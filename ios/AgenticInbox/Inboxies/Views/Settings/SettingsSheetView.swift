@@ -71,7 +71,7 @@ struct SettingsSheetView: View {
                                 Text("Default signature")
                                     .foregroundStyle(AppTheme.ink)
                                 Text("Include a signature in emails.")
-                                    .font(.system(size: 12))
+                                    .font(.inter(size: 12))
                                     .foregroundStyle(AppTheme.muted)
                             }
                         } icon: {
@@ -110,7 +110,7 @@ struct SettingsSheetView: View {
                         showDisconnectConfirm = true
                     }
                     .frame(maxWidth: .infinity)
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.inter(size: 16, weight: .medium))
                 }
             }
             .listStyle(.insetGrouped)
@@ -123,7 +123,7 @@ struct SettingsSheetView: View {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.inter(size: 13, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)
                             .frame(width: 32, height: 32)
                             .background(AppTheme.pillFill, in: Circle())
@@ -165,19 +165,19 @@ struct SettingsSheetView: View {
     private var profileHeader: some View {
         VStack(spacing: 10) {
             Text(initials)
-                .font(.system(size: initials.count > 1 ? 28 : 34, weight: .semibold))
+                .font(.inter(size: initials.count > 1 ? 28 : 34, weight: .semibold))
                 .foregroundStyle(AppTheme.ink)
                 .frame(width: 88, height: 88)
                 .background(AppTheme.pillFill, in: Circle())
 
             VStack(spacing: 4) {
                 Text(displayName)
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.inter(size: 22, weight: .bold))
                     .foregroundStyle(AppTheme.ink)
                     .multilineTextAlignment(.center)
 
                 Text(emailAddress)
-                    .font(.system(size: 14))
+                    .font(.inter(size: 14))
                     .foregroundStyle(AppTheme.muted)
                     .multilineTextAlignment(.center)
             }
@@ -188,7 +188,7 @@ struct SettingsSheetView: View {
                 showEditName = true
             } label: {
                 Text("Edit")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.inter(size: 14, weight: .semibold))
                     .foregroundStyle(AppTheme.accent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)

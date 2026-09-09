@@ -98,7 +98,8 @@ final class ComposeFormModel {
         mode: ComposeMode,
         mailbox: Mailbox,
         original: Email? = nil,
-        draft: Email? = nil
+        draft: Email? = nil,
+        initialTo: [MailAddress] = []
     ) {
         self.mode = mode
         let mailboxId = mailbox.id
@@ -157,9 +158,15 @@ final class ComposeFormModel {
                 nextSubject = ComposeHTML.prefixedSubject(original.subject, prefix: "Fwd")
                 nextBody = ComposeHTML.forwardBody(original: original, signature: signature)
             case .new, .editDraft:
+                if mode == .new && !initialTo.isEmpty {
+                    nextTo = initialTo
+                }
                 nextBody = signature.isEmpty ? "" : "\n\n\(signature)"
             }
         } else {
+            if !initialTo.isEmpty {
+                nextTo = initialTo
+            }
             nextBody = signature.isEmpty ? "" : "\n\n\(signature)"
         }
 

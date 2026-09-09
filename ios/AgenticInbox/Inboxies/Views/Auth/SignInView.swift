@@ -28,10 +28,10 @@ struct SignInView: View {
                         .font(.system(size: 44, weight: .light))
                         .foregroundStyle(AppTheme.ink)
                     Text("Agentic Inbox")
-                        .font(.system(size: 34, weight: .semibold, design: .rounded))
+                        .font(.inter(size: 34, weight: .semibold))
                         .foregroundStyle(AppTheme.ink)
                     Text("Your email, with an AI agent that drafts — you send.")
-                        .font(.system(size: 16))
+                        .font(.inter(size: 16))
                         .foregroundStyle(AppTheme.muted)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
@@ -59,7 +59,7 @@ struct SignInView: View {
                             }
                         } label: {
                             Text("Continue with Dev Login")
-                                .font(.system(size: 15, weight: .medium))
+                                .font(.inter(size: 15, weight: .medium))
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 48)
                                 .background(AppTheme.pillFill)
@@ -77,7 +77,7 @@ struct SignInView: View {
 
                 if let error = auth.errorMessage {
                     Text(error)
-                        .font(.footnote)
+                        .font(.inter(.footnote))
                         .foregroundStyle(.red)
                         .padding(.horizontal)
                 }
@@ -86,7 +86,7 @@ struct SignInView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("API base URL")
-                        .font(.caption)
+                        .font(.inter(.caption))
                         .foregroundStyle(AppTheme.muted)
                     TextField("inboxies.email", text: $apiBase)
                         .keyboardType(.URL)
@@ -105,7 +105,7 @@ struct SignInView: View {
                             commitAPIBaseURL()
                         }
                     Text("Bare domains (inboxies.email) automatically use https://")
-                        .font(.caption2)
+                        .font(.inter(.caption2))
                         .foregroundStyle(AppTheme.muted)
                 }
                 .padding(.horizontal, 32)

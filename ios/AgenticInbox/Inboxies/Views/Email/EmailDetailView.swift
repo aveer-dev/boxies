@@ -188,7 +188,7 @@ struct EmailDetailView: View {
 
     private func tagChip(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 12, weight: .medium))
+            .font(.inter(size: 12, weight: .medium))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(AppTheme.pillFill)
@@ -323,15 +323,15 @@ struct EmailDetailView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text("Sender Name")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.inter(size: 15, weight: .semibold))
                             Spacer()
                             Text("Mar 15, 2026")
-                                .font(.system(size: 13))
+                                .font(.inter(size: 13))
                         }
                         Text("To Recipients")
-                            .font(.system(size: 13))
+                            .font(.inter(size: 13))
                         Text(String(repeating: "Body preview line for skeleton loading state. ", count: 4))
-                            .font(.system(size: 15))
+                            .font(.inter(size: 15))
                             .lineLimit(6)
                     }
                     .padding(.horizontal, 16)
@@ -401,12 +401,12 @@ private struct DraftMessageRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(alignment: .center, spacing: 6) {
                         Text("Draft")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.inter(size: 12, weight: .semibold))
                             .foregroundStyle(AppTheme.deepDarkRed)
                             .lineLimit(1)
                         if message.hasFileAttachment {
                             Image(systemName: "paperclip")
-                                .font(.system(size: 10, weight: .medium))
+                                .font(.inter(size: 10, weight: .medium))
                                 .foregroundStyle(AppTheme.muted)
                                 .accessibilityLabel("Has attachment")
                         }
@@ -414,7 +414,7 @@ private struct DraftMessageRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if !preview.isEmpty {
                         Text(preview)
-                            .font(.system(size: 11))
+                            .font(.inter(size: 11))
                             .foregroundStyle(AppTheme.muted)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -433,7 +433,7 @@ private struct DraftMessageRow: View {
                 showDeleteConfirm = true
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 14))
+                    .font(.inter(size: 14))
                     .foregroundStyle(AppTheme.muted)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
@@ -482,7 +482,7 @@ private struct MessagePeopleHeader: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button(action: senderOrToAction) {
                 Text(message.fromAddress.label(selfAddress: selfAddress))
-                    .font(.system(size: AppTheme.FontSize.sender, weight: .semibold))
+                    .font(.inter(size: AppTheme.FontSize.sender, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -512,7 +512,7 @@ private struct MessagePeopleHeader: View {
         if !summary.isEmpty {
             Button(action: senderOrToAction) {
                 Text("To \(summary)")
-                    .font(.system(size: AppTheme.FontSize.recipient))
+                    .font(.inter(size: AppTheme.FontSize.recipient))
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -527,7 +527,7 @@ private struct MessagePeopleHeader: View {
     private var expandedFromRow: some View {
         HStack(alignment: .center, spacing: 8) {
             Text("From")
-                .font(.system(size: AppTheme.FontSize.recipient, weight: .medium))
+                .font(.inter(size: AppTheme.FontSize.recipient, weight: .medium))
                 .foregroundStyle(AppTheme.muted)
                 .frame(width: 32, alignment: .leading)
             PersonAddressMenu(
@@ -544,18 +544,18 @@ private struct MessagePeopleHeader: View {
         HStack(alignment: .center, spacing: 4) {
             if message.hasFileAttachment {
                 Image(systemName: "paperclip")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.inter(size: 10, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                     .accessibilityLabel("Has attachment")
             }
             Button(action: onToggleRecipients) {
                 HStack(spacing: 4) {
                     Text(formattedDate)
-                        .font(.system(size: AppTheme.FontSize.meta))
+                        .font(.inter(size: AppTheme.FontSize.meta))
                         .foregroundStyle(AppTheme.muted)
                         .lineLimit(1)
                     Image(systemName: isRecipientsExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.chevron, weight: .semibold))
+                        .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
                         .foregroundStyle(AppTheme.muted)
                         .frame(width: 16, height: 16)
                 }
@@ -572,7 +572,7 @@ private struct MessagePeopleHeader: View {
         if !addresses.isEmpty {
             HStack(alignment: .top, spacing: 8) {
                 Text(label)
-                    .font(.system(size: AppTheme.FontSize.meta, weight: .medium))
+                    .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                     .frame(width: 32, alignment: .leading)
                     .padding(.top, 4)
@@ -621,10 +621,10 @@ private struct PersonAddressMenu: View {
         } label: {
             HStack(spacing: 4) {
                 Text(address.label(selfAddress: selfAddress))
-                    .font(.system(size: AppTheme.FontSize.meta, weight: .medium))
+                    .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: AppTheme.FontSize.chevron, weight: .semibold))
+                    .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
             }
             .padding(.leading, 8)
             .padding(.trailing, 6)

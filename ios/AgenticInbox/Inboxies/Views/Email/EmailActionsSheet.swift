@@ -154,13 +154,13 @@ struct EmailActionsSheet: View {
         Button(action: action) {
             VStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.inter(size: 18, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .frame(width: 52, height: 52)
                     .background(AppTheme.pillFill)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.inter(size: 11, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -209,7 +209,7 @@ private struct EmailSourceView: View {
             ForEach(Array(email.sourceHeaders.enumerated()), id: \.offset) { _, header in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(header.key)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.inter(size: 12, weight: .semibold))
                         .foregroundStyle(AppTheme.muted)
                     Text(header.value)
                         .font(.system(size: 14, design: .monospaced))
@@ -245,6 +245,7 @@ private struct ActionsSheetChrome: ViewModifier {
             .scrollContentBackground(.hidden)
             .contentMargins(.top, 20, for: .scrollContent)
             .background(AppTheme.background)
+            .background(InlineNavigationTitleFont())
             .navigationBarTitleDisplayMode(.inline)
             .toolbarRole(.editor)
             .toolbarBackground(.ultraThinMaterial, for: .navigationBar)

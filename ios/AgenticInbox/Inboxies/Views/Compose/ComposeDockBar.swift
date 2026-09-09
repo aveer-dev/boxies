@@ -14,7 +14,7 @@ struct ComposeDockBar: View {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 Text(session.dockTitle)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.inter(size: 15, weight: .semibold))
                     .lineLimit(1)
                 if session.form.saveStatus == .saving {
                     ProgressView()

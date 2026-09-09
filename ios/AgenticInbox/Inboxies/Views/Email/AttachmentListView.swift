@@ -20,7 +20,7 @@ struct AttachmentListView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if attachments.count > 1 {
                     Text("\(attachments.count) attachments")
-                        .font(.system(size: 12, weight: .regular))
+                        .font(.inter(size: 12, weight: .regular))
                         .foregroundStyle(AppTheme.muted)
                 }
 
@@ -35,7 +35,7 @@ struct AttachmentListView: View {
 
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.footnote)
+                        .font(.inter(.footnote))
                         .foregroundStyle(.red)
                 }
             }
@@ -52,11 +52,11 @@ struct AttachmentListView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(attachment.filename)
-                        .font(.system(size: 11, weight: .regular))
+                        .font(.inter(size: 11, weight: .regular))
                         .foregroundStyle(AppTheme.ink)
                         .lineLimit(1)
                     Text(byteString(attachment.size))
-                        .font(.system(size: 9))
+                        .font(.inter(size: 9))
                         .foregroundStyle(AppTheme.muted)
                         .lineLimit(1)
                 }
@@ -81,7 +81,7 @@ struct AttachmentListView: View {
     private func fileTypeIcon(for attachment: Attachment) -> some View {
         let kind = AttachmentFileKind(attachment)
         return Image(systemName: kind.systemImage)
-            .font(.system(size: 14, weight: .semibold))
+            .font(.inter(size: 14, weight: .semibold))
             .foregroundStyle(kind.tint)
             .frame(width: 28, height: 28)
             .background(kind.tint.opacity(0.14))

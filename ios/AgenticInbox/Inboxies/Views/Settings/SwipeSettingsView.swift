@@ -53,7 +53,7 @@ struct SwipeSettingsView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.inter(size: 14, weight: .semibold))
                         .foregroundStyle(AppTheme.ink)
                         .frame(width: 32, height: 32)
                         .background(AppTheme.pillFill, in: Circle())
@@ -73,10 +73,10 @@ struct SwipeSettingsView: View {
         VStack(spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: "folder")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.inter(size: 11, weight: .medium))
                     .foregroundStyle(.red)
                 Text("Move to Inbox")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.inter(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                 Spacer(minLength: 0)
             }
@@ -128,7 +128,7 @@ struct SwipeSettingsView: View {
 
     private func previewActionChip(_ action: SwipeQuickAction) -> some View {
         Image(systemName: action.systemImage)
-            .font(.system(size: 16, weight: .semibold))
+            .font(.inter(size: 16, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 52, height: 52)
             .background(action.swipeTint)
@@ -142,7 +142,7 @@ struct SwipeSettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(size: 13, weight: .medium))
+                .font(.inter(size: 13, weight: .medium))
                 .foregroundStyle(AppTheme.muted)
 
             ForEach(actions.wrappedValue) { action in
@@ -159,9 +159,9 @@ struct SwipeSettingsView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "plus")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.inter(size: 14, weight: .semibold))
                         Text("Add action")
-                            .font(.system(size: 15, weight: .medium))
+                            .font(.inter(size: 15, weight: .medium))
                     }
                     .foregroundStyle(AppTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -180,7 +180,7 @@ struct SwipeSettingsView: View {
     ) -> some View {
         HStack(alignment: .center, spacing: 10) {
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.inter(size: 14, weight: .semibold))
                 .foregroundStyle(AppTheme.muted.opacity(0.75))
                 .frame(width: 18, height: 44)
                 .contentShape(Rectangle())
@@ -191,12 +191,12 @@ struct SwipeSettingsView: View {
 
             HStack(spacing: 12) {
                 Image(systemName: action.systemImage)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.inter(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .frame(width: 22)
 
                 Text(action.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.inter(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
 
                 Spacer(minLength: 0)
@@ -207,7 +207,7 @@ struct SwipeSettingsView: View {
                         persist()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.inter(size: 11, weight: .bold))
                             .foregroundStyle(AppTheme.muted)
                             .frame(width: 24, height: 24)
                             .background(AppTheme.background, in: Circle())

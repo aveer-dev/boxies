@@ -46,7 +46,7 @@ struct SearchView: View {
                     Spacer()
                 } else if isSearching || hasResults {
                     Text("Results")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.inter(size: 13, weight: .medium))
                         .foregroundStyle(AppTheme.muted)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
@@ -64,7 +64,7 @@ struct SearchView: View {
                     }
                 } else if trimmedQuery.count >= 2 {
                     Text("No matching emails")
-                        .font(.system(size: 15))
+                        .font(.inter(size: 15))
                         .foregroundStyle(AppTheme.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.top, 24)
@@ -86,10 +86,8 @@ struct SearchView: View {
         .task(id: query) {
             await runSearch()
         }
-        .sheet(isPresented: $showChat) {
+        .fullScreenCover(isPresented: $showChat) {
             ChatSheetView(seedPrompt: trimmedQuery)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
         }
     }
 
@@ -99,9 +97,9 @@ struct SearchView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.inter(size: 16, weight: .medium))
                 Text("Ask AI “\(trimmedQuery)”")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.inter(size: 16, weight: .medium))
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -154,7 +152,7 @@ struct SearchView: View {
             dismiss()
         } label: {
             Image(systemName: "xmark")
-                .font(.system(size: 14, weight: .medium))
+                .font(.inter(size: 14, weight: .medium))
                 .foregroundStyle(AppTheme.ink)
                 .frame(height: 52)
                 .frame(width: 52)

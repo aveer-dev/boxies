@@ -17,7 +17,7 @@ struct AgentPromptSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     Text(isCustomPrompt ? "Custom" : "Default")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.inter(size: 11, weight: .semibold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(AppTheme.pillFill, in: Capsule())
@@ -27,13 +27,13 @@ struct AgentPromptSettingsView: View {
                         Button("Reset to default") {
                             agentPrompt = ""
                         }
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.inter(size: 12, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
                     }
                 }
 
                 Text("Customize how the AI agent behaves for this mailbox. Leave empty to use the built-in default prompt.")
-                    .font(.system(size: 12))
+                    .font(.inter(size: 12))
                     .foregroundStyle(AppTheme.muted)
 
                 TextEditor(text: $agentPrompt)
@@ -48,7 +48,7 @@ struct AgentPromptSettingsView: View {
                     )
 
                 Text("The prompt is sent as the system message to the AI model. It controls the agent's personality, writing style, and behavior rules.")
-                    .font(.system(size: 12))
+                    .font(.inter(size: 12))
                     .foregroundStyle(AppTheme.muted)
             }
             .padding(16)
@@ -68,7 +68,7 @@ struct AgentPromptSettingsView: View {
         .overlay(alignment: .bottom) {
             if let saveMessage {
                 Text(saveMessage)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.inter(size: 13, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)

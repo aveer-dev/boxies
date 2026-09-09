@@ -276,6 +276,17 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func updateConversation(mailboxId: String, id: String, title: String? = nil, lastMessagePreview: String? = nil) async throws -> AgentConversation {
+        var body: [String: Any] = [:]
+        if let title { body["title"] = title }
+        if let lastMessagePreview { body["lastMessagePreview"] = lastMessagePreview }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/agent/conversations/\(id.urlPathEncoded)",
+            method: "PATCH",
+            body: body
+        )
+    }
+
     func deleteConversation(mailboxId: String, id: String) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/agent/conversations/\(id.urlPathEncoded)",
