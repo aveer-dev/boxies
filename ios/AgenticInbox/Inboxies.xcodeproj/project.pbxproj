@@ -44,6 +44,15 @@
 		F2A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift */; };
 		F2A1B2C3D4E5478990ABCD05 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A1B2C3D4E5478990ABCD05 /* AppDelegate.swift */; };
 		F2A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift */; };
+		4A0B2D3F9C7E5B22C1F6D8E6 /* Views/Components/TextFlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F9A1C2E8B6D4A11B0E5C7D5 /* Views/Components/TextFlowLayout.swift */; };
+		4A0B2D3F9C7E5B22C1F6D8E7 /* Views/Components/MarkdownContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F9A1C2E8B6D4A11B0E5C7D6 /* Views/Components/MarkdownContentView.swift */; };
+		219CF0985CEB43F58D0A6181 /* Views/Chat/ContactPillParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D339D5F9D3E646D58813D855 /* Views/Chat/ContactPillParser.swift */; };
+		219CF0985CEB43F58D0A6182 /* Views/Chat/ContactPillMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = D339D5F9D3E646D58813D856 /* Views/Chat/ContactPillMenu.swift */; };
+		F017B0014567890123456781 /* Fonts/Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F017F0014567890123456781 /* Fonts/Inter-Regular.ttf */; };
+		F017B0024567890123456782 /* Fonts/Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F017F0024567890123456782 /* Fonts/Inter-Medium.ttf */; };
+		F017B0034567890123456783 /* Fonts/Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F017F0034567890123456783 /* Fonts/Inter-SemiBold.ttf */; };
+		F017B0044567890123456784 /* Fonts/Inter-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F017F0044567890123456784 /* Fonts/Inter-Bold.ttf */; };
+		F017B0054567890123456785 /* Fonts/Inter-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F017F0054567890123456785 /* Fonts/Inter-Italic.ttf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +82,10 @@
 		EF772F64F27842E2A7E84279 /* Views/Email/AttachmentListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/AttachmentListView.swift; sourceTree = "<group>"; };
 		B572B6236F2243868CCEFD07 /* Views/Email/EmailBodyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/EmailBodyView.swift; sourceTree = "<group>"; };
 		A6B6D0BA36EC4EE7BEC367D7 /* Views/Email/EmailActionsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/EmailActionsSheet.swift; sourceTree = "<group>"; };
+		3F9A1C2E8B6D4A11B0E5C7D5 /* Views/Components/TextFlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Components/TextFlowLayout.swift; sourceTree = "<group>"; };
+		3F9A1C2E8B6D4A11B0E5C7D6 /* Views/Components/MarkdownContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Components/MarkdownContentView.swift; sourceTree = "<group>"; };
+		D339D5F9D3E646D58813D855 /* Views/Chat/ContactPillParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Chat/ContactPillParser.swift; sourceTree = "<group>"; };
+		D339D5F9D3E646D58813D856 /* Views/Chat/ContactPillMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Chat/ContactPillMenu.swift; sourceTree = "<group>"; };
 		C8E41A2F9B7D4E6A8C0F1234 /* Views/Components/UndoToastBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Components/UndoToastBanner.swift; sourceTree = "<group>"; };
 		3F9A1C2E8B6D4A11B0E5C7D4 /* Views/Components/FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Components/FlowLayout.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD01 /* Services/SwipeActionPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SwipeActionPreferences.swift; sourceTree = "<group>"; };
@@ -87,6 +100,11 @@
 		F1A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/RealTimeStreamClient.swift; sourceTree = "<group>"; };
 		F1A1B2C3D4E5478990ABCD05 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		F1A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/PushNotificationManager.swift; sourceTree = "<group>"; };
+		F017F0014567890123456781 /* Fonts/Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Fonts/Inter-Regular.ttf; sourceTree = "<group>"; };
+		F017F0024567890123456782 /* Fonts/Inter-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Fonts/Inter-Medium.ttf; sourceTree = "<group>"; };
+		F017F0034567890123456783 /* Fonts/Inter-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Fonts/Inter-SemiBold.ttf; sourceTree = "<group>"; };
+		F017F0044567890123456784 /* Fonts/Inter-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Fonts/Inter-Bold.ttf; sourceTree = "<group>"; };
+		F017F0054567890123456785 /* Fonts/Inter-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = Fonts/Inter-Italic.ttf; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -146,6 +164,10 @@
 				A6B6D0BA36EC4EE7BEC367D7 /* Views/Email/EmailActionsSheet.swift */,
 				C8E41A2F9B7D4E6A8C0F1234 /* Views/Components/UndoToastBanner.swift */,
 				3F9A1C2E8B6D4A11B0E5C7D4 /* Views/Components/FlowLayout.swift */,
+				3F9A1C2E8B6D4A11B0E5C7D5 /* Views/Components/TextFlowLayout.swift */,
+				3F9A1C2E8B6D4A11B0E5C7D6 /* Views/Components/MarkdownContentView.swift */,
+				D339D5F9D3E646D58813D855 /* Views/Chat/ContactPillParser.swift */,
+				D339D5F9D3E646D58813D856 /* Views/Chat/ContactPillMenu.swift */,
 				68CBCACD0F1941F796F4F461 /* Views/Email/EmailDetailView.swift */,
 				FAA619084E624222B919A7C4 /* Views/Email/EmailListView.swift */,
 				74318D3C6D954DCA9AE3A5EF /* Views/Home/HomeShellView.swift */,
@@ -158,6 +180,11 @@
 				83D37F469E5F418DB189BA76 /* Views/Search/SearchView.swift */,
 				1ADA91EDA69A47BA95EB9514 /* Info.plist */,
 				F444315A11E44D83826E7D65 /* Inboxies.entitlements */,
+				F017F0014567890123456781 /* Fonts/Inter-Regular.ttf */,
+				F017F0024567890123456782 /* Fonts/Inter-Medium.ttf */,
+				F017F0034567890123456783 /* Fonts/Inter-SemiBold.ttf */,
+				F017F0044567890123456784 /* Fonts/Inter-Bold.ttf */,
+				F017F0054567890123456785 /* Fonts/Inter-Italic.ttf */,
 			);
 			path = Inboxies;
 			sourceTree = "<group>";
@@ -215,6 +242,11 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F017B0014567890123456781 /* Fonts/Inter-Regular.ttf in Resources */,
+				F017B0024567890123456782 /* Fonts/Inter-Medium.ttf in Resources */,
+				F017B0034567890123456783 /* Fonts/Inter-SemiBold.ttf in Resources */,
+				F017B0044567890123456784 /* Fonts/Inter-Bold.ttf in Resources */,
+				F017B0054567890123456785 /* Fonts/Inter-Italic.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -250,6 +282,10 @@
 				6AE0059EAD914AD79D02011F /* Views/Email/EmailActionsSheet.swift in Sources */,
 				D9F52B3A0C8E5F7B9D1E2345 /* Views/Components/UndoToastBanner.swift in Sources */,
 				4A0B2D3F9C7E5B22C1F6D8E5 /* Views/Components/FlowLayout.swift in Sources */,
+				4A0B2D3F9C7E5B22C1F6D8E6 /* Views/Components/TextFlowLayout.swift in Sources */,
+				4A0B2D3F9C7E5B22C1F6D8E7 /* Views/Components/MarkdownContentView.swift in Sources */,
+				219CF0985CEB43F58D0A6181 /* Views/Chat/ContactPillParser.swift in Sources */,
+				219CF0985CEB43F58D0A6182 /* Views/Chat/ContactPillMenu.swift in Sources */,
 				411FB5F3E3824817A4909D02 /* Views/Email/EmailDetailView.swift in Sources */,
 				C543C24F6A504509B345B919 /* Views/Email/EmailListView.swift in Sources */,
 				23E7B306C65E4F21A0AEB90C /* Views/Home/HomeShellView.swift in Sources */,

@@ -16,5 +16,6 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: auth.isAuthenticated)
+        .font(.inter(size: 14))
     }
 }

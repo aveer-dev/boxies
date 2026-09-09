@@ -223,24 +223,40 @@ struct EmailListView: View {
     private static let skeletonCount = 9
 }
 
-/// Loading placeholder with no unread dot and taller bars than a real row.
+/// Loading placeholder matching the row geometry.
 private struct EmailRowSkeleton: View {
     let index: Int
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                bar(width: senderWidth, height: 16)
-                Spacer(minLength: 8)
-                bar(width: 44, height: 14)
+        HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
+            Circle()
+                .fill(AppTheme.pillActive)
+                .frame(width: AppTheme.List.unreadDotSize, height: AppTheme.List.unreadDotSize)
+                .frame(width: AppTheme.List.unreadDotSize, height: AppTheme.List.unreadDotLineHeight, alignment: .center)
+
+            VStack(alignment: .leading, spacing: AppTheme.List.rowTextSpacing) {
+                HStack(spacing: 8) {
+                    bar(width: senderWidth, height: AppTheme.List.sender)
+                    Spacer(minLength: 8)
+                    bar(width: 44, height: AppTheme.List.date)
+                }
+                bar(width: subjectWidth, height: AppTheme.List.subject)
+                bar(width: previewWidth, height: AppTheme.List.preview)
             }
-            bar(width: subjectWidth, height: 16)
-            bar(width: previewWidth, height: 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 20)
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
+        .padding(.vertical, AppTheme.List.rowVerticalPadding)
+        .padding(.leading, AppTheme.List.rowHorizontalPadding)
+        .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AppTheme.List.separatorColor)
+                .frame(height: AppTheme.List.separatorHeight)
+                .padding(.leading, AppTheme.List.separatorLeadingInset)
+                .padding(.trailing, AppTheme.List.rowHorizontalPadding)
+                .accessibilityHidden(true)
+        }
     }
 
     private var senderWidth: CGFloat { [128, 156, 112, 140, 168, 120, 148, 104, 136][index % 9] }
@@ -287,10 +303,10 @@ struct EmailRowView: View {
     var folderLabel: String?
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
             unreadDot
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: AppTheme.List.rowTextSpacing) {
                 headerRow
                 subjectRow
                 if !previewText.isEmpty {
@@ -302,30 +318,39 @@ struct EmailRowView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 14)
-        .padding(.leading, 6)
-        .padding(.trailing, 10)
+        .padding(.vertical, AppTheme.List.rowVerticalPadding)
+        .padding(.leading, AppTheme.List.rowHorizontalPadding)
+        .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AppTheme.List.separatorColor)
+                .frame(height: AppTheme.List.separatorHeight)
+                .padding(.leading, AppTheme.List.separatorLeadingInset)
+                .padding(.trailing, AppTheme.List.rowHorizontalPadding)
+                .accessibilityHidden(true)
+        }
     }
 
     private var unreadDot: some View {
         Circle()
-            .fill(email.isUnread ? AppTheme.unread : Color.clear)
-            .frame(width: 8, height: 8)
-            .frame(width: 10, height: 20, alignment: .center)
+            .fill(email.isUnread ? AppTheme.unread : AppTheme.pillActive)
+            .frame(width: AppTheme.List.unreadDotSize, height: AppTheme.List.unreadDotSize)
+            .frame(width: AppTheme.List.unreadDotSize, height: AppTheme.List.unreadDotLineHeight, alignment: .center)
             .accessibilityLabel(email.isUnread ? "Unread" : "Read")
     }
 
     private var headerRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            highlighted(email.displaySender, size: 12, weight: email.isUnread ? .semibold : .regular)
+            highlighted(email.displaySender, size: AppTheme.List.sender, weight: email.isUnread ? .medium : .regular)
                 .foregroundStyle(AppTheme.ink)
                 .lineLimit(1)
+                .tracking(AppTheme.List.tracking)
 
             if (email.threadCount ?? 1) > 1 {
                 Text("\(email.threadCount!)")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.inter(size: AppTheme.List.badge, weight: .medium))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
                     .background(AppTheme.pillFill)
@@ -335,7 +360,7 @@ struct EmailRowView: View {
 
             if email.hasDraft == true {
                 Text("Draft")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.inter(size: AppTheme.List.badge, weight: .medium))
                     .foregroundStyle(AppTheme.deepDarkRed)
             }
 
@@ -344,13 +369,13 @@ struct EmailRowView: View {
             HStack(alignment: .center, spacing: 4) {
                 if email.hasFileAttachment {
                     Image(systemName: "paperclip")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.inter(size: AppTheme.List.badge, weight: .medium))
                         .foregroundStyle(AppTheme.muted)
                         .accessibilityLabel("Has attachment")
                 }
 
                 Text(Self.formatDate(email.date))
-                    .font(.system(size: 10))
+                    .font(.inter(size: AppTheme.List.date))
                     .foregroundStyle(AppTheme.muted)
             }
         }
@@ -359,22 +384,25 @@ struct EmailRowView: View {
     private var subjectRow: some View {
         highlighted(
             email.subject.isEmpty ? "(no subject)" : email.subject,
-            size: 12,
-            weight: email.isUnread ? .semibold : .regular
+            size: AppTheme.List.subject,
+            weight: email.isUnread ? .medium : .regular
         )
         .foregroundStyle(AppTheme.ink)
         .lineLimit(1)
+        .tracking(AppTheme.List.tracking)
+        
     }
 
     private var previewRow: some View {
-        highlighted(previewText, size: 12, weight: .regular)
+        highlighted(previewText, size: AppTheme.List.preview, weight: .regular)
             .foregroundStyle(AppTheme.muted)
             .lineLimit(1)
+            .tracking(AppTheme.List.tracking)
     }
 
     private func tagRow(_ tag: String) -> some View {
         Text(tag)
-            .font(.system(size: 10, weight: .medium))
+            .font(.inter(size: AppTheme.List.badge, weight: .medium))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(AppTheme.pillFill)
@@ -400,7 +428,7 @@ struct EmailRowView: View {
     private func highlighted(_ text: String, size: CGFloat, weight: Font.Weight) -> Text {
         let query = highlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         if query.isEmpty {
-            return Text(text).font(.system(size: size, weight: weight))
+            return Text(text).font(.inter(size: size, weight: weight))
         }
         return Text(Self.attributed(text, highlight: query, size: size, weight: weight))
     }
@@ -433,14 +461,14 @@ struct EmailRowView: View {
         weight: Font.Weight
     ) -> AttributedString {
         var result = AttributedString(text)
-        result.font = .system(size: size, weight: weight)
+        result.font = .inter(size: size, weight: weight)
         let lower = text.lowercased()
         let needle = highlight.lowercased()
         var searchStart = lower.startIndex
         while let range = lower.range(of: needle, range: searchStart..<lower.endIndex) {
             if let start = AttributedString.Index(range.lowerBound, within: result),
                let end = AttributedString.Index(range.upperBound, within: result) {
-                result[start..<end].font = .system(size: size, weight: .bold)
+                result[start..<end].font = .inter(size: size, weight: .bold)
                 result[start..<end].foregroundColor = AppTheme.ink
             }
             searchStart = range.upperBound

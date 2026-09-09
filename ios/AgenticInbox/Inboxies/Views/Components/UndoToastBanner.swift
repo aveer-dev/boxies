@@ -8,14 +8,14 @@ struct UndoToastBanner: View {
     var body: some View {
         HStack(spacing: 12) {
             Text(message)
-                .font(.system(size: 15, weight: .medium))
+                .font(.inter(size: 15, weight: .medium))
                 .foregroundStyle(AppTheme.ink)
                 .lineLimit(1)
 
             Spacer(minLength: 8)
 
             Button("Undo", action: onUndo)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.inter(size: 15, weight: .semibold))
                 .foregroundStyle(AppTheme.accent)
                 .buttonStyle(.plain)
                 .accessibilityHint("Reverses the last archive")

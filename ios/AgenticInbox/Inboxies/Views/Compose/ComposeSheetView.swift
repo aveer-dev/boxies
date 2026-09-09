@@ -45,7 +45,7 @@ struct ComposeSheetView: View {
 
                 if let error = form.errorMessage {
                     Text(error)
-                        .font(.footnote)
+                        .font(.inter(.footnote))
                         .foregroundStyle(.red)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
@@ -129,11 +129,11 @@ struct ComposeSheetView: View {
                 if let toast = form.toast {
                     HStack(spacing: 8) {
                         Image(systemName: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.inter(size: 13, weight: .semibold))
                             .foregroundStyle(toast.isError ? .red : AppTheme.ink)
 
                         Text(toast.message)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.inter(size: 13, weight: .medium))
                             .foregroundStyle(AppTheme.ink)
                     }
                     .padding(.horizontal, 16)
@@ -180,10 +180,10 @@ struct ComposeSheetView: View {
                 Text("From \(fromDisplayName)")
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(1)
-                    .font(.system(size: AppTheme.FontSize.sender, weight: .medium))
+                    .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
                 if app.mailboxes.count > 1 {
                     Image(systemName: "chevron.down")
-                        .font(.system(size: AppTheme.FontSize.chevron, weight: .semibold))
+                        .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
                         .foregroundStyle(AppTheme.muted)
                 }
                 Spacer(minLength: 0)
@@ -215,7 +215,7 @@ struct ComposeSheetView: View {
             set: { form.subject = $0 }
         ))
         .focused($focusedField, equals: .subject)
-        .font(.system(size: AppTheme.FontSize.inlineTitle, weight: .medium))
+        .font(.inter(size: AppTheme.FontSize.inlineTitle, weight: .medium))
         .foregroundStyle(AppTheme.ink)
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -227,7 +227,7 @@ struct ComposeSheetView: View {
             set: { form.body = $0 }
         ))
         .focused($focusedField, equals: .body)
-        .font(.system(size: AppTheme.FontSize.body))
+        .font(.inter(size: AppTheme.FontSize.body))
         .foregroundStyle(AppTheme.ink)
         .scrollContentBackground(.hidden)
         .padding(.horizontal, 12)
@@ -243,9 +243,9 @@ struct ComposeSheetView: View {
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "text.quote")
-                    .font(.system(size: AppTheme.FontSize.meta, weight: .semibold))
+                    .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
                 Text(quoted.header)
-                    .font(.system(size: AppTheme.FontSize.body, weight: .medium))
+                    .font(.inter(size: AppTheme.FontSize.body, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 8)
@@ -270,11 +270,11 @@ struct ComposeSheetView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text(quoted.header)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.inter(size: 16, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
 
                 Text(quoted.text)
-                    .font(.system(size: AppTheme.FontSize.body))
+                    .font(.inter(size: AppTheme.FontSize.body))
                     .foregroundStyle(AppTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.leading, 12)
@@ -306,7 +306,7 @@ struct ComposeSheetView: View {
         let isActive = recipientFocus == field
         let labeledField = HStack(alignment: .top, spacing: 8) {
             Text(label)
-                .font(.system(size: AppTheme.FontSize.meta, weight: .medium))
+                .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
                 .foregroundStyle(AppTheme.muted)
                 .frame(minWidth: 28, alignment: .leading)
                 .frame(height: CollapsedTokenMetrics.lineHeight)
@@ -333,7 +333,7 @@ struct ComposeSheetView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: AppTheme.FontSize.sender, weight: .semibold))
+                        .font(.inter(size: AppTheme.FontSize.sender, weight: .semibold))
                         .foregroundStyle(AppTheme.muted)
                         .frame(width: 28, height: 18)
                         .contentShape(Rectangle())
@@ -547,7 +547,7 @@ private enum CollapsedTokenMetrics {
     static let spacing: CGFloat = 6
     static let minPillWidth: CGFloat = 56
     static let pillHorizontalPadding: CGFloat = 16
-    static let pillFont = UIFont.systemFont(ofSize: AppTheme.FontSize.meta, weight: .medium)
+    static let pillFont = UIFont.inter(size: AppTheme.FontSize.meta, weight: .medium)
 
     static var lineHeight: CGFloat {
         ceil(pillFont.lineHeight) + 8
@@ -618,7 +618,7 @@ private struct CollapsedTokenSummary: View {
         HStack(alignment: .center, spacing: CollapsedTokenMetrics.spacing) {
             if tokens.isEmpty {
                 Text(placeholder)
-                    .font(.system(size: AppTheme.FontSize.meta, weight: .medium))
+                    .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(1)
             } else {
@@ -634,7 +634,7 @@ private struct CollapsedTokenSummary: View {
                 }
                 if plan.hidden > 0 {
                     Text(CollapsedTokenMetrics.overflowLabel(hidden: plan.hidden))
-                        .font(.system(size: AppTheme.FontSize.meta, weight: .medium))
+                        .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
                         .foregroundStyle(AppTheme.muted)
                         .lineLimit(1)
                         .fixedSize()
@@ -662,13 +662,13 @@ private struct RecipientTokenPill: View {
     var body: some View {
         HStack(spacing: 4) {
             Text(token.tokenLabel)
-                .font(.system(size: AppTheme.FontSize.meta, weight: .medium))
+                .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
                 .lineLimit(1)
                 .truncationMode(.tail)
             if showsRemove {
                 Button(action: onRemove) {
                     Image(systemName: "xmark")
-                        .font(.system(size: AppTheme.FontSize.chevron, weight: .semibold))
+                        .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Remove \(token.tokenLabel)")
@@ -713,7 +713,7 @@ private struct BackspaceTextField: UIViewRepresentable {
         field.returnKeyType = .next
         field.tintColor = UIColor(AppTheme.ink)
         field.textColor = UIColor(AppTheme.ink)
-        field.font = UIFont.systemFont(ofSize: AppTheme.FontSize.recipient)
+        field.font = UIFont.inter(size: AppTheme.FontSize.recipient, weight: .regular)
         field.setContentHuggingPriority(.required, for: .horizontal)
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.addTarget(context.coordinator, action: #selector(Coordinator.editingChanged), for: .editingChanged)
@@ -750,7 +750,7 @@ private struct BackspaceTextField: UIViewRepresentable {
                 string: placeholder,
                 attributes: [
                     .foregroundColor: UIColor(AppTheme.muted),
-                    .font: UIFont.systemFont(ofSize: AppTheme.FontSize.recipient),
+                    .font: UIFont.inter(size: AppTheme.FontSize.recipient, weight: .regular),
                 ]
             )
         }

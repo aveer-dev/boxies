@@ -384,7 +384,8 @@ final class AppModel {
     func startCompose(
         mode: ComposeMode,
         original: Email? = nil,
-        draft: Email? = nil
+        draft: Email? = nil,
+        initialTo: [MailAddress] = []
     ) async {
         guard let mailbox = selectedMailbox else {
             errorMessage = "No mailbox selected."
@@ -404,7 +405,8 @@ final class AppModel {
             mode: mode,
             mailbox: mailbox,
             original: enrichedOriginal ?? original,
-            draft: enrichedDraft ?? draft
+            draft: enrichedDraft ?? draft,
+            initialTo: initialTo
         )
         form.onDraftSaved = { [weak self] draftId, threadId, originalEmailId, subject, body in
             self?.markThreadHasDraft(
@@ -695,6 +697,60 @@ final class AppModel {
             conversations = try await APIClient.shared.listConversations(mailboxId: mailboxId)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func updateConversation(id: String, title: String? = nil, lastMessagePreview: String? = nil) async -> AgentConversation? {
+        guard let mailboxId = selectedMailboxId else { return nil }
+
+        // Optimistically update local array
+        if let idx = conversations.firstIndex(where: { $0.id == id }) {
+            if let title, !title.isEmpty {
+                conversations[idx].title = title
+            }
+            if let lastMessagePreview {
+                conversations[idx].lastMessagePreview = lastMessagePreview
+            }
+            conversations[idx].updatedAt = ISO8601DateFormatter().string(from: Date())
+            let updated = conversations.remove(at: idx)
+            conversations.insert(updated, at: 0)
+        }
+
+        do {
+            let serverUpdated = try await APIClient.shared.updateConversation(
+                mailboxId: mailboxId,
+                id: id,
+                title: title,
+                lastMessagePreview: lastMessagePreview
+            )
+            if let idx = conversations.firstIndex(where: { $0.id == id }) {
+                conversations[idx] = serverUpdated
+            }
+            return serverUpdated
+        } catch {
+            print("[AppModel] Failed to update conversation \(id): \(error)")
+            return nil
+        }
+    }
+
+    func deleteConversation(id: String) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        conversations.removeAll(where: { $0.id == id })
+        do {
+            try await APIClient.shared.deleteConversation(mailboxId: mailboxId, id: id)
+        } catch {
+            errorMessage = error.localizedDescription
+            await refreshConversations()
+        }
+    }
+
+    func notifyAIToolCompleted() async {
+        guard let mailboxId = selectedMailboxId else { return }
+        _ = try? await syncService.syncFolder(mailboxId: mailboxId, folderId: "draft")
+        if case let .folder(folderId) = selectedTab {
+            _ = try? await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId)
+            await loadEmailsForCurrentTab(showLoading: false)
         }
     }
 }

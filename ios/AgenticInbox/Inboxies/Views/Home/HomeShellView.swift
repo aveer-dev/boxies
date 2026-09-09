@@ -45,7 +45,7 @@ struct HomeShellView: View {
             .sheet(isPresented: $showSearch) {
                 SearchView()
             }
-            .sheet(isPresented: $showChat, onDismiss: dismissChat) {
+            .fullScreenCover(isPresented: $showChat, onDismiss: dismissChat) {
                 chatSheet
             }
             .sheet(item: selectedEmailItem) { _ in
@@ -69,6 +69,7 @@ struct HomeShellView: View {
         NavigationStack {
             tabContent
                 .background(AppTheme.background)
+                .background(HomeNavigationTitleFont())
                 .navigationTitle(navigationTitleText)
                 .navigationBarTitleDisplayMode(.large)
                 .toolbarRole(.editor)
@@ -112,8 +113,6 @@ struct HomeShellView: View {
             seedPrompt: chatSeedPrompt,
             initialConversationId: pendingConversationId
         )
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder
@@ -140,11 +139,11 @@ struct HomeShellView: View {
                 if let toast = app.toast {
                     HStack(spacing: 8) {
                         Image(systemName: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.inter(size: 13, weight: .semibold))
                             .foregroundStyle(toast.isError ? .red : AppTheme.ink)
 
                         Text(toast.message)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.inter(size: 13, weight: .medium))
                             .foregroundStyle(AppTheme.ink)
                     }
                     .padding(.horizontal, 16)
@@ -252,7 +251,7 @@ struct HomeShellView: View {
 
     private func mailboxAvatar(initials: String) -> some View {
         Text(initials)
-            .font(.system(size: initials.count > 1 ? 13 : 15, weight: .semibold))
+            .font(.inter(size: initials.count > 1 ? 13 : 15, weight: .semibold))
             .foregroundStyle(AppTheme.ink)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -407,7 +406,7 @@ struct HomeShellView: View {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(AppTheme.muted)
                     Text("Search mail")
-                        .font(.system(size: 16, weight: .medium))
+                        .font(.inter(size: 16, weight: .medium))
                         .foregroundStyle(AppTheme.muted)
                     Spacer(minLength: 0)
                 }
@@ -421,10 +420,11 @@ struct HomeShellView: View {
 
             Button {
                 chatSeedPrompt = nil
+                pendingConversationId = nil
                 showChat = true
             } label: {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.inter(size: 18, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .frame(width: HomeChromeMetrics.actionBarHeight, height: HomeChromeMetrics.actionBarHeight)
                     .liquidGlass(in: Capsule())
@@ -436,7 +436,7 @@ struct HomeShellView: View {
                 Task { await app.startCompose(mode: .new) }
             } label: {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.inter(size: 18, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .frame(width: HomeChromeMetrics.actionBarHeight, height: HomeChromeMetrics.actionBarHeight)
                     .liquidGlass(in: Capsule())
@@ -479,6 +479,24 @@ struct HomeShellView: View {
                 selectButton
                 filterButton
             }
+        } else if case .chats = app.selectedTab {
+            Button {
+                Task {
+                    if let created = await app.createConversation() {
+                        chatSeedPrompt = nil
+                        pendingConversationId = created.id
+                        showChat = true
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.inter(size: 15, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("New chat")
         }
     }
 
@@ -493,13 +511,13 @@ struct HomeShellView: View {
         } label: {
             if isSelectMode {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.inter(size: 15, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
                     .frame(width: 36, height: 36)
                     .contentShape(Rectangle())
             } else {
                 Text("Select")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.inter(size: 14, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -516,7 +534,7 @@ struct HomeShellView: View {
         } label: {
             ZStack(alignment: .topTrailing) {
                 Image(systemName: filterState.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.inter(size: 17, weight: .medium))
                     .foregroundStyle(filterState.isActive ? AppTheme.accent : AppTheme.ink)
                     .frame(width: 36, height: 36)
 
@@ -640,7 +658,7 @@ struct HomeShellView: View {
                     }
                 } label: {
                     Text("Clear all")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.inter(size: 11, weight: .semibold))
                         .foregroundStyle(AppTheme.muted)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -660,10 +678,10 @@ struct HomeShellView: View {
         } label: {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.inter(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                 Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.inter(size: 9, weight: .bold))
                     .foregroundStyle(AppTheme.muted)
             }
             .padding(.horizontal, 10)
@@ -706,7 +724,7 @@ struct HomeShellView: View {
                 toggleSelectAll()
             } label: {
                 Text(areAllVisibleSelected ? "Deselect All" : "Select All")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.inter(size: 13, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
@@ -719,7 +737,7 @@ struct HomeShellView: View {
             Spacer(minLength: 8)
 
             Text("\(selectedEmailIDs.count)")
-                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .font(.inter(size: 14, weight: .bold))
                 .foregroundStyle(selectedEmailIDs.isEmpty ? AppTheme.muted : AppTheme.ink)
                 .frame(minWidth: 26, minHeight: 26)
                 .padding(.horizontal, 6)
@@ -736,7 +754,7 @@ struct HomeShellView: View {
                     Task { await app.markEmailsRead(ids, read: targetRead) }
                 } label: {
                     Image(systemName: areSelectedMostlyUnread ? "envelope.open" : "envelope.badge")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.inter(size: 15, weight: .medium))
                         .foregroundStyle(AppTheme.ink)
                         .frame(width: 38, height: 38)
                         .background(AppTheme.pillFill, in: Circle())
@@ -752,7 +770,7 @@ struct HomeShellView: View {
                     Task { await app.starEmails(ids, starred: targetStarred) }
                 } label: {
                     Image(systemName: areSelectedMostlyStarred ? "star.slash" : "star")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.inter(size: 15, weight: .medium))
                         .foregroundStyle(AppTheme.ink)
                         .frame(width: 38, height: 38)
                         .background(AppTheme.pillFill, in: Circle())
@@ -770,7 +788,7 @@ struct HomeShellView: View {
                     }
                 } label: {
                     Image(systemName: "archivebox")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.inter(size: 15, weight: .medium))
                         .foregroundStyle(AppTheme.ink)
                         .frame(width: 38, height: 38)
                         .background(AppTheme.pillFill, in: Circle())
@@ -788,7 +806,7 @@ struct HomeShellView: View {
                     }
                 } label: {
                     Image(systemName: "trash")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.inter(size: 15, weight: .medium))
                         .foregroundStyle(Color.red)
                         .frame(width: 38, height: 38)
                         .background(AppTheme.pillFill, in: Circle())
@@ -818,7 +836,7 @@ private struct HomeNavigationSubtitle: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             if !subtitle.isEmpty {
-                content.navigationSubtitle(Text(subtitle))
+                content.navigationSubtitle(Text(subtitle).font(.inter(size: AppTheme.FontSize.homeSubtitle, weight: .regular)))
             } else {
                 content
             }

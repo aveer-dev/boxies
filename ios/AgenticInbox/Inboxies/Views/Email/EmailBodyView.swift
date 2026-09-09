@@ -52,11 +52,12 @@ struct EmailBodyView: View {
                     }
                 }
             } else {
-                Text(htmlOrText)
-                    .font(.system(size: 14))
-                    .foregroundStyle(AppTheme.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                MarkdownContentView(
+                    text: htmlOrText,
+                    fontSize: 14
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
             }
         }
         .task(id: resolveTaskID) {
@@ -69,7 +70,7 @@ struct EmailBodyView: View {
             ProgressView()
                 .controlSize(.small)
             Text("Loading inline images...")
-                .font(.system(size: 12, weight: .medium))
+                .font(.inter(size: 12, weight: .medium))
                 .foregroundStyle(AppTheme.muted)
         }
         .padding(.horizontal, 10)
@@ -84,7 +85,7 @@ struct EmailBodyView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text(isResolvingImages ? "Loading inline images..." : "Loading content...")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.inter(size: 12, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
             }
             .padding(.bottom, 2)
@@ -128,7 +129,7 @@ struct EmailBodyView: View {
             overflow: visible;
           }
           body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: \(Int(AppTheme.FontSize.body))px;
             line-height: 1.45;
             color: #1f1f23;

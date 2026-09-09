@@ -9,6 +9,10 @@ struct InboxiesApp: App {
     @State private var authStore = AuthStore()
     @State private var appModel = AppModel()
 
+    init() {
+        AppTheme.configureGlobalAppearance()
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()

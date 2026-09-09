@@ -73,8 +73,8 @@ private extension UITabBar {
         appearance.shadowColor = UIColor.black.withAlphaComponent(0.08)
         appearance.shadowImage = nil
 
-        let titleFont = UIFont.systemFont(ofSize: HomeChromeMetrics.tabLabelPointSize, weight: .medium)
-        let selectedTitleFont = UIFont.systemFont(ofSize: HomeChromeMetrics.tabLabelPointSize, weight: .semibold)
+        let titleFont = UIFont.inter(size: HomeChromeMetrics.tabLabelPointSize, weight: .medium)
+        let selectedTitleFont = UIFont.inter(size: HomeChromeMetrics.tabLabelPointSize, weight: .semibold)
         let normalAttributes: [NSAttributedString.Key: Any] = [
             .foregroundColor: UIColor(AppTheme.muted),
             .font: titleFont

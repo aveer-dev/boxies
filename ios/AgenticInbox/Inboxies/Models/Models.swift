@@ -624,6 +624,120 @@ struct AgentConversation: Identifiable, Codable, Hashable {
     var lastMessagePreview: String?
 }
 
+struct ConversationDateGroup: Identifiable {
+    let id: String
+    let title: String
+    let conversations: [AgentConversation]
+}
+
+extension AgentConversation {
+    var parsedUpdatedAt: Date {
+        if let d = AgentConversationDateHelpers.parseDate(updatedAt) { return d }
+        if let d = AgentConversationDateHelpers.parseDate(createdAt) { return d }
+        return .distantPast
+    }
+}
+
+enum AgentConversationDateHelpers {
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoStandard: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static let sqlFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        return f
+    }()
+
+    static func parseDate(_ string: String) -> Date? {
+        if let d = isoFractional.date(from: string) { return d }
+        if let d = isoStandard.date(from: string) { return d }
+        return sqlFormat.date(from: string)
+    }
+
+    static func groupConversationsByDate(_ conversations: [AgentConversation]) -> [ConversationDateGroup] {
+        let calendar = Calendar.current
+        let now = Date()
+        let startOfToday = calendar.startOfDay(for: now)
+        let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: startOfToday) ?? .distantPast
+        let thirtyDaysAgo = calendar.date(byAdding: .day, value: -30, to: startOfToday) ?? .distantPast
+
+        let sorted = conversations.sorted { $0.parsedUpdatedAt > $1.parsedUpdatedAt }
+
+        var todayList: [AgentConversation] = []
+        var yesterdayList: [AgentConversation] = []
+        var prev7DaysList: [AgentConversation] = []
+        var prev30DaysList: [AgentConversation] = []
+        var monthGroups: [Int: (title: String, conversations: [AgentConversation])] = [:]
+
+        let currentYear = calendar.component(.year, from: now)
+
+        for conv in sorted {
+            let date = conv.parsedUpdatedAt
+            if calendar.isDateInToday(date) {
+                todayList.append(conv)
+            } else if calendar.isDateInYesterday(date) {
+                yesterdayList.append(conv)
+            } else if date >= sevenDaysAgo {
+                prev7DaysList.append(conv)
+            } else if date >= thirtyDaysAgo {
+                prev30DaysList.append(conv)
+            } else {
+                let year = calendar.component(.year, from: date)
+                let month = calendar.component(.month, from: date)
+                let sortKey = year * 100 + month
+
+                let monthFormatter = DateFormatter()
+                if year == currentYear {
+                    monthFormatter.dateFormat = "MMMM"
+                } else {
+                    monthFormatter.dateFormat = "MMMM yyyy"
+                }
+                let title = monthFormatter.string(from: date)
+
+                if monthGroups[sortKey] == nil {
+                    monthGroups[sortKey] = (title: title, conversations: [conv])
+                } else {
+                    monthGroups[sortKey]?.conversations.append(conv)
+                }
+            }
+        }
+
+        var groups: [ConversationDateGroup] = []
+
+        if !todayList.isEmpty {
+            groups.append(ConversationDateGroup(id: "today", title: "Today", conversations: todayList))
+        }
+        if !yesterdayList.isEmpty {
+            groups.append(ConversationDateGroup(id: "yesterday", title: "Yesterday", conversations: yesterdayList))
+        }
+        if !prev7DaysList.isEmpty {
+            groups.append(ConversationDateGroup(id: "prev7Days", title: "Previous 7 Days", conversations: prev7DaysList))
+        }
+        if !prev30DaysList.isEmpty {
+            groups.append(ConversationDateGroup(id: "prev30Days", title: "Previous 30 Days", conversations: prev30DaysList))
+        }
+
+        let sortedMonthKeys = monthGroups.keys.sorted(by: >)
+        for key in sortedMonthKeys {
+            if let group = monthGroups[key] {
+                groups.append(ConversationDateGroup(id: "month-\(key)", title: group.title, conversations: group.conversations))
+            }
+        }
+
+        return groups
+    }
+}
+
 struct AuthResponse: Codable {
     let token: String
     let expiresAt: String
@@ -639,6 +753,18 @@ struct ChatMessage: Identifiable, Hashable {
     let id: String
     let role: String
     var text: String
+    var reasoning: String? = nil
+    var reasoningDuration: TimeInterval? = nil
+    var isToolAction: Bool = false
+    var toolName: String? = nil
+    var isError: Bool = false
+    var timestamp: Date = Date()
+
+    var reasoningDurationString: String? {
+        guard let duration = reasoningDuration else { return nil }
+        let secs = max(1, Int(round(duration)))
+        return "\(secs)s"
+    }
 }
 
 enum ComposeMode: String, Hashable {
