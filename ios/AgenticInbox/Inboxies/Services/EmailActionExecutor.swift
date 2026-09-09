@@ -25,11 +25,14 @@ extension AppModel {
         DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "delete", payload: [:])
         OutboxQueueWorker.shared.trigger()
 
-        if selectedEmail?.id == email.id {
-            selectedEmail = nil
-            threadEmails = []
-        }
+        threadEmails.removeAll { $0.id == email.id }
         emails.removeAll { $0.id == email.id }
+
+        if threadEmails.isEmpty {
+            selectedEmail = nil
+        } else if selectedEmail?.id == email.id {
+            selectedEmail = threadEmails.last(where: { !$0.isDraft }) ?? threadEmails.last
+        }
         if email.isUnread {
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
         }
@@ -44,11 +47,14 @@ extension AppModel {
         DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "move", payload: ["folderId": "archive"])
         OutboxQueueWorker.shared.trigger()
 
-        if selectedEmail?.id == email.id {
-            selectedEmail = nil
-            threadEmails = []
-        }
+        threadEmails.removeAll { $0.id == email.id }
         emails.removeAll { $0.id == email.id }
+
+        if threadEmails.isEmpty {
+            selectedEmail = nil
+        } else if selectedEmail?.id == email.id {
+            selectedEmail = threadEmails.last(where: { !$0.isDraft }) ?? threadEmails.last
+        }
         if email.isUnread {
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
         }
@@ -69,11 +75,14 @@ extension AppModel {
         DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "move", payload: ["folderId": folderId])
         OutboxQueueWorker.shared.trigger()
 
-        if selectedEmail?.id == email.id {
-            selectedEmail = nil
-            threadEmails = []
-        }
+        threadEmails.removeAll { $0.id == email.id }
         emails.removeAll { $0.id == email.id }
+
+        if threadEmails.isEmpty {
+            selectedEmail = nil
+        } else if selectedEmail?.id == email.id {
+            selectedEmail = threadEmails.last(where: { !$0.isDraft }) ?? threadEmails.last
+        }
         if email.isUnread {
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
         }

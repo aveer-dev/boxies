@@ -547,7 +547,7 @@ struct MarkdownContentView: View {
                             .frame(width: 3)
                         InlineMarkdownText(
                             text: quoteText,
-                            fontSize: max(fontSize - 1, 11),
+                            fontSize: fontSize,
                             onCompose: onCompose,
                             onSearch: onSearch,
                             onAskAI: onAskAI

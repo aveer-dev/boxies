@@ -21,7 +21,7 @@ enum AppTheme {
         /// Collapsed navigation title and compose subject field.
         static let inlineTitle: CGFloat = 14
         /// Sender name and compose From line.
-        static let sender: CGFloat = 12
+        static let sender: CGFloat = 13
         /// Recipient summary, expanded From label, and compose recipient field.
         static let recipient: CGFloat = 12
         /// Dates, To/Cc/Bcc labels, address pills, and compose recipient chrome.
@@ -31,7 +31,7 @@ enum AppTheme {
         /// HTML email body and compose editor.
         static let body: CGFloat = 13
         /// Home large-title subtitle (e.g. "No unread").
-        static let homeSubtitle: CGFloat = 14
+        static let homeSubtitle: CGFloat = 12
     }
 
     /// List row typography and spacing (email list, AI chat list, search).

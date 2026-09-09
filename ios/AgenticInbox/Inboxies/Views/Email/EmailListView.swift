@@ -130,6 +130,11 @@ struct EmailListView: View {
                 }
                 .buttonStyle(MailRowButtonStyle())
                 .mailRowChrome()
+                .contextMenu {
+                    if !isSelectMode {
+                        emailContextMenu(for: email)
+                    }
+                }
                 .swipeActions(edge: .trailing, allowsFullSwipe: isSelectMode ? false : trailingFullSwipe(for: email)) {
                     if !isSelectMode {
                         ForEach(swipeLayout(for: email).trailingActions) { action in
@@ -153,6 +158,62 @@ struct EmailListView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func emailContextMenu(for email: Email) -> some View {
+        let availability = EmailActionAvailability(email: email)
+
+        if availability.showsReplyActions {
+            Button {
+                Task { await app.startCompose(mode: .reply, original: email) }
+            } label: {
+                Label("Reply", systemImage: "arrowshape.turn.up.left")
+            }
+            Button {
+                Task { await app.startCompose(mode: .replyAll, original: email) }
+            } label: {
+                Label("Reply All", systemImage: "arrowshape.turn.up.left.2")
+            }
+            Button {
+                Task { await app.startCompose(mode: .forward, original: email) }
+            } label: {
+                Label("Forward", systemImage: "arrowshape.turn.up.right")
+            }
+            Divider()
+        }
+
+        Button {
+            Task { await app.toggleStar(on: email) }
+        } label: {
+            Label(email.starred ? "Unstar" : "Star", systemImage: email.starred ? "star.fill" : "star")
+        }
+
+        Button {
+            Task { await app.toggleRead(on: email) }
+        } label: {
+            Label(email.read ? "Mark as Unread" : "Mark as Read", systemImage: email.read ? "envelope.badge" : "envelope.open")
+        }
+
+        Divider()
+
+        Button {
+            actionsSheetEmail = ActionsSheetEmail(email: email)
+        } label: {
+            Label("More Options…", systemImage: "ellipsis.circle")
+        }
+
+        if availability.showsDelete {
+            Divider()
+            Button(role: .destructive) {
+                Task {
+                    await app.deleteEmail(email, fromList: true)
+                    hiddenEmailIDs.insert(email.id)
+                }
+            } label: {
+                Label("Delete Message", systemImage: "trash")
             }
         }
     }
@@ -312,8 +373,13 @@ struct EmailRowView: View {
                 if !previewText.isEmpty {
                     previewRow
                 }
-                if let tag = tagLabel {
-                    tagRow(tag)
+                if !rowTags.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(rowTags, id: \.self) { tag in
+                            tagRow(tag)
+                        }
+                    }
+                    .padding(.top, 3)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -322,6 +388,7 @@ struct EmailRowView: View {
         .padding(.leading, AppTheme.List.rowHorizontalPadding)
         .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.background)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -373,6 +440,13 @@ struct EmailRowView: View {
                         .foregroundStyle(AppTheme.muted)
                         .accessibilityLabel("Has attachment")
                 }
+                
+                if email.starred {
+                    Image(systemName: "star.fill")
+                        .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                        .foregroundStyle(Color.yellow)
+                        .accessibilityLabel("Starred")
+                }
 
                 Text(Self.formatDate(email.date))
                     .font(.inter(size: AppTheme.List.date))
@@ -408,21 +482,27 @@ struct EmailRowView: View {
             .background(AppTheme.pillFill)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .foregroundStyle(AppTheme.muted)
-            .padding(.top, 3)
+            .lineLimit(1)
     }
 
     private var previewText: String {
         email.previewText
     }
 
-    private var tagLabel: String? {
-        if let folderLabel, !folderLabel.isEmpty { return folderLabel }
-        let query = highlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return nil }
-        if let folderName = email.folderName, !folderName.isEmpty {
-            return folderName.capitalized
+    private var rowTags: [String] {
+        var tags: [String] = []
+        if let folderLabel, !folderLabel.isEmpty {
+            tags.append(folderLabel)
+        } else {
+            let query = highlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !query.isEmpty {
+                if let folderName = email.folderName, !folderName.isEmpty {
+                    tags.append(folderName.capitalized)
+                }
+            }
         }
-        return nil
+        if email.needsReply == true { tags.append("Needs reply") }
+        return tags
     }
 
     private func highlighted(_ text: String, size: CGFloat, weight: Font.Weight) -> Text {

@@ -8,13 +8,8 @@ struct EmailActionsSheet: View {
     let email: Email
     var onRemoveFromList: ((String) -> Void)? = nil
 
-    @State private var selectedDetent: PresentationDetent = .medium
-
     private var source: Email {
-        if app.selectedEmail?.id == email.id {
-            return app.actionSourceEmail ?? email
-        }
-        return email
+        email
     }
 
     private var availability: EmailActionAvailability {
@@ -22,7 +17,7 @@ struct EmailActionsSheet: View {
     }
 
     private var fromList: Bool {
-        app.selectedEmail?.id != email.id
+        onRemoveFromList != nil
     }
 
     private var moveTargets: [Folder] {
@@ -40,7 +35,7 @@ struct EmailActionsSheet: View {
                 if availability.showsReplyActions {
                     Section {
                         quickActionsRow
-                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 16, trailing: 0))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                     }
@@ -97,17 +92,55 @@ struct EmailActionsSheet: View {
                     }
                 }
             }
-            .listSectionSpacing(.compact)
-            .navigationTitle(source.displaySender)
+            .listSectionSpacing(.custom(16))
             .navigationBarBackButtonHidden(true)
-            .modifier(ActionsSheetSubtitle(subtitle: previewLine))
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
+                        Circle()
+                            .fill(source.isUnread ? AppTheme.unread : AppTheme.pillActive)
+                            .frame(width: AppTheme.List.unreadDotSize, height: AppTheme.List.unreadDotSize)
+                            .frame(width: AppTheme.List.unreadDotSize, height: AppTheme.List.unreadDotLineHeight, alignment: .center)
+                            .accessibilityLabel(source.isUnread ? "Unread" : "Read")
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(source.displaySender)
+                                .font(.inter(size: AppTheme.List.sender, weight: source.isUnread ? .medium : .regular))
+                                .foregroundStyle(AppTheme.ink)
+                                .lineLimit(1)
+                                .tracking(AppTheme.List.tracking)
+                            
+                            Text(previewLine)
+                                .font(.inter(size: AppTheme.List.preview, weight: .regular))
+                                .foregroundStyle(AppTheme.muted)
+                                .lineLimit(1)
+                                .tracking(AppTheme.List.tracking)
+                        }
+                    }
+                }
+            }
             .actionsSheetChrome(onClose: dismissSheet)
         }
+        .padding(.top, 10)
         .tint(AppTheme.ink)
-        .presentationDetents([.medium, .large], selection: $selectedDetent)
+        .presentationDetents([.height(estimatedHeight)])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.resizes)
         .presentationBackground(AppTheme.background)
+    }
+
+    private var estimatedHeight: CGFloat {
+        var h: CGFloat = 140 // base height for nav bar, paddings, and safe area
+        if availability.showsReplyActions {
+            h += 130 // quick actions row + section spacing
+        }
+        var rows = 2 // Star, Read
+        if !moveTargets.isEmpty { rows += 1 }
+        rows += 1 // View Source
+        if availability.showsDelete { rows += 1 }
+        
+        h += CGFloat(rows) * 44 // standard list row height
+        return h
     }
 
     private func dismissSheet() {
@@ -144,6 +177,9 @@ struct EmailActionsSheet: View {
                 }
             }
         }
+        .padding(16)
+        .background(AppTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func quickActionButton(
@@ -224,18 +260,7 @@ private struct EmailSourceView: View {
     }
 }
 
-private struct ActionsSheetSubtitle: ViewModifier {
-    var subtitle: String
 
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.navigationSubtitle(Text(subtitle))
-        } else {
-            content
-        }
-    }
-}
 
 private struct ActionsSheetChrome: ViewModifier {
     var onClose: () -> Void
@@ -243,13 +268,11 @@ private struct ActionsSheetChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
-            .contentMargins(.top, 20, for: .scrollContent)
+            .contentMargins(.vertical, 16, for: .scrollContent)
             .background(AppTheme.background)
-            .background(InlineNavigationTitleFont())
             .navigationBarTitleDisplayMode(.inline)
             .toolbarRole(.editor)
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: onClose) {

@@ -73,7 +73,7 @@ struct HomeShellView: View {
                 .navigationTitle(navigationTitleText)
                 .navigationBarTitleDisplayMode(.large)
                 .toolbarRole(.editor)
-                .modifier(HomeNavigationSubtitle(subtitle: navigationSubtitleText))
+                .modifier(HomeNavigationSubtitle(subtitle: navigationSubtitleText, fontWeight: .regular))
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         mailboxControl
@@ -831,12 +831,18 @@ private struct IdentifiedEmail: Identifiable {
 
 private struct HomeNavigationSubtitle: ViewModifier {
     var subtitle: String
+    var fontSize: CGFloat = AppTheme.FontSize.homeSubtitle
+    var fontWeight: Font.Weight = .regular
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             if !subtitle.isEmpty {
-                content.navigationSubtitle(Text(subtitle).font(.inter(size: AppTheme.FontSize.homeSubtitle, weight: .regular)))
+                content.navigationSubtitle(
+                    Text(subtitle)
+                        .font(.inter(size: fontSize, weight: fontWeight))
+                        .foregroundStyle(AppTheme.muted)
+                )
             } else {
                 content
             }

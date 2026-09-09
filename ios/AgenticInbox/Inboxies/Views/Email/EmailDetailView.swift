@@ -4,7 +4,8 @@ import UIKit
 struct EmailDetailView: View {
     @Environment(AppModel.self) private var app
 
-    @State private var showActionsSheet = false
+    @State private var toolbarSheetEmail: Email?
+    @State private var messageSheetEmail: Email?
     @State private var expandedMessageIDs: Set<String> = []
     @State private var expandedRecipientIDs: Set<String> = []
     @State private var personSearch: PersonSearch?
@@ -36,7 +37,6 @@ struct EmailDetailView: View {
         } else if let folderId = email.folderId, !folderId.isEmpty {
             tags.append(HomeTab.folder(folderId).title)
         }
-        if email.starred { tags.append("Starred") }
         if email.isUnread { tags.append("Unread") }
         if email.needsReply == true { tags.append("Needs reply") }
         if email.hasDraft == true { tags.append("Has draft") }
@@ -62,6 +62,12 @@ struct EmailDetailView: View {
                         messagesList
                     }
                 }
+            }
+            .background {
+                Color.clear
+                    .sheet(item: $messageSheetEmail) { sheetEmail in
+                        EmailActionsSheet(email: sheetEmail)
+                    }
             }
             .id(email?.id)
             .background(AppTheme.background)
@@ -144,11 +150,17 @@ struct EmailDetailView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showActionsSheet) {
-                actionsSheetContent
+            .background {
+                Color.clear
+                    .sheet(item: $toolbarSheetEmail) { sheetEmail in
+                        toolbarSheetContent(for: sheetEmail)
+                    }
             }
-            .sheet(item: $personSearch) { search in
-                SearchView(initialQuery: search.query)
+            .background {
+                Color.clear
+                    .sheet(item: $personSearch) { search in
+                        SearchView(initialQuery: search.query)
+                    }
             }
             .onChange(of: email?.id) { _, _ in
                 expandedMessageIDs = []
@@ -174,9 +186,22 @@ struct EmailDetailView: View {
                 }
                 .redacted(reason: .placeholder)
                 .skeletonPulse(true)
-            } else if !detailTags.isEmpty {
+            } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
+                        if email?.starred == true {
+                            Button {
+                                if let email = email {
+                                    Task { await app.toggleStar(on: email) }
+                                }
+                            } label: {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(Color.yellow)
+                            }
+                            .padding(.trailing, 4)
+                        }
+
                         ForEach(detailTags, id: \.self) { tag in
                             tagChip(tag)
                         }
@@ -237,8 +262,6 @@ struct EmailDetailView: View {
                 }
 
                 messageBlock(message)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 16)
             }
         }
         .onAppear(perform: seedExpandedMessages)
@@ -268,6 +291,9 @@ struct EmailDetailView: View {
                     isBodyExpanded: isExpanded,
                     onToggleRecipients: { toggleRecipients(message.id) },
                     onToggleBody: { toggleMessage(message.id) },
+                    onShowActions: {
+                        messageSheetEmail = message
+                    },
                     onSearch: { query in
                         personSearch = PersonSearch(query: query)
                     }
@@ -288,6 +314,13 @@ struct EmailDetailView: View {
                     }
                     .transition(.opacity.combined(with: .offset(y: 6)))
                 }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 16)
+            .background(AppTheme.background)
+            .contentShape(Rectangle())
+            .conditionalContextMenu(!isExpanded) {
+                messageContextMenu(for: message)
             }
         }
     }
@@ -348,7 +381,7 @@ struct EmailDetailView: View {
     @ViewBuilder
     private var moreButton: some View {
         let button = Button {
-            showActionsSheet = true
+            toolbarSheetEmail = email ?? source
         } label: {
             Image(systemName: "ellipsis")
         }
@@ -364,15 +397,70 @@ struct EmailDetailView: View {
     }
 
     @ViewBuilder
-    private var actionsSheetContent: some View {
-        if let sheetEmail = email ?? source {
-            let sheet = EmailActionsSheet(email: sheetEmail)
+    private func toolbarSheetContent(for sheetEmail: Email) -> some View {
+        let sheet = EmailActionsSheet(email: sheetEmail)
 
-            if #available(iOS 18.0, *) {
-                sheet
-                    .navigationTransition(.zoom(sourceID: "email-actions", in: actionsNamespace))
-            } else {
-                sheet
+        if #available(iOS 18.0, *) {
+            sheet
+                .navigationTransition(.zoom(sourceID: "email-actions", in: actionsNamespace))
+        } else {
+            sheet
+        }
+    }
+
+    @ViewBuilder
+    private func messageContextMenu(for message: Email) -> some View {
+        let availability = EmailActionAvailability(email: message)
+
+        if availability.showsReplyActions {
+            Button {
+                Task { await app.startCompose(mode: .reply, original: message) }
+            } label: {
+                Label("Reply", systemImage: "arrowshape.turn.up.left")
+            }
+
+            Button {
+                Task { await app.startCompose(mode: .replyAll, original: message) }
+            } label: {
+                Label("Reply All", systemImage: "arrowshape.turn.up.left.2")
+            }
+
+            Button {
+                Task { await app.startCompose(mode: .forward, original: message) }
+            } label: {
+                Label("Forward", systemImage: "arrowshape.turn.up.right")
+            }
+
+            Divider()
+        }
+
+        Button {
+            Task { await app.toggleStar(on: message) }
+        } label: {
+            Label(message.starred ? "Unstar" : "Star", systemImage: message.starred ? "star.fill" : "star")
+        }
+
+        Button {
+            Task { await app.toggleRead(on: message) }
+        } label: {
+            Label(message.read ? "Mark as Unread" : "Mark as Read", systemImage: message.read ? "envelope.badge" : "envelope.open")
+        }
+
+        Divider()
+
+        Button {
+            messageSheetEmail = message
+        } label: {
+            Label("More Options…", systemImage: "ellipsis.circle")
+        }
+
+        if availability.showsDelete {
+            Divider()
+
+            Button(role: .destructive) {
+                Task { await app.deleteEmail(message) }
+            } label: {
+                Label("Delete Message", systemImage: "trash")
             }
         }
     }
@@ -441,6 +529,8 @@ private struct DraftMessageRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Delete draft")
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .confirmationDialog(
@@ -462,6 +552,7 @@ private struct MessagePeopleHeader: View {
     let isBodyExpanded: Bool
     var onToggleRecipients: () -> Void
     var onToggleBody: () -> Void
+    var onShowActions: () -> Void
     var onSearch: (String) -> Void
 
     var body: some View {
@@ -482,7 +573,7 @@ private struct MessagePeopleHeader: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button(action: senderOrToAction) {
                 Text(message.fromAddress.label(selfAddress: selfAddress))
-                    .font(.inter(size: AppTheme.FontSize.sender, weight: .semibold))
+                    .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -548,6 +639,9 @@ private struct MessagePeopleHeader: View {
                     .foregroundStyle(AppTheme.muted)
                     .accessibilityLabel("Has attachment")
             }
+
+            messageOptionsButton
+
             Button(action: onToggleRecipients) {
                 HStack(spacing: 4) {
                     Text(formattedDate)
@@ -565,6 +659,18 @@ private struct MessagePeopleHeader: View {
             .accessibilityLabel(isRecipientsExpanded ? "Hide recipient details" : "Show recipient details")
         }
         .layoutPriority(1)
+    }
+
+    private var messageOptionsButton: some View {
+        Button(action: onShowActions) {
+            Image(systemName: "ellipsis")
+                .font(.inter(size: 15, weight: .medium))
+                .foregroundStyle(AppTheme.muted)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Message options")
     }
 
     @ViewBuilder
@@ -637,5 +743,76 @@ private struct PersonAddressMenu: View {
         .buttonStyle(.plain)
         .accessibilityLabel(address.label(selfAddress: selfAddress))
         .accessibilityHint("Show contact actions")
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func conditionalContextMenu<M: View>(
+        _ condition: Bool,
+        @ViewBuilder menuItems: () -> M
+    ) -> some View {
+        if condition {
+            self.contextMenu {
+                menuItems()
+            }
+        } else {
+            self
+        }
+    }
+}
+
+#Preview("EmailDetailView with Thread Reply") {
+    EmailDetailPreviewWrapper()
+}
+
+struct EmailDetailPreviewWrapper: View {
+    @State private var app: AppModel = {
+        let model = PreviewSupport.appModel()
+        let msg1 = Email(
+            id: "thread-msg-1",
+            folderId: "inbox",
+            subject: "Quarterly planning notes",
+            sender: "jordan@example.com",
+            senderName: "Jordan Hale",
+            recipient: "you@inboxies.email",
+            date: "2026-09-03T10:00:00.000Z",
+            read: true,
+            starred: false,
+            body: "<p>Hey Alex,</p><p>Are you free to meet on Thursday afternoon for our quarterly planning sync?</p><p>Jordan</p>",
+            snippet: "Hey, are you free to meet on Thursday afternoon?"
+        )
+        let msg2 = Email(
+            id: "thread-msg-2",
+            folderId: "inbox",
+            subject: "Re: Quarterly planning notes",
+            sender: "you@inboxies.email",
+            senderName: "Alex Rivera",
+            recipient: "jordan@example.com",
+            date: "2026-09-03T14:30:00.000Z",
+            read: true,
+            starred: false,
+            body: """
+            <p>Hi Jordan,</p>
+            <p>Can we move Thursday's sync to 10:00 AM instead? The afternoon is packed with reviews.</p>
+            <br>
+            <blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;">
+            On Thu, Sep 3, 2026, at 10:00 AM, Jordan Hale wrote:<br><br>
+            Hey Alex,<br><br>Are you free to meet on Thursday afternoon for our quarterly planning sync?<br><br>Jordan
+            </blockquote>
+            """,
+            snippet: "Can we move Thursday's sync to 10:00 AM instead?"
+        )
+        model.selectedEmail = msg2
+        model.threadEmails = [msg1, msg2]
+        return model
+    }()
+    @State private var auth = PreviewSupport.authStore()
+
+    var body: some View {
+        EmailDetailView()
+            .environment(app)
+            .environment(auth)
+            .preferredColorScheme(.light)
     }
 }
