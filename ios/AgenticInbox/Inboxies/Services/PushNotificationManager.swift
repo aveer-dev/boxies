@@ -22,6 +22,9 @@ final class PushNotificationManager {
     func requestPermissionAndRegister(mailboxId: String) {
         self.activeMailboxId = mailboxId
 
+        let isEnabled = UserDefaults.standard.object(forKey: "push_notifications_enabled") as? Bool ?? true
+        guard isEnabled else { return }
+
         // If we already have a token, sync it immediately
         if let token = deviceToken {
             syncTokenWithServer(mailboxId: mailboxId, token: token)

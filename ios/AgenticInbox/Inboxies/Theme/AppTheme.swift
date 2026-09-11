@@ -3,16 +3,42 @@ import UIKit
 
 /// Notion-inspired light palette. CSS variables → SwiftUI Color constants.
 enum AppTheme {
-    static let background = Color(red: 0.98, green: 0.98, blue: 0.985)
-    static let surface = Color.white
-    static let ink = Color(red: 0.12, green: 0.12, blue: 0.14)
-    static let muted = Color(red: 0.45, green: 0.45, blue: 0.48)
-    static let line = Color(red: 0.90, green: 0.90, blue: 0.92)
-    static let pillFill = Color(red: 0.93, green: 0.93, blue: 0.94)
-    static let pillActive = Color(red: 0.86, green: 0.86, blue: 0.875)
-    static let accent = Color(red: 0.15, green: 0.35, blue: 0.85)
-    static let unread = Color(red: 0.22, green: 0.22, blue: 0.24)
-    static let deepDarkRed = Color(red: 0.42, green: 0.08, blue: 0.10)
+    // MARK: - Dynamic UIColors
+    static let uiBackground = dynamicColor(light: UIColor(red: 0.98, green: 0.98, blue: 0.985, alpha: 1), dark: UIColor(red: 0.05, green: 0.05, blue: 0.05, alpha: 1))
+    static let uiSurface = dynamicColor(light: UIColor.white, dark: UIColor(red: 0.11, green: 0.11, blue: 0.12, alpha: 1))
+    static let uiInk = dynamicColor(light: UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1), dark: UIColor(red: 0.98, green: 0.98, blue: 0.99, alpha: 1))
+    static let uiMuted = dynamicColor(light: UIColor(red: 0.45, green: 0.45, blue: 0.48, alpha: 1), dark: UIColor(red: 0.60, green: 0.60, blue: 0.65, alpha: 1))
+    static let uiLine = dynamicColor(light: UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1), dark: UIColor(red: 0.20, green: 0.20, blue: 0.22, alpha: 1))
+    static let uiPillFill = dynamicColor(light: UIColor(red: 0.93, green: 0.93, blue: 0.94, alpha: 1), dark: UIColor(red: 0.18, green: 0.18, blue: 0.20, alpha: 1))
+    static let uiPillActive = dynamicColor(light: UIColor(red: 0.86, green: 0.86, blue: 0.875, alpha: 1), dark: UIColor(red: 0.28, green: 0.28, blue: 0.30, alpha: 1))
+    static let uiAccent = dynamicColor(light: UIColor(red: 0.15, green: 0.35, blue: 0.85, alpha: 1), dark: UIColor(red: 0.35, green: 0.55, blue: 1.0, alpha: 1))
+    static let uiUnread = dynamicColor(light: UIColor(red: 0.22, green: 0.22, blue: 0.24, alpha: 1), dark: UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1))
+    static let uiDeepDarkRed = dynamicColor(light: UIColor(red: 0.42, green: 0.08, blue: 0.10, alpha: 1), dark: UIColor(red: 0.90, green: 0.35, blue: 0.35, alpha: 1))
+
+    // MARK: - SwiftUI Colors
+    static let background = Color(uiColor: uiBackground)
+    static let surface = Color(uiColor: uiSurface)
+    static let ink = Color(uiColor: uiInk)
+    static let muted = Color(uiColor: uiMuted)
+    static let line = Color(uiColor: uiLine)
+    static let pillFill = Color(uiColor: uiPillFill)
+    static let pillActive = Color(uiColor: uiPillActive)
+    static let accent = Color(uiColor: uiAccent)
+    static let unread = Color(uiColor: uiUnread)
+    static let deepDarkRed = Color(uiColor: uiDeepDarkRed)
+
+    private static func dynamicColor(light: UIColor, dark: UIColor) -> UIColor {
+        return UIColor { traitCollection in
+            switch traitCollection.userInterfaceStyle {
+            case .dark:
+                return dark
+            case .light, .unspecified:
+                return light
+            @unknown default:
+                return light
+            }
+        }
+    }
 
     /// Type sizes from EmailDetailView; compose uses the same values for analogous chrome.
     enum FontSize {
@@ -60,8 +86,7 @@ enum AppTheme {
         }
         /// Standard row separator height.
         static let separatorHeight: CGFloat = 0.5
-        /// Standard row separator color.
-        static let separatorColor = Color(red: 0.90, green: 0.90, blue: 0.92).opacity(0.65)
+        static let separatorColor = AppTheme.line.opacity(0.65)
     }
 
     /// AI Chat typography and spacing system.
@@ -114,20 +139,20 @@ enum AppTheme {
         navBarAppearance.configureWithDefaultBackground()
         navBarAppearance.titleTextAttributes = [
             .font: UIFont.inter(size: 17, weight: .semibold),
-            .foregroundColor: UIColor(ink)
+            .foregroundColor: AppTheme.uiInk
         ]
         navBarAppearance.largeTitleTextAttributes = [
             .font: UIFont.inter(size: 34, weight: .bold),
-            .foregroundColor: UIColor(ink)
+            .foregroundColor: AppTheme.uiInk
         ]
         if #available(iOS 26.0, *) {
             navBarAppearance.subtitleTextAttributes = [
                 .font: UIFont.inter(size: 13, weight: .regular),
-                .foregroundColor: UIColor(muted)
+                .foregroundColor: AppTheme.uiMuted
             ]
             navBarAppearance.largeSubtitleTextAttributes = [
                 .font: UIFont.inter(size: 13, weight: .regular),
-                .foregroundColor: UIColor(muted)
+                .foregroundColor: AppTheme.uiMuted
             ]
         }
         UINavigationBar.appearance().standardAppearance = navBarAppearance
@@ -332,8 +357,8 @@ struct NavigationBarTitleFont: UIViewControllerRepresentable {
             let largeFont = UIFont.inter(size: largeTitleSize, weight: largeTitleWeight)
             let inlineFont = UIFont.inter(size: inlineTitleSize, weight: inlineTitleWeight)
             let subtitleFont = UIFont.inter(size: subtitleSize, weight: subtitleWeight)
-            let ink = UIColor(AppTheme.ink)
-            let muted = UIColor(AppTheme.muted)
+            let ink = AppTheme.uiInk
+            let muted = AppTheme.uiMuted
 
             func styled(_ existing: UINavigationBarAppearance) -> UINavigationBarAppearance {
                 let appearance = existing.copy() as? UINavigationBarAppearance ?? existing

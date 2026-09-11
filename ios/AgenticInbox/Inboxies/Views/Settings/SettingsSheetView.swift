@@ -8,8 +8,9 @@ struct SettingsSheetView: View {
 
     @State private var editNameDraft = ""
     @State private var showEditName = false
-    @State private var showDisconnectConfirm = false
     @State private var signatureEnabled = false
+    @AppStorage("push_notifications_enabled") private var notificationsEnabled = true
+    @AppStorage("app_theme") private var appTheme: ThemeMode = .system
 
     private var mailbox: Mailbox? {
         app.selectedMailbox
@@ -41,7 +42,7 @@ struct SettingsSheetView: View {
             List {
                 Section {
                     profileHeader
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 16, trailing: 16))
+                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 16, trailing: 16))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                 }
@@ -59,27 +60,8 @@ struct SettingsSheetView: View {
                         settingsLabel("AI prompt", systemImage: "sparkles")
                     }
 
-                    NavigationLink {
-                        SettingsComingSoonView(title: "Notifications")
-                    } label: {
-                        settingsLabel("Notifications", systemImage: "bell")
-                    }
-
-                    Toggle(isOn: signatureBinding) {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Default signature")
-                                    .foregroundStyle(AppTheme.ink)
-                                Text("Include a signature in emails.")
-                                    .font(.inter(size: 12))
-                                    .foregroundStyle(AppTheme.muted)
-                            }
-                        } icon: {
-                            Image(systemName: "pencil")
-                                .foregroundStyle(AppTheme.ink)
-                        }
-                    }
-                    .tint(AppTheme.accent)
+                    notificationsToggle
+                    signatureToggle
                 } header: {
                     Text("Preferences")
                 }
@@ -87,7 +69,7 @@ struct SettingsSheetView: View {
 
                 Section {
                     NavigationLink {
-                        SettingsComingSoonView(title: "Theme")
+                        ThemeSettingsView()
                     } label: {
                         settingsLabel("Theme", systemImage: "circle.lefthalf.filled")
                     }
@@ -97,7 +79,7 @@ struct SettingsSheetView: View {
 
                 Section {
                     NavigationLink {
-                        SettingsComingSoonView(title: "Support & feedback")
+                        SupportSettingsView()
                     } label: {
                         settingsLabel("Support & feedback", systemImage: "questionmark.circle")
                     }
@@ -106,11 +88,19 @@ struct SettingsSheetView: View {
                 }
 
                 Section {
-                    Button("Disconnect address", role: .destructive) {
-                        showDisconnectConfirm = true
+                    Menu {
+                        Section("This will permanently delete this email and all its messages.") {
+                            Button("Confirm delete", role: .destructive) {
+                                deleteSelectedMailbox()
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        }
+                    } label: {
+                        Text("Delete email")
+                            .frame(maxWidth: .infinity)
+                            .font(.inter(size: 16, weight: .medium))
+                            .foregroundStyle(.red)
                     }
-                    .frame(maxWidth: .infinity)
-                    .font(.inter(size: 16, weight: .medium))
                 }
             }
             .listStyle(.insetGrouped)
@@ -126,7 +116,6 @@ struct SettingsSheetView: View {
                             .font(.inter(size: 13, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)
                             .frame(width: 32, height: 32)
-                            .background(AppTheme.pillFill, in: Circle())
                     }
                     .accessibilityLabel("Close")
                 }
@@ -140,26 +129,14 @@ struct SettingsSheetView: View {
             } message: {
                 Text("This name appears when you send email.")
             }
-            .confirmationDialog(
-                "Disconnect this address?",
-                isPresented: $showDisconnectConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Disconnect address", role: .destructive) {
-                    dismiss()
-                    auth.signOut()
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("You'll need to sign in again to use Inboxies.")
-            }
             .onAppear {
-                signatureEnabled = mailbox?.settings?.signature?.enabled == true
+                signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
             }
             .onChange(of: app.selectedMailboxId) { _, _ in
-                signatureEnabled = mailbox?.settings?.signature?.enabled == true
+                signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
             }
         }
+        .applyThemeController()
     }
 
     private var profileHeader: some View {
@@ -167,12 +144,12 @@ struct SettingsSheetView: View {
             Text(initials)
                 .font(.inter(size: initials.count > 1 ? 28 : 34, weight: .semibold))
                 .foregroundStyle(AppTheme.ink)
-                .frame(width: 88, height: 88)
+                .frame(width: 70, height: 70)
                 .background(AppTheme.pillFill, in: Circle())
 
             VStack(spacing: 4) {
                 Text(displayName)
-                    .font(.inter(size: 22, weight: .bold))
+                    .font(.inter(size: 20, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
                     .multilineTextAlignment(.center)
 
@@ -188,7 +165,7 @@ struct SettingsSheetView: View {
                 showEditName = true
             } label: {
                 Text("Edit")
-                    .font(.inter(size: 14, weight: .semibold))
+                    .font(.inter(size: 14, weight: .medium))
                     .foregroundStyle(AppTheme.accent)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
@@ -209,6 +186,53 @@ struct SettingsSheetView: View {
                 Task { await saveSignatureEnabled(newValue) }
             }
         )
+    }
+
+    private var notificationsToggle: some View {
+        Toggle(isOn: $notificationsEnabled) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Notifications")
+                        .foregroundStyle(AppTheme.ink)
+                    Text("Receive alerts for new messages.")
+                        .font(.inter(size: 12))
+                        .foregroundStyle(AppTheme.muted)
+                }
+            } icon: {
+                Image(systemName: "bell")
+                    .foregroundStyle(AppTheme.ink)
+            }
+        }
+        .tint(AppTheme.accent)
+        .onChange(of: notificationsEnabled) { _, newValue in
+            if newValue {
+                if let mailboxId = app.selectedMailboxId {
+                    PushNotificationManager.shared.requestPermissionAndRegister(mailboxId: mailboxId)
+                }
+            } else {
+                if let mailboxId = app.selectedMailboxId {
+                    PushNotificationManager.shared.unregisterToken(mailboxId: mailboxId)
+                }
+            }
+        }
+    }
+
+    private var signatureToggle: some View {
+        Toggle(isOn: signatureBinding) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Default signature")
+                        .foregroundStyle(AppTheme.ink)
+                    Text("Show 'Sent with Inboxies Email' in emails")
+                        .font(.inter(size: 12))
+                        .foregroundStyle(AppTheme.muted)
+                }
+            } icon: {
+                Image(systemName: "pencil")
+                    .foregroundStyle(AppTheme.ink)
+            }
+        }
+        .tint(AppTheme.accent)
     }
 
     private func settingsLabel(_ title: String, systemImage: String) -> some View {
@@ -233,14 +257,21 @@ struct SettingsSheetView: View {
             var signature = settings.signature ?? SignatureSettings()
             signature.enabled = enabled
             if signature.text == nil, signature.html == nil, enabled {
-                let name = settings.fromName
-                    ?? (mailbox?.name != mailbox?.email ? mailbox?.name : nil)
-                signature.text = name
+                signature.text = "Sent with Inboxies Email"
             }
             settings.signature = signature
         }
         if !success {
-            signatureEnabled = mailbox?.settings?.signature?.enabled == true
+            signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+        }
+    }
+
+    private func deleteSelectedMailbox() {
+        dismiss()
+        Task {
+            if let id = mailbox?.id {
+                await app.deleteMailbox(id: id)
+            }
         }
     }
 }
@@ -290,5 +321,109 @@ enum AvatarInitials {
 #Preview("Settings") {
     PreviewHost {
         SettingsSheetView()
+    }
+}
+import SwiftUI
+import StoreKit
+
+struct SupportSettingsView: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.requestReview) private var requestReview
+    @Environment(\.openURL) private var openURL
+    
+    private var appVersion: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "Version \(version) (\(build))"
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Button {
+                    if let url = URL(string: "https://inboxies.email/help") {
+                        openURL(url)
+                    }
+                } label: {
+                    settingsActionLabel("Help Center", systemImage: "book.pages")
+                }
+                
+                Button {
+                    Task {
+                        await app.startCompose(
+                            mode: .new,
+                            initialTo: [MailAddress(name: "Inboxies Support", email: "support@inboxies.email")]
+                        )
+                    }
+                } label: {
+                    settingsActionLabel("Contact Support", systemImage: "envelope")
+                }
+                
+                Button {
+                    Task {
+                        await app.startCompose(
+                            mode: .new,
+                            initialTo: [MailAddress(name: "Inboxies Feedback", email: "support@inboxies.email")]
+                        )
+                    }
+                } label: {
+                    settingsActionLabel("Send Feedback", systemImage: "lightbulb")
+                }
+            } header: {
+                Text("Help & Support")
+            }
+            
+            Section {
+                Button {
+                    requestReview()
+                } label: {
+                    settingsActionLabel("Rate on App Store", systemImage: "star")
+                }
+                
+                Button {
+                    if let url = URL(string: "https://x.com/inboxies_app") {
+                        openURL(url)
+                    }
+                } label: {
+                    settingsActionLabel("Follow @inboxies_app", systemImage: "at")
+                }
+            } header: {
+                Text("Community")
+            } footer: {
+                Text(appVersion)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 24)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
+        .navigationTitle("Support & feedback")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    private func settingsActionLabel(_ title: String, systemImage: String) -> some View {
+        HStack {
+            Label {
+                Text(title)
+                    .foregroundStyle(AppTheme.ink)
+            } icon: {
+                Image(systemName: systemImage)
+                    .foregroundStyle(AppTheme.ink)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
+                .foregroundStyle(AppTheme.muted.opacity(0.5))
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+#Preview {
+    PreviewHost {
+        NavigationStack {
+            SupportSettingsView()
+        }
     }
 }

@@ -8,6 +8,7 @@ struct InboxiesApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @State private var authStore = AuthStore()
     @State private var appModel = AppModel()
+    @AppStorage("app_theme") private var appTheme: ThemeMode = .system
 
     init() {
         AppTheme.configureGlobalAppearance()
@@ -18,7 +19,7 @@ struct InboxiesApp: App {
             RootView()
                 .environment(authStore)
                 .environment(appModel)
-                .preferredColorScheme(.light)
+                .applyThemeController()
         }
     }
 }

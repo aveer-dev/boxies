@@ -10,6 +10,7 @@ struct SwipeSettingsView: View {
     @State private var rightActions: [SwipeQuickAction] = []
     @State private var addingEdge: SwipeEdge?
     @State private var draggingAction: SwipeQuickAction?
+    @AppStorage("app_theme") private var appTheme: ThemeMode = .system
 
     private enum SwipeEdge: Identifiable {
         case left
@@ -56,7 +57,6 @@ struct SwipeSettingsView: View {
                         .font(.inter(size: 14, weight: .semibold))
                         .foregroundStyle(AppTheme.ink)
                         .frame(width: 32, height: 32)
-                        .background(AppTheme.pillFill, in: Circle())
                 }
                 .accessibilityLabel("Back")
             }

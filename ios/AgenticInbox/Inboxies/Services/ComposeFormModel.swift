@@ -497,7 +497,7 @@ enum ComposeHTML {
 
     /// Signature inserted into compose when mailbox signature is enabled.
     static func signatureText(settings: MailboxSettings?, fromName: String?) -> String {
-        guard settings?.signature?.enabled == true else { return "" }
+        guard settings?.signature?.enabled ?? true else { return "" }
         if let html = settings?.signature?.html?.trimmingCharacters(in: .whitespacesAndNewlines),
            !html.isEmpty {
             return stripHTML(html)
@@ -506,7 +506,7 @@ enum ComposeHTML {
            !text.isEmpty {
             return text
         }
-        return signatureLine(fromName: fromName)
+        return "Sent with Inboxies Email"
     }
 
     static func stripHTML(_ html: String) -> String {
