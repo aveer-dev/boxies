@@ -121,7 +121,7 @@ struct ComposeActionListOverlay: View {
             .background {
                 if isHighlighted {
                     Capsule()
-                        .fill(AppTheme.pillFill.opacity(0.98))
+                        .fill(AppTheme.pillActive)
                         .matchedGeometryEffect(id: "compose-action-focus", in: highlightNamespace)
                 }
             }
