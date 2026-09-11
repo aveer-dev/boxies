@@ -6,7 +6,6 @@ struct ComposeSheetView: View {
     @Environment(AppModel.self) private var app
     var session: ComposeSession
 
-    @State private var showCloseActions = false
     @State private var showFromPicker = false
     @State private var recipientFocus: Field?
     @State private var viewportHeight: CGFloat = 0
@@ -70,11 +69,37 @@ struct ComposeSheetView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        Task { handleClose() }
-                    } label: {
-                        Image (systemName: "xmark")
-                            .symbolRenderingMode(.hierarchical)
+                    if form.isEmpty {
+                        Button {
+                            form.commitPendingTokens()
+                            form.cancelAutoSave()
+                            app.closeCompose()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .symbolRenderingMode(.hierarchical)
+                        }
+                    } else {
+                        Menu {
+                            Button("Save Draft") {
+                                Task {
+                                    form.commitPendingTokens()
+                                    if await form.saveDraft(explicit: true) {
+                                        app.showToast("Draft saved")
+                                        app.minimizeCompose()
+                                    }
+                                }
+                            }
+                            Button("Minimize") {
+                                form.commitPendingTokens()
+                                app.minimizeCompose()
+                            }
+                            Button("Delete Draft", role: .destructive) {
+                                Task { await deleteAndClose() }
+                            }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .symbolRenderingMode(.hierarchical)
+                        }
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -87,21 +112,6 @@ struct ComposeSheetView: View {
                     .disabled(!canSend || form.isSending)
                     .accessibilityLabel("Send")
                 }
-            }
-            .confirmationDialog("Draft", isPresented: $showCloseActions, titleVisibility: .visible) {
-                Button("Delete Draft", role: .destructive) {
-                    Task { await deleteAndClose() }
-                }
-                Button("Save Draft") {
-                    Task {
-                        if await form.saveDraft(explicit: true) {
-                            app.showToast("Draft saved")
-                            app.minimizeCompose()
-                        }
-                    }
-                }
-                Button("Minimize") { app.minimizeCompose() }
-                Button("Cancel", role: .cancel) {}
             }
             .background {
                 Button {
@@ -426,22 +436,31 @@ struct ComposeSheetView: View {
         return hasDelimiter || hasSpacedEmail
     }
 
-    private func handleClose() {
-        form.commitPendingTokens()
-        if form.isEmpty {
-            form.cancelAutoSave()
-            app.closeCompose()
-        } else {
-            showCloseActions = true
-        }
-    }
-
     private func send() async {
         form.cancelAutoSave()
-        if await form.send() {
-            app.closeCompose()
-            await app.loadEmailsForCurrentTab()
-        }
+        form.commitPendingTokens()
+        guard form.toTokens.isEmpty == false else { return }
+        
+        let sessionToRestore = session
+        let formToRestore = form
+        
+        app.scheduleUndoableAction(
+            optimistic: {
+                app.closeCompose()
+            },
+            commit: { @Sendable in
+                let success = await formToRestore.performActualSend()
+                if success {
+                    await app.loadEmailsForCurrentTab()
+                }
+            },
+            rollback: { @MainActor in
+                app.composeSession = sessionToRestore
+                app.composeSession?.expand()
+            },
+            pendingMessage: "Sending...",
+            completedMessage: "Sent"
+        )
     }
 
     private func deleteAndClose() async {

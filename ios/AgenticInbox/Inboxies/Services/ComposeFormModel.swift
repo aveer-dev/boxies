@@ -360,7 +360,7 @@ final class ComposeFormModel {
     }
 
     @discardableResult
-    func send() async -> Bool {
+    func performActualSend() async -> Bool {
         cancelAutoSave()
         commitPendingTokens()
         guard !toTokens.isEmpty else {

@@ -624,6 +624,23 @@ struct AgentConversation: Identifiable, Codable, Hashable {
     var lastMessagePreview: String?
 }
 
+/// Visible screen inside the AI chat sheet. Lives on `AppModel` so SwiftUI
+/// remounting the sheet cannot mint a second conversation id.
+enum ChatSession: Equatable {
+    case dismissed
+    case list
+    case conversation(String)
+
+    var conversationId: String? {
+        if case .conversation(let id) = self { return id }
+        return nil
+    }
+
+    static func newConversationId() -> String {
+        UUID().uuidString.lowercased()
+    }
+}
+
 struct ConversationDateGroup: Identifiable {
     let id: String
     let title: String

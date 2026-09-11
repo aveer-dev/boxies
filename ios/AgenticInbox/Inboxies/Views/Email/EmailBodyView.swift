@@ -201,7 +201,7 @@ struct EmailBodyView: View {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <style>
-          :root { color-scheme: light; }
+          :root { color-scheme: light dark; }
           html, body {
             margin: 0;
             padding: 0;
@@ -222,6 +222,13 @@ struct EmailBodyView: View {
           img { max-width: 100%; height: auto; }
           a { color: #2659d9; }
           pre, code { white-space: pre-wrap; }
+
+          @media (prefers-color-scheme: dark) {
+            body {
+              color: #f7f7f8;
+            }
+            a { color: #5888fb; }
+          }
 
           /* Pre-emptively hide standard quotes so they take 0 layout space */
           .gmail_quote, .yahoo_quoted, .protonmail_quote, #divRplyFwdMsg, blockquote[type="cite"], #appendonsend {
@@ -748,7 +755,7 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <style>
-          :root { color-scheme: light; }
+          :root { color-scheme: light dark; }
           html, body {
             margin: 0;
             padding: 16px 20px 32px 20px;
@@ -775,6 +782,15 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
           }
           p, div, span, td, th, blockquote {
             font-size: \(Int(AppTheme.FontSize.body))px !important;
+          }
+
+          @media (prefers-color-scheme: dark) {
+            body { color: #f7f7f8; }
+            a { color: #5888fb; }
+            blockquote {
+              border-left-color: #3f3f46;
+              color: #a1a1aa;
+            }
           }
         </style>
         </head>

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Main shell: native large-title toolbar, content list, floating action bar, native folder tab bar.
 struct HomeShellView: View {
@@ -9,13 +10,24 @@ struct HomeShellView: View {
     @State private var showSearch = false
     @State private var showChat = false
     @State private var chatSeedPrompt: String?
-    @State private var pendingConversationId: String?
     @State private var tabNavigatingForward = true
-    @State private var registeredArchiveUndoID: UUID?
+    @State private var registeredUndoID: UUID?
     @State private var showSettings = false
     @State private var isSelectMode = false
     @State private var selectedEmailIDs: Set<String> = []
     @State private var filterState = EmailFilterState()
+    @State private var showAddMailboxSheet = false
+    @State private var newMailboxName = ""
+    @State private var newMailboxEmail = ""
+    @FocusState private var isNameFocused: Bool
+    @AppStorage("app_theme") private var appTheme: ThemeMode = .system
+    @Namespace private var barNamespace
+    @State private var composeMorphsFromBar = false
+    @State private var showComposeSheet = false
+
+    static let askAITransitionID = "ai-chat-button"
+    static let searchTransitionID = "search-button"
+    static let composeTransitionID = "compose-button"
 
     private let folderTabs: [HomeTab] = [
 //        .chats,
@@ -42,16 +54,18 @@ struct HomeShellView: View {
         shell
             .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isComposeExpanded)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasMinimizedCompose)
-            .sheet(isPresented: $showSearch) {
-                SearchView()
-            }
-            .fullScreenCover(isPresented: $showChat, onDismiss: dismissChat) {
-                chatSheet
+            .fullScreenCover(isPresented: $showSearch) {
+                searchSheet
             }
             .sheet(item: selectedEmailItem) { _ in
                 EmailDetailView()
             }
-            .sheet(isPresented: composeExpandedBinding) {
+            .fullScreenCover(isPresented: $showComposeSheet, onDismiss: {
+                composeMorphsFromBar = false
+                if app.composeSession?.isExpanded == true {
+                    app.minimizeCompose()
+                }
+            }) {
                 expandedComposeSheet
             }
             .sheet(isPresented: $showSettings) {
@@ -59,10 +73,18 @@ struct HomeShellView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
-            .onChange(of: app.archiveUndo?.id) { _, newID in
-                registerArchiveUndoIfNeeded(newID)
+            .fullScreenCover(isPresented: $showChat, onDismiss: {
+                dismissChat()
+            }) {
+                chatSheet
             }
-            .sensoryFeedback(.success, trigger: app.archiveUndo?.id)
+            .onChange(of: isComposeExpanded) { _, expanded in
+                showComposeSheet = expanded
+            }
+            .onChange(of: app.pendingUndoAction?.id) { _, newID in
+                registerUndoIfNeeded(newID)
+            }
+            .sensoryFeedback(.success, trigger: app.pendingUndoAction?.id)
     }
 
     private var shell: some View {
@@ -82,8 +104,9 @@ struct HomeShellView: View {
                         trailingToolbarItems
                     }
                 }
-                .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+                .toolbarBackground(.hidden, for: .navigationBar)
         }
+        .background(alignment: .top) { ProgressiveBlurBackground() }
         .tint(AppTheme.ink)
         .animation(tabSpring, value: app.selectedTab)
         .background(AppTheme.background.ignoresSafeArea())
@@ -96,31 +119,48 @@ struct HomeShellView: View {
         app.composeSession?.isExpanded == true
     }
 
-    /// Swipe-to-dismiss minimizes (docks) instead of discarding the draft.
-    private var composeExpandedBinding: Binding<Bool> {
-        Binding(
-            get: { isComposeExpanded },
-            set: { isPresented in
-                if !isPresented {
-                    app.minimizeCompose()
-                }
-            }
-        )
+    private func openChat(seedPrompt: String? = nil, conversationId: String? = nil, resumeActive: Bool = true) {
+        chatSeedPrompt = seedPrompt
+        if let conversationId {
+            app.openChatSession(existingId: conversationId)
+        } else if seedPrompt != nil {
+            app.openChatSession(forceNew: true)
+        } else {
+            app.openChatSession(resumeActive: resumeActive, forceNew: !resumeActive)
+        }
+        showChat = true
     }
 
+    @ViewBuilder
     private var chatSheet: some View {
         ChatSheetView(
             seedPrompt: chatSeedPrompt,
-            initialConversationId: pendingConversationId
+            initialConversationId: app.chatSession.conversationId
         )
+        .modifier(CoverDragIndicator())
+        .modifier(BarSheetZoom(enabled: true, id: Self.askAITransitionID, namespace: barNamespace))
+        .presentationBackground(AppTheme.background)
+    }
+
+    @ViewBuilder
+    private var searchSheet: some View {
+        SearchView()
+            .modifier(CoverDragIndicator())
+            .modifier(BarSheetZoom(enabled: true, id: Self.searchTransitionID, namespace: barNamespace))
+            .presentationBackground(AppTheme.background)
     }
 
     @ViewBuilder
     private var expandedComposeSheet: some View {
         if let session = app.composeSession {
             ComposeSheetView(session: session)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .modifier(CoverDragIndicator())
+                .modifier(BarSheetZoom(
+                    enabled: composeMorphsFromBar,
+                    id: Self.composeTransitionID,
+                    namespace: barNamespace
+                ))
+                .presentationBackground(AppTheme.background)
         }
     }
 
@@ -128,23 +168,30 @@ struct HomeShellView: View {
     private var composeChrome: some View {
         VStack(spacing: 0) {
             VStack(spacing: HomeChromeMetrics.chromeSpacing) {
-                if let offer = app.archiveUndo {
-                    UndoToastBanner(message: "Archived") {
-                        Task { await app.undoArchive(offer) }
-                    }
-                    .padding(.horizontal, HomeChromeMetrics.chromeHorizontalPadding)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-
                 if let toast = app.toast {
                     HStack(spacing: 8) {
-                        Image(systemName: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                            .font(.inter(size: 13, weight: .semibold))
-                            .foregroundStyle(toast.isError ? .red : AppTheme.ink)
+                        if toast.isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                                .font(.inter(size: 13, weight: .semibold))
+                                .foregroundStyle(toast.isError ? .red : AppTheme.ink)
+                        }
 
                         Text(toast.message)
                             .font(.inter(size: 13, weight: .medium))
                             .foregroundStyle(AppTheme.ink)
+                            
+                        if toast.isUndo {
+                            Spacer(minLength: 8)
+                            Button("Undo") {
+                                app.undoPendingAction()
+                            }
+                            .font(.inter(size: 13, weight: .semibold))
+                            .foregroundStyle(AppTheme.accent)
+                            .buttonStyle(.plain)
+                        }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 10)
@@ -164,10 +211,10 @@ struct HomeShellView: View {
                         .padding(.bottom, 20)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
+                    tabStrip
                     bottomBar
                         .padding(.horizontal, 24)
                         .padding(.bottom, 20)
-                    tabStrip
                 }
             }
 
@@ -176,28 +223,26 @@ struct HomeShellView: View {
                     .ignoresSafeArea(edges: .bottom)
             }
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.archiveUndo?.id)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.pendingUndoAction?.id)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.toast?.id)
         .animation(tabSpring, value: app.selectedTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isSelectMode)
         .padding(.bottom, -12)
     }
 
-    private func registerArchiveUndoIfNeeded(_ newID: UUID?) {
-        guard let newID, let offer = app.archiveUndo, offer.id == newID else {
+    private func registerUndoIfNeeded(_ newID: UUID?) {
+        guard let newID, let action = app.pendingUndoAction, action.id == newID else {
             if newID == nil {
-                registeredArchiveUndoID = nil
+                registeredUndoID = nil
             }
             return
         }
-        guard registeredArchiveUndoID != newID else { return }
-        registeredArchiveUndoID = newID
+        guard registeredUndoID != newID else { return }
+        registeredUndoID = newID
         undoManager?.registerUndo(withTarget: app) { model in
-            Task { @MainActor in
-                await model.undoArchive(offer)
-            }
+            model.undoPendingAction()
         }
-        undoManager?.setActionName("Archive")
+        undoManager?.setActionName("Action")
     }
 
     private var selectedEmailItem: Binding<IdentifiedEmail?> {
@@ -215,7 +260,7 @@ struct HomeShellView: View {
     }
 
     private func dismissChat() {
-        pendingConversationId = nil
+        app.dismissChatSession()
         chatSeedPrompt = nil
     }
 
@@ -226,14 +271,18 @@ struct HomeShellView: View {
                 Button {
                     Task { await app.loadMailbox(mailbox.id) }
                 } label: {
+                    let displayName = self.displayName(for: mailbox)
                     if mailbox.id == app.selectedMailboxId {
-                        Label(mailbox.email, systemImage: "checkmark")
+                        Label(displayName, systemImage: "checkmark")
                     } else {
-                        Text(mailbox.email)
+                        Text(displayName)
                     }
                 }
             }
             Divider()
+            Button("Add another email", systemImage: "plus") {
+                showAddMailboxSheet = true
+            }
             Button("Settings", systemImage: "gearshape") {
                 showSettings = true
             }
@@ -247,6 +296,57 @@ struct HomeShellView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Mailbox")
         .accessibilityValue("\(mailboxName), \(mailboxTitle)")
+        .sheet(isPresented: $showAddMailboxSheet) {
+            NavigationStack {
+                Form {
+                    Section {
+                        TextField("Full Name", text: $newMailboxName)
+                            .focused($isNameFocused)
+                        HStack {
+                            TextField("Username", text: $newMailboxEmail)
+                                .keyboardType(.emailAddress)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .onChange(of: newMailboxEmail) { _, newValue in
+                                    if let atIndex = newValue.firstIndex(of: "@") {
+                                        newMailboxEmail = String(newValue[..<atIndex])
+                                    }
+                                }
+                            Text("@inboxies.email")
+                                .foregroundStyle(AppTheme.muted)
+                        }
+                    } footer: {
+                        Text("Create a new email address for this workspace.")
+                    }
+                }
+                .onAppear {
+                    isNameFocused = true
+                }
+                .navigationTitle("Add Mailbox")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button { showAddMailboxSheet = false }
+                        label: {
+                            Image(systemName: "xmark")
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Create") {
+                            Task {
+                                let fullEmail = "\(newMailboxEmail)@inboxies.email"
+                                await app.createMailbox(name: newMailboxName, email: fullEmail)
+                                showAddMailboxSheet = false
+                                newMailboxName = ""
+                                newMailboxEmail = ""
+                            }
+                        }
+                        .disabled(newMailboxEmail.isEmpty || newMailboxName.isEmpty)
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 
     private func mailboxAvatar(initials: String) -> some View {
@@ -311,12 +411,15 @@ struct HomeShellView: View {
     }
 
     private var tabStrip: some View {
-        FolderTabBar(
-            tabs: folderTabs,
-            selection: app.selectedTab,
-            onSelect: selectTab
-        )
-        .frame(height: HomeChromeMetrics.tabStripHeight)
+        HStack() {
+
+            FolderTabBar(
+                tabs: folderTabs,
+                selection: app.selectedTab,
+                onSelect: selectTab
+            )
+            .frame(height: HomeChromeMetrics.tabStripHeight)
+        }
     }
 
     @ViewBuilder
@@ -343,11 +446,15 @@ struct HomeShellView: View {
                     Task { await app.openEmail(email) }
                 }
             case .chats:
-                ConversationsListView(bottomInset: listBottomInset) { conversation in
-                    chatSeedPrompt = nil
-                    pendingConversationId = conversation.id
-                    showChat = true
-                }
+                ConversationsListView(
+                    bottomInset: listBottomInset,
+                    onNewChat: {
+                        openChat(resumeActive: false)
+                    },
+                    onOpen: { conversation in
+                        openChat(conversationId: conversation.id)
+                    }
+                )
             }
         }
         .id(app.selectedTab)
@@ -401,38 +508,24 @@ struct HomeShellView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            Button { showSearch = true } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(AppTheme.muted)
-                    Text("Search mail")
-                        .font(.inter(size: 16, weight: .medium))
-                        .foregroundStyle(AppTheme.muted)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 14)
-                .frame(height: HomeChromeMetrics.actionBarHeight)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .liquidGlass(in: RoundedRectangle(cornerRadius: HomeChromeMetrics.chromeCornerRadius, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Search")
-
             Button {
-                chatSeedPrompt = nil
-                pendingConversationId = nil
-                showChat = true
+                showSearch = true
             } label: {
-                Image(systemName: "sparkles")
+                Image(systemName: "magnifyingglass")
                     .font(.inter(size: 18, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .frame(width: HomeChromeMetrics.actionBarHeight, height: HomeChromeMetrics.actionBarHeight)
                     .liquidGlass(in: Capsule())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Ask AI")
+            .accessibilityLabel("Search")
+            .modifier(BarZoomSource(id: Self.searchTransitionID, namespace: barNamespace))
+            .modifier(BarZoomSourceHidden(hidden: showSearch))
+
+            askAIButton
 
             Button {
+                composeMorphsFromBar = true
                 Task { await app.startCompose(mode: .new) }
             } label: {
                 Image(systemName: "square.and.pencil")
@@ -443,8 +536,9 @@ struct HomeShellView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Compose")
+            .modifier(BarZoomSource(id: Self.composeTransitionID, namespace: barNamespace))
+            .modifier(BarZoomSourceHidden(hidden: showComposeSheet && composeMorphsFromBar))
         }
-        .liquidGlassContainer(spacing: 10)
     }
 
     private var mailboxTitle: String {
@@ -452,17 +546,20 @@ struct HomeShellView: View {
     }
 
     private var mailboxName: String {
-        let mailbox = app.selectedMailbox
-        if let fromName = mailbox?.settings?.fromName, !fromName.isEmpty {
-            return fromName
+        guard let mailbox = app.selectedMailbox else {
+            if let local = mailboxTitle.split(separator: "@").first, !local.isEmpty {
+                return String(local)
+            }
+            return mailboxTitle
         }
-        if let name = mailbox?.name, !name.isEmpty, name != mailbox?.email {
-            return name
-        }
-        if let local = mailboxTitle.split(separator: "@").first, !local.isEmpty {
+        return displayName(for: mailbox)
+    }
+
+    private func displayName(for mailbox: Mailbox) -> String {
+        if let local = mailbox.email.split(separator: "@").first, !local.isEmpty {
             return String(local)
         }
-        return mailbox?.name ?? mailboxTitle
+        return mailbox.email
     }
 
     private var initials: String {
@@ -481,13 +578,7 @@ struct HomeShellView: View {
             }
         } else if case .chats = app.selectedTab {
             Button {
-                Task {
-                    if let created = await app.createConversation() {
-                        chatSeedPrompt = nil
-                        pendingConversationId = created.id
-                        showChat = true
-                    }
-                }
+                openChat(resumeActive: false)
             } label: {
                 Image(systemName: "plus")
                     .font(.inter(size: 15, weight: .semibold))
@@ -821,6 +912,22 @@ struct HomeShellView: View {
         .frame(height: 58)
         .liquidGlass(in: RoundedRectangle(cornerRadius: HomeChromeMetrics.chromeCornerRadius, style: .continuous))
     }
+
+    private var askAIButton: some View {
+        Button {
+            openChat()
+        } label: {
+            AskAIButtonLabel()
+                .padding(.horizontal, 14)
+                .frame(height: HomeChromeMetrics.actionBarHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .liquidGlass(in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ask AI")
+        .modifier(BarZoomSource(id: Self.askAITransitionID, namespace: barNamespace))
+        .modifier(BarZoomSourceHidden(hidden: showChat))
+    }
 }
 
 private struct IdentifiedEmail: Identifiable {
@@ -864,5 +971,155 @@ private struct MailboxLoadingAccessibility: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+private struct AskAIButtonLabel: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(AppTheme.muted)
+            Text("Ask AI")
+                .font(.inter(size: 16, weight: .medium))
+                .foregroundStyle(AppTheme.muted)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct CoverDragIndicator: ViewModifier {
+    private let handleTop: CGFloat = 12
+    private let handleHeight: CGFloat = 5
+    private let handleBottom: CGFloat = 16
+    private var extraTop: CGFloat { handleTop + handleHeight + handleBottom }
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                ExtraTopSafeAreaInset(extra: extraTop)
+            }
+            .overlay(alignment: .top) {
+                Capsule()
+                    .fill(AppTheme.muted.opacity(0.45))
+                    .frame(width: 36, height: handleHeight)
+                    .padding(.top, handleTop)
+                    .frame(maxWidth: .infinity)
+                    .offset(y: -extraTop)
+                    .accessibilityLabel("Drag to close")
+            }
+    }
+}
+
+/// Pushes UINavigationBar down. SwiftUI safeAreaInset is ignored by the toolbar.
+private struct ExtraTopSafeAreaInset: UIViewRepresentable {
+    var extra: CGFloat
+
+    func makeUIView(context: Context) -> ExtraTopSafeAreaView {
+        let view = ExtraTopSafeAreaView()
+        view.extra = extra
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ view: ExtraTopSafeAreaView, context: Context) {
+        view.extra = extra
+        view.apply()
+    }
+
+    static func dismantleUIView(_ view: ExtraTopSafeAreaView, coordinator: ()) {
+        view.clear()
+    }
+}
+
+private final class ExtraTopSafeAreaView: UIView {
+    var extra: CGFloat = 0
+    private weak var appliedTo: UIViewController?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        apply()
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        apply()
+    }
+
+    func apply() {
+        guard window != nil else {
+            clear()
+            return
+        }
+        guard let target = nearestHost() else { return }
+        if appliedTo !== target {
+            appliedTo?.additionalSafeAreaInsets.top = 0
+            appliedTo = target
+        }
+        if target.additionalSafeAreaInsets.top != extra {
+            target.additionalSafeAreaInsets.top = extra
+        }
+    }
+
+    func clear() {
+        appliedTo?.additionalSafeAreaInsets.top = 0
+        appliedTo = nil
+    }
+
+    private func nearestHost() -> UIViewController? {
+        var responder: UIResponder? = self
+        var lastViewController: UIViewController?
+        while let current = responder {
+            if let viewController = current as? UIViewController {
+                lastViewController = viewController
+                if viewController.presentingViewController != nil {
+                    return viewController
+                }
+            }
+            responder = current.next
+        }
+        return lastViewController?.navigationController ?? lastViewController
+    }
+}
+
+private struct BarSheetZoom: ViewModifier {
+    var enabled: Bool
+    var id: String
+    var namespace: Namespace.ID
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), enabled {
+            content.navigationTransition(.zoom(sourceID: id, in: namespace))
+        } else {
+            content
+        }
+    }
+}
+
+private struct BarZoomSource: ViewModifier {
+    var id: String
+    var namespace: Namespace.ID
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.matchedTransitionSource(id: id, in: namespace)
+        } else {
+            content
+        }
+    }
+}
+
+/// Hide the real button while its sheet is up so the zoom replica is the only copy.
+private struct BarZoomSourceHidden: ViewModifier {
+    var hidden: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(hidden ? 0 : 1)
+            .animation(nil, value: hidden)
+            .accessibilityHidden(hidden)
+            .allowsHitTesting(!hidden)
     }
 }

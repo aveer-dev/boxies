@@ -44,3 +44,22 @@ extension View {
         }
     }
 }
+
+struct ProgressiveBlurBackground: View {
+    var body: some View {
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .ignoresSafeArea(edges: .top)
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.6),
+                        .init(color: .clear, location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .allowsHitTesting(false)
+    }
+}

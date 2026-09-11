@@ -602,6 +602,18 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    func deleteMailbox(id: String) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql = "DELETE FROM mailboxes WHERE id = ?;"
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
     func pruneRemovedEmails(
         mailboxId: String,
         folderId: String,

@@ -10,6 +10,7 @@ final class AgentChatClient: NSObject, ObservableObject {
     @Published var isStreaming = false
     @Published var isLoadingHistory = false
     @Published var statusText: String?
+    @Published var historyError: String?
 
     var onStreamFinished: ((_ hasToolActions: Bool) -> Void)?
     var onHistoryLoaded: (([ChatMessage]) -> Void)?
@@ -22,16 +23,31 @@ final class AgentChatClient: NSObject, ObservableObject {
     private var streamingAssistantId: String?
     private var hasActiveToolAction = false
     private var pingTimer: Task<Void, Never>?
+    private var reconnectTask: Task<Void, Never>?
     private var reasoningStartTime: Date?
     private var isExplicitDisconnect = false
+    /// Maps toolCallId → name/input from tool-input events so tool-output
+    /// chunks (which often omit toolName) still get a human-readable label.
+    private var pendingToolCalls: [String: PendingToolCall] = [:]
+
+    private struct PendingToolCall {
+        var toolName: String
+        var input: [String: Any]?
+    }
 
     func connect(mailboxId: String, conversationId: String, authToken: String?) {
         if isConnected && self.mailboxId == mailboxId && self.conversationId == conversationId {
             return
         }
-        disconnect()
+        let isSameConversation = self.mailboxId == mailboxId && self.conversationId == conversationId
+        teardownSocket(explicit: false)
+        if !isSameConversation {
+            messages = []
+        }
         isExplicitDisconnect = false
         statusText = nil
+        historyError = nil
+        isLoadingHistory = true
         self.mailboxId = mailboxId
         self.conversationId = conversationId
         self.authToken = authToken
@@ -41,18 +57,9 @@ final class AgentChatClient: NSObject, ObservableObject {
             await loadInitialMessages(mailboxId: mailboxId, conversationId: conversationId, authToken: authToken)
         }
 
-        // Literal :: separator required by partyserver and agent-conversations helpers
-        let rawAgentName = "\(mailboxId)::\(conversationId)"
-        let base = AppConfig.apiBaseURL
-        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false),
-              components.host != nil else {
-            print("[AgentChatClient] Invalid API URL: \(base)")
-            return
-        }
-        components.scheme = base.scheme == "https" ? "wss" : "ws"
-        components.percentEncodedPath = "\(AppConfig.agentPathPrefix)/\(rawAgentName)"
-        guard let url = components.url else {
-            print("[AgentChatClient] Invalid chat URL for: \(rawAgentName)")
+        guard let url = Self.agentURL(mailboxId: mailboxId, conversationId: conversationId, websocket: true) else {
+            print("[AgentChatClient] Invalid chat URL for: \(mailboxId)::\(conversationId)")
+            isLoadingHistory = false
             return
         }
 
@@ -65,13 +72,17 @@ final class AgentChatClient: NSObject, ObservableObject {
         let task = session!.webSocketTask(with: request)
         webSocket = task
         task.resume()
-        isConnected = true
-        startPing()
-        listen()
+        listen(task)
     }
 
     func disconnect() {
-        isExplicitDisconnect = true
+        teardownSocket(explicit: true)
+    }
+
+    private func teardownSocket(explicit: Bool) {
+        isExplicitDisconnect = explicit
+        reconnectTask?.cancel()
+        reconnectTask = nil
         stopPing()
         webSocket?.cancel(with: .goingAway, reason: nil)
         webSocket = nil
@@ -83,6 +94,7 @@ final class AgentChatClient: NSObject, ObservableObject {
         streamingAssistantId = nil
         hasActiveToolAction = false
         reasoningStartTime = nil
+        pendingToolCalls = [:]
     }
 
     func clearHistory() {
@@ -90,13 +102,25 @@ final class AgentChatClient: NSObject, ObservableObject {
         messages = []
     }
 
-    static func fetchMessages(mailboxId: String, conversationId: String, authToken: String?) async -> [ChatMessage] {
-        let rawAgentName = "\(mailboxId)::\(conversationId)"
+    /// EmailAgent DO name: `mailboxId::conversationId`. Keep `::` literal for PartyServer.
+    static func agentInstanceName(mailboxId: String, conversationId: String) -> String {
+        "\(mailboxId)::\(conversationId)"
+    }
+
+    static func agentURL(mailboxId: String, conversationId: String, websocket: Bool, pathSuffix: String = "") -> URL? {
+        let rawAgentName = agentInstanceName(mailboxId: mailboxId, conversationId: conversationId)
         let base = AppConfig.apiBaseURL
         guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false),
-              components.host != nil else { return [] }
-        components.percentEncodedPath = "\(AppConfig.agentPathPrefix)/\(rawAgentName)/get-messages"
-        guard let url = components.url else { return [] }
+              components.host != nil else { return nil }
+        components.scheme = websocket ? (base.scheme == "https" ? "wss" : "ws") : base.scheme
+        components.percentEncodedPath = "\(AppConfig.agentPathPrefix)/\(rawAgentName)\(pathSuffix)"
+        return components.url
+    }
+
+    static func fetchMessages(mailboxId: String, conversationId: String, authToken: String?) async -> [ChatMessage]? {
+        guard let url = agentURL(mailboxId: mailboxId, conversationId: conversationId, websocket: false, pathSuffix: "/get-messages") else {
+            return nil
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -107,31 +131,48 @@ final class AgentChatClient: NSObject, ObservableObject {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                return []
+                return nil
             }
             if let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
                 return array.flatMap(parseMessages)
             }
+            return []
         } catch {
             print("[AgentChatClient] Failed to fetch messages: \(error)")
+            return nil
         }
-        return []
     }
 
     func loadInitialMessages(mailboxId: String, conversationId: String, authToken: String?) async {
         isLoadingHistory = true
+        historyError = nil
         defer { isLoadingHistory = false }
 
-        let loaded = await Self.fetchMessages(mailboxId: mailboxId, conversationId: conversationId, authToken: authToken)
-        if self.mailboxId == mailboxId && self.conversationId == conversationId {
-            self.messages = loaded
-            self.onHistoryLoaded?(loaded)
+        var loaded: [ChatMessage]?
+        for attempt in 0..<3 {
+            loaded = await Self.fetchMessages(mailboxId: mailboxId, conversationId: conversationId, authToken: authToken)
+            if loaded != nil { break }
+            if attempt < 2 {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
         }
+
+        guard self.mailboxId == mailboxId && self.conversationId == conversationId else { return }
+        guard let loaded else {
+            if messages.isEmpty {
+                historyError = "Couldn't load this chat."
+            }
+            return
+        }
+        if isStreaming { return }
+        if loaded.isEmpty && !self.messages.isEmpty { return }
+        self.messages = loaded
+        self.onHistoryLoaded?(loaded)
     }
 
     func sendUserMessage(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, isConnected, !isStreaming else { return }
 
         let userId = UUID().uuidString
         messages.append(ChatMessage(id: userId, role: "user", text: trimmed))
@@ -183,12 +224,16 @@ final class AgentChatClient: NSObject, ObservableObject {
             ],
         ])
         isStreaming = true
-        statusText = "Thinking…"
+        // Thinking UI lives on the message bubble / fallback row — statusText is
+        // reserved for in-progress tool actions so we never show two Thinking loaders.
+        statusText = nil
         streamingAssistantId = nil
         hasActiveToolAction = false
+        pendingToolCalls = [:]
     }
 
     private func sendJSON(_ object: [String: Any]) {
+        guard isConnected, webSocket != nil else { return }
         guard let data = try? JSONSerialization.data(withJSONObject: object),
               let text = String(data: data, encoding: .utf8) else { return }
         webSocket?.send(.string(text)) { error in
@@ -198,10 +243,11 @@ final class AgentChatClient: NSObject, ObservableObject {
         }
     }
 
-    private func listen() {
-        webSocket?.receive { [weak self] result in
+    private func listen(_ task: URLSessionWebSocketTask? = nil) {
+        let current = task ?? webSocket
+        current?.receive { [weak self] result in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self, self.webSocket === current else { return }
                 switch result {
                 case .failure(let error):
                     self.isConnected = false
@@ -211,7 +257,7 @@ final class AgentChatClient: NSObject, ObservableObject {
                     }
                 case .success(let message):
                     self.handle(message)
-                    self.listen()
+                    self.listen(current)
                 }
             }
         }
@@ -221,9 +267,10 @@ final class AgentChatClient: NSObject, ObservableObject {
         guard let mailboxId = self.mailboxId,
               let conversationId = self.conversationId,
               !isExplicitDisconnect else { return }
-        Task {
+        reconnectTask?.cancel()
+        reconnectTask = Task {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !self.isExplicitDisconnect, !self.isConnected else { return }
+            guard !Task.isCancelled, !self.isExplicitDisconnect, !self.isConnected else { return }
             print("[AgentChatClient] Attempting silent reconnect…")
             self.connect(mailboxId: mailboxId, conversationId: conversationId, authToken: self.authToken)
         }
@@ -237,6 +284,9 @@ final class AgentChatClient: NSObject, ObservableObject {
 
         switch type {
         case "cf_agent_chat_messages":
+            // A snapshot during an in-flight turn would drop the local user message
+            // and any tool rows that haven't been persisted yet.
+            if isStreaming { return }
             if let arr = json["messages"] as? [[String: Any]] {
                 let parsed = arr.flatMap(Self.parseMessages)
                 if !parsed.isEmpty {
@@ -258,19 +308,11 @@ final class AgentChatClient: NSObject, ObservableObject {
             }
 
             if done {
-                if let start = self.reasoningStartTime {
-                    let elapsed = Date().timeIntervalSince(start)
-                    if let id = self.streamingAssistantId,
-                       let idx = self.messages.firstIndex(where: { $0.id == id }) {
-                        if self.messages[idx].reasoningDuration == nil {
-                            self.messages[idx].reasoningDuration = elapsed
-                        }
-                    }
-                    self.reasoningStartTime = nil
-                }
+                stampReasoningDurationIfNeeded()
                 isStreaming = false
                 statusText = nil
                 streamingAssistantId = nil
+                pendingToolCalls = [:]
                 let hadTool = hasActiveToolAction
                 hasActiveToolAction = false
                 onStreamFinished?(hadTool)
@@ -298,24 +340,17 @@ final class AgentChatClient: NSObject, ObservableObject {
             if reasoningStartTime == nil {
                 reasoningStartTime = Date()
             }
-            statusText = "Thinking…"
+            // Clear tool status so the single Thinking loader can take over.
+            statusText = nil
             return
         }
         if type == "reasoning-end" {
-            statusText = nil
-            if let start = reasoningStartTime {
-                let elapsed = Date().timeIntervalSince(start)
-                if let id = streamingAssistantId,
-                   let idx = messages.firstIndex(where: { $0.id == id }) {
-                    messages[idx].reasoningDuration = elapsed
-                }
-                reasoningStartTime = nil
-            }
+            stampReasoningDurationIfNeeded()
             return
         }
         if type == "reasoning-delta" || (type.contains("reasoning") && type.contains("delta")) {
             if let delta = obj["delta"] as? String ?? obj["text"] as? String ?? obj["reasoningDelta"] as? String, !delta.isEmpty {
-                statusText = "Thinking…"
+                statusText = nil
                 appendAssistantReasoning(delta)
             }
             return
@@ -332,25 +367,63 @@ final class AgentChatClient: NSObject, ObservableObject {
 
         // 3. Tool events
         if type.starts(with: "tool-") || type.contains("tool") {
-            if let start = reasoningStartTime {
-                let elapsed = Date().timeIntervalSince(start)
-                if let id = streamingAssistantId,
-                   let idx = messages.firstIndex(where: { $0.id == id }) {
-                    if messages[idx].reasoningDuration == nil {
-                        messages[idx].reasoningDuration = elapsed
-                    }
-                }
-                reasoningStartTime = nil
-            }
+            stampReasoningDurationIfNeeded()
             hasActiveToolAction = true
-            let toolName = obj["toolName"] as? String ?? type.replacingOccurrences(of: "tool-", with: "")
+
+            let toolCallId = obj["toolCallId"] as? String
+            let rawName = obj["toolName"] as? String
+            let input = obj["input"] as? [String: Any] ?? obj["args"] as? [String: Any]
+
             if type.contains("start") || type.contains("input") {
-                statusText = Self.statusForTool(toolName)
-            } else if type.contains("output") || type.contains("available") {
-                let desc = Self.describeToolAction(name: toolName, input: obj["input"] as? [String: Any])
+                let toolName = Self.resolveToolName(rawName: rawName, eventType: type)
+                if let toolName {
+                    if let toolCallId {
+                        var pending = pendingToolCalls[toolCallId] ?? PendingToolCall(toolName: toolName, input: nil)
+                        pending.toolName = toolName
+                        if let input { pending.input = input }
+                        pendingToolCalls[toolCallId] = pending
+                    }
+                    statusText = Self.statusForTool(toolName)
+                } else {
+                    statusText = "Working on email actions…"
+                }
+            } else if type.contains("output") {
+                let pending = toolCallId.flatMap { pendingToolCalls[$0] }
+                let toolName = Self.resolveToolName(rawName: rawName ?? pending?.toolName, eventType: type)
+                    ?? pending?.toolName
+                let resolvedInput = input ?? pending?.input
+
+                guard let toolName, Self.isRealToolName(toolName) else { return }
+
+                if let toolCallId {
+                    pendingToolCalls.removeValue(forKey: toolCallId)
+                }
+
+                let desc = Self.describeToolAction(name: toolName, input: resolvedInput)
                 let id = UUID().uuidString
-                messages.append(ChatMessage(id: id, role: "assistant", text: desc, isToolAction: true, toolName: toolName))
-                streamingAssistantId = nil
+                let toolMessage = ChatMessage(
+                    id: id,
+                    role: "assistant",
+                    text: desc,
+                    isToolAction: true,
+                    toolName: toolName
+                )
+                // Insert before the streaming assistant bubble so live order
+                // matches reopened history: tools → thought → reply.
+                if let assistantId = streamingAssistantId,
+                   let idx = messages.firstIndex(where: { $0.id == assistantId }) {
+                    messages.insert(toolMessage, at: idx)
+                } else {
+                    messages.append(toolMessage)
+                }
+                // Tool finished — drop progress when nothing else is in flight.
+                // If other tools are still pending, keep a status row for those.
+                if pendingToolCalls.isEmpty {
+                    statusText = nil
+                } else if let remaining = pendingToolCalls.values.first {
+                    statusText = Self.statusForTool(remaining.toolName)
+                }
+                // Keep streamingAssistantId so later text/reasoning stay on one bubble.
             }
             return
         }
@@ -378,16 +451,7 @@ final class AgentChatClient: NSObject, ObservableObject {
     }
 
     private func appendAssistantText(_ text: String) {
-        if let start = reasoningStartTime {
-            let elapsed = Date().timeIntervalSince(start)
-            if let id = streamingAssistantId,
-               let idx = messages.firstIndex(where: { $0.id == id }) {
-                if messages[idx].reasoningDuration == nil {
-                    messages[idx].reasoningDuration = elapsed
-                }
-            }
-            reasoningStartTime = nil
-        }
+        stampReasoningDurationIfNeeded()
         if let id = streamingAssistantId,
            let idx = messages.firstIndex(where: { $0.id == id }) {
             messages[idx].text += text
@@ -398,10 +462,23 @@ final class AgentChatClient: NSObject, ObservableObject {
         }
     }
 
+    private func stampReasoningDurationIfNeeded() {
+        guard let start = reasoningStartTime else { return }
+        let elapsed = Date().timeIntervalSince(start)
+        if let id = streamingAssistantId,
+           let idx = messages.firstIndex(where: { $0.id == id }) {
+            if messages[idx].reasoningDuration == nil {
+                messages[idx].reasoningDuration = elapsed
+            }
+        }
+        reasoningStartTime = nil
+    }
+
     private func handleStreamError(_ errorMsg: String) {
         isStreaming = false
         statusText = nil
         streamingAssistantId = nil
+        pendingToolCalls = [:]
         let id = UUID().uuidString
         messages.append(ChatMessage(id: id, role: "assistant", text: errorMsg, isError: true))
     }
@@ -419,7 +496,7 @@ final class AgentChatClient: NSObject, ObservableObject {
         let parts = (dict["parts"] as? [[String: Any]]) ?? (dict["content"] as? [[String: Any]])
 
         if let parts {
-            for (index, part) in parts.enumerated() {
+            for part in parts {
                 let pType = part["type"] as? String ?? ""
 
                 if pType == "text" {
@@ -454,16 +531,22 @@ final class AgentChatClient: NSObject, ObservableObject {
                         }
                     }
 
-                    guard let toolName = tName, !toolName.isEmpty, toolName != "call", toolName != "result" else {
+                    guard let toolName = tName, isRealToolName(toolName) else {
                         continue
                     }
 
-                    // De-duplicate if the same tool call appears as both call and result
-                    let dedupeKey = callId ?? "\(index)-\(toolName)"
-                    if seenToolCallIds.contains(dedupeKey) {
+                    // De-duplicate call+result (and mixed shapes) within one assistant message.
+                    let nameKey = "name:\(toolName)"
+                    if let callId, seenToolCallIds.contains(callId) {
                         continue
                     }
-                    seenToolCallIds.insert(dedupeKey)
+                    if seenToolCallIds.contains(nameKey) {
+                        continue
+                    }
+                    if let callId {
+                        seenToolCallIds.insert(callId)
+                    }
+                    seenToolCallIds.insert(nameKey)
 
                     let input = (invocation?["args"] as? [String: Any])
                         ?? (invocation?["input"] as? [String: Any])
@@ -518,6 +601,33 @@ final class AgentChatClient: NSObject, ObservableObject {
 
     static func parseMessage(_ dict: [String: Any]) -> ChatMessage? {
         parseMessages(dict).last
+    }
+
+    /// Lifecycle suffixes from AI SDK stream event types — not real tool names.
+    private static let lifecycleToolNames: Set<String> = [
+        "call", "result", "invocation",
+        "input-start", "input-delta", "input-available",
+        "output-available", "output-error", "output-denied",
+        "start", "end", "delta", "available", "error",
+    ]
+
+    private static func isRealToolName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return !lifecycleToolNames.contains(trimmed)
+    }
+
+    private static func resolveToolName(rawName: String?, eventType: String) -> String? {
+        if let rawName, isRealToolName(rawName) {
+            return rawName
+        }
+        if eventType.starts(with: "tool-") {
+            let stripped = eventType.replacingOccurrences(of: "tool-", with: "")
+            if isRealToolName(stripped) {
+                return stripped
+            }
+        }
+        return nil
     }
 
     private static func statusForTool(_ name: String) -> String {
@@ -598,7 +708,9 @@ extension AgentChatClient: URLSessionWebSocketDelegate {
         didOpenWithProtocol protocol: String?
     ) {
         Task { @MainActor in
+            guard webSocketTask === self.webSocket else { return }
             self.isConnected = true
+            self.startPing()
         }
     }
 
@@ -609,7 +721,12 @@ extension AgentChatClient: URLSessionWebSocketDelegate {
         reason: Data?
     ) {
         Task { @MainActor in
+            guard webSocketTask === self.webSocket else { return }
             self.isConnected = false
+            self.stopPing()
+            if !self.isExplicitDisconnect {
+                self.attemptReconnect()
+            }
         }
     }
 }

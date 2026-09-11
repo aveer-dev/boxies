@@ -20,50 +20,64 @@ extension AppModel {
     func deleteEmail(_ email: Email, fromList: Bool = false) async {
         guard let mailboxId = selectedMailboxId else { return }
 
-        // 1. Instant local optimistic delete (<1ms)
-        DatabaseService.shared.deleteEmail(id: email.id)
-        DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "delete", payload: [:])
-        OutboxQueueWorker.shared.trigger()
+        scheduleUndoableAction(
+            optimistic: {
+                self.threadEmails.removeAll { $0.id == email.id }
+                self.emails.removeAll { $0.id == email.id }
 
-        threadEmails.removeAll { $0.id == email.id }
-        emails.removeAll { $0.id == email.id }
-
-        if threadEmails.isEmpty {
-            selectedEmail = nil
-        } else if selectedEmail?.id == email.id {
-            selectedEmail = threadEmails.last(where: { !$0.isDraft }) ?? threadEmails.last
-        }
-        if email.isUnread {
-            adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
-        }
+                if self.threadEmails.isEmpty {
+                    self.selectedEmail = nil
+                } else if self.selectedEmail?.id == email.id {
+                    self.selectedEmail = self.threadEmails.last(where: { !$0.isDraft }) ?? self.threadEmails.last
+                }
+                if email.isUnread {
+                    self.adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
+                }
+            },
+            commit: { @Sendable in
+                DatabaseService.shared.deleteEmail(id: email.id)
+                DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "delete", payload: [:])
+                OutboxQueueWorker.shared.trigger()
+            },
+            rollback: { @MainActor in
+                Task {
+                    await self.loadEmailsForCurrentTab(showLoading: false)
+                }
+            },
+            pendingMessage: "Deleting...",
+            completedMessage: "Deleted"
+        )
     }
 
     func archiveEmail(_ email: Email, fromList: Bool = false) async {
         guard let mailboxId = selectedMailboxId else { return }
-        let previousFolderId = archiveRestoreFolder(for: email)
 
-        // 1. Instant local optimistic move (<1ms)
-        DatabaseService.shared.moveEmail(id: email.id, toFolderId: "archive")
-        DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "move", payload: ["folderId": "archive"])
-        OutboxQueueWorker.shared.trigger()
+        scheduleUndoableAction(
+            optimistic: {
+                self.threadEmails.removeAll { $0.id == email.id }
+                self.emails.removeAll { $0.id == email.id }
 
-        threadEmails.removeAll { $0.id == email.id }
-        emails.removeAll { $0.id == email.id }
-
-        if threadEmails.isEmpty {
-            selectedEmail = nil
-        } else if selectedEmail?.id == email.id {
-            selectedEmail = threadEmails.last(where: { !$0.isDraft }) ?? threadEmails.last
-        }
-        if email.isUnread {
-            adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
-        }
-        presentArchiveUndo(
-            ArchiveUndoOffer(
-                emailId: email.id,
-                mailboxId: mailboxId,
-                previousFolderId: previousFolderId
-            )
+                if self.threadEmails.isEmpty {
+                    self.selectedEmail = nil
+                } else if self.selectedEmail?.id == email.id {
+                    self.selectedEmail = self.threadEmails.last(where: { !$0.isDraft }) ?? self.threadEmails.last
+                }
+                if email.isUnread {
+                    self.adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
+                }
+            },
+            commit: { @Sendable in
+                DatabaseService.shared.moveEmail(id: email.id, toFolderId: "archive")
+                DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "move", payload: ["folderId": "archive"])
+                OutboxQueueWorker.shared.trigger()
+            },
+            rollback: { @MainActor in
+                Task {
+                    await self.loadEmailsForCurrentTab(showLoading: false)
+                }
+            },
+            pendingMessage: "Archiving...",
+            completedMessage: "Archived"
         )
     }
 

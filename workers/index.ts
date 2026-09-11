@@ -399,10 +399,20 @@ app.get("/api/v1/mailboxes/:mailboxId/agent/conversations", async (c: AppContext
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/agent/conversations", async (c: AppContext) => {
-	const body = (await c.req.json().catch(() => ({}))) as { title?: string };
+	const body = (await c.req.json().catch(() => ({}))) as {
+		id?: string;
+		title?: string;
+		lastMessagePreview?: string | null;
+	};
+	const id = typeof body.id === "string" ? body.id.trim() : "";
+	if (id === AUTO_CONVERSATION_ID) {
+		return c.json({ error: "Reserved conversation id" }, 400);
+	}
 	const stub = c.var.mailboxStub as any;
 	const conversation = await stub.createAgentConversation({
+		id: id || undefined,
 		title: body.title,
+		lastMessagePreview: body.lastMessagePreview,
 	});
 	return c.json(conversation, 201);
 });

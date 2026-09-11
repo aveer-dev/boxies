@@ -171,6 +171,7 @@ struct ConversationsListView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(AppModel.self) private var app
     var bottomInset: CGFloat = HomeChromeMetrics.listBottomInset(hasMinimizedCompose: false)
+    var onNewChat: (() -> Void)? = nil
     let onOpen: (AgentConversation) -> Void
 
     @State private var conversationToRename: AgentConversation?
@@ -190,11 +191,7 @@ struct ConversationsListView: View {
         List {
             Section {
                 Button {
-                    Task {
-                        if let created = await app.createConversation() {
-                            onOpen(created)
-                        }
-                    }
+                    onNewChat?()
                 } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "plus")
@@ -285,7 +282,7 @@ struct ConversationsListView: View {
         }
         .task {
             await app.refreshConversations()
-            await backfillUntitledConversations()
+            await app.pruneEmptyConversations(authToken: auth.token)
         }
     }
 
@@ -316,24 +313,6 @@ struct ConversationsListView: View {
             }
         }
     }
-
-    private func backfillUntitledConversations() async {
-        guard let mailboxId = app.selectedMailboxId else { return }
-        let untitled = userConversations.filter { $0.title == "New chat" }
-        for conv in untitled.prefix(8) {
-            let msgs = await AgentChatClient.fetchMessages(
-                mailboxId: mailboxId,
-                conversationId: conv.id,
-                authToken: auth.token
-            )
-            if let firstUser = msgs.first(where: { $0.role == "user" && !$0.text.isEmpty }) {
-                let derived = ConversationTitleHelper.deriveTitle(from: firstUser.text)
-                let lastText = msgs.last?.text ?? firstUser.text
-                let preview = String(lastText.prefix(120))
-                await app.updateConversation(id: conv.id, title: derived, lastMessagePreview: preview)
-            }
-        }
-    }
 }
 
 struct ChatConversationsModalListView: View {
@@ -342,7 +321,6 @@ struct ChatConversationsModalListView: View {
 
     let onSelect: (AgentConversation) -> Void
     let onNewChat: () -> Void
-    let onClose: () -> Void
 
     @State private var conversationToRename: AgentConversation?
     @State private var renameText = ""
@@ -440,22 +418,20 @@ struct ChatConversationsModalListView: View {
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
-        .background(DetailNavigationTitleFont())
+        .background(NavigationBarTitleFont(
+            largeTitleSize: 26,
+            inlineTitleSize: 26,
+            largeTitleWeight: .bold,
+            inlineTitleWeight: .bold
+        ))
         .refreshable { await app.refreshConversations() }
         .navigationTitle("Chats")
-        .navigationBarTitleDisplayMode(.large)
+        .toolbarTitleDisplayMode(.inlineLarge)
+        .toolbarRole(.editor)
         .navigationBarBackButtonHidden(true)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .background(alignment: .top) { ProgressiveBlurBackground() }
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    onClose()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.inter(size: 15, weight: .semibold))
-                        .foregroundStyle(AppTheme.ink)
-                }
-                .accessibilityLabel("Close")
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     onNewChat()
@@ -481,7 +457,7 @@ struct ChatConversationsModalListView: View {
         }
         .task {
             await app.refreshConversations()
-            await backfillUntitledConversations()
+            await app.pruneEmptyConversations(authToken: auth.token)
         }
     }
 
@@ -493,30 +469,13 @@ struct ChatConversationsModalListView: View {
             }
         }
     }
-
-    private func backfillUntitledConversations() async {
-        guard let mailboxId = app.selectedMailboxId else { return }
-        let untitled = userConversations.filter { $0.title == "New chat" }
-        for conv in untitled.prefix(8) {
-            let msgs = await AgentChatClient.fetchMessages(
-                mailboxId: mailboxId,
-                conversationId: conv.id,
-                authToken: auth.token
-            )
-            if let firstUser = msgs.first(where: { $0.role == "user" && !$0.text.isEmpty }) {
-                let derived = ConversationTitleHelper.deriveTitle(from: firstUser.text)
-                let lastText = msgs.last?.text ?? firstUser.text
-                let preview = String(lastText.prefix(120))
-                await app.updateConversation(id: conv.id, title: derived, lastMessagePreview: preview)
-            }
-        }
-    }
 }
 
 struct ChatConversationDetailView: View {
     let conversationId: String
     var seedPrompt: String?
     var onSeedConsumed: (() -> Void)?
+    let onBack: () -> Void
     let onNewChat: () -> Void
     let onClose: () -> Void
 
@@ -542,8 +501,24 @@ struct ChatConversationDetailView: View {
         app.conversations.first(where: { $0.id == conversationId })?.title ?? "Ask AI"
     }
 
+    private var isKnownConversation: Bool {
+        app.conversations.contains(where: { $0.id == conversationId })
+    }
+
+    /// Existing chats wait for history so a fast send cannot replace the transcript.
+    /// New chats only wait for the socket so suggested prompts actually send.
+    private var isWaitingForHistory: Bool {
+        chat.messages.isEmpty
+            && isKnownConversation
+            && (chat.isLoadingHistory || chat.historyError != nil)
+    }
+
+    private var isChatReady: Bool {
+        chat.isConnected && !isWaitingForHistory
+    }
+
     private var isSendDisabled: Bool {
-        draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || chat.isStreaming
+        draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || chat.isStreaming || !isChatReady
     }
 
     var body: some View {
@@ -562,9 +537,20 @@ struct ChatConversationDetailView: View {
                 .padding(.bottom, 10)
         }
         .background(AppTheme.background)
+        .background(alignment: .top) { ProgressiveBlurBackground() }
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarRole(.editor)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(action: onBack) {
+                    Image(systemName: "text.menu")
+                        .font(.inter(size: 16, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                }
+                .accessibilityLabel("Chats")
+            }
             ToolbarItem(placement: .principal) {
                 HStack {
                     Text(currentTitle)
@@ -590,6 +576,11 @@ struct ChatConversationDetailView: View {
                     }
                     Button(role: .destructive) {
                         chat.clearHistory()
+                        if isKnownConversation {
+                            Task {
+                                await app.updateConversation(id: conversationId, lastMessagePreview: "")
+                            }
+                        }
                     } label: {
                         Label("Clear this chat", systemImage: "trash")
                     }
@@ -599,17 +590,6 @@ struct ChatConversationDetailView: View {
                         .foregroundStyle(AppTheme.ink)
                 }
                 .accessibilityLabel("Options")
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    onClose()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.inter(size: 15, weight: .semibold))
-                        .foregroundStyle(AppTheme.ink)
-                }
-                .accessibilityLabel("Close")
             }
         }
         .sheet(item: $selectedReasoningMessage) { msg in
@@ -635,12 +615,20 @@ struct ChatConversationDetailView: View {
                 let trimmed = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty {
                     Task {
-                        await app.updateConversation(id: conversationId, title: trimmed)
+                        let isSaved = app.conversations.contains(where: { $0.id == conversationId })
+                        if isSaved {
+                            await app.updateConversation(id: conversationId, title: trimmed)
+                        } else {
+                            await app.createConversation(id: conversationId, title: trimmed)
+                            await MainActor.run {
+                                app.activeConversationId = conversationId
+                            }
+                        }
                     }
                 }
             }
         }
-        .task {
+        .task(id: conversationId) {
             chat.onStreamFinished = { hasToolActions in
                 if hasToolActions {
                     Task { @MainActor in
@@ -682,6 +670,13 @@ struct ChatConversationDetailView: View {
                 onSeedConsumed?()
             }
         }
+        .onChange(of: conversationId) { _, _ in
+            draft = ""
+            showRenameAlert = false
+            renameText = ""
+            selectedReasoningMessage = nil
+            activeSearchQuery = nil
+        }
         .onDisappear {
             isInputFocused = false
             chat.disconnect()
@@ -691,20 +686,26 @@ struct ChatConversationDetailView: View {
     private var messagesList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    if chat.isLoadingHistory {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                                .padding(.vertical, 24)
-                            Spacer()
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if chat.messages.isEmpty {
+                        if let historyError = chat.historyError {
+                            historyErrorView(historyError)
+                        } else if isChatReady {
+                            emptyStateView
+                        } else {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                    .padding(.vertical, 24)
+                                Spacer()
+                            }
                         }
-                    } else if chat.messages.isEmpty {
-                        emptyStateView
                     } else {
-                        ForEach(chat.messages) { message in
+                        ForEach(Array(chat.messages.enumerated()), id: \.element.id) { index, message in
                             ChatBubble(
                                 message: message,
+                                isStreaming: chat.isStreaming,
+                                hasActiveToolStatus: chat.statusText != nil,
                                 onOpenReasoning: {
                                     selectedReasoningMessage = message
                                 },
@@ -722,21 +723,39 @@ struct ChatConversationDetailView: View {
                                     sendMessage(prompt)
                                 }
                             )
+                            .padding(.top, index == 0 ? 0 : spacingBefore(messageAt: index))
                             .id(message.id)
                         }
                     }
 
+                    // Tool progress (only when a tool is running). Spinner on the right
+                    // to match ThinkingGhostButton — never a second "Thinking…" row.
                     if let status = chat.statusText {
-                        HStack(spacing: 6) {
-                            ProgressView()
-                                .controlSize(.mini)
+                        HStack(spacing: 5) {
                             Text(status)
-                                .font(.inter(size: AppTheme.Chat.toolAction, weight: .regular))
+                                .font(.inter(size: AppTheme.Chat.meta, weight: .medium))
                                 .tracking(AppTheme.Chat.tracking)
                                 .foregroundStyle(AppTheme.muted)
+                            ProgressView()
+                                .controlSize(.mini)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 3)
+                        .padding(.top, chat.messages.isEmpty ? 0 : 4)
+                        .id("status_indicator")
+                    } else if showsFallbackThinking {
+                        // Single Thinking loader before reasoning tokens arrive.
+                        HStack(spacing: 5) {
+                            Text("Thinking…")
+                                .font(.inter(size: AppTheme.Chat.meta, weight: .medium))
+                                .tracking(AppTheme.Chat.tracking)
+                                .foregroundStyle(AppTheme.muted)
+                            ProgressView()
+                                .controlSize(.mini)
+                        }
+                        .padding(.horizontal, 2)
+                        .padding(.vertical, 3)
+                        .padding(.top, chat.messages.isEmpty ? 0 : 8)
                         .id("status_indicator")
                     }
                 }
@@ -762,7 +781,74 @@ struct ChatConversationDetailView: View {
                     withAnimation { proxy.scrollTo("status_indicator", anchor: .bottom) }
                 }
             }
+            .onChange(of: chat.isStreaming) { _, streaming in
+                if streaming, chat.statusText == nil {
+                    withAnimation { proxy.scrollTo("status_indicator", anchor: .bottom) }
+                }
+            }
         }
+    }
+
+    /// Compact chrome (tool / thinking) vs normal turn spacing.
+    private func spacingBefore(messageAt index: Int) -> CGFloat {
+        let messages = chat.messages
+        guard index > 0, index < messages.count else { return 12 }
+        let previous = messages[index - 1]
+        let current = messages[index]
+
+        let previousIsChrome = previous.isToolAction || isReasoningChrome(previous)
+        let currentIsChrome = current.isToolAction || isReasoningChrome(current)
+        let currentIsReply = !current.isToolAction && !current.isError && current.role != "user"
+            && (!current.text.isEmpty || current.reasoning != nil)
+
+        if previousIsChrome && currentIsChrome {
+            return 4
+        }
+        if previousIsChrome && currentIsReply {
+            return 8
+        }
+        return 12
+    }
+
+    private func isReasoningChrome(_ message: ChatMessage) -> Bool {
+        guard message.role != "user", !message.isToolAction, !message.isError else { return false }
+        // Reasoning-only bubble (no reply text yet) counts as chrome.
+        return message.reasoning != nil && !message.reasoning!.isEmpty && message.text.isEmpty
+    }
+
+    /// True when streaming with no tool row and no in-bubble Thinking loader yet.
+    private var showsFallbackThinking: Bool {
+        guard chat.isStreaming, chat.statusText == nil else { return false }
+        return !chat.messages.contains { message in
+            !message.isToolAction
+                && !message.isError
+                && message.role != "user"
+                && message.text.isEmpty
+                && !(message.reasoning ?? "").isEmpty
+        }
+    }
+
+    private func historyErrorView(_ message: String) -> some View {
+        VStack(spacing: 12) {
+            Text(message)
+                .font(.inter(size: 15, weight: .medium))
+                .foregroundStyle(AppTheme.ink)
+                .multilineTextAlignment(.center)
+            Button("Try again") {
+                guard let mailboxId = app.selectedMailboxId else { return }
+                Task {
+                    await chat.loadInitialMessages(
+                        mailboxId: mailboxId,
+                        conversationId: conversationId,
+                        authToken: auth.token
+                    )
+                }
+            }
+            .font(.inter(size: AppTheme.Chat.prompt, weight: .medium))
+            .foregroundStyle(AppTheme.accent)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
     }
 
     private var emptyStateView: some View {
@@ -854,6 +940,7 @@ struct ChatConversationDetailView: View {
 
     private var sendButton: some View {
         Button {
+            guard !isSendDisabled else { return }
             let text = draft
             draft = ""
             isInputFocused = false
@@ -874,97 +961,178 @@ struct ChatConversationDetailView: View {
 
     private func sendMessage(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, isChatReady, !chat.isStreaming else { return }
 
         chat.sendUserMessage(trimmed)
+        app.activeConversationId = conversationId
 
-        let conv = app.conversations.first(where: { $0.id == conversationId })
-        let isDefaultTitle = conv == nil || conv?.title == "New chat" || conv?.title == "Ask AI" || conv?.title.isEmpty == true
-
-        if isDefaultTitle {
+        let isSaved = app.conversations.contains(where: { $0.id == conversationId })
+        if !isSaved {
             let derived = ConversationTitleHelper.deriveTitle(from: trimmed)
+            app.notePendingConversation(id: conversationId, title: derived, lastMessagePreview: trimmed)
             Task {
-                await app.updateConversation(id: conversationId, title: derived, lastMessagePreview: trimmed)
+                await app.createConversation(id: conversationId, title: derived, lastMessagePreview: trimmed)
             }
         } else {
-            Task {
-                await app.updateConversation(id: conversationId, lastMessagePreview: trimmed)
+            let conv = app.conversations.first(where: { $0.id == conversationId })
+            let isDefaultTitle = conv == nil || conv?.title == "New chat" || conv?.title == "Ask AI" || conv?.title.isEmpty == true
+
+            if isDefaultTitle {
+                let derived = ConversationTitleHelper.deriveTitle(from: trimmed)
+                Task {
+                    await app.updateConversation(id: conversationId, title: derived, lastMessagePreview: trimmed)
+                }
+            } else {
+                Task {
+                    await app.updateConversation(id: conversationId, lastMessagePreview: trimmed)
+                }
             }
         }
     }
 }
 
+private enum ChatSheetRoute: Hashable {
+    case conversation
+}
+
 struct ChatSheetView: View {
-    @Environment(AuthStore.self) private var auth
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     var seedPrompt: String?
     var initialConversationId: String?
+    var forceNewChat: Bool = false
+    var onClose: (() -> Void)? = nil
 
-    @State private var navigationPath: [String]
     @State private var pendingSeedPrompt: String?
+    @State private var visibleSession: ChatSession = .list
+    @State private var path: [ChatSheetRoute]
 
-    init(seedPrompt: String? = nil, initialConversationId: String? = nil) {
+    init(
+        seedPrompt: String? = nil,
+        initialConversationId: String? = nil,
+        forceNewChat: Bool = false,
+        onClose: (() -> Void)? = nil
+    ) {
         self.seedPrompt = seedPrompt
         self.initialConversationId = initialConversationId
+        self.forceNewChat = forceNewChat
+        self.onClose = onClose
         self._pendingSeedPrompt = State(initialValue: seedPrompt)
+        let startsOnConversation = initialConversationId != nil
+            || forceNewChat
+            || (seedPrompt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+        self._path = State(initialValue: startsOnConversation ? [.conversation] : [])
         if let initialConversationId {
-            self._navigationPath = State(initialValue: [initialConversationId])
+            self._visibleSession = State(initialValue: .conversation(initialConversationId))
+        }
+    }
+
+    private func handleClose() {
+        if let onClose {
+            onClose()
         } else {
-            self._navigationPath = State(initialValue: [])
+            dismiss()
         }
     }
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
-            ChatConversationsModalListView(
-                onSelect: { conversation in
-                    navigationPath = [conversation.id]
-                },
-                onNewChat: {
-                    Task {
-                        if let created = await app.createConversation(title: "New chat") {
-                            navigationPath = [created.id]
+        NavigationStack(path: $path) {
+            chatsList
+                .navigationDestination(for: ChatSheetRoute.self) { route in
+                    switch route {
+                    case .conversation:
+                        if let conversationId = displayedSession.conversationId ?? visibleSession.conversationId {
+                            ChatConversationDetailView(
+                                conversationId: conversationId,
+                                seedPrompt: pendingSeedPrompt,
+                                onSeedConsumed: {
+                                    pendingSeedPrompt = nil
+                                },
+                                onBack: {
+                                    path = []
+                                    app.showChatList()
+                                },
+                                onNewChat: {
+                                    pendingSeedPrompt = nil
+                                    app.startNewChat()
+                                },
+                                onClose: handleClose
+                            )
                         }
                     }
-                },
-                onClose: {
-                    dismiss()
                 }
-            )
-            .navigationDestination(for: String.self) { conversationId in
-                ChatConversationDetailView(
-                    conversationId: conversationId,
-                    seedPrompt: pendingSeedPrompt,
-                    onSeedConsumed: {
-                        pendingSeedPrompt = nil
-                    },
-                    onNewChat: {
-                        Task {
-                            if let created = await app.createConversation(title: "New chat") {
-                                navigationPath = [created.id]
-                            }
-                        }
-                    },
-                    onClose: {
-                        dismiss()
-                    }
-                )
-            }
+        }
+        .onAppear {
+            rememberVisibleSession(app.chatSession)
+            resolveOpeningConversation()
+            syncPath(from: displayedSession)
         }
         .task {
-            if navigationPath.isEmpty {
-                if let seed = seedPrompt, !seed.isEmpty {
-                    let title = ConversationTitleHelper.deriveTitle(from: seed)
-                    if let created = await app.createConversation(title: title) {
-                        navigationPath = [created.id]
-                    }
-                } else if let initialConversationId {
-                    navigationPath = [initialConversationId]
-                }
+            resolveOpeningConversation()
+            syncPath(from: displayedSession)
+        }
+        .onChange(of: app.chatSession) { _, newSession in
+            rememberVisibleSession(newSession)
+            syncPath(from: displayedSession)
+        }
+        .onChange(of: path) { _, newPath in
+            if newPath.isEmpty, app.chatSession.conversationId != nil {
+                app.showChatList()
             }
         }
+    }
+
+    private var chatsList: some View {
+        ChatConversationsModalListView(
+            onSelect: { conversation in
+                pendingSeedPrompt = nil
+                app.openChatSession(existingId: conversation.id)
+                path = [.conversation]
+            },
+            onNewChat: {
+                pendingSeedPrompt = nil
+                app.startNewChat()
+                path = [.conversation]
+            }
+        )
+    }
+
+    private var displayedSession: ChatSession {
+        app.chatSession == .dismissed ? visibleSession : app.chatSession
+    }
+
+    private func rememberVisibleSession(_ session: ChatSession) {
+        if session != .dismissed {
+            visibleSession = session
+        }
+    }
+
+    private func syncPath(from session: ChatSession) {
+        let newPath: [ChatSheetRoute] = session.conversationId != nil ? [.conversation] : []
+        guard path != newPath else { return }
+        path = newPath
+    }
+
+    /// Parent (Ask AI / New chat / Search) chooses the session before presenting.
+    /// If SwiftUI remounts the sheet while dismissed, reopen the same way Ask AI would.
+    private func resolveOpeningConversation() {
+        guard case .dismissed = app.chatSession else { return }
+
+        if let initialConversationId {
+            app.openChatSession(existingId: initialConversationId)
+            return
+        }
+        if forceNewChat {
+            app.startNewChat()
+            return
+        }
+        let hasSeed = pendingSeedPrompt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        if hasSeed {
+            app.startNewChat()
+            return
+        }
+        app.openChatSession(resumeActive: true)
     }
 }
 
@@ -1052,10 +1220,18 @@ private struct ReasoningModalView: View {
 
 private struct ChatBubble: View {
     let message: ChatMessage
+    var isStreaming: Bool = false
+    /// When a tool progress row is visible, suppress the in-bubble Thinking spinner
+    /// so we don't show two loaders — unless that concurrent tool status is intended.
+    var hasActiveToolStatus: Bool = false
     let onOpenReasoning: () -> Void
     var onCompose: ((MailAddress) -> Void)? = nil
     var onSearch: ((String) -> Void)? = nil
     var onAskAI: ((String) -> Void)? = nil
+
+    private var isLiveThinking: Bool {
+        isStreaming && message.text.isEmpty && !hasActiveToolStatus
+    }
 
     var body: some View {
         HStack(alignment: .top) {
@@ -1063,11 +1239,11 @@ private struct ChatBubble: View {
 
             if message.isToolAction {
                 Text(message.text)
-                    .font(.inter(size: AppTheme.Chat.toolAction, weight: .medium))
+                    .font(.inter(size: AppTheme.Chat.meta, weight: .medium))
                     .tracking(AppTheme.Chat.tracking)
-                    .foregroundStyle(AppTheme.ink)
+                    .foregroundStyle(AppTheme.muted)
                     .padding(.trailing, 14)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 2)
             } else if message.isError {
                 Text(message.text)
                     .font(.inter(size: AppTheme.Chat.toolAction, weight: .regular))
@@ -1090,11 +1266,11 @@ private struct ChatBubble: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .textSelection(.enabled)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let reasoning = message.reasoning, !reasoning.isEmpty {
                         ThinkingGhostButton(
                             message: message,
-                            isLiveThinking: message.text.isEmpty,
+                            isLiveThinking: isLiveThinking,
                             onTap: onOpenReasoning
                         )
                     }

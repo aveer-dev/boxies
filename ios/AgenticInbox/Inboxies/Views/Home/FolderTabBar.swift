@@ -15,8 +15,8 @@ struct FolderTabBar: UIViewRepresentable {
         let tabBar = UITabBar()
         tabBar.delegate = context.coordinator
         tabBar.isTranslucent = false
-        tabBar.tintColor = UIColor(AppTheme.ink)
-        tabBar.unselectedItemTintColor = UIColor(AppTheme.muted)
+        tabBar.tintColor = AppTheme.uiInk
+        tabBar.unselectedItemTintColor = AppTheme.uiMuted
         tabBar.applySurfaceAppearance()
         tabBar.items = Self.makeItems(from: tabs)
         syncSelection(on: tabBar)
@@ -42,8 +42,8 @@ struct FolderTabBar: UIViewRepresentable {
     private static func makeItems(from tabs: [HomeTab]) -> [UITabBarItem] {
         tabs.enumerated().map { index, tab in
             UITabBarItem(
-                title: tab.title,
-                image: UIImage(systemName: tab.systemImage, withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .regular)),
+                title: nil,
+                image: UIImage(systemName: tab.systemImage, withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)),
                 tag: index
             )
         }
@@ -69,27 +69,27 @@ private extension UITabBar {
     func applySurfaceAppearance() {
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(AppTheme.surface)
+        appearance.backgroundColor = AppTheme.uiSurface
         appearance.shadowColor = UIColor.black.withAlphaComponent(0.08)
         appearance.shadowImage = nil
 
         let titleFont = UIFont.inter(size: HomeChromeMetrics.tabLabelPointSize, weight: .medium)
         let selectedTitleFont = UIFont.inter(size: HomeChromeMetrics.tabLabelPointSize, weight: .semibold)
         let normalAttributes: [NSAttributedString.Key: Any] = [
-            .foregroundColor: UIColor(AppTheme.muted),
+            .foregroundColor: AppTheme.uiMuted,
             .font: titleFont
         ]
         let selectedAttributes: [NSAttributedString.Key: Any] = [
-            .foregroundColor: UIColor(AppTheme.ink),
+            .foregroundColor: AppTheme.uiInk,
             .font: selectedTitleFont
         ]
 
         [appearance.stackedLayoutAppearance,
          appearance.inlineLayoutAppearance,
          appearance.compactInlineLayoutAppearance].forEach { layout in
-            layout.normal.iconColor = UIColor(AppTheme.muted)
+            layout.normal.iconColor = AppTheme.uiMuted
             layout.normal.titleTextAttributes = normalAttributes
-            layout.selected.iconColor = UIColor(AppTheme.ink)
+            layout.selected.iconColor = AppTheme.uiInk
             layout.selected.titleTextAttributes = selectedAttributes
         }
 

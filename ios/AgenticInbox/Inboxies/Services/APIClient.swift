@@ -139,6 +139,14 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes")
     }
 
+    func createMailbox(name: String, email: String) async throws -> Mailbox {
+        try await request(
+            path: "/api/v1/mailboxes",
+            method: "POST",
+            body: ["name": name, "email": email]
+        )
+    }
+
     func getMailbox(mailboxId: String) async throws -> Mailbox {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)")
     }
@@ -150,6 +158,13 @@ final class APIClient: @unchecked Sendable {
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)",
             method: "PUT",
             body: ["settings": settingsObject]
+        )
+    }
+
+    func deleteMailbox(mailboxId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)",
+            method: "DELETE"
         )
     }
 
@@ -266,9 +281,11 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/agent/conversations")
     }
 
-    func createConversation(mailboxId: String, title: String? = nil) async throws -> AgentConversation {
+    func createConversation(mailboxId: String, id: String? = nil, title: String? = nil, lastMessagePreview: String? = nil) async throws -> AgentConversation {
         var body: [String: Any] = [:]
+        if let id { body["id"] = id }
         if let title { body["title"] = title }
+        if let lastMessagePreview { body["lastMessagePreview"] = lastMessagePreview }
         return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/agent/conversations",
             method: "POST",

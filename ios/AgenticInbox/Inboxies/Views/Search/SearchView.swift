@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Notion-like search screen: floating bottom search field + result rows.
 struct SearchView: View {
@@ -12,6 +13,8 @@ struct SearchView: View {
     @State private var isSearching = false
     @State private var errorMessage: String?
     @State private var showChat = false
+    @State private var keyboardOverlap: CGFloat = 0
+    @State private var safeBottom: CGFloat = 0
     @FocusState private var focused: Bool
 
     init(initialQuery: String = "") {
@@ -25,6 +28,13 @@ struct SearchView: View {
 
     private var hasResults: Bool {
         !results.isEmpty
+    }
+
+    /// Keyboard lift that does not change the sheet's layout bounds.
+    /// Zoom snapshots the container; a safe-area change mid-dismiss rebuilds that
+    /// snapshot and is the 2-frame snap back to the full search chrome.
+    private var keyboardLift: CGFloat {
+        max(0, keyboardOverlap - safeBottom)
     }
 
     var body: some View {
@@ -80,19 +90,39 @@ struct SearchView: View {
 
             searchBar
                 .padding(.horizontal, 12)
-                .padding(.bottom, 10)
+                .padding(.bottom, 10 + keyboardLift)
         }
-        .onAppear { focused = initialQuery.isEmpty }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.keyboard)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.safeAreaInsets.bottom
+        } action: { safeBottom = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            updateKeyboardOverlap(from: notification)
+        }
+        .scrollDismissesKeyboard(.immediately)
+        .task {
+            guard initialQuery.isEmpty else { return }
+            try? await Task.sleep(for: .milliseconds(450))
+            focused = true
+        }
         .task(id: query) {
             await runSearch()
         }
-        .fullScreenCover(isPresented: $showChat) {
-            ChatSheetView(seedPrompt: trimmedQuery)
+        .fullScreenCover(isPresented: $showChat, onDismiss: {
+            app.dismissChatSession()
+        }) {
+            ChatSheetView(
+                seedPrompt: trimmedQuery,
+                initialConversationId: app.chatSession.conversationId,
+                forceNewChat: true
+            )
         }
     }
 
     private var askAIButton: some View {
         Button {
+            app.openChatSession(forceNew: true)
             showChat = true
         } label: {
             HStack(spacing: 10) {
@@ -149,6 +179,7 @@ struct SearchView: View {
 
     private var cancelButton: some View {
         Button {
+            focused = false
             dismiss()
         } label: {
             Image(systemName: "xmark")
@@ -161,6 +192,18 @@ struct SearchView: View {
         .buttonStyle(.plain)
         .liquidGlass(in: Capsule())
         .accessibilityLabel("Cancel")
+    }
+
+    private func updateKeyboardOverlap(from notification: Notification) {
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return
+        }
+        let overlap = max(0, UIScreen.main.bounds.height - frame.origin.y)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            keyboardOverlap = overlap
+        }
     }
 
     private func runSearch() async {

@@ -11,6 +11,12 @@ final class AppModel {
     var selectedTab: HomeTab = .inbox
     var emails: [Email] = []
     var conversations: [AgentConversation] = []
+    /// The chat Ask AI should resume. Empty drafts are never stored here; it is set on the first message.
+    var activeConversationId: String?
+    /// Current chat sheet screen. Stored here so sheet remounts keep the same conversation.
+    var chatSession: ChatSession = .dismissed
+    /// Client ids waiting for the server registry to catch up. Refresh must not drop these.
+    private var pendingConversationIds: Set<String> = []
     /// True until the first mailbox identity is available (top bar skeleton).
     var isMailboxLoading = true
     /// True while the current folder's email list is fetching with no cached data.
@@ -24,12 +30,18 @@ final class AppModel {
     var selectedEmail: Email?
     var threadEmails: [Email] = []
     var composeSession: ComposeSession?
-    /// Transient archive undo affordance (Mail-style toast + system UndoManager).
-    var archiveUndo: ArchiveUndoOffer?
-    private var archiveUndoDismissTask: Task<Void, Never>?
-
     var toast: AppToast?
     private var toastDismissTask: Task<Void, Never>?
+    
+    struct UndoableAction: Identifiable {
+        let id = UUID()
+        let message: String
+        let execute: @Sendable () async -> Void
+        let rollback: @MainActor () -> Void
+    }
+    
+    var pendingUndoAction: UndoableAction?
+    private var pendingUndoTask: Task<Void, Never>?
 
     private let db = DatabaseService.shared
     private let syncService = MailboxSyncService.shared
@@ -166,12 +178,30 @@ final class AppModel {
             }
         } catch {
             errorMessage = error.localizedDescription
-            isMailboxLoading = false
             isLoading = false
+            isMailboxLoading = false
+        }
+    }
+
+    func createMailbox(name: String, email: String) async {
+        do {
+            let _ = try await APIClient.shared.createMailbox(name: name, email: email)
+            await refreshMailboxes(showLoading: true)
+            showToast("Mailbox created")
+        } catch {
+            showToast("Failed to create mailbox: \(error.localizedDescription)", isError: true)
         }
     }
 
     func loadMailbox(_ id: String) async {
+        if selectedMailboxId != id {
+            activeConversationId = nil
+            pendingConversationIds.removeAll()
+            conversations = []
+            if chatSession != .dismissed {
+                chatSession = .dismissed
+            }
+        }
         selectedMailboxId = id
         setupRealTimeStream()
 
@@ -201,12 +231,38 @@ final class AppModel {
             async let foldersTask = syncService.syncMailbox(mailboxId: id)
             async let conversationsTask = APIClient.shared.listConversations(mailboxId: id)
             folders = try await foldersTask
-            conversations = (try? await conversationsTask) ?? conversations
+            if let server = try? await conversationsTask {
+                conversations = Self.visibleConversations(server)
+                dropStaleActiveConversation()
+            }
             await loadEmailsForCurrentTab(showLoading: emails.isEmpty)
         } catch {
             errorMessage = error.localizedDescription
             isMailboxLoading = false
             isLoading = false
+        }
+    }
+
+    func deleteMailbox(id: String) async {
+        do {
+            try await APIClient.shared.deleteMailbox(mailboxId: id)
+            db.deleteMailbox(id: id)
+            mailboxes.removeAll(where: { $0.id == id })
+            if mailboxes.isEmpty {
+                selectedMailboxId = nil
+                emails = []
+                folders = []
+                conversations = []
+                activeConversationId = nil
+                pendingConversationIds.removeAll()
+                chatSession = .dismissed
+            } else {
+                if selectedMailboxId == id {
+                    await loadMailbox(mailboxes[0].id)
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -556,47 +612,72 @@ final class AppModel {
     }
 
 
-    func undoArchive(_ offer: ArchiveUndoOffer) async {
-        guard archiveUndo?.id == offer.id else { return }
-        clearArchiveUndo()
-        do {
-            try await APIClient.shared.moveEmail(
-                mailboxId: offer.mailboxId,
-                id: offer.emailId,
-                folderId: offer.previousFolderId
-            )
-            await loadEmailsForCurrentTab()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func clearArchiveUndo() {
-        archiveUndoDismissTask?.cancel()
-        archiveUndoDismissTask = nil
-        archiveUndo = nil
-    }
-
-    func presentArchiveUndo(_ offer: ArchiveUndoOffer) {
-        archiveUndoDismissTask?.cancel()
-        archiveUndo = offer
-        archiveUndoDismissTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard !Task.isCancelled, archiveUndo?.id == offer.id else { return }
-            archiveUndo = nil
-            archiveUndoDismissTask = nil
-        }
-    }
-
-    func showToast(_ message: String, isError: Bool = false) {
+    func showToast(_ message: String, isError: Bool = false, isLoading: Bool = false, isUndo: Bool = false, duration: TimeInterval = 2.5) {
         toastDismissTask?.cancel()
-        toast = AppToast(message: message, isError: isError)
-        toastDismissTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled else { return }
-            toast = nil
-            toastDismissTask = nil
+        toast = AppToast(message: message, isError: isError, isLoading: isLoading, isUndo: isUndo)
+        if duration > 0 {
+            toastDismissTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(duration))
+                guard !Task.isCancelled else { return }
+                toast = nil
+                toastDismissTask = nil
+            }
         }
+    }
+    
+    func hideToast() {
+        toastDismissTask?.cancel()
+        toast = nil
+        toastDismissTask = nil
+    }
+
+    func scheduleUndoableAction(
+        optimistic: @MainActor () -> Void,
+        commit: @escaping @Sendable () async -> Void,
+        rollback: @escaping @MainActor () -> Void,
+        pendingMessage: String?,
+        completedMessage: String
+    ) {
+        optimistic()
+        commitPendingActionImmediately()
+        
+        let action = UndoableAction(message: completedMessage, execute: commit, rollback: rollback)
+        let actionID = action.id
+        self.pendingUndoAction = action
+        
+        pendingUndoTask = Task { @MainActor in
+            if let pendingMessage {
+                self.showToast(pendingMessage, isLoading: true, duration: 1.0)
+                try? await Task.sleep(for: .seconds(1))
+            }
+            guard !Task.isCancelled, self.pendingUndoAction?.id == actionID else { return }
+            
+            self.showToast(completedMessage, isUndo: true, duration: 5.0)
+            
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, self.pendingUndoAction?.id == actionID else { return }
+            
+            self.commitPendingActionImmediately()
+        }
+    }
+    
+    func commitPendingActionImmediately() {
+        pendingUndoTask?.cancel()
+        if let action = pendingUndoAction {
+            let execute = action.execute
+            Task { await execute() }
+        }
+        pendingUndoAction = nil
+    }
+    
+    func undoPendingAction() {
+        pendingUndoTask?.cancel()
+        if let action = pendingUndoAction {
+            let rollback = action.rollback
+            rollback()
+        }
+        pendingUndoAction = nil
+        hideToast()
     }
 
     func archiveRestoreFolder(for email: Email) -> String {
@@ -679,22 +760,109 @@ final class AppModel {
         composeSession = nil
     }
 
-    func createConversation(title: String? = nil) async -> AgentConversation? {
+    func openChatSession(existingId: String? = nil, resumeActive: Bool = true, forceNew: Bool = false) {
+        if let existingId, !existingId.isEmpty, existingId != Self.autoConversationId {
+            chatSession = .conversation(existingId)
+            if isKnownConversation(existingId) {
+                activeConversationId = existingId
+            }
+            return
+        }
+        if forceNew {
+            chatSession = .conversation(ChatSession.newConversationId())
+            return
+        }
+        if resumeActive, let active = validatedActiveConversationId() {
+            chatSession = .conversation(active)
+            return
+        }
+        chatSession = .conversation(ChatSession.newConversationId())
+    }
+
+    func showChatList() {
+        chatSession = .list
+    }
+
+    func startNewChat() {
+        openChatSession(forceNew: true)
+    }
+
+    func dismissChatSession() {
+        chatSession = .dismissed
+    }
+
+    func notePendingConversation(id: String, title: String, lastMessagePreview: String?) {
+        pendingConversationIds.insert(id)
+        let now = ISO8601DateFormatter().string(from: Date())
+        upsertLocalConversation(
+            AgentConversation(
+                id: id,
+                title: title,
+                createdAt: now,
+                updatedAt: now,
+                lastMessagePreview: lastMessagePreview
+            )
+        )
+    }
+
+    func createConversation(id: String? = nil, title: String? = nil, lastMessagePreview: String? = nil) async -> AgentConversation? {
         guard let mailboxId = selectedMailboxId else { return nil }
+
+        let targetId = id ?? ChatSession.newConversationId()
+        guard targetId != Self.autoConversationId else { return nil }
+        let finalTitle = (title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false) ? title! : "New chat"
+        let now = ISO8601DateFormatter().string(from: Date())
+
+        let optimistic = AgentConversation(
+            id: targetId,
+            title: finalTitle,
+            createdAt: now,
+            updatedAt: now,
+            lastMessagePreview: lastMessagePreview
+        )
+        upsertLocalConversation(optimistic)
+        pendingConversationIds.insert(targetId)
+
         do {
-            let created = try await APIClient.shared.createConversation(mailboxId: mailboxId, title: title)
-            conversations.insert(created, at: 0)
-            return created
+            let created = try await APIClient.shared.createConversation(
+                mailboxId: mailboxId,
+                id: targetId,
+                title: finalTitle,
+                lastMessagePreview: lastMessagePreview
+            )
+            if created.id == targetId {
+                upsertLocalConversation(created)
+                pendingConversationIds.remove(targetId)
+                return created
+            }
+
+            // Old workers mint their own id. Messages already live on the client id's
+            // EmailAgent, so drop the empty extra row instead of switching to it.
+            conversations.removeAll { $0.id == created.id }
+            pendingConversationIds.remove(created.id)
+            try? await APIClient.shared.deleteConversation(mailboxId: mailboxId, id: created.id)
+            return conversations.first(where: { $0.id == targetId }) ?? optimistic
         } catch {
             errorMessage = error.localizedDescription
-            return nil
+            return optimistic
         }
     }
 
     func refreshConversations() async {
         guard let mailboxId = selectedMailboxId else { return }
         do {
-            conversations = try await APIClient.shared.listConversations(mailboxId: mailboxId)
+            let server = try await APIClient.shared.listConversations(mailboxId: mailboxId)
+            let visible = Self.visibleConversations(server)
+            let serverIds = Set(visible.map(\.id))
+            pendingConversationIds = pendingConversationIds.filter { !serverIds.contains($0) }
+            let inFlight = conversations.filter { pendingConversationIds.contains($0.id) && !serverIds.contains($0.id) }
+            conversations = visible
+            for local in inFlight.reversed() {
+                if !conversations.contains(where: { $0.id == local.id }) {
+                    conversations.insert(local, at: 0)
+                }
+            }
+            dropStaleActiveConversation()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -704,18 +872,7 @@ final class AppModel {
     func updateConversation(id: String, title: String? = nil, lastMessagePreview: String? = nil) async -> AgentConversation? {
         guard let mailboxId = selectedMailboxId else { return nil }
 
-        // Optimistically update local array
-        if let idx = conversations.firstIndex(where: { $0.id == id }) {
-            if let title, !title.isEmpty {
-                conversations[idx].title = title
-            }
-            if let lastMessagePreview {
-                conversations[idx].lastMessagePreview = lastMessagePreview
-            }
-            conversations[idx].updatedAt = ISO8601DateFormatter().string(from: Date())
-            let updated = conversations.remove(at: idx)
-            conversations.insert(updated, at: 0)
-        }
+        applyLocalConversationUpdate(id: id, title: title, lastMessagePreview: lastMessagePreview)
 
         do {
             let serverUpdated = try await APIClient.shared.updateConversation(
@@ -724,11 +881,17 @@ final class AppModel {
                 title: title,
                 lastMessagePreview: lastMessagePreview
             )
-            if let idx = conversations.firstIndex(where: { $0.id == id }) {
-                conversations[idx] = serverUpdated
-            }
+            upsertLocalConversation(serverUpdated)
             return serverUpdated
         } catch {
+            if case APIError.http(404, _) = error {
+                let local = conversations.first(where: { $0.id == id })
+                return await createConversation(
+                    id: id,
+                    title: title ?? local?.title,
+                    lastMessagePreview: lastMessagePreview ?? local?.lastMessagePreview
+                )
+            }
             print("[AppModel] Failed to update conversation \(id): \(error)")
             return nil
         }
@@ -737,12 +900,108 @@ final class AppModel {
     func deleteConversation(id: String) async {
         guard let mailboxId = selectedMailboxId else { return }
         conversations.removeAll(where: { $0.id == id })
+        pendingConversationIds.remove(id)
+        if activeConversationId == id {
+            activeConversationId = nil
+        }
+        if chatSession.conversationId == id {
+            chatSession = .list
+        }
         do {
             try await APIClient.shared.deleteConversation(mailboxId: mailboxId, id: id)
         } catch {
             errorMessage = error.localizedDescription
             await refreshConversations()
         }
+    }
+
+    /// Titles empty chats from the first user message, and deletes empty duplicates
+    /// that would otherwise open as a blank "new chat" screen.
+    func pruneEmptyConversations(authToken: String?) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        var preserve = pendingConversationIds
+        if let activeConversationId { preserve.insert(activeConversationId) }
+        if let openId = chatSession.conversationId { preserve.insert(openId) }
+
+        let visible = conversations.filter { $0.id != Self.autoConversationId }
+
+        for conv in visible.filter({ $0.title == "New chat" }).prefix(8) {
+            if preserve.contains(conv.id) { continue }
+            guard let msgs = await AgentChatClient.fetchMessages(
+                mailboxId: mailboxId,
+                conversationId: conv.id,
+                authToken: authToken
+            ) else { continue }
+            if let firstUser = msgs.first(where: { $0.role == "user" && !$0.text.isEmpty }) {
+                let derived = ConversationTitleHelper.deriveTitle(from: firstUser.text)
+                let lastText = msgs.last?.text ?? firstUser.text
+                await updateConversation(id: conv.id, title: derived, lastMessagePreview: String(lastText.prefix(120)))
+            } else if msgs.isEmpty {
+                await deleteConversation(id: conv.id)
+            }
+        }
+
+        let grouped = Dictionary(
+            grouping: conversations.filter { $0.id != Self.autoConversationId },
+            by: { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        )
+        for (_, group) in grouped where group.count > 1 {
+            for conv in group {
+                if preserve.contains(conv.id) { continue }
+                guard let msgs = await AgentChatClient.fetchMessages(
+                    mailboxId: mailboxId,
+                    conversationId: conv.id,
+                    authToken: authToken
+                ) else { continue }
+                if msgs.isEmpty {
+                    await deleteConversation(id: conv.id)
+                }
+            }
+        }
+    }
+
+    private static let autoConversationId = "auto"
+
+    private static func visibleConversations(_ conversations: [AgentConversation]) -> [AgentConversation] {
+        conversations.filter { $0.id != autoConversationId }
+    }
+
+    private func isKnownConversation(_ id: String) -> Bool {
+        pendingConversationIds.contains(id) || conversations.contains(where: { $0.id == id })
+    }
+
+    /// Ask AI should only resume a chat that still exists in this mailbox.
+    private func validatedActiveConversationId() -> String? {
+        dropStaleActiveConversation()
+        return activeConversationId
+    }
+
+    private func dropStaleActiveConversation() {
+        guard let active = activeConversationId, !isKnownConversation(active) else { return }
+        activeConversationId = nil
+    }
+
+    private func upsertLocalConversation(_ conversation: AgentConversation) {
+        if let idx = conversations.firstIndex(where: { $0.id == conversation.id }) {
+            conversations[idx] = conversation
+            let updated = conversations.remove(at: idx)
+            conversations.insert(updated, at: 0)
+        } else {
+            conversations.insert(conversation, at: 0)
+        }
+    }
+
+    private func applyLocalConversationUpdate(id: String, title: String?, lastMessagePreview: String?) {
+        guard let idx = conversations.firstIndex(where: { $0.id == id }) else { return }
+        if let title, !title.isEmpty {
+            conversations[idx].title = title
+        }
+        if let lastMessagePreview {
+            conversations[idx].lastMessagePreview = lastMessagePreview
+        }
+        conversations[idx].updatedAt = ISO8601DateFormatter().string(from: Date())
+        let updated = conversations.remove(at: idx)
+        conversations.insert(updated, at: 0)
     }
 
     func notifyAIToolCompleted() async {
@@ -755,17 +1014,12 @@ final class AppModel {
     }
 }
 
-struct ArchiveUndoOffer: Identifiable, Equatable {
-    let id = UUID()
-    let emailId: String
-    let mailboxId: String
-    let previousFolderId: String
-}
-
 struct AppToast: Identifiable, Equatable {
     let id = UUID()
     let message: String
     var isError: Bool = false
+    var isLoading: Bool = false
+    var isUndo: Bool = false
 }
 
 enum HomeTab: Hashable {

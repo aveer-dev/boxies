@@ -796,30 +796,49 @@ export class MailboxDO extends DurableObject<Env> {
 	async createAgentConversation(options: {
 		id?: string;
 		title?: string;
+		lastMessagePreview?: string | null;
 	} = {}) {
 		const now = new Date().toISOString();
-		const id = options.id || crypto.randomUUID();
+		const id = (options.id || crypto.randomUUID()).trim();
 		const title = (options.title || "New chat").trim() || "New chat";
 
-		const result = this.db
-			.insert(schema.agentConversations)
-			.values({
-				id,
-				title,
-				created_at: now,
-				updated_at: now,
-				last_message_preview: null,
-			})
-			.returning({
-				id: schema.agentConversations.id,
-				title: schema.agentConversations.title,
-				createdAt: schema.agentConversations.created_at,
-				updatedAt: schema.agentConversations.updated_at,
-				lastMessagePreview: schema.agentConversations.last_message_preview,
-			})
-			.get();
+		const existing = await this.getAgentConversation(id);
+		if (existing) {
+			if (options.title || options.lastMessagePreview !== undefined) {
+				return (
+					(await this.updateAgentConversation(id, {
+						title: options.title,
+						lastMessagePreview: options.lastMessagePreview,
+					})) ?? existing
+				);
+			}
+			return existing;
+		}
 
-		return result;
+		try {
+			return this.db
+				.insert(schema.agentConversations)
+				.values({
+					id,
+					title,
+					created_at: now,
+					updated_at: now,
+					last_message_preview: options.lastMessagePreview ?? null,
+				})
+				.returning({
+					id: schema.agentConversations.id,
+					title: schema.agentConversations.title,
+					createdAt: schema.agentConversations.created_at,
+					updatedAt: schema.agentConversations.updated_at,
+					lastMessagePreview: schema.agentConversations.last_message_preview,
+				})
+				.get();
+		} catch {
+			// Parallel creates with the same client id should reuse the winner.
+			const raced = await this.getAgentConversation(id);
+			if (raced) return raced;
+			throw new Error(`Failed to create conversation ${id}`);
+		}
 	}
 
 	async getAgentConversation(id: string) {
