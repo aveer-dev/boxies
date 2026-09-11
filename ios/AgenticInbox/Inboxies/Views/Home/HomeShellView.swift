@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Main shell: native large-title toolbar, content list, floating action bar, native folder tab bar.
+/// Main shell: native large-title toolbar, content list, floating action bar.
 struct HomeShellView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(AppModel.self) private var app
@@ -24,9 +24,14 @@ struct HomeShellView: View {
     @Namespace private var barNamespace
     @State private var composeMorphsFromBar = false
     @State private var showComposeSheet = false
+    @State private var showComposeActions = false
+    @State private var highlightedComposeAction: ComposeActionItem.ID?
+    @State private var composeActionRowFrames: [ComposeActionItem.ID: CGRect] = [:]
+    @State private var composeTouchBeganAt: Date?
+    @State private var composeDidLongPress = false
+    @State private var composePressToken = UUID()
 
     static let askAITransitionID = "ai-chat-button"
-    static let searchTransitionID = "search-button"
     static let composeTransitionID = "compose-button"
 
     private let folderTabs: [HomeTab] = [
@@ -54,9 +59,6 @@ struct HomeShellView: View {
         shell
             .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isComposeExpanded)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasMinimizedCompose)
-            .fullScreenCover(isPresented: $showSearch) {
-                searchSheet
-            }
             .sheet(item: selectedEmailItem) { _ in
                 EmailDetailView()
             }
@@ -85,9 +87,55 @@ struct HomeShellView: View {
                 registerUndoIfNeeded(newID)
             }
             .sensoryFeedback(.success, trigger: app.pendingUndoAction?.id)
+            .sensoryFeedback(.selection, trigger: highlightedComposeAction)
     }
 
     private var shell: some View {
+        ZStack {
+            homeNavigation
+                .opacity(showSearch ? 0 : 1)
+                .allowsHitTesting(!showSearch)
+                .accessibilityHidden(showSearch)
+
+            if showSearch {
+                SearchView(onClose: closeSearch)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.28), value: showSearch)
+        .background(alignment: .top) {
+            ProgressiveBlurBackground()
+                .opacity(showSearch ? 0 : 1)
+        }
+        .tint(AppTheme.ink)
+        .animation(tabSpring, value: app.selectedTab)
+        .background(AppTheme.background.ignoresSafeArea())
+        .overlay(alignment: .bottom) {
+            if !showSearch {
+                composeChrome
+            }
+        }
+        .overlay {
+            if showComposeActions {
+                ComposeActionListOverlay(
+                    highlightedID: highlightedComposeAction,
+                    onSelect: { item in
+                        performComposeAction(item)
+                    },
+                    onDismiss: {
+                        dismissComposeActions()
+                    },
+                    onRowFramesChange: { frames in
+                        composeActionRowFrames = frames
+                    }
+                )
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: showComposeActions)
+    }
+
+    private var homeNavigation: some View {
         NavigationStack {
             tabContent
                 .background(AppTheme.background)
@@ -100,18 +148,27 @@ struct HomeShellView: View {
                     ToolbarItem(placement: .topBarLeading) {
                         mailboxControl
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        trailingToolbarItems
+                    if case .folder = app.selectedTab {
+                        // Trailing items are placed outside-in: declare rightmost first.
+                        ToolbarItem(placement: .topBarTrailing) {
+                            searchToolbarButton
+                        }
+                        if #available(iOS 26.0, *) {
+                            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            HStack(spacing: 8) {
+                                selectButton
+                                filterButton
+                            }
+                        }
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            trailingToolbarItems
+                        }
                     }
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
-        }
-        .background(alignment: .top) { ProgressiveBlurBackground() }
-        .tint(AppTheme.ink)
-        .animation(tabSpring, value: app.selectedTab)
-        .background(AppTheme.background.ignoresSafeArea())
-        .overlay(alignment: .bottom) {
-            composeChrome
         }
     }
 
@@ -140,14 +197,6 @@ struct HomeShellView: View {
         .modifier(CoverDragIndicator())
         .modifier(BarSheetZoom(enabled: true, id: Self.askAITransitionID, namespace: barNamespace))
         .presentationBackground(AppTheme.background)
-    }
-
-    @ViewBuilder
-    private var searchSheet: some View {
-        SearchView()
-            .modifier(CoverDragIndicator())
-            .modifier(BarSheetZoom(enabled: true, id: Self.searchTransitionID, namespace: barNamespace))
-            .presentationBackground(AppTheme.background)
     }
 
     @ViewBuilder
@@ -208,13 +257,12 @@ struct HomeShellView: View {
                 if isSelectMode {
                     selectionActionBar
                         .padding(.horizontal, 16)
-                        .padding(.bottom, 20)
+                        .padding(.bottom, HomeChromeMetrics.chromeBottomPadding)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 } else {
-                    tabStrip
                     bottomBar
                         .padding(.horizontal, 24)
-                        .padding(.bottom, 20)
+                        .padding(.bottom, HomeChromeMetrics.chromeBottomPadding)
                 }
             }
 
@@ -410,18 +458,6 @@ struct HomeShellView: View {
         .modifier(MailboxLoadingAccessibility(isLoading: app.isMailboxLoading))
     }
 
-    private var tabStrip: some View {
-        HStack() {
-
-            FolderTabBar(
-                tabs: folderTabs,
-                selection: app.selectedTab,
-                onSelect: selectTab
-            )
-            .frame(height: HomeChromeMetrics.tabStripHeight)
-        }
-    }
-
     @ViewBuilder
     private var tabContent: some View {
         Group {
@@ -508,36 +544,128 @@ struct HomeShellView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            Button {
-                showSearch = true
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.inter(size: 18, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                    .frame(width: HomeChromeMetrics.actionBarHeight, height: HomeChromeMetrics.actionBarHeight)
-                    .liquidGlass(in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Search")
-            .modifier(BarZoomSource(id: Self.searchTransitionID, namespace: barNamespace))
-            .modifier(BarZoomSourceHidden(hidden: showSearch))
-
             askAIButton
 
-            Button {
-                composeMorphsFromBar = true
-                Task { await app.startCompose(mode: .new) }
-            } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.inter(size: 18, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                    .frame(width: HomeChromeMetrics.actionBarHeight, height: HomeChromeMetrics.actionBarHeight)
-                    .liquidGlass(in: Capsule())
+            composeButton
+        }
+    }
+
+    private var composeButton: some View {
+        Image(systemName: "square.and.pencil")
+            .font(.inter(size: 18, weight: .medium))
+            .foregroundStyle(AppTheme.ink)
+            .frame(width: HomeChromeMetrics.actionBarHeight, height: HomeChromeMetrics.actionBarHeight)
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(AppTheme.muted)
+                    .offset(x: -8, y: 24)
+                    .accessibilityHidden(true)
             }
-            .buttonStyle(.plain)
+            .liquidGlass(in: Capsule())
+            .contentShape(Capsule())
+            .gesture(composePressGesture)
             .accessibilityLabel("Compose")
+            .accessibilityHint("Long press for more actions")
             .modifier(BarZoomSource(id: Self.composeTransitionID, namespace: barNamespace))
             .modifier(BarZoomSourceHidden(hidden: showComposeSheet && composeMorphsFromBar))
+            .opacity(showComposeActions ? 0 : 1)
+    }
+
+    private var composePressGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { value in
+                if composeTouchBeganAt == nil {
+                    let token = UUID()
+                    composePressToken = token
+                    composeTouchBeganAt = Date()
+                    composeDidLongPress = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        guard composePressToken == token,
+                              composeTouchBeganAt != nil,
+                              !composeDidLongPress else { return }
+                        composeDidLongPress = true
+                        openComposeActions()
+                    }
+                }
+                if showComposeActions {
+                    updateHighlightedComposeAction(at: value.location)
+                }
+            }
+            .onEnded { _ in
+                let wasLongPress = composeDidLongPress
+                composeTouchBeganAt = nil
+                composeDidLongPress = false
+
+                if wasLongPress {
+                    if let highlightedComposeAction,
+                       let item = ComposeActionItem(rawValue: highlightedComposeAction) {
+                        performComposeAction(item)
+                    } else {
+                        highlightedComposeAction = nil
+                    }
+                } else {
+                    startComposeFromBar()
+                }
+            }
+    }
+
+    private func openComposeActions() {
+        guard !showComposeActions else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.easeOut(duration: 0.2)) {
+            showComposeActions = true
+        }
+    }
+
+    private func dismissComposeActions() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            showComposeActions = false
+            highlightedComposeAction = nil
+        }
+    }
+
+    private func updateHighlightedComposeAction(at point: CGPoint) {
+        let hit = composeActionRowFrames.first { _, frame in
+            frame.insetBy(dx: -8, dy: -6).contains(point)
+        }?.key
+        if highlightedComposeAction != hit {
+            highlightedComposeAction = hit
+        }
+    }
+
+    private func startComposeFromBar() {
+        composeMorphsFromBar = true
+        Task { await app.startCompose(mode: .new) }
+    }
+
+    private func performComposeAction(_ item: ComposeActionItem) {
+        dismissComposeActions()
+        switch item {
+        case .compose:
+            startComposeFromBar()
+        case .settings:
+            showSettings = true
+        case .inbox, .sent, .drafts, .archive, .trash:
+            if let tab = item.folderTab {
+                selectTab(tab)
+            }
+        }
+    }
+
+    private func closeSearch() {
+        withAnimation(.easeInOut(duration: 0.28)) {
+            showSearch = false
+        }
+    }
+
+    private func openSearch() {
+        if isSelectMode {
+            isSelectMode = false
+            selectedEmailIDs.removeAll()
+        }
+        withAnimation(.easeInOut(duration: 0.28)) {
+            showSearch = true
         }
     }
 
@@ -571,12 +699,7 @@ struct HomeShellView: View {
 
     @ViewBuilder
     private var trailingToolbarItems: some View {
-        if case .folder = app.selectedTab {
-            HStack(spacing: 8) {
-                selectButton
-                filterButton
-            }
-        } else if case .chats = app.selectedTab {
+        if case .chats = app.selectedTab {
             Button {
                 openChat(resumeActive: false)
             } label: {
@@ -589,6 +712,19 @@ struct HomeShellView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("New chat")
         }
+    }
+
+    private var searchToolbarButton: some View {
+        Button {
+            if showSearch {
+                closeSearch()
+            } else {
+                openSearch()
+            }
+        } label: {
+            Image(systemName: showSearch ? "magnifyingglass.circle.fill" : "magnifyingglass")
+        }
+        .accessibilityLabel(showSearch ? "Close search" : "Search")
     }
 
     private var selectButton: some View {

@@ -1,9 +1,9 @@
 import SwiftUI
-import UIKit
 
 /// Notion-like search screen: floating bottom search field + result rows.
 struct SearchView: View {
     var initialQuery: String = ""
+    var onClose: (() -> Void)?
 
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -13,12 +13,11 @@ struct SearchView: View {
     @State private var isSearching = false
     @State private var errorMessage: String?
     @State private var showChat = false
-    @State private var keyboardOverlap: CGFloat = 0
-    @State private var safeBottom: CGFloat = 0
     @FocusState private var focused: Bool
 
-    init(initialQuery: String = "") {
+    init(initialQuery: String = "", onClose: (() -> Void)? = nil) {
         self.initialQuery = initialQuery
+        self.onClose = onClose
         _query = State(initialValue: initialQuery)
     }
 
@@ -30,13 +29,6 @@ struct SearchView: View {
         !results.isEmpty
     }
 
-    /// Keyboard lift that does not change the sheet's layout bounds.
-    /// Zoom snapshots the container; a safe-area change mid-dismiss rebuilds that
-    /// snapshot and is the 2-frame snap back to the full search chrome.
-    private var keyboardLift: CGFloat {
-        max(0, keyboardOverlap - safeBottom)
-    }
-
     var body: some View {
         ZStack(alignment: .bottom) {
             AppTheme.background.ignoresSafeArea()
@@ -45,7 +37,7 @@ struct SearchView: View {
                 if !trimmedQuery.isEmpty {
                     askAIButton
                         .padding(.horizontal, 16)
-                        .padding(.top, 12)
+                        .padding(.top, 8)
                         .padding(.bottom, 20)
                 }
 
@@ -65,11 +57,11 @@ struct SearchView: View {
                     EmailListView(
                         emails: results,
                         highlightQuery: query,
-                        isLoading: isSearching
+                        isLoading: isSearching,
+                        bottomInset: 0
                     ) { email in
                         Task {
                             await app.openEmail(email)
-                            dismiss()
                         }
                     }
                 } else if trimmedQuery.count >= 2 {
@@ -83,27 +75,18 @@ struct SearchView: View {
                     Spacer()
                 }
             }
-            .padding(.top, 28)
-            .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: 70)
-            }
-
-            searchBar
-                .padding(.horizontal, 12)
-                .padding(.bottom, 10 + keyboardLift)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.keyboard)
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.safeAreaInsets.bottom
-        } action: { safeBottom = $0 }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            updateKeyboardOverlap(from: notification)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            searchBar
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
         }
         .scrollDismissesKeyboard(.immediately)
         .task {
             guard initialQuery.isEmpty else { return }
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .milliseconds(280))
             focused = true
         }
         .task(id: query) {
@@ -158,6 +141,7 @@ struct SearchView: View {
                 .foregroundStyle(AppTheme.muted)
             TextField("Search mail", text: $query)
                 .focused($focused)
+                .submitLabel(.search)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             if !query.isEmpty {
@@ -180,7 +164,11 @@ struct SearchView: View {
     private var cancelButton: some View {
         Button {
             focused = false
-            dismiss()
+            if let onClose {
+                onClose()
+            } else {
+                dismiss()
+            }
         } label: {
             Image(systemName: "xmark")
                 .font(.inter(size: 14, weight: .medium))
@@ -192,18 +180,6 @@ struct SearchView: View {
         .buttonStyle(.plain)
         .liquidGlass(in: Capsule())
         .accessibilityLabel("Cancel")
-    }
-
-    private func updateKeyboardOverlap(from notification: Notification) {
-        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
-            return
-        }
-        let overlap = max(0, UIScreen.main.bounds.height - frame.origin.y)
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            keyboardOverlap = overlap
-        }
     }
 
     private func runSearch() async {

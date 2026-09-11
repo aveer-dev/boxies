@@ -3,16 +3,15 @@ import SwiftUI
 /// Shared Liquid Glass styling (iOS 26+) with material fallback for earlier releases.
 enum HomeChromeMetrics {
     static let actionBarHeight: CGFloat = 52
-    static let tabStripHeight: CGFloat = 49
     static let chromeHorizontalPadding: CGFloat = 12
     static let chromeSpacing: CGFloat = 10
-    static let chromeBottomPadding: CGFloat = 10
+    static let chromeBottomPadding: CGFloat = 20
     static let chromeCornerRadius: CGFloat = 50
     static let tabLabelPointSize: CGFloat = 10
     static let minimizedComposeHeight: CGFloat = 58
 
     static func listBottomInset(hasMinimizedCompose: Bool) -> CGFloat {
-        var height = tabStripHeight + chromeSpacing + actionBarHeight
+        var height = actionBarHeight + chromeBottomPadding
         if hasMinimizedCompose {
             height += minimizedComposeHeight
         }
