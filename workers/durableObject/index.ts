@@ -8,11 +8,16 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
+import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 import {
 	senderNameFromRawHeaders,
 } from "../../shared/sender";
+import {
+	buildInboxDigest,
+	type DigestEmailRow,
+} from "../lib/inbox-digest";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -1226,5 +1231,109 @@ export class MailboxDO extends DurableObject<Env> {
 	async getDeviceTokens(): Promise<string[]> {
 		const rows = [...this.ctx.storage.sql.exec(`SELECT token FROM device_tokens;`)];
 		return rows.map((r: any) => r.token as string);
+	}
+
+	// ── Inbox digest (in-time) ─────────────────────────────────────
+
+	async getInboxDigest(greetingName: string): Promise<InboxDigest> {
+		const emails = (await this.getThreadedEmails({
+			folder: Folders.INBOX,
+			page: 1,
+			limit: 50,
+		})) as DigestEmailRow[];
+
+		const folders = await this.getFolders();
+		const inbox = folders.find(
+			(folder) => folder.id === Folders.INBOX || folder.name.toLowerCase() === "inbox",
+		);
+		const unreadCount = inbox?.unreadCount ?? 0;
+
+		const dismissedRows = [
+			...this.ctx.storage.sql.exec(`SELECT email_id FROM dismissed_todos;`),
+		] as { email_id: string }[];
+		const dismissedIds = new Set(dismissedRows.map((row) => row.email_id));
+
+		const attachmentCounts = this.#attachmentCountsForEmails(emails.map((e) => e.id));
+
+		return buildInboxDigest({
+			emails,
+			dismissedIds,
+			unreadCount,
+			greetingName,
+			attachmentCounts,
+		});
+	}
+
+	async completeDigestTodo(emailId: string) {
+		const email = this.db
+			.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, emailId))
+			.get();
+		if (!email) return null;
+
+		this.ctx.storage.sql.exec(
+			`INSERT INTO dismissed_todos (email_id, dismissed_at)
+			 VALUES (?, ?)
+			 ON CONFLICT(email_id) DO UPDATE SET dismissed_at = excluded.dismissed_at;`,
+			emailId,
+			Date.now(),
+		);
+
+		if (email.thread_id) {
+			await this.markThreadRead(email.thread_id);
+		} else {
+			await this.updateEmail(emailId, { read: true });
+		}
+
+		this.broadcastEvent("digest_todo_completed", { emailId });
+		return { status: "completed" as const };
+	}
+
+	async markDigestTopicRead(emailIds: string[]) {
+		const unique = [...new Set(emailIds.filter(Boolean))];
+		if (unique.length === 0) return { status: "marked_read" as const, count: 0 };
+
+		let count = 0;
+		for (const id of unique) {
+			const email = this.db
+				.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
+				.from(schema.emails)
+				.where(eq(schema.emails.id, id))
+				.get();
+			if (!email) continue;
+			if (email.thread_id) {
+				await this.markThreadRead(email.thread_id);
+			} else {
+				await this.updateEmail(id, { read: true });
+			}
+			count += 1;
+		}
+		this.broadcastEvent("digest_topic_read", { emailIds: unique });
+		return { status: "marked_read" as const, count };
+	}
+
+	#attachmentCountsForEmails(emailIds: string[]): Map<string, number> {
+		const counts = new Map<string, number>();
+		if (emailIds.length === 0) return counts;
+		try {
+			const placeholders = emailIds.map((_, i) => `?${i + 1}`).join(",");
+			const rows = [
+				...this.ctx.storage.sql.exec(
+					`SELECT email_id, COUNT(*) as count
+					 FROM attachments
+					 WHERE email_id IN (${placeholders})
+					   AND COALESCE(disposition, '') != 'inline'
+					 GROUP BY email_id`,
+					...emailIds,
+				),
+			] as { email_id: string; count: number }[];
+			for (const row of rows) {
+				counts.set(row.email_id, Number(row.count) || 0);
+			}
+		} catch (e) {
+			console.error("attachment count lookup failed:", (e as Error).message);
+		}
+		return counts;
 	}
 }

@@ -7,6 +7,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     case drafts
     case sent
     case inbox
+    case forYou
     case compose
 
     var id: String { rawValue }
@@ -19,6 +20,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .drafts: return "Drafts"
         case .sent: return "Sent"
         case .inbox: return "Inbox"
+        case .forYou: return "For you"
         case .compose: return "Compose"
         }
     }
@@ -31,12 +33,14 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .drafts: return HomeTab.folder("draft").systemImage
         case .sent: return HomeTab.folder("sent").systemImage
         case .inbox: return HomeTab.folder("inbox").systemImage
+        case .forYou: return HomeTab.aiInbox.systemImage
         case .compose: return "square.and.pencil"
         }
     }
 
     var folderTab: HomeTab? {
         switch self {
+        case .forYou: return .aiInbox
         case .inbox: return .folder("inbox")
         case .sent: return .folder("sent")
         case .drafts: return .folder("draft")

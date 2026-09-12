@@ -589,6 +589,73 @@ struct EmailListResponse: Codable {
     let totalCount: Int
 }
 
+struct InboxDigest: Codable, Hashable {
+    var greetingName: String
+    var unreadCount: Int
+    var todos: [InboxDigestTodo]
+    var topics: [InboxDigestTopic]
+
+    enum CodingKeys: String, CodingKey {
+        case greetingName = "greeting_name"
+        case unreadCount = "unread_count"
+        case todos, topics
+    }
+}
+
+struct InboxDigestTodo: Identifiable, Codable, Hashable {
+    let id: String
+    var emailId: String
+    var threadId: String?
+    var title: String
+    var summary: String
+    var date: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, summary, date
+        case emailId = "email_id"
+        case threadId = "thread_id"
+    }
+}
+
+struct InboxDigestTopic: Identifiable, Codable, Hashable {
+    let id: String
+    var title: String
+    var emoji: String
+    var caughtUp: Bool
+    var remainingSummary: String?
+    var items: [InboxDigestTopicItem]
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, emoji, items
+        case caughtUp = "caught_up"
+        case remainingSummary = "remaining_summary"
+    }
+}
+
+struct InboxDigestTopicItem: Identifiable, Codable, Hashable {
+    var emailId: String
+    var threadId: String?
+    var subject: String
+    var summary: String
+    var date: String
+    var unread: Bool
+    var attachmentCount: Int
+
+    var id: String { emailId }
+
+    enum CodingKeys: String, CodingKey {
+        case subject, summary, date, unread
+        case emailId = "email_id"
+        case threadId = "thread_id"
+        case attachmentCount = "attachment_count"
+    }
+}
+
+struct DigestStatusResponse: Codable {
+    let status: String
+    var count: Int?
+}
+
 struct SendEmailResponse: Codable {
     let id: String
     let status: String

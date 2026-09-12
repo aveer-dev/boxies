@@ -265,5 +265,14 @@ export const mailboxMigrations: Migration[] = [
               );
         `),
 	},
+	{
+		name: "14_add_dismissed_todos",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS dismissed_todos (
+                email_id TEXT PRIMARY KEY,
+                dismissed_at INTEGER NOT NULL
+            );
+        `),
+	},
 ];
 

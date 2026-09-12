@@ -27,6 +27,7 @@ import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
 } from "../shared/agent-conversations";
+import { resolveGreetingName } from "./lib/inbox-digest";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -370,6 +371,36 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
 // -- Folders --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
+
+app.get("/api/v1/mailboxes/:mailboxId/inbox-digest", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!;
+	const obj = await c.env.BUCKET.get(`mailboxes/${mailboxId}.json`);
+	const settings = obj ? ((await obj.json()) as { fromName?: string }) : {};
+	const greetingName = resolveGreetingName({
+		fromName: settings.fromName,
+		mailboxName: mailboxId,
+		mailboxEmail: mailboxId,
+	});
+	const digest = await (c.var.mailboxStub as any).getInboxDigest(greetingName);
+	return c.json(digest);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/inbox-digest/todos/:todoId/complete", async (c: AppContext) => {
+	const todoId = c.req.param("todoId")!;
+	const result = await (c.var.mailboxStub as any).completeDigestTodo(todoId);
+	if (!result) return c.json({ error: "Not found" }, 404);
+	return c.json(result);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/inbox-digest/topics/:topicId/mark-read", async (c: AppContext) => {
+	const body = (await c.req.json().catch(() => ({}))) as { emailIds?: string[] };
+	const emailIds = Array.isArray(body.emailIds) ? body.emailIds : [];
+	if (emailIds.length === 0) {
+		return c.json({ error: "emailIds required" }, 400);
+	}
+	const result = await (c.var.mailboxStub as any).markDigestTopicRead(emailIds);
+	return c.json(result);
+});
 
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };

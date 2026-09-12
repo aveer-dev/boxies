@@ -74,3 +74,10 @@ export interface AgentConversation {
 	updatedAt: string;
 	lastMessagePreview?: string | null;
 }
+
+export type {
+	InboxDigest,
+	InboxDigestTodo,
+	InboxDigestTopic,
+	InboxDigestTopicItem,
+} from "shared/inbox-digest";

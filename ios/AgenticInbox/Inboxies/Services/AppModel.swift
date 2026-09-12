@@ -8,8 +8,10 @@ final class AppModel {
     var mailboxes: [Mailbox] = []
     var selectedMailboxId: String?
     var folders: [Folder] = []
-    var selectedTab: HomeTab = .inbox
+    var selectedTab: HomeTab = .aiInbox
     var emails: [Email] = []
+    var inboxDigest: InboxDigest?
+    var isDigestLoading = false
     var conversations: [AgentConversation] = []
     /// The chat Ask AI should resume. Empty drafts are never stored here; it is set on the first message.
     var activeConversationId: String?
@@ -86,10 +88,7 @@ final class AppModel {
 
     func adjustFolderUnread(for email: Email, wasUnread: Bool, isUnread: Bool) {
         guard wasUnread != isUnread else { return }
-        let folderId = email.folderId ?? {
-            if case let .folder(id) = selectedTab { return id }
-            return nil
-        }()
+        let folderId = email.folderId ?? selectedTab.syncFolderId
         guard let folderId else { return }
         adjustFolderUnread(folderId: folderId, delta: isUnread ? 1 : -1)
     }
@@ -111,7 +110,7 @@ final class AppModel {
                 if !cachedFolders.isEmpty {
                     folders = cachedFolders
                 }
-                if case let .folder(folderId) = selectedTab {
+                if let folderId = selectedTab.syncFolderId {
                     let cachedEmails = db.getEmails(mailboxId: id, folderId: folderId, limit: 50)
                     if !cachedEmails.isEmpty {
                         emails = cachedEmails
@@ -145,12 +144,15 @@ final class AppModel {
 
     private func handleIncomingRealTimeEmail(_ email: Email) {
         // If email matches current tab folder, insert at top with smooth animation
-        if case let .folder(currentFolder) = selectedTab {
+        if let currentFolder = selectedTab.syncFolderId {
             let targetFolder = email.folderId ?? "inbox"
             if targetFolder.caseInsensitiveCompare(currentFolder) == .orderedSame {
                 if !emails.contains(where: { $0.id == email.id }) {
                     emails.insert(email, at: 0)
                 }
+            }
+            if selectedTab == .aiInbox {
+                Task { await loadInboxDigest(showLoading: false) }
             }
         }
         if email.isUnread {
@@ -198,6 +200,7 @@ final class AppModel {
             activeConversationId = nil
             pendingConversationIds.removeAll()
             conversations = []
+            inboxDigest = nil
             if chatSession != .dismissed {
                 chatSession = .dismissed
             }
@@ -211,7 +214,7 @@ final class AppModel {
             folders = cachedFolders
             isMailboxLoading = false
         }
-        if case let .folder(folderId) = selectedTab {
+        if let folderId = selectedTab.syncFolderId {
             let cachedEmails = db.getEmails(mailboxId: id, folderId: folderId, limit: 50)
             if !cachedEmails.isEmpty {
                 emails = cachedEmails
@@ -236,6 +239,9 @@ final class AppModel {
                 dropStaleActiveConversation()
             }
             await loadEmailsForCurrentTab(showLoading: emails.isEmpty)
+            if selectedTab == .aiInbox {
+                await loadInboxDigest(showLoading: inboxDigest == nil)
+            }
         } catch {
             errorMessage = error.localizedDescription
             isMailboxLoading = false
@@ -252,6 +258,7 @@ final class AppModel {
                 selectedMailboxId = nil
                 emails = []
                 folders = []
+                inboxDigest = nil
                 conversations = []
                 activeConversationId = nil
                 pendingConversationIds.removeAll()
@@ -270,8 +277,8 @@ final class AppModel {
         selectedTab = tab
         selectedEmail = nil
 
-        // Instant local query for folder (< 2ms)
-        if case let .folder(folderId) = tab, let mailboxId = selectedMailboxId {
+        // Instant local query for folder-backed tabs (< 2ms)
+        if let folderId = tab.syncFolderId, let mailboxId = selectedMailboxId {
             let cached = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
             if !cached.isEmpty {
                 emails = cached
@@ -281,6 +288,9 @@ final class AppModel {
             }
         }
         await loadEmailsForCurrentTab(showLoading: emails.isEmpty)
+        if tab == .aiInbox {
+            await loadInboxDigest(showLoading: inboxDigest == nil)
+        }
     }
 
     func loadEmailsForCurrentTab(showLoading: Bool = true) async {
@@ -288,7 +298,7 @@ final class AppModel {
             isLoading = false
             return
         }
-        guard case let .folder(folderId) = selectedTab else {
+        guard let folderId = selectedTab.syncFolderId else {
             emails = []
             isLoading = false
             return
@@ -322,19 +332,75 @@ final class AppModel {
     /// Reloads the visible tab without swapping in the list skeleton.
     func refreshCurrentTab() async {
         switch selectedTab {
-        case .folder:
+        case .folder, .aiInbox:
             await loadEmailsForCurrentTab(showLoading: false)
+            if selectedTab == .aiInbox {
+                await loadInboxDigest(showLoading: false)
+            }
         case .chats:
             await refreshConversations()
         }
     }
 
     func refreshCurrentTabSilently() async {
-        if case let .folder(folderId) = selectedTab, let mailboxId = selectedMailboxId {
+        if let folderId = selectedTab.syncFolderId, let mailboxId = selectedMailboxId {
             if let synced = try? await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId) {
                 emails = synced
                 lastSyncedAt = Date()
             }
+            if selectedTab == .aiInbox {
+                await loadInboxDigest(showLoading: false)
+            }
+        }
+    }
+
+    func loadInboxDigest(showLoading: Bool = true) async {
+        guard let mailboxId = selectedMailboxId else {
+            inboxDigest = nil
+            isDigestLoading = false
+            return
+        }
+        if showLoading && inboxDigest == nil {
+            isDigestLoading = true
+        }
+        defer { isDigestLoading = false }
+        do {
+            inboxDigest = try await APIClient.shared.getInboxDigest(mailboxId: mailboxId)
+        } catch {
+            if inboxDigest == nil {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func completeDigestTodo(id: String) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        if var digest = inboxDigest {
+            digest.todos.removeAll { $0.id == id }
+            inboxDigest = digest
+        }
+        do {
+            _ = try await APIClient.shared.completeDigestTodo(mailboxId: mailboxId, todoId: id)
+            await loadEmailsForCurrentTab(showLoading: false)
+            await loadInboxDigest(showLoading: false)
+        } catch {
+            showToast("Couldn’t complete to-do", isError: true)
+            await loadInboxDigest(showLoading: false)
+        }
+    }
+
+    func markDigestTopicRead(topicId: String, emailIds: [String]) async {
+        guard let mailboxId = selectedMailboxId, !emailIds.isEmpty else { return }
+        do {
+            _ = try await APIClient.shared.markDigestTopicRead(
+                mailboxId: mailboxId,
+                topicId: topicId,
+                emailIds: emailIds
+            )
+            await loadEmailsForCurrentTab(showLoading: false)
+            await loadInboxDigest(showLoading: false)
+        } catch {
+            showToast("Couldn’t mark topic read", isError: true)
         }
     }
 
@@ -684,7 +750,7 @@ final class AppModel {
         if let folderId = email.folderId, !folderId.isEmpty, folderId != "archive" {
             return folderId
         }
-        if case let .folder(folderId) = selectedTab, folderId != "archive" {
+        if let folderId = selectedTab.syncFolderId, folderId != "archive" {
             return folderId
         }
         return "inbox"
@@ -1007,9 +1073,12 @@ final class AppModel {
     func notifyAIToolCompleted() async {
         guard let mailboxId = selectedMailboxId else { return }
         _ = try? await syncService.syncFolder(mailboxId: mailboxId, folderId: "draft")
-        if case let .folder(folderId) = selectedTab {
+        if let folderId = selectedTab.syncFolderId {
             _ = try? await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId)
             await loadEmailsForCurrentTab(showLoading: false)
+        }
+        if selectedTab == .aiInbox {
+            await loadInboxDigest(showLoading: false)
         }
     }
 }
@@ -1025,8 +1094,18 @@ struct AppToast: Identifiable, Equatable {
 enum HomeTab: Hashable {
     case folder(String)
     case chats
+    case aiInbox
 
     static var inbox: HomeTab { .folder("inbox") }
+
+    /// Folder id used for cache/sync when this tab shows mail-backed content.
+    var syncFolderId: String? {
+        switch self {
+        case .folder(let id): return id
+        case .aiInbox: return "inbox"
+        case .chats: return nil
+        }
+    }
 
     var title: String {
         switch self {
@@ -1041,6 +1120,8 @@ enum HomeTab: Hashable {
             }
         case .chats:
             return "AI"
+        case .aiInbox:
+            return "For you"
         }
     }
 
@@ -1056,6 +1137,8 @@ enum HomeTab: Hashable {
             default: return "folder"
             }
         case .chats:
+            return "bubble.left.and.bubble.right"
+        case .aiInbox:
             return "sparkles"
         }
     }

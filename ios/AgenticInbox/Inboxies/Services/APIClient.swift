@@ -172,6 +172,25 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders")
     }
 
+    func getInboxDigest(mailboxId: String) async throws -> InboxDigest {
+        try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/inbox-digest")
+    }
+
+    func completeDigestTodo(mailboxId: String, todoId: String) async throws -> DigestStatusResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/inbox-digest/todos/\(todoId.urlPathEncoded)/complete",
+            method: "POST"
+        )
+    }
+
+    func markDigestTopicRead(mailboxId: String, topicId: String, emailIds: [String]) async throws -> DigestStatusResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/inbox-digest/topics/\(topicId.urlPathEncoded)/mark-read",
+            method: "POST",
+            body: ["emailIds": emailIds]
+        )
+    }
+
     func listEmails(mailboxId: String, folder: String, page: Int = 1) async throws -> EmailListResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",

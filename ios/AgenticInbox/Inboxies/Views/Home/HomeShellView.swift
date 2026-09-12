@@ -35,6 +35,7 @@ struct HomeShellView: View {
     static let composeTransitionID = "compose-button"
 
     private let folderTabs: [HomeTab] = [
+        .aiInbox,
 //        .chats,
         .folder("inbox"),
         .folder("sent"),
@@ -408,7 +409,13 @@ struct HomeShellView: View {
     }
 
     private var navigationTitleText: String {
-        app.selectedTab.title
+        if case .aiInbox = app.selectedTab {
+            if let name = app.inboxDigest?.greetingName, !name.isEmpty {
+                return "Hi \(name) 👋"
+            }
+            return "Hi 👋"
+        }
+        return app.selectedTab.title
     }
 
     private var filteredEmails: [Email] {
@@ -416,6 +423,14 @@ struct HomeShellView: View {
     }
 
     private var navigationSubtitleText: String {
+        if case .aiInbox = app.selectedTab {
+            if let digest = app.inboxDigest {
+                let count = digest.todos.count
+                if count == 0 { return "You’re all caught up on suggested to-dos" }
+                return "You have \(count) suggested to-do\(count == 1 ? "" : "s")"
+            }
+            return app.isDigestLoading ? "Loading…" : ""
+        }
         guard case .folder = app.selectedTab else { return "" }
         if isSelectMode {
             return selectedEmailIDs.isEmpty ? "Select emails" : "\(selectedEmailIDs.count) selected"
@@ -481,15 +496,16 @@ struct HomeShellView: View {
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
-            case .chats:
-                ConversationsListView(
+            case .aiInbox:
+                InboxDigestView(
                     bottomInset: listBottomInset,
-                    onNewChat: {
-                        openChat(resumeActive: false)
-                    },
-                    onOpen: { conversation in
-                        openChat(conversationId: conversation.id)
-                    }
+                    onRefresh: { await app.refreshCurrentTab() }
+                )
+            case .chats:
+                ContentUnavailableView(
+                    "AI chats",
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text("Open Ask AI from the bottom bar.")
                 )
             }
         }
@@ -646,7 +662,7 @@ struct HomeShellView: View {
             startComposeFromBar()
         case .settings:
             showSettings = true
-        case .inbox, .sent, .drafts, .archive, .trash:
+        case .forYou, .inbox, .sent, .drafts, .archive, .trash:
             if let tab = item.folderTab {
                 selectTab(tab)
             }

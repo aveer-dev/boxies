@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { AgentConversation, Email, Folder, Mailbox } from "~/types";
+import type { AgentConversation, Email, Folder, InboxDigest, Mailbox } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -164,6 +164,21 @@ const api = {
 		put<Folder>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`, { name }),
 	deleteFolder: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`),
+
+	// Inbox digest (For You)
+	getInboxDigest: (mailboxId: string, opts?: { signal?: AbortSignal }) =>
+		get<InboxDigest>(`/api/v1/mailboxes/${mailboxId}/inbox-digest`, {
+			signal: opts?.signal,
+		}),
+	completeDigestTodo: (mailboxId: string, todoId: string) =>
+		post<{ status: string }>(
+			`/api/v1/mailboxes/${mailboxId}/inbox-digest/todos/${todoId}/complete`,
+		),
+	markDigestTopicRead: (mailboxId: string, topicId: string, emailIds: string[]) =>
+		post<{ status: string; count: number }>(
+			`/api/v1/mailboxes/${mailboxId}/inbox-digest/topics/${encodeURIComponent(topicId)}/mark-read`,
+			{ emailIds },
+		),
 
 	// Search
 	searchEmails: (mailboxId: string, params: Record<string, string>) =>

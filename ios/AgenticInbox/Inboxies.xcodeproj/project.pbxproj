@@ -15,6 +15,7 @@
 		219CF0985CEB43F58D0A6181 /* ContactPillParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D339D5F9D3E646D58813D855 /* ContactPillParser.swift */; };
 		219CF0985CEB43F58D0A6182 /* ContactPillMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = D339D5F9D3E646D58813D856 /* ContactPillMenu.swift */; };
 		23E7B306C65E4F21A0AEB90C /* HomeShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74318D3C6D954DCA9AE3A5EF /* HomeShellView.swift */; };
+		24A1B2C3D4E5478990ABCD07 /* InboxDigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24A1B2C3D4E5478990ABCD08 /* InboxDigestView.swift */; };
 		2EC70370129F423785536DB2 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010262344D5842BD893A671C /* AppModel.swift */; };
 		340C18C527B44FD1B96E612C /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43432D294A6A4E8886288B5C /* AuthStore.swift */; };
 		36FD2CCDC03848B0B12D0871 /* InboxiesApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA5A54FAAA74727A76C3CC2 /* InboxiesApp.swift */; };
@@ -67,6 +68,7 @@
 		1CA5A54FAAA74727A76C3CC2 /* InboxiesApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxiesApp.swift; sourceTree = "<group>"; };
 		2153D18D975F436E94786CB2 /* AgentChatClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/AgentChatClient.swift; sourceTree = "<group>"; };
 		21CCC0BA3ECA48D3ACAAD064 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config/AppConfig.swift; sourceTree = "<group>"; };
+		24A1B2C3D4E5478990ABCD08 /* InboxDigestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Home/InboxDigestView.swift; sourceTree = "<group>"; };
 		276C8945F603459A8A0C1FBE /* ComposeDockBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Compose/ComposeDockBar.swift; sourceTree = "<group>"; };
 		28CDA4BA87F547B6A4A0DD65 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme/AppTheme.swift; sourceTree = "<group>"; };
 		3F9A1C2E8B6D4A11B0E5C7D4 /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Components/FlowLayout.swift; sourceTree = "<group>"; };
@@ -202,6 +204,7 @@
 				68CBCACD0F1941F796F4F461 /* EmailDetailView.swift */,
 				FAA619084E624222B919A7C4 /* EmailListView.swift */,
 				74318D3C6D954DCA9AE3A5EF /* HomeShellView.swift */,
+				24A1B2C3D4E5478990ABCD08 /* InboxDigestView.swift */,
 				E3F4A5B6C7D8478990ABCD05 /* ComposeActionListOverlay.swift */,
 				A1B2C3D4E5F6478990ABCD03 /* SettingsSheetView.swift */,
 				A1B2C3D4E5F6478990ABCD04 /* AgentPromptSettingsView.swift */,
@@ -322,6 +325,7 @@
 				411FB5F3E3824817A4909D02 /* EmailDetailView.swift in Sources */,
 				C543C24F6A504509B345B919 /* EmailListView.swift in Sources */,
 				23E7B306C65E4F21A0AEB90C /* HomeShellView.swift in Sources */,
+				24A1B2C3D4E5478990ABCD07 /* InboxDigestView.swift in Sources */,
 				D2E3F4A5B6C7478990ABCD05 /* ComposeActionListOverlay.swift in Sources */,
 				5369F800D7D2405DBBF9A789 /* RootView.swift in Sources */,
 				4E114F70C529443291821DA5 /* SearchView.swift in Sources */,
