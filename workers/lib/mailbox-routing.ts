@@ -3,12 +3,21 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Canonical mailbox IDs for inbound envelope routing and mailbox creation.
+ * Mailbox map for inbound envelope routing and every mailbox-id lookup.
  *
- * Plus-tags are stripped so hello+invoices@domain maps to hello@domain.
+ * Cloudflare invokes email() once per envelope RCPT TO. Each call is an
+ * O(1) R2 HEAD on `mailboxes/<canonical>.json` — never a mailbox list scan.
+ * Plus-tags collapse onto the base mailbox so hello+invoices@domain and
+ * hello@domain are the same Durable Object (serialized, so Message-ID
+ * dedup is safe under concurrent fan-in).
+ *
  * Reply-To display must keep the original plus-address; do not use this
  * helper in reply-recipient selection.
  */
+
+export function mailboxMetadataKey(mailboxId: string): string {
+	return `mailboxes/${mailboxId}.json`;
+}
 
 export function canonicalMailboxId(address: string): string | null {
 	const trimmed = address.trim();
@@ -20,7 +29,7 @@ export function canonicalMailboxId(address: string): string | null {
 	if (at <= 0 || at === extracted.length - 1) return null;
 
 	const local = extracted.slice(0, at);
-	const domain = extracted.slice(at + 1);
+	const domain = extracted.slice(at + 1).replace(/\.+$/, "");
 	const plus = local.indexOf("+");
 	const baseLocal = plus === -1 ? local : local.slice(0, plus);
 	if (!baseLocal || !domain || /\s/.test(baseLocal) || /\s/.test(domain)) {
@@ -30,20 +39,72 @@ export function canonicalMailboxId(address: string): string | null {
 	return `${baseLocal}@${domain}`;
 }
 
+/** Decode a URL/path mailbox id, then canonicalize. */
+export function resolveMailboxParam(raw: string | undefined): string | null {
+	if (!raw) return null;
+	let decoded = raw;
+	try {
+		decoded = decodeURIComponent(raw);
+	} catch {
+		// Malformed % sequences — canonicalize the raw value.
+	}
+	return canonicalMailboxId(decoded);
+}
+
+export function allowedMailboxSet(addresses: readonly string[]): Set<string> {
+	const set = new Set<string>();
+	for (const address of addresses) {
+		const id = canonicalMailboxId(address);
+		if (id) set.add(id);
+	}
+	return set;
+}
+
+export type MailboxExists = (
+	mailboxId: string,
+) => boolean | Promise<boolean>;
+
 export type InboundEnvelopeRoute =
 	| { action: "deliver"; mailboxId: string }
 	| { action: "reject"; reason: string };
 
 /**
- * Map an SMTP envelope recipient onto a mailbox, or a permanent bounce reason.
- * Existence is supplied by the caller (R2 mailbox metadata).
+ * Map one SMTP envelope recipient onto a mailbox, or a permanent bounce.
+ * `mailboxExists` must be an O(1) key check (R2 HEAD or Set), keyed by
+ * the canonical mailbox id — never a linear scan of all mailboxes.
  */
-export function routeInboundEnvelope(
+export async function routeInboundEnvelope(
 	envelopeTo: string,
-	mailboxExists: boolean,
-): InboundEnvelopeRoute {
+	mailboxExists: MailboxExists,
+): Promise<InboundEnvelopeRoute> {
 	const mailboxId = canonicalMailboxId(envelopeTo);
 	if (!mailboxId) return { action: "reject", reason: "Invalid recipient" };
-	if (!mailboxExists) return { action: "reject", reason: "Mailbox does not exist" };
+	if (!(await mailboxExists(mailboxId))) {
+		return { action: "reject", reason: "Mailbox does not exist" };
+	}
 	return { action: "deliver", mailboxId };
+}
+
+/**
+ * Independent per-recipient routing. Production fan-out is N Worker
+ * invocations; this is the same function applied to each envelope `to`.
+ */
+export async function routeInboundEnvelopes(
+	envelopeRecipients: readonly string[],
+	mailboxExists: MailboxExists,
+): Promise<InboundEnvelopeRoute[]> {
+	return Promise.all(
+		envelopeRecipients.map((to) => routeInboundEnvelope(to, mailboxExists)),
+	);
+}
+
+/**
+ * Same Message-ID already stored in this mailbox (plus-address + base
+ * address, or a Worker retry after a successful write).
+ */
+export function isDuplicateInbound(
+	originalMessageId: string | null | undefined,
+	alreadyStored: boolean,
+): boolean {
+	return Boolean(originalMessageId && alreadyStored);
 }

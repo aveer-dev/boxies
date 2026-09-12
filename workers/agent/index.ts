@@ -32,6 +32,7 @@ import {
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import { mailboxIdFromAgentName } from "../../shared/agent-conversations";
 import type { Env } from "../types";
+import { mailboxMetadataKey } from "../lib/mailbox-routing";
 
 // AI SDK v6 changed tool() overloads significantly. We define tools as plain
 // objects matching the Tool type to avoid overload resolution issues.
@@ -94,7 +95,7 @@ Use discard_draft to delete drafts that the operator rejects or that are no long
  */
 async function getSystemPrompt(env: Env, mailboxId: string): Promise<string> {
 	try {
-		const key = `mailboxes/${mailboxId}.json`;
+		const key = mailboxMetadataKey(mailboxId);
 		const obj = await env.BUCKET.get(key);
 		if (obj) {
 			const settings = await obj.json<Record<string, unknown>>();
