@@ -6,7 +6,6 @@ struct ComposeSheetView: View {
     @Environment(AppModel.self) private var app
     var session: ComposeSession
 
-    @State private var showFromPicker = false
     @State private var recipientFocus: Field?
     @State private var viewportHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
@@ -122,14 +121,6 @@ struct ComposeSheetView: View {
                 .keyboardShortcut("s", modifiers: .command)
                 .opacity(0)
             }
-            .confirmationDialog("From", isPresented: $showFromPicker, titleVisibility: .visible) {
-                ForEach(app.mailboxes) { mailbox in
-                    Button(mailbox.email) {
-                        form.selectFrom(mailbox: mailbox)
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            }
             .sheet(isPresented: $showQuotedOriginal) {
                 if let quoted = form.quotedOriginal {
                     quotedOriginalSheet(quoted)
@@ -181,30 +172,58 @@ struct ComposeSheetView: View {
     }
 
     private var fromRow: some View {
-        Button {
+        HStack(spacing: 4) {
+            Text("From:")
+                .foregroundStyle(AppTheme.muted)
+                .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
+
             if app.mailboxes.count > 1 {
-                showFromPicker = true
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text("From \(fromDisplayName)")
+                Menu {
+                    Picker("From", selection: fromMailboxBinding) {
+                        ForEach(app.mailboxes) { mailbox in
+                            Text(mailbox.email).tag(mailbox.id)
+                        }
+                    }
+                    .labelsHidden()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(fromDisplayName)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
+                    }
+                    .foregroundStyle(AppTheme.muted)
+                    .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
+                    .contentShape(Rectangle())
+                }
+                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
+                .accessibilityLabel("From")
+                .accessibilityValue(fromDisplayName)
+                .accessibilityHint("Select sender")
+            } else {
+                Text(fromDisplayName)
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(1)
                     .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
-                if app.mailboxes.count > 1 {
-                    Image(systemName: "chevron.down")
-                        .font(.inter(size: AppTheme.FontSize.chevron, weight: .semibold))
-                        .foregroundStyle(AppTheme.muted)
-                }
-                Spacer(minLength: 0)
+                    .accessibilityLabel("From \(fromDisplayName)")
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 2)
-            .contentShape(Rectangle())
+
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .disabled(app.mailboxes.count <= 1)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 2)
+    }
+
+    private var fromMailboxBinding: Binding<String> {
+        Binding(
+            get: { form.fromMailboxId },
+            set: { id in
+                guard let mailbox = app.mailboxes.first(where: { $0.id == id }) else { return }
+                form.selectFrom(mailbox: mailbox)
+            }
+        )
     }
 
     private var toRow: some View {
