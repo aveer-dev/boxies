@@ -84,6 +84,7 @@ final class ComposeFormModel {
     var toast: ComposeToast?
     var errorMessage: String?
 
+    private let signature: String
     private let initialSnapshot: String
     private var lastSavedSnapshot: String
     private var autoSaveTask: Task<Void, Never>?
@@ -91,8 +92,11 @@ final class ComposeFormModel {
     private var consecutiveFailures = 0
     private let continuousFailureThreshold = 3
 
-    var onDraftSaved: ((_ draftId: String, _ threadId: String?, _ originalEmailId: String?, _ subject: String?, _ body: String?) -> Void)?
+    var onDraftSaved: ((_ draftId: String, _ threadId: String?, _ originalEmailId: String?, _ subject: String?, _ body: String?, _ recipient: String) -> Void)?
     var onDraftDeleted: ((_ draftId: String, _ threadId: String?, _ originalEmailId: String?) -> Void)?
+
+    private let originalEmail: Email?
+    private let selfAddresses: Set<String>
 
     init(
         mode: ComposeMode,
@@ -108,8 +112,11 @@ final class ComposeFormModel {
         self.fromMailboxId = mailboxId
         self.fromEmail = mailboxEmail
         self.fromName = mailboxFromName
+        self.originalEmail = original
+        self.selfAddresses = ComposeHTML.selfAddresses(mailbox: mailbox)
 
         let signature = ComposeHTML.signatureText(settings: mailbox.settings, fromName: mailboxFromName)
+        self.signature = signature
 
         var nextTo: [MailAddress] = []
         var nextCc: [MailAddress] = []
@@ -139,16 +146,23 @@ final class ComposeFormModel {
                 fromDraftHTML: draft.body ?? "",
                 quotedHeader: nextQuoted?.header
             )
+            if let original {
+                nextTo = ComposeHTML.correctedReplyTo(
+                    draftTo: nextTo,
+                    original: original,
+                    selfAddresses: ComposeHTML.selfAddresses(mailbox: mailbox)
+                )
+            }
         } else if let original {
             nextOriginalId = original.id
             nextThreadId = original.threadId ?? original.id
             switch mode {
             case .reply:
-                nextTo = [original.fromAddress]
+                nextTo = ComposeHTML.replyFields(original: original, selfAddresses: ComposeHTML.selfAddresses(mailbox: mailbox))
                 nextSubject = ComposeHTML.prefixedSubject(original.subject, prefix: "Re")
                 nextBody = ComposeHTML.replyBody(signature: signature)
             case .replyAll:
-                let fields = ComposeHTML.replyAllFields(original: original, selfAddress: mailboxEmail)
+                let fields = ComposeHTML.replyAllFields(original: original, selfAddresses: ComposeHTML.selfAddresses(mailbox: mailbox))
                 nextTo = fields.to
                 nextCc = fields.cc
                 nextShowCcBcc = !fields.cc.isEmpty
@@ -161,13 +175,13 @@ final class ComposeFormModel {
                 if mode == .new && !initialTo.isEmpty {
                     nextTo = initialTo
                 }
-                nextBody = signature.isEmpty ? "" : "\n\n\(signature)"
+                nextBody = ComposeHTML.bodyWithSignature(signature)
             }
         } else {
             if !initialTo.isEmpty {
                 nextTo = initialTo
             }
-            nextBody = signature.isEmpty ? "" : "\n\n\(signature)"
+            nextBody = ComposeHTML.bodyWithSignature(signature)
         }
 
         self.toTokens = nextTo
@@ -209,7 +223,7 @@ final class ComposeFormModel {
         toTokens.isEmpty && ccTokens.isEmpty && bccTokens.isEmpty
             && toDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !ComposeHTML.bodyHasUserContent(body, signature: signature)
     }
 
     var currentSnapshot: String {
@@ -314,7 +328,7 @@ final class ComposeFormModel {
                 showToast("Draft saved")
             }
             if let draftId {
-                onDraftSaved?(draftId, threadId, originalEmailId, subject, outgoingHTML())
+                onDraftSaved?(draftId, threadId, originalEmailId, subject, outgoingHTML(), recipientListValue())
             }
             return true
         }
@@ -327,7 +341,7 @@ final class ComposeFormModel {
             var payload: [String: Any] = [
                 "body": outgoingHTML(),
             ]
-            if !toTokens.isEmpty { payload["to"] = toTokens.map(\.email).joined(separator: ", ") }
+            if !toTokens.isEmpty { payload["to"] = replySendRecipients().map(\.email).joined(separator: ", ") }
             if !ccTokens.isEmpty { payload["cc"] = ccTokens.map(\.email).joined(separator: ", ") }
             if !bccTokens.isEmpty { payload["bcc"] = bccTokens.map(\.email).joined(separator: ", ") }
             if !subject.isEmpty { payload["subject"] = subject }
@@ -336,7 +350,15 @@ final class ComposeFormModel {
             if let draftId { payload["draft_id"] = draftId }
 
             let saved = try await APIClient.shared.saveDraft(mailboxId: fromMailboxId, draft: payload)
-            draftId = saved.resolvedId.isEmpty ? (draftId ?? saved.id) : saved.resolvedId
+            let resolved = saved.resolvedId.isEmpty ? (draftId ?? saved.id) : saved.resolvedId
+            if isSending {
+                if let resolved, !resolved.isEmpty {
+                    try? await APIClient.shared.deleteEmail(mailboxId: fromMailboxId, id: resolved)
+                    onDraftDeleted?(resolved, threadId, originalEmailId)
+                }
+                return false
+            }
+            draftId = resolved
             lastSavedSnapshot = currentSnapshot
             saveStatus = .saved(Date())
             consecutiveFailures = 0
@@ -344,7 +366,7 @@ final class ComposeFormModel {
                 showToast("Draft saved")
             }
             if let draftId {
-                onDraftSaved?(draftId, threadId, originalEmailId, subject, outgoingHTML())
+                onDraftSaved?(draftId, threadId, originalEmailId, subject, outgoingHTML(), recipientListValue())
             }
             return true
         } catch {
@@ -367,6 +389,16 @@ final class ComposeFormModel {
             errorMessage = "Add at least one recipient."
             return false
         }
+        let sendRecipients = replySendRecipients()
+        guard !sendRecipients.isEmpty else {
+            errorMessage = "Add at least one recipient."
+            return false
+        }
+        var waited = 0
+        while isSavingDraft && waited < 100 {
+            try? await Task.sleep(for: .milliseconds(50))
+            waited += 1
+        }
         isSending = true
         errorMessage = nil
         defer { isSending = false }
@@ -378,7 +410,7 @@ final class ComposeFormModel {
             "html": html,
             "text": text,
         ]
-        let toEmails = toTokens.map(\.email)
+        let toEmails = sendRecipients.map(\.email)
         payload["to"] = toEmails.count == 1 ? toEmails[0] as Any : toEmails as Any
         if !ccTokens.isEmpty {
             let ccEmails = ccTokens.map(\.email)
@@ -429,6 +461,22 @@ final class ComposeFormModel {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    private func recipientListValue() -> String {
+        toTokens.map(\.email).joined(separator: ", ")
+    }
+
+    /// Reply to your own Sent mail must go to the original recipients, not back to you.
+    private func replySendRecipients() -> [MailAddress] {
+        guard mode == .reply || mode == .replyAll, let originalEmail else {
+            return toTokens
+        }
+        return ComposeHTML.correctedReplyTo(
+            draftTo: toTokens,
+            original: originalEmail,
+            selfAddresses: selfAddresses
+        )
     }
 
     private func outgoingHTML() -> String {
@@ -509,6 +557,20 @@ enum ComposeHTML {
         return "Sent with Inboxies Email"
     }
 
+    /// Two empty paragraphs above the signature so the user has room to type.
+    static func bodyWithSignature(_ signature: String) -> String {
+        signature.isEmpty ? "" : "\n\n\(signature)"
+    }
+
+    /// True when compose text has user-authored content beyond the mailbox signature.
+    static func bodyHasUserContent(_ body: String, signature: String) -> Bool {
+        var text = body
+        if !signature.isEmpty, let range = text.range(of: signature) {
+            text.removeSubrange(range)
+        }
+        return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     static func stripHTML(_ html: String) -> String {
         html
             .replacingOccurrences(of: "<br>", with: "\n", options: .caseInsensitive)
@@ -543,9 +605,7 @@ enum ComposeHTML {
     }
 
     static func replyBody(signature: String) -> String {
-        var parts: [String] = [""]
-        if !signature.isEmpty { parts.append(signature) }
-        return parts.joined(separator: "\n")
+        bodyWithSignature(signature)
     }
 
     static func quotedOriginal(from original: Email) -> QuotedOriginal? {
@@ -582,8 +642,7 @@ enum ComposeHTML {
     }
 
     static func forwardBody(original: Email, signature: String) -> String {
-        var parts: [String] = [""]
-        if !signature.isEmpty { parts.append(signature) }
+        var parts: [String] = signature.isEmpty ? [""] : ["", "", signature]
         parts.append("")
         parts.append("---------- Forwarded message ----------")
         parts.append("From: \(original.formattedFrom)")
@@ -595,8 +654,49 @@ enum ComposeHTML {
         return parts.joined(separator: "\n")
     }
 
-    static func replyAllFields(original: Email, selfAddress: String) -> (to: [MailAddress], cc: [MailAddress]) {
-        let selfLower = selfAddress.lowercased()
+    static func selfAddresses(mailbox: Mailbox) -> Set<String> {
+        Set([mailbox.email, mailbox.id]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty })
+    }
+
+    static func isSelfAddress(_ address: String, selfAddresses: Set<String>) -> Bool {
+        selfAddresses.contains(address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    static func replyFields(original: Email, selfAddresses: Set<String>) -> [MailAddress] {
+        if isSelfAddress(original.fromAddress.email, selfAddresses: selfAddresses) {
+            var to: [MailAddress] = []
+            var seen = Set<String>()
+            for recipient in original.toAddresses {
+                let email = recipient.email.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !email.isEmpty else { continue }
+                let normalized = email.lowercased()
+                guard !selfAddresses.contains(normalized), !seen.contains(normalized) else { continue }
+                seen.insert(normalized)
+                to.append(recipient)
+            }
+            return to.isEmpty ? [original.fromAddress] : to
+        }
+        return [original.fromAddress]
+    }
+
+    static func correctedReplyTo(
+        draftTo: [MailAddress],
+        original: Email,
+        selfAddresses: Set<String>
+    ) -> [MailAddress] {
+        let onlySelf = !draftTo.isEmpty && draftTo.allSatisfy {
+            isSelfAddress($0.email, selfAddresses: selfAddresses)
+        }
+        guard onlySelf, isSelfAddress(original.fromAddress.email, selfAddresses: selfAddresses) else {
+            return draftTo
+        }
+        let corrected = replyFields(original: original, selfAddresses: selfAddresses)
+        return corrected.isEmpty ? draftTo : corrected
+    }
+
+    static func replyAllFields(original: Email, selfAddresses: Set<String>) -> (to: [MailAddress], cc: [MailAddress]) {
         var to: [MailAddress] = []
         var toSeen = Set<String>()
 
@@ -604,7 +704,7 @@ enum ComposeHTML {
             let email = address.email.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !email.isEmpty else { return }
             let normalized = email.lowercased()
-            guard normalized != selfLower, !seen.contains(normalized) else { return }
+            guard !selfAddresses.contains(normalized), !seen.contains(normalized) else { return }
             seen.insert(normalized)
             list.append(address)
         }
@@ -618,7 +718,7 @@ enum ComposeHTML {
         var ccSeen = Set<String>()
         for recipient in original.ccAddresses {
             let normalized = recipient.email.lowercased()
-            if normalized == selfLower || toSeen.contains(normalized) || ccSeen.contains(normalized) {
+            if selfAddresses.contains(normalized) || toSeen.contains(normalized) || ccSeen.contains(normalized) {
                 continue
             }
             ccSeen.insert(normalized)

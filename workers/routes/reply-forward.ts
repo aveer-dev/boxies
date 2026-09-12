@@ -14,6 +14,7 @@ import {
 	buildThreadingHeaders,
 	resolveOriginalEmail,
 } from "../lib/email-helpers";
+import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { SendEmailRequestSchema } from "../lib/schemas";
 import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
@@ -26,7 +27,7 @@ export async function handleReplyEmail(c: AppContext) {
 	const mailboxId = c.req.param("mailboxId") ?? "";
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments } = body;
+	const { cc, bcc, from, subject, html, text, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -37,6 +38,7 @@ export async function handleReplyEmail(c: AppContext) {
 
 	const originalEmail = await resolveOriginalEmail(stub, rawOriginal);
 	const { originalMsgId, references, threadId: thread_id } = buildReferencesChain(originalEmail);
+	const to = rewriteSelfReplyTo(body.to, originalEmail, mailboxId);
 
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
@@ -88,6 +90,7 @@ export async function handleReplyEmail(c: AppContext) {
 	);
 
 	await stub.markThreadRead(thread_id);
+	await stub.deleteDraftsForThread(thread_id);
 
 	c.executionCtx.waitUntil(
 		sendEmail(c.env.EMAIL, {

@@ -129,8 +129,12 @@ export function escapeHtml(text: string): string {
 		.replace(/'/g, "&#39;");
 }
 
+/** Two empty paragraphs inserted above a compose signature. */
+const COMPOSE_SIGNATURE_SPACER = "<p><br></p><p><br></p>";
+
 /**
  * Generate the HTML signature block for compose forms.
+ * Includes two empty paragraphs above the signature so the user has room to type.
  */
 export function getSignatureBlock(settings?: {
 	signature?: { enabled: boolean; text?: string; html?: string };
@@ -143,7 +147,7 @@ export function getSignatureBlock(settings?: {
 		const content = sig.html
 			? DOMPurify.sanitize(sig.html)
 			: escapeHtml(sig.text || "");
-		return `<div style="border-top: 1px solid #ccc; margin-top: 16px; padding-top: 12px;">${content}</div>`;
+		return `${COMPOSE_SIGNATURE_SPACER}<div style="border-top: 1px solid #ccc; margin-top: 16px; padding-top: 12px;">${content}</div>`;
 	}
 	return "";
 }

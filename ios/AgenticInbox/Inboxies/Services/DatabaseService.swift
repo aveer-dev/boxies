@@ -602,6 +602,75 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    func deleteDrafts(
+        mailboxId: String,
+        threadId: String?,
+        originalEmailId: String? = nil,
+        keeping keepId: String?
+    ) {
+        queue.sync {
+            func deleteWhere(_ sql: String, _ value: String) {
+                var stmt: OpaquePointer?
+                if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 2, (value as NSString).utf8String, -1, nil)
+                    if let keepId {
+                        sqlite3_bind_text(stmt, 3, (keepId as NSString).utf8String, -1, nil)
+                    }
+                    sqlite3_step(stmt)
+                }
+                sqlite3_finalize(stmt)
+            }
+
+            let keepClause = keepId == nil ? "" : " AND id != ?"
+            if let threadId, !threadId.isEmpty {
+                deleteWhere(
+                    "DELETE FROM emails WHERE mailbox_id = ? AND folder_id = 'draft' AND thread_id = ?\(keepClause);",
+                    threadId
+                )
+            }
+            if let originalEmailId, !originalEmailId.isEmpty {
+                deleteWhere(
+                    "DELETE FROM emails WHERE mailbox_id = ? AND folder_id = 'draft' AND in_reply_to = ?\(keepClause);",
+                    originalEmailId
+                )
+            }
+        }
+    }
+
+    func pruneLocalOnlyDrafts(mailboxId: String, threadId: String, keepingIds: Set<String>) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql = """
+            SELECT id FROM emails
+            WHERE mailbox_id = ? AND folder_id = 'draft' AND (thread_id = ? OR in_reply_to = ?);
+            """
+            var staleIDs: [String] = []
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (threadId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 3, (threadId as NSString).utf8String, -1, nil)
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(stmt, 0))
+                    if !keepingIds.contains(id) {
+                        staleIDs.append(id)
+                    }
+                }
+            }
+            sqlite3_finalize(stmt)
+            guard !staleIDs.isEmpty else { return }
+            var delStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "DELETE FROM emails WHERE id = ?;", -1, &delStmt, nil) == SQLITE_OK {
+                for id in staleIDs {
+                    sqlite3_reset(delStmt)
+                    sqlite3_bind_text(delStmt, 1, (id as NSString).utf8String, -1, nil)
+                    sqlite3_step(delStmt)
+                }
+            }
+            sqlite3_finalize(delStmt)
+        }
+    }
+
     func deleteMailbox(id: String) {
         queue.sync {
             var stmt: OpaquePointer?

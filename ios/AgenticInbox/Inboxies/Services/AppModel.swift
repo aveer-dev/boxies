@@ -444,11 +444,17 @@ final class AppModel {
         }
 
         // 3. Silent fetch of full thread / body if needed
-        let shouldLoadThread = email.hasDraft == true || (email.threadCount ?? 1) > 1
+        let localHasDraft = localThread.contains(where: \.isDraft)
+        let shouldLoadThread = email.hasDraft == true || (email.threadCount ?? 1) > 1 || localHasDraft
         Task {
             do {
                 if let threadId = email.threadId, shouldLoadThread {
                     let remoteThread = try await APIClient.shared.getThread(mailboxId: mailboxId, threadId: threadId)
+                    db.pruneLocalOnlyDrafts(
+                        mailboxId: mailboxId,
+                        threadId: threadId,
+                        keepingIds: Set(remoteThread.map(\.id))
+                    )
                     db.upsertEmails(mailboxId: mailboxId, emails: remoteThread, defaultFolder: email.folderId)
                     if selectedEmail?.id == email.id || selectedEmail?.threadId == threadId {
                         threadEmails = remoteThread
@@ -516,11 +522,17 @@ final class AppModel {
 
         var enrichedOriginal = original
         var enrichedDraft = draft
-        if let original, original.body == nil || original.cc == nil {
-            enrichedOriginal = try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: original.id)
+        if let original {
+            enrichedOriginal = (try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: original.id)) ?? original
+        } else if let inReplyTo = draft?.inReplyTo, !inReplyTo.isEmpty {
+            if let cached = db.getEmail(id: inReplyTo) {
+                enrichedOriginal = cached
+            } else {
+                enrichedOriginal = try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: inReplyTo)
+            }
         }
-        if let draft, draft.body == nil {
-            enrichedDraft = try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: draft.id)
+        if let draft {
+            enrichedDraft = (try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: draft.id)) ?? draft
         }
 
         let form = ComposeFormModel(
@@ -530,13 +542,14 @@ final class AppModel {
             draft: enrichedDraft ?? draft,
             initialTo: initialTo
         )
-        form.onDraftSaved = { [weak self] draftId, threadId, originalEmailId, subject, body in
+        form.onDraftSaved = { [weak self] draftId, threadId, originalEmailId, subject, body, recipient in
             self?.markThreadHasDraft(
                 draftId: draftId,
                 threadId: threadId,
                 originalEmailId: originalEmailId,
                 draftSubject: subject,
                 draftBody: body,
+                draftRecipient: recipient,
                 hasDraft: true
             )
         }
@@ -556,17 +569,34 @@ final class AppModel {
 
     /// Open a saved draft in compose. Reply-drafts keep reply send semantics.
     func openDraft(_ draft: Email) async {
-        let original: Email? = {
-            guard let inReplyTo = draft.inReplyTo, !inReplyTo.isEmpty else { return nil }
-            return threadEmails.first { $0.id == inReplyTo || $0.messageId == inReplyTo }
-        }()
+        let original = await resolveReplyOriginal(for: draft)
         let mode: ComposeMode = original != nil || (draft.inReplyTo?.isEmpty == false) ? .reply : .editDraft
         await startCompose(mode: mode, original: original, draft: draft)
     }
 
-    /// Prefer the latest non-draft thread message for reply/forward actions.
+    private func resolveReplyOriginal(for draft: Email) async -> Email? {
+        guard let inReplyTo = draft.inReplyTo, !inReplyTo.isEmpty else { return nil }
+        if let fromThread = threadEmails.first(where: { $0.id == inReplyTo || $0.messageId == inReplyTo }) {
+            return fromThread
+        }
+        if let cached = db.getEmail(id: inReplyTo) {
+            return cached
+        }
+        guard let mailboxId = selectedMailboxId else { return nil }
+        return try? await APIClient.shared.getEmail(mailboxId: mailboxId, id: inReplyTo)
+    }
+
+    /// Prefer the latest message from someone else; fall back to latest non-draft.
     var actionSourceEmail: Email? {
-        threadEmails.last(where: { !$0.isDraft }) ?? selectedEmail
+        let selfAddresses = Set(
+            [selectedMailbox?.email, selectedMailbox?.id]
+                .compactMap { $0?.lowercased() }
+                .filter { !$0.isEmpty }
+        )
+        if let received = threadEmails.last(where: { !$0.isDraft && !selfAddresses.contains($0.sender.lowercased()) }) {
+            return received
+        }
+        return threadEmails.last(where: { !$0.isDraft }) ?? selectedEmail
     }
 
     /// Discard a draft in the open thread without closing the conversation.
@@ -574,6 +604,7 @@ final class AppModel {
         guard draft.isDraft, let mailboxId = selectedMailboxId else { return }
         do {
             try await APIClient.shared.deleteEmail(mailboxId: mailboxId, id: draft.id)
+            db.deleteEmail(id: draft.id)
             threadEmails.removeAll { $0.id == draft.id }
             emails.removeAll { $0.id == draft.id }
 
@@ -601,6 +632,7 @@ final class AppModel {
         originalEmailId: String?,
         draftSubject: String? = nil,
         draftBody: String? = nil,
+        draftRecipient: String? = nil,
         hasDraft: Bool
     ) {
         // 1. Update emails in the current tab list (e.g. Inbox)
@@ -650,11 +682,30 @@ final class AppModel {
             }
         }
 
-        // Keep threadEmails in sync if viewing this thread
+        // Keep threadEmails / local cache in sync if viewing this thread
         if hasDraft {
+            let removed = threadEmails.filter { email in
+                email.isDraft && email.id != draftId && Self.isRelatedDraft(
+                    email,
+                    threadId: threadId,
+                    originalEmailId: originalEmailId
+                )
+            }
+            threadEmails.removeAll { email in removed.contains(where: { $0.id == email.id }) }
+            emails.removeAll { email in
+                email.isDraft && email.id != draftId && Self.isRelatedDraft(
+                    email,
+                    threadId: threadId,
+                    originalEmailId: originalEmailId
+                )
+            }
+            for stale in removed {
+                db.deleteEmail(id: stale.id)
+            }
             if let idx = threadEmails.firstIndex(where: { $0.id == draftId }) {
                 if let draftSubject { threadEmails[idx].subject = draftSubject }
                 if let draftBody { threadEmails[idx].body = draftBody }
+                if let draftRecipient { threadEmails[idx].recipient = draftRecipient }
             } else if let threadId, threadEmails.contains(where: { $0.threadId == threadId || $0.id == threadId }) {
                 let draftEmail = Email(
                     id: draftId,
@@ -663,7 +714,7 @@ final class AppModel {
                     subject: draftSubject ?? "",
                     sender: selectedMailbox?.email ?? "",
                     senderName: selectedMailbox?.name,
-                    recipient: "",
+                    recipient: draftRecipient ?? "",
                     date: ISO8601DateFormatter().string(from: Date()),
                     read: true,
                     starred: false,
@@ -672,9 +723,78 @@ final class AppModel {
                 )
                 threadEmails.append(draftEmail)
             }
+            if let mailboxId = selectedMailboxId {
+                db.deleteDrafts(
+                    mailboxId: mailboxId,
+                    threadId: threadId,
+                    originalEmailId: originalEmailId,
+                    keeping: draftId
+                )
+                db.upsertEmails(
+                    mailboxId: mailboxId,
+                    emails: [
+                        Email(
+                            id: draftId,
+                            threadId: threadId,
+                            folderId: "draft",
+                            subject: draftSubject ?? "",
+                            sender: selectedMailbox?.email ?? "",
+                            senderName: selectedMailbox?.name,
+                            recipient: draftRecipient ?? "",
+                            date: ISO8601DateFormatter().string(from: Date()),
+                            read: true,
+                            starred: false,
+                            body: draftBody,
+                            inReplyTo: originalEmailId
+                        )
+                    ],
+                    defaultFolder: "draft"
+                )
+            }
         } else {
-            threadEmails.removeAll { $0.id == draftId }
+            let removed = threadEmails.filter { email in
+                email.id == draftId || (email.isDraft && Self.isRelatedDraft(
+                    email,
+                    threadId: threadId,
+                    originalEmailId: originalEmailId
+                ))
+            }
+            threadEmails.removeAll { email in removed.contains(where: { $0.id == email.id }) }
+            emails.removeAll { email in
+                email.id == draftId || (email.isDraft && Self.isRelatedDraft(
+                    email,
+                    threadId: threadId,
+                    originalEmailId: originalEmailId
+                ))
+            }
+            for stale in removed {
+                db.deleteEmail(id: stale.id)
+            }
+            db.deleteEmail(id: draftId)
+            if let mailboxId = selectedMailboxId {
+                db.deleteDrafts(
+                    mailboxId: mailboxId,
+                    threadId: threadId,
+                    originalEmailId: originalEmailId,
+                    keeping: nil
+                )
+            }
         }
+    }
+
+    private static func isRelatedDraft(
+        _ email: Email,
+        threadId: String?,
+        originalEmailId: String?
+    ) -> Bool {
+        if let threadId, !threadId.isEmpty, email.threadId == threadId || email.id == threadId {
+            return true
+        }
+        if let originalEmailId, !originalEmailId.isEmpty,
+           email.inReplyTo == originalEmailId || email.threadId == originalEmailId {
+            return true
+        }
+        return false
     }
 
 

@@ -29,6 +29,7 @@ import {
 import { verifyDraft } from "./ai";
 import { sendEmail } from "../email-sender";
 import { Folders } from "../../shared/folders";
+import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import type { Env } from "../types";
 
 // ── Type casts for DO methods not on the base stub type ────────────
@@ -153,12 +154,16 @@ export async function toolDraftReply(
 	// Get the original email for thread_id and quoted text
 	const original = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
 	const threadId = original?.thread_id || params.originalEmailId;
+	const rewrittenTo = original
+		? rewriteSelfReplyTo(params.to, original, mailboxId)
+		: params.to;
+	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 
 	// Append quoted original message
 	const quotedBlock = original
 		? buildQuotedReplyBlock({
 				date: original.date,
-				sender: original.sender_name || original.sender || params.to,
+				sender: original.sender_name || original.sender || to,
 				body: original.body ?? undefined,
 			})
 		: "";
@@ -170,7 +175,7 @@ export async function toolDraftReply(
 			id: draftId,
 			subject: params.subject,
 			sender: mailboxId.toLowerCase(),
-			recipient: params.to.toLowerCase(),
+			recipient: to.toLowerCase(),
 			date: new Date().toISOString(),
 			body: bodyHtml,
 			in_reply_to: params.originalEmailId,
@@ -179,6 +184,10 @@ export async function toolDraftReply(
 		},
 		[],
 	);
+	await stub.deleteSiblingDrafts(draftId, {
+		threadId,
+		inReplyTo: params.originalEmailId,
+	});
 
 	return {
 		status: "draft_saved",
@@ -186,7 +195,7 @@ export async function toolDraftReply(
 		message: "Draft saved to Drafts folder. Review it and confirm to send.",
 		draft: {
 			originalEmailId: params.originalEmailId,
-			to: params.to,
+			to,
 			subject: params.subject,
 			body: params.isPlainText ? params.body.trim() : bodyHtml,
 		},
@@ -255,6 +264,10 @@ export async function toolDraftEmail(
 		},
 		[],
 	);
+	await stub.deleteSiblingDrafts(draftId, {
+		threadId: resolvedThreadId,
+		inReplyTo: params.in_reply_to,
+	});
 
 	return {
 		status: "draft_saved",
@@ -291,8 +304,7 @@ export async function toolUpdateDraft(
 		return { error: "Draft not found" };
 	}
 
-	// Verify the body BEFORE deleting the old draft to prevent data loss
-	const newDraftId = crypto.randomUUID();
+	// Verify the body before updating so a failed check leaves the draft intact
 	const rawBody = params.bodyHtml ?? oldDraft.body ?? "";
 	const verifiedBody = await verifyDraft(env.AI, rawBody);
 
@@ -300,26 +312,24 @@ export async function toolUpdateDraft(
 		return { error: "Draft verification failed — keeping existing draft unchanged. Please try again." };
 	}
 
-	await stub.deleteEmail(params.draftId);
-	await stub.createEmail(
-		Folders.DRAFT,
-		{
-			id: newDraftId,
-			subject: params.subject ?? oldDraft.subject,
-			sender: mailboxId.toLowerCase(),
-			recipient: (params.to ?? oldDraft.recipient).toLowerCase(),
-			date: new Date().toISOString(),
-			body: verifiedBody,
-			in_reply_to: oldDraft.in_reply_to || null,
-			email_references: oldDraft.email_references || null,
-			thread_id: oldDraft.thread_id || newDraftId,
-		},
-		[],
-	);
+	const updated = await stub.updateDraft(params.draftId, {
+		subject: params.subject ?? oldDraft.subject ?? "",
+		recipient: (params.to ?? oldDraft.recipient).toLowerCase(),
+		cc: oldDraft.cc || null,
+		bcc: oldDraft.bcc || null,
+		body: verifiedBody,
+		date: new Date().toISOString(),
+		in_reply_to: oldDraft.in_reply_to || null,
+		thread_id: oldDraft.thread_id || params.draftId,
+	});
+
+	if (!updated) {
+		return { error: "Draft not found" };
+	}
 
 	return {
 		status: "draft_updated",
-		newDraftId,
+		newDraftId: params.draftId,
 		oldDraftId: params.draftId,
 		message: "Draft updated in Drafts folder.",
 	};
@@ -416,6 +426,8 @@ export async function toolSendReply(
 		return { error: "Original email not found" };
 	}
 
+	const rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
+	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 	const { originalMsgId, references, threadId } = buildReferencesChain(originalEmail);
 	const fromDomain = mailboxId.split("@")[1];
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
@@ -428,14 +440,14 @@ export async function toolSendReply(
 	}
 	const quotedBlock = buildQuotedReplyBlock({
 		date: originalEmail.date,
-		sender: originalEmail.sender_name || originalEmail.sender || params.to,
+		sender: originalEmail.sender_name || originalEmail.sender || to,
 		body: originalEmail.body ?? undefined,
 	});
 	const fullBodyHtml = sanitizedBody + quotedBlock;
 
 	try {
 		await sendEmail(env.EMAIL, {
-			to: params.to,
+			to,
 			from: mailboxId,
 			subject: params.subject,
 			html: fullBodyHtml,
@@ -452,7 +464,7 @@ export async function toolSendReply(
 			id: messageId,
 			subject: params.subject,
 			sender: mailboxId.toLowerCase(),
-			recipient: params.to.toLowerCase(),
+			recipient: to.toLowerCase(),
 			date: new Date().toISOString(),
 			body: fullBodyHtml,
 			in_reply_to: originalMsgId,
@@ -463,8 +475,9 @@ export async function toolSendReply(
 		},
 		[],
 	);
+	await stub.deleteDraftsForThread(threadId);
 
-	return { status: "sent", messageId, message: `Reply sent to ${params.to}` };
+	return { status: "sent", messageId, message: `Reply sent to ${to}` };
 }
 
 // ── send_email ─────────────────────────────────────────────────────

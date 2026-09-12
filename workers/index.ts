@@ -247,25 +247,61 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const { to, cc, bcc, subject, body, in_reply_to, thread_id, draft_id } = DraftBody.parse(await c.req.json());
 	const stub = c.var.mailboxStub;
-	if (draft_id) await stub.deleteEmail(draft_id); // not atomic — create-then-delete would be safer
-	const messageId = crypto.randomUUID();
 	const now = new Date().toISOString();
 
-	let resolvedThreadId = thread_id;
+	let resolvedThreadId = thread_id || null;
 	if (!resolvedThreadId && in_reply_to) {
-		resolvedThreadId = (await (stub as any).findThreadIdByReferences([in_reply_to])) || null;
+		resolvedThreadId = (await stub.findThreadIdByReferences([in_reply_to])) || null;
 	}
+
+	const draftFields = {
+		subject: subject || "",
+		recipient: (to || "").toLowerCase(),
+		cc: cc?.toLowerCase() || null,
+		bcc: bcc?.toLowerCase() || null,
+		body,
+		date: now,
+		in_reply_to: in_reply_to || null,
+		thread_id: resolvedThreadId,
+	};
+
+	if (draft_id) {
+		const updated = await stub.updateDraft(draft_id, {
+			...draftFields,
+			thread_id: resolvedThreadId || draft_id,
+		});
+		if (updated) {
+			await stub.deleteSiblingDrafts(draft_id, {
+				threadId: updated.thread_id,
+				inReplyTo: in_reply_to || updated.in_reply_to,
+			});
+			return c.json({
+				id: draft_id,
+				draft_id,
+				status: "draft",
+				subject: subject || "",
+				recipient: to || "",
+				date: now,
+			});
+		}
+	}
+
+	const messageId = crypto.randomUUID();
 	if (!resolvedThreadId) {
 		resolvedThreadId = messageId;
 	}
 
 	await stub.createEmail(Folders.DRAFT, {
-		id: messageId, subject: subject || "", sender: mailboxId.toLowerCase(),
-		recipient: (to || "").toLowerCase(), cc: cc?.toLowerCase() || null, bcc: bcc?.toLowerCase() || null,
+		id: messageId, subject: draftFields.subject, sender: mailboxId.toLowerCase(),
+		recipient: draftFields.recipient, cc: draftFields.cc, bcc: draftFields.bcc,
 		date: now, body, in_reply_to: in_reply_to || null, email_references: null,
 		thread_id: resolvedThreadId,
 	}, []);
-	return c.json({ id: messageId, status: "draft", subject: subject || "", recipient: to || "", date: now }, 201);
+	await stub.deleteSiblingDrafts(messageId, {
+		threadId: resolvedThreadId,
+		inReplyTo: in_reply_to,
+	});
+	return c.json({ id: messageId, draft_id: messageId, status: "draft", subject: subject || "", recipient: to || "", date: now }, 201);
 });
 
 app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
@@ -629,6 +665,19 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 	if (!(await env.BUCKET.head(`mailboxes/${mailboxId}.json`))) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
 
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
+	const extractMsgId = (s: string) => { const m = s.match(/<([^>]+)>/); return m ? m[1] : s.trim().split(/\s+/)[0]; };
+	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
+
+	// Outbound mail already has a Sent copy. Don't store a second Inbox copy
+	// when it is delivered back to this mailbox.
+	if (originalMessageId && fromAddress === mailboxId.toLowerCase()) {
+		const existing = await stub.findEmailByMessageId(originalMessageId);
+		if (existing) {
+			console.log(`Skipping inbound copy of own outbound message ${originalMessageId}`);
+			return;
+		}
+	}
 
 	const attachmentData: StoredAttachment[] = [];
 	if (parsedEmail.attachments) {
@@ -642,8 +691,6 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		}
 	}
 
-	const extractMsgId = (s: string) => { const m = s.match(/<([^>]+)>/); return m ? m[1] : s.trim().split(/\s+/)[0]; };
-	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 	const inReplyTo = parsedEmail.inReplyTo ? extractMsgId(parsedEmail.inReplyTo) : null;
 	const emailReferences = parsedEmail.references ? parsedEmail.references.split(/\s+/).filter(Boolean).map(extractMsgId) : [];
 
@@ -673,7 +720,6 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		threadId = messageId;
 	}
 
-	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
 	const fromHeaders = JSON.stringify(parsedEmail.headers);
 	const senderName =
 		normalizeDisplayName(parsedEmail.from?.name) ??

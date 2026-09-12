@@ -675,6 +675,109 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.getEmail(id);
 	}
 
+	async updateDraft(
+		id: string,
+		data: {
+			subject: string;
+			recipient: string;
+			cc: string | null;
+			bcc: string | null;
+			body: string;
+			date: string;
+			in_reply_to: string | null;
+			thread_id: string | null;
+		},
+	) {
+		const existing = this.db
+			.select({ id: schema.emails.id, folder_id: schema.emails.folder_id })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, id))
+			.get();
+
+		if (!existing || existing.folder_id !== Folders.DRAFT) return null;
+
+		this.db
+			.update(schema.emails)
+			.set({
+				subject: data.subject,
+				recipient: data.recipient,
+				cc: data.cc,
+				bcc: data.bcc,
+				body: data.body,
+				date: data.date,
+				in_reply_to: data.in_reply_to,
+				thread_id: data.thread_id,
+			})
+			.where(eq(schema.emails.id, id))
+			.run();
+
+		this.broadcastEvent("email_updated", { id, folder_id: Folders.DRAFT });
+		return this.getEmail(id);
+	}
+
+	async findEmailByMessageId(messageId: string) {
+		const cleaned = messageId.trim().replace(/^<|>$/g, "");
+		if (!cleaned) return null;
+		return (
+			this.db
+				.select()
+				.from(schema.emails)
+				.where(eq(schema.emails.message_id, cleaned))
+				.get() ?? null
+		);
+	}
+
+	async deleteDraftsForThread(threadId: string) {
+		if (!threadId) return [];
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id FROM emails WHERE folder_id = ?1 AND thread_id = ?2`,
+				Folders.DRAFT,
+				threadId,
+			),
+		] as { id: string }[];
+		const ids: string[] = [];
+		for (const row of rows) {
+			await this.deleteEmail(row.id);
+			ids.push(row.id);
+		}
+		return ids;
+	}
+
+	async deleteSiblingDrafts(
+		keepId: string,
+		opts: { threadId?: string | null; inReplyTo?: string | null },
+	) {
+		const threadId = opts.threadId?.trim() || "";
+		const inReplyTo = opts.inReplyTo?.trim() || "";
+		if (!threadId && !inReplyTo) return [];
+
+		const clauses: string[] = [];
+		const params: string[] = [Folders.DRAFT, keepId];
+		if (threadId) {
+			clauses.push(`thread_id = ?${params.length + 1}`);
+			params.push(threadId);
+		}
+		if (inReplyTo) {
+			clauses.push(`in_reply_to = ?${params.length + 1}`);
+			params.push(inReplyTo);
+		}
+
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id FROM emails
+				 WHERE folder_id = ?1 AND id != ?2 AND (${clauses.join(" OR ")})`,
+				...params,
+			),
+		] as { id: string }[];
+		const ids: string[] = [];
+		for (const row of rows) {
+			await this.deleteEmail(row.id);
+			ids.push(row.id);
+		}
+		return ids;
+	}
+
 	async markThreadRead(threadId: string) {
 		this.ctx.storage.sql.exec(
 			`UPDATE emails SET read = 1 WHERE thread_id = ? AND read = 0`,

@@ -6,6 +6,7 @@ import { useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { Folders } from "shared/folders";
+import { rewriteSelfReplyTo } from "shared/reply-recipients";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
 import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
@@ -118,8 +119,12 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 			const fromName = currentMailbox.settings?.fromName || currentMailbox.name;
 			const from = fromName && fromName !== currentMailbox.email ? { email: currentMailbox.email, name: fromName } : currentMailbox.email;
 			const originalEmail = target.in_reply_to ? allMessages.find((msg) => msg.id === target.in_reply_to) : undefined;
+			let sendTo: string | string[] = toEmailListValue(toRecipients) ?? toRecipients;
+			if (originalEmail) {
+				sendTo = rewriteSelfReplyTo(sendTo, originalEmail, currentMailbox.email);
+			}
 			const emailData = {
-				to: toEmailListValue(toRecipients),
+				to: sendTo,
 				cc: toEmailListValue(splitEmailList(target.cc)),
 				bcc: toEmailListValue(splitEmailList(target.bcc)),
 				from,
@@ -128,7 +133,15 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				text: target.body ? target.body.replace(/<[^>]*>/g, "").trim() : "",
 			};
 			if (originalEmail) await replyMut.mutateAsync({ mailboxId, emailId: originalEmail.id, email: emailData }); else await sendEmailMut.mutateAsync({ mailboxId, email: emailData });
-			await deleteEmailMut.mutateAsync({ mailboxId, id: target.id });
+			const draftIds = new Set(
+				allMessages.filter((msg) => draftMessageIds.has(msg.id)).map((msg) => msg.id),
+			);
+			draftIds.add(target.id);
+			await Promise.all(
+				[...draftIds].map((id) =>
+					deleteEmailMut.mutateAsync({ mailboxId, id }).catch(() => undefined),
+				),
+			);
 			toastManager.add({ title: "Email sent!" });
 			if (isDraftFolder) closePanel();
 		} catch (err) {
