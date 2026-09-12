@@ -8,7 +8,7 @@ Designed for people coming from **web / Ionic / Capacitor**: Compose screens ≈
 
 - **Google Sign-In** → backend exchanges the Google ID token for a mobile session JWT (`Authorization: Bearer …`) via `/api/v1/auth/google`
 - **Dev login** (DEBUG builds, local API only) against `/api/v1/auth/dev` while running the Worker locally
-- **Notion-inspired shell**: folder pills (For you / Inbox / Sent / Drafts / Archive / Trash), floating Ask AI + Compose bar
+- **Notion-inspired shell**: large-title nav with mailbox avatar, swipe between folders (For you / Inbox / Sent / Drafts / Archive / Trash), long-press compose action list, floating Ask AI + Compose bar
 - **Email list + detail**, HTML body via `WebView`
 - **Search**, **AI chat** via WebSocket `/agents/email-agent/{mailbox}::{conversationId}`
 - **Compose** (new / reply / reply-all / forward / draft) with minimize dock

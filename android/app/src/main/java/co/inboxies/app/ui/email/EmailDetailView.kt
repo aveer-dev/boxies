@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.utils.DateUtils
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -108,7 +109,7 @@ fun EmailDetailView(
             Spacer(Modifier.height(12.dp))
             Text(current.displaySender, fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Text("To ${current.recipient}", fontSize = 12.sp, color = colors.muted)
-            Text(current.date, fontSize = 12.sp, color = colors.muted)
+            Text(DateUtils.formatFullDate(current.date), fontSize = 12.sp, color = colors.muted)
             Spacer(Modifier.height(16.dp))
             if (loading) {
                 CircularProgressIndicator(color = colors.ink, modifier = Modifier.align(Alignment.CenterHorizontally))

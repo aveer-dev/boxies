@@ -50,44 +50,62 @@ object AppConfig {
     val isLocalDevelopmentAPI: Boolean
         get() {
             val host = runCatching { URI(apiBaseURL).host?.lowercase() }.getOrNull() ?: return false
-            return host == "localhost" ||
-                host == "127.0.0.1" ||
-                host == "::1" ||
-                host == "10.0.2.2"
+            return isLocalHost(host)
         }
 
     /** Accepts a full origin or bare domain; host-only strings get https:// (or http:// for local). */
     fun parseAPIBaseURL(raw: String): String? {
-        var trimmed = raw.trim().trimEnd('/')
+        val trimmed = raw.trim().trimEnd('/')
         if (trimmed.isEmpty()) return null
 
-        if (!hasHttpScheme(trimmed)) {
-            val hostPart = trimmed.split('/', limit = 2).first()
-            val isLocal =
-                hostPart.startsWith("localhost") ||
-                    hostPart.startsWith("127.0.0.1") ||
-                    hostPart.startsWith("[::1]") ||
-                    hostPart.startsWith("0.0.0.0") ||
-                    hostPart.startsWith("10.0.2.2")
-            trimmed = (if (isLocal) "http://" else "https://") + trimmed
+        val scheme = when {
+            trimmed.startsWith("https://", ignoreCase = true) -> "https://"
+            trimmed.startsWith("http://", ignoreCase = true) -> "http://"
+            else -> null
+        }
+
+        val rest = if (scheme != null) trimmed.substring(scheme.length) else trimmed
+        val hostPart = rest.split('/', limit = 2).first()
+        val hostOnly = hostPart.split(':', limit = 2).first()
+        val isLocal = isLocalHost(hostOnly)
+
+        // If no scheme provided, default based on host.
+        // If https was mistakenly added to a local host (e.g. during typing), downgrade it.
+        var finalUrl = when {
+            scheme == null -> (if (isLocal) "http://" else "https://") + rest
+            isLocal && scheme == "https://" -> "http://" + rest
+            else -> trimmed
         }
 
         return try {
-            val uri = URI(trimmed)
-            val scheme = uri.scheme?.lowercase()
-            if (scheme != "http" && scheme != "https") return null
+            val uri = URI(finalUrl)
+            val s = uri.scheme?.lowercase()
+            if (s != "http" && s != "https") return null
             val host = uri.host ?: return null
             if (host.isEmpty()) return null
             val port = if (uri.port != -1) ":${uri.port}" else ""
             val path = uri.path?.takeIf { it.isNotEmpty() && it != "/" } ?: ""
-            "$scheme://$host$port$path"
+            "$s://$host$port$path"
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun hasHttpScheme(value: String): Boolean {
-        val lower = value.lowercase()
-        return lower.startsWith("https://") || lower.startsWith("http://")
+    private fun isLocalHost(host: String): Boolean {
+        val h = host.lowercase().removePrefix("[").removeSuffix("]")
+        if (h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "10.0.2.2" || h == "0.0.0.0") return true
+
+        // Private IPv4 ranges
+        if (h.startsWith("192.168.")) return true
+        if (h.startsWith("10.")) return true
+        if (h.startsWith("172.")) {
+            val second = h.split('.').getOrNull(1)?.toIntOrNull()
+            if (second != null && second in 16..31) return true
+        }
+
+        // Common local development host suffixes
+        if (h.endsWith(".local") || h.endsWith(".lan")) return true
+
+        return false
     }
 }

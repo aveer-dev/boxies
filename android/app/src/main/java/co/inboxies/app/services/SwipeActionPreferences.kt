@@ -19,9 +19,93 @@ enum class SwipeQuickAction(val title: String) {
     }
 }
 
+enum class EmailFolderKind {
+    INBOX,
+    SENT,
+    ARCHIVE,
+    TRASH,
+    DRAFT,
+    OTHER,
+}
+
+object EmailFolderContext {
+    fun kind(email: Email, fallbackFolderId: String?): EmailFolderKind {
+        val folderId = normalizedFolderId(email.folderId) ?: normalizedFolderId(fallbackFolderId)
+        return when (folderId) {
+            "inbox" -> EmailFolderKind.INBOX
+            "sent" -> EmailFolderKind.SENT
+            "archive" -> EmailFolderKind.ARCHIVE
+            "trash" -> EmailFolderKind.TRASH
+            "draft", "drafts" -> EmailFolderKind.DRAFT
+            else -> if (email.isDraft) EmailFolderKind.DRAFT else EmailFolderKind.OTHER
+        }
+    }
+
+    private fun normalizedFolderId(id: String?): String? {
+        if (id.isNullOrEmpty()) return null
+        return id.lowercase()
+    }
+}
+
+data class EmailSwipeLayout(
+    val trailingActions: List<SwipeQuickAction>,
+    val trailingAllowsFullSwipe: Boolean,
+    val leadingActions: List<SwipeQuickAction>,
+    val leadingAllowsFullSwipe: Boolean,
+    val showsMore: Boolean,
+) {
+    companion object {
+        fun resolve(
+            email: Email,
+            fallbackFolderId: String?,
+            preferences: SwipeActionPreferences,
+        ): EmailSwipeLayout {
+            return when (EmailFolderContext.kind(email, fallbackFolderId)) {
+                EmailFolderKind.ARCHIVE -> EmailSwipeLayout(
+                    trailingActions = listOf(SwipeQuickAction.DELETE),
+                    trailingAllowsFullSwipe = true,
+                    leadingActions = emptyList(),
+                    leadingAllowsFullSwipe = false,
+                    showsMore = true,
+                )
+                EmailFolderKind.TRASH -> EmailSwipeLayout(
+                    trailingActions = listOf(SwipeQuickAction.DELETE),
+                    trailingAllowsFullSwipe = true,
+                    leadingActions = listOf(SwipeQuickAction.ARCHIVE),
+                    leadingAllowsFullSwipe = true,
+                    showsMore = true,
+                )
+                EmailFolderKind.DRAFT -> EmailSwipeLayout(
+                    trailingActions = listOf(SwipeQuickAction.DELETE),
+                    trailingAllowsFullSwipe = true,
+                    leadingActions = emptyList(),
+                    leadingAllowsFullSwipe = false,
+                    showsMore = true,
+                )
+                EmailFolderKind.INBOX, EmailFolderKind.SENT, EmailFolderKind.OTHER -> EmailSwipeLayout(
+                    trailingActions = preferences.leftActions,
+                    trailingAllowsFullSwipe = preferences.leftActions.isNotEmpty(),
+                    leadingActions = preferences.rightActions,
+                    leadingAllowsFullSwipe = preferences.rightActions.isNotEmpty(),
+                    showsMore = true,
+                )
+            }
+        }
+    }
+}
+
+data class EmailActionAvailability(val email: Email) {
+    val showsArchive: Boolean
+        get() = EmailFolderContext.kind(email, null) != EmailFolderKind.ARCHIVE && !email.isDraft
+
+    val showsDelete: Boolean get() = true
+
+    val showsReplyActions: Boolean get() = !email.isDraft
+}
+
 data class SwipeActionPreferences(
-    val leftActions: List<SwipeQuickAction> = listOf(SwipeQuickAction.ARCHIVE, SwipeQuickAction.DELETE),
-    val rightActions: List<SwipeQuickAction> = listOf(SwipeQuickAction.TOGGLE_READ, SwipeQuickAction.STAR),
+    val leftActions: List<SwipeQuickAction> = listOf(SwipeQuickAction.DELETE),
+    val rightActions: List<SwipeQuickAction> = listOf(SwipeQuickAction.ARCHIVE),
 ) {
     fun save(prefs: SharedPreferences) {
         prefs.edit {
@@ -46,11 +130,13 @@ data class SwipeActionPreferences(
                 if (raw.isNullOrBlank()) return fallback
                 return raw.split(",")
                     .mapNotNull { name -> SwipeQuickAction.entries.firstOrNull { it.name == name } }
+                    .distinct()
                     .take(MAX_ACTIONS_PER_EDGE)
+                    .ifEmpty { fallback }
             }
             return SwipeActionPreferences(
-                leftActions = parse(prefs.getString(KEY_LEFT, null), listOf(SwipeQuickAction.ARCHIVE, SwipeQuickAction.DELETE)),
-                rightActions = parse(prefs.getString(KEY_RIGHT, null), listOf(SwipeQuickAction.TOGGLE_READ, SwipeQuickAction.STAR)),
+                leftActions = parse(prefs.getString(KEY_LEFT, null), listOf(SwipeQuickAction.DELETE)),
+                rightActions = parse(prefs.getString(KEY_RIGHT, null), listOf(SwipeQuickAction.ARCHIVE)),
             )
         }
     }

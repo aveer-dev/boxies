@@ -14,6 +14,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.R
 
@@ -92,10 +93,22 @@ object AppThemeDims {
 
     object List {
         val title = 15.sp
+        val sender = 15.sp
         val subject = 13.sp
         val preview = 12.sp
         val date = 10.sp
+        val badge = 10.sp
         val sectionHeader = 11.sp
+        val tracking = 0.25.sp
+        val rowVerticalPadding = 18.dp
+        val rowTextSpacing = 6.dp
+        val rowHorizontalPadding = 20.dp
+        val dotToText = 14.dp
+        val unreadDotSize = 8.dp
+        val unreadDotLineHeight = 22.dp
+        val separatorHeight = 0.5.dp
+        val separatorLeadingInset get() = rowHorizontalPadding + unreadDotSize + dotToText
+        val actionWidth = 72.dp
     }
 }
 

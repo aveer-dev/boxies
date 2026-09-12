@@ -731,6 +731,16 @@ class AppModel {
         hideToast()
     }
 
+    suspend fun performSwipeAction(action: SwipeQuickAction, on: Email) {
+        when (action) {
+            SwipeQuickAction.DELETE -> deleteEmail(on)
+            SwipeQuickAction.ARCHIVE -> archiveEmail(on)
+            SwipeQuickAction.STAR -> toggleStar(on)
+            SwipeQuickAction.TOGGLE_READ -> toggleRead(on)
+            SwipeQuickAction.REPLY -> startCompose(ComposeMode.Reply, original = on)
+        }
+    }
+
     suspend fun toggleStar(on: Email? = null) {
         val mailboxId = _selectedMailboxId.value ?: return
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return

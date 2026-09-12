@@ -1,17 +1,14 @@
 package co.inboxies.app.ui.search
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -32,6 +29,7 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.email.EmailListView
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -49,8 +47,14 @@ fun SearchView(
     var results by remember { mutableStateOf<List<Email>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
+    val trimmed = query.trim()
 
-    Column(modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background)
+            .padding(top = 8.dp),
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -65,6 +69,7 @@ fun SearchView(
                         val mailboxId = app.selectedMailboxId.value ?: return@launch
                         if (value.isBlank()) {
                             results = emptyList()
+                            loading = false
                             return@launch
                         }
                         loading = true
@@ -83,30 +88,44 @@ fun SearchView(
                 Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.ink)
             }
         }
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier.align(Alignment.CenterHorizontally).padding(24.dp),
-                color = colors.ink,
+
+        if (trimmed.isNotEmpty()) {
+            Text(
+                "Results",
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                color = colors.muted,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            items(results, key = { it.id }) { email ->
-                Column(
+
+        when {
+            loading || results.isNotEmpty() -> {
+                EmailListView(
+                    emails = results,
+                    isLoading = loading,
+                    highlightQuery = query,
+                    bottomInset = 0.dp,
+                    onOpen = { email ->
+                        scope.launch {
+                            if (onOpenEmail != null) onOpenEmail(email)
+                            else app.openEmail(email)
+                            onClose()
+                        }
+                    },
+                )
+            }
+            trimmed.length >= 2 -> {
+                Text(
+                    "No matching emails",
+                    fontFamily = InterFontFamily,
+                    fontSize = 15.sp,
+                    color = colors.muted,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            scope.launch {
-                                if (onOpenEmail != null) onOpenEmail(email)
-                                else app.openEmail(email)
-                                onClose()
-                            }
-                        }
-                        .padding(horizontal = 20.dp, vertical = 14.dp),
-                ) {
-                    Text(email.displaySender, fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, color = colors.ink)
-                    Text(email.subject, fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.ink)
-                    Text(email.previewText, fontSize = 12.sp, color = colors.muted, maxLines = 2)
-                }
+                        .padding(top = 24.dp),
+                )
             }
         }
     }
