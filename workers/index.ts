@@ -34,9 +34,32 @@ import {
 	issueMobileSessionToken,
 	verifyAppleIdentityToken,
 } from "./lib/apple-auth";
-import { sendAPNsPush } from "./lib/apns";
+import { verifyGoogleIdentityToken } from "./lib/google-auth";
+import { sendAPNsPush, type APNsPayload } from "./lib/apns";
+import { sendFcmPush } from "./lib/fcm";
 
 type AppContext = Context<MailboxContext>;
+
+type DeviceTokenRow = { token: string; platform: string };
+
+async function dispatchPushToDevices(
+	env: Env,
+	stub: { getDeviceTokens: () => Promise<DeviceTokenRow[]>; unregisterDeviceToken: (token: string) => Promise<unknown> },
+	payload: APNsPayload,
+): Promise<{ deviceCount: number; ios: unknown; android: unknown }> {
+	const rows = await stub.getDeviceTokens();
+	const iosTokens = rows.filter((r) => r.platform !== "android").map((r) => r.token);
+	const androidTokens = rows.filter((r) => r.platform === "android").map((r) => r.token);
+
+	const ios = await sendAPNsPush(env, iosTokens, payload);
+	const android = await sendFcmPush(env, androidTokens, payload);
+
+	for (const stale of [...ios.staleTokens, ...android.staleTokens]) {
+		await stub.unregisterDeviceToken(stale);
+	}
+
+	return { deviceCount: rows.length, ios, android };
+}
 
 // -- Request body schemas (kept for validation) ---------------------
 
@@ -374,19 +397,19 @@ app.delete("/api/v1/mailboxes/:mailboxId/device-token/:token", async (c: AppCont
 
 app.post("/api/v1/mailboxes/:mailboxId/test-push", async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId");
-	const deviceTokens = await (c.var.mailboxStub as any).getDeviceTokens();
-	console.log(`[APNs Test] Found ${deviceTokens?.length ?? 0} token(s) for ${mailboxId}`);
-	if (!deviceTokens || deviceTokens.length === 0) {
+	const rows = await (c.var.mailboxStub as any).getDeviceTokens();
+	console.log(`[Push Test] Found ${rows?.length ?? 0} token(s) for ${mailboxId}`);
+	if (!rows || rows.length === 0) {
 		return c.json({
 			status: "no_devices",
-			message: `No device tokens registered for mailbox "${mailboxId}". Launch the Inboxies iOS app and grant notification permission.`,
+			message: `No device tokens registered for mailbox "${mailboxId}". Launch the Inboxies iOS or Android app and grant notification permission.`,
 			deviceTokens: [],
 		});
 	}
 
-	const result = await sendAPNsPush(c.env, deviceTokens, {
+	const result = await dispatchPushToDevices(c.env, c.var.mailboxStub as any, {
 		title: "Inboxies Push Test",
-		body: "Your APNs push notification pipeline is working live! 🚀",
+		body: "Your push notification pipeline is working live!",
 		mailboxId,
 		emailId: "test-push-" + Date.now(),
 		folderId: "inbox",
@@ -394,7 +417,7 @@ app.post("/api/v1/mailboxes/:mailboxId/test-push", async (c: AppContext) => {
 
 	return c.json({
 		status: "completed",
-		deviceCount: deviceTokens.length,
+		deviceCount: result.deviceCount,
 		result,
 	});
 });
@@ -565,6 +588,55 @@ app.post("/api/v1/auth/apple", async (c) => {
 	} catch (e) {
 		console.error("Apple auth failed:", (e as Error).message);
 		return c.json({ error: "Invalid Apple identity token" }, 401);
+	}
+});
+
+const GoogleAuthBody = z.object({
+	idToken: z.string().min(1),
+});
+
+app.post("/api/v1/auth/google", async (c) => {
+	const googleClientId = c.env.GOOGLE_CLIENT_ID;
+	const mobileSecret = c.env.MOBILE_JWT_SECRET;
+	if (!googleClientId || !mobileSecret) {
+		return c.json(
+			{
+				error:
+					"Google Sign In is not configured. Set GOOGLE_CLIENT_ID and MOBILE_JWT_SECRET secrets.",
+			},
+			503,
+		);
+	}
+
+	const parsed = GoogleAuthBody.safeParse(await c.req.json());
+	if (!parsed.success) {
+		return c.json({ error: "idToken is required" }, 400);
+	}
+
+	try {
+		const claims = await verifyGoogleIdentityToken(
+			parsed.data.idToken,
+			googleClientId,
+		);
+		const session = await issueMobileSessionToken(mobileSecret, {
+			sub: claims.sub,
+			email: claims.email,
+			auth: "google",
+		});
+		return c.json({
+			token: session.token,
+			expiresAt: session.expiresAt,
+			user: {
+				id: claims.sub,
+				email: claims.email ?? null,
+				fullName: claims.name
+					? { givenName: claims.name, familyName: undefined }
+					: null,
+			},
+		});
+	} catch (e) {
+		console.error("Google auth failed:", (e as Error).message);
+		return c.json({ error: "Invalid Google identity token" }, 401);
 	}
 });
 
@@ -761,27 +833,25 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		),
 	);
 
-	// Send Apple Push Notification (APNs) to all registered iOS devices
+	// Send push notifications to registered iOS (APNs) and Android (FCM) devices
 	ctx.waitUntil(
 		(async () => {
-			const deviceTokens = await (stub as any).getDeviceTokens();
-			console.log(`[APNs] Inbound email for "${mailboxId}". Registered device tokens: ${deviceTokens?.length ?? 0}`);
-			if (deviceTokens && deviceTokens.length > 0) {
-				const { successCount, failureCount, staleTokens } = await sendAPNsPush(env, deviceTokens, {
+			const rows = await (stub as any).getDeviceTokens();
+			console.log(`[Push] Inbound email for "${mailboxId}". Registered device tokens: ${rows?.length ?? 0}`);
+			if (rows && rows.length > 0) {
+				const result = await dispatchPushToDevices(env, stub as any, {
 					title: senderName || fromAddress,
 					body: parsedEmail.subject || "(No subject)",
 					mailboxId,
 					emailId: messageId,
 					folderId: Folders.INBOX,
 				});
-				console.log(`[APNs] Push results for "${mailboxId}": ${successCount} delivered, ${failureCount} failed.`);
-				for (const stale of staleTokens) {
-					console.log(`[APNs] Pruning stale token: ${stale.slice(0, 8)}...`);
-					await (stub as any).unregisterDeviceToken(stale);
-				}
+				console.log(
+					`[Push] Results for "${mailboxId}": ios=${JSON.stringify(result.ios)} android=${JSON.stringify(result.android)}`,
+				);
 			}
 		})().catch((e) =>
-			console.error("[APNs] Push notification trigger failed:", (e as Error).message),
+			console.error("[Push] Push notification trigger failed:", (e as Error).message),
 		),
 	);
 }

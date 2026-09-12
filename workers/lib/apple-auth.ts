@@ -23,10 +23,12 @@ export interface AppleIdentityClaims {
 	email?: string;
 }
 
+export type MobileAuthProvider = "apple" | "dev" | "google";
+
 export interface MobileSessionClaims extends JWTPayload {
 	sub: string;
 	email?: string;
-	auth: "apple" | "dev";
+	auth: MobileAuthProvider;
 }
 
 /**
@@ -54,7 +56,7 @@ export async function verifyAppleIdentityToken(
 
 export async function issueMobileSessionToken(
 	secret: string,
-	claims: { sub: string; email?: string; auth: "apple" | "dev" },
+	claims: { sub: string; email?: string; auth: MobileAuthProvider },
 ): Promise<{ token: string; expiresAt: string }> {
 	const key = new TextEncoder().encode(secret);
 	const expiresAtMs = Date.now() + MOBILE_TOKEN_TTL_SECONDS * 1000;
@@ -89,7 +91,7 @@ export async function verifyMobileSessionToken(
 	}
 
 	const auth = payload.auth;
-	if (auth !== "apple" && auth !== "dev") {
+	if (auth !== "apple" && auth !== "dev" && auth !== "google") {
 		throw new Error("Mobile session token missing auth claim");
 	}
 

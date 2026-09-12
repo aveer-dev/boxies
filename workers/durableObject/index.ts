@@ -1316,7 +1316,9 @@ export class MailboxDO extends DurableObject<Env> {
 		this.ctx.storage.sql.exec(
 			`INSERT INTO device_tokens (token, platform, updated_at)
 			 VALUES (?, ?, datetime('now'))
-			 ON CONFLICT(token) DO UPDATE SET updated_at = datetime('now');`,
+			 ON CONFLICT(token) DO UPDATE SET
+			   platform = excluded.platform,
+			   updated_at = datetime('now');`,
 			token,
 			platform,
 		);
@@ -1331,9 +1333,14 @@ export class MailboxDO extends DurableObject<Env> {
 		return { status: "unregistered" };
 	}
 
-	async getDeviceTokens(): Promise<string[]> {
-		const rows = [...this.ctx.storage.sql.exec(`SELECT token FROM device_tokens;`)];
-		return rows.map((r: any) => r.token as string);
+	async getDeviceTokens(): Promise<{ token: string; platform: string }[]> {
+		const rows = [
+			...this.ctx.storage.sql.exec(`SELECT token, platform FROM device_tokens;`),
+		];
+		return rows.map((r: any) => ({
+			token: r.token as string,
+			platform: (r.platform as string) || "ios",
+		}));
 	}
 
 	// ── Inbox digest (in-time) ─────────────────────────────────────
