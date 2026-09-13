@@ -14,6 +14,7 @@ import {
 	generateMessageId,
 	buildThreadingHeaders,
 	listMailboxes,
+	getMailboxStub,
 } from "./lib/email-helpers";
 import {
 	displayNameFromAddressField,
@@ -676,7 +677,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 
 	const messageId = crypto.randomUUID();
 
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const stub = getMailboxStub(env, mailboxId);
 	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
 	const extractMsgId = (s: string) => { const m = s.match(/<([^>]+)>/); return m ? m[1] : s.trim().split(/\s+/)[0]; };
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;

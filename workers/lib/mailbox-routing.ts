@@ -19,7 +19,8 @@ export function mailboxMetadataKey(mailboxId: string): string {
 	return `mailboxes/${mailboxId}.json`;
 }
 
-export function canonicalMailboxId(address: string): string | null {
+export function canonicalMailboxId(address: string | null | undefined): string | null {
+	if (typeof address !== "string") return null;
 	const trimmed = address.trim();
 	if (!trimmed) return null;
 
@@ -74,7 +75,7 @@ export type InboundEnvelopeRoute =
  * the canonical mailbox id — never a linear scan of all mailboxes.
  */
 export async function routeInboundEnvelope(
-	envelopeTo: string,
+	envelopeTo: string | null | undefined,
 	mailboxExists: MailboxExists,
 ): Promise<InboundEnvelopeRoute> {
 	const mailboxId = canonicalMailboxId(envelopeTo);

@@ -47,6 +47,9 @@ assert.equal(canonicalMailboxId("@inboxies.email"), null);
 assert.equal(canonicalMailboxId("hello+tag@"), null);
 assert.equal(canonicalMailboxId("+tag@inboxies.email"), null);
 assert.equal(canonicalMailboxId("hello @inboxies.email"), null);
+assert.equal(canonicalMailboxId(null), null);
+assert.equal(canonicalMailboxId(undefined), null);
+assert.equal(resolveMailboxParam("Hello+Foo@Inboxies.Email"), "hello@inboxies.email");
 
 assert.equal(
 	resolveMailboxParam("Hello%2BFoo%40Inboxies.Email"),
@@ -181,6 +184,49 @@ assert.equal(delivered[1].mailboxId, "user42@inboxies.email");
 assert.equal(
 	delivered.every((r) => mailboxes.has(r.mailboxId)),
 	true,
+);
+
+// ── receiveEmail prelude: bounce before reading MIME ──────────────
+
+async function receivePrelude(envelopeTo, existing) {
+	const rawReads = [];
+	const route = await routeInboundEnvelope(envelopeTo, async (id) => existing.has(id));
+	if (route.action === "reject") {
+		return { reject: route.reason, rawReads, mailboxId: null };
+	}
+	rawReads.push(route.mailboxId);
+	return { reject: null, rawReads, mailboxId: route.mailboxId };
+}
+
+const created = new Set(["hello@inboxies.email", "alice@inboxies.email"]);
+
+assert.deepEqual(await receivePrelude("unknown@inboxies.email", created), {
+	reject: "Mailbox does not exist",
+	rawReads: [],
+	mailboxId: null,
+});
+assert.deepEqual(await receivePrelude("", created), {
+	reject: "Invalid recipient",
+	rawReads: [],
+	mailboxId: null,
+});
+assert.deepEqual(await receivePrelude(undefined, created), {
+	reject: "Invalid recipient",
+	rawReads: [],
+	mailboxId: null,
+});
+assert.deepEqual(await receivePrelude("hello+tag@inboxies.email", created), {
+	reject: null,
+	rawReads: ["hello@inboxies.email"],
+	mailboxId: "hello@inboxies.email",
+});
+
+// Transient R2/DO failures must throw (retry), not bounce.
+await assert.rejects(
+	() => routeInboundEnvelope("hello@inboxies.email", async () => {
+		throw new Error("R2 unavailable");
+	}),
+	{ message: "R2 unavailable" },
 );
 
 console.log("mailbox-routing helpers: ok");
