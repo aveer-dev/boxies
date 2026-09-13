@@ -48,9 +48,10 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                 <button type="button" onClick={onToggleExpand} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kumo-tint rounded-lg text-left">
                     <Avatar isDraft={isDraft} isSelf={isSelf} sender={senderName} />
                     <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-medium text-kumo-default truncate">{senderLabel}</span>
                             <span className="text-xs text-kumo-subtle shrink-0 flex items-center gap-1.5">
+                                {deliveryFailed && <Badge variant="outline">{deliveryStatusLabel(email.delivery_status)}</Badge>}
                                 {hasFileAttachment(email) && <PaperclipIcon size={12} className="shrink-0" aria-label="Has attachment" />}
                                 {formatDetailDate(email.date)}
                             </span>

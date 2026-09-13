@@ -51,8 +51,14 @@ export interface EmailSendingEvent {
 	metadata?: Record<string, unknown>;
 }
 
+/** Terminal failure statuses written from Email Sending events. */
+export type FailureDeliveryStatus = Extract<
+	DeliveryStatus,
+	"failed" | "bounced" | "complained"
+>;
+
 export interface MappedDeliveryEvent {
-	status: DeliveryStatus;
+	status: FailureDeliveryStatus;
 	error: string | null;
 	providerMessageId: string;
 	sender: string | null;
@@ -72,6 +78,23 @@ function bounceOrDeliveryReason(payload: EmailSendingEventPayload): string | nul
 		payload.delivery?.smtpResponse,
 		payload.delivery?.status,
 	);
+}
+
+/**
+ * Cloudflare may wrap the event under a `data` property depending on how the
+ * queue consumer receives the message body. Prefer a top-level `type` when
+ * present so we do not unwrap a legitimate event that happens to include data.
+ */
+export function unwrapEmailSendingEvent(body: unknown): EmailSendingEvent {
+	if (!body || typeof body !== "object") return { type: "" };
+	const record = body as Record<string, unknown>;
+	if (typeof record.type === "string") {
+		return body as EmailSendingEvent;
+	}
+	if (record.data && typeof record.data === "object") {
+		return unwrapEmailSendingEvent(record.data);
+	}
+	return body as EmailSendingEvent;
 }
 
 /**
@@ -129,4 +152,86 @@ export function mapEmailSendingEvent(
 
 	// delivered / deferred: ignored for UI (failure-focused)
 	return null;
+}
+
+export type DeliveryStub = {
+	findEmailByProviderMessageId: (
+		providerMessageId: string,
+	) => Promise<{ id: string } | null>;
+	setDeliveryState: (
+		id: string,
+		state: {
+			providerMessageId?: string | null;
+			status: "failed" | "bounced" | "complained";
+			error?: string | null;
+		},
+	) => Promise<unknown>;
+};
+
+export type ResolveDeliveryStub = (sender: string) => DeliveryStub;
+
+/**
+ * Apply one Email Sending event body. Returns whether the message should be
+ * acked (true) or retried (false).
+ */
+export async function applyEmailSendingEvent(
+	body: unknown,
+	resolveStub: ResolveDeliveryStub,
+): Promise<boolean> {
+	const event = unwrapEmailSendingEvent(body);
+	const mapped = mapEmailSendingEvent(event);
+	if (!mapped) {
+		// Delivered / deferred / unknown — nothing to persist.
+		return true;
+	}
+
+	const sender = mapped.sender;
+	if (!sender) {
+		console.warn(
+			"Email sending event missing sender; cannot route to mailbox",
+			mapped.providerMessageId,
+		);
+		return true;
+	}
+
+	let stub: DeliveryStub;
+	try {
+		stub = resolveStub(sender);
+	} catch (error) {
+		// Invalid / unknown sender cannot be fixed by retry — ack to avoid poison loops.
+		console.warn(
+			"Email sending event sender is not a valid mailbox; acking",
+			sender,
+			(error as Error).message,
+		);
+		return true;
+	}
+
+	try {
+		const email = await stub.findEmailByProviderMessageId(
+			mapped.providerMessageId,
+		);
+		if (!email) {
+			// Race: Sent row may not have provider_message_id yet — retry.
+			console.warn(
+				"No email found for provider message id; will retry",
+				mapped.providerMessageId,
+				sender,
+			);
+			return false;
+		}
+
+		await stub.setDeliveryState(email.id, {
+			status: mapped.status,
+			error: mapped.error,
+			providerMessageId: mapped.providerMessageId,
+		});
+		return true;
+	} catch (error) {
+		console.error(
+			"Failed to apply email sending event:",
+			(error as Error).message,
+		);
+		return false;
+	}
 }

@@ -9,24 +9,10 @@
 
 import { getMailboxStub } from "./email-helpers";
 import {
-	mapEmailSendingEvent,
-	type EmailSendingEvent,
+	applyEmailSendingEvent,
+	type DeliveryStub,
 } from "./email-sending-events";
 import type { Env } from "../types";
-
-type DeliveryStub = {
-	findEmailByProviderMessageId: (
-		providerMessageId: string,
-	) => Promise<{ id: string } | null>;
-	setDeliveryState: (
-		id: string,
-		state: {
-			providerMessageId?: string | null;
-			status: "failed" | "bounced" | "complained";
-			error?: string | null;
-		},
-	) => Promise<unknown>;
-};
 
 /**
  * Process one Email Sending queue message. Returns whether the message
@@ -36,50 +22,10 @@ export async function handleEmailSendingQueueMessage(
 	env: Env,
 	body: unknown,
 ): Promise<boolean> {
-	const event = body as EmailSendingEvent;
-	const mapped = mapEmailSendingEvent(event);
-	if (!mapped) {
-		// Delivered / deferred / unknown — nothing to persist.
-		return true;
-	}
-
-	const sender = mapped.sender;
-	if (!sender) {
-		console.warn(
-			"Email sending event missing sender; cannot route to mailbox",
-			mapped.providerMessageId,
-		);
-		return true;
-	}
-
-	try {
-		const stub = getMailboxStub(env, sender) as unknown as DeliveryStub;
-		const email = await stub.findEmailByProviderMessageId(
-			mapped.providerMessageId,
-		);
-		if (!email) {
-			// Race: Sent row may not have provider_message_id yet — retry.
-			console.warn(
-				"No email found for provider message id; will retry",
-				mapped.providerMessageId,
-				sender,
-			);
-			return false;
-		}
-
-		await stub.setDeliveryState(email.id, {
-			status: mapped.status,
-			error: mapped.error,
-			providerMessageId: mapped.providerMessageId,
-		});
-		return true;
-	} catch (error) {
-		console.error(
-			"Failed to apply email sending event:",
-			(error as Error).message,
-		);
-		return false;
-	}
+	return applyEmailSendingEvent(
+		body,
+		(sender) => getMailboxStub(env, sender) as unknown as DeliveryStub,
+	);
 }
 
 export async function handleEmailSendingQueueBatch(

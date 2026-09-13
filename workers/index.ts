@@ -909,7 +909,26 @@ async function sendInboundAutoReply(options: {
 	const from = fromName ? { email: mailboxId, name: fromName } : mailboxId;
 
 	try {
-		await sendEmail(env.EMAIL, {
+		assertOutboundMessageSize({ html, text });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) {
+			console.error(`Skipping auto-reply for ${mailboxId}: ${e.message}`);
+			try {
+				await stub.releaseAutoReply(sender);
+			} catch (releaseError) {
+				console.error(
+					`Failed to release auto-reply claim for ${mailboxId}:`,
+					(releaseError as Error).message,
+				);
+			}
+			return;
+		}
+		throw e;
+	}
+
+	let providerMessageId: string;
+	try {
+		const result = await sendEmail(env.EMAIL, {
 			to: sender,
 			from,
 			subject: replySubject,
@@ -917,6 +936,7 @@ async function sendInboundAutoReply(options: {
 			html,
 			headers: autoHeaders,
 		});
+		providerMessageId = result.messageId;
 	} catch (e) {
 		console.error(`Auto-reply send failed for ${mailboxId}:`, (e as Error).message);
 		try {
@@ -948,6 +968,9 @@ async function sendInboundAutoReply(options: {
 				email_references: originalMessageId ? JSON.stringify([originalMessageId]) : null,
 				thread_id: threadId,
 				message_id: outgoingMessageId,
+				provider_message_id: providerMessageId,
+				delivery_status: "accepted",
+				delivery_error: null,
 				raw_headers: JSON.stringify([
 					{ key: "from", value: fromHeader },
 					{ key: "to", value: sender },

@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
+import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 import { EmailMCP } from "./mcp";
 import { verifyMobileSessionToken } from "./lib/apple-auth";
 import type { Env } from "./types";
@@ -179,8 +180,6 @@ app.all("*", (c) => {
 		cloudflare: { env: c.env, ctx: c.executionCtx as ExecutionContext },
 	});
 });
-
-import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 
 // Export the Hono app as the default export with email + queue handlers
 export default {

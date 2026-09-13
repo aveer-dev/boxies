@@ -13,7 +13,11 @@ import {
 	OutboundSizeError,
 	OUTBOUND_SIZE_ERROR,
 } from "../lib/outbound-limits.ts";
-import { mapEmailSendingEvent } from "../lib/email-sending-events.ts";
+import {
+	applyEmailSendingEvent,
+	mapEmailSendingEvent,
+	unwrapEmailSendingEvent,
+} from "../lib/email-sending-events.ts";
 
 describe("outbound message size", () => {
 	it("estimates UTF-8 body bytes", () => {
@@ -119,5 +123,118 @@ describe("email sending event mapping", () => {
 			}),
 			null,
 		);
+	});
+
+	it("unwraps nested data wrappers without losing typed events", () => {
+		const nested = unwrapEmailSendingEvent({
+			data: {
+				type: "cf.email.sending.message.bounced",
+				payload: { messageId: "prov-5", sender: "a@b.com" },
+			},
+		});
+		assert.equal(nested.type, "cf.email.sending.message.bounced");
+		assert.equal(nested.payload?.messageId, "prov-5");
+
+		const typed = unwrapEmailSendingEvent({
+			type: "cf.email.sending.message.bounced",
+			payload: { messageId: "prov-6", sender: "a@b.com" },
+			data: { ignored: true },
+		});
+		assert.equal(typed.type, "cf.email.sending.message.bounced");
+		assert.equal(typed.payload?.messageId, "prov-6");
+	});
+});
+
+describe("email sending event apply", () => {
+	it("acks when event should be ignored", async () => {
+		const ok = await applyEmailSendingEvent(
+			{
+				type: "cf.email.sending.message.delivered",
+				payload: { messageId: "x", sender: "a@b.com" },
+			},
+			() => {
+				throw new Error("should not resolve stub");
+			},
+		);
+		assert.equal(ok, true);
+	});
+
+	it("acks when sender is missing", async () => {
+		const ok = await applyEmailSendingEvent(
+			{
+				type: "cf.email.sending.message.bounced",
+				payload: { messageId: "x", bounce: { reason: "nope" } },
+			},
+			() => {
+				throw new Error("should not resolve stub");
+			},
+		);
+		assert.equal(ok, true);
+	});
+
+	it("acks when stub resolution throws for invalid sender", async () => {
+		const ok = await applyEmailSendingEvent(
+			{
+				type: "cf.email.sending.message.bounced",
+				payload: {
+					messageId: "x",
+					sender: "not-an-email",
+					bounce: { reason: "nope" },
+				},
+			},
+			() => {
+				throw new Error("Invalid mailbox email address");
+			},
+		);
+		assert.equal(ok, true);
+	});
+
+	it("retries when email is not found yet", async () => {
+		const ok = await applyEmailSendingEvent(
+			{
+				type: "cf.email.sending.message.bounced",
+				payload: {
+					messageId: "prov-missing",
+					sender: "me@example.com",
+					bounce: { reason: "550" },
+				},
+			},
+			() => ({
+				findEmailByProviderMessageId: async () => null,
+				setDeliveryState: async () => {
+					throw new Error("should not set");
+				},
+			}),
+		);
+		assert.equal(ok, false);
+	});
+
+	it("updates delivery state when email is found", async () => {
+		const calls = [];
+		const ok = await applyEmailSendingEvent(
+			{
+				data: {
+					type: "cf.email.sending.message.complained",
+					payload: {
+						messageId: "prov-9",
+						sender: "me@example.com",
+					},
+				},
+			},
+			() => ({
+				findEmailByProviderMessageId: async (id) => ({
+					id: "email-1",
+					provider: id,
+				}),
+				setDeliveryState: async (id, state) => {
+					calls.push({ id, state });
+				},
+			}),
+		);
+		assert.equal(ok, true);
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0].id, "email-1");
+		assert.equal(calls[0].state.status, "complained");
+		assert.equal(calls[0].state.providerMessageId, "prov-9");
 	});
 });
