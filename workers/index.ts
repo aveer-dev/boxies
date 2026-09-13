@@ -778,6 +778,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 	};
 
+	let filedFolder: string = classification.folderId;
 	try {
 		await stub.createEmail(classification.folderId, inboundEmail, attachmentData);
 	} catch (e) {
@@ -787,6 +788,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			(e as Error).message,
 		);
 		await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
+		filedFolder = Folders.INBOX;
 	}
 
 	// Auto-draft personal ham only. Spam and bulk skip the agent entirely.
@@ -832,7 +834,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 					body: parsedEmail.subject || "(No subject)",
 					mailboxId,
 					emailId: messageId,
-					folderId: classification.folderId,
+					folderId: filedFolder,
 				});
 				console.log(`[APNs] Push results for "${mailboxId}": ${successCount} delivered, ${failureCount} failed.`);
 				for (const stale of staleTokens) {
