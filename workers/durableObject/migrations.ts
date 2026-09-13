@@ -274,5 +274,13 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		name: "15_add_promotions_updates_folders",
+		sql: txn(`
+            INSERT OR IGNORE INTO folders (id, name, is_deletable) VALUES
+                ('promotions', 'Promotions', 0),
+                ('updates', 'Updates', 0);
+        `),
+	},
 ];
 
