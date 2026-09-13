@@ -1232,9 +1232,12 @@ enum HomeTab: Hashable {
         case .folder(let id):
             switch id {
             case "inbox": return "Inbox"
+            case "promotions": return "Promotions"
+            case "updates": return "Updates"
             case "sent": return "Sent"
             case "draft": return "Drafts"
             case "archive": return "Archive"
+            case "spam": return "Spam"
             case "trash": return "Trash"
             default: return id.capitalized
             }
@@ -1250,9 +1253,12 @@ enum HomeTab: Hashable {
         case .folder(let id):
             switch id {
             case "inbox": return "tray"
+            case "promotions": return "megaphone"
+            case "updates": return "newspaper"
             case "sent": return "paperplane"
             case "draft": return "pencil.and.scribble"
             case "archive": return "archivebox"
+            case "spam": return "exclamationmark.triangle"
             case "trash": return "trash"
             default: return "folder"
             }

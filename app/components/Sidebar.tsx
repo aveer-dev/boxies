@@ -8,34 +8,41 @@ import {
 	CaretLeftIcon,
 	FileIcon,
 	FolderIcon,
+	MegaphoneIcon,
+	NewspaperIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
 	PlusIcon,
 	TrashIcon,
 	TrayIcon,
+	WarningIcon,
 } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
-import { Folders, SYSTEM_FOLDER_IDS } from "shared/folders";
+import {
+	Folders,
+	FOLDER_DISPLAY_NAMES,
+	SYSTEM_FOLDER_IDS,
+} from "shared/folders";
 import { useCreateFolder, useFolders } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
 
 const FOLDER_ICONS: Record<string, React.ReactNode> = {
 	[Folders.INBOX]: <TrayIcon size={18} weight="regular" />,
+	[Folders.PROMOTIONS]: <MegaphoneIcon size={18} weight="regular" />,
+	[Folders.UPDATES]: <NewspaperIcon size={18} weight="regular" />,
 	[Folders.SENT]: <PaperPlaneTiltIcon size={18} weight="regular" />,
 	[Folders.DRAFT]: <FileIcon size={18} weight="regular" />,
 	[Folders.ARCHIVE]: <ArchiveIcon size={18} weight="regular" />,
+	[Folders.SPAM]: <WarningIcon size={18} weight="regular" />,
 	[Folders.TRASH]: <TrashIcon size={18} weight="regular" />,
 };
 
-const SYSTEM_FOLDER_LINKS = [
-	{ id: Folders.INBOX, label: "Inbox" },
-	{ id: Folders.SENT, label: "Sent" },
-	{ id: Folders.DRAFT, label: "Drafts" },
-	{ id: Folders.ARCHIVE, label: "Archive" },
-	{ id: Folders.TRASH, label: "Trash" },
-];
+const SYSTEM_FOLDER_LINKS = SYSTEM_FOLDER_IDS.map((id) => ({
+	id,
+	label: FOLDER_DISPLAY_NAMES[id] ?? id,
+}));
 
 interface FolderLinkProps {
 	to: string;
