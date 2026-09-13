@@ -310,5 +310,13 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		name: "18_email_snippet_and_body_offload",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN snippet TEXT;
+            UPDATE emails SET snippet = SUBSTR(body, 1, 300)
+             WHERE snippet IS NULL AND body IS NOT NULL;
+        `),
+	},
 ];
 

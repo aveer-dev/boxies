@@ -19,6 +19,13 @@ import {
 	buildInboxDigest,
 	type DigestEmailRow,
 } from "../lib/inbox-digest";
+import {
+	buildSimpleMime,
+	computeSnippet,
+	deleteEmailContent,
+	loadEmailBody,
+	storeEmailContent,
+} from "../lib/email-content";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -97,7 +104,10 @@ interface EmailData {
 	cc?: string | null;
 	bcc?: string | null;
 	date: string;
-	body: string;
+	/** Full body for R2 offload; not persisted in SQLite for new mail. */
+	body?: string | null;
+	/** Persisted list/search preview. */
+	snippet?: string | null;
 	read?: boolean;
 	starred?: boolean;
 	in_reply_to?: string | null;
@@ -303,7 +313,7 @@ export class MailboxDO extends DurableObject<Env> {
 				email_references: schema.emails.email_references,
 				thread_id: schema.emails.thread_id,
 				folder_id: schema.emails.folder_id,
-				snippet: sql<string>`SUBSTR(${schema.emails.body}, 1, 300)`,
+				snippet: schema.emails.snippet,
 			})
 			.from(schema.emails)
 			.where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -412,7 +422,7 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.id, lp.subject, lp.sender, lp.sender_name, lp.recipient, lp.date,
 					lp.read, lp.starred, lp.thread_id, lp.folder_id,
 					lp.in_reply_to, lp.email_references,
-					SUBSTR(lp.body, 1, 300) as snippet,
+					lp.snippet as snippet,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
@@ -502,7 +512,7 @@ export class MailboxDO extends DurableObject<Env> {
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
 				lif.read, lif.starred, lif.thread_id, lif.folder_id,
 				lif.in_reply_to, lif.email_references,
-				SUBSTR(lif.body, 1, 300) as snippet,
+				lif.snippet as snippet,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
 				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
 					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
@@ -600,8 +610,11 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.attachments.email_id, id))
 			.all();
 
+		const body = await this.#hydrateBody(id, email.body, email.snippet);
+
 		return {
 			...email,
+			body,
 			read: !!email.read,
 			starred: !!email.starred,
 			attachments: emailAttachments,
@@ -642,12 +655,15 @@ export class MailboxDO extends DurableObject<Env> {
 			attachmentsByEmail.set(att.email_id, list);
 		}
 
-		return emailRows.map((email) => ({
-			...email,
-			read: !!email.read,
-			starred: !!email.starred,
-			attachments: attachmentsByEmail.get(email.id) || [],
-		}));
+		return await Promise.all(
+			emailRows.map(async (email) => ({
+				...email,
+				body: await this.#hydrateBody(email.id, email.body, email.snippet),
+				read: !!email.read,
+				starred: !!email.starred,
+				attachments: attachmentsByEmail.get(email.id) || [],
+			})),
+		);
 	}
 
 	async updateEmail(
@@ -697,6 +713,22 @@ export class MailboxDO extends DurableObject<Env> {
 
 		if (!existing || existing.folder_id !== Folders.DRAFT) return null;
 
+		const snippet = computeSnippet(data.body);
+		await storeEmailContent(this.env.BUCKET, id, {
+			htmlOrText: data.body,
+			rawMime: buildSimpleMime(
+				{
+					to: data.recipient,
+					cc: data.cc,
+					bcc: data.bcc,
+					subject: data.subject,
+					date: data.date,
+					inReplyTo: data.in_reply_to,
+				},
+				data.body,
+			),
+		});
+
 		this.db
 			.update(schema.emails)
 			.set({
@@ -704,7 +736,8 @@ export class MailboxDO extends DurableObject<Env> {
 				recipient: data.recipient,
 				cc: data.cc,
 				bcc: data.bcc,
-				body: data.body,
+				body: null,
+				snippet,
 				date: data.date,
 				in_reply_to: data.in_reply_to,
 				thread_id: data.thread_id,
@@ -810,6 +843,8 @@ export class MailboxDO extends DurableObject<Env> {
 			.delete(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.run();
+
+		await deleteEmailContent(this.env.BUCKET, id);
 
 		this.broadcastEvent("email_deleted", { id });
 		return emailAttachments;
@@ -1066,7 +1101,8 @@ export class MailboxDO extends DurableObject<Env> {
 			const p3 = addParam(`%${query}%`);
 			const p4 = addParam(`%${query}%`);
 			const p5 = addParam(`%${query}%`);
-			conditions.push(`(${prefix}subject LIKE ${p1} OR ${prefix}body LIKE ${p2} OR ${prefix}sender LIKE ${p3} OR ${prefix}sender_name LIKE ${p5} OR ${prefix}recipient LIKE ${p4} OR ${prefix}cc LIKE ${p4} OR ${prefix}bcc LIKE ${p4})`);
+			// Free-text search uses snippet until SQLite FTS / an external index is added.
+			conditions.push(`(${prefix}subject LIKE ${p1} OR ${prefix}snippet LIKE ${p2} OR ${prefix}sender LIKE ${p3} OR ${prefix}sender_name LIKE ${p5} OR ${prefix}recipient LIKE ${p4} OR ${prefix}cc LIKE ${p4} OR ${prefix}bcc LIKE ${p4})`);
 		}
 		if (folder) {
 			const p = addParam(folder);
@@ -1096,7 +1132,7 @@ export class MailboxDO extends DurableObject<Env> {
 			SELECT e.id, e.subject, e.sender, e.sender_name, e.recipient, e.cc, e.bcc, e.date,
 				e.read, e.starred, e.in_reply_to, e.email_references,
 				e.thread_id, e.folder_id,
-				SUBSTR(e.body, 1, 300) as snippet,
+				e.snippet as snippet,
 				f.name as folder_name
 			FROM emails e
 			LEFT JOIN folders f ON e.folder_id = f.id
@@ -1311,6 +1347,30 @@ export class MailboxDO extends DurableObject<Env> {
 		const isOwnComposition =
 			folderId === Folders.SENT || folderId === Folders.DRAFT;
 
+		const snippet =
+			email.snippet ?? (email.body ? computeSnippet(email.body) : null);
+		// Callers should write R2 first; if body is still provided, offload here as a safety net.
+		if (email.body) {
+			await storeEmailContent(this.env.BUCKET, email.id, {
+				htmlOrText: email.body,
+				rawMime: buildSimpleMime(
+					{
+						from: email.sender_name
+							? `${email.sender_name} <${email.sender}>`
+							: email.sender,
+						to: email.recipient,
+						cc: email.cc,
+						bcc: email.bcc,
+						subject: email.subject,
+						date: email.date,
+						messageId: email.message_id,
+						inReplyTo: email.in_reply_to,
+					},
+					email.body,
+				),
+			});
+		}
+
 		// Sent and draft emails are always read — the author already knows the content.
 		// This prevents them from looking unread in lists or inflating thread_unread_count.
 		this.db
@@ -1327,7 +1387,8 @@ export class MailboxDO extends DurableObject<Env> {
 				date: email.date,
 				read: isOwnComposition ? 1 : (email.read ? 1 : 0),
 				starred: email.starred ? 1 : 0,
-				body: email.body,
+				body: null,
+				snippet,
 				in_reply_to: email.in_reply_to ?? null,
 				email_references: email.email_references ?? null,
 				thread_id: email.thread_id ?? null,
@@ -1350,9 +1411,37 @@ export class MailboxDO extends DurableObject<Env> {
 			date: email.date,
 			read: isOwnComposition ? true : !!email.read,
 			starred: !!email.starred,
-			body: email.body,
+			snippet,
 			thread_id: email.thread_id ?? null,
 		});
+	}
+
+	/**
+	 * Resolve full body from R2, with SQLite `body` as a legacy fallback.
+	 * Lazily migrates legacy rows into R2 and clears the SQLite body column.
+	 */
+	async #hydrateBody(
+		emailId: string,
+		legacyBody: string | null | undefined,
+		snippet: string | null | undefined,
+	): Promise<string | null> {
+		const fromR2 = await loadEmailBody(this.env.BUCKET, emailId);
+		if (fromR2 != null) return fromR2;
+
+		if (legacyBody == null || legacyBody === "") {
+			return legacyBody ?? null;
+		}
+
+		await storeEmailContent(this.env.BUCKET, emailId, {
+			htmlOrText: legacyBody,
+		});
+		const nextSnippet = snippet || computeSnippet(legacyBody);
+		this.db
+			.update(schema.emails)
+			.set({ body: null, snippet: nextSnippet })
+			.where(eq(schema.emails.id, emailId))
+			.run();
+		return legacyBody;
 	}
 
 	// ── Push Notification Device Tokens ────────────────────────────

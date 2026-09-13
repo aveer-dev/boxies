@@ -9,6 +9,10 @@ import { z } from "zod";
 import { sendEmail } from "./email-sender";
 import { storeAttachments, type StoredAttachment } from "./lib/attachments";
 import {
+	computeSnippet,
+	storeEmailContent,
+} from "./lib/email-content";
+import {
 	validateSender,
 	SenderValidationError,
 	generateMessageId,
@@ -1059,12 +1063,19 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		`Classified inbound mail for ${mailboxId} as ${classification.class} (${classification.folderId}): ${classification.reason}`,
 	);
 
+	const bodyText = parsedEmail.html || parsedEmail.text || "";
+	// Store HTML + original MIME in R2 before the DO row (metadata + snippet only).
+	await storeEmailContent(env.BUCKET, messageId, {
+		htmlOrText: bodyText,
+		rawMime: rawEmail,
+	});
+
 	const inboundEmail = {
 		id: messageId, subject: parsedEmail.subject || "",
 		sender: fromAddress, sender_name: senderName, recipient,
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
-		body: parsedEmail.html || parsedEmail.text || "",
+		snippet: computeSnippet(bodyText),
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 	};
