@@ -129,6 +129,31 @@ function parseHeaderList(
 	return map;
 }
 
+const NESTED_SETTING_KEYS = ["forwarding", "autoReply", "signature"] as const;
+
+/**
+ * PUT /mailboxes replaces the R2 JSON blob. iOS omits nil optionals and
+ * Android encodes with encodeDefaults=false, so a forwarding save can drop
+ * auto-reply (and vice versa). Keep nested setting objects the client omitted;
+ * omitted agentSystemPrompt still clears, matching prompt reset.
+ */
+export function mergeMailboxSettingsBlob(
+	existing: Record<string, unknown>,
+	incoming: unknown,
+): Record<string, unknown> {
+	if (!isRecord(incoming)) return { ...existing };
+	const next: Record<string, unknown> = { ...incoming };
+	for (const key of NESTED_SETTING_KEYS) {
+		if (!(key in incoming) && key in existing) {
+			next[key] = existing[key];
+		}
+	}
+	if (!("fromName" in incoming) && "fromName" in existing) {
+		next.fromName = existing.fromName;
+	}
+	return next;
+}
+
 export function parseAutomationSettings(raw: unknown): MailboxAutomationSettings {
 	if (!isRecord(raw)) return {};
 	const forwardingRaw = isRecord(raw.forwarding) ? raw.forwarding : undefined;
@@ -310,8 +335,20 @@ export function shouldAutoReply(options: {
 	if (xLoopContains(map, options.mailboxId)) {
 		return { ok: false, reason: "x-loop" };
 	}
+	if (isAutoSubmitted(map)) {
+		return { ok: false, reason: "auto-submitted" };
+	}
 
 	return { ok: true };
+}
+
+/** RFC 3834: Auto-Submitted other than "no" is an automated message. */
+export function isAutoSubmitted(map: Map<string, string[]>): boolean {
+	const values = map.get("auto-submitted") ?? [];
+	return values.some((value) => {
+		const normalized = value.trim().toLowerCase();
+		return Boolean(normalized) && normalized !== "no";
+	});
 }
 
 export function autoReplySubject(
@@ -343,4 +380,18 @@ export function buildAutoReplyHeaders(options: {
 		headers.References = `<${originalId}>`;
 	}
 	return headers;
+}
+
+/**
+ * Email Service send() rejects empty header values. Drop blanks so a
+ * missing In-Reply-To cannot fail the whole auto-reply.
+ */
+export function headersForEmailSend(
+	headers: Record<string, string>,
+): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [key, value] of Object.entries(headers)) {
+		if (typeof value === "string" && value.trim()) out[key] = value;
+	}
+	return out;
 }

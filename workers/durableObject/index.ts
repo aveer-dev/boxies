@@ -1272,6 +1272,19 @@ export class MailboxDO extends DurableObject<Env> {
 		});
 	}
 
+	/**
+	 * Drop a claim so a failed send can retry. Must DELETE: setting
+	 * last_sent_at to 0 would still look like a send inside the window.
+	 */
+	async releaseAutoReply(sender: string): Promise<void> {
+		const normalized = sender.trim().toLowerCase();
+		if (!normalized) return;
+		this.ctx.storage.sql.exec(
+			`DELETE FROM auto_reply_receipts WHERE sender = ?1`,
+			normalized,
+		);
+	}
+
 	// ── Email creation (Drizzle) ───────────────────────────────────
 
 	async createEmail(

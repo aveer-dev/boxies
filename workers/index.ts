@@ -63,6 +63,8 @@ import {
 	automationSettingsError,
 	buildAutoReplyHeaders,
 	headerMapFromSource,
+	headersForEmailSend,
+	mergeMailboxSettingsBlob,
 	parseAutomationSettings,
 	shouldAutoReply,
 	shouldForward,
@@ -199,14 +201,25 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const key = mailboxMetadataKey(mailboxId);
-	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
+	const obj = await c.env.BUCKET.get(key);
+	if (!obj) return c.json({ error: "Not found" }, 404);
+	let existing: Record<string, unknown> = {};
+	try {
+		const parsed = await obj.json();
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			existing = parsed as Record<string, unknown>;
+		}
+	} catch {
+		existing = {};
+	}
+	const merged = mergeMailboxSettingsBlob(existing, settings);
 	const automationError = automationSettingsError(
-		parseAutomationSettings(settings),
+		parseAutomationSettings(merged),
 		mailboxId,
 	);
 	if (automationError) return c.json({ error: automationError }, 400);
-	await c.env.BUCKET.put(key, JSON.stringify(settings));
-	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings });
+	await c.env.BUCKET.put(key, JSON.stringify(merged));
+	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings: merged });
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
@@ -760,6 +773,7 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 
 type AutomationStub = {
 	claimAutoReply: (sender: string) => Promise<boolean>;
+	releaseAutoReply: (sender: string) => Promise<void>;
 	checkSendRateLimit: () => Promise<string | null>;
 	createEmail: (
 		folder: string,
@@ -851,9 +865,9 @@ async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const claimed = await stub.claimAutoReply(sender);
-	if (!claimed) {
-		console.log(`Skipping auto-reply for ${mailboxId}: already sent to ${sender} in 24h`);
+	const fromDomain = mailboxId.split("@")[1];
+	if (!fromDomain) {
+		console.error(`Skipping auto-reply for ${mailboxId}: invalid mailbox`);
 		return;
 	}
 
@@ -863,9 +877,9 @@ async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const fromDomain = mailboxId.split("@")[1];
-	if (!fromDomain) {
-		console.error(`Skipping auto-reply for ${mailboxId}: invalid mailbox`);
+	const claimed = await stub.claimAutoReply(sender);
+	if (!claimed) {
+		console.log(`Skipping auto-reply for ${mailboxId}: already sent to ${sender} in 24h`);
 		return;
 	}
 
@@ -873,11 +887,13 @@ async function sendInboundAutoReply(options: {
 	const replySubject = autoReplySubject(settings.autoReply?.subject, subject);
 	const text = settings.autoReply?.message || "";
 	const html = textToHtml(text);
-	const autoHeaders = buildAutoReplyHeaders({
-		mailboxId,
-		originalMessageId,
-		existingXLoop: (headerMapFromSource(headers).get("x-loop") ?? []).join(", "),
-	});
+	const autoHeaders = headersForEmailSend(
+		buildAutoReplyHeaders({
+			mailboxId,
+			originalMessageId,
+			existingXLoop: (headerMapFromSource(headers).get("x-loop") ?? []).join(", "),
+		}),
+	);
 	const from = fromName ? { email: mailboxId, name: fromName } : mailboxId;
 
 	try {
@@ -891,6 +907,14 @@ async function sendInboundAutoReply(options: {
 		});
 	} catch (e) {
 		console.error(`Auto-reply send failed for ${mailboxId}:`, (e as Error).message);
+		try {
+			await stub.releaseAutoReply(sender);
+		} catch (releaseError) {
+			console.error(
+				`Failed to release auto-reply claim for ${mailboxId}:`,
+				(releaseError as Error).message,
+			);
+		}
 		return;
 	}
 
@@ -948,7 +972,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const messageId = crypto.randomUUID();
 
 	const stub = getMailboxStub(env, mailboxId);
-	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
+	const fromAddress = (parsedEmail.from?.address || message.from || "").toLowerCase();
 	const extractMsgId = (s: string) => { const m = s.match(/<([^>]+)>/); return m ? m[1] : s.trim().split(/\s+/)[0]; };
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 

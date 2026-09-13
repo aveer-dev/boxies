@@ -138,6 +138,20 @@ function headers(...pairs) {
 	);
 }
 
+{
+	const result = classifyFromHeaders({
+		headers: headers(["Auto-Submitted", "auto-replied"]),
+		subject: "Re: Lunch tomorrow",
+		sender: "bob@example.com",
+	});
+	assert.deepEqual(result, {
+		class: "bulk",
+		folderId: Folders.UPDATES,
+		reason: "bulk-transactional",
+	});
+	assert.equal(shouldAutoDraft(result), false);
+}
+
 // ── Spam headers win over list headers ────────────────────────────
 
 {

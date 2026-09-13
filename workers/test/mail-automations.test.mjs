@@ -10,7 +10,9 @@ import {
 	automationSettingsError,
 	buildAutoReplyHeaders,
 	headerMapFromSource,
+	headersForEmailSend,
 	isNoreplyAddress,
+	mergeMailboxSettingsBlob,
 	normalizeEmailAddress,
 	parseAutomationSettings,
 	shouldAutoReply,
@@ -250,6 +252,32 @@ assert.equal(
 	"empty-message",
 );
 
+assert.equal(
+	shouldAutoReply({
+		enabled: true,
+		message: "I am away.",
+		mailboxId: mailbox,
+		sender: "bob@example.com",
+		classification: ham,
+		headers: headers(["Auto-Submitted", "auto-replied"]),
+	}).reason,
+	"auto-submitted",
+	"other vacation systems must not get a reply even if classified ham",
+);
+
+assert.equal(
+	shouldAutoReply({
+		enabled: true,
+		message: "I am away.",
+		mailboxId: mailbox,
+		sender: "bob@example.com",
+		classification: ham,
+		headers: headers(["Auto-Submitted", "no"]),
+	}).ok,
+	true,
+	"Auto-Submitted: no is a normal message",
+);
+
 assert.equal(autoReplySubject("", "Hello"), "Re: Hello");
 assert.equal(autoReplySubject("Out of office", "Hello"), "Out of office");
 assert.equal(autoReplySubject("", "Re: Hello"), "Re: Hello");
@@ -265,6 +293,45 @@ assert.equal(autoReplySubject("", "Re: Hello"), "Re: Hello");
 	assert.equal(built["X-Loop"], mailbox);
 	assert.equal(built["In-Reply-To"], "<abc@example.com>");
 	assert.equal(built.References, "<abc@example.com>");
+	const sendHeaders = headersForEmailSend({ ...built, "In-Reply-To": "" });
+	assert.equal(sendHeaders["Auto-Submitted"], "auto-replied");
+	assert.equal(sendHeaders.Precedence, "bulk");
+	assert.equal("In-Reply-To" in sendHeaders, false);
+}
+
+{
+	const merged = mergeMailboxSettingsBlob(
+		{
+			fromName: "Ada",
+			agentSystemPrompt: "Be brief.",
+			forwarding: { enabled: false, email: "" },
+			autoReply: { enabled: true, subject: "Out", message: "Gone" },
+			signature: { enabled: true, text: "-- Ada" },
+		},
+		{
+			fromName: "Ada",
+			forwarding: { enabled: true, email: "ada@example.com" },
+		},
+	);
+	assert.deepEqual(merged.autoReply, {
+		enabled: true,
+		subject: "Out",
+		message: "Gone",
+	});
+	assert.deepEqual(merged.signature, { enabled: true, text: "-- Ada" });
+	assert.deepEqual(merged.forwarding, {
+		enabled: true,
+		email: "ada@example.com",
+	});
+	assert.equal(merged.agentSystemPrompt, undefined);
+}
+
+{
+	const keptPrompt = mergeMailboxSettingsBlob(
+		{ agentSystemPrompt: "Be brief.", fromName: "Ada" },
+		{ fromName: "Ada", agentSystemPrompt: "Be brief." },
+	);
+	assert.equal(keptPrompt.agentSystemPrompt, "Be brief.");
 }
 
 console.log("mail-automations tests passed");

@@ -174,13 +174,17 @@ function isBulk(map: Map<string, string[]>): boolean {
 	return precedence === "list" || precedence === "bulk";
 }
 
+function isAutoSubmitted(map: Map<string, string[]>): boolean {
+	const autoSubmitted = firstHeader(map, "auto-submitted").trim().toLowerCase();
+	return Boolean(autoSubmitted) && autoSubmitted !== "no";
+}
+
 function isTransactionalBulk(
 	map: Map<string, string[]>,
 	subject: string,
 	sender: string,
 ): boolean {
-	const autoSubmitted = firstHeader(map, "auto-submitted").trim().toLowerCase();
-	if (autoSubmitted && autoSubmitted !== "no") return true;
+	if (isAutoSubmitted(map)) return true;
 	return TRANSACTIONAL_RE.test(`${subject} ${sender}`);
 }
 
@@ -212,6 +216,15 @@ export function classifyFromHeaders(
 ): EmailClassification | null {
 	const map = parseHeaderList(input.headers);
 	if (isExplicitSpam(map)) return SPAM_CLASSIFICATION;
+	// RFC 3834 auto-replies often have Auto-Submitted and no List-*. Treat
+	// them as bulk so vacation systems cannot ping-pong as ham.
+	if (isAutoSubmitted(map)) {
+		return {
+			class: "bulk",
+			folderId: "updates",
+			reason: "bulk-transactional",
+		};
+	}
 	if (isBulk(map)) {
 		return bulkClassification(map, input.subject ?? "", input.sender ?? "");
 	}
