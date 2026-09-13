@@ -183,12 +183,12 @@ app.all("*", (c) => {
 export default {
 	fetch: app.fetch,
 	async email(
-		event: { raw: ReadableStream; rawSize: number },
+		message: ForwardableEmailMessage,
 		env: Env,
 		ctx: ExecutionContext,
 	) {
 		try {
-			await receiveEmail(event, env, ctx);
+			await receiveEmail(message, env, ctx);
 		} catch (e) {
 			console.error("Failed to process incoming email:", (e as Error).message, (e as Error).stack);
 			// Re-throw so Cloudflare's email routing can retry delivery or bounce the message.
