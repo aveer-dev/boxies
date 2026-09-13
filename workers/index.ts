@@ -14,6 +14,7 @@ import {
 	generateMessageId,
 	buildThreadingHeaders,
 	listMailboxes,
+	getMailboxStub,
 } from "./lib/email-helpers";
 import {
 	displayNameFromAddressField,
@@ -37,6 +38,14 @@ import {
 import { verifyGoogleIdentityToken } from "./lib/google-auth";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
 import { sendFcmPush } from "./lib/fcm";
+import {
+	allowedMailboxSet,
+	canonicalMailboxId,
+	isDuplicateInbound,
+	mailboxMetadataKey,
+	resolveMailboxParam,
+	routeInboundEnvelope,
+} from "./lib/mailbox-routing";
 
 type AppContext = Context<MailboxContext>;
 
@@ -139,12 +148,13 @@ app.get("/api/v1/mailboxes", async (c) => {
 
 app.post("/api/v1/mailboxes", async (c) => {
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
-	const email = rawEmail.toLowerCase();
-	const allowedAddresses = (c.env.EMAIL_ADDRESSES ?? []) as string[];
-	if (allowedAddresses.length > 0 && !allowedAddresses.map((a) => a.toLowerCase()).includes(email)) {
+	const email = canonicalMailboxId(rawEmail);
+	if (!email) return c.json({ error: "Invalid mailbox email address" }, 400);
+	const allowed = allowedMailboxSet((c.env.EMAIL_ADDRESSES ?? []) as string[]);
+	if (allowed.size > 0 && !allowed.has(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
 	}
-	const key = `mailboxes/${email}.json`;
+	const key = mailboxMetadataKey(email);
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
 	const defaultSettings = { fromName: name, forwarding: { enabled: false, email: "" }, signature: { enabled: false, text: "" }, autoReply: { enabled: false, subject: "", message: "" } };
 	const finalSettings = { ...defaultSettings, ...settings };
@@ -155,24 +165,27 @@ app.post("/api/v1/mailboxes", async (c) => {
 });
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const mailboxId = c.req.param("mailboxId")!;
-	const obj = await c.env.BUCKET.get(`mailboxes/${mailboxId}.json`);
+	const mailboxId = resolveMailboxParam(c.req.param("mailboxId"));
+	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+	const obj = await c.env.BUCKET.get(mailboxMetadataKey(mailboxId));
 	if (!obj) return c.json({ error: "Not found" }, 404);
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings: await obj.json() });
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const mailboxId = c.req.param("mailboxId")!;
+	const mailboxId = resolveMailboxParam(c.req.param("mailboxId"));
+	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
-	const key = `mailboxes/${mailboxId}.json`;
+	const key = mailboxMetadataKey(mailboxId);
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
 	await c.env.BUCKET.put(key, JSON.stringify(settings));
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings });
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const mailboxId = c.req.param("mailboxId")!;
-	const key = `mailboxes/${mailboxId}.json`;
+	const mailboxId = resolveMailboxParam(c.req.param("mailboxId"));
+	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+	const key = mailboxMetadataKey(mailboxId);
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
 	await c.env.BUCKET.delete(key); // TODO: also delete DO data and R2 attachment blobs
 	return c.body(null, 204);
@@ -204,7 +217,7 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
-	const mailboxId = c.req.param("mailboxId")!;
+	const mailboxId = c.var.mailboxId;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
 
@@ -267,7 +280,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
-	const mailboxId = c.req.param("mailboxId")!;
+	const mailboxId = c.var.mailboxId;
 	const { to, cc, bcc, subject, body, in_reply_to, thread_id, draft_id } = DraftBody.parse(await c.req.json());
 	const stub = c.var.mailboxStub;
 	const now = new Date().toISOString();
@@ -396,7 +409,7 @@ app.delete("/api/v1/mailboxes/:mailboxId/device-token/:token", async (c: AppCont
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/test-push", async (c: AppContext) => {
-	const mailboxId = c.req.param("mailboxId");
+	const mailboxId = c.var.mailboxId;
 	const rows = await (c.var.mailboxStub as any).getDeviceTokens();
 	console.log(`[Push Test] Found ${rows?.length ?? 0} token(s) for ${mailboxId}`);
 	if (!rows || rows.length === 0) {
@@ -432,8 +445,8 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
 app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
 
 app.get("/api/v1/mailboxes/:mailboxId/inbox-digest", async (c: AppContext) => {
-	const mailboxId = c.req.param("mailboxId")!;
-	const obj = await c.env.BUCKET.get(`mailboxes/${mailboxId}.json`);
+	const mailboxId = c.var.mailboxId;
+	const obj = await c.env.BUCKET.get(mailboxMetadataKey(mailboxId));
 	const settings = obj ? ((await obj.json()) as { fromName?: string }) : {};
 	const greetingName = resolveGreetingName({
 		fromName: settings.fromName,
@@ -715,38 +728,39 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	return result;
 }
 
-async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env: Env, ctx: ExecutionContext) {
-	const rawEmail = await streamToArrayBuffer(event.raw, event.rawSize);
+async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+	const route = await routeInboundEnvelope(message.to, async (mailboxId) =>
+		Boolean(await env.BUCKET.head(mailboxMetadataKey(mailboxId))),
+	);
+	if (route.action === "reject") {
+		console.log(`Rejecting email for ${message.to}: ${route.reason}`);
+		message.setReject(route.reason);
+		return;
+	}
+	const mailboxId = route.mailboxId;
+
+	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
 
-	if (!parsedEmail.to?.length || !parsedEmail.to[0].address) throw new Error("received email with empty to");
-
-	const allowedAddresses = ((env.EMAIL_ADDRESSES ?? []) as string[]).map((a) => a.toLowerCase());
-	const allRecipients = parsedEmail.to.map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
+	const allRecipients = (parsedEmail.to || []).map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
-
-	let mailboxId: string | undefined;
-	if (allowedAddresses.length > 0) {
-		mailboxId = allRecipients.find((addr) => allowedAddresses.includes(addr));
-		if (!mailboxId) { console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`); return; }
-	} else { mailboxId = allRecipients[0]; }
-	if (!mailboxId) throw new Error("received email with no valid recipient address");
+	const recipient = allRecipients.join(", ") || message.to.toLowerCase();
 
 	const messageId = crypto.randomUUID();
-	if (!(await env.BUCKET.head(`mailboxes/${mailboxId}.json`))) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
 
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const stub = getMailboxStub(env, mailboxId);
 	const fromAddress = (parsedEmail.from?.address || "").toLowerCase();
 	const extractMsgId = (s: string) => { const m = s.match(/<([^>]+)>/); return m ? m[1] : s.trim().split(/\s+/)[0]; };
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 
-	// Outbound mail already has a Sent copy. Don't store a second Inbox copy
-	// when it is delivered back to this mailbox.
-	if (originalMessageId && fromAddress === mailboxId.toLowerCase()) {
+	// Same mailbox is one Durable Object, so concurrent hello@ + hello+tag@
+	// (or a retry after a successful write) serialize here. Skip duplicates
+	// instead of inserting a second Inbox copy.
+	if (originalMessageId) {
 		const existing = await stub.findEmailByMessageId(originalMessageId);
-		if (existing) {
-			console.log(`Skipping inbound copy of own outbound message ${originalMessageId}`);
+		if (isDuplicateInbound(originalMessageId, Boolean(existing))) {
+			console.log(`Skipping duplicate inbound message ${originalMessageId} for ${mailboxId}`);
 			return;
 		}
 	}
@@ -799,7 +813,7 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 
 	await stub.createEmail(Folders.INBOX, {
 		id: messageId, subject: parsedEmail.subject || "",
-		sender: fromAddress, sender_name: senderName, recipient: allRecipients.join(", "),
+		sender: fromAddress, sender_name: senderName, recipient,
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
 		body: parsedEmail.html || parsedEmail.text || "",

@@ -13,6 +13,7 @@ import type { EmailFull } from "./schemas";
 import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
 import { formatQuotedDate } from "../../shared/dates";
+import { canonicalMailboxId } from "./mailbox-routing";
 
 // ── DO Stub ────────────────────────────────────────────────────────
 
@@ -24,8 +25,10 @@ export function getMailboxStub(
 	env: Env,
 	mailboxId: string,
 ): DurableObjectStub<MailboxDO> {
+	const canonical = canonicalMailboxId(mailboxId);
+	if (!canonical) throw new Error("Invalid mailbox email address");
 	const ns = env.MAILBOX;
-	const id = ns.idFromName(mailboxId);
+	const id = ns.idFromName(canonical);
 	return ns.get(id);
 }
 
