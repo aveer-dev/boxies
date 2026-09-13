@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
@@ -101,11 +102,11 @@ enum class ComposeActionItem {
     val folderTab: HomeTab?
         get() = when (this) {
             ForYou -> HomeTab.AiInbox
-            Inbox -> HomeTab.Folder("inbox")
-            Sent -> HomeTab.Folder("sent")
-            Drafts -> HomeTab.Folder("draft")
-            Archive -> HomeTab.Folder("archive")
-            Trash -> HomeTab.Folder("trash")
+            Inbox -> HomeTab.Folder(FolderIds.INBOX)
+            Sent -> HomeTab.Folder(FolderIds.SENT)
+            Drafts -> HomeTab.Folder(FolderIds.DRAFT)
+            Archive -> HomeTab.Folder(FolderIds.ARCHIVE)
+            Trash -> HomeTab.Folder(FolderIds.TRASH)
             Settings, Compose -> null
         }
 }
