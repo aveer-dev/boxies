@@ -11,6 +11,7 @@ import {
 	firstClassifierToken,
 	shouldAutoDraft,
 	shouldClassifyInbound,
+	shouldFallbackToInbox,
 	shouldSendPush,
 } from "../lib/classify-email.ts";
 import PostalMime from "postal-mime";
@@ -65,6 +66,16 @@ function headers(...pairs) {
 	assert.equal(result?.folderId, Folders.PROMOTIONS);
 }
 
+{
+	const result = classifyFromHeaders({
+		headers: headers(["Precedence", "list"]),
+		subject: "List traffic",
+		sender: "list@example.com",
+	});
+	assert.equal(result?.class, "bulk");
+	assert.equal(result?.folderId, Folders.PROMOTIONS);
+}
+
 // ── Bulk + transactional → Updates ────────────────────────────────
 
 {
@@ -109,6 +120,22 @@ function headers(...pairs) {
 		sender: "billing@example.com",
 	});
 	assert.equal(result?.folderId, Folders.UPDATES);
+}
+
+{
+	const result = classifyFromHeaders({
+		headers: headers(
+			["List-Unsubscribe", "<mailto:unsub@news.example>"],
+			["Auto-Submitted", "no"],
+		),
+		subject: "This week's deals",
+		sender: "news@shop.example",
+	});
+	assert.equal(
+		result?.folderId,
+		Folders.PROMOTIONS,
+		"Auto-Submitted: no is not transactional",
+	);
 }
 
 // ── Spam headers win over list headers ────────────────────────────
@@ -185,6 +212,28 @@ function headers(...pairs) {
 		subject: "Weekly promo",
 		sender: "promo@example.com",
 	});
+	assert.equal(result?.folderId, Folders.PROMOTIONS);
+}
+
+{
+	const result = classifyFromHeaders({
+		headers: [{ name: "List-Id", value: "<weekly.example.com>" }],
+		subject: "Roundup",
+		sender: "editor@example.com",
+	});
+	assert.equal(result?.folderId, Folders.PROMOTIONS);
+}
+
+{
+	const result = classifyFromHeaders({
+		headers: headers(
+			["X-Spam-Flag", "NO"],
+			["List-Unsubscribe", "<mailto:unsub@news.example>"],
+		),
+		subject: "This week's deals",
+		sender: "news@shop.example",
+	});
+	assert.equal(result?.class, "bulk");
 	assert.equal(result?.folderId, Folders.PROMOTIONS);
 }
 
@@ -311,6 +360,45 @@ assert.equal(
 assert.equal(
 	shouldClassifyInbound({ routeAction: "deliver", isDuplicate: false }),
 	true,
+);
+
+// ── Inbox fallback only for missing classified folders ────────────
+
+assert.equal(
+	shouldFallbackToInbox(
+		Folders.PROMOTIONS,
+		new Error(
+			'createEmail: folder "promotions" not found. Ensure the folder exists before inserting an email.',
+		),
+	),
+	true,
+);
+assert.equal(
+	shouldFallbackToInbox(
+		Folders.SPAM,
+		new Error('createEmail: folder "spam" not found.'),
+	),
+	true,
+);
+assert.equal(
+	shouldFallbackToInbox(
+		Folders.INBOX,
+		new Error('createEmail: folder "inbox" not found.'),
+	),
+	false,
+	"Inbox itself missing must bounce, not retry Inbox",
+);
+assert.equal(
+	shouldFallbackToInbox(
+		Folders.PROMOTIONS,
+		new Error("UNIQUE constraint failed: emails.id"),
+	),
+	false,
+	"Duplicate or other write errors must not insert a second copy in Inbox",
+);
+assert.equal(
+	shouldFallbackToInbox(Folders.UPDATES, new Error("SQLITE_BUSY")),
+	false,
 );
 
 // ── AI token parse: first word only, fail open ────────────────────

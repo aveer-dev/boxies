@@ -283,5 +283,23 @@ export const mailboxMigrations: Migration[] = [
             UPDATE folders SET is_deletable = 0 WHERE id IN ('promotions', 'updates', 'spam');
         `),
 	},
+	{
+		name: "16_lock_promotions_updates_folder_ids",
+		sql: txn(`
+            UPDATE folders SET name = name || ' (custom)'
+             WHERE lower(name) IN ('promotions', 'updates')
+               AND id NOT IN ('promotions', 'updates');
+            INSERT OR IGNORE INTO folders (id, name, is_deletable) VALUES
+                ('promotions', 'Promotions', 0),
+                ('updates', 'Updates', 0);
+            UPDATE folders SET is_deletable = 0,
+                name = CASE id
+                    WHEN 'promotions' THEN 'Promotions'
+                    WHEN 'updates' THEN 'Updates'
+                    ELSE name
+                END
+             WHERE id IN ('promotions', 'updates', 'spam');
+        `),
+	},
 ];
 

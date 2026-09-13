@@ -48,6 +48,7 @@ import {
 	classifyInboundEmail,
 	shouldAutoDraft,
 	shouldClassifyInbound,
+	shouldFallbackToInbox,
 	shouldSendPush,
 	type ClassifyAi,
 } from "./lib/classify-email";
@@ -782,7 +783,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	try {
 		await stub.createEmail(classification.folderId, inboundEmail, attachmentData);
 	} catch (e) {
-		if (classification.folderId === Folders.INBOX) throw e;
+		if (!shouldFallbackToInbox(classification.folderId, e)) throw e;
 		console.error(
 			`Failed to file inbound mail to ${classification.folderId}, falling back to inbox:`,
 			(e as Error).message,

@@ -301,3 +301,20 @@ export function shouldAutoDraft(classification: EmailClassification): boolean {
 export function shouldSendPush(classification: EmailClassification): boolean {
 	return classification.class !== "spam";
 }
+
+/**
+ * Inbox fallback is only for a missing Promotions/Updates/Spam folder.
+ * Unique-constraint, attachment, or other Durable Object errors must
+ * propagate so Email Routing retries instead of inserting a second copy.
+ */
+export function shouldFallbackToInbox(
+	classifiedFolderId: string,
+	error: unknown,
+): boolean {
+	if (classifiedFolderId === "inbox") return false;
+	const message = error instanceof Error ? error.message : String(error);
+	return (
+		message.includes('createEmail: folder "') &&
+		message.includes(" not found")
+	);
+}
