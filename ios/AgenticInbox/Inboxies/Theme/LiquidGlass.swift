@@ -8,7 +8,7 @@ enum HomeChromeMetrics {
     static let chromeBottomPadding: CGFloat = 20
     static let chromeCornerRadius: CGFloat = 50
     static let tabLabelPointSize: CGFloat = 10
-    static let minimizedComposeHeight: CGFloat = 58
+    static let minimizedComposeHeight: CGFloat = 66
 
     static func listBottomInset(hasMinimizedCompose: Bool) -> CGFloat {
         var height = actionBarHeight + chromeBottomPadding

@@ -18,3 +18,12 @@ skills-lock.json
 .DS_Store
 worker-configuration.d.ts
 .cursor
+# Android
+android/.gradle/
+android/local.properties
+android/**/build/
+android/**/captures/
+android/.idea/
+android/*.iml
+android/app/google-services.json
+*.xcuserstate

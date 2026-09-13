@@ -43,6 +43,7 @@ function getAccessUrls(teamDomain: string) {
 function isPublicAuthPath(pathname: string): boolean {
 	return (
 		pathname === "/api/v1/auth/apple" ||
+		pathname === "/api/v1/auth/google" ||
 		pathname === "/api/v1/auth/dev"
 	);
 }

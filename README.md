@@ -61,6 +61,9 @@ pnpm run dev
 
 A SwiftUI app lives in [`ios/`](./ios/README.md) (open `ios/AgenticInbox/Inboxies.xcodeproj`). It reuses this Worker API with Sign in with Apple (mobile JWT), Notion-inspired shell, multi-conversation AI chat, and Phase 2 Mail-like minimizable compose (send/reply/forward/drafts, HTML bodies, attachments).
 
+### Native Android client
+
+A Jetpack Compose app lives in [`android/`](./android/README.md). It reuses the same Worker API with Google Sign-In (mobile JWT), Notion-inspired shell, inbox digest, multi-conversation AI chat, and minimizable compose. Emulator default API base is `http://10.0.2.2:5173`.
 ### Configuration
 
 1. Set your domain in `wrangler.jsonc`
