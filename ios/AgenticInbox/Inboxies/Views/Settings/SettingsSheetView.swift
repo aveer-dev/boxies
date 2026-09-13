@@ -60,6 +60,18 @@ struct SettingsSheetView: View {
                         settingsLabel("AI prompt", systemImage: "sparkles")
                     }
 
+                    NavigationLink {
+                        ForwardingSettingsView()
+                    } label: {
+                        settingsLabel("Forwarding", systemImage: "arrowshape.turn.up.right")
+                    }
+
+                    NavigationLink {
+                        AutoReplySettingsView()
+                    } label: {
+                        settingsLabel("Auto-reply", systemImage: "arrowshape.turn.up.left")
+                    }
+
                     notificationsToggle
                     signatureToggle
                 } header: {

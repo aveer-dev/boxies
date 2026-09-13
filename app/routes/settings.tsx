@@ -3,9 +3,15 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Badge, Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
-import { RobotIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
+import {
+	RobotIcon,
+	ArrowCounterClockwiseIcon,
+	CaretRightIcon,
+	PaperPlaneTiltIcon,
+	ArrowBendUpLeftIcon,
+} from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
 // Placeholder shown in the textarea when no custom prompt is set.
@@ -92,6 +98,41 @@ export default function SettingsRoute() {
 								Log out of Cloudflare Access
 							</Button>
 						</div>
+					</div>
+				</div>
+
+				{/* Mail automations */}
+				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+					<div className="text-sm font-medium text-kumo-default mb-4">
+						Incoming mail
+					</div>
+					<div className="divide-y divide-kumo-line -mx-1">
+						<Link
+							to={`/mailbox/${mailboxId}/settings/forwarding`}
+							className="flex items-center gap-3 px-1 py-3 hover:bg-kumo-tint rounded-md"
+						>
+							<PaperPlaneTiltIcon size={18} className="text-kumo-subtle shrink-0" />
+							<div className="min-w-0 flex-1">
+								<div className="text-sm text-kumo-default">Forwarding</div>
+								<p className="text-xs text-kumo-subtle">
+									Send a copy of incoming mail to another address
+								</p>
+							</div>
+							<CaretRightIcon size={16} className="text-kumo-subtle shrink-0" />
+						</Link>
+						<Link
+							to={`/mailbox/${mailboxId}/settings/auto-reply`}
+							className="flex items-center gap-3 px-1 py-3 hover:bg-kumo-tint rounded-md"
+						>
+							<ArrowBendUpLeftIcon size={18} className="text-kumo-subtle shrink-0" />
+							<div className="min-w-0 flex-1">
+								<div className="text-sm text-kumo-default">Auto-reply</div>
+								<p className="text-xs text-kumo-subtle">
+									Automatically reply to new personal messages
+								</p>
+							</div>
+							<CaretRightIcon size={16} className="text-kumo-subtle shrink-0" />
+						</Link>
 					</div>
 				</div>
 

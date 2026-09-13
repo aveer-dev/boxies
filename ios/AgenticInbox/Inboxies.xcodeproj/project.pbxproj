@@ -39,6 +39,8 @@
 		B1C2D3E4F5A6478990ABCD03 /* SettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD03 /* SettingsSheetView.swift */; };
 		B1C2D3E4F5A6478990ABCD04 /* AgentPromptSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD04 /* AgentPromptSettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD05 /* SwipeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD05 /* SwipeSettingsView.swift */; };
+		B1C2D3E4F5A6478990ABCD07 /* ForwardingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD07 /* ForwardingSettingsView.swift */; };
+		B1C2D3E4F5A6478990ABCD08 /* AutoReplySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD08 /* AutoReplySettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD06 /* PreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD06 /* PreviewSupport.swift */; };
 		B79E45379B0F49C6AB6CD957 /* ComposeSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 898D73DC019C4035B7FA5403 /* ComposeSheetView.swift */; };
 		C1D2E3F4A5B6478990ABCD04 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7478990ABCD04 /* LiquidGlass.swift */; };
@@ -86,6 +88,8 @@
 		A1B2C3D4E5F6478990ABCD03 /* SettingsSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SettingsSheetView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD04 /* AgentPromptSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/AgentPromptSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD05 /* SwipeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SwipeSettingsView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6478990ABCD07 /* ForwardingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/ForwardingSettingsView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6478990ABCD08 /* AutoReplySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/AutoReplySettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD06 /* PreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/PreviewSupport.swift; sourceTree = "<group>"; };
 		A2D50AE4A35F064918C6153F /* ThemeSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Views/Settings/ThemeSettingsView.swift; sourceTree = "<group>"; };
 		A6B6D0BA36EC4EE7BEC367D7 /* EmailActionsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/EmailActionsSheet.swift; sourceTree = "<group>"; };
@@ -209,6 +213,8 @@
 				A1B2C3D4E5F6478990ABCD03 /* SettingsSheetView.swift */,
 				A1B2C3D4E5F6478990ABCD04 /* AgentPromptSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD05 /* SwipeSettingsView.swift */,
+				A1B2C3D4E5F6478990ABCD07 /* ForwardingSettingsView.swift */,
+				A1B2C3D4E5F6478990ABCD08 /* AutoReplySettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD06 /* PreviewSupport.swift */,
 				063B7A93C3B6424791462165 /* RootView.swift */,
 				83D37F469E5F418DB189BA76 /* SearchView.swift */,
@@ -334,6 +340,8 @@
 				B1C2D3E4F5A6478990ABCD03 /* SettingsSheetView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD04 /* AgentPromptSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD05 /* SwipeSettingsView.swift in Sources */,
+				B1C2D3E4F5A6478990ABCD07 /* ForwardingSettingsView.swift in Sources */,
+				B1C2D3E4F5A6478990ABCD08 /* AutoReplySettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD06 /* PreviewSupport.swift in Sources */,
 				E69F3F4A5B0665C9A28E96FD /* ThemeMode.swift in Sources */,
 				3DFE9829C1A91D111C5C4FFD /* ThemeSettingsView.swift in Sources */,
