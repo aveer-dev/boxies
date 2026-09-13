@@ -15,6 +15,7 @@ import {
 	buildThreadingHeaders,
 	listMailboxes,
 	getMailboxStub,
+	textToHtml,
 } from "./lib/email-helpers";
 import {
 	displayNameFromAddressField,
@@ -53,7 +54,20 @@ import {
 	shouldFallbackToInbox,
 	shouldSendPush,
 	type ClassifyAi,
+	type EmailClassification,
+	type HeaderEntry,
 } from "./lib/classify-email";
+import {
+	appendXLoop,
+	autoReplySubject,
+	automationSettingsError,
+	buildAutoReplyHeaders,
+	headerMapFromSource,
+	parseAutomationSettings,
+	shouldAutoReply,
+	shouldForward,
+	type MailboxAutomationSettings,
+} from "./lib/mail-automations";
 
 type AppContext = Context<MailboxContext>;
 
@@ -186,6 +200,11 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const key = mailboxMetadataKey(mailboxId);
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
+	const automationError = automationSettingsError(
+		parseAutomationSettings(settings),
+		mailboxId,
+	);
+	if (automationError) return c.json({ error: automationError }, 400);
 	await c.env.BUCKET.put(key, JSON.stringify(settings));
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings });
 });
@@ -739,6 +758,174 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	return result;
 }
 
+type AutomationStub = {
+	claimAutoReply: (sender: string) => Promise<boolean>;
+	checkSendRateLimit: () => Promise<string | null>;
+	createEmail: (
+		folder: string,
+		email: Record<string, unknown>,
+		attachments: unknown[],
+	) => Promise<unknown>;
+};
+
+async function loadAutomationSettings(
+	env: Env,
+	mailboxId: string,
+): Promise<MailboxAutomationSettings> {
+	const obj = await env.BUCKET.get(mailboxMetadataKey(mailboxId));
+	if (!obj) return {};
+	try {
+		return parseAutomationSettings(await obj.json());
+	} catch {
+		return {};
+	}
+}
+
+async function applyInboundForward(options: {
+	message: ForwardableEmailMessage;
+	mailboxId: string;
+	sender: string;
+	settings: MailboxAutomationSettings;
+	classification: EmailClassification;
+	headers: HeaderEntry[] | string | null;
+}): Promise<void> {
+	const { message, mailboxId, sender, settings, classification, headers } = options;
+	const decision = shouldForward({
+		enabled: Boolean(settings.forwarding?.enabled),
+		dest: settings.forwarding?.email,
+		mailboxId,
+		sender,
+		classification,
+		headers,
+		canBeForwarded: (message as { canBeForwarded?: boolean }).canBeForwarded,
+	});
+	if (!decision.ok) {
+		if (settings.forwarding?.enabled) {
+			console.log(`Skipping forward for ${mailboxId}: ${decision.reason}`);
+		}
+		return;
+	}
+	try {
+		const extra = new Headers();
+		const existing = (headerMapFromSource(headers).get("x-loop") ?? []).join(", ");
+		extra.set("X-Loop", appendXLoop(existing, mailboxId));
+		await message.forward(decision.dest, extra);
+		console.log(`Forwarded inbound mail for ${mailboxId} to ${decision.dest}`);
+	} catch (e) {
+		console.error(
+			`Forwarding failed for ${mailboxId} to ${decision.dest}:`,
+			(e as Error).message,
+		);
+	}
+}
+
+async function sendInboundAutoReply(options: {
+	env: Env;
+	stub: AutomationStub;
+	mailboxId: string;
+	sender: string;
+	fromName?: string;
+	subject: string;
+	originalMessageId: string | null;
+	threadId: string;
+	settings: MailboxAutomationSettings;
+	classification: EmailClassification;
+	headers: HeaderEntry[] | string | null;
+}): Promise<void> {
+	const {
+		env, stub, mailboxId, sender, fromName, subject, originalMessageId,
+		threadId, settings, classification, headers,
+	} = options;
+	const decision = shouldAutoReply({
+		enabled: Boolean(settings.autoReply?.enabled),
+		message: settings.autoReply?.message,
+		mailboxId,
+		sender,
+		classification,
+		headers,
+	});
+	if (!decision.ok) {
+		if (settings.autoReply?.enabled) {
+			console.log(`Skipping auto-reply for ${mailboxId}: ${decision.reason}`);
+		}
+		return;
+	}
+
+	const claimed = await stub.claimAutoReply(sender);
+	if (!claimed) {
+		console.log(`Skipping auto-reply for ${mailboxId}: already sent to ${sender} in 24h`);
+		return;
+	}
+
+	const rateLimitError = await stub.checkSendRateLimit();
+	if (rateLimitError) {
+		console.log(`Skipping auto-reply for ${mailboxId}: ${rateLimitError}`);
+		return;
+	}
+
+	const fromDomain = mailboxId.split("@")[1];
+	if (!fromDomain) {
+		console.error(`Skipping auto-reply for ${mailboxId}: invalid mailbox`);
+		return;
+	}
+
+	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
+	const replySubject = autoReplySubject(settings.autoReply?.subject, subject);
+	const text = settings.autoReply?.message || "";
+	const html = textToHtml(text);
+	const autoHeaders = buildAutoReplyHeaders({
+		mailboxId,
+		originalMessageId,
+		existingXLoop: (headerMapFromSource(headers).get("x-loop") ?? []).join(", "),
+	});
+	const from = fromName ? { email: mailboxId, name: fromName } : mailboxId;
+
+	try {
+		await sendEmail(env.EMAIL, {
+			to: sender,
+			from,
+			subject: replySubject,
+			text,
+			html,
+			headers: autoHeaders,
+		});
+	} catch (e) {
+		console.error(`Auto-reply send failed for ${mailboxId}:`, (e as Error).message);
+		return;
+	}
+
+	const fromHeader = fromName ? `${fromName} <${mailboxId}>` : mailboxId;
+	await stub.createEmail(
+		Folders.SENT,
+		{
+			id: messageId,
+			subject: replySubject,
+			sender: mailboxId,
+			sender_name: fromName || null,
+			recipient: sender,
+			cc: null,
+			bcc: null,
+			date: new Date().toISOString(),
+			body: html,
+			in_reply_to: originalMessageId,
+			email_references: originalMessageId ? JSON.stringify([originalMessageId]) : null,
+			thread_id: threadId,
+			message_id: outgoingMessageId,
+			raw_headers: JSON.stringify([
+				{ key: "from", value: fromHeader },
+				{ key: "to", value: sender },
+				{ key: "subject", value: replySubject },
+				{ key: "auto-submitted", value: "auto-replied" },
+				{ key: "precedence", value: "bulk" },
+				{ key: "x-loop", value: autoHeaders["X-Loop"] },
+				{ key: "message-id", value: `<${outgoingMessageId}>` },
+			]),
+		},
+		[],
+	);
+	console.log(`Sent auto-reply from ${mailboxId} to ${sender}`);
+}
+
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
 	const route = await routeInboundEnvelope(message.to, async (mailboxId) =>
 		Boolean(await env.BUCKET.head(mailboxMetadataKey(mailboxId))),
@@ -863,6 +1050,33 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
 		filedFolder = Folders.INBOX;
 	}
+
+	const automationSettings = await loadAutomationSettings(env, mailboxId);
+	await applyInboundForward({
+		message,
+		mailboxId,
+		sender: fromAddress,
+		settings: automationSettings,
+		classification,
+		headers: parsedEmail.headers,
+	});
+	ctx.waitUntil(
+		sendInboundAutoReply({
+			env,
+			stub: stub as unknown as AutomationStub,
+			mailboxId,
+			sender: fromAddress,
+			fromName: automationSettings.fromName,
+			subject: parsedEmail.subject || "",
+			originalMessageId,
+			threadId: threadId ?? messageId,
+			settings: automationSettings,
+			classification,
+			headers: parsedEmail.headers,
+		}).catch((e) =>
+			console.error("Auto-reply failed:", (e as Error).message),
+		),
+	);
 
 	// Auto-draft personal ham only. Spam and bulk skip the agent entirely.
 	if (shouldAutoDraft(classification)) {
