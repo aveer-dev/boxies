@@ -75,6 +75,18 @@ assert.equal(
 	assert.equal(xLoopContains(map, "ada@example.com"), false);
 }
 
+{
+	const workerHeaders = {
+		get(name) {
+			return name.toLowerCase() === "x-loop" ? mailbox : null;
+		},
+		forEach(callback) {
+			callback(mailbox, "X-Loop");
+		},
+	};
+	assert.equal(xLoopContains(headerMapFromSource(workerHeaders), mailbox), true);
+}
+
 assert.equal(
 	appendXLoop("other@example.com", mailbox),
 	"other@example.com, hello@inboxies.email",

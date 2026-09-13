@@ -51,8 +51,11 @@ export default function ForwardingSettingsRoute() {
 				},
 			});
 			toastManager.add({ title: "Forwarding saved" });
-		} catch {
-			toastManager.add({ title: "Failed to save forwarding", variant: "error" });
+		} catch (e) {
+			const title = e instanceof Error && e.message
+				? e.message
+				: "Failed to save forwarding";
+			toastManager.add({ title, variant: "error" });
 		} finally {
 			setIsSaving(false);
 		}

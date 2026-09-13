@@ -55,7 +55,6 @@ import {
 	shouldSendPush,
 	type ClassifyAi,
 	type EmailClassification,
-	type HeaderEntry,
 } from "./lib/classify-email";
 import {
 	appendXLoop,
@@ -68,6 +67,7 @@ import {
 	parseAutomationSettings,
 	shouldAutoReply,
 	shouldForward,
+	type HeaderSource,
 	type MailboxAutomationSettings,
 } from "./lib/mail-automations";
 
@@ -801,7 +801,7 @@ async function applyInboundForward(options: {
 	sender: string;
 	settings: MailboxAutomationSettings;
 	classification: EmailClassification;
-	headers: HeaderEntry[] | string | null;
+	headers: HeaderSource;
 }): Promise<void> {
 	const { message, mailboxId, sender, settings, classification, headers } = options;
 	const decision = shouldForward({
@@ -844,7 +844,7 @@ async function sendInboundAutoReply(options: {
 	threadId: string;
 	settings: MailboxAutomationSettings;
 	classification: EmailClassification;
-	headers: HeaderEntry[] | string | null;
+	headers: HeaderSource;
 }): Promise<void> {
 	const {
 		env, stub, mailboxId, sender, fromName, subject, originalMessageId,
@@ -919,34 +919,41 @@ async function sendInboundAutoReply(options: {
 	}
 
 	const fromHeader = fromName ? `${fromName} <${mailboxId}>` : mailboxId;
-	await stub.createEmail(
-		Folders.SENT,
-		{
-			id: messageId,
-			subject: replySubject,
-			sender: mailboxId,
-			sender_name: fromName || null,
-			recipient: sender,
-			cc: null,
-			bcc: null,
-			date: new Date().toISOString(),
-			body: html,
-			in_reply_to: originalMessageId,
-			email_references: originalMessageId ? JSON.stringify([originalMessageId]) : null,
-			thread_id: threadId,
-			message_id: outgoingMessageId,
-			raw_headers: JSON.stringify([
-				{ key: "from", value: fromHeader },
-				{ key: "to", value: sender },
-				{ key: "subject", value: replySubject },
-				{ key: "auto-submitted", value: "auto-replied" },
-				{ key: "precedence", value: "bulk" },
-				{ key: "x-loop", value: autoHeaders["X-Loop"] },
-				{ key: "message-id", value: `<${outgoingMessageId}>` },
-			]),
-		},
-		[],
-	);
+	try {
+		await stub.createEmail(
+			Folders.SENT,
+			{
+				id: messageId,
+				subject: replySubject,
+				sender: mailboxId,
+				sender_name: fromName || null,
+				recipient: sender,
+				cc: null,
+				bcc: null,
+				date: new Date().toISOString(),
+				body: html,
+				in_reply_to: originalMessageId,
+				email_references: originalMessageId ? JSON.stringify([originalMessageId]) : null,
+				thread_id: threadId,
+				message_id: outgoingMessageId,
+				raw_headers: JSON.stringify([
+					{ key: "from", value: fromHeader },
+					{ key: "to", value: sender },
+					{ key: "subject", value: replySubject },
+					{ key: "auto-submitted", value: "auto-replied" },
+					{ key: "precedence", value: "bulk" },
+					{ key: "x-loop", value: autoHeaders["X-Loop"] },
+					{ key: "message-id", value: `<${outgoingMessageId}>` },
+				]),
+			},
+			[],
+		);
+	} catch (e) {
+		console.error(
+			`Auto-reply sent but failed to store in Sent for ${mailboxId}:`,
+			(e as Error).message,
+		);
+	}
 	console.log(`Sent auto-reply from ${mailboxId} to ${sender}`);
 }
 
@@ -1075,32 +1082,39 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		filedFolder = Folders.INBOX;
 	}
 
-	const automationSettings = await loadAutomationSettings(env, mailboxId);
-	await applyInboundForward({
-		message,
-		mailboxId,
-		sender: fromAddress,
-		settings: automationSettings,
-		classification,
-		headers: parsedEmail.headers,
-	});
-	ctx.waitUntil(
-		sendInboundAutoReply({
-			env,
-			stub: stub as unknown as AutomationStub,
+	try {
+		const automationSettings = await loadAutomationSettings(env, mailboxId);
+		await applyInboundForward({
+			message,
 			mailboxId,
 			sender: fromAddress,
-			fromName: automationSettings.fromName,
-			subject: parsedEmail.subject || "",
-			originalMessageId,
-			threadId: threadId ?? messageId,
 			settings: automationSettings,
 			classification,
-			headers: parsedEmail.headers,
-		}).catch((e) =>
-			console.error("Auto-reply failed:", (e as Error).message),
-		),
-	);
+			headers: message.headers,
+		});
+		ctx.waitUntil(
+			sendInboundAutoReply({
+				env,
+				stub: stub as unknown as AutomationStub,
+				mailboxId,
+				sender: fromAddress,
+				fromName: automationSettings.fromName,
+				subject: parsedEmail.subject || "",
+				originalMessageId,
+				threadId: threadId ?? messageId,
+				settings: automationSettings,
+				classification,
+				headers: message.headers,
+			}).catch((e) =>
+				console.error("Auto-reply failed:", (e as Error).message),
+			),
+		);
+	} catch (e) {
+		console.error(
+			`Inbound automations failed for ${mailboxId}:`,
+			(e as Error).message,
+		);
+	}
 
 	// Auto-draft personal ham only. Spam and bulk skip the agent entirely.
 	if (shouldAutoDraft(classification)) {

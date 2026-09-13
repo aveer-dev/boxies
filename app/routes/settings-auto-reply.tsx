@@ -47,8 +47,11 @@ export default function AutoReplySettingsRoute() {
 				},
 			});
 			toastManager.add({ title: "Auto-reply saved" });
-		} catch {
-			toastManager.add({ title: "Failed to save auto-reply", variant: "error" });
+		} catch (e) {
+			const title = e instanceof Error && e.message
+				? e.message
+				: "Failed to save auto-reply";
+			toastManager.add({ title, variant: "error" });
 		} finally {
 			setIsSaving(false);
 		}
