@@ -94,6 +94,7 @@ import androidx.compose.ui.window.Dialog
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.EmailDateFilter
 import co.inboxies.app.models.EmailFilterState
+import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.services.AppModel
@@ -167,14 +168,7 @@ fun HomeShellView(
     var newMailboxEmail by remember { mutableStateOf("") }
 
     val folderTabs = remember {
-        listOf(
-            HomeTab.AiInbox,
-            HomeTab.Folder("inbox"),
-            HomeTab.Folder("sent"),
-            HomeTab.Folder("draft"),
-            HomeTab.Folder("archive"),
-            HomeTab.Folder("trash"),
-        )
+        listOf(HomeTab.AiInbox) + FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
     }
 
     val hasMinimizedCompose = composeSession?.isMinimized == true

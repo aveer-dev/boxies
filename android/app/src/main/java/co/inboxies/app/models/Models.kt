@@ -644,11 +644,14 @@ sealed class HomeTab {
     val title: String
         get() = when (this) {
             is Folder -> when (id) {
-                "inbox" -> "Inbox"
-                "sent" -> "Sent"
-                "draft" -> "Drafts"
-                "archive" -> "Archive"
-                "trash" -> "Trash"
+                FolderIds.INBOX -> "Inbox"
+                FolderIds.PROMOTIONS -> "Promotions"
+                FolderIds.UPDATES -> "Updates"
+                FolderIds.SENT -> "Sent"
+                FolderIds.DRAFT -> "Drafts"
+                FolderIds.ARCHIVE -> "Archive"
+                FolderIds.SPAM -> "Spam"
+                FolderIds.TRASH -> "Trash"
                 else -> id.replaceFirstChar { it.uppercase() }
             }
             Chats -> "AI"
@@ -656,16 +659,31 @@ sealed class HomeTab {
         }
 
     companion object {
-        val Inbox: HomeTab = Folder("inbox")
+        val Inbox: HomeTab = Folder(FolderIds.INBOX)
     }
 }
 
 object FolderIds {
     const val INBOX = "inbox"
+    const val PROMOTIONS = "promotions"
+    const val UPDATES = "updates"
     const val SENT = "sent"
     const val DRAFT = "draft"
     const val ARCHIVE = "archive"
+    const val SPAM = "spam"
     const val TRASH = "trash"
+
+    /** Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). */
+    val swipeFolderIds: List<String> = listOf(
+        INBOX,
+        PROMOTIONS,
+        UPDATES,
+        SENT,
+        DRAFT,
+        ARCHIVE,
+        SPAM,
+        TRASH,
+    )
 }
 
 fun groupConversationsByDate(conversations: List<AgentConversation>): List<ConversationDateGroup> {
