@@ -14,6 +14,8 @@ export default [
 		index("routes/mailbox-index.tsx"),
 		route("emails/:folder", "routes/email-list.tsx"),
 		route("settings", "routes/settings.tsx"),
+		route("settings/forwarding", "routes/settings-forwarding.tsx"),
+		route("settings/auto-reply", "routes/settings-auto-reply.tsx"),
 		route("search", "routes/search-results.tsx"),
 	]),
 	route("*", "routes/not-found.tsx"),

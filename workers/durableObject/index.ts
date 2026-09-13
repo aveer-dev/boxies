@@ -8,6 +8,7 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
+import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
@@ -1238,6 +1239,50 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Claim the once-per-sender auto-reply window. Returns false if this
+	 * sender already received an auto-reply inside the window.
+	 */
+	async claimAutoReply(
+		sender: string,
+		windowMs: number = AUTO_REPLY_WINDOW_MS,
+	): Promise<boolean> {
+		const normalized = sender.trim().toLowerCase();
+		if (!normalized) return false;
+		const now = Date.now();
+		return this.ctx.storage.transactionSync(() => {
+			const existing = [
+				...this.ctx.storage.sql.exec(
+					`SELECT last_sent_at FROM auto_reply_receipts WHERE sender = ?1`,
+					normalized,
+				),
+			][0] as { last_sent_at: number } | undefined;
+			if (existing && now - Number(existing.last_sent_at) < windowMs) {
+				return false;
+			}
+			this.ctx.storage.sql.exec(
+				`INSERT INTO auto_reply_receipts (sender, last_sent_at) VALUES (?1, ?2)
+				 ON CONFLICT(sender) DO UPDATE SET last_sent_at = excluded.last_sent_at`,
+				normalized,
+				now,
+			);
+			return true;
+		});
+	}
+
+	/**
+	 * Drop a claim so a failed send can retry. Must DELETE: setting
+	 * last_sent_at to 0 would still look like a send inside the window.
+	 */
+	async releaseAutoReply(sender: string): Promise<void> {
+		const normalized = sender.trim().toLowerCase();
+		if (!normalized) return;
+		this.ctx.storage.sql.exec(
+			`DELETE FROM auto_reply_receipts WHERE sender = ?1`,
+			normalized,
+		);
 	}
 
 	// ── Email creation (Drizzle) ───────────────────────────────────

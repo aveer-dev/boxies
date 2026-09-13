@@ -301,5 +301,14 @@ export const mailboxMigrations: Migration[] = [
              WHERE id IN ('promotions', 'updates', 'spam');
         `),
 	},
+	{
+		name: "17_add_auto_reply_receipts",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS auto_reply_receipts (
+                sender TEXT PRIMARY KEY,
+                last_sent_at INTEGER NOT NULL
+            );
+        `),
+	},
 ];
 

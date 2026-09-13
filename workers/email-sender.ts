@@ -54,7 +54,11 @@ export async function sendEmail(
 	if (params.replyTo) message.replyTo = params.replyTo;
 
 	if (params.headers && Object.keys(params.headers).length > 0) {
-		message.headers = params.headers;
+		const headers: Record<string, string> = {};
+		for (const [key, value] of Object.entries(params.headers)) {
+			if (typeof value === "string" && value.trim()) headers[key] = value;
+		}
+		if (Object.keys(headers).length > 0) message.headers = headers;
 	}
 
 	if (params.attachments && params.attachments.length > 0) {

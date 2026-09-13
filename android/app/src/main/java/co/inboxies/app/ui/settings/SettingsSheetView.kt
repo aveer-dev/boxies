@@ -31,10 +31,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ForwardToInbox
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
@@ -77,6 +79,8 @@ private sealed class SettingsPage {
     data object Theme : SettingsPage()
     data object Swipe : SettingsPage()
     data object AgentPrompt : SettingsPage()
+    data object Forwarding : SettingsPage()
+    data object AutoReply : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
 }
@@ -201,6 +205,8 @@ fun SettingsSheetView(
                     onOpenTheme = { page = SettingsPage.Theme },
                     onOpenSwipe = { page = SettingsPage.Swipe },
                     onOpenAgentPrompt = { page = SettingsPage.AgentPrompt },
+                    onOpenForwarding = { page = SettingsPage.Forwarding },
+                    onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
                         if (enabled) enableNotifications() else disableNotifications()
@@ -220,6 +226,12 @@ fun SettingsSheetView(
                     onAddAction = { edge -> page = SettingsPage.AddSwipeAction(edge) },
                 )
                 SettingsPage.AgentPrompt -> AgentPromptSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.Forwarding -> ForwardingSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.AutoReply -> AutoReplySettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Support -> SupportSettingsView(
@@ -244,6 +256,8 @@ private fun SettingsRootPage(
     onOpenTheme: () -> Unit,
     onOpenSwipe: () -> Unit,
     onOpenAgentPrompt: () -> Unit,
+    onOpenForwarding: () -> Unit,
+    onOpenAutoReply: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
     onDeleteMailbox: (String) -> Unit,
@@ -363,6 +377,16 @@ private fun SettingsRootPage(
                 title = "AI prompt",
                 icon = Icons.Outlined.AutoAwesome,
                 onClick = onOpenAgentPrompt,
+            )
+            SettingsNavRow(
+                title = "Forwarding",
+                icon = Icons.Outlined.ForwardToInbox,
+                onClick = onOpenForwarding,
+            )
+            SettingsNavRow(
+                title = "Auto-reply",
+                icon = Icons.AutoMirrored.Outlined.Reply,
+                onClick = onOpenAutoReply,
             )
             SettingsToggleRow(
                 title = "Notifications",
