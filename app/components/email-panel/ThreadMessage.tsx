@@ -9,6 +9,7 @@ import EmailIframe from '~/components/EmailIframe';
 import { formatDetailDate, formatShortDate, hasFileAttachment, rewriteInlineImages, stripHtml } from '~/lib/utils';
 import { displaySenderName } from 'shared/sender';
 import type { Email } from '~/types';
+import { deliveryStatusLabel, isDeliveryFailure } from '~/lib/delivery-status';
 
 interface ThreadMessageProps {
     email: Email;
@@ -36,7 +37,8 @@ function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolea
 
 export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage }: ThreadMessageProps) {
     const isSelf = email.sender === mailboxEmail;
-    const containerClassName = `${!isLast ? 'border-b border-kumo-line' : ''} ${isDraft ? 'border-l-2 border-l-kumo-warning bg-kumo-warning/[0.02]' : ''}`;
+    const deliveryFailed = isDeliveryFailure(email.delivery_status);
+    const containerClassName = `${!isLast ? 'border-b border-kumo-line' : ''} ${isDraft || deliveryFailed ? 'border-l-2 border-l-kumo-warning bg-kumo-warning/[0.02]' : ''}`;
     const senderName = displaySenderName(email);
     const senderLabel = isDraft ? 'Draft reply' : isSelf ? 'You' : senderName;
 
@@ -75,6 +77,9 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                             <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium text-kumo-default truncate">{senderLabel}</span>
                                 {isDraft && <Badge variant="outline">Draft</Badge>}
+                                {deliveryFailed && (
+                                    <Badge variant="outline">{deliveryStatusLabel(email.delivery_status)}</Badge>
+                                )}
                             </div>
                             {!isDraft && !isSelf && senderName !== email.sender && <div className="text-xs text-kumo-subtle truncate">{email.sender}</div>}
                             <div className="text-xs text-kumo-subtle">To: {email.recipient}</div>
@@ -97,6 +102,15 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                 <div className="md:ml-10.5">
                     <EmailIframe body={rewriteInlineImages(email.body || '', mailboxId || '', email.id, email.attachments)} autoSize />
                 </div>
+
+                {deliveryFailed && (
+                    <div className="mt-3 md:ml-10.5 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
+                        <div className="font-medium">{deliveryStatusLabel(email.delivery_status)}</div>
+                        {email.delivery_error && (
+                            <div className="mt-0.5 text-kumo-subtle">{email.delivery_error}</div>
+                        )}
+                    </div>
+                )}
 
                 {isDraft && (onSendDraft || onEditDraft || onDeleteDraft) && (
                     <div className="flex gap-2 mt-3 md:ml-10.5">

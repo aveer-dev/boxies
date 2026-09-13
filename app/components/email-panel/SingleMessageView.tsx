@@ -8,6 +8,7 @@ import EmailIframe from "~/components/EmailIframe";
 import { formatDetailDate, hasFileAttachment, rewriteInlineImages } from "~/lib/utils";
 import { displaySenderName } from "shared/sender";
 import type { Email } from "~/types";
+import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
 
 interface SingleMessageViewProps {
 	email: Email;
@@ -21,6 +22,7 @@ export default function SingleMessageView({
 	onPreviewImage,
 }: SingleMessageViewProps) {
 	const senderName = displaySenderName(email);
+	const deliveryFailed = isDeliveryFailure(email.delivery_status);
 
 	return (
 		<div className="flex flex-col h-full">
@@ -57,6 +59,15 @@ export default function SingleMessageView({
 					)}
 				/>
 			</div>
+
+			{deliveryFailed && (
+				<div className="mx-4 mb-3 md:mx-6 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
+					<div className="font-medium">{deliveryStatusLabel(email.delivery_status)}</div>
+					{email.delivery_error && (
+						<div className="mt-0.5 text-kumo-subtle">{email.delivery_error}</div>
+					)}
+				</div>
+			)}
 
 			<EmailAttachmentList
 				mailboxId={mailboxId}

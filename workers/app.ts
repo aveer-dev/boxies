@@ -180,7 +180,9 @@ app.all("*", (c) => {
 	});
 });
 
-// Export the Hono app as the default export with an email handler
+import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
+
+// Export the Hono app as the default export with email + queue handlers
 export default {
 	fetch: app.fetch,
 	async email(
@@ -196,5 +198,8 @@ export default {
 			// Swallowing the error would silently drop the email.
 			throw e;
 		}
+	},
+	async queue(batch: MessageBatch<unknown>, env: Env) {
+		await handleEmailSendingQueueBatch(batch, env);
 	},
 };
