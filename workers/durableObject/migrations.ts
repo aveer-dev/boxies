@@ -280,6 +280,7 @@ export const mailboxMigrations: Migration[] = [
             INSERT OR IGNORE INTO folders (id, name, is_deletable) VALUES
                 ('promotions', 'Promotions', 0),
                 ('updates', 'Updates', 0);
+            UPDATE folders SET is_deletable = 0 WHERE id IN ('promotions', 'updates', 'spam');
         `),
 	},
 ];

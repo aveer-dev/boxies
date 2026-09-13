@@ -45,7 +45,7 @@ export type ClassifyAi = {
 			max_tokens?: number;
 			temperature?: number;
 		},
-	) => Promise<{ response?: string }>;
+	) => Promise<{ response?: string } | { result?: { response?: string } } | unknown>;
 };
 
 const SPAM_CLASSIFICATION: EmailClassification = {
@@ -71,6 +71,43 @@ SPAM is unsolicited junk, phishing, malware, scams, or commercial blasts that sh
 Return ONLY one word: SPAM or HAM.`;
 
 const AI_BODY_LIMIT = 2000;
+const CLASSIFIER_TIMEOUT_MS = 3000;
+
+function aiText(response: unknown): string {
+	if (!response || typeof response !== "object") return "";
+	const record = response as {
+		response?: unknown;
+		result?: { response?: unknown };
+	};
+	if (typeof record.response === "string") return record.response;
+	if (typeof record.result?.response === "string") return record.result.response;
+	return "";
+}
+
+/** First A–Z token. Verbose "NOT SPAM" / "this is ham" fail open to ham. */
+export function firstClassifierToken(raw: string): string {
+	return raw.trim().toUpperCase().match(/[A-Z]+/)?.[0] ?? "";
+}
+
+function withTimeout<T>(
+	promise: Promise<T>,
+	ms: number,
+	label: string,
+): Promise<T> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(label)), ms);
+		promise.then(
+			(value) => {
+				clearTimeout(timer);
+				resolve(value);
+			},
+			(error) => {
+				clearTimeout(timer);
+				reject(error);
+			},
+		);
+	});
+}
 
 export function parseHeaderList(
 	headers?: HeaderEntry[] | string | null,
@@ -207,17 +244,20 @@ async function classifySpamVsHam(
 	].join("\n");
 
 	try {
-		const response = await ai.run("@cf/meta/llama-3.1-8b-instruct-fast", {
-			messages: [
-				{ role: "system", content: SPAM_HAM_PROMPT },
-				{ role: "user", content: userContent },
-			],
-			max_tokens: 10,
-			temperature: 0,
-		});
+		const response = await withTimeout(
+			ai.run("@cf/meta/llama-3.1-8b-instruct-fast", {
+				messages: [
+					{ role: "system", content: SPAM_HAM_PROMPT },
+					{ role: "user", content: userContent },
+				],
+				max_tokens: 10,
+				temperature: 0,
+			}),
+			CLASSIFIER_TIMEOUT_MS,
+			"spam/ham classifier timed out",
+		);
 
-		const result = (response?.response || "HAM").trim().toUpperCase();
-		if (result.includes("SPAM")) {
+		if (firstClassifierToken(aiText(response)) === "SPAM") {
 			return {
 				class: "spam",
 				folderId: "spam",

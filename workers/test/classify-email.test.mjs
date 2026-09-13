@@ -8,10 +8,12 @@ import { Folders } from "../../shared/folders.ts";
 import {
 	classifyFromHeaders,
 	classifyInboundEmail,
+	firstClassifierToken,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldSendPush,
 } from "../lib/classify-email.ts";
+import PostalMime from "postal-mime";
 
 function headers(...pairs) {
 	return pairs.map(([key, value]) => ({ key, value }));
@@ -310,5 +312,148 @@ assert.equal(
 	shouldClassifyInbound({ routeAction: "deliver", isDuplicate: false }),
 	true,
 );
+
+// ── AI token parse: first word only, fail open ────────────────────
+
+assert.equal(firstClassifierToken("SPAM"), "SPAM");
+assert.equal(firstClassifierToken("spam."), "SPAM");
+assert.equal(firstClassifierToken("HAM"), "HAM");
+assert.equal(firstClassifierToken("NOT SPAM"), "NOT");
+assert.equal(firstClassifierToken("This is HAM"), "THIS");
+
+{
+	const verboseSpam = {
+		run: async () => ({ response: "NOT SPAM. This is a real person." }),
+	};
+	const result = await classifyInboundEmail(
+		{
+			subject: "Lunch?",
+			sender: "ada@example.com",
+			bodyText: "Want to grab lunch?",
+		},
+		verboseSpam,
+	);
+	assert.equal(result.class, "ham", "verbose NOT SPAM must fail open to ham");
+}
+
+{
+	const wrapped = {
+		run: async () => ({ result: { response: "SPAM" } }),
+	};
+	const result = await classifyInboundEmail(
+		{
+			subject: "Cheap meds",
+			sender: "phish@evil.example",
+			bodyText: "Click now",
+		},
+		wrapped,
+	);
+	assert.equal(result.class, "spam");
+	assert.equal(result.reason, "ai-spam");
+}
+
+// ── PostalMime round-trip (same header shape as receiveEmail) ─────
+
+function rfc822({ from, to, subject, extraHeaders = [], body }) {
+	return [
+		`From: ${from}`,
+		`To: ${to}`,
+		`Subject: ${subject}`,
+		...extraHeaders,
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		body,
+	].join("\r\n");
+}
+
+async function classifyMime(raw, ai) {
+	const parsed = await PostalMime.parse(raw);
+	return classifyInboundEmail(
+		{
+			headers: parsed.headers,
+			subject: parsed.subject,
+			sender: parsed.from?.address,
+			bodyText: parsed.text,
+			bodyHtml: parsed.html,
+		},
+		ai,
+	);
+}
+
+{
+	const result = await classifyMime(
+		rfc822({
+			from: "News <news@shop.example>",
+			to: "you@inboxies.email",
+			subject: "This week's deals",
+			extraHeaders: [
+				"List-Unsubscribe: <mailto:unsub@shop.example>",
+				"List-Id: <weekly.shop.example>",
+				"Message-ID: <news-1@shop.example>",
+			],
+			body: "Hello subscriber, 20% off everything.",
+		}),
+	);
+	assert.equal(result.class, "bulk");
+	assert.equal(result.folderId, Folders.PROMOTIONS);
+	assert.equal(shouldAutoDraft(result), false);
+	assert.equal(shouldSendPush(result), true);
+}
+
+{
+	const result = await classifyMime(
+		rfc822({
+			from: "Shop <orders@shop.example>",
+			to: "you@inboxies.email",
+			subject: "Your order has shipped",
+			extraHeaders: [
+				"List-Unsubscribe: <https://shop.example/unsub>",
+				"List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+				"Message-ID: <ship-9@shop.example>",
+			],
+			body: "Tracking 1Z999 is on the way.",
+		}),
+	);
+	assert.equal(result.class, "bulk");
+	assert.equal(result.folderId, Folders.UPDATES);
+	assert.equal(shouldAutoDraft(result), false);
+}
+
+{
+	const result = await classifyMime(
+		rfc822({
+			from: "Spammer <win@spam.example>",
+			to: "you@inboxies.email",
+			subject: "You won a prize",
+			extraHeaders: [
+				"X-Spam-Flag: YES",
+				"List-Unsubscribe: <mailto:unsub@spam.example>",
+				"Message-ID: <spam-1@spam.example>",
+			],
+			body: "Claim your prize now.",
+		}),
+	);
+	assert.equal(result.class, "spam");
+	assert.equal(result.folderId, Folders.SPAM);
+	assert.equal(shouldAutoDraft(result), false);
+	assert.equal(shouldSendPush(result), false);
+}
+
+{
+	const result = await classifyMime(
+		rfc822({
+			from: "Ada Lovelace <ada@example.com>",
+			to: "you@inboxies.email",
+			subject: "Lunch tomorrow?",
+			extraHeaders: ["Message-ID: <lunch@example.com>"],
+			body: "Want to grab lunch?",
+		}),
+	);
+	assert.equal(result.class, "ham");
+	assert.equal(result.folderId, Folders.INBOX);
+	assert.equal(result.reason, "personal-ham");
+	assert.equal(shouldAutoDraft(result), true);
+}
 
 console.log("classify-email tests passed");

@@ -23,7 +23,7 @@ import {
 } from "../shared/sender";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
-import { Folders } from "../shared/folders";
+import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
 import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
@@ -462,6 +462,9 @@ app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
 	const slug = slugify(name);
 	if (!slug) return c.json({ error: "Folder name must contain alphanumeric characters" }, 400);
+	if ((SYSTEM_FOLDER_IDS as readonly string[]).includes(slug)) {
+		return c.json({ error: "Folder with this name already exists" }, 409);
+	}
 	const f = await c.var.mailboxStub.createFolder(slug, name);
 	return f ? c.json(f, 201) : c.json({ error: "Folder with this name already exists" }, 409);
 });
@@ -765,7 +768,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		`Classified inbound mail for ${mailboxId} as ${classification.class} (${classification.folderId}): ${classification.reason}`,
 	);
 
-	await stub.createEmail(classification.folderId, {
+	const inboundEmail = {
 		id: messageId, subject: parsedEmail.subject || "",
 		sender: fromAddress, sender_name: senderName, recipient,
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
@@ -773,7 +776,18 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
-	}, attachmentData);
+	};
+
+	try {
+		await stub.createEmail(classification.folderId, inboundEmail, attachmentData);
+	} catch (e) {
+		if (classification.folderId === Folders.INBOX) throw e;
+		console.error(
+			`Failed to file inbound mail to ${classification.folderId}, falling back to inbox:`,
+			(e as Error).message,
+		);
+		await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
+	}
 
 	// Auto-draft personal ham only. Spam and bulk skip the agent entirely.
 	if (shouldAutoDraft(classification)) {

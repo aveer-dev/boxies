@@ -665,7 +665,7 @@ struct HomeShellView: View {
             startComposeFromBar()
         case .settings:
             showSettings = true
-        case .forYou, .inbox, .sent, .drafts, .archive, .trash:
+        case .forYou, .inbox, .promotions, .updates, .sent, .drafts, .archive, .spam, .trash:
             if let tab = item.folderTab {
                 selectTab(tab)
             }

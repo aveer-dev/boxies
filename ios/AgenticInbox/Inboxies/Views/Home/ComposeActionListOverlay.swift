@@ -4,8 +4,11 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     case settings
     case trash
     case archive
+    case spam
     case drafts
     case sent
+    case updates
+    case promotions
     case inbox
     case forYou
     case compose
@@ -17,8 +20,11 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .settings: return "Settings"
         case .trash: return "Trash"
         case .archive: return "Archive"
+        case .spam: return "Spam"
         case .drafts: return "Drafts"
         case .sent: return "Sent"
+        case .updates: return "Updates"
+        case .promotions: return "Promotions"
         case .inbox: return "Inbox"
         case .forYou: return "For you"
         case .compose: return "Compose"
@@ -30,8 +36,11 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .settings: return "gearshape"
         case .trash: return HomeTab.folder("trash").systemImage
         case .archive: return HomeTab.folder("archive").systemImage
+        case .spam: return HomeTab.folder("spam").systemImage
         case .drafts: return HomeTab.folder("draft").systemImage
         case .sent: return HomeTab.folder("sent").systemImage
+        case .updates: return HomeTab.folder("updates").systemImage
+        case .promotions: return HomeTab.folder("promotions").systemImage
         case .inbox: return HomeTab.folder("inbox").systemImage
         case .forYou: return HomeTab.aiInbox.systemImage
         case .compose: return "square.and.pencil"
@@ -42,9 +51,12 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         switch self {
         case .forYou: return .aiInbox
         case .inbox: return .folder("inbox")
+        case .promotions: return .folder("promotions")
+        case .updates: return .folder("updates")
         case .sent: return .folder("sent")
         case .drafts: return .folder("draft")
         case .archive: return .folder("archive")
+        case .spam: return .folder("spam")
         case .trash: return .folder("trash")
         case .settings, .compose: return nil
         }
