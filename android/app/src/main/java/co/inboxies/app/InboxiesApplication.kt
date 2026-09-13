@@ -4,6 +4,7 @@ import android.app.Application
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.services.PushNotificationManager
+import co.inboxies.app.services.SwipeActionPreferences
 
 class InboxiesApplication : Application() {
     lateinit var authStore: AuthStore
@@ -14,5 +15,6 @@ class InboxiesApplication : Application() {
         AppConfig.init(this)
         authStore = AuthStore(this)
         PushNotificationManager.init(this)
+        SwipeActionPreferences.init(this)
     }
 }

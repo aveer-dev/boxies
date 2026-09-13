@@ -5,14 +5,15 @@ import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
-import co.inboxies.app.util.ComposeBody
-import co.inboxies.app.util.ReplyRecipients
+import co.inboxies.app.util.ComposeHtml
+import co.inboxies.app.util.QuotedOriginal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class ComposeSession(
     val form: ComposeFormModel,
@@ -31,6 +32,17 @@ class ComposeSession(
     }
 }
 
+data class ComposeToast(
+    val message: String,
+    val isError: Boolean = false,
+    val id: String = UUID.randomUUID().toString(),
+)
+
+enum class DraftSaveStatus {
+    Idle,
+    Saving,
+}
+
 /** Mutable compose form owned by AppModel (mirrors iOS ComposeFormModel). */
 class ComposeFormModel(
     val mode: ComposeMode,
@@ -39,99 +51,124 @@ class ComposeFormModel(
     draft: Email? = null,
     initialTo: List<MailAddress> = emptyList(),
 ) {
+    var fromMailboxId: String = mailbox.id
     var fromEmail: String = mailbox.email
-    var fromName: String? = mailbox.settings?.fromName ?: mailbox.name
+    var fromName: String? = mailbox.settings?.fromName
+        ?: mailbox.name.takeIf { it != mailbox.email }
     val original: Email? = original
 
     var toTokens: List<MailAddress> = initialTo
     var ccTokens: List<MailAddress> = emptyList()
     var bccTokens: List<MailAddress> = emptyList()
+    var toDraft: String = ""
+    var ccDraft: String = ""
+    var bccDraft: String = ""
     var subject: String = ""
-    var bodyHtml: String = ""
+    var body: String = ""
     var showCcBcc: Boolean = false
     var draftId: String? = draft?.id
+    var originalEmailId: String? = original?.id ?: draft?.inReplyTo
+    var threadId: String? = original?.threadId ?: original?.id ?: draft?.threadId
     var isSending: Boolean = false
+    var isSavingDraft: Boolean = false
+    var saveStatus: DraftSaveStatus = DraftSaveStatus.Idle
+    var toast: ComposeToast? = null
     var errorMessage: String? = null
+    val quotedOriginal: QuotedOriginal?
 
     private val signature: String
+    val signatureText: String get() = signature
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var autoSaveJob: Job? = null
+    private var toastDismissJob: Job? = null
+
+    val title: String
+        get() = when (mode) {
+            ComposeMode.New -> "New Message"
+            ComposeMode.Reply -> "Reply"
+            ComposeMode.ReplyAll -> "Reply All"
+            ComposeMode.Forward -> "Forward"
+            ComposeMode.EditDraft -> "Edit Draft"
+        }
 
     val displayTitle: String
         get() {
-            val subj = subject.trim()
-            if (subj.isNotEmpty()) return subj
-            return when (mode) {
-                ComposeMode.Reply, ComposeMode.ReplyAll ->
-                    "Re: ${(original?.subject ?: "").removePrefix("Re: ").trim()}"
-                ComposeMode.Forward -> "Fwd: ${original?.subject.orEmpty()}"
-                ComposeMode.EditDraft -> "Draft"
-                ComposeMode.New -> "New Message"
-            }
+            val trimmed = subject.trim()
+            if (trimmed.isNotEmpty()) return trimmed
+            return title
         }
+
+    val bodyHtml: String
+        get() = outgoingHtml()
 
     val isEmpty: Boolean
-        get() = !ComposeBody.composeBodyHasUserContent(bodyHtml, signature) &&
-            toTokens.isEmpty() &&
-            subject.isBlank()
+        get() = toTokens.isEmpty() &&
+            ccTokens.isEmpty() &&
+            bccTokens.isEmpty() &&
+            toDraft.trim().isEmpty() &&
+            ccDraft.trim().isEmpty() &&
+            bccDraft.trim().isEmpty() &&
+            subject.trim().isEmpty() &&
+            !ComposeHtml.bodyHasUserContent(body, signature)
 
     val hasUnsavedChanges: Boolean
-        get() = ComposeBody.composeBodyHasUserContent(bodyHtml, signature) ||
+        get() = ComposeHtml.bodyHasUserContent(body, signature) ||
             subject.isNotBlank() ||
-            toTokens.isNotEmpty()
-
-    suspend fun saveDraft(explicit: Boolean = true) {
-        // Draft persistence is orchestrated by AppModel / ApiClient when wired;
-        // ComposeFormModel keeps the dirty-state contract for minimize/close.
-        if (!explicit && isEmpty) return
-    }
+            toTokens.isNotEmpty() ||
+            ccTokens.isNotEmpty() ||
+            bccTokens.isNotEmpty() ||
+            toDraft.isNotBlank() ||
+            ccDraft.isNotBlank() ||
+            bccDraft.isNotBlank()
 
     init {
-        val sigEnabled = mailbox.settings?.signature?.enabled == true
-        signature = if (sigEnabled) {
-            mailbox.settings?.signature?.html
-                ?: mailbox.settings?.signature?.text?.let { "<p>$it</p>" }
-                ?: ""
+        signature = ComposeHtml.signatureText(
+            settings = mailbox.settings,
+            fromName = fromName,
+        )
+        quotedOriginal = if (mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll) {
+            original?.let { ComposeHtml.quotedOriginal(it) }
         } else {
-            ""
+            null
         }
+
+        val selfAddresses = ComposeHtml.selfAddresses(mailbox)
 
         when {
             draft != null -> {
                 toTokens = MailAddress.parseList(draft.recipient)
                 ccTokens = MailAddress.parseList(draft.cc)
                 bccTokens = MailAddress.parseList(draft.bcc)
+                showCcBcc = ccTokens.isNotEmpty() || bccTokens.isNotEmpty()
                 subject = draft.subject
-                bodyHtml = draft.body.orEmpty()
-                showCcBcc = !draft.cc.isNullOrBlank() || !draft.bcc.isNullOrBlank()
+                body = ComposeHtml.editableReply(draft.body.orEmpty(), quotedOriginal?.header)
+                if (original != null && toTokens.isNotEmpty() &&
+                    toTokens.all { ComposeHtml.isSelfAddress(it.email, selfAddresses) } &&
+                    ComposeHtml.isSelfAddress(original.fromAddress.email, selfAddresses)
+                ) {
+                    val corrected = ComposeHtml.replyFields(original, selfAddresses)
+                    if (corrected.isNotEmpty()) toTokens = corrected
+                }
             }
-            mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll -> {
-                val replyOriginal = ReplyRecipients.ReplyOriginal(
-                    sender = original?.sender.orEmpty(),
-                    recipient = original?.recipient,
-                    cc = original?.cc,
-                )
+            original != null && (mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll) -> {
                 if (mode == ComposeMode.Reply) {
-                    toTokens = ReplyRecipients.replyToAddresses(replyOriginal, mailbox.email)
-                        .map { MailAddress.parse(it) ?: MailAddress(email = it) }
+                    toTokens = ComposeHtml.replyFields(original, selfAddresses)
                 } else {
-                    val (to, cc) = ReplyRecipients.replyAllAddresses(replyOriginal, mailbox.email)
-                    toTokens = to.map { MailAddress.parse(it) ?: MailAddress(email = it) }
-                    ccTokens = cc.map { MailAddress.parse(it) ?: MailAddress(email = it) }
+                    val (to, cc) = ComposeHtml.replyAllFields(original, selfAddresses)
+                    toTokens = to
+                    ccTokens = cc
                     showCcBcc = cc.isNotEmpty()
                 }
-                val base = original?.subject.orEmpty()
-                subject = if (base.startsWith("Re:", ignoreCase = true)) base else "Re: $base"
-                bodyHtml = if (signature.isNotEmpty()) "<p></p>$signature" else "<p></p>"
+                subject = ComposeHtml.prefixedSubject(original.subject, "Re")
+                body = ComposeHtml.bodyWithSignature(signature)
             }
-            mode == ComposeMode.Forward -> {
-                val base = original?.subject.orEmpty()
-                subject = if (base.startsWith("Fwd:", ignoreCase = true)) base else "Fwd: $base"
-                bodyHtml = if (signature.isNotEmpty()) "<p></p>$signature" else "<p></p>"
+            mode == ComposeMode.Forward && original != null -> {
+                subject = ComposeHtml.prefixedSubject(original.subject, "Fwd")
+                body = ComposeHtml.forwardBody(original, signature)
             }
             else -> {
                 if (initialTo.isNotEmpty()) toTokens = initialTo
-                bodyHtml = if (signature.isNotEmpty()) "<p></p>$signature" else "<p></p>"
+                body = ComposeHtml.bodyWithSignature(signature)
             }
         }
     }
@@ -139,6 +176,63 @@ class ComposeFormModel(
     fun toJoined(): String = toTokens.joinToString(", ") { it.email }
     fun ccJoined(): String = ccTokens.joinToString(", ") { it.email }
     fun bccJoined(): String = bccTokens.joinToString(", ") { it.email }
+
+    fun commitPendingTokens() {
+        toTokens = mergeTokens(toTokens, toDraft)
+        toDraft = ""
+        ccTokens = mergeTokens(ccTokens, ccDraft)
+        ccDraft = ""
+        bccTokens = mergeTokens(bccTokens, bccDraft)
+        bccDraft = ""
+    }
+
+    fun removeTo(token: MailAddress) {
+        toTokens = toTokens.filterNot { it.id == token.id }
+    }
+
+    fun removeCc(token: MailAddress) {
+        ccTokens = ccTokens.filterNot { it.id == token.id }
+    }
+
+    fun removeBcc(token: MailAddress) {
+        bccTokens = bccTokens.filterNot { it.id == token.id }
+    }
+
+    fun selectFrom(mailbox: Mailbox) {
+        fromMailboxId = mailbox.id
+        fromEmail = mailbox.email
+        fromName = mailbox.settings?.fromName
+            ?: mailbox.name.takeIf { it != mailbox.email }
+    }
+
+    fun showToast(message: String, isError: Boolean = false) {
+        toastDismissJob?.cancel()
+        toast = ComposeToast(message = message, isError = isError)
+        toastDismissJob = scope.launch {
+            delay(2500)
+            toast = null
+        }
+    }
+
+    fun outgoingHtml(): String {
+        var html = ComposeHtml.textToHtml(body)
+        quotedOriginal?.let { html += ComposeHtml.quotedHtml(it) }
+        return html
+    }
+
+    fun outgoingPlainText(): String {
+        val quoted = quotedOriginal ?: return body
+        val quotedLines = quoted.text.split("\n").map { "> $it" }
+        return (listOf(body, "", quoted.header) + quotedLines).joinToString("\n")
+    }
+
+    suspend fun saveDraft(explicit: Boolean = true): Boolean {
+        cancelAutoSave()
+        commitPendingTokens()
+        if (isEmpty) return true
+        if (explicit) showToast("Draft saved")
+        return true
+    }
 
     fun scheduleAutoSave(onSave: () -> Unit) {
         autoSaveJob?.cancel()
@@ -151,5 +245,16 @@ class ComposeFormModel(
     fun cancelAutoSave() {
         autoSaveJob?.cancel()
         autoSaveJob = null
+    }
+
+    private fun mergeTokens(existing: List<MailAddress>, draft: String): List<MailAddress> {
+        val parts = MailAddress.parseList(draft)
+        if (parts.isEmpty()) return existing
+        val seen = existing.map { it.id }.toMutableSet()
+        val next = existing.toMutableList()
+        for (part in parts) {
+            if (seen.add(part.id)) next += part
+        }
+        return next
     }
 }

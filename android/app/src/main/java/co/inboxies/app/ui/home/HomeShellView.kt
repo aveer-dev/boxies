@@ -5,10 +5,21 @@ import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,6 +32,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -79,8 +91,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import co.inboxies.app.models.ChatSession
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.EmailDateFilter
 import co.inboxies.app.models.EmailFilterState
@@ -115,7 +125,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
 @Composable
 fun HomeShellView(
     auth: AuthStore,
@@ -134,7 +144,6 @@ fun HomeShellView(
     val emails by appModel.emails.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
     val isDigestLoading by appModel.isDigestLoading.collectAsState()
-    val chatSession by appModel.chatSession.collectAsState()
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
     val authEmail by auth.userEmail.collectAsState()
@@ -169,7 +178,11 @@ fun HomeShellView(
     }
 
     val hasMinimizedCompose = composeSession?.isMinimized == true
-    val listBottomInset = HomeChromeMetrics.listBottomInset(hasMinimizedCompose)
+    val listBottomInset by animateDpAsState(
+        targetValue = HomeChromeMetrics.listBottomInset(hasMinimizedCompose && !isSelectMode),
+        animationSpec = selectModeSpring(),
+        label = "listBottomInset",
+    )
     val mailboxTitle = mailbox?.email ?: authEmail.orEmpty()
     val mailboxName = mailbox?.let { displayName(it) }
         ?: mailboxTitle.substringBefore("@").ifBlank { mailboxTitle }
@@ -353,45 +366,63 @@ fun HomeShellView(
                                     .height(HomeChromeMetrics.toolbarControlSize)
                                     .homeChromeToolbarSurface(
                                         RoundedCornerShape(HomeChromeMetrics.toolbarControlCornerRadius),
-                                    ),
+                                    )
+                                    .animateContentSize(animationSpec = selectModeSpring()),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                if (isSelectMode) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(HomeChromeMetrics.toolbarControlSize)
-                                            .clickable {
-                                                isSelectMode = false
-                                                selectedEmailIds = emptySet()
-                                            },
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Close,
-                                            contentDescription = "Cancel selection",
-                                            tint = colors.ink,
-                                            modifier = Modifier.size(HomeChromeMetrics.toolbarControlIconSize),
-                                        )
-                                    }
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .height(HomeChromeMetrics.toolbarControlSize)
-                                            .clickable {
-                                                isSelectMode = true
-                                                selectedEmailIds = emptySet()
-                                            }
-                                            .padding(start = 16.dp, end = 12.dp),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            "Select",
-                                            fontFamily = InterFontFamily,
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 15.sp,
-                                            color = colors.ink,
-                                        )
+                                AnimatedContent(
+                                    targetState = isSelectMode,
+                                    transitionSpec = {
+                                        (
+                                            fadeIn(selectModeSpring()) +
+                                                scaleIn(selectModeSpring(), initialScale = 0.86f)
+                                            ) togetherWith (
+                                            fadeOut(selectModeSpring()) +
+                                                scaleOut(selectModeSpring(), targetScale = 0.86f)
+                                            ) using SizeTransform(clip = false) { _, _ ->
+                                            selectModeSpring()
+                                        }
+                                    },
+                                    contentAlignment = Alignment.Center,
+                                    label = "selectToggle",
+                                ) { selectMode ->
+                                    if (selectMode) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(HomeChromeMetrics.toolbarControlSize)
+                                                .clickable {
+                                                    isSelectMode = false
+                                                    selectedEmailIds = emptySet()
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Close,
+                                                contentDescription = "Cancel selection",
+                                                tint = colors.ink,
+                                                modifier = Modifier.size(HomeChromeMetrics.toolbarControlIconSize),
+                                            )
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .height(HomeChromeMetrics.toolbarControlSize)
+                                                .clickable {
+                                                    isSelectMode = true
+                                                    selectedEmailIds = emptySet()
+                                                }
+                                                .padding(start = 16.dp, end = 12.dp),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                "Select",
+                                                fontFamily = InterFontFamily,
+                                                fontWeight = FontWeight.Medium,
+                                                fontSize = 15.sp,
+                                                color = colors.ink,
+                                            )
+                                        }
                                     }
                                 }
 
@@ -447,15 +478,23 @@ fun HomeShellView(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (navigationSubtitle.isNotBlank()) {
-                        Text(
-                            navigationSubtitle,
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.Normal,
-                            fontSize = 12.sp,
-                            color = colors.muted,
-                            modifier = Modifier.padding(top = 2.dp),
-                        )
+                    AnimatedContent(
+                        targetState = navigationSubtitle,
+                        transitionSpec = {
+                            fadeIn(selectModeSpring()) togetherWith fadeOut(selectModeSpring())
+                        },
+                        label = "navSubtitle",
+                    ) { subtitle ->
+                        if (subtitle.isNotBlank()) {
+                            Text(
+                                subtitle,
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 12.sp,
+                                color = colors.muted,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
                     }
                 }
 
@@ -542,11 +581,24 @@ fun HomeShellView(
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(bottom = HomeChromeMetrics.chromeBottomPadding - 12.dp),
+                    .fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (hasMinimizedCompose && !isSelectMode) {
+                                Modifier.padding(bottom = HomeChromeMetrics.minimizedComposeGap)
+                            } else {
+                                Modifier
+                                    .navigationBarsPadding()
+                                    .padding(bottom = HomeChromeMetrics.chromeBottomPadding - 12.dp)
+                            }
+                        )
+                        .animateContentSize(animationSpec = selectModeSpring()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                 toast?.let {
                     UndoToastBanner(
                         message = it.message,
@@ -560,106 +612,128 @@ fun HomeShellView(
                     )
                 }
 
-                if (isSelectMode) {
-                    SelectionActionBar(
-                        selectedCount = selectedEmailIds.size,
-                        allSelected = filteredEmails.isNotEmpty() &&
-                            filteredEmails.all { selectedEmailIds.contains(it.id) },
-                        mostlyUnread = run {
-                            val selected = emails.filter { selectedEmailIds.contains(it.id) }
-                            if (selected.isEmpty()) true
-                            else selected.count { it.isUnread } >= maxOf(1, selected.size - selected.count { it.isUnread })
-                        },
-                        mostlyStarred = run {
-                            val selected = emails.filter { selectedEmailIds.contains(it.id) }
-                            if (selected.isEmpty()) false
-                            else selected.count { it.starred } >= maxOf(1, selected.size - selected.count { it.starred })
-                        },
-                        onToggleSelectAll = {
-                            selectedEmailIds = if (
-                                filteredEmails.isNotEmpty() &&
-                                filteredEmails.all { selectedEmailIds.contains(it.id) }
-                            ) {
-                                emptySet()
-                            } else {
-                                filteredEmails.map { it.id }.toSet()
-                            }
-                        },
-                        onToggleRead = {
-                            val targetRead = run {
+                AnimatedContent(
+                    targetState = isSelectMode,
+                    modifier = Modifier.fillMaxWidth(),
+                    transitionSpec = {
+                        (
+                            slideInVertically(selectModeSpring()) { it } + fadeIn(selectModeSpring())
+                            ) togetherWith (
+                            slideOutVertically(selectModeSpring()) { it } + fadeOut(selectModeSpring())
+                            ) using SizeTransform(clip = false) { _, _ ->
+                            selectModeSpring()
+                        }
+                    },
+                    contentAlignment = Alignment.BottomCenter,
+                    label = "selectChrome",
+                ) { selectMode ->
+                    if (selectMode) {
+                        SelectionActionBar(
+                            selectedCount = selectedEmailIds.size,
+                            allSelected = filteredEmails.isNotEmpty() &&
+                                filteredEmails.all { selectedEmailIds.contains(it.id) },
+                            mostlyUnread = run {
                                 val selected = emails.filter { selectedEmailIds.contains(it.id) }
                                 if (selected.isEmpty()) true
                                 else selected.count { it.isUnread } >= maxOf(1, selected.size - selected.count { it.isUnread })
-                            }
-                            val ids = selectedEmailIds
-                            scope.launch { appModel.markEmailsRead(ids, targetRead) }
-                        },
-                        onToggleStar = {
-                            val targetStarred = run {
+                            },
+                            mostlyStarred = run {
                                 val selected = emails.filter { selectedEmailIds.contains(it.id) }
-                                if (selected.isEmpty()) true
-                                else selected.count { it.starred } < maxOf(1, selected.size - selected.count { it.starred })
-                            }
-                            val ids = selectedEmailIds
-                            scope.launch { appModel.starEmails(ids, targetStarred) }
-                        },
-                        onArchive = {
-                            val ids = selectedEmailIds
-                            scope.launch {
-                                appModel.archiveEmails(ids)
-                                selectedEmailIds = emptySet()
-                            }
-                        },
-                        onDelete = {
-                            val ids = selectedEmailIds
-                            scope.launch {
-                                appModel.deleteEmails(ids)
-                                selectedEmailIds = emptySet()
-                            }
-                        },
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                    )
-                } else {
-                    BottomBar(
-                        showComposeActions = showComposeActions,
-                        onAskAi = {
-                            appModel.startNewChat()
-                            showChat = true
-                        },
-                        onComposeTap = {
-                            scope.launch { appModel.startCompose(ComposeMode.New) }
-                        },
-                        onComposeLongPress = {
-                            composeActionsDismissible = false
-                            view.impactHaptic()
-                            showComposeActions = true
-                        },
-                        onComposeDrag = { point ->
-                            if (showComposeActions) {
-                                val hit = hitTestComposeAction(point, composeActionFrames)
-                                if (hit != null) updateComposeHighlight(hit)
-                            }
-                        },
-                        onComposeRelease = { wasLongPress, point ->
-                            if (wasLongPress) {
-                                val hit = hitTestComposeAction(point, composeActionFrames)
-                                if (hit != null) {
-                                    performComposeAction(hit)
+                                if (selected.isEmpty()) false
+                                else selected.count { it.starred } >= maxOf(1, selected.size - selected.count { it.starred })
+                            },
+                            onToggleSelectAll = {
+                                selectedEmailIds = if (
+                                    filteredEmails.isNotEmpty() &&
+                                    filteredEmails.all { selectedEmailIds.contains(it.id) }
+                                ) {
+                                    emptySet()
                                 } else {
-                                    highlightedComposeAction = null
-                                    composeActionsDismissible = true
+                                    filteredEmails.map { it.id }.toSet()
                                 }
-                            }
-                        },
-                    )
+                            },
+                            onToggleRead = {
+                                val targetRead = run {
+                                    val selected = emails.filter { selectedEmailIds.contains(it.id) }
+                                    if (selected.isEmpty()) true
+                                    else selected.count { it.isUnread } >= maxOf(1, selected.size - selected.count { it.isUnread })
+                                }
+                                val ids = selectedEmailIds
+                                scope.launch { appModel.markEmailsRead(ids, targetRead) }
+                            },
+                            onToggleStar = {
+                                val targetStarred = run {
+                                    val selected = emails.filter { selectedEmailIds.contains(it.id) }
+                                    if (selected.isEmpty()) true
+                                    else selected.count { it.starred } < maxOf(1, selected.size - selected.count { it.starred })
+                                }
+                                val ids = selectedEmailIds
+                                scope.launch { appModel.starEmails(ids, targetStarred) }
+                            },
+                            onArchive = {
+                                val ids = selectedEmailIds
+                                scope.launch {
+                                    appModel.archiveEmails(ids)
+                                    selectedEmailIds = emptySet()
+                                }
+                            },
+                            onDelete = {
+                                val ids = selectedEmailIds
+                                scope.launch {
+                                    appModel.deleteEmails(ids)
+                                    selectedEmailIds = emptySet()
+                                }
+                            },
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                    } else {
+                        BottomBar(
+                            showComposeActions = showComposeActions,
+                            onAskAi = {
+                                appModel.openChatSession(resumeActive = true)
+                                showChat = true
+                            },
+                            onComposeTap = {
+                                scope.launch { appModel.startCompose(ComposeMode.New) }
+                            },
+                            onComposeLongPress = {
+                                composeActionsDismissible = false
+                                view.impactHaptic()
+                                showComposeActions = true
+                            },
+                            onComposeDrag = { point ->
+                                if (showComposeActions) {
+                                    val hit = hitTestComposeAction(point, composeActionFrames)
+                                    if (hit != null) updateComposeHighlight(hit)
+                                }
+                            },
+                            onComposeRelease = { wasLongPress, point ->
+                                if (wasLongPress) {
+                                    val hit = hitTestComposeAction(point, composeActionFrames)
+                                    if (hit != null) {
+                                        performComposeAction(hit)
+                                    } else {
+                                        highlightedComposeAction = null
+                                        composeActionsDismissible = true
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
                 }
 
-                if (hasMinimizedCompose && !isSelectMode) {
-                    ComposeDockBar(
-                        session = composeSession!!,
-                        onExpand = { appModel.expandCompose() },
-                        onClose = { appModel.closeCompose() },
-                    )
+                AnimatedVisibility(
+                    visible = hasMinimizedCompose && !isSelectMode,
+                    enter = slideInVertically(selectModeSpring()) { it } + fadeIn(selectModeSpring()),
+                    exit = slideOutVertically(selectModeSpring()) { it } + fadeOut(selectModeSpring()),
+                ) {
+                    composeSession?.let { session ->
+                        ComposeDockBar(
+                            session = session,
+                            onExpand = { appModel.expandCompose() },
+                        )
+                    }
                 }
             }
         } else {
@@ -680,6 +754,25 @@ fun HomeShellView(
                 dismissEnabled = composeActionsDismissible,
             )
         }
+
+        if (composeSession?.isExpanded == true) {
+            ComposeSheetView(
+                session = composeSession!!,
+                onMinimize = { appModel.minimizeCompose() },
+                onClose = { appModel.closeCompose() },
+                onSend = { appModel.sendCompose() },
+                onSaveDraft = { appModel.saveDraft() },
+            )
+        }
+
+        if (showChat) {
+            ChatSheetView(
+                onClose = {
+                    showChat = false
+                    appModel.dismissChatSession()
+                },
+            )
+        }
     }
 
     if (selectedEmail != null) {
@@ -687,6 +780,9 @@ fun HomeShellView(
             onDismissRequest = { appModel.closeEmail() },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = colors.background,
+            scrimColor = HomeChromeMetrics.modalScrim,
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            dragHandle = null,
         ) {
             EmailDetailView(onClose = { appModel.closeEmail() })
         }
@@ -697,16 +793,14 @@ fun HomeShellView(
             onDismissRequest = { showSettings = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = colors.background,
+            scrimColor = HomeChromeMetrics.modalScrim,
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            dragHandle = null,
         ) {
             SettingsSheetView(
                 onClose = { showSettings = false },
                 onThemeModeChange = onThemeModeChange,
                 themeMode = themeMode,
-                onSignOut = {
-                    showSettings = false
-                    auth.signOut()
-                    appModel.reset()
-                },
             )
         }
     }
@@ -732,38 +826,6 @@ fun HomeShellView(
                         newMailboxName = ""
                         newMailboxEmail = ""
                     }
-                },
-            )
-        }
-    }
-
-    if (composeSession?.isExpanded == true) {
-        Dialog(
-            onDismissRequest = { appModel.minimizeCompose() },
-            properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true),
-        ) {
-            ComposeSheetView(
-                session = composeSession!!,
-                onMinimize = { appModel.minimizeCompose() },
-                onClose = { appModel.closeCompose() },
-                onSend = { appModel.sendCompose() },
-                onSaveDraft = { appModel.saveDraft() },
-            )
-        }
-    }
-
-    if (showChat || chatSession !is ChatSession.Dismissed) {
-        Dialog(
-            onDismissRequest = {
-                showChat = false
-                appModel.dismissChatSession()
-            },
-            properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true),
-        ) {
-            ChatSheetView(
-                onClose = {
-                    showChat = false
-                    appModel.dismissChatSession()
                 },
             )
         }
@@ -1263,3 +1325,8 @@ private fun View.impactHaptic() {
 private fun View.selectionHaptic() {
     performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
 }
+
+private fun <T> selectModeSpring() = spring<T>(
+    dampingRatio = 0.86f,
+    stiffness = Spring.StiffnessMediumLow,
+)

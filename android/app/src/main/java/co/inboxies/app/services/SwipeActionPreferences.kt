@@ -2,8 +2,19 @@ package co.inboxies.app.services
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.MarkEmailRead
+import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.edit
 import co.inboxies.app.models.Email
+import co.inboxies.app.theme.InboxiesPalette
 
 enum class SwipeQuickAction(val title: String) {
     DELETE("Delete"),
@@ -16,6 +27,29 @@ enum class SwipeQuickAction(val title: String) {
         STAR -> if (forEmail.starred) "Unstar" else "Star"
         TOGGLE_READ -> if (forEmail.read) "Unread" else "Read"
         else -> title
+    }
+
+    fun tint(colors: InboxiesPalette): Color = when (this) {
+        DELETE -> Color(0xFFE53935)
+        ARCHIVE -> Color(0xFF8C59D9)
+        STAR -> Color(0xFFFF9800)
+        TOGGLE_READ -> Color(0xFF1E88E5)
+        REPLY -> colors.accent
+    }
+
+    fun icon(): ImageVector = when (this) {
+        DELETE -> Icons.Outlined.Delete
+        ARCHIVE -> Icons.Outlined.Archive
+        STAR -> Icons.Outlined.Star
+        TOGGLE_READ -> Icons.Outlined.MarkEmailRead
+        REPLY -> Icons.AutoMirrored.Outlined.Reply
+    }
+
+    fun icon(email: Email): ImageVector = when (this) {
+        STAR -> if (email.starred) Icons.Filled.Star else Icons.Outlined.Star
+        TOGGLE_READ ->
+            if (email.read) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead
+        else -> icon()
     }
 }
 
@@ -107,7 +141,7 @@ data class SwipeActionPreferences(
     val leftActions: List<SwipeQuickAction> = listOf(SwipeQuickAction.DELETE),
     val rightActions: List<SwipeQuickAction> = listOf(SwipeQuickAction.ARCHIVE),
 ) {
-    fun save(prefs: SharedPreferences) {
+    fun save(prefs: SharedPreferences = requirePrefs()) {
         prefs.edit {
             putString(KEY_LEFT, leftActions.joinToString(",") { it.name })
             putString(KEY_RIGHT, rightActions.joinToString(",") { it.name })
@@ -120,10 +154,22 @@ data class SwipeActionPreferences(
         private const val KEY_RIGHT = "swipe_right_actions"
         private const val PREFS = "inboxies_swipe"
 
+        @Volatile
+        private var appPrefs: SharedPreferences? = null
+
+        fun init(context: Context) {
+            appPrefs = prefs(context.applicationContext)
+        }
+
+        private fun requirePrefs(): SharedPreferences =
+            appPrefs ?: error("SwipeActionPreferences.init() was not called")
+
         fun prefs(context: Context): SharedPreferences =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
         fun load(context: Context): SwipeActionPreferences = load(prefs(context))
+
+        fun load(): SwipeActionPreferences = load(requirePrefs())
 
         fun load(prefs: SharedPreferences): SwipeActionPreferences {
             fun parse(raw: String?, fallback: List<SwipeQuickAction>): List<SwipeQuickAction> {

@@ -3,11 +3,19 @@ package co.inboxies.app.theme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -16,7 +24,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -28,7 +38,8 @@ object HomeChromeMetrics {
     val chromeSpacing: Dp = 10.dp
     val chromeBottomPadding: Dp = 20.dp
     val chromeCornerRadius: Dp = 50.dp
-    val minimizedComposeHeight: Dp = 58.dp
+    val minimizedComposeHeight: Dp = 88.dp
+    val minimizedComposeGap: Dp = 18.dp
     val mailboxAvatarSize: Dp = 48.dp
     val bottomBarHorizontalPadding: Dp = 24.dp
     val selectionBarHeight: Dp = 58.dp
@@ -37,7 +48,7 @@ object HomeChromeMetrics {
 
     /** iOS `Menu` chrome — 14pt continuous corners, 20pt glyphs, 16pt insets. */
     val menuCornerRadius: Dp = 22.dp
-    val menuIconSize: Dp = 18.dp
+    val menuIconSize: Dp = 16.dp
     val menuItemHorizontalPadding: Dp = 16.dp
     val menuDividerInset: Dp = 16.dp
     val menuMinWidth: Dp = 220.dp
@@ -48,6 +59,11 @@ object HomeChromeMetrics {
     val toolbarControlIconSize: Dp = 22.dp
     val toolbarControlSpacing: Dp = 10.dp
     val toolbarControlElevation: Dp = 8.dp
+    val toolbarClusterInnerPadding: Dp = 8.dp
+    val toolbarClusterItemSpacing: Dp = 6.dp
+
+    /** Subtle dim behind compose / sheets so a drag shows a layer over home. */
+    val modalScrim: Color = Color.Black.copy(alpha = 0.22f)
 
     fun listBottomInset(hasMinimizedCompose: Boolean): Dp {
         var height = actionBarHeight + chromeBottomPadding
@@ -108,16 +124,107 @@ fun Modifier.homeChromeToolbarSurface(
 fun HomeChromeToolbarButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     shape: Shape = CircleShape,
+    size: Dp = HomeChromeMetrics.toolbarControlSize,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(
         modifier = modifier
+            .size(size)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
             .homeChromeToolbarSurface(shape)
-            .clickable(role = Role.Button, onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
         content = content,
     )
+}
+
+@Composable
+fun HomeChromeToolbarButton(
+    icon: ImageVector,
+    contentDescription: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    shape: Shape = CircleShape,
+    size: Dp = HomeChromeMetrics.toolbarControlSize,
+    tint: Color = inboxiesColors().ink,
+) {
+    HomeChromeToolbarButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        shape = shape,
+        size = size,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(HomeChromeMetrics.toolbarControlIconSize),
+        )
+    }
+}
+
+/** Grouped trailing controls — same capsule as home Select + Filter. */
+@Composable
+fun HomeChromeToolbarCluster(
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    itemSpacing: Dp = 0.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .height(HomeChromeMetrics.toolbarControlSize)
+            .homeChromeToolbarSurface(
+                RoundedCornerShape(HomeChromeMetrics.toolbarControlCornerRadius),
+            )
+            .padding(contentPadding),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(itemSpacing),
+        content = content,
+    )
+}
+
+@Composable
+fun HomeChromeToolbarClusterItem(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .size(HomeChromeMetrics.toolbarControlSize)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+        content = content,
+    )
+}
+
+@Composable
+fun HomeChromeToolbarClusterItem(
+    icon: ImageVector,
+    contentDescription: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    tint: Color = inboxiesColors().ink,
+) {
+    HomeChromeToolbarClusterItem(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(HomeChromeMetrics.toolbarControlIconSize),
+        )
+    }
 }
 
 /** Soft material fade behind the large title, analogous to iOS ProgressiveBlurBackground. */

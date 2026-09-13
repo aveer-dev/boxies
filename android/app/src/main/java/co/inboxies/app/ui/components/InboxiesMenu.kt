@@ -1,7 +1,9 @@
 package co.inboxies.app.ui.components
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -53,6 +55,44 @@ fun InboxiesMenuDivider() {
     )
 }
 
+/** Non-interactive name / email header, matching iOS contact menu preview. */
+@Composable
+fun InboxiesMenuHeader(
+    title: String,
+    subtitle: String? = null,
+) {
+    val colors = inboxiesColors()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = HomeChromeMetrics.menuItemHorizontalPadding,
+                vertical = 10.dp,
+            ),
+    ) {
+        Text(
+            title,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 16.sp,
+            color = colors.ink,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (!subtitle.isNullOrBlank()) {
+            Text(
+                subtitle,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Normal,
+                fontSize = 13.sp,
+                color = colors.muted,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 @Composable
 fun InboxiesMenuItem(
     text: String,
@@ -68,7 +108,7 @@ fun InboxiesMenuItem(
                 text,
                 fontFamily = InterFontFamily,
                 fontWeight = FontWeight.Normal,
-                fontSize = 16.sp,
+                fontSize = 14.sp,
                 color = contentColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

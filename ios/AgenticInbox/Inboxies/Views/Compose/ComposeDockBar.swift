@@ -25,8 +25,8 @@ struct ComposeDockBar: View {
             .frame(maxWidth: .infinity, alignment: .center)
             .foregroundStyle(AppTheme.ink)
             .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 24)
+            .padding(.top, 22)
+            .padding(.bottom, 28)
             .frame(maxWidth: .infinity)
                 .background(AppTheme.surface)
                 .clipShape(
@@ -36,7 +36,7 @@ struct ComposeDockBar: View {
                         style: .continuous
                     )
                 )
-                .shadow(color: .black.opacity(0.12), radius: 16, y: -4)
+                .shadow(color: .black.opacity(0.06), radius: 8, y: -2)
         }
         .buttonStyle(.plain)
         .transition(.move(edge: .bottom).combined(with: .opacity))

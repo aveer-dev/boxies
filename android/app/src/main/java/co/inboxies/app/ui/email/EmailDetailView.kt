@@ -1,141 +1,1016 @@
 package co.inboxies.app.ui.email
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MoreVert
-import androidx.compose.material.icons.outlined.Star
-import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
+import co.inboxies.app.models.ComposeMode
+import co.inboxies.app.models.Email
+import co.inboxies.app.models.HomeTab
+import co.inboxies.app.models.MailAddress
+import co.inboxies.app.services.EmailActionAvailability
+import co.inboxies.app.theme.AppThemeDims
+import co.inboxies.app.theme.HomeChromeMetrics
+import co.inboxies.app.theme.HomeChromeToolbarButton
+import co.inboxies.app.theme.HomeChromeToolbarCluster
+import co.inboxies.app.theme.HomeChromeToolbarClusterItem
 import co.inboxies.app.theme.InterFontFamily
+import co.inboxies.app.theme.TransparentSystemBars
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.InboxiesDropdownMenu
+import co.inboxies.app.ui.components.InboxiesMenuDivider
+import co.inboxies.app.ui.components.InboxiesMenuHeader
+import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.utils.DateUtils
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun EmailDetailView(
     onClose: () -> Unit = {},
-    onReply: (() -> Unit)? = null,
-    onReplyAll: (() -> Unit)? = null,
-    onForward: (() -> Unit)? = null,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
     val email by app.selectedEmail.collectAsState()
     val thread by app.threadEmails.collectAsState()
+    val listEmails by app.emails.collectAsState()
     val loading by app.isEmailDetailLoading.collectAsState()
-    var showActions by remember { mutableStateOf(false) }
     val current = email ?: return
 
-    Column(modifier = Modifier.fillMaxSize().padding(bottom = 24.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = {
-                app.closeEmail()
-                onClose()
-            }) {
-                Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.ink)
+    val navigable = remember(listEmails) { listEmails.filter { !it.isDraft } }
+    val navIndex = navigable.indexOfFirst { it.id == current.id }
+    val canOpenPrevious = navIndex > 0
+    val canOpenNext = navIndex in 0 until navigable.lastIndex
+
+    val selfAddresses = remember(app.selectedMailbox) {
+        setOfNotNull(
+            app.selectedMailbox?.email?.lowercase()?.takeIf { it.isNotEmpty() },
+            app.selectedMailbox?.id?.lowercase()?.takeIf { it.isNotEmpty() },
+        )
+    }
+    val source = remember(thread, current, selfAddresses) {
+        thread.lastOrNull { !it.isDraft && it.sender.lowercase() !in selfAddresses }
+            ?: thread.lastOrNull { !it.isDraft }
+            ?: current
+    }
+    val availability = EmailActionAvailability(source)
+    val selfAddress = app.selectedMailbox?.email
+
+    var expandedMessageIds by remember { mutableStateOf(setOf<String>()) }
+    var expandedRecipientIds by remember { mutableStateOf(setOf<String>()) }
+    var toolbarSheetEmail by remember { mutableStateOf<Email?>(null) }
+    var messageSheetEmail by remember { mutableStateOf<Email?>(null) }
+    var personSearchQuery by remember { mutableStateOf<String?>(null) }
+    var showDeleteMenu by remember { mutableStateOf(false) }
+    var contextMenuMessage by remember { mutableStateOf<Email?>(null) }
+
+    val subjectText = current.subject.ifBlank { "(no subject)" }
+    val messages = thread.ifEmpty { listOf(current) }
+
+    fun seedExpandedMessages() {
+        val latest = messages.lastOrNull { !it.isDraft }
+        expandedMessageIds = if (latest != null) setOf(latest.id) else emptySet()
+    }
+
+    LaunchedEffect(current.id) {
+        expandedMessageIds = emptySet()
+        expandedRecipientIds = emptySet()
+        if (!loading) seedExpandedMessages()
+    }
+
+    LaunchedEffect(loading, messages.map { it.id }.joinToString()) {
+        if (!loading) seedExpandedMessages()
+    }
+
+    val detailTags = remember(current, messages.size) {
+        buildList {
+            val folderName = current.folderName?.takeIf { it.isNotEmpty() }
+            if (folderName != null) {
+                add(folderName.replaceFirstChar { it.uppercase() })
+            } else {
+                val folderId = current.folderId?.takeIf { it.isNotEmpty() }
+                if (folderId != null) add(HomeTab.Folder(folderId).title)
             }
-            Spacer(modifier = Modifier.weight(1f))
-            IconButton(onClick = { scope.launch { app.toggleStar(current) } }) {
-                Icon(
-                    if (current.starred) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                    contentDescription = "Star",
-                    tint = colors.ink,
+            if (current.isUnread) add("Unread")
+            if (current.needsReply == true) add("Needs reply")
+            if (current.hasDraft == true) add("Has draft")
+            val messageCount = maxOf(messages.size, current.threadCount ?: 1)
+            if (messageCount > 1) add("$messageCount messages")
+        }
+    }
+
+    // Compact collapse range so expanded title sits close under the toolbar.
+    val titleCollapseRangePx = with(density) { 28.dp.toPx() }
+    var titleCollapsePx by remember(current.id) { mutableFloatStateOf(0f) }
+    val titleCollapseFraction = (titleCollapsePx / titleCollapseRangePx).coerceIn(0f, 1f)
+    val titleNestedScroll = remember(titleCollapseRangePx) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                val delta = available.y
+                if (delta >= 0f) return Offset.Zero
+                val next = (titleCollapsePx - delta).coerceIn(0f, titleCollapseRangePx)
+                val consumed = next - titleCollapsePx
+                titleCollapsePx = next
+                return Offset(0f, -consumed)
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset {
+                val delta = available.y
+                if (delta <= 0f) return Offset.Zero
+                val next = (titleCollapsePx - delta).coerceIn(0f, titleCollapseRangePx)
+                val consumedY = titleCollapsePx - next
+                titleCollapsePx = next
+                return Offset(0f, consumedY)
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity = Velocity.Zero
+        }
+    }
+    val titleSize = lerp(AppThemeDims.FontSize.largeTitle, AppThemeDims.FontSize.inlineTitle, titleCollapseFraction)
+    val titleWeight = if (titleCollapseFraction > 0.5f) FontWeight.SemiBold else FontWeight.Bold
+    val titleTopPadding = lerp(8.dp, 0.dp, titleCollapseFraction)
+    val titleBottomPadding = lerp(4.dp, 2.dp, titleCollapseFraction)
+
+    TransparentSystemBars()
+
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .nestedScroll(titleNestedScroll),
+        containerColor = colors.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            Column {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp, bottom = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(36.dp)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(colors.muted.copy(alpha = 0.45f)),
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.toolbarControlSpacing),
+                ) {
+                    HomeChromeToolbarButton(
+                        icon = Icons.Outlined.Close,
+                        contentDescription = "Close",
+                        onClick = {
+                            app.closeEmail()
+                            onClose()
+                        },
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    HomeChromeToolbarCluster {
+                        HomeChromeToolbarClusterItem(
+                            icon = Icons.Outlined.KeyboardArrowUp,
+                            contentDescription = "Previous email",
+                            onClick = { scope.launch { app.openAdjacentEmail(-1) } },
+                            enabled = canOpenPrevious,
+                            tint = if (canOpenPrevious) colors.ink else colors.muted.copy(alpha = 0.4f),
+                        )
+                        HomeChromeToolbarClusterItem(
+                            icon = Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = "Next email",
+                            onClick = { scope.launch { app.openAdjacentEmail(1) } },
+                            enabled = canOpenNext,
+                            tint = if (canOpenNext) colors.ink else colors.muted.copy(alpha = 0.4f),
+                        )
+                    }
+                }
+                Text(
+                    subjectText,
+                    fontFamily = InterFontFamily,
+                    fontWeight = titleWeight,
+                    fontSize = titleSize,
+                    color = colors.ink,
+                    maxLines = if (titleCollapseFraction > 0.6f) 1 else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(top = titleTopPadding, bottom = titleBottomPadding),
                 )
             }
-            IconButton(onClick = { onReply?.invoke() }) {
-                Icon(Icons.AutoMirrored.Outlined.Reply, contentDescription = "Reply", tint = colors.ink)
-            }
-            IconButton(onClick = {
-                scope.launch {
-                    app.archiveEmail(current)
-                    onClose()
+        },
+        bottomBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = HomeChromeMetrics.bottomBarHorizontalPadding)
+                    .padding(top = 8.dp, bottom = HomeChromeMetrics.chromeBottomPadding),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
+            ) {
+                HomeChromeToolbarCluster(
+                    contentPadding = PaddingValues(horizontal = HomeChromeMetrics.toolbarClusterInnerPadding),
+                    itemSpacing = HomeChromeMetrics.toolbarClusterItemSpacing,
+                ) {
+                    Box {
+                        HomeChromeToolbarClusterItem(
+                            icon = Icons.Outlined.Delete,
+                            contentDescription = "Delete",
+                            onClick = { showDeleteMenu = true },
+                        )
+                        InboxiesDropdownMenu(
+                            expanded = showDeleteMenu,
+                            onDismiss = { showDeleteMenu = false },
+                        ) {
+                            InboxiesMenuItem(
+                                text = "Delete Message",
+                                icon = Icons.Outlined.Delete,
+                                destructive = true,
+                                onClick = {
+                                    showDeleteMenu = false
+                                    scope.launch { app.deleteCurrentEmail() }
+                                },
+                            )
+                        }
+                    }
+                    if (availability.showsArchive) {
+                        HomeChromeToolbarClusterItem(
+                            icon = Icons.Outlined.Archive,
+                            contentDescription = "Archive",
+                            onClick = { scope.launch { app.archiveCurrentEmail() } },
+                        )
+                    }
+                    if (availability.showsReplyActions) {
+                        HomeChromeToolbarClusterItem(
+                            icon = Icons.AutoMirrored.Outlined.Reply,
+                            contentDescription = "Reply",
+                            onClick = {
+                                scope.launch {
+                                    app.startCompose(ComposeMode.Reply, original = source)
+                                }
+                            },
+                        )
+                    }
                 }
-            }) {
-                Icon(Icons.Outlined.Archive, contentDescription = "Archive", tint = colors.ink)
+                Spacer(modifier = Modifier.weight(1f))
+                HomeChromeToolbarButton(
+                    icon = Icons.Outlined.MoreHoriz,
+                    contentDescription = "More",
+                    onClick = { toolbarSheetEmail = current },
+                )
             }
-            IconButton(onClick = { showActions = true }) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "More", tint = colors.ink)
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            TagsRow(
+                tags = detailTags,
+                starred = current.starred,
+                loading = loading && detailTags.isEmpty(),
+                onToggleStar = { scope.launch { app.toggleStar(current) } },
+            )
+
+            if (loading && messages.isEmpty()) {
+                DetailSkeleton()
+            } else {
+                messages.forEachIndexed { index, message ->
+                    if (index > 0) {
+                        HorizontalDivider(thickness = 1.dp, color = colors.line)
+                    }
+                    if (message.isDraft) {
+                        DraftMessageRow(
+                            message = message,
+                            onOpen = { scope.launch { app.openDraft(message) } },
+                            onDelete = { scope.launch { app.deleteThreadDraft(message) } },
+                        )
+                    } else {
+                        val isExpanded = expandedMessageIds.contains(message.id)
+                        val recipientsExpanded = expandedRecipientIds.contains(message.id)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(colors.background)
+                                .then(
+                                    if (!isExpanded) {
+                                        Modifier.combinedClickable(
+                                            onClick = {},
+                                            onLongClick = { contextMenuMessage = message },
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .padding(horizontal = 16.dp, vertical = 16.dp),
+                        ) {
+                            MessagePeopleHeader(
+                                message = message,
+                                selfAddress = selfAddress,
+                                formattedDate = DateUtils.formatDetailDate(message.date),
+                                isRecipientsExpanded = recipientsExpanded,
+                                isBodyExpanded = isExpanded,
+                                onToggleRecipients = {
+                                    expandedRecipientIds = if (recipientsExpanded) {
+                                        expandedRecipientIds - message.id
+                                    } else {
+                                        expandedRecipientIds + message.id
+                                    }
+                                },
+                                onToggleBody = {
+                                    expandedMessageIds = if (isExpanded) {
+                                        expandedMessageIds - message.id
+                                    } else {
+                                        expandedMessageIds + message.id
+                                    }
+                                },
+                                onShowActions = { messageSheetEmail = message },
+                                onSearch = { personSearchQuery = it },
+                            )
+
+                            AnimatedVisibility(
+                                visible = isExpanded,
+                                enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 6 },
+                                exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { 6 },
+                            ) {
+                                Column {
+                                    EmailBodyView(
+                                        email = message,
+                                        modifier = Modifier.padding(top = 20.dp),
+                                    )
+                                    AttachmentListView(
+                                        email = message,
+                                        modifier = Modifier.padding(top = 20.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+    }
 
+    toolbarSheetEmail?.let { sheetEmail ->
+        EmailActionsSheetModal(
+            email = sheetEmail,
+            onDismiss = { toolbarSheetEmail = null },
+            onDone = {
+                toolbarSheetEmail = null
+                if (app.selectedEmail.value == null) onClose()
+            },
+        )
+    }
+
+    messageSheetEmail?.let { sheetEmail ->
+        EmailActionsSheetModal(
+            email = sheetEmail,
+            onDismiss = { messageSheetEmail = null },
+            onDone = {
+                messageSheetEmail = null
+                if (app.selectedEmail.value == null) onClose()
+            },
+        )
+    }
+
+    personSearchQuery?.let { query ->
+        ModalBottomSheet(
+            onDismissRequest = { personSearchQuery = null },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = colors.background,
+            scrimColor = HomeChromeMetrics.modalScrim,
+        ) {
+            SearchView(
+                onClose = { personSearchQuery = null },
+                initialQuery = query,
+                onOpenEmail = { opened ->
+                    scope.launch {
+                        personSearchQuery = null
+                        app.openEmail(opened)
+                    }
+                },
+            )
+        }
+    }
+
+    contextMenuMessage?.let { message ->
+        MessageContextMenu(
+            message = message,
+            onDismiss = { contextMenuMessage = null },
+            onReply = {
+                contextMenuMessage = null
+                scope.launch { app.startCompose(ComposeMode.Reply, original = message) }
+            },
+            onReplyAll = {
+                contextMenuMessage = null
+                scope.launch { app.startCompose(ComposeMode.ReplyAll, original = message) }
+            },
+            onForward = {
+                contextMenuMessage = null
+                scope.launch { app.startCompose(ComposeMode.Forward, original = message) }
+            },
+            onToggleStar = {
+                contextMenuMessage = null
+                scope.launch { app.toggleStar(message) }
+            },
+            onToggleRead = {
+                contextMenuMessage = null
+                scope.launch { app.toggleRead(message) }
+            },
+            onMore = {
+                contextMenuMessage = null
+                messageSheetEmail = message
+            },
+            onDelete = {
+                contextMenuMessage = null
+                scope.launch { app.deleteEmail(message) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun TagsRow(
+    tags: List<String>,
+    starred: Boolean,
+    loading: Boolean,
+    onToggleStar: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
+            .padding(top = 8.dp, bottom = 12.dp),
+    ) {
+        if (loading) {
+            repeat(3) { TagChip("Folder") }
+        } else {
+            if (starred) {
+                IconButton(
+                    onClick = onToggleStar,
+                    modifier = Modifier.size(28.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Star,
+                        contentDescription = "Unstar",
+                        tint = Color(0xFFFFC107),
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+            tags.forEach { TagChip(it) }
+        }
+    }
+}
+
+@Composable
+private fun TagChip(title: String) {
+    val colors = inboxiesColors()
+    Text(
+        title,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.Medium,
+        fontSize = 12.sp,
+        color = colors.muted,
+        modifier = Modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+    )
+}
+
+@Composable
+private fun DetailSkeleton() {
+    val colors = inboxiesColors()
+    Column {
+        repeat(2) { index ->
+            if (index > 0) {
+                HorizontalDivider(thickness = 1.dp, color = colors.line)
+            }
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(16.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(colors.line),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(80.dp)
+                            .height(14.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(colors.line),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.55f)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(colors.line),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(colors.line),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DraftMessageRow(
+    message: Email,
+    onOpen: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    var showConfirm by remember { mutableStateOf(false) }
+    val preview = message.previewText
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+    ) {
         Column(
             modifier = Modifier
                 .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp),
+                .clickable(onClick = onOpen),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(
-                current.subject.ifBlank { "(no subject)" },
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp,
-                color = colors.ink,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(current.displaySender, fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Text("To ${current.recipient}", fontSize = 12.sp, color = colors.muted)
-            Text(DateUtils.formatFullDate(current.date), fontSize = 12.sp, color = colors.muted)
-            Spacer(Modifier.height(16.dp))
-            if (loading) {
-                CircularProgressIndicator(color = colors.ink, modifier = Modifier.align(Alignment.CenterHorizontally))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    "Draft",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp,
+                    color = colors.deepDarkRed,
+                )
+                if (message.hasFileAttachment) {
+                    Icon(
+                        Icons.Outlined.AttachFile,
+                        contentDescription = "Has attachment",
+                        tint = colors.muted,
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
             }
-            (thread.ifEmpty { listOf(current) }).forEach { msg ->
-                EmailBodyView(email = msg)
-                Spacer(Modifier.height(16.dp))
+            if (preview.isNotEmpty()) {
+                Text(
+                    preview,
+                    fontFamily = InterFontFamily,
+                    fontSize = 11.sp,
+                    color = colors.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
+        }
+        IconButton(onClick = { showConfirm = true }) {
+            Icon(Icons.Outlined.Delete, contentDescription = "Delete draft", tint = colors.muted)
         }
     }
 
-    if (showActions) {
-        ModalBottomSheet(
-            onDismissRequest = { showActions = false },
-            sheetState = rememberModalBottomSheetState(),
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Draft") },
+            text = { Text("Delete this draft?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConfirm = false
+                    onDelete()
+                }) {
+                    Text("Delete Draft", color = colors.deepDarkRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MessagePeopleHeader(
+    message: Email,
+    selfAddress: String?,
+    formattedDate: String,
+    isRecipientsExpanded: Boolean,
+    isBodyExpanded: Boolean,
+    onToggleRecipients: () -> Unit,
+    onToggleBody: () -> Unit,
+    onShowActions: () -> Unit,
+    onSearch: (String) -> Unit,
+) {
+    val colors = inboxiesColors()
+    val senderOrToAction = {
+        if (isBodyExpanded) onToggleRecipients() else onToggleBody()
+    }
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(if (isRecipientsExpanded) 8.dp else 2.dp),
+    ) {
+        if (isRecipientsExpanded) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "From",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = AppThemeDims.FontSize.recipient,
+                    color = colors.muted,
+                    modifier = Modifier.width(32.dp),
+                )
+                PersonAddressPill(
+                    address = message.fromAddress,
+                    selfAddress = selfAddress,
+                    onSearch = onSearch,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                DateAndToggle(
+                    message = message,
+                    formattedDate = formattedDate,
+                    isRecipientsExpanded = true,
+                    onToggleRecipients = onToggleRecipients,
+                    onShowActions = onShowActions,
+                )
+            }
+            AddressDetailRow("To", message.toAddresses, selfAddress, onSearch)
+            AddressDetailRow("Cc", message.ccAddresses, selfAddress, onSearch)
+            AddressDetailRow("Bcc", message.bccAddresses, selfAddress, onSearch)
+        } else {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    message.fromAddress.label(selfAddress),
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = AppThemeDims.FontSize.sender,
+                    color = colors.ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(onClick = senderOrToAction),
+                )
+                DateAndToggle(
+                    message = message,
+                    formattedDate = formattedDate,
+                    isRecipientsExpanded = false,
+                    onToggleRecipients = onToggleRecipients,
+                    onShowActions = onShowActions,
+                )
+            }
+            val summary = message.recipientSummary(selfAddress)
+            if (summary.isNotEmpty()) {
+                Text(
+                    "To $summary",
+                    fontFamily = InterFontFamily,
+                    fontSize = AppThemeDims.FontSize.recipient,
+                    color = colors.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = senderOrToAction),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DateAndToggle(
+    message: Email,
+    formattedDate: String,
+    isRecipientsExpanded: Boolean,
+    onToggleRecipients: () -> Unit,
+    onShowActions: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (message.hasFileAttachment) {
+            Icon(
+                Icons.Outlined.AttachFile,
+                contentDescription = "Has attachment",
+                tint = colors.muted,
+                modifier = Modifier.size(12.dp),
+            )
+        }
+        IconButton(
+            onClick = onShowActions,
+            modifier = Modifier.size(32.dp),
         ) {
-            EmailActionsSheet(
-                email = current,
-                onDismiss = { showActions = false },
-                onDone = {
-                    showActions = false
-                    onClose()
-                },
-                onReplyAll = onReplyAll,
-                onForward = onForward,
+            Icon(
+                Icons.Outlined.MoreVert,
+                contentDescription = "Message options",
+                tint = colors.muted,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.clickable(onClick = onToggleRecipients),
+        ) {
+            Text(
+                formattedDate,
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+                maxLines = 1,
+            )
+            Icon(
+                if (isRecipientsExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                contentDescription = null,
+                tint = colors.muted,
+                modifier = Modifier.size(16.dp),
             )
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AddressDetailRow(
+    label: String,
+    addresses: List<MailAddress>,
+    selfAddress: String?,
+    onSearch: (String) -> Unit,
+) {
+    if (addresses.isEmpty()) return
+    val colors = inboxiesColors()
+    val unique = addresses.distinctBy { it.id }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            label,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+            modifier = Modifier
+                .width(32.dp)
+                .padding(top = 4.dp),
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            unique.forEach { address ->
+                PersonAddressPill(address = address, selfAddress = selfAddress, onSearch = onSearch)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonAddressPill(
+    address: MailAddress,
+    selfAddress: String?,
+    onSearch: (String) -> Unit,
+) {
+    val colors = inboxiesColors()
+    val context = LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(colors.pillFill)
+                .clickable { expanded = true }
+                .padding(start = 8.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+        ) {
+            Text(
+                address.label(selfAddress),
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+                maxLines = 1,
+            )
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = colors.muted,
+                modifier = Modifier.size(8.dp),
+            )
+        }
+        InboxiesDropdownMenu(
+            expanded = expanded,
+            onDismiss = { expanded = false },
+        ) {
+            InboxiesMenuHeader(
+                title = address.resolvedName,
+                subtitle = address.email,
+            )
+            InboxiesMenuDivider()
+            InboxiesMenuItem(
+                text = "Copy Address",
+                icon = Icons.Outlined.ContentCopy,
+                onClick = {
+                    expanded = false
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("email", address.email))
+                },
+            )
+            InboxiesMenuItem(
+                text = "Search Name",
+                icon = Icons.Outlined.Search,
+                onClick = {
+                    expanded = false
+                    onSearch(address.searchQuery)
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageContextMenu(
+    message: Email,
+    onDismiss: () -> Unit,
+    onReply: () -> Unit,
+    onReplyAll: () -> Unit,
+    onForward: () -> Unit,
+    onToggleStar: () -> Unit,
+    onToggleRead: () -> Unit,
+    onMore: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    val availability = EmailActionAvailability(message)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(message.fromAddress.resolvedName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        text = {
+            Column {
+                if (availability.showsReplyActions) {
+                    TextButton(onClick = onReply, modifier = Modifier.fillMaxWidth()) {
+                        Text("Reply", modifier = Modifier.fillMaxWidth())
+                    }
+                    TextButton(onClick = onReplyAll, modifier = Modifier.fillMaxWidth()) {
+                        Text("Reply All", modifier = Modifier.fillMaxWidth())
+                    }
+                    TextButton(onClick = onForward, modifier = Modifier.fillMaxWidth()) {
+                        Text("Forward", modifier = Modifier.fillMaxWidth())
+                    }
+                    HorizontalDivider(color = colors.line)
+                }
+                TextButton(onClick = onToggleStar, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (message.starred) "Unstar" else "Star", modifier = Modifier.fillMaxWidth())
+                }
+                TextButton(onClick = onToggleRead, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        if (message.read) "Mark as Unread" else "Mark as Read",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                HorizontalDivider(color = colors.line)
+                TextButton(onClick = onMore, modifier = Modifier.fillMaxWidth()) {
+                    Text("More Options…", modifier = Modifier.fillMaxWidth())
+                }
+                if (availability.showsDelete) {
+                    TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                        Text("Delete Message", color = colors.deepDarkRed, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }

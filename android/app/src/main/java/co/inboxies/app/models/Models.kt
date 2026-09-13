@@ -74,6 +74,17 @@ data class Attachment(
     val disposition: String? = null,
 ) {
     val isInline: Boolean get() = (disposition ?: "").lowercase() == "inline"
+
+    /** Content-ID without surrounding angle brackets (`<image001@local>` → `image001@local`). */
+    val normalizedContentId: String?
+        get() {
+            var value = contentId?.trim().orEmpty()
+            if (value.isEmpty()) return null
+            if (value.startsWith("<") && value.endsWith(">") && value.length >= 2) {
+                value = value.substring(1, value.length - 1)
+            }
+            return value
+        }
 }
 
 data class MailAddress(
@@ -95,6 +106,13 @@ data class MailAddress(
         if (!selfAddress.isNullOrEmpty() && email.equals(selfAddress, ignoreCase = true)) return "me"
         return resolvedName
     }
+
+    /** Query used when searching mail for this person. */
+    val searchQuery: String
+        get() {
+            val trimmed = name?.trim().orEmpty()
+            return if (trimmed.isNotEmpty()) trimmed else email
+        }
 
     val tokenLabel: String
         get() {
@@ -237,10 +255,63 @@ data class Email(
             return fromAddress.resolvedName
         }
 
+    /** Name plus address for quoted/forward headers. */
+    val formattedFrom: String
+        get() {
+            val name = fromAddress.resolvedName
+            return if (name != sender && sender.isNotEmpty()) "$name <$sender>" else sender
+        }
+
     val previewText: String
         get() {
             val source = snippet?.takeIf { it.isNotEmpty() } ?: body
             return snippetText(source)
+        }
+
+    /** Parsed raw headers for View Source, with field fallbacks when raw is missing. */
+    val sourceHeaders: List<Pair<String, String>>
+        get() {
+            val raw = rawHeaders
+            if (!raw.isNullOrEmpty()) {
+                try {
+                    val element = kotlinx.serialization.json.Json.parseToJsonElement(raw)
+                    when (element) {
+                        is kotlinx.serialization.json.JsonArray -> {
+                            val parsed = element.mapNotNull { item ->
+                                val obj = item as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                                val key = (obj["key"] ?: obj["name"])?.let {
+                                    (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+                                }.orEmpty()
+                                val value = obj["value"]?.let {
+                                    (it as? kotlinx.serialization.json.JsonPrimitive)?.content ?: it.toString()
+                                }.orEmpty()
+                                if (key.isEmpty() && value.isEmpty()) null else key to value
+                            }
+                            if (parsed.isNotEmpty()) return parsed
+                        }
+                        is kotlinx.serialization.json.JsonObject -> {
+                            return element.entries
+                                .map { (k, v) ->
+                                    k to ((v as? kotlinx.serialization.json.JsonPrimitive)?.content ?: v.toString())
+                                }
+                                .sortedBy { it.first.lowercase() }
+                        }
+                        else -> Unit
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            val headers = mutableListOf<Pair<String, String>>()
+            if (sender.isNotEmpty()) headers.add("From" to sender)
+            if (recipient.isNotEmpty()) headers.add("To" to recipient)
+            if (!cc.isNullOrEmpty()) headers.add("Cc" to cc)
+            if (!bcc.isNullOrEmpty()) headers.add("Bcc" to bcc)
+            if (subject.isNotEmpty()) headers.add("Subject" to subject)
+            if (date.isNotEmpty()) headers.add("Date" to date)
+            if (!messageId.isNullOrEmpty()) headers.add("Message-ID" to messageId)
+            if (!inReplyTo.isNullOrEmpty()) headers.add("In-Reply-To" to inReplyTo)
+            if (!threadId.isNullOrEmpty()) headers.add("X-Thread-ID" to threadId)
+            return headers
         }
 
     val parsedDate: java.util.Date?
@@ -527,7 +598,15 @@ data class ChatMessage(
     val toolName: String? = null,
     val isError: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
-)
+) {
+    /** Human-readable reasoning duration, e.g. `"3s"`. */
+    val reasoningDurationString: String?
+        get() {
+            val ms = reasoningDurationMs ?: return null
+            val secs = maxOf(1, ((ms + 500) / 1000).toInt())
+            return "${secs}s"
+        }
+}
 
 enum class ComposeMode {
     New,

@@ -11,6 +11,7 @@ import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
+import co.inboxies.app.models.MailboxSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +37,6 @@ class AppModel {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val db get() = DatabaseService.shared
     private val streamClient = RealTimeStreamClient.shared
-    val chatClient = AgentChatClient()
 
     private val _mailboxes = MutableStateFlow<List<Mailbox>>(emptyList())
     val mailboxes: StateFlow<List<Mailbox>> = _mailboxes.asStateFlow()
@@ -100,11 +100,32 @@ class AppModel {
     private val _pendingUndoAction = MutableStateFlow<UndoableAction?>(null)
     val pendingUndoAction: StateFlow<UndoableAction?> = _pendingUndoAction.asStateFlow()
 
+    private val _swipePreferences = MutableStateFlow(
+        runCatching { SwipeActionPreferences.load() }.getOrElse { SwipeActionPreferences() },
+    )
+    val swipePreferences: StateFlow<SwipeActionPreferences> = _swipePreferences.asStateFlow()
+
     private var toastDismissJob: Job? = null
     private var pendingUndoJob: Job? = null
 
     val selectedMailbox: Mailbox?
         get() = _mailboxes.value.firstOrNull { it.id == _selectedMailboxId.value }
+
+    fun updateSwipePreferences(transform: (SwipeActionPreferences) -> SwipeActionPreferences) {
+        val current = _swipePreferences.value
+        val next = transform(current).let { prefs ->
+            prefs.copy(
+                leftActions = prefs.leftActions
+                    .distinct()
+                    .take(SwipeActionPreferences.MAX_ACTIONS_PER_EDGE),
+                rightActions = prefs.rightActions
+                    .distinct()
+                    .take(SwipeActionPreferences.MAX_ACTIONS_PER_EDGE),
+            )
+        }
+        next.save()
+        _swipePreferences.value = next
+    }
 
     fun unreadCount(forFolderId: String): Int =
         _folders.value.firstOrNull { it.id == forFolderId }?.unreadCount ?: 0
@@ -188,8 +209,17 @@ class AppModel {
         _errorMessage.value = null
         try {
             val list = ApiClient.shared.listMailboxes()
-            _mailboxes.value = list
-            db.upsertMailboxes(list)
+            val previous = _mailboxes.value.associateBy { it.id }
+            val merged = list.map { incoming ->
+                val existing = previous[incoming.id]
+                if (incoming.settings == null && existing?.settings != null) {
+                    incoming.copy(settings = existing.settings)
+                } else {
+                    incoming
+                }
+            }
+            _mailboxes.value = merged
+            db.upsertMailboxes(merged)
             if (_selectedMailboxId.value == null) {
                 _selectedMailboxId.value = list.firstOrNull()?.id
             }
@@ -484,9 +514,16 @@ class AppModel {
         draft: Email? = null,
         initialTo: List<MailAddress> = emptyList(),
     ) {
-        val mailbox = selectedMailbox ?: run {
+        var mailbox = selectedMailbox ?: run {
             _errorMessage.value = "No mailbox selected."
             return
+        }
+        if (mailbox.settings == null) {
+            runCatching { ApiClient.shared.getMailbox(mailbox.id) }.getOrNull()?.let { detailed ->
+                mailbox = detailed
+                _mailboxes.update { list -> list.map { if (it.id == detailed.id) detailed else it } }
+                db.upsertMailboxes(listOf(detailed))
+            }
         }
         var enrichedOriginal = original
         var enrichedDraft = draft
@@ -518,6 +555,84 @@ class AppModel {
         _selectedEmail.value = null
         _threadEmails.value = emptyList()
         _isEmailDetailLoading.value = false
+    }
+
+    /** Readable (non-draft) emails in the current list, in display order. */
+    val navigableEmails: List<Email>
+        get() = _emails.value.filter { !it.isDraft }
+
+    val canOpenPreviousEmail: Boolean
+        get() {
+            val current = _selectedEmail.value ?: return false
+            val idx = navigableEmails.indexOfFirst { it.id == current.id }
+            return idx > 0
+        }
+
+    val canOpenNextEmail: Boolean
+        get() {
+            val current = _selectedEmail.value ?: return false
+            val idx = navigableEmails.indexOfFirst { it.id == current.id }
+            return idx in 0 until navigableEmails.lastIndex
+        }
+
+    suspend fun openAdjacentEmail(offset: Int) {
+        val current = _selectedEmail.value ?: return
+        val idx = navigableEmails.indexOfFirst { it.id == current.id }
+        if (idx < 0) return
+        val next = idx + offset
+        if (next !in navigableEmails.indices) return
+        openEmail(navigableEmails[next])
+    }
+
+    /** Prefer the latest message from someone else; fall back to latest non-draft. */
+    val actionSourceEmail: Email?
+        get() {
+            val selfAddresses = setOfNotNull(
+                selectedMailbox?.email?.lowercase()?.takeIf { it.isNotEmpty() },
+                selectedMailbox?.id?.lowercase()?.takeIf { it.isNotEmpty() },
+            )
+            val thread = _threadEmails.value
+            thread.lastOrNull { !it.isDraft && it.sender.lowercase() !in selfAddresses }?.let { return it }
+            return thread.lastOrNull { !it.isDraft } ?: _selectedEmail.value
+        }
+
+    suspend fun deleteCurrentEmail() {
+        val email = _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
+        deleteEmail(email)
+    }
+
+    suspend fun archiveCurrentEmail() {
+        val email = _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
+        archiveEmail(email)
+    }
+
+    /** Discard a draft in the open thread without closing the conversation. */
+    suspend fun deleteThreadDraft(draft: Email) {
+        if (!draft.isDraft) return
+        val mailboxId = _selectedMailboxId.value ?: return
+        try {
+            ApiClient.shared.deleteEmail(mailboxId, draft.id)
+            db.deleteEmail(draft.id)
+            _threadEmails.update { it.filterNot { e -> e.id == draft.id } }
+            _emails.update { it.filterNot { e -> e.id == draft.id } }
+
+            if (_selectedEmail.value?.id == draft.id || _threadEmails.value.isEmpty()) {
+                _selectedEmail.value = null
+                _threadEmails.value = emptyList()
+                loadEmailsForCurrentTab(showLoading = false)
+                return
+            }
+
+            val stillHasDraft = _threadEmails.value.any { it.isDraft }
+            _selectedEmail.update { it?.copy(hasDraft = stillHasDraft) }
+            _selectedEmail.value?.id?.let { selectedId ->
+                _emails.update { list ->
+                    list.map { if (it.id == selectedId) it.copy(hasDraft = stillHasDraft) else it }
+                }
+            }
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+        }
     }
 
     fun markThreadHasDraft(
@@ -639,8 +754,7 @@ class AppModel {
     fun updateComposeFromMailbox(mailboxId: String) {
         val session = _composeSession.value ?: return
         val mailbox = _mailboxes.value.firstOrNull { it.id == mailboxId } ?: return
-        session.form.fromEmail = mailbox.email
-        session.form.fromName = mailbox.settings?.fromName ?: mailbox.name
+        session.form.selectFrom(mailbox)
         _composeSession.value = session
     }
 
@@ -650,25 +764,29 @@ class AppModel {
             runCatching {
                 val session = _composeSession.value ?: error("No compose session")
                 val form = session.form
-                val mailboxId = _selectedMailboxId.value ?: error("No mailbox")
+                form.commitPendingTokens()
+                val mailboxId = form.fromMailboxId.ifBlank {
+                    _selectedMailboxId.value ?: error("No mailbox")
+                }
+                val html = form.bodyHtml
                 when (form.mode) {
                     ComposeMode.Reply -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyEmail(mailboxId, origId, form.bodyHtml, replyAll = false)
+                        ApiClient.shared.replyEmail(mailboxId, origId, html, replyAll = false)
                     }
                     ComposeMode.ReplyAll -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyEmail(mailboxId, origId, form.bodyHtml, replyAll = true)
+                        ApiClient.shared.replyEmail(mailboxId, origId, html, replyAll = true)
                     }
                     ComposeMode.Forward -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.forwardEmail(mailboxId, origId, form.toJoined(), form.bodyHtml)
+                        ApiClient.shared.forwardEmail(mailboxId, origId, form.toJoined(), html)
                     }
                     else -> ApiClient.shared.sendEmail(
                         mailboxId = mailboxId,
                         to = form.toJoined(),
                         subject = form.subject,
-                        body = form.bodyHtml,
+                        body = html,
                         cc = form.ccJoined().ifBlank { null },
                         bcc = form.bccJoined().ifBlank { null },
                     )
@@ -866,15 +984,33 @@ class AppModel {
     }
 
     fun minimizeCompose() {
-        _composeSession.value?.minimize()
-        val form = _composeSession.value?.form
-        if (form != null && !form.isEmpty && form.hasUnsavedChanges) {
+        val session = _composeSession.value ?: return
+        session.form.commitPendingTokens()
+        _composeSession.value = ComposeSession(session.form, ComposePresentation.Minimized)
+        val form = session.form
+        if (!form.isEmpty && form.hasUnsavedChanges) {
             scope.launch { form.saveDraft(explicit = false) }
         }
     }
 
     fun expandCompose() {
-        _composeSession.value?.expand()
+        val session = _composeSession.value ?: return
+        _composeSession.value = ComposeSession(session.form, ComposePresentation.Expanded)
+    }
+
+    suspend fun updateMailboxSettings(transform: (MailboxSettings) -> MailboxSettings): Boolean {
+        val mailboxId = _selectedMailboxId.value ?: return false
+        val current = selectedMailbox?.settings ?: MailboxSettings()
+        val next = transform(current)
+        return try {
+            val updated = ApiClient.shared.updateMailbox(mailboxId, next)
+            _mailboxes.update { list -> list.map { if (it.id == updated.id) updated else it } }
+            db.upsertMailboxes(listOf(updated))
+            true
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+            false
+        }
     }
 
     fun closeCompose() {
@@ -883,41 +1019,67 @@ class AppModel {
     }
 
     fun openChatSession(existingId: String? = null, resumeActive: Boolean = true, forceNew: Boolean = false) {
-        val mailboxId = _selectedMailboxId.value
         if (!existingId.isNullOrEmpty() && existingId != AUTO_CONVERSATION_ID) {
             _chatSession.value = ChatSession.Conversation(existingId)
             if (isKnownConversation(existingId)) _activeConversationId.value = existingId
-            if (mailboxId != null) chatClient.connect(mailboxId, existingId)
             return
         }
         if (forceNew) {
-            val id = ChatSession.newConversationId()
-            _chatSession.value = ChatSession.Conversation(id)
-            if (mailboxId != null) chatClient.connect(mailboxId, id)
+            _chatSession.value = ChatSession.Conversation(ChatSession.newConversationId())
             return
         }
         if (resumeActive) {
             validatedActiveConversationId()?.let {
                 _chatSession.value = ChatSession.Conversation(it)
-                if (mailboxId != null) chatClient.connect(mailboxId, it)
                 return
             }
         }
-        val id = ChatSession.newConversationId()
-        _chatSession.value = ChatSession.Conversation(id)
-        if (mailboxId != null) chatClient.connect(mailboxId, id)
+        _chatSession.value = ChatSession.Conversation(ChatSession.newConversationId())
     }
 
     fun showChatList() {
-        chatClient.disconnect()
         _chatSession.value = ChatSession.List
     }
 
     fun startNewChat() = openChatSession(forceNew = true)
 
     fun dismissChatSession() {
-        chatClient.disconnect()
         _chatSession.value = ChatSession.Dismissed
+    }
+
+    /** Titles empty chats from the first user message; deletes empty duplicates. */
+    suspend fun pruneEmptyConversations(authToken: String? = ApiClient.shared.authTokenProvider()) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val preserve = pendingConversationIds.toMutableSet()
+        _activeConversationId.value?.let { preserve.add(it) }
+        _chatSession.value.conversationId?.let { preserve.add(it) }
+
+        val visible = _conversations.value.filter { it.id != AUTO_CONVERSATION_ID }
+
+        for (conv in visible.filter { it.title == "New chat" }.take(8)) {
+            if (conv.id in preserve) continue
+            val msgs = AgentChatClient.fetchMessages(mailboxId, conv.id, authToken) ?: continue
+            val firstUser = msgs.firstOrNull { it.role == "user" && it.text.isNotEmpty() }
+            if (firstUser != null) {
+                val derived = ConversationTitleHelper.deriveTitle(firstUser.text)
+                val lastText = msgs.lastOrNull()?.text ?: firstUser.text
+                updateConversation(conv.id, derived, lastText.take(120))
+            } else if (msgs.isEmpty()) {
+                deleteConversation(conv.id)
+            }
+        }
+
+        val grouped = _conversations.value
+            .filter { it.id != AUTO_CONVERSATION_ID }
+            .groupBy { it.title.trim().lowercase() }
+        for ((_, group) in grouped) {
+            if (group.size <= 1) continue
+            for (conv in group) {
+                if (conv.id in preserve) continue
+                val msgs = AgentChatClient.fetchMessages(mailboxId, conv.id, authToken) ?: continue
+                if (msgs.isEmpty()) deleteConversation(conv.id)
+            }
+        }
     }
 
     fun dismissChat() = dismissChatSession()

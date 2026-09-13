@@ -1,11 +1,20 @@
 package co.inboxies.app.ui.email
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -61,6 +70,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,7 +83,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -91,11 +100,9 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
 import co.inboxies.app.services.EmailActionAvailability
 import co.inboxies.app.services.EmailSwipeLayout
-import co.inboxies.app.services.SwipeActionPreferences
 import co.inboxies.app.services.SwipeQuickAction
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
-import co.inboxies.app.theme.InboxiesPalette
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
@@ -182,17 +189,11 @@ fun EmailListView(
     }
 
     actionsEmail?.let { email ->
-        ModalBottomSheet(
-            onDismissRequest = { actionsEmail = null },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-            containerColor = colors.background,
-        ) {
-            EmailActionsSheet(
-                email = email,
-                onDismiss = { actionsEmail = null },
-                onDone = { actionsEmail = null },
-            )
-        }
+        EmailActionsSheetModal(
+            email = email,
+            onDismiss = { actionsEmail = null },
+            onDone = { actionsEmail = null },
+        )
     }
 }
 
@@ -210,8 +211,8 @@ private fun EmailRows(
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
 ) {
-    val context = LocalContext.current
-    val swipePreferences = remember { SwipeActionPreferences.load(context) }
+    val app = LocalAppModel.current
+    val swipePreferences by app.swipePreferences.collectAsState()
 
     LazyColumn(
         contentPadding = PaddingValues(top = 12.dp, bottom = bottomInset),
@@ -271,16 +272,34 @@ private fun MailRow(
             .graphicsLayer { alpha = if (pressed) 0.55f else 1f },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (isSelectMode) {
-            Icon(
-                if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
-                contentDescription = if (isSelected) "Selected" else "Not selected",
-                tint = if (isSelected) colors.ink else colors.muted.copy(alpha = 0.6f),
-                modifier = Modifier
-                    .padding(start = 12.dp)
-                    .size(20.dp),
-            )
-            Spacer(Modifier.width(8.dp))
+        AnimatedVisibility(
+            visible = isSelectMode,
+            enter = fadeIn(selectModeSpring()) +
+                expandHorizontally(
+                    animationSpec = selectModeSpring(),
+                    expandFrom = Alignment.Start,
+                    clip = false,
+                ) +
+                scaleIn(animationSpec = selectModeSpring(), initialScale = 0.72f),
+            exit = fadeOut(selectModeSpring()) +
+                shrinkHorizontally(
+                    animationSpec = selectModeSpring(),
+                    shrinkTowards = Alignment.Start,
+                    clip = false,
+                ) +
+                scaleOut(animationSpec = selectModeSpring(), targetScale = 0.72f),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (isSelected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+                    contentDescription = if (isSelected) "Selected" else "Not selected",
+                    tint = if (isSelected) colors.ink else colors.muted.copy(alpha = 0.6f),
+                    modifier = Modifier
+                        .padding(start = 12.dp)
+                        .size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+            }
         }
 
         Box(modifier = Modifier.weight(1f)) {
@@ -940,19 +959,7 @@ private fun rowTags(email: Email, highlightQuery: String, folderLabel: String?):
     return tags
 }
 
-private fun SwipeQuickAction.tint(colors: InboxiesPalette): Color = when (this) {
-    SwipeQuickAction.DELETE -> Color(0xFFE53935)
-    SwipeQuickAction.ARCHIVE -> Color(0xFF8C59D9)
-    SwipeQuickAction.STAR -> Color(0xFFFF9800)
-    SwipeQuickAction.TOGGLE_READ -> Color(0xFF1E88E5)
-    SwipeQuickAction.REPLY -> colors.accent
-}
-
-private fun SwipeQuickAction.icon(email: Email): ImageVector = when (this) {
-    SwipeQuickAction.DELETE -> Icons.Outlined.Delete
-    SwipeQuickAction.ARCHIVE -> Icons.Outlined.Archive
-    SwipeQuickAction.STAR -> if (email.starred) Icons.Filled.Star else Icons.Outlined.Star
-    SwipeQuickAction.TOGGLE_READ ->
-        if (email.read) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead
-    SwipeQuickAction.REPLY -> Icons.AutoMirrored.Outlined.Reply
-}
+private fun <T> selectModeSpring() = spring<T>(
+    dampingRatio = 0.86f,
+    stiffness = Spring.StiffnessMediumLow,
+)

@@ -87,6 +87,7 @@ object AppThemeDims {
         val sender = 13.sp
         val recipient = 12.sp
         val meta = 12.sp
+        val chevron = 8.sp
         val body = 13.sp
         val homeSubtitle = 12.sp
     }
@@ -109,6 +110,20 @@ object AppThemeDims {
         val separatorHeight = 0.5.dp
         val separatorLeadingInset get() = rowHorizontalPadding + unreadDotSize + dotToText
         val actionWidth = 72.dp
+    }
+
+    /** AI chat typography — mirrors iOS `AppTheme.Chat`. */
+    object Chat {
+        val body = 13.sp
+        val toolAction = 12.sp
+        val meta = 11.sp
+        val prompt = 14.sp
+        val input = 14.sp
+        val code = 12.5.sp
+        val codeMeta = 11.sp
+        val tableCell = 12.sp
+        val tracking = 0.25.sp
+        const val bodyLineSpacingRatio = 0.28f
     }
 }
 
@@ -201,7 +216,10 @@ fun InboxiesTheme(
         MaterialTheme(
             colorScheme = colorScheme,
             typography = typography,
-            content = content,
+            content = {
+                TransparentSystemBars()
+                content()
+            },
         )
     }
 }

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import co.inboxies.app.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,11 +26,12 @@ class PushNotificationManager private constructor(private val appContext: Contex
     fun requestPermissionAndRegister(mailboxId: String) {
         activeMailboxId = mailboxId
         if (!BuildConfig.HAS_GOOGLE_SERVICES) return
+        if (!isNotificationsEnabled()) return
 
         ensureChannel()
         deviceToken?.let { syncTokenWithServer(mailboxId, it) }
 
-        // Permission is requested from the Activity when needed; here we only sync.
+        // Permission is requested from Settings / Activity when needed; here we only sync.
         if (Build.VERSION.SDK_INT >= 33) {
             val granted = ContextCompat.checkSelfPermission(
                 appContext,
@@ -39,6 +41,24 @@ class PushNotificationManager private constructor(private val appContext: Contex
         }
 
         fetchAndRegisterToken(mailboxId)
+    }
+
+    fun isNotificationsEnabled(): Boolean =
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_PUSH_ENABLED, true)
+
+    fun setNotificationsEnabled(enabled: Boolean) {
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_PUSH_ENABLED, enabled)
+        }
+    }
+
+    fun hasNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return true
+        return ContextCompat.checkSelfPermission(
+            appContext,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     fun handleTokenReceived(token: String) {
@@ -98,6 +118,9 @@ class PushNotificationManager private constructor(private val appContext: Contex
 
     companion object {
         const val CHANNEL_ID = "inboxies_mail"
+        private const val PREFS_NAME = "inboxies_prefs"
+        private const val KEY_PUSH_ENABLED = "push_notifications_enabled"
+
         lateinit var shared: PushNotificationManager
             private set
 
