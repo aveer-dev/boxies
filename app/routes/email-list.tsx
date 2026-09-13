@@ -10,12 +10,15 @@ import {
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FileIcon,
+	MegaphoneIcon,
+	NewspaperIcon,
 	PaperclipIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
 	StarIcon,
 	TrashIcon,
 	TrayIcon,
+	WarningIcon,
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -73,6 +76,23 @@ const FOLDER_EMPTY_STATES: Record<
 		title: "Archive is empty",
 		description:
 			"Move emails here to keep your inbox clean without deleting them.",
+	},
+	[Folders.PROMOTIONS]: {
+		icon: <MegaphoneIcon size={48} weight="thin" className="text-kumo-subtle" />,
+		title: "No promotions",
+		description:
+			"Newsletters and marketing mail with List-Unsubscribe or List-Id land here.",
+	},
+	[Folders.UPDATES]: {
+		icon: <NewspaperIcon size={48} weight="thin" className="text-kumo-subtle" />,
+		title: "No updates",
+		description:
+			"Receipts, shipping notices, and other transactional bulk mail land here.",
+	},
+	[Folders.SPAM]: {
+		icon: <WarningIcon size={48} weight="thin" className="text-kumo-subtle" />,
+		title: "No spam",
+		description: "Mail classified as spam is kept out of your inbox here.",
 	},
 	[Folders.TRASH]: {
 		icon: <TrashIcon size={48} weight="thin" className="text-kumo-subtle" />,

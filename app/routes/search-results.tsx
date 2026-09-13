@@ -6,7 +6,7 @@ import { Badge, Button, Loader, Pagination, Tooltip } from "@cloudflare/kumo";
 import { ArrowLeftIcon, MagnifyingGlassIcon, PaperclipIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
-import { Folders } from "shared/folders";
+import { Folders, getFolderDisplayName } from "shared/folders";
 import MailboxSplitView from "~/components/MailboxSplitView";
 import { formatListDate, getSnippetText, hasFileAttachment } from "~/lib/utils";
 import { displaySenderName } from "shared/sender";
@@ -67,7 +67,10 @@ export default function SearchResultsRoute() {
 	const isPanelOpen = selectedEmailId !== null || isComposing;
 
 	const handleRowClick = (email: Email) => { selectEmail(email.id); if (!email.read && email.folder_id !== Folders.DRAFT && mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { read: true } }); };
-	const folderDisplayName = (name: string | null | undefined): string => { if (!name) return ""; const map: Record<string, string> = { inbox: "Inbox", sent: "Sent", draft: "Drafts", archive: "Archive", trash: "Trash" }; return map[name.toLowerCase()] || name; };
+	const folderDisplayName = (name: string | null | undefined): string => {
+		if (!name) return "";
+		return getFolderDisplayName(name);
+	};
 	const isUnread = (email: Email) => !email.read && email.folder_id !== Folders.DRAFT;
 
 	return (

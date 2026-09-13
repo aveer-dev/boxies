@@ -23,7 +23,7 @@ import {
 } from "../shared/sender";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
-import { Folders } from "../shared/folders";
+import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
 import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
@@ -46,6 +46,14 @@ import {
 	resolveMailboxParam,
 	routeInboundEnvelope,
 } from "./lib/mailbox-routing";
+import {
+	classifyInboundEmail,
+	shouldAutoDraft,
+	shouldClassifyInbound,
+	shouldFallbackToInbox,
+	shouldSendPush,
+	type ClassifyAi,
+} from "./lib/classify-email";
 
 type AppContext = Context<MailboxContext>;
 
@@ -478,6 +486,9 @@ app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
 	const slug = slugify(name);
 	if (!slug) return c.json({ error: "Folder name must contain alphanumeric characters" }, 400);
+	if ((SYSTEM_FOLDER_IDS as readonly string[]).includes(slug)) {
+		return c.json({ error: "Folder with this name already exists" }, 409);
+	}
 	const f = await c.var.mailboxStub.createFolder(slug, name);
 	return f ? c.json(f, 201) : c.json({ error: "Folder with this name already exists" }, 409);
 });
@@ -756,10 +767,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 
 	// Same mailbox is one Durable Object, so concurrent hello@ + hello+tag@
 	// (or a retry after a successful write) serialize here. Skip duplicates
-	// instead of inserting a second Inbox copy.
+	// instead of inserting a second copy.
 	if (originalMessageId) {
 		const existing = await stub.findEmailByMessageId(originalMessageId);
-		if (isDuplicateInbound(originalMessageId, Boolean(existing))) {
+		if (
+			!shouldClassifyInbound({
+				routeAction: "deliver",
+				isDuplicate: isDuplicateInbound(originalMessageId, Boolean(existing)),
+			})
+		) {
 			console.log(`Skipping duplicate inbound message ${originalMessageId} for ${mailboxId}`);
 			return;
 		}
@@ -811,7 +827,21 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		normalizeDisplayName(parsedEmail.from?.name) ??
 		senderNameFromRawHeaders(fromHeaders);
 
-	await stub.createEmail(Folders.INBOX, {
+	const classification = await classifyInboundEmail(
+		{
+			headers: parsedEmail.headers,
+			subject: parsedEmail.subject,
+			sender: fromAddress,
+			bodyText: parsedEmail.text,
+			bodyHtml: parsedEmail.html,
+		},
+		env.AI as ClassifyAi,
+	);
+	console.log(
+		`Classified inbound mail for ${mailboxId} as ${classification.class} (${classification.folderId}): ${classification.reason}`,
+	);
+
+	const inboundEmail = {
 		id: messageId, subject: parsedEmail.subject || "",
 		sender: fromAddress, sender_name: senderName, recipient,
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
@@ -819,33 +849,52 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
-	}, attachmentData);
+	};
 
-	// Auto-drafts land in the reserved multi-chat conversation so user chats stay clean.
-	ctx.waitUntil(
-		(async () => {
-			await stub.ensureAutoAgentConversation();
-			const agentName = agentInstanceName(mailboxId, AUTO_CONVERSATION_ID);
-			const agentStub = env.EMAIL_AGENT.get(
-				env.EMAIL_AGENT.idFromName(agentName),
-			);
-			await agentStub.fetch(
-				new Request("https://agents/onNewEmail", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						mailboxId,
-						emailId: messageId,
-						sender: (parsedEmail.from?.address || "").toLowerCase(),
-						subject: parsedEmail.subject || "",
-						threadId,
+	let filedFolder: string = classification.folderId;
+	try {
+		await stub.createEmail(classification.folderId, inboundEmail, attachmentData);
+	} catch (e) {
+		if (!shouldFallbackToInbox(classification.folderId, e)) throw e;
+		console.error(
+			`Failed to file inbound mail to ${classification.folderId}, falling back to inbox:`,
+			(e as Error).message,
+		);
+		await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
+		filedFolder = Folders.INBOX;
+	}
+
+	// Auto-draft personal ham only. Spam and bulk skip the agent entirely.
+	if (shouldAutoDraft(classification)) {
+		ctx.waitUntil(
+			(async () => {
+				await stub.ensureAutoAgentConversation();
+				const agentName = agentInstanceName(mailboxId, AUTO_CONVERSATION_ID);
+				const agentStub = env.EMAIL_AGENT.get(
+					env.EMAIL_AGENT.idFromName(agentName),
+				);
+				await agentStub.fetch(
+					new Request("https://agents/onNewEmail", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							mailboxId,
+							emailId: messageId,
+							sender: (parsedEmail.from?.address || "").toLowerCase(),
+							subject: parsedEmail.subject || "",
+							threadId,
+						}),
 					}),
-				}),
-			);
-		})().catch((e) =>
-			console.error("Auto-draft trigger failed:", (e as Error).message),
-		),
-	);
+				);
+			})().catch((e) =>
+				console.error("Auto-draft trigger failed:", (e as Error).message),
+			),
+		);
+	}
+
+	if (!shouldSendPush(classification)) {
+		return;
+	}
 
 	// Send push notifications to registered iOS (APNs) and Android (FCM) devices
 	ctx.waitUntil(
@@ -858,7 +907,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 					body: parsedEmail.subject || "(No subject)",
 					mailboxId,
 					emailId: messageId,
-					folderId: Folders.INBOX,
+					folderId: filedFolder,
 				});
 				console.log(
 					`[Push] Results for "${mailboxId}": ios=${JSON.stringify(result.ios)} android=${JSON.stringify(result.android)}`,

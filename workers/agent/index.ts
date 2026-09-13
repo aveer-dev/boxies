@@ -113,7 +113,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 	return {
 		list_emails: defineTool({
 			description:
-				"List emails in a folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id). Use folder='inbox' for received emails, 'sent' for sent emails.",
+				"List emails in a folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id). Use folder='inbox' for personal mail, 'promotions'/'updates' for bulk, 'spam' for spam, 'sent' for sent emails.",
 			parameters: z.object({
 				folder: z
 					.string()
@@ -246,7 +246,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 
 		move_email: defineTool({
 			description:
-				"Move an email to a different folder (inbox, sent, draft, archive, trash).",
+				"Move an email to a different folder (inbox, promotions, updates, sent, draft, archive, spam, trash).",
 			parameters: z.object({
 				emailId: z.string().describe("The email ID"),
 				folderId: z
