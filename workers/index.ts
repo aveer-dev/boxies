@@ -40,6 +40,7 @@ import {
 	agentInstanceName,
 } from "../shared/agent-conversations";
 import { resolveGreetingName } from "./lib/inbox-digest";
+import { composePushAlert } from "./lib/push-payload";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -1202,9 +1203,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			const rows = await (stub as any).getDeviceTokens();
 			console.log(`[Push] Inbound email for "${mailboxId}". Registered device tokens: ${rows?.length ?? 0}`);
 			if (rows && rows.length > 0) {
+				const alert = composePushAlert({
+					subject: parsedEmail.subject,
+					snippet: inboundEmail.snippet,
+				});
 				const result = await dispatchPushToDevices(env, stub as any, {
 					title: senderName || fromAddress,
-					body: parsedEmail.subject || "(No subject)",
+					body: alert.body,
+					fcmBody: alert.fcmBody,
+					subtitle: alert.subtitle,
 					mailboxId,
 					emailId: messageId,
 					folderId: filedFolder,

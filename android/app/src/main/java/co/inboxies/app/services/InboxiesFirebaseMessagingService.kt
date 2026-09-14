@@ -42,6 +42,7 @@ class InboxiesFirebaseMessagingService : FirebaseMessagingService() {
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
             .setContentIntent(pending)
             .build()

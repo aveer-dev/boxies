@@ -120,9 +120,11 @@ export async function sendFcmPush(
 							token,
 							notification: {
 								title: payload.title,
-								body: payload.body,
+								body: payload.fcmBody ?? payload.body,
 							},
 							data: {
+								title: payload.title,
+								body: payload.fcmBody ?? payload.body,
 								mailboxId: payload.mailboxId,
 								emailId: payload.emailId,
 								folderId: payload.folderId ?? "inbox",

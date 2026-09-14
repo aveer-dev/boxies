@@ -18,6 +18,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.services.AppModel
+import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.InboxiesTheme
 import co.inboxies.app.theme.ThemeMode
@@ -44,6 +45,14 @@ fun RootView(
         } else {
             appModel.reset()
         }
+    }
+
+    val pendingDeepLink by PushNotificationManager.shared.pendingDeepLink.collectAsState()
+    LaunchedEffect(pendingDeepLink, isAuthenticated, isMailboxLoading, mailboxes) {
+        val link = pendingDeepLink ?: return@LaunchedEffect
+        if (!isAuthenticated || isMailboxLoading || mailboxes.isEmpty()) return@LaunchedEffect
+        PushNotificationManager.shared.clearPendingDeepLink()
+        appModel.openEmailFromNotification(link.mailboxId, link.emailId, link.folderId)
     }
 
     RootViewContent(
