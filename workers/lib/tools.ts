@@ -28,6 +28,11 @@ import {
 } from "./email-helpers";
 import { verifyDraft } from "./ai";
 import { sendEmail } from "../email-sender";
+import {
+	assertOutboundMessageSize,
+	OutboundSizeError,
+	mapSendFailureMessage,
+} from "./outbound-limits";
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import type { Env } from "../types";
@@ -446,16 +451,26 @@ export async function toolSendReply(
 	const fullBodyHtml = sanitizedBody + quotedBlock;
 
 	try {
-		await sendEmail(env.EMAIL, {
+		assertOutboundMessageSize({ html: fullBodyHtml });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return { error: e.message };
+		throw e;
+	}
+
+	let providerMessageId: string;
+	try {
+		const result = await sendEmail(env.EMAIL, {
 			to,
 			from: mailboxId,
 			subject: params.subject,
 			html: fullBodyHtml,
 			headers: buildThreadingHeaders(originalMsgId, references),
 		});
+		providerMessageId = result.messageId;
 	} catch (e) {
-		console.error("Email send failed:", (e as Error).message);
-		return { error: `Failed to send reply: ${(e as Error).message}` };
+		const message = mapSendFailureMessage(e);
+		console.error("Email send failed:", message);
+		return { error: `Failed to send reply: ${message}` };
 	}
 
 	await stub.createEmail(
@@ -472,6 +487,9 @@ export async function toolSendReply(
 				references.length > 0 ? JSON.stringify(references) : null,
 			thread_id: threadId,
 			message_id: outgoingMessageId,
+			provider_message_id: providerMessageId,
+			delivery_status: "accepted",
+			delivery_error: null,
 		},
 		[],
 	);
@@ -512,15 +530,25 @@ export async function toolSendEmail(
 	}
 
 	try {
-		await sendEmail(env.EMAIL, {
+		assertOutboundMessageSize({ html: sanitizedBody });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return { error: e.message };
+		throw e;
+	}
+
+	let providerMessageId: string;
+	try {
+		const result = await sendEmail(env.EMAIL, {
 			to: params.to,
 			from: mailboxId,
 			subject: params.subject,
 			html: sanitizedBody,
 		});
+		providerMessageId = result.messageId;
 	} catch (e) {
-		console.error("Email send failed:", (e as Error).message);
-		return { error: `Failed to send email: ${(e as Error).message}` };
+		const message = mapSendFailureMessage(e);
+		console.error("Email send failed:", message);
+		return { error: `Failed to send email: ${message}` };
 	}
 
 	await stub.createEmail(
@@ -536,6 +564,9 @@ export async function toolSendEmail(
 			email_references: null,
 			thread_id: messageId,
 			message_id: outgoingMessageId,
+			provider_message_id: providerMessageId,
+			delivery_status: "accepted",
+			delivery_error: null,
 		},
 		[],
 	);

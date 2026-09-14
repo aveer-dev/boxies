@@ -310,5 +310,15 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		name: "18_add_delivery_status",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN provider_message_id TEXT;
+            ALTER TABLE emails ADD COLUMN delivery_status TEXT;
+            ALTER TABLE emails ADD COLUMN delivery_error TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_provider_message_id
+                ON emails(provider_message_id);
+        `),
+	},
 ];
 

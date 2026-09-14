@@ -7,6 +7,11 @@ import { cors } from "hono/cors";
 import PostalMime from "postal-mime";
 import { z } from "zod";
 import { sendEmail } from "./email-sender";
+import {
+	assertOutboundMessageSize,
+	OutboundSizeError,
+} from "./lib/outbound-limits";
+import { deliverOutboundInBackground } from "./lib/outbound-delivery";
 import { storeAttachments, type StoredAttachment } from "./lib/attachments";
 import {
 	validateSender,
@@ -273,6 +278,12 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const stub = c.var.mailboxStub;
 	const rateLimitError = await (stub as any).checkSendRateLimit();
 	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
+	try {
+		assertOutboundMessageSize({ html, text, attachments });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		throw e;
+	}
 	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
 	let resolvedThreadId = thread_id;
@@ -299,6 +310,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		date: new Date().toISOString(), body: html || text || "",
 		in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
 		thread_id: resolvedThreadId, message_id: outgoingMessageId,
+		delivery_status: "queued", delivery_error: null,
 		raw_headers: JSON.stringify([
 			{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 			{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -310,11 +322,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	}, attachmentData);
 
 	c.executionCtx.waitUntil(
-		sendEmail(c.env.EMAIL, {
+		deliverOutboundInBackground(c.env, mailboxId, messageId, {
 			to, cc, bcc, from, subject, html, text,
 			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
 			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
-		}).catch((e) => console.error("Deferred email delivery failed:", (e as Error).message)),
+		}),
 	);
 	return c.json({ id: messageId, status: "sent" }, 202);
 });
@@ -897,7 +909,26 @@ async function sendInboundAutoReply(options: {
 	const from = fromName ? { email: mailboxId, name: fromName } : mailboxId;
 
 	try {
-		await sendEmail(env.EMAIL, {
+		assertOutboundMessageSize({ html, text });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) {
+			console.error(`Skipping auto-reply for ${mailboxId}: ${e.message}`);
+			try {
+				await stub.releaseAutoReply(sender);
+			} catch (releaseError) {
+				console.error(
+					`Failed to release auto-reply claim for ${mailboxId}:`,
+					(releaseError as Error).message,
+				);
+			}
+			return;
+		}
+		throw e;
+	}
+
+	let providerMessageId: string;
+	try {
+		const result = await sendEmail(env.EMAIL, {
 			to: sender,
 			from,
 			subject: replySubject,
@@ -905,6 +936,7 @@ async function sendInboundAutoReply(options: {
 			html,
 			headers: autoHeaders,
 		});
+		providerMessageId = result.messageId;
 	} catch (e) {
 		console.error(`Auto-reply send failed for ${mailboxId}:`, (e as Error).message);
 		try {
@@ -936,6 +968,9 @@ async function sendInboundAutoReply(options: {
 				email_references: originalMessageId ? JSON.stringify([originalMessageId]) : null,
 				thread_id: threadId,
 				message_id: outgoingMessageId,
+				provider_message_id: providerMessageId,
+				delivery_status: "accepted",
+				delivery_error: null,
 				raw_headers: JSON.stringify([
 					{ key: "from", value: fromHeader },
 					{ key: "to", value: sender },

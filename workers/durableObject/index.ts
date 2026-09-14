@@ -88,6 +88,13 @@ interface GetEmailsOptions {
 	sortDirection?: "ASC" | "DESC";
 }
 
+export type DeliveryStatus =
+	| "queued"
+	| "accepted"
+	| "failed"
+	| "bounced"
+	| "complained";
+
 interface EmailData {
 	id: string;
 	subject: string;
@@ -105,6 +112,9 @@ interface EmailData {
 	thread_id?: string | null;
 	message_id?: string | null;
 	raw_headers?: string | null;
+	provider_message_id?: string | null;
+	delivery_status?: DeliveryStatus | null;
+	delivery_error?: string | null;
 }
 
 interface AttachmentData {
@@ -303,6 +313,9 @@ export class MailboxDO extends DurableObject<Env> {
 				email_references: schema.emails.email_references,
 				thread_id: schema.emails.thread_id,
 				folder_id: schema.emails.folder_id,
+				provider_message_id: schema.emails.provider_message_id,
+				delivery_status: schema.emails.delivery_status,
+				delivery_error: schema.emails.delivery_error,
 				snippet: sql<string>`SUBSTR(${schema.emails.body}, 1, 300)`,
 			})
 			.from(schema.emails)
@@ -412,6 +425,7 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.id, lp.subject, lp.sender, lp.sender_name, lp.recipient, lp.date,
 					lp.read, lp.starred, lp.thread_id, lp.folder_id,
 					lp.in_reply_to, lp.email_references,
+					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					SUBSTR(lp.body, 1, 300) as snippet,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
@@ -502,6 +516,7 @@ export class MailboxDO extends DurableObject<Env> {
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
 				lif.read, lif.starred, lif.thread_id, lif.folder_id,
 				lif.in_reply_to, lif.email_references,
+				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				SUBSTR(lif.body, 1, 300) as snippet,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
 				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
@@ -726,6 +741,53 @@ export class MailboxDO extends DurableObject<Env> {
 				.where(eq(schema.emails.message_id, cleaned))
 				.get() ?? null
 		);
+	}
+
+	async findEmailByProviderMessageId(providerMessageId: string) {
+		const cleaned = providerMessageId.trim();
+		if (!cleaned) return null;
+		return (
+			this.db
+				.select()
+				.from(schema.emails)
+				.where(eq(schema.emails.provider_message_id, cleaned))
+				.get() ?? null
+		);
+	}
+
+	async setDeliveryState(
+		id: string,
+		state: {
+			providerMessageId?: string | null;
+			status: DeliveryStatus;
+			error?: string | null;
+		},
+	) {
+		const data: {
+			provider_message_id?: string | null;
+			delivery_status: DeliveryStatus;
+			delivery_error: string | null;
+		} = {
+			delivery_status: state.status,
+			delivery_error: state.error ?? null,
+		};
+		if (state.providerMessageId !== undefined) {
+			data.provider_message_id = state.providerMessageId;
+		}
+
+		this.db
+			.update(schema.emails)
+			.set(data)
+			.where(eq(schema.emails.id, id))
+			.run();
+
+		this.broadcastEvent("email_updated", {
+			id,
+			provider_message_id: state.providerMessageId,
+			delivery_status: state.status,
+			delivery_error: state.error ?? null,
+		});
+		return this.getEmail(id);
 	}
 
 	async deleteDraftsForThread(threadId: string) {
@@ -1333,6 +1395,9 @@ export class MailboxDO extends DurableObject<Env> {
 				thread_id: email.thread_id ?? null,
 				message_id: email.message_id ?? null,
 				raw_headers: email.raw_headers ?? null,
+				provider_message_id: email.provider_message_id ?? null,
+				delivery_status: email.delivery_status ?? null,
+				delivery_error: email.delivery_error ?? null,
 			})
 			.run();
 
@@ -1352,6 +1417,9 @@ export class MailboxDO extends DurableObject<Env> {
 			starred: !!email.starred,
 			body: email.body,
 			thread_id: email.thread_id ?? null,
+			provider_message_id: email.provider_message_id ?? null,
+			delivery_status: email.delivery_status ?? null,
+			delivery_error: email.delivery_error ?? null,
 		});
 	}
 

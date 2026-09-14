@@ -3,7 +3,11 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { Context } from "hono";
-import { sendEmail } from "../email-sender";
+import {
+	assertOutboundMessageSize,
+	OutboundSizeError,
+} from "../lib/outbound-limits";
+import { deliverOutboundInBackground } from "../lib/outbound-delivery";
 import { storeAttachments } from "../lib/attachments";
 import type { EmailFull } from "../lib/schemas";
 import {
@@ -56,6 +60,13 @@ export async function handleReplyEmail(c: AppContext) {
 		return c.json({ error: rateLimitError }, 429);
 	}
 
+	try {
+		assertOutboundMessageSize({ html, text, attachments });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		throw e;
+	}
+
 	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
 	await stub.createEmail(
@@ -74,6 +85,8 @@ export async function handleReplyEmail(c: AppContext) {
 			email_references: JSON.stringify(references),
 			thread_id: thread_id,
 			message_id: outgoingMessageId,
+			delivery_status: "queued",
+			delivery_error: null,
 			raw_headers: JSON.stringify([
 				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -93,7 +106,7 @@ export async function handleReplyEmail(c: AppContext) {
 	await stub.deleteDraftsForThread(thread_id);
 
 	c.executionCtx.waitUntil(
-		sendEmail(c.env.EMAIL, {
+		deliverOutboundInBackground(c.env, mailboxId, messageId, {
 			to,
 			cc,
 			bcc,
@@ -109,8 +122,6 @@ export async function handleReplyEmail(c: AppContext) {
 				contentId: att.contentId,
 			})),
 			headers: buildThreadingHeaders(originalMsgId, references),
-		}).catch((e) => {
-			console.error("Deferred reply delivery failed:", (e as Error).message);
 		}),
 	);
 
@@ -148,6 +159,13 @@ export async function handleForwardEmail(c: AppContext) {
 		return c.json({ error: rateLimitError }, 429);
 	}
 
+	try {
+		assertOutboundMessageSize({ html, text, attachments });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		throw e;
+	}
+
 	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
 	await stub.createEmail(
@@ -166,6 +184,8 @@ export async function handleForwardEmail(c: AppContext) {
 			email_references: null,
 			thread_id: messageId,
 			message_id: outgoingMessageId,
+			delivery_status: "queued",
+			delivery_error: null,
 			raw_headers: JSON.stringify([
 				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -180,7 +200,7 @@ export async function handleForwardEmail(c: AppContext) {
 	);
 
 	c.executionCtx.waitUntil(
-		sendEmail(c.env.EMAIL, {
+		deliverOutboundInBackground(c.env, mailboxId, messageId, {
 			to,
 			cc,
 			bcc,
@@ -195,8 +215,6 @@ export async function handleForwardEmail(c: AppContext) {
 				disposition: att.disposition,
 				contentId: att.contentId,
 			})),
-		}).catch((e) => {
-			console.error("Deferred forward delivery failed:", (e as Error).message);
 		}),
 	);
 
