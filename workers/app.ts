@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
+import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 import { EmailMCP } from "./mcp";
 import { verifyMobileSessionToken } from "./lib/apple-auth";
 import type { Env } from "./types";
@@ -180,7 +181,7 @@ app.all("*", (c) => {
 	});
 });
 
-// Export the Hono app as the default export with an email handler
+// Export the Hono app as the default export with email + queue handlers
 export default {
 	fetch: app.fetch,
 	async email(
@@ -196,5 +197,8 @@ export default {
 			// Swallowing the error would silently drop the email.
 			throw e;
 		}
+	},
+	async queue(batch: MessageBatch<unknown>, env: Env) {
+		await handleEmailSendingQueueBatch(batch, env);
 	},
 };

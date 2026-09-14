@@ -40,6 +40,15 @@
     "ai": {
         "binding": "AI",
     },
+    "queues": {
+        "consumers": [
+            {
+                "queue": "email-sending-events",
+                "max_batch_size": 10,
+                "max_retries": 5,
+            },
+        ],
+    },
     "workers_dev": true,
     "preview_urls": true,
     "durable_objects": {
