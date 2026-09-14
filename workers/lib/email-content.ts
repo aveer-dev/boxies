@@ -43,7 +43,8 @@ export async function storeEmailContent(
 	},
 ): Promise<void> {
 	const puts: Promise<R2Object | null>[] = [];
-	if (options.htmlOrText != null && options.htmlOrText !== "") {
+	// Allow empty string so draft clears overwrite a previous body.html object.
+	if (options.htmlOrText != null) {
 		puts.push(
 			bucket.put(emailBodyKey(emailId), options.htmlOrText, {
 				httpMetadata: { contentType: "text/html; charset=utf-8" },
