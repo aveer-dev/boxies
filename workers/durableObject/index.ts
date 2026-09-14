@@ -274,20 +274,24 @@ export class MailboxDO extends DurableObject<Env> {
 			fields.cc,
 			fields.bcc,
 		);
-		this.ctx.storage.sql.exec(
-			`DELETE FROM emails_fts WHERE id = ?1`,
-			fields.id,
-		);
-		this.ctx.storage.sql.exec(
-			`INSERT INTO emails_fts(id, subject, sender, sender_name, recipients, body_text)
-			 VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
-			fields.id,
-			fields.subject ?? "",
-			fields.sender ?? "",
-			fields.sender_name ?? "",
-			recipients,
-			fields.body_text ?? "",
-		);
+		// DELETE+INSERT must be atomic: a failed INSERT after DELETE would leave
+		// the row unsearchable, and post-backfill alarms would not retry it.
+		this.ctx.storage.transactionSync(() => {
+			this.ctx.storage.sql.exec(
+				`DELETE FROM emails_fts WHERE id = ?1`,
+				fields.id,
+			);
+			this.ctx.storage.sql.exec(
+				`INSERT INTO emails_fts(id, subject, sender, sender_name, recipients, body_text)
+				 VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+				fields.id,
+				fields.subject ?? "",
+				fields.sender ?? "",
+				fields.sender_name ?? "",
+				recipients,
+				fields.body_text ?? "",
+			);
+		});
 	}
 
 	#deleteEmailFts(id: string): void {
