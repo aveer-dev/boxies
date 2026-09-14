@@ -425,6 +425,7 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.id, lp.subject, lp.sender, lp.sender_name, lp.recipient, lp.date,
 					lp.read, lp.starred, lp.thread_id, lp.folder_id,
 					lp.in_reply_to, lp.email_references,
+					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					SUBSTR(lp.body, 1, 300) as snippet,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
@@ -515,6 +516,7 @@ export class MailboxDO extends DurableObject<Env> {
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
 				lif.read, lif.starred, lif.thread_id, lif.folder_id,
 				lif.in_reply_to, lif.email_references,
+				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				SUBSTR(lif.body, 1, 300) as snippet,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
 				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}

@@ -95,6 +95,47 @@ describe("email sending event mapping", () => {
 		assert.match(mapped?.error || "", /spam/i);
 	});
 
+	it("maps Cloudflare docs bounce/complaint payloads", () => {
+		const bounced = mapEmailSendingEvent({
+			type: "cf.email.sending.message.bounced",
+			source: { type: "email.sending", domain: "send.example.com" },
+			payload: {
+				eventId: "0190d0c4-7ea1-7af2-8b88-c1d2e3f4a5b6",
+				messageId: "0101018f7d0c4d9a-msg-bounced",
+				sender: "receipts@send.example.com",
+				recipient: "user@example.net",
+				terminal: true,
+				delivery: {
+					status: "bounced",
+					smtpStatusCode: "550",
+					smtpResponse: "550 5.1.1 User unknown",
+				},
+				bounce: {
+					type: "hard",
+					classification: "permanent_failure",
+					reason: "550 5.1.1 User unknown",
+				},
+			},
+		});
+		assert.equal(bounced?.status, "bounced");
+		assert.equal(bounced?.error, "550 5.1.1 User unknown");
+		assert.equal(bounced?.sender, "receipts@send.example.com");
+
+		const complained = mapEmailSendingEvent({
+			type: "cf.email.sending.message.complained",
+			payload: {
+				messageId: "0101018f7d0c4d9a-msg-complained",
+				sender: "news@send.example.com",
+				terminal: true,
+				delivery: { status: "complained" },
+				complaint: { type: "abuse" },
+			},
+		});
+		assert.equal(complained?.status, "complained");
+		assert.match(complained?.error || "", /spam/i);
+		assert.notEqual(complained?.error, "complained");
+	});
+
 	it("maps failed/rejected events", () => {
 		const failed = mapEmailSendingEvent({
 			type: "cf.email.sending.message.failed",
@@ -142,6 +183,15 @@ describe("email sending event mapping", () => {
 		});
 		assert.equal(typed.type, "cf.email.sending.message.bounced");
 		assert.equal(typed.payload?.messageId, "prov-6");
+
+		const fromJson = unwrapEmailSendingEvent(
+			JSON.stringify({
+				type: "cf.email.sending.message.failed",
+				payload: { messageId: "prov-7", sender: "a@b.com" },
+			}),
+		);
+		assert.equal(fromJson.type, "cf.email.sending.message.failed");
+		assert.equal(fromJson.payload?.messageId, "prov-7");
 	});
 });
 

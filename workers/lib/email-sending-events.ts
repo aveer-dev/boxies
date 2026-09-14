@@ -38,6 +38,10 @@ export interface EmailSendingEventPayload {
 		classification?: string;
 		reason?: string;
 	};
+	complaint?: {
+		type?: string;
+		feedbackType?: string;
+	};
 }
 
 export interface EmailSendingEvent {
@@ -72,12 +76,25 @@ function firstNonEmpty(...values: Array<string | undefined | null>): string | nu
 	return null;
 }
 
-function bounceOrDeliveryReason(payload: EmailSendingEventPayload): string | null {
+/** Delivery status enums are not useful as user-facing error copy. */
+function actionableDeliveryDetail(payload: EmailSendingEventPayload): string | null {
 	return firstNonEmpty(
 		payload.bounce?.reason,
 		payload.delivery?.smtpResponse,
-		payload.delivery?.status,
+		payload.delivery?.smtpStatusCode,
 	);
+}
+
+function complaintReason(payload: EmailSendingEventPayload): string | null {
+	const feedback = firstNonEmpty(
+		payload.complaint?.feedbackType,
+		payload.complaint?.type,
+	);
+	if (!feedback) return null;
+	if (/^(abuse|spam|fraud)$/i.test(feedback)) {
+		return "Recipient marked this message as spam";
+	}
+	return `Recipient complaint: ${feedback}`;
 }
 
 /**
@@ -86,15 +103,23 @@ function bounceOrDeliveryReason(payload: EmailSendingEventPayload): string | nul
  * present so we do not unwrap a legitimate event that happens to include data.
  */
 export function unwrapEmailSendingEvent(body: unknown): EmailSendingEvent {
-	if (!body || typeof body !== "object") return { type: "" };
-	const record = body as Record<string, unknown>;
+	let value: unknown = body;
+	if (typeof value === "string") {
+		try {
+			value = JSON.parse(value);
+		} catch {
+			return { type: "" };
+		}
+	}
+	if (!value || typeof value !== "object") return { type: "" };
+	const record = value as Record<string, unknown>;
 	if (typeof record.type === "string") {
-		return body as EmailSendingEvent;
+		return value as EmailSendingEvent;
 	}
 	if (record.data && typeof record.data === "object") {
 		return unwrapEmailSendingEvent(record.data);
 	}
-	return body as EmailSendingEvent;
+	return value as EmailSendingEvent;
 }
 
 /**
@@ -114,7 +139,7 @@ export function mapEmailSendingEvent(
 		return {
 			status: "bounced",
 			error:
-				bounceOrDeliveryReason(event.payload ?? {}) ||
+				actionableDeliveryDetail(event.payload ?? {}) ||
 				"Message bounced",
 			providerMessageId,
 			sender,
@@ -125,10 +150,9 @@ export function mapEmailSendingEvent(
 		return {
 			status: "complained",
 			error:
-				firstNonEmpty(
-					event.payload?.delivery?.smtpResponse,
-					event.payload?.delivery?.status,
-				) || "Recipient marked this message as spam",
+				complaintReason(event.payload ?? {}) ||
+				actionableDeliveryDetail(event.payload ?? {}) ||
+				"Recipient marked this message as spam",
 			providerMessageId,
 			sender,
 		};
@@ -143,7 +167,7 @@ export function mapEmailSendingEvent(
 		return {
 			status: "failed",
 			error:
-				bounceOrDeliveryReason(event.payload ?? {}) ||
+				actionableDeliveryDetail(event.payload ?? {}) ||
 				"Message failed to send",
 			providerMessageId,
 			sender,
