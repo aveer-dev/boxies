@@ -26,6 +26,14 @@ import {
 	loadEmailBody,
 	storeEmailContent,
 } from "../lib/email-content";
+import {
+	FTS_BACKFILL_BATCH_SIZE,
+	FTS_BACKFILL_MIGRATION,
+	computeSearchText,
+	formatFtsRecipients,
+	sanitizeFtsQuery,
+	type FtsEmailFields,
+} from "../lib/email-fts";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -115,6 +123,8 @@ interface EmailData {
 	body?: string | null;
 	/** Persisted list/search preview. */
 	snippet?: string | null;
+	/** Plain-text body for FTS; preferred over stripping `body` when provided. */
+	search_text?: string | null;
 	read?: boolean;
 	starred?: boolean;
 	in_reply_to?: string | null;
@@ -175,6 +185,12 @@ export class MailboxDO extends DurableObject<Env> {
 		this.db = drizzle(this.ctx.storage, { schema });
 		applyMigrations(this.ctx.storage.sql, mailboxMigrations, this.ctx.storage);
 		this.#backfillSenderNames();
+		this.#scheduleFtsBackfill();
+	}
+
+	/** Incremental R2 → FTS indexing for mail created before FTS existed. */
+	async alarm(): Promise<void> {
+		await this.#runFtsBackfillBatch();
 	}
 
 	/**
@@ -218,6 +234,140 @@ export class MailboxDO extends DurableObject<Env> {
 			});
 		} catch (e) {
 			console.error("sender_name backfill failed:", (e as Error).message);
+		}
+	}
+
+	#isFtsBackfillDone(): boolean {
+		try {
+			const applied = [
+				...this.ctx.storage.sql.exec(
+					`SELECT 1 FROM d1_migrations WHERE name = ?`,
+					FTS_BACKFILL_MIGRATION,
+				),
+			];
+			return applied.length > 0;
+		} catch {
+			return false;
+		}
+	}
+
+	#markFtsBackfillDone(): void {
+		this.ctx.storage.sql.exec(
+			`INSERT OR IGNORE INTO d1_migrations (name) VALUES (?)`,
+			FTS_BACKFILL_MIGRATION,
+		);
+	}
+
+	/** Kick off (or continue) FTS backfill without blocking the constructor. */
+	#scheduleFtsBackfill(): void {
+		if (this.#isFtsBackfillDone()) return;
+		try {
+			void this.ctx.storage.setAlarm(Date.now() + 50);
+		} catch (e) {
+			console.error("FTS backfill schedule failed:", (e as Error).message);
+		}
+	}
+
+	#upsertEmailFts(fields: FtsEmailFields): void {
+		const recipients = formatFtsRecipients(
+			fields.recipient,
+			fields.cc,
+			fields.bcc,
+		);
+		this.ctx.storage.sql.exec(
+			`DELETE FROM emails_fts WHERE id = ?1`,
+			fields.id,
+		);
+		this.ctx.storage.sql.exec(
+			`INSERT INTO emails_fts(id, subject, sender, sender_name, recipients, body_text)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+			fields.id,
+			fields.subject ?? "",
+			fields.sender ?? "",
+			fields.sender_name ?? "",
+			recipients,
+			fields.body_text ?? "",
+		);
+	}
+
+	#deleteEmailFts(id: string): void {
+		this.ctx.storage.sql.exec(`DELETE FROM emails_fts WHERE id = ?1`, id);
+	}
+
+	async #runFtsBackfillBatch(): Promise<void> {
+		if (this.#isFtsBackfillDone()) return;
+
+		try {
+			const rows = [
+				...this.ctx.storage.sql.exec(
+					`SELECT e.id as id, e.subject as subject, e.sender as sender,
+					        e.sender_name as sender_name, e.recipient as recipient,
+					        e.cc as cc, e.bcc as bcc, e.body as body, e.snippet as snippet
+					 FROM emails e
+					 LEFT JOIN emails_fts f ON f.id = e.id
+					 WHERE f.id IS NULL
+					 ORDER BY e.date DESC
+					 LIMIT ?1`,
+					FTS_BACKFILL_BATCH_SIZE,
+				),
+			] as {
+				id: string;
+				subject: string | null;
+				sender: string | null;
+				sender_name: string | null;
+				recipient: string | null;
+				cc: string | null;
+				bcc: string | null;
+				body: string | null;
+				snippet: string | null;
+			}[];
+
+			if (rows.length === 0) {
+				this.#markFtsBackfillDone();
+				return;
+			}
+
+			for (const row of rows) {
+				let htmlOrText = row.body;
+				if (htmlOrText == null || htmlOrText === "") {
+					htmlOrText = await loadEmailBody(this.env.BUCKET, row.id);
+				}
+				const bodyText = htmlOrText
+					? computeSearchText(htmlOrText)
+					: computeSearchText(row.snippet ?? "");
+				this.#upsertEmailFts({
+					id: row.id,
+					subject: row.subject,
+					sender: row.sender,
+					sender_name: row.sender_name,
+					recipient: row.recipient,
+					cc: row.cc,
+					bcc: row.bcc,
+					body_text: bodyText,
+				});
+			}
+
+			const remaining = [
+				...this.ctx.storage.sql.exec(
+					`SELECT 1 as one
+					 FROM emails e
+					 LEFT JOIN emails_fts f ON f.id = e.id
+					 WHERE f.id IS NULL
+					 LIMIT 1`,
+				),
+			];
+			if (remaining.length === 0) {
+				this.#markFtsBackfillDone();
+			} else {
+				await this.ctx.storage.setAlarm(Date.now() + 250);
+			}
+		} catch (e) {
+			console.error("FTS backfill batch failed:", (e as Error).message);
+			try {
+				await this.ctx.storage.setAlarm(Date.now() + 5_000);
+			} catch {
+				/* ignore reschedule failure */
+			}
 		}
 	}
 
@@ -721,7 +871,12 @@ export class MailboxDO extends DurableObject<Env> {
 		},
 	) {
 		const existing = this.db
-			.select({ id: schema.emails.id, folder_id: schema.emails.folder_id })
+			.select({
+				id: schema.emails.id,
+				folder_id: schema.emails.folder_id,
+				sender: schema.emails.sender,
+				sender_name: schema.emails.sender_name,
+			})
 			.from(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.get();
@@ -759,6 +914,17 @@ export class MailboxDO extends DurableObject<Env> {
 			})
 			.where(eq(schema.emails.id, id))
 			.run();
+
+		this.#upsertEmailFts({
+			id,
+			subject: data.subject,
+			sender: existing.sender,
+			sender_name: existing.sender_name,
+			recipient: data.recipient,
+			cc: data.cc,
+			bcc: data.bcc,
+			body_text: computeSearchText(data.body),
+		});
 
 		this.broadcastEvent("email_updated", { id, folder_id: Folders.DRAFT });
 		return this.getEmail(id);
@@ -905,6 +1071,8 @@ export class MailboxDO extends DurableObject<Env> {
 			.delete(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.run();
+
+		this.#deleteEmailFts(id);
 
 		await deleteEmailContent(this.env.BUCKET, id);
 
@@ -1138,14 +1306,30 @@ export class MailboxDO extends DurableObject<Env> {
 	// ── Search (raw SQL — dynamic condition builder) ───────────────
 
 	/**
-	 * Build WHERE conditions and params for search queries.
-	 * Shared between searchEmails and countSearchResults.
+	 * Build JOIN / WHERE / ORDER BY fragments for search queries.
+	 * Free-text uses FTS5 MATCH + bm25; structured filters stay on `emails`.
 	 */
-	#buildSearchConditions(
+	#prepareSearchQuery(
 		options: SearchFilterOptions,
-		tableAlias = "",
-	): { conditions: string[]; params: (string | number)[] } {
-		const { query, folder, from, to, subject, date_start, date_end, is_read, is_starred, has_attachment } = options;
+		tableAlias = "e",
+	): {
+		ftsJoin: string;
+		where: string;
+		params: (string | number)[];
+		orderBy: string;
+	} {
+		const {
+			query,
+			folder,
+			from,
+			to,
+			subject,
+			date_start,
+			date_end,
+			is_read,
+			is_starred,
+			has_attachment,
+		} = options;
 		const prefix = tableAlias ? `${tableAlias}.` : "";
 		const conditions: string[] = [];
 		const params: (string | number)[] = [];
@@ -1157,37 +1341,79 @@ export class MailboxDO extends DurableObject<Env> {
 			return `?${paramIdx}`;
 		};
 
-		if (query) {
-			const p1 = addParam(`%${query}%`);
-			const p2 = addParam(`%${query}%`);
-			const p3 = addParam(`%${query}%`);
-			const p4 = addParam(`%${query}%`);
-			const p5 = addParam(`%${query}%`);
-			// Free-text search uses snippet until SQLite FTS / an external index is added.
-			conditions.push(`(${prefix}subject LIKE ${p1} OR ${prefix}snippet LIKE ${p2} OR ${prefix}sender LIKE ${p3} OR ${prefix}sender_name LIKE ${p5} OR ${prefix}recipient LIKE ${p4} OR ${prefix}cc LIKE ${p4} OR ${prefix}bcc LIKE ${p4})`);
+		const ftsQuery = query ? sanitizeFtsQuery(query) : null;
+		let ftsJoin = "";
+		if (ftsQuery) {
+			ftsJoin = `JOIN emails_fts ON emails_fts.id = ${prefix}id`;
+			conditions.push(`emails_fts MATCH ${addParam(ftsQuery)}`);
+		} else if (query && query.trim()) {
+			// Free-text was provided but had no searchable tokens — match nothing.
+			conditions.push("1 = 0");
 		}
+
 		if (folder) {
 			const p = addParam(folder);
-			conditions.push(`${prefix}folder_id = (SELECT id FROM folders WHERE name = ${p} OR id = ${p} LIMIT 1)`);
+			conditions.push(
+				`${prefix}folder_id = (SELECT id FROM folders WHERE name = ${p} OR id = ${p} LIMIT 1)`,
+			);
 		}
-		if (from) { const p = addParam(`%${from}%`); conditions.push(`(${prefix}sender LIKE ${p} OR ${prefix}sender_name LIKE ${p})`); }
-		if (to) { const p = addParam(`%${to}%`); conditions.push(`(${prefix}recipient LIKE ${p} OR ${prefix}cc LIKE ${p} OR ${prefix}bcc LIKE ${p})`); }
-		if (subject) { const p = addParam(`%${subject}%`); conditions.push(`${prefix}subject LIKE ${p}`); }
-		if (date_start) { const p = addParam(date_start); conditions.push(`${prefix}date >= ${p}`); }
-		if (date_end) { const p = addParam(date_end); conditions.push(`${prefix}date <= ${p}`); }
-		if (is_read !== undefined) { const p = addParam(is_read ? 1 : 0); conditions.push(`${prefix}read = ${p}`); }
-		if (is_starred !== undefined) { const p = addParam(is_starred ? 1 : 0); conditions.push(`${prefix}starred = ${p}`); }
-		if (has_attachment) { conditions.push(`${prefix}id IN (SELECT DISTINCT email_id FROM attachments)`); }
+		if (from) {
+			const p = addParam(`%${from}%`);
+			conditions.push(
+				`(${prefix}sender LIKE ${p} OR ${prefix}sender_name LIKE ${p})`,
+			);
+		}
+		if (to) {
+			const p = addParam(`%${to}%`);
+			conditions.push(
+				`(${prefix}recipient LIKE ${p} OR ${prefix}cc LIKE ${p} OR ${prefix}bcc LIKE ${p})`,
+			);
+		}
+		if (subject) {
+			const p = addParam(`%${subject}%`);
+			conditions.push(`${prefix}subject LIKE ${p}`);
+		}
+		if (date_start) {
+			const p = addParam(date_start);
+			conditions.push(`${prefix}date >= ${p}`);
+		}
+		if (date_end) {
+			const p = addParam(date_end);
+			conditions.push(`${prefix}date <= ${p}`);
+		}
+		if (is_read !== undefined) {
+			const p = addParam(is_read ? 1 : 0);
+			conditions.push(`${prefix}read = ${p}`);
+		}
+		if (is_starred !== undefined) {
+			const p = addParam(is_starred ? 1 : 0);
+			conditions.push(`${prefix}starred = ${p}`);
+		}
+		if (has_attachment) {
+			conditions.push(
+				`${prefix}id IN (SELECT DISTINCT email_id FROM attachments)`,
+			);
+		}
 
-		return { conditions, params };
+		return {
+			ftsJoin,
+			where: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
+			params,
+			orderBy: ftsQuery
+				? `ORDER BY bm25(emails_fts) ASC, ${prefix}date DESC`
+				: `ORDER BY ${prefix}date DESC`,
+		};
 	}
 
 	async searchEmails(options: SearchFilterOptions & { page?: number; limit?: number }) {
+		this.#scheduleFtsBackfill();
+
 		const { page = 1, limit: rawLimit = 25 } = options;
 		const limit = Math.min(Math.max(rawLimit, 1), 100);
-		const { conditions, params } = this.#buildSearchConditions(options, "e");
-
-		const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+		const { ftsJoin, where, params, orderBy } = this.#prepareSearchQuery(
+			options,
+			"e",
+		);
 		const offset = (page - 1) * limit;
 
 		const query = `
@@ -1198,9 +1424,11 @@ export class MailboxDO extends DurableObject<Env> {
 				e.snippet as snippet,
 				f.name as folder_name
 			FROM emails e
+			${ftsJoin}
 			LEFT JOIN folders f ON e.folder_id = f.id
 			${where}
-			ORDER BY e.date DESC LIMIT ?${params.length + 1} OFFSET ?${params.length + 2}`;
+			${orderBy}
+			LIMIT ?${params.length + 1} OFFSET ?${params.length + 2}`;
 		params.push(limit, offset);
 
 		const result = this.ctx.storage.sql.exec(query, ...params);
@@ -1217,10 +1445,10 @@ export class MailboxDO extends DurableObject<Env> {
 	 * Count total search results matching the given filters (for pagination).
 	 */
 	async countSearchResults(options: SearchFilterOptions) {
-		const { conditions, params } = this.#buildSearchConditions(options);
+		this.#scheduleFtsBackfill();
 
-		const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-		const query = `SELECT COUNT(*) as total FROM emails ${where}`;
+		const { ftsJoin, where, params } = this.#prepareSearchQuery(options, "e");
+		const query = `SELECT COUNT(*) as total FROM emails e ${ftsJoin} ${where}`;
 
 		const row = [...this.ctx.storage.sql.exec(query, ...params)][0] as
 			| { total: number }
@@ -1467,6 +1695,20 @@ export class MailboxDO extends DurableObject<Env> {
 			this.db.insert(schema.attachments).values(attachments).run();
 		}
 
+		const bodyText =
+			email.search_text ??
+			(email.body ? computeSearchText(email.body) : "");
+		this.#upsertEmailFts({
+			id: email.id,
+			subject: email.subject,
+			sender: email.sender,
+			sender_name: email.sender_name,
+			recipient: email.recipient,
+			cc: email.cc,
+			bcc: email.bcc,
+			body_text: bodyText,
+		});
+
 		this.broadcastEvent("new_email", {
 			id: email.id,
 			folder_id: folderId,
@@ -1510,6 +1752,33 @@ export class MailboxDO extends DurableObject<Env> {
 			.set({ body: null, snippet: nextSnippet })
 			.where(eq(schema.emails.id, emailId))
 			.run();
+
+		// Ensure FTS has body text when lazily migrating legacy SQLite bodies.
+		const meta = this.db
+			.select({
+				subject: schema.emails.subject,
+				sender: schema.emails.sender,
+				sender_name: schema.emails.sender_name,
+				recipient: schema.emails.recipient,
+				cc: schema.emails.cc,
+				bcc: schema.emails.bcc,
+			})
+			.from(schema.emails)
+			.where(eq(schema.emails.id, emailId))
+			.get();
+		if (meta) {
+			this.#upsertEmailFts({
+				id: emailId,
+				subject: meta.subject,
+				sender: meta.sender,
+				sender_name: meta.sender_name,
+				recipient: meta.recipient,
+				cc: meta.cc,
+				bcc: meta.bcc,
+				body_text: computeSearchText(legacyBody),
+			});
+		}
+
 		return legacyBody;
 	}
 
