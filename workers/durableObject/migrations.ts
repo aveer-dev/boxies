@@ -329,5 +329,19 @@ export const mailboxMigrations: Migration[] = [
              WHERE snippet IS NULL AND body IS NOT NULL;
         `),
 	},
+	{
+		name: "19_emails_fts",
+		sql: txn(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
+                id UNINDEXED,
+                subject,
+                sender,
+                sender_name,
+                recipients,
+                body_text,
+                tokenize = 'porter unicode61'
+            );
+        `),
+	},
 ];
 

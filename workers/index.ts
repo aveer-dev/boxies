@@ -17,6 +17,7 @@ import {
 	computeSnippet,
 	storeEmailContent,
 } from "./lib/email-content";
+import { computeSearchText } from "./lib/email-fts";
 import {
 	validateSender,
 	SenderValidationError,
@@ -1112,6 +1113,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
 		snippet: computeSnippet(bodyText),
+		search_text: computeSearchText(bodyText, { plainText: parsedEmail.text }),
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 	};

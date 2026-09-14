@@ -41,7 +41,7 @@ Outbound messages larger than **5 MiB** (body + attachments) are rejected with H
 ## Features
 
 - **Full email client** — Send and receive emails via Cloudflare Email Routing with a rich text composer, reply/forward threading, folder organization, search, and attachments
-- **Per-mailbox isolation** — Each mailbox runs in its own Durable Object with SQLite for metadata/snippets and R2 for HTML bodies, raw MIME, and attachments
+- **Per-mailbox isolation** — Each mailbox runs in its own Durable Object with SQLite for metadata/snippets/FTS and R2 for HTML bodies, raw MIME, and attachments
 - **Built-in AI agent** — Side panel with 9 email tools for reading, searching, drafting, and sending
 - **Auto-draft on new email** — Agent automatically reads inbound emails and generates draft replies, always requiring explicit confirmation before sending
 - **Configurable and persistent** — Custom system prompts per mailbox, persistent chat history, streaming markdown responses, and tool call visibility
@@ -94,7 +94,7 @@ Any user who passes the shared Cloudflare Access policy can access all mailboxes
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   Browser    │────>│  Hono Worker     │────>│  MailboxDO      │
 │  React SPA   │     │  (API + SSR)     │     │  SQLite meta +  │
-│  Agent Panel │     │                  │     │  snippets       │
+│  Agent Panel │     │                  │     │  snippets + FTS │
 └──────┬───────┘     │  /agents/* ──────┼────>└────────┬────────┘
        │             │                  │              │
        │ WebSocket   │                  │              ▼
@@ -110,7 +110,7 @@ Any user who passes the shared Cloudflare Access policy can access all mailboxes
                      └──────────────────┘     └─────────────────┘
 ```
 
-Full HTML and raw MIME are stored in R2 (`emails/{id}/body.html`, `emails/{id}/raw.eml`). The Durable Object SQLite database keeps metadata and a short `snippet` for list/search. Free-text search currently matches the snippet (plus headers); add SQLite FTS or an external index before a mailbox grows years of mail.
+Full HTML and raw MIME are stored in R2 (`emails/{id}/body.html`, `emails/{id}/raw.eml`). The Durable Object SQLite database keeps metadata and a short `snippet` for list previews, plus an **FTS5** index (`emails_fts`) over subject, sender, recipients, and plain-text body so free-text search matches the full message — not just the first 300 characters. Existing mail is backfilled from R2 in alarm-driven batches.
 
 ## License
 
