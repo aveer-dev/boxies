@@ -474,6 +474,31 @@ final class AppModel {
         }
     }
 
+    /// Open an email from a push notification payload.
+    func openEmailFromNotification(mailboxId: String, emailId: String, folderId: String?) async {
+        if selectedMailboxId != mailboxId {
+            await loadMailbox(mailboxId)
+        }
+        if let folderId, !folderId.isEmpty {
+            let tab: HomeTab = (folderId == "inbox" && selectedTab == .aiInbox)
+                ? selectedTab
+                : .folder(folderId)
+            if selectedTab != tab {
+                await selectTab(tab)
+            }
+        }
+        if let email = emails.first(where: { $0.id == emailId }) ?? db.getEmail(id: emailId) {
+            await openEmail(email)
+            return
+        }
+        do {
+            let email = try await APIClient.shared.getEmail(mailboxId: mailboxId, id: emailId)
+            await openEmail(email)
+        } catch {
+            showToast("Couldn’t open email", isError: true)
+        }
+    }
+
     /// Readable (non-draft) emails in the current list, in display order.
     var navigableEmails: [Email] {
         emails.filter { !$0.isDraft }

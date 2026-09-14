@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(AppModel.self) private var app
+    private var pushManager = PushNotificationManager.shared
 
     var body: some View {
         Group {
@@ -14,6 +15,14 @@ struct RootView: View {
                         .task(id: auth.token) {
                             await app.bootstrap(authToken: auth.token)
                         }
+                        .task(id: pushManager.pendingDeepLink) {
+                            await consumePendingDeepLinkIfReady()
+                        }
+                        .onChange(of: app.isMailboxLoading) { _, loading in
+                            if !loading {
+                                Task { await consumePendingDeepLinkIfReady() }
+                            }
+                        }
                 }
             } else {
                 SignInView()
@@ -21,6 +30,20 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: auth.isAuthenticated)
         .font(.inter(size: 14))
+    }
+
+    @MainActor
+    private func consumePendingDeepLinkIfReady() async {
+        guard auth.isAuthenticated,
+              !app.isMailboxLoading,
+              !app.mailboxes.isEmpty,
+              let link = pushManager.pendingDeepLink else { return }
+        pushManager.pendingDeepLink = nil
+        await app.openEmailFromNotification(
+            mailboxId: link.mailboxId,
+            emailId: link.emailId,
+            folderId: link.folderId
+        )
     }
 }
 

@@ -78,6 +78,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        let userInfo = response.notification.request.content.userInfo
+        Task { @MainActor in
+            PushNotificationManager.shared.handleNotificationTap(userInfo: userInfo)
+        }
         completionHandler()
     }
 }

@@ -482,6 +482,35 @@ class AppModel {
         }
     }
 
+    /** Open an email targeted by a push notification. */
+    suspend fun openEmailFromNotification(mailboxId: String, emailId: String, folderId: String?) {
+        if (_selectedMailboxId.value != mailboxId) {
+            loadMailbox(mailboxId)
+        }
+        val folder = folderId?.takeIf { it.isNotBlank() }
+        if (folder != null) {
+            val tab = if (folder == "inbox" && _selectedTab.value is HomeTab.AiInbox) {
+                _selectedTab.value
+            } else {
+                HomeTab.Folder(folder)
+            }
+            if (_selectedTab.value != tab) {
+                selectTab(tab)
+            }
+        }
+        val local = _emails.value.firstOrNull { it.id == emailId } ?: db.getEmail(emailId)
+        if (local != null) {
+            openEmail(local)
+            return
+        }
+        try {
+            val email = ApiClient.shared.getEmail(mailboxId, emailId)
+            openEmail(email)
+        } catch (_: Exception) {
+            showToast("Couldn’t open email", isError = true)
+        }
+    }
+
     suspend fun openDraft(draft: Email) {
         val original = resolveReplyOriginal(draft)
         val mode = if (original != null || !draft.inReplyTo.isNullOrEmpty()) {

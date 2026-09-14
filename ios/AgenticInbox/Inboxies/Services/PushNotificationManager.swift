@@ -1,3 +1,10 @@
+
+struct PushDeepLink: Equatable {
+    let mailboxId: String
+    let emailId: String
+    let folderId: String
+}
+
 import Foundation
 import UIKit
 import UserNotifications
@@ -14,6 +21,8 @@ final class PushNotificationManager {
     private(set) var deviceToken: String?
     private(set) var isRegistered = false
     private var activeMailboxId: String?
+    /// Set when the user taps a push; consumed by RootView once the app is ready.
+    var pendingDeepLink: PushDeepLink?
 
     init() {
         self.deviceToken = UserDefaults.standard.string(forKey: tokenStorageKey)
@@ -72,5 +81,18 @@ final class PushNotificationManager {
         Task {
             try? await APIClient.shared.unregisterDeviceToken(mailboxId: mailboxId, token: token)
         }
+    }
+
+    func handleNotificationTap(userInfo: [AnyHashable: Any]) {
+        guard let mailboxId = userInfo["mailboxId"] as? String, !mailboxId.isEmpty,
+              let emailId = userInfo["emailId"] as? String, !emailId.isEmpty else {
+            return
+        }
+        let folderId = (userInfo["folderId"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingDeepLink = PushDeepLink(
+            mailboxId: mailboxId,
+            emailId: emailId,
+            folderId: (folderId?.isEmpty == false ? folderId! : "inbox")
+        )
     }
 }
