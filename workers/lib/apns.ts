@@ -7,7 +7,12 @@ import type { Env } from "../types";
 
 export interface APNsPayload {
 	title: string;
+	/** APNs alert.body (preview, or subject when no preview). */
 	body: string;
+	/** FCM notification.body; defaults to `body` when omitted. */
+	fcmBody?: string;
+	/** APNs alert.subtitle (typically the mail subject). */
+	subtitle?: string;
 	mailboxId: string;
 	emailId: string;
 	folderId?: string;
@@ -97,12 +102,17 @@ export async function sendAPNsPush(
 
 	console.log(`[APNs] Dispatching push for mailbox "${payload.mailboxId}" to ${deviceTokens.length} device(s). Target: ${primaryHost}, topic: ${topic}`);
 
+	const alert: { title: string; subtitle?: string; body: string } = {
+		title: payload.title,
+		body: payload.body,
+	};
+	if (payload.subtitle) {
+		alert.subtitle = payload.subtitle;
+	}
+
 	const requestBody = JSON.stringify({
 		aps: {
-			alert: {
-				title: payload.title,
-				body: payload.body,
-			},
+			alert,
 			sound: "default",
 			badge: payload.badge,
 			"content-available": 1, // Wakes up app in background to pre-sync local SQLite

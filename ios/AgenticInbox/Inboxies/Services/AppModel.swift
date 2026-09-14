@@ -474,6 +474,42 @@ final class AppModel {
         }
     }
 
+    /// Open an email from a push notification payload.
+    /// Resolves and opens the message first; folder tab sync runs in the background
+    /// so notification taps are not blocked on a full list refresh.
+    func openEmailFromNotification(mailboxId: String, emailId: String, folderId: String?) async {
+        if selectedMailboxId != mailboxId {
+            await loadMailbox(mailboxId)
+        }
+
+        let resolved: Email
+        if let local = emails.first(where: { $0.id == emailId }) ?? db.getEmail(id: emailId) {
+            resolved = local
+        } else {
+            do {
+                let remote = try await APIClient.shared.getEmail(mailboxId: mailboxId, id: emailId)
+                db.upsertEmails(mailboxId: mailboxId, emails: [remote], defaultFolder: remote.folderId ?? folderId)
+                resolved = remote
+            } catch {
+                showToast("Couldn’t open email", isError: true)
+                return
+            }
+        }
+
+        if let folderId, !folderId.isEmpty {
+            let tab: HomeTab = (folderId == "inbox" && selectedTab == .aiInbox)
+                ? selectedTab
+                : .folder(folderId)
+            // Assign tab directly — `selectTab` clears `selectedEmail` and awaits a folder sync.
+            if selectedTab != tab {
+                selectedTab = tab
+                Task { await loadEmailsForCurrentTab(showLoading: false) }
+            }
+        }
+
+        await openEmail(resolved)
+    }
+
     /// Readable (non-draft) emails in the current list, in display order.
     var navigableEmails: [Email] {
         emails.filter { !$0.isDraft }

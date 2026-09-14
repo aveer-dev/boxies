@@ -78,4 +78,50 @@ assert.doesNotMatch(
 assert.match(fcm, /putExtra\("folderId", folderId\)/);
 assert.match(fcm, /message\.data\["folderId"\] \?: "inbox"/);
 
+
+const mainActivity = readFileSync(
+	join(root, "app/src/main/java/co/inboxies/app/MainActivity.kt"),
+	"utf8",
+);
+const appModel = readFileSync(
+	join(root, "app/src/main/java/co/inboxies/app/services/AppModel.kt"),
+	"utf8",
+);
+const pushManager = readFileSync(
+	join(root, "app/src/main/java/co/inboxies/app/services/PushNotificationManager.kt"),
+	"utf8",
+);
+const rootView = readFileSync(
+	join(root, "app/src/main/java/co/inboxies/app/ui/RootView.kt"),
+	"utf8",
+);
+const manifest = readFileSync(
+	join(root, "app/src/main/AndroidManifest.xml"),
+	"utf8",
+);
+
+assert.match(fcm, /BigTextStyle/);
+assert.match(mainActivity, /handlePushIntent/);
+assert.match(mainActivity, /onNewIntent/);
+assert.match(mainActivity, /setPendingDeepLink/);
+assert.match(manifest, /android:launchMode="singleTop"/);
+assert.match(pushManager, /fun setPendingDeepLink/);
+assert.match(pushManager, /pendingDeepLink/);
+assert.match(appModel, /openEmailFromNotification/);
+assert.match(rootView, /pendingDeepLink/);
+assert.match(rootView, /openEmailFromNotification/);
+
+const iosRoot = join(root, "..", "ios", "AgenticInbox", "Inboxies");
+const iosAppDelegate = readFileSync(join(iosRoot, "AppDelegate.swift"), "utf8");
+const iosPush = readFileSync(join(iosRoot, "Services/PushNotificationManager.swift"), "utf8");
+const iosAppModel = readFileSync(join(iosRoot, "Services/AppModel.swift"), "utf8");
+const iosRootView = readFileSync(join(iosRoot, "Views/RootView.swift"), "utf8");
+
+assert.match(iosAppDelegate, /handleNotificationTap/);
+assert.match(iosPush, /pendingDeepLink/);
+assert.match(iosPush, /handleNotificationTap/);
+assert.match(iosAppModel, /openEmailFromNotification/);
+assert.match(iosRootView, /consumePendingDeepLinkIfReady/);
+assert.match(iosRootView, /pendingDeepLink/);
+
 console.log("android folder-tabs tests passed");

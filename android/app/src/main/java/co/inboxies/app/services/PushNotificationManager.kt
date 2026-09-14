@@ -12,16 +12,27 @@ import co.inboxies.app.BuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
  * FCM registration coordinator. No-ops when Firebase / google-services.json
  * is not configured (`BuildConfig.HAS_GOOGLE_SERVICES == false`).
  */
+data class PushDeepLink(
+    val mailboxId: String,
+    val emailId: String,
+    val folderId: String = "inbox",
+)
+
 class PushNotificationManager private constructor(private val appContext: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeMailboxId: String? = null
     private var deviceToken: String? = null
+    private val _pendingDeepLink = MutableStateFlow<PushDeepLink?>(null)
+    val pendingDeepLink: StateFlow<PushDeepLink?> = _pendingDeepLink.asStateFlow()
 
     fun requestPermissionAndRegister(mailboxId: String) {
         activeMailboxId = mailboxId
@@ -114,6 +125,21 @@ class PushNotificationManager private constructor(private val appContext: Contex
             NotificationManager.IMPORTANCE_DEFAULT,
         )
         manager.createNotificationChannel(channel)
+    }
+
+
+    fun setPendingDeepLink(mailboxId: String?, emailId: String?, folderId: String?) {
+        val mb = mailboxId?.takeIf { it.isNotBlank() } ?: return
+        val em = emailId?.takeIf { it.isNotBlank() } ?: return
+        _pendingDeepLink.value = PushDeepLink(
+            mailboxId = mb,
+            emailId = em,
+            folderId = folderId?.takeIf { it.isNotBlank() } ?: "inbox",
+        )
+    }
+
+    fun clearPendingDeepLink() {
+        _pendingDeepLink.value = null
     }
 
     companion object {

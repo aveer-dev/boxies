@@ -1,5 +1,6 @@
 package co.inboxies.app
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -15,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.core.view.WindowCompat
 import co.inboxies.app.services.AppModel
+import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.InboxiesTheme
 import co.inboxies.app.theme.ThemeMode
@@ -24,6 +26,8 @@ val LocalAuthStore = staticCompositionLocalOf<AuthStore> { error("AuthStore miss
 val LocalAppModel = staticCompositionLocalOf<AppModel> { error("AppModel missing") }
 
 class MainActivity : ComponentActivity() {
+    private lateinit var appModel: AppModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
@@ -36,7 +40,9 @@ class MainActivity : ComponentActivity() {
             window.isNavigationBarContrastEnforced = false
         }
         val auth = (application as InboxiesApplication).authStore
-        val model = AppModel()
+        appModel = AppModel()
+        val model = appModel
+        handlePushIntent(intent)
         setContent {
             var themeMode by remember {
                 mutableStateOf(
@@ -66,5 +72,24 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePushIntent(intent)
+    }
+
+    private fun handlePushIntent(intent: Intent?) {
+        if (intent == null) return
+        val mailboxId = intent.getStringExtra("mailboxId")
+        val emailId = intent.getStringExtra("emailId")
+        val folderId = intent.getStringExtra("folderId")
+        if (mailboxId.isNullOrBlank() || emailId.isNullOrBlank()) return
+        PushNotificationManager.shared.setPendingDeepLink(mailboxId, emailId, folderId)
+        // Prevent re-processing on recreation.
+        intent.removeExtra("mailboxId")
+        intent.removeExtra("emailId")
+        intent.removeExtra("folderId")
     }
 }
