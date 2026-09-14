@@ -1,14 +1,13 @@
+import Foundation
+import UIKit
+import UserNotifications
+import Observation
 
 struct PushDeepLink: Equatable {
     let mailboxId: String
     let emailId: String
     let folderId: String
 }
-
-import Foundation
-import UIKit
-import UserNotifications
-import Observation
 
 /// Coordinates Apple Push Notification registration, device token persistence,
 /// and synchronization with the Cloudflare backend for the active mailbox.

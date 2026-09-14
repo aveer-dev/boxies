@@ -3,7 +3,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(AppModel.self) private var app
-    private var pushManager = PushNotificationManager.shared
+    @Bindable private var pushManager = PushNotificationManager.shared
 
     var body: some View {
         Group {

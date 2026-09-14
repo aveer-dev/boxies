@@ -482,11 +482,27 @@ class AppModel {
         }
     }
 
-    /** Open an email targeted by a push notification. */
+    /**
+     * Open an email targeted by a push notification.
+     * Resolves and opens the message first; folder list sync runs in the background
+     * so notification taps are not blocked on a full folder refresh.
+     */
     suspend fun openEmailFromNotification(mailboxId: String, emailId: String, folderId: String?) {
         if (_selectedMailboxId.value != mailboxId) {
             loadMailbox(mailboxId)
         }
+
+        val resolved = _emails.value.firstOrNull { it.id == emailId }
+            ?: db.getEmail(emailId)
+            ?: runCatching {
+                ApiClient.shared.getEmail(mailboxId, emailId).also { remote ->
+                    db.upsertEmails(mailboxId, listOf(remote), defaultFolder = remote.folderId ?: folderId)
+                }
+            }.getOrElse {
+                showToast("Couldn’t open email", isError = true)
+                return
+            }
+
         val folder = folderId?.takeIf { it.isNotBlank() }
         if (folder != null) {
             val tab = if (folder == "inbox" && _selectedTab.value is HomeTab.AiInbox) {
@@ -494,21 +510,14 @@ class AppModel {
             } else {
                 HomeTab.Folder(folder)
             }
+            // Assign tab directly — `selectTab` clears selected email and awaits folder sync.
             if (_selectedTab.value != tab) {
-                selectTab(tab)
+                _selectedTab.value = tab
+                scope.launch { loadEmailsForCurrentTab(showLoading = false) }
             }
         }
-        val local = _emails.value.firstOrNull { it.id == emailId } ?: db.getEmail(emailId)
-        if (local != null) {
-            openEmail(local)
-            return
-        }
-        try {
-            val email = ApiClient.shared.getEmail(mailboxId, emailId)
-            openEmail(email)
-        } catch (_: Exception) {
-            showToast("Couldn’t open email", isError = true)
-        }
+
+        openEmail(resolved)
     }
 
     suspend fun openDraft(draft: Email) {
