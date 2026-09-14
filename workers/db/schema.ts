@@ -24,7 +24,10 @@ export const emails = sqliteTable("emails", {
 	date: text("date"),
 	read: integer("read").default(0),
 	starred: integer("starred").default(0),
+	/** @deprecated Full HTML/text lives in R2; kept nullable for legacy rows during lazy offload. */
 	body: text("body"),
+	/** List/search preview; full body is in R2 (`emails/{id}/body.html`). */
+	snippet: text("snippet"),
 	in_reply_to: text("in_reply_to"),
 	email_references: text("email_references"),
 	thread_id: text("thread_id"),

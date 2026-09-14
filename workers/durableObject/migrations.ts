@@ -320,5 +320,14 @@ export const mailboxMigrations: Migration[] = [
                 ON emails(provider_message_id);
         `),
 	},
+	{
+		// Name kept for DOs that already applied this on the offload PR branch.
+		name: "18_email_snippet_and_body_offload",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN snippet TEXT;
+            UPDATE emails SET snippet = SUBSTR(body, 1, 300)
+             WHERE snippet IS NULL AND body IS NOT NULL;
+        `),
+	},
 ];
 

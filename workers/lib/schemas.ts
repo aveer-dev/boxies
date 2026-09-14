@@ -30,6 +30,9 @@ export interface EmailMetadata {
 	thread_id?: string | null;
 	folder_id?: string | null;
 	snippet?: string | null;
+	provider_message_id?: string | null;
+	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
+	delivery_error?: string | null;
 }
 
 export interface EmailFull extends EmailMetadata {

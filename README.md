@@ -3,7 +3,7 @@
   <p><em>A self-hosted email client with an AI agent, running entirely on Cloudflare Workers</em></p>
 </div>
 
-Agentic Inbox lets you send, receive, and manage emails through a modern web interface -- all powered by your own Cloudflare account. Incoming emails arrive via [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/), each mailbox is isolated in its own [Durable Object](https://developers.cloudflare.com/durable-objects/) with a SQLite database, and attachments are stored in [R2](https://developers.cloudflare.com/r2/).
+Agentic Inbox lets you send, receive, and manage emails through a modern web interface -- all powered by your own Cloudflare account. Incoming emails arrive via [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/), each mailbox is isolated in its own [Durable Object](https://developers.cloudflare.com/durable-objects/) with a SQLite database for metadata and snippets, and message bodies (HTML), raw MIME (`.eml`), and attachments are stored in [R2](https://developers.cloudflare.com/r2/).
 
 An **AI-powered Email Agent** can read your inbox, search conversations, and draft replies -- built with the [Cloudflare Agents SDK](https://developers.cloudflare.com/agents/) and [Workers AI](https://developers.cloudflare.com/workers-ai/).
 
@@ -41,7 +41,7 @@ Outbound messages larger than **5 MiB** (body + attachments) are rejected with H
 ## Features
 
 - **Full email client** — Send and receive emails via Cloudflare Email Routing with a rich text composer, reply/forward threading, folder organization, search, and attachments
-- **Per-mailbox isolation** — Each mailbox runs in its own Durable Object with SQLite storage and R2 for attachments
+- **Per-mailbox isolation** — Each mailbox runs in its own Durable Object with SQLite for metadata/snippets and R2 for HTML bodies, raw MIME, and attachments
 - **Built-in AI agent** — Side panel with 9 email tools for reading, searching, drafting, and sending
 - **Auto-draft on new email** — Agent automatically reads inbound emails and generates draft replies, always requiring explicit confirmation before sending
 - **Configurable and persistent** — Custom system prompts per mailbox, persistent chat history, streaming markdown responses, and tool call visibility
@@ -93,15 +93,24 @@ Any user who passes the shared Cloudflare Access policy can access all mailboxes
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │   Browser    │────>│  Hono Worker     │────>│  MailboxDO      │
-│  React SPA   │     │  (API + SSR)     │     │  (SQLite + R2)  │
-│  Agent Panel │     │                  │     └─────────────────┘
-└──────┬───────┘     │  /agents/* ──────┼────>┌─────────────────┐
-       │             │                  │     │  EmailAgent DO  │
-       │ WebSocket   │                  │     │  (AIChatAgent)  │
-       └─────────────┤                  │     │  9 email tools  │
-                     │                  │────>│  Workers AI     │
+│  React SPA   │     │  (API + SSR)     │     │  SQLite meta +  │
+│  Agent Panel │     │                  │     │  snippets       │
+└──────┬───────┘     │  /agents/* ──────┼────>└────────┬────────┘
+       │             │                  │              │
+       │ WebSocket   │                  │              ▼
+       └─────────────┤                  │     ┌─────────────────┐
+                     │                  │     │  R2             │
+                     │                  │     │  body.html      │
+                     │                  │     │  raw.eml        │
+                     │                  │     │  attachments    │
+                     │                  │     └─────────────────┘
+                     │                  │────>┌─────────────────┐
+                     │                  │     │  EmailAgent DO  │
+                     │                  │     │  (AIChatAgent)  │
                      └──────────────────┘     └─────────────────┘
 ```
+
+Full HTML and raw MIME are stored in R2 (`emails/{id}/body.html`, `emails/{id}/raw.eml`). The Durable Object SQLite database keeps metadata and a short `snippet` for list/search. Free-text search currently matches the snippet (plus headers); add SQLite FTS or an external index before a mailbox grows years of mail.
 
 ## License
 
