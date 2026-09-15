@@ -738,6 +738,17 @@ app.post("/api/v1/auth/dev", async (c) => {
 	});
 });
 
+// -- Recipients (people I've emailed) -------------------------------
+
+app.get("/api/v1/mailboxes/:mailboxId/recipients", async (c: AppContext) => {
+	const stub = c.var.mailboxStub as any;
+	const recipients = await stub.listRecentRecipients({
+		q: c.req.query("q") || "",
+		limit: intQuery(c, "limit"),
+	});
+	return c.json({ recipients });
+});
+
 // -- Search ---------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/search", async (c: AppContext) => {

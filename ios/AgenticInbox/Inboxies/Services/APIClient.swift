@@ -257,6 +257,17 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func listRecipients(mailboxId: String, q: String = "", limit: Int = 20) async throws -> [RecentRecipient] {
+        let response: RecentRecipientsResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/recipients",
+            query: [
+                "q": q,
+                "limit": String(limit),
+            ]
+        )
+        return response.recipients
+    }
+
     func sendEmail(mailboxId: String, payload: [String: Any]) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",

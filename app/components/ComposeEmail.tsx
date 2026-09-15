@@ -6,6 +6,7 @@ import { Banner, Button, Dialog, Input, Text } from "@cloudflare/kumo";
 import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import RichTextEditor from "./RichTextEditor";
 import { useUIStore } from "~/hooks/useUIStore";
 
@@ -53,13 +54,12 @@ export default function ComposeEmail() {
 					{error && <Banner variant="error" text={error} />}
 					<div className="flex items-center gap-2">
 						<div className="flex-1">
-							<Input
+							<RecipientAutocompleteInput
+								mailboxId={mailboxId}
 								label="To"
-								type="text"
 								placeholder="recipient@example.com, another@example.com"
-								size="sm"
 								value={to}
-								onChange={(e) => setTo(e.target.value)}
+								onChange={setTo}
 								required
 							/>
 						</div>
@@ -74,22 +74,20 @@ export default function ComposeEmail() {
 						)}
 					</div>
 					{showCcBcc && (
-						<Input
+						<RecipientAutocompleteInput
+							mailboxId={mailboxId}
 							label="CC"
-							type="text"
-							size="sm"
 							value={cc}
-							onChange={(e) => setCc(e.target.value)}
+							onChange={setCc}
 							placeholder="Separate multiple addresses with commas"
 						/>
 					)}
 					{showCcBcc && (
-						<Input
+						<RecipientAutocompleteInput
+							mailboxId={mailboxId}
 							label="BCC"
-							type="text"
-							size="sm"
 							value={bcc}
-							onChange={(e) => setBcc(e.target.value)}
+							onChange={setBcc}
 							placeholder="Separate multiple addresses with commas"
 						/>
 					)}
