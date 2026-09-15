@@ -129,7 +129,12 @@ function parseHeaderList(
 	return map;
 }
 
-const NESTED_SETTING_KEYS = ["forwarding", "autoReply", "signature"] as const;
+const NESTED_SETTING_KEYS = [
+	"forwarding",
+	"autoReply",
+	"signature",
+	"filters",
+] as const;
 
 /**
  * PUT /mailboxes replaces the R2 JSON blob. iOS omits nil optionals and

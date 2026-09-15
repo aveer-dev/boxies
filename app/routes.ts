@@ -16,6 +16,7 @@ export default [
 		route("settings", "routes/settings.tsx"),
 		route("settings/forwarding", "routes/settings-forwarding.tsx"),
 		route("settings/auto-reply", "routes/settings-auto-reply.tsx"),
+		route("settings/filters", "routes/settings-filters.tsx"),
 		route("search", "routes/search-results.tsx"),
 	]),
 	route("*", "routes/not-found.tsx"),

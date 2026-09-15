@@ -81,6 +81,11 @@ import {
 	type HeaderSource,
 	type MailboxAutomationSettings,
 } from "./lib/mail-automations";
+import {
+	applyInboxFilters,
+	inboxFiltersError,
+	parseInboxFilters,
+} from "./lib/inbox-filters";
 
 type AppContext = Context<MailboxContext>;
 
@@ -229,6 +234,8 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 		mailboxId,
 	);
 	if (automationError) return c.json({ error: automationError }, 400);
+	const filtersError = inboxFiltersError(parseInboxFilters(merged), mailboxId);
+	if (filtersError) return c.json({ error: filtersError }, 400);
 	await c.env.BUCKET.put(key, JSON.stringify(merged));
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings: merged });
 });
@@ -811,17 +818,28 @@ type AutomationStub = {
 	) => Promise<unknown>;
 };
 
+async function loadMailboxSettingsRaw(
+	env: Env,
+	mailboxId: string,
+): Promise<Record<string, unknown>> {
+	const obj = await env.BUCKET.get(mailboxMetadataKey(mailboxId));
+	if (!obj) return {};
+	try {
+		const parsed = await obj.json();
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+	} catch {
+		/* ignore */
+	}
+	return {};
+}
+
 async function loadAutomationSettings(
 	env: Env,
 	mailboxId: string,
 ): Promise<MailboxAutomationSettings> {
-	const obj = await env.BUCKET.get(mailboxMetadataKey(mailboxId));
-	if (!obj) return {};
-	try {
-		return parseAutomationSettings(await obj.json());
-	} catch {
-		return {};
-	}
+	return parseAutomationSettings(await loadMailboxSettingsRaw(env, mailboxId));
 }
 
 async function applyInboundForward(options: {
@@ -831,11 +849,17 @@ async function applyInboundForward(options: {
 	settings: MailboxAutomationSettings;
 	classification: EmailClassification;
 	headers: HeaderSource;
+	/** When set (including from a matched filter), overrides global forwarding. */
+	forwardToOverride?: string | null;
 }): Promise<void> {
-	const { message, mailboxId, sender, settings, classification, headers } = options;
+	const {
+		message, mailboxId, sender, settings, classification, headers, forwardToOverride,
+	} = options;
+	const override = typeof forwardToOverride === "string" ? forwardToOverride.trim() : "";
+	const useOverride = Boolean(override);
 	const decision = shouldForward({
-		enabled: Boolean(settings.forwarding?.enabled),
-		dest: settings.forwarding?.email,
+		enabled: useOverride ? true : Boolean(settings.forwarding?.enabled),
+		dest: useOverride ? override : settings.forwarding?.email,
 		mailboxId,
 		sender,
 		classification,
@@ -843,7 +867,7 @@ async function applyInboundForward(options: {
 		canBeForwarded: (message as { canBeForwarded?: boolean }).canBeForwarded,
 	});
 	if (!decision.ok) {
-		if (settings.forwarding?.enabled) {
+		if (useOverride || settings.forwarding?.enabled) {
 			console.log(`Skipping forward for ${mailboxId}: ${decision.reason}`);
 		}
 		return;
@@ -1129,13 +1153,28 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 	};
 
-	let filedFolder: string = classification.folderId;
+	const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
+	const automationSettings = parseAutomationSettings(rawMailboxSettings);
+	const filterHit = applyInboxFilters(parseInboxFilters(rawMailboxSettings), {
+		sender: fromAddress,
+		subject: parsedEmail.subject || "",
+		headers: parsedEmail.headers,
+	});
+	if (filterHit) {
+		console.log(
+			`Inbox filter ${filterHit.ruleId} matched for ${mailboxId}` +
+				(filterHit.folderId ? ` -> ${filterHit.folderId}` : ""),
+		);
+	}
+
+	const targetFolder = filterHit?.folderId || classification.folderId;
+	let filedFolder: string = targetFolder;
 	try {
-		await stub.createEmail(classification.folderId, inboundEmail, attachmentData);
+		await stub.createEmail(targetFolder, inboundEmail, attachmentData);
 	} catch (e) {
-		if (!shouldFallbackToInbox(classification.folderId, e)) throw e;
+		if (!shouldFallbackToInbox(targetFolder, e)) throw e;
 		console.error(
-			`Failed to file inbound mail to ${classification.folderId}, falling back to inbox:`,
+			`Failed to file inbound mail to ${targetFolder}, falling back to inbox:`,
 			(e as Error).message,
 		);
 		await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
@@ -1143,7 +1182,6 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	}
 
 	try {
-		const automationSettings = await loadAutomationSettings(env, mailboxId);
 		await applyInboundForward({
 			message,
 			mailboxId,
@@ -1151,6 +1189,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			settings: automationSettings,
 			classification,
 			headers: message.headers,
+			forwardToOverride: filterHit?.forwardTo,
 		});
 		ctx.waitUntil(
 			sendInboundAutoReply({
@@ -1177,7 +1216,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	}
 
 	// Auto-draft personal ham only. Spam and bulk skip the agent entirely.
-	if (shouldAutoDraft(classification)) {
+	if (shouldAutoDraft(classification) && !filterHit?.skipAutoDraft) {
 		ctx.waitUntil(
 			(async () => {
 				await stub.ensureAutoAgentConversation();
