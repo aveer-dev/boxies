@@ -17,7 +17,9 @@ opencode.jsonc
 skills-lock.json
 .DS_Store
 worker-configuration.d.ts
-.cursor
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
 # Android
 android/.gradle/
 android/local.properties
