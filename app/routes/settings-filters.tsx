@@ -11,6 +11,33 @@ import { useFolders } from "~/queries/folders";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import type { InboxFilterRule } from "~/types";
 
+// #region agent log
+function dbg(
+	hypothesisId: string,
+	location: string,
+	message: string,
+	data: Record<string, unknown> = {},
+) {
+	const payload = {
+		hypothesisId,
+		location,
+		message,
+		data,
+		timestamp: Date.now(),
+	};
+	console.log("[DBG-FILTERS]", payload);
+	try {
+		fetch("http://127.0.0.1:7399/", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload),
+		}).catch(() => {});
+	} catch {
+		/* ignore */
+	}
+}
+// #endregion
+
 function createRule(): InboxFilterRule {
 	return {
 		id: crypto.randomUUID(),
@@ -70,8 +97,33 @@ export default function FiltersSettingsRoute() {
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [isSaving, setIsSaving] = useState(false);
 
+	// #region agent log
+	useEffect(() => {
+		dbg("B", "settings-filters.tsx:mount", "FiltersSettingsRoute mounted", {
+			mailboxId: mailboxId ?? null,
+		});
+		return () => {
+			dbg("B", "settings-filters.tsx:unmount", "FiltersSettingsRoute unmounted", {
+				mailboxId: mailboxId ?? null,
+			});
+		};
+	}, [mailboxId]);
+	// #endregion
+
 	useEffect(() => {
 		if (!mailbox) return;
+		// #region agent log
+		const incoming = mailbox.settings?.filters ?? [];
+		dbg("A", "settings-filters.tsx:useEffect[mailbox]", "mailbox effect reset rules", {
+			mailboxEmail: mailbox.email,
+			incomingCount: incoming.length,
+			incomingIds: incoming.map((r) => r.id),
+			incomingIdPresent: incoming.map((r) => Boolean(r.id)),
+			prevRulesCount: rules.length,
+			prevRuleIds: rules.map((r) => r.id),
+			editingId,
+		});
+		// #endregion
 		setRules(
 			(mailbox.settings?.filters ?? []).map((rule) => ({
 				...createRule(),
@@ -90,6 +142,19 @@ export default function FiltersSettingsRoute() {
 
 	const editing = rules.find((rule) => rule.id === editingId) ?? null;
 
+	// #region agent log
+	useEffect(() => {
+		dbg("A", "settings-filters.tsx:render-state", "rules/editingId state", {
+			rulesCount: rules.length,
+			ruleIds: rules.map((r) => r.id),
+			ruleNames: rules.map((r) => r.name || "Untitled"),
+			editingId,
+			editingFound: Boolean(editing),
+			editingName: editing?.name || null,
+		});
+	}, [rules, editingId, editing]);
+	// #endregion
+
 	const updateRule = (id: string, patch: Partial<InboxFilterRule>) => {
 		setRules((prev) =>
 			prev.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)),
@@ -98,6 +163,13 @@ export default function FiltersSettingsRoute() {
 
 	const handleAdd = () => {
 		const rule = createRule();
+		// #region agent log
+		dbg("D", "settings-filters.tsx:handleAdd", "Add filter clicked", {
+			newRuleId: rule.id,
+			prevRulesCount: rules.length,
+			prevEditingId: editingId,
+		});
+		// #endregion
 		setRules((prev) => [...prev, rule]);
 		setEditingId(rule.id);
 	};
@@ -215,11 +287,31 @@ export default function FiltersSettingsRoute() {
 							<button
 								type="button"
 								className="min-w-0 flex-1 text-left"
-								onClick={() =>
+								onClick={() => {
+									// #region agent log
+									const topEl =
+										typeof document !== "undefined"
+											? document.elementFromPoint(
+													window.innerWidth / 2,
+													window.innerHeight / 2,
+												)
+											: null;
+									dbg("C", "settings-filters.tsx:rowClick", "filter row clicked", {
+										ruleId: rule.id,
+										ruleName: rule.name || "Untitled",
+										prevEditingId: editingId,
+										nextEditingId: editingId === rule.id ? null : rule.id,
+										centerElement:
+											topEl?.tagName +
+											(topEl?.className
+												? `.${String(topEl.className).slice(0, 80)}`
+												: ""),
+									});
+									// #endregion
 									setEditingId((current) =>
 										current === rule.id ? null : rule.id,
-									)
-								}
+									);
+								}}
 							>
 								<div className="text-sm text-kumo-default font-medium">
 									{rule.name?.trim() || "Untitled filter"}
@@ -330,7 +422,15 @@ export default function FiltersSettingsRoute() {
 						variant="secondary"
 						size="sm"
 						icon={<PlusIcon size={14} />}
-						onClick={handleAdd}
+						onClick={() => {
+							// #region agent log
+							dbg("D", "settings-filters.tsx:AddButton", "Kumo Add filter Button onClick fired", {
+								rulesCount: rules.length,
+								editingId,
+							});
+							// #endregion
+							handleAdd();
+						}}
 					>
 						Add filter
 					</Button>
