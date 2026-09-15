@@ -4,6 +4,8 @@ Native Jetpack Compose client for the Cloudflare [Agentic Inbox](../README.md) b
 
 Designed for people coming from **web / Ionic / Capacitor**: Compose screens ≈ React components, `StateFlow` stores ≈ Zustand/context, `suspend` + OkHttp ≈ `fetch`.
 
+**UI for agents:** follow [`.cursor/skills/inboxies-android-ui`](../.cursor/skills/inboxies-android-ui/SKILL.md) (tokens, chrome, navigation, iOS parity). Do not use Material You / Navigation Compose for app IA.
+
 ## What’s included
 
 - **Google Sign-In** → backend exchanges the Google ID token for a mobile session JWT (`Authorization: Bearer …`) via `/api/v1/auth/google`

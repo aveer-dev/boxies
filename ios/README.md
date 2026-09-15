@@ -4,6 +4,8 @@ Native SwiftUI client for the Cloudflare [Agentic Inbox](../../README.md) backen
 
 Designed for people coming from **web / Ionic / Capacitor**: SwiftUI views ≈ React components, `@Observable` stores ≈ Zustand/context, `async/await` + `URLSession` ≈ `fetch`.
 
+**UI for agents:** follow [`.cursor/skills/inboxies-ios-ui`](../.cursor/skills/inboxies-ios-ui/SKILL.md) (tokens, chrome, navigation, motion). Do not invent Apple Mail styling.
+
 ## What’s included
 
 ### Phase 1 (MVP)
