@@ -2,13 +2,11 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Input } from "@cloudflare/kumo";
 import {
 	useEffect,
 	useId,
 	useRef,
 	useState,
-	type ChangeEvent,
 	type KeyboardEvent,
 } from "react";
 import { useRecentRecipients } from "~/queries/recipients";
@@ -46,6 +44,8 @@ interface RecipientAutocompleteInputProps {
 	required?: boolean;
 	id?: string;
 	className?: string;
+	/** Show the people-I've-emailed list under the field (default true). */
+	showPeopleList?: boolean;
 }
 
 export default function RecipientAutocompleteInput({
@@ -57,14 +57,16 @@ export default function RecipientAutocompleteInput({
 	required,
 	id,
 	className,
+	showPeopleList = true,
 }: RecipientAutocompleteInputProps) {
 	const listId = useId();
-	const rootRef = useRef<HTMLDivElement>(null);
-	const [open, setOpen] = useState(false);
+	const inputId = id ?? listId;
+	const inputRef = useRef<HTMLInputElement>(null);
 	const [highlight, setHighlight] = useState(0);
 	const { token } = currentToken(value);
+
 	const { data: recipients = [] } = useRecentRecipients(mailboxId, token, {
-		enabled: open,
+		enabled: !!mailboxId,
 	});
 
 	const suggestions = recipients.filter((r) => {
@@ -74,9 +76,8 @@ export default function RecipientAutocompleteInput({
 			.map((p) => p.trim())
 			.filter(Boolean);
 		const email = r.email.toLowerCase();
-		// Allow the in-progress token to match itself; exclude committed addresses.
-		const committed = already.slice(0, -1);
-		return !committed.some(
+		const committedOnly = token ? already.slice(0, -1) : already;
+		return !committedOnly.some(
 			(entry) =>
 				entry === email ||
 				entry.includes(`<${email}>`) ||
@@ -84,37 +85,23 @@ export default function RecipientAutocompleteInput({
 		);
 	});
 
+	// Always show the people-I've-emailed list while there are matches.
+	const showList = showPeopleList && suggestions.length > 0;
+
 	useEffect(() => {
 		setHighlight(0);
 	}, [token, suggestions.length]);
-
-	useEffect(() => {
-		function onPointerDown(e: MouseEvent) {
-			if (!rootRef.current?.contains(e.target as Node)) {
-				setOpen(false);
-			}
-		}
-		document.addEventListener("mousedown", onPointerDown);
-		return () => document.removeEventListener("mousedown", onPointerDown);
-	}, []);
-
-	const showList = open && suggestions.length > 0;
 
 	const selectAt = (index: number) => {
 		const suggestion = suggestions[index];
 		if (!suggestion) return;
 		onChange(applySuggestion(value, suggestion));
-		setOpen(true);
 		setHighlight(0);
+		inputRef.current?.focus();
 	};
 
 	const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-		if (!showList) {
-			if (e.key === "ArrowDown" && suggestions.length > 0) {
-				setOpen(true);
-			}
-			return;
-		}
+		if (!showList) return;
 		if (e.key === "ArrowDown") {
 			e.preventDefault();
 			setHighlight((h) => (h + 1) % suggestions.length);
@@ -128,21 +115,36 @@ export default function RecipientAutocompleteInput({
 			}
 		} else if (e.key === "Escape") {
 			e.preventDefault();
-			setOpen(false);
+			inputRef.current?.blur();
 		}
 	};
 
 	return (
-		<div ref={rootRef} className={`relative ${className ?? ""}`}>
-			<Input
-				id={id}
-				label={label}
+		<div className={`relative ${className ?? ""}`}>
+			{label ? (
+				<label
+					htmlFor={inputId}
+					className="mb-1.5 block text-sm font-medium text-kumo-default"
+				>
+					{label}
+					{required ? (
+						<span className="text-kumo-danger" aria-hidden>
+							{" "}
+							*
+						</span>
+					) : null}
+				</label>
+			) : null}
+			<input
+				ref={inputRef}
+				id={inputId}
 				type="text"
 				placeholder={placeholder}
-				size="sm"
 				value={value}
 				required={required}
+				autoComplete="off"
 				role="combobox"
+				aria-label={label ?? placeholder ?? "Recipients"}
 				aria-expanded={showList}
 				aria-controls={listId}
 				aria-autocomplete="list"
@@ -151,29 +153,28 @@ export default function RecipientAutocompleteInput({
 						? `${listId}-${highlight}`
 						: undefined
 				}
-				onFocus={() => setOpen(true)}
-				onChange={(e: ChangeEvent<HTMLInputElement>) => {
+				className="w-full h-6.5 gap-1 rounded-md px-2 text-xs border-0 bg-kumo-control text-kumo-default ring ring-kumo-hairline focus:ring-kumo-hairline outline-none"
+				onChange={(e) => {
 					onChange(e.target.value);
-					setOpen(true);
 				}}
 				onKeyDown={onKeyDown}
 			/>
-			{showList && (
+			{showList ? (
 				<ul
 					id={listId}
 					role="listbox"
-					className="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-md border border-kumo-line bg-kumo-base py-1 shadow-md"
+					className="relative z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border border-kumo-line bg-kumo-base py-1 shadow-md"
 				>
 					{suggestions.map((r, i) => {
-						const active = i === highlight;
+						const selected = i === highlight;
 						return (
 							<li
 								key={r.email}
 								id={`${listId}-${i}`}
 								role="option"
-								aria-selected={active}
+								aria-selected={selected}
 								className={`cursor-pointer px-3 py-2 text-sm ${
-									active
+									selected
 										? "bg-kumo-tint text-kumo-default"
 										: "text-kumo-default hover:bg-kumo-tint"
 								}`}
@@ -195,7 +196,7 @@ export default function RecipientAutocompleteInput({
 						);
 					})}
 				</ul>
-			)}
+			) : null}
 		</div>
 	);
 }

@@ -149,7 +149,7 @@ const api = {
 		if (params?.q) query.q = params.q;
 		if (params?.limit != null) query.limit = String(params.limit);
 		return get<{ recipients: RecentRecipient[] }>(
-			`/api/v1/mailboxes/${mailboxId}/recipients`,
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/recipients`,
 			{ params: query, signal: opts?.signal },
 		);
 	},
