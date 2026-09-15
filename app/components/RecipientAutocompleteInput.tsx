@@ -8,6 +8,7 @@ import {
 	useRef,
 	useState,
 	type KeyboardEvent,
+	type ReactNode,
 } from "react";
 import { useRecentRecipients } from "~/queries/recipients";
 import type { RecentRecipient } from "~/types";
@@ -44,6 +45,8 @@ interface RecipientAutocompleteInputProps {
 	required?: boolean;
 	id?: string;
 	className?: string;
+	/** Shown inline to the right of the input (e.g. CC/BCC toggle). */
+	trailing?: ReactNode;
 	/** Show the people-I've-emailed list under the field (default true). */
 	showPeopleList?: boolean;
 }
@@ -57,6 +60,7 @@ export default function RecipientAutocompleteInput({
 	required,
 	id,
 	className,
+	trailing,
 	showPeopleList = true,
 }: RecipientAutocompleteInputProps) {
 	const listId = useId();
@@ -65,7 +69,8 @@ export default function RecipientAutocompleteInput({
 	const [highlight, setHighlight] = useState(0);
 	const { token } = currentToken(value);
 
-	const { data: recipients = [] } = useRecentRecipients(mailboxId, token, {
+	// Load the recent-people set once; filter locally as the user types.
+	const { data: recipients = [] } = useRecentRecipients(mailboxId, "", {
 		enabled: !!mailboxId,
 	});
 
@@ -76,16 +81,23 @@ export default function RecipientAutocompleteInput({
 			.map((p) => p.trim())
 			.filter(Boolean);
 		const email = r.email.toLowerCase();
+		const name = (r.name || "").toLowerCase();
 		const committedOnly = token ? already.slice(0, -1) : already;
-		return !committedOnly.some(
-			(entry) =>
-				entry === email ||
-				entry.includes(`<${email}>`) ||
-				entry.endsWith(email),
-		);
+		if (
+			committedOnly.some(
+				(entry) =>
+					entry === email ||
+					entry.includes(`<${email}>`) ||
+					entry.endsWith(email),
+			)
+		) {
+			return false;
+		}
+		const q = token.trim().toLowerCase();
+		if (!q) return true;
+		return email.includes(q) || name.includes(q);
 	});
 
-	// Always show the people-I've-emailed list while there are matches.
 	const showList = showPeopleList && suggestions.length > 0;
 
 	useEffect(() => {
@@ -120,7 +132,7 @@ export default function RecipientAutocompleteInput({
 	};
 
 	return (
-		<div className={`relative ${className ?? ""}`}>
+		<div className={`min-w-0 ${className ?? ""}`}>
 			{label ? (
 				<label
 					htmlFor={inputId}
@@ -135,35 +147,37 @@ export default function RecipientAutocompleteInput({
 					) : null}
 				</label>
 			) : null}
-			<input
-				ref={inputRef}
-				id={inputId}
-				type="text"
-				placeholder={placeholder}
-				value={value}
-				required={required}
-				autoComplete="off"
-				role="combobox"
-				aria-label={label ?? placeholder ?? "Recipients"}
-				aria-expanded={showList}
-				aria-controls={listId}
-				aria-autocomplete="list"
-				aria-activedescendant={
-					showList && suggestions[highlight]
-						? `${listId}-${highlight}`
-						: undefined
-				}
-				className="w-full h-6.5 gap-1 rounded-md px-2 text-xs border-0 bg-kumo-control text-kumo-default ring ring-kumo-hairline focus:ring-kumo-hairline outline-none"
-				onChange={(e) => {
-					onChange(e.target.value);
-				}}
-				onKeyDown={onKeyDown}
-			/>
+			<div className="flex items-center gap-2 min-w-0">
+				<input
+					ref={inputRef}
+					id={inputId}
+					type="text"
+					placeholder={placeholder}
+					value={value}
+					required={required}
+					autoComplete="off"
+					role="combobox"
+					aria-label={label ?? placeholder ?? "Recipients"}
+					aria-expanded={showList}
+					aria-controls={listId}
+					aria-autocomplete="list"
+					aria-activedescendant={
+						showList && suggestions[highlight]
+							? `${listId}-${highlight}`
+							: undefined
+					}
+					className="min-w-0 flex-1 h-8 rounded-md px-2 text-sm border-0 bg-kumo-control text-kumo-default ring ring-kumo-hairline focus:ring-kumo-hairline outline-none"
+					title={value || undefined}
+					onChange={(e) => onChange(e.target.value)}
+					onKeyDown={onKeyDown}
+				/>
+				{trailing}
+			</div>
 			{showList ? (
 				<ul
 					id={listId}
 					role="listbox"
-					className="relative z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border border-kumo-line bg-kumo-base py-1 shadow-md"
+					className="mt-1 max-h-48 w-full overflow-auto rounded-md border border-kumo-line bg-kumo-base py-1 shadow-md"
 				>
 					{suggestions.map((r, i) => {
 						const selected = i === highlight;
@@ -173,6 +187,7 @@ export default function RecipientAutocompleteInput({
 								id={`${listId}-${i}`}
 								role="option"
 								aria-selected={selected}
+								title={r.email}
 								className={`cursor-pointer px-3 py-2 text-sm ${
 									selected
 										? "bg-kumo-tint text-kumo-default"
@@ -184,11 +199,11 @@ export default function RecipientAutocompleteInput({
 									selectAt(i);
 								}}
 							>
-								<div className="font-medium truncate">
+								<div className="font-medium break-all">
 									{r.name?.trim() || r.email}
 								</div>
 								{r.name?.trim() ? (
-									<div className="text-xs text-kumo-subtle truncate">
+									<div className="text-xs text-kumo-subtle break-all">
 										{r.email}
 									</div>
 								) : null}
