@@ -72,6 +72,12 @@ struct SettingsSheetView: View {
                         settingsLabel("Auto-reply", systemImage: "arrowshape.turn.up.left")
                     }
 
+                    NavigationLink {
+                        FiltersSettingsView()
+                    } label: {
+                        settingsLabel("Filters", systemImage: "line.3.horizontal.decrease.circle")
+                    }
+
                     notificationsToggle
                     signatureToggle
                 } header: {

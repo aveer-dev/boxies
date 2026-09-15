@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.Edit
@@ -81,6 +82,7 @@ private sealed class SettingsPage {
     data object AgentPrompt : SettingsPage()
     data object Forwarding : SettingsPage()
     data object AutoReply : SettingsPage()
+    data object Filters : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
 }
@@ -207,6 +209,7 @@ fun SettingsSheetView(
                     onOpenAgentPrompt = { page = SettingsPage.AgentPrompt },
                     onOpenForwarding = { page = SettingsPage.Forwarding },
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
+                    onOpenFilters = { page = SettingsPage.Filters },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
                         if (enabled) enableNotifications() else disableNotifications()
@@ -234,6 +237,9 @@ fun SettingsSheetView(
                 SettingsPage.AutoReply -> AutoReplySettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.Filters -> FiltersSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.Support -> SupportSettingsView(
                     onBack = { page = SettingsPage.Root },
                     onCloseSettings = onClose,
@@ -258,6 +264,7 @@ private fun SettingsRootPage(
     onOpenAgentPrompt: () -> Unit,
     onOpenForwarding: () -> Unit,
     onOpenAutoReply: () -> Unit,
+    onOpenFilters: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
     onDeleteMailbox: (String) -> Unit,
@@ -387,6 +394,11 @@ private fun SettingsRootPage(
                 title = "Auto-reply",
                 icon = Icons.AutoMirrored.Outlined.Reply,
                 onClick = onOpenAutoReply,
+            )
+            SettingsNavRow(
+                title = "Filters",
+                icon = Icons.Outlined.FilterList,
+                onClick = onOpenFilters,
             )
             SettingsToggleRow(
                 title = "Notifications",

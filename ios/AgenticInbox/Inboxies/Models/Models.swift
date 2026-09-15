@@ -13,6 +13,19 @@ struct MailboxSettings: Codable, Hashable {
     var forwarding: ForwardingSettings?
     var signature: SignatureSettings?
     var autoReply: AutoReplySettings?
+    var filters: [InboxFilterRule]?
+}
+
+struct InboxFilterRule: Codable, Hashable, Identifiable {
+    var id: String
+    var enabled: Bool?
+    var name: String?
+    var from: String?
+    var list: String?
+    var subject: String?
+    var folderId: String?
+    var skipAutoDraft: Bool?
+    var forwardTo: String?
 }
 
 struct ForwardingSettings: Codable, Hashable {
