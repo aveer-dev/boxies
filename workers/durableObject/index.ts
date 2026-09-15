@@ -34,6 +34,7 @@ import {
 	sanitizeFtsQuery,
 	type FtsEmailFields,
 } from "../lib/email-fts";
+import { aggregateRecentRecipients } from "../../shared/recent-recipients";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -496,6 +497,61 @@ export class MailboxDO extends DurableObject<Env> {
 				starred: !!email.starred,
 			})),
 		);
+	}
+
+	/**
+	 * People I've emailed: unique recipients from recent Sent mail,
+	 * ranked by most recent, optionally filtered by `q`.
+	 */
+	async listRecentRecipients(options: { q?: string; limit?: number } = {}) {
+		const limit = Math.min(Math.max(options.limit ?? 20, 1), 50);
+		const scanLimit = 200;
+
+		const sentRows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT recipient, cc, bcc, date
+				 FROM emails
+				 WHERE folder_id = ${SENT_FOLDER_ID_SQL}
+				 ORDER BY date DESC
+				 LIMIT ?`,
+				scanLimit,
+			),
+		] as {
+			recipient: string | null;
+			cc: string | null;
+			bcc: string | null;
+			date: string | null;
+		}[];
+
+		const knownNames = new Map<string, string>();
+		try {
+			const nameRows = [
+				...this.ctx.storage.sql.exec(
+					`SELECT LOWER(TRIM(sender)) AS email, sender_name AS name
+					 FROM emails
+					 WHERE sender IS NOT NULL
+					   AND TRIM(sender) != ''
+					   AND sender_name IS NOT NULL
+					   AND TRIM(sender_name) != ''
+					 GROUP BY LOWER(TRIM(sender))
+					 ORDER BY MAX(date) DESC
+					 LIMIT 500`,
+				),
+			] as { email: string; name: string }[];
+			for (const row of nameRows) {
+				if (row.email && row.name && !knownNames.has(row.email)) {
+					knownNames.set(row.email, row.name);
+				}
+			}
+		} catch (e) {
+			console.error("known sender names lookup failed:", (e as Error).message);
+		}
+
+		return aggregateRecentRecipients(sentRows, {
+			q: options.q,
+			limit,
+			knownNames,
+		});
 	}
 
 	/**

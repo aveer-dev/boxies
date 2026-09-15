@@ -2,7 +2,14 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { AgentConversation, Email, Folder, InboxDigest, Mailbox } from "~/types";
+import type {
+	AgentConversation,
+	Email,
+	Folder,
+	InboxDigest,
+	Mailbox,
+	RecentRecipient,
+} from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -133,6 +140,19 @@ const api = {
 		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, { folderId }),
 	getThread: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
 		get<Email[]>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}`, { signal: opts?.signal }),
+	listRecentRecipients: (
+		mailboxId: string,
+		params?: { q?: string; limit?: number },
+		opts?: { signal?: AbortSignal },
+	) => {
+		const query: Record<string, string> = {};
+		if (params?.q) query.q = params.q;
+		if (params?.limit != null) query.limit = String(params.limit);
+		return get<{ recipients: RecentRecipient[] }>(
+			`/api/v1/mailboxes/${mailboxId}/recipients`,
+			{ params: query, signal: opts?.signal },
+		);
+	},
 	markThreadRead: (mailboxId: string, threadId: string) =>
 		post<void>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}/read`),
 	getAttachment: (mailboxId: string, emailId: string, attachmentId: string) =>

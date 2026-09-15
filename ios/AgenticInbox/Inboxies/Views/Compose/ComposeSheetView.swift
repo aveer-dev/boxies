@@ -10,6 +10,8 @@ struct ComposeSheetView: View {
     @State private var viewportHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
     @State private var showQuotedOriginal = false
+    @State private var suggestions: [RecentRecipient] = []
+    @State private var suggestionRequestID = UUID()
     @FocusState private var focusedField: Field?
 
     private enum Field: Hashable {
@@ -63,7 +65,15 @@ struct ComposeSheetView: View {
             .onChange(of: focusedField) { _, new in
                 if new == .subject || new == .body {
                     recipientFocus = nil
+                    suggestions = []
                     form.commitPendingTokens()
+                }
+            }
+            .onChange(of: recipientFocus) { _, new in
+                if let new, new == .to || new == .cc || new == .bcc {
+                    scheduleSuggestionFetch(for: new)
+                } else {
+                    suggestions = []
                 }
             }
             .toolbar {
@@ -165,10 +175,55 @@ struct ComposeSheetView: View {
                 ccRow
                 bccRow
             }
+            if !suggestions.isEmpty, let focus = recipientFocus,
+               focus == .to || focus == .cc || focus == .bcc {
+                recipientSuggestions(for: focus)
+            }
             subjectRow
             divider
         }
         .padding(.top, 8)
+    }
+
+    private func recipientSuggestions(for field: Field) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(suggestions) { suggestion in
+                Button {
+                    selectSuggestion(suggestion, for: field)
+                } label: {
+                    let trimmedName = suggestion.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(trimmedName.isEmpty ? suggestion.email : trimmedName)
+                            .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
+                            .foregroundStyle(AppTheme.ink)
+                            .lineLimit(1)
+                        if !trimmedName.isEmpty {
+                            Text(suggestion.email)
+                                .font(.inter(size: AppTheme.FontSize.meta))
+                                .foregroundStyle(AppTheme.muted)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(AppTheme.surface)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(AppTheme.line.opacity(0.65))
+                .frame(height: 0.5)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(AppTheme.line.opacity(0.65))
+                .frame(height: 0.5)
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: suggestions.map(\.id))
     }
 
     private var fromRow: some View {
@@ -441,6 +496,73 @@ struct ComposeSheetView: View {
         .onChange(of: draft.wrappedValue) { _, newValue in
             if Self.shouldCommitToken(newValue) {
                 onCommit()
+                suggestions = []
+            } else {
+                scheduleSuggestionFetch(for: focus)
+            }
+        }
+    }
+
+    private func selectSuggestion(_ suggestion: RecentRecipient, for field: Field) {
+        let address = suggestion.asMailAddress
+        switch field {
+        case .to:
+            form.addSuggestion(address, to: .to)
+        case .cc:
+            form.addSuggestion(address, to: .cc)
+        case .bcc:
+            form.addSuggestion(address, to: .bcc)
+        case .subject, .body:
+            break
+        }
+        suggestions = []
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func scheduleSuggestionFetch(for field: Field) {
+        let draft: String
+        let existing: [MailAddress]
+        switch field {
+        case .to:
+            draft = form.toDraft
+            existing = form.toTokens
+        case .cc:
+            draft = form.ccDraft
+            existing = form.ccTokens
+        case .bcc:
+            draft = form.bccDraft
+            existing = form.bccTokens
+        case .subject, .body:
+            suggestions = []
+            return
+        }
+
+        let query = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requestID = UUID()
+        suggestionRequestID = requestID
+        let mailboxId = form.fromMailboxId
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard suggestionRequestID == requestID else { return }
+            // Preview / mock mailboxes have no API.
+            if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+                || mailboxId.hasPrefix("mb-") {
+                suggestions = []
+                return
+            }
+            do {
+                let results = try await APIClient.shared.listRecipients(
+                    mailboxId: mailboxId,
+                    q: query,
+                    limit: 8
+                )
+                guard suggestionRequestID == requestID else { return }
+                let existingIDs = Set(existing.map(\.id))
+                suggestions = results.filter { !existingIDs.contains($0.id) }
+            } catch {
+                guard suggestionRequestID == requestID else { return }
+                suggestions = []
             }
         }
     }

@@ -93,6 +93,8 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
+import co.inboxies.app.models.RecentRecipient
+import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.ComposeSession
 import co.inboxies.app.services.ComposeToast
 import co.inboxies.app.theme.AppThemeDims
@@ -141,6 +143,7 @@ fun ComposeSheetView(
     var fromName by remember(form) { mutableStateOf(form.fromName) }
     var fromEmail by remember(form) { mutableStateOf(form.fromEmail) }
     var recipientFocus by remember { mutableStateOf<ComposeField?>(null) }
+    var suggestions by remember { mutableStateOf<List<RecentRecipient>>(emptyList()) }
     var showCloseMenu by remember { mutableStateOf(false) }
     var showFromMenu by remember { mutableStateOf(false) }
     var showQuotedOriginal by remember { mutableStateOf(false) }
@@ -192,6 +195,65 @@ fun ComposeSheetView(
         val current = toast ?: return@LaunchedEffect
         delay(2500)
         if (toast?.id == current.id) toast = null
+    }
+
+    val suggestionDraft = when (recipientFocus) {
+        ComposeField.To -> toDraft
+        ComposeField.Cc -> ccDraft
+        ComposeField.Bcc -> bccDraft
+        else -> null
+    }
+    val suggestionExisting = when (recipientFocus) {
+        ComposeField.To -> toTokens
+        ComposeField.Cc -> ccTokens
+        ComposeField.Bcc -> bccTokens
+        else -> emptyList()
+    }
+    LaunchedEffect(recipientFocus, suggestionDraft, fromMailboxId) {
+        val field = recipientFocus
+        if (field != ComposeField.To && field != ComposeField.Cc && field != ComposeField.Bcc) {
+            suggestions = emptyList()
+            return@LaunchedEffect
+        }
+        delay(180)
+        val q = suggestionDraft?.trim().orEmpty()
+        val existingIds = suggestionExisting.map { it.id }.toSet()
+        suggestions = runCatching {
+            ApiClient.shared.listRecipients(fromMailboxId, q = q, limit = 8)
+                .filter { it.id !in existingIds }
+        }.getOrDefault(emptyList())
+    }
+
+    fun selectSuggestion(suggestion: RecentRecipient) {
+        val address = suggestion.toMailAddress()
+        when (recipientFocus) {
+            ComposeField.To -> {
+                if (toTokens.none { it.id == address.id }) {
+                    toTokens = toTokens + address
+                }
+                toDraft = ""
+                form.toTokens = toTokens
+                form.toDraft = ""
+            }
+            ComposeField.Cc -> {
+                if (ccTokens.none { it.id == address.id }) {
+                    ccTokens = ccTokens + address
+                }
+                ccDraft = ""
+                form.ccTokens = ccTokens
+                form.ccDraft = ""
+            }
+            ComposeField.Bcc -> {
+                if (bccTokens.none { it.id == address.id }) {
+                    bccTokens = bccTokens + address
+                }
+                bccDraft = ""
+                form.bccTokens = bccTokens
+                form.bccDraft = ""
+            }
+            else -> Unit
+        }
+        suggestions = emptyList()
     }
 
     fun settleDrag() {
@@ -464,6 +526,16 @@ fun ComposeSheetView(
                                 onFocus = { recipientFocus = ComposeField.Bcc },
                             )
                         }
+                        if (suggestions.isNotEmpty() &&
+                            (recipientFocus == ComposeField.To ||
+                                recipientFocus == ComposeField.Cc ||
+                                recipientFocus == ComposeField.Bcc)
+                        ) {
+                            RecipientSuggestions(
+                                suggestions = suggestions,
+                                onSelect = { selectSuggestion(it) },
+                            )
+                        }
                         SubjectField(
                             value = subject,
                             onValueChange = {
@@ -473,6 +545,7 @@ fun ComposeSheetView(
                             },
                             onFocus = {
                                 recipientFocus = null
+                                suggestions = emptyList()
                                 commitTokens()
                             },
                         )
@@ -631,6 +704,70 @@ private fun FromRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+@Composable
+private fun RecipientSuggestions(
+    suggestions: List<RecentRecipient>,
+    onSelect: (RecentRecipient) -> Unit,
+) {
+    val colors = inboxiesColors()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.surface)
+            .drawBehind {
+                val stroke = 0.5.dp.toPx()
+                drawLine(
+                    color = colors.line.copy(alpha = 0.65f),
+                    start = androidx.compose.ui.geometry.Offset(0f, 0f),
+                    end = androidx.compose.ui.geometry.Offset(size.width, 0f),
+                    strokeWidth = stroke,
+                )
+                drawLine(
+                    color = colors.line.copy(alpha = 0.65f),
+                    start = androidx.compose.ui.geometry.Offset(0f, size.height),
+                    end = androidx.compose.ui.geometry.Offset(size.width, size.height),
+                    strokeWidth = stroke,
+                )
+            },
+    ) {
+        suggestions.forEach { suggestion ->
+            val trimmedName = suggestion.name?.trim().orEmpty()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        role = Role.Button,
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = { onSelect(suggestion) },
+                    )
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    text = trimmedName.ifEmpty { suggestion.email },
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = AppThemeDims.FontSize.sender,
+                    color = colors.ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (trimmedName.isNotEmpty()) {
+                    Text(
+                        text = suggestion.email,
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Normal,
+                        fontSize = AppThemeDims.FontSize.meta,
+                        color = colors.muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
