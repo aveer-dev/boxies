@@ -483,6 +483,22 @@ data class EmailListResponse(
 )
 
 @Serializable
+data class RecentRecipient(
+    val email: String,
+    val name: String? = null,
+    val lastEmailedAt: String? = null,
+) {
+    val id: String get() = email.lowercase()
+
+    fun toMailAddress(): MailAddress = MailAddress(name = name, email = email)
+}
+
+@Serializable
+data class RecentRecipientsResponse(
+    val recipients: List<RecentRecipient> = emptyList(),
+)
+
+@Serializable
 data class InboxDigest(
     @SerialName("greeting_name") val greetingName: String = "",
     @SerialName("unread_count") val unreadCount: Int = 0,

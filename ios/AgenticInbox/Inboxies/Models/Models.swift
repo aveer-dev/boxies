@@ -589,6 +589,22 @@ struct EmailListResponse: Codable {
     let totalCount: Int
 }
 
+struct RecentRecipient: Codable, Hashable, Identifiable {
+    let email: String
+    let name: String?
+    let lastEmailedAt: String?
+
+    var id: String { email.lowercased() }
+
+    var asMailAddress: MailAddress {
+        MailAddress(name: name, email: email)
+    }
+}
+
+struct RecentRecipientsResponse: Codable {
+    let recipients: [RecentRecipient]
+}
+
 struct InboxDigest: Codable, Hashable {
     var greetingName: String
     var unreadCount: Int

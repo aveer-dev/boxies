@@ -288,6 +288,30 @@ final class ComposeFormModel {
     func removeCc(_ token: MailAddress) { ccTokens.removeAll { $0.id == token.id } }
     func removeBcc(_ token: MailAddress) { bccTokens.removeAll { $0.id == token.id } }
 
+    func addSuggestion(_ address: MailAddress, to field: RecipientField) {
+        switch field {
+        case .to:
+            if !toTokens.contains(where: { $0.id == address.id }) {
+                toTokens.append(address)
+            }
+            toDraft = ""
+        case .cc:
+            if !ccTokens.contains(where: { $0.id == address.id }) {
+                ccTokens.append(address)
+            }
+            ccDraft = ""
+        case .bcc:
+            if !bccTokens.contains(where: { $0.id == address.id }) {
+                bccTokens.append(address)
+            }
+            bccDraft = ""
+        }
+    }
+
+    enum RecipientField {
+        case to, cc, bcc
+    }
+
     func selectFrom(mailbox: Mailbox) {
         fromMailboxId = mailbox.id
         fromEmail = mailbox.email

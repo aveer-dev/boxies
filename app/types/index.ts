@@ -70,6 +70,13 @@ export interface Folder {
 	unreadCount: number;
 }
 
+/** People I've emailed — compose autocomplete suggestion. */
+export interface RecentRecipient {
+	email: string;
+	name?: string | null;
+	lastEmailedAt?: string | null;
+}
+
 export interface AgentConversation {
 	id: string;
 	title: string;
