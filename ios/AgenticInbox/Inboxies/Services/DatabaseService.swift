@@ -176,6 +176,11 @@ final class DatabaseService: @unchecked Sendable {
 
             setVersion(1)
         }
+
+        if (getVersion() < 2) {
+            exec("ALTER TABLE emails ADD COLUMN auth_json TEXT;")
+            setVersion(2)
+        }
     }
 
     private func getVersion() -> Int {
@@ -377,12 +382,12 @@ final class DatabaseService: @unchecked Sendable {
                 id, mailbox_id, thread_id, folder_id, subject, sender, sender_name,
                 recipient, cc, bcc, date, read, starred, body, snippet, in_reply_to,
                 message_id, raw_headers, thread_count, thread_unread_count, participants,
-                folder_name, has_draft, needs_reply, has_attachment, attachments_json, updated_at
+                folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json, updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -410,6 +415,7 @@ final class DatabaseService: @unchecked Sendable {
                 needs_reply = COALESCE(excluded.needs_reply, emails.needs_reply),
                 has_attachment = COALESCE(excluded.has_attachment, emails.has_attachment),
                 attachments_json = COALESCE(excluded.attachments_json, emails.attachments_json),
+                auth_json = COALESCE(excluded.auth_json, emails.auth_json),
                 updated_at = excluded.updated_at;
             """
             var stmt: OpaquePointer?
@@ -451,7 +457,8 @@ final class DatabaseService: @unchecked Sendable {
                         sqlite3_bind_null(stmt, 26)
                     }
 
-                    bindString(stmt, 27, now)
+                    bindOptionalString(stmt, 27, encodeAuth(e.auth))
+                    bindString(stmt, 28, now)
 
                     sqlite3_step(stmt)
                 }
@@ -471,7 +478,7 @@ final class DatabaseService: @unchecked Sendable {
                 recipient, cc, bcc, date, read, starred, body, snippet,
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
-                needs_reply, has_attachment, attachments_json
+                needs_reply, has_attachment, attachments_json, auth_json
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ?
             ORDER BY date DESC
@@ -503,7 +510,7 @@ final class DatabaseService: @unchecked Sendable {
                 recipient, cc, bcc, date, read, starred, body, snippet,
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
-                needs_reply, has_attachment, attachments_json
+                needs_reply, has_attachment, attachments_json, auth_json
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -530,7 +537,7 @@ final class DatabaseService: @unchecked Sendable {
                 recipient, cc, bcc, date, read, starred, body, snippet,
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
-                needs_reply, has_attachment, attachments_json
+                needs_reply, has_attachment, attachments_json, auth_json
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -746,7 +753,7 @@ final class DatabaseService: @unchecked Sendable {
                 e.recipient, e.cc, e.bcc, e.date, e.read, e.starred, e.body, e.snippet,
                 e.in_reply_to, e.message_id, e.raw_headers, e.thread_count,
                 e.thread_unread_count, e.participants, e.folder_name, e.has_draft,
-                e.needs_reply, e.has_attachment, e.attachments_json
+                e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -899,8 +906,19 @@ final class DatabaseService: @unchecked Sendable {
             hasDraft: hasDraft,
             needsReply: needsReply,
             hasAttachment: hasAttachment,
-            attachments: attachments
+            attachments: attachments,
+            auth: decodeAuth(columnOptionalString(stmt, 25))
         )
+    }
+
+    private func encodeAuth(_ auth: EmailAuth?) -> String? {
+        guard let auth, let data = try? JSONEncoder().encode(auth) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func decodeAuth(_ raw: String?) -> EmailAuth? {
+        guard let raw, let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(EmailAuth.self, from: data)
     }
 
     private func bindString(_ stmt: OpaquePointer?, _ index: Int32, _ val: String) {

@@ -40,6 +40,7 @@ struct EmailDetailView: View {
         if email.isUnread { tags.append("Unread") }
         if email.needsReply == true { tags.append("Needs reply") }
         if email.hasDraft == true { tags.append("Has draft") }
+        if email.isSpoofed { tags.append("Spoofed") }
         let messageCount = max(app.threadEmails.count, email.threadCount ?? 1)
         if messageCount > 1 {
             tags.append("\(messageCount) messages")
@@ -203,7 +204,7 @@ struct EmailDetailView: View {
                         }
 
                         ForEach(detailTags, id: \.self) { tag in
-                            tagChip(tag)
+                            tagChip(tag, destructive: tag == "Spoofed")
                         }
                     }
                 }
@@ -211,14 +212,14 @@ struct EmailDetailView: View {
         }
     }
 
-    private func tagChip(_ title: String) -> some View {
+    private func tagChip(_ title: String, destructive: Bool = false) -> some View {
         Text(title)
             .font(.inter(size: 12, weight: .medium))
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(AppTheme.pillFill)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .foregroundStyle(AppTheme.muted)
+            .foregroundStyle(destructive ? AppTheme.deepDarkRed : AppTheme.muted)
     }
 
     private func seedExpandedMessages() {
@@ -298,6 +299,11 @@ struct EmailDetailView: View {
                         personSearch = PersonSearch(query: query)
                     }
                 )
+
+                if message.isSpoofed {
+                    SpoofWarningBanner()
+                        .padding(.top, 10)
+                }
 
                 if isExpanded {
                     VStack(alignment: .leading, spacing: 0) {
@@ -743,6 +749,29 @@ private struct PersonAddressMenu: View {
         .buttonStyle(.plain)
         .accessibilityLabel(address.label(selfAddress: selfAddress))
         .accessibilityHint("Show contact actions")
+    }
+}
+
+private struct SpoofWarningBanner: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("This sender isn’t authenticated.")
+                .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
+                .foregroundStyle(AppTheme.deepDarkRed)
+            Text("The From address failed SPF/DKIM/DMARC alignment.")
+                .font(.inter(size: AppTheme.FontSize.meta))
+                .foregroundStyle(AppTheme.muted)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.pillFill)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(AppTheme.deepDarkRed.opacity(0.35), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
 

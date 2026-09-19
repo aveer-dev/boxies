@@ -558,4 +558,25 @@ async function classifyMime(raw, ai) {
 	assert.equal(shouldAutoDraft(result), true);
 }
 
+{
+	const result = classifyFromHeaders({
+		headers: headers(["From", "PayPal <ceo@paypal.com>"]),
+		subject: "Urgent wire",
+		sender: "ceo@paypal.com",
+		auth: {
+			spoofed: true,
+			source: "authentication-results",
+			aligned: false,
+			headerFrom: "ceo@paypal.com",
+			envelopeFrom: "bad@evil.example",
+		},
+	});
+	assert.deepEqual(result, {
+		class: "spam",
+		folderId: Folders.SPAM,
+		reason: "auth-spoofed",
+	});
+	assert.equal(shouldAutoDraft(result, { spoofed: true }), false);
+}
+
 console.log("classify-email tests passed");

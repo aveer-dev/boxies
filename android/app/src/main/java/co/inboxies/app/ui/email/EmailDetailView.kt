@@ -11,6 +11,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -177,6 +178,7 @@ fun EmailDetailView(
             if (current.isUnread) add("Unread")
             if (current.needsReply == true) add("Needs reply")
             if (current.hasDraft == true) add("Has draft")
+            if (current.isSpoofed) add("Spoofed")
             val messageCount = maxOf(messages.size, current.threadCount ?: 1)
             if (messageCount > 1) add("$messageCount messages")
         }
@@ -423,6 +425,12 @@ fun EmailDetailView(
                                 onSearch = { personSearchQuery = it },
                             )
 
+                            if (message.isSpoofed) {
+                                SpoofWarningBanner(
+                                    modifier = Modifier.padding(top = 10.dp),
+                                )
+                            }
+
                             AnimatedVisibility(
                                 visible = isExpanded,
                                 enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 6 },
@@ -557,25 +565,53 @@ private fun TagsRow(
                     )
                 }
             }
-            tags.forEach { TagChip(it) }
+            tags.forEach { TagChip(it, destructive = it == "Spoofed") }
         }
     }
 }
 
 @Composable
-private fun TagChip(title: String) {
+private fun TagChip(title: String, destructive: Boolean = false) {
     val colors = inboxiesColors()
     Text(
         title,
         fontFamily = InterFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
-        color = colors.muted,
+        color = if (destructive) colors.deepDarkRed else colors.muted,
         modifier = Modifier
             .clip(RoundedCornerShape(7.dp))
             .background(colors.pillFill)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
+}
+
+@Composable
+private fun SpoofWarningBanner(modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, colors.deepDarkRed.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            "This sender isn’t authenticated.",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.deepDarkRed,
+        )
+        Text(
+            "The From address failed SPF/DKIM/DMARC alignment.",
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+        )
+    }
 }
 
 @Composable

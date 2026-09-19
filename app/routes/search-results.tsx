@@ -9,6 +9,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Folders, getFolderDisplayName } from "shared/folders";
 import MailboxSplitView from "~/components/MailboxSplitView";
 import { formatListDate, getSnippetText, hasFileAttachment } from "~/lib/utils";
+import { isAuthSpoofed } from "~/lib/email-auth";
 import { displaySenderName } from "shared/sender";
 import { useUpdateEmail } from "~/queries/emails";
 import { useSearchEmails, SEARCH_PAGE_SIZE } from "~/queries/search";
@@ -100,7 +101,7 @@ export default function SearchResultsRoute() {
 								<div key={email.id} role="button" tabIndex={0} onClick={() => handleRowClick(email)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(email); } }} className={`group flex items-center gap-3 w-full text-left cursor-pointer transition-colors border-b border-kumo-line px-4 py-2.5 md:px-5 md:py-3 ${isPanelOpen ? "md:px-4 md:py-2.5" : ""} ${isSelected ? "bg-kumo-tint" : "hover:bg-kumo-tint"}`}>
 									<div className="w-2.5 shrink-0 flex justify-center">{isUnread(email) && <div className="h-2 w-2 rounded-full bg-kumo-brand" />}</div>
 									<div className="min-w-0 flex-1">
-										<div className="flex items-center gap-2"><span className={`truncate text-sm ${isUnread(email) ? "font-semibold text-kumo-default" : "text-kumo-strong"}`}>{highlightTerms(displaySenderName(email), urlQuery)}</span>{folderName && <Badge variant="outline">{folderDisplayName(folderName)}</Badge>}<span className="text-sm text-kumo-subtle shrink-0 ml-auto flex items-center gap-1.5">{hasFileAttachment(email) && <PaperclipIcon size={12} className="shrink-0" aria-label="Has attachment" />}{formatListDate(email.date)}</span></div>
+										<div className="flex items-center gap-2"><span className={`truncate text-sm ${isUnread(email) ? "font-semibold text-kumo-default" : "text-kumo-strong"}`}>{highlightTerms(displaySenderName(email), urlQuery)}</span>{folderName && <Badge variant="outline">{folderDisplayName(folderName)}</Badge>}{isAuthSpoofed(email) && <span className="shrink-0 text-xs text-kumo-destructive font-medium">Spoofed</span>}<span className="text-sm text-kumo-subtle shrink-0 ml-auto flex items-center gap-1.5">{hasFileAttachment(email) && <PaperclipIcon size={12} className="shrink-0" aria-label="Has attachment" />}{formatListDate(email.date)}</span></div>
 										<div className={`truncate text-sm mt-0.5 ${isUnread(email) ? "font-medium text-kumo-default" : "text-kumo-subtle"}`}>{highlightTerms(email.subject, urlQuery)}</div>
 										{snippet && <div className="truncate text-xs text-kumo-subtle mt-0.5">{highlightTerms(snippet, urlQuery)}</div>}
 									</div>

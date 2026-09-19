@@ -36,6 +36,8 @@ export const emails = sqliteTable("emails", {
 	provider_message_id: text("provider_message_id"),
 	delivery_status: text("delivery_status"),
 	delivery_error: text("delivery_error"),
+	/** JSON EmailAuth snapshot (SPF/DKIM/DMARC). Null on outbound and legacy rows. */
+	auth: text("auth"),
 });
 
 export const attachments = sqliteTable("attachments", {

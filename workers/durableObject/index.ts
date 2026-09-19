@@ -35,6 +35,11 @@ import {
 	type FtsEmailFields,
 } from "../lib/email-fts";
 import { aggregateRecentRecipients } from "../../shared/recent-recipients";
+import {
+	parseStoredEmailAuth,
+	serializeEmailAuth,
+	type EmailAuth,
+} from "../lib/email-auth";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -136,6 +141,7 @@ interface EmailData {
 	provider_message_id?: string | null;
 	delivery_status?: DeliveryStatus | null;
 	delivery_error?: string | null;
+	auth?: EmailAuth | string | null;
 }
 
 interface AttachmentData {
@@ -426,6 +432,15 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 	}
 
+	#withDecodedAuth<T extends { auth?: unknown }>(
+		email: T,
+	): T & { auth: EmailAuth | null } {
+		return {
+			...email,
+			auth: parseStoredEmailAuth(email.auth),
+		};
+	}
+
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
 
 	async getEmails(options: GetEmailsOptions = {}) {
@@ -482,6 +497,7 @@ export class MailboxDO extends DurableObject<Env> {
 				delivery_status: schema.emails.delivery_status,
 				delivery_error: schema.emails.delivery_error,
 				snippet: schema.emails.snippet,
+				auth: schema.emails.auth,
 			})
 			.from(schema.emails)
 			.where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -491,7 +507,7 @@ export class MailboxDO extends DurableObject<Env> {
 			.all();
 
 		return this.#withFileAttachmentFlag(
-			result.map((email) => ({
+			result.map((email) => this.#withDecodedAuth({
 				...email,
 				read: !!email.read,
 				starred: !!email.starred,
@@ -647,6 +663,7 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
+					lp.auth,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
@@ -658,7 +675,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 			const rows = [...result];
 			return this.#withFileAttachmentFlag(
-				rows.map((row: any) => ({
+				rows.map((row: any) => this.#withDecodedAuth({
 					...row,
 					read: !!row.read,
 					starred: !!row.starred,
@@ -738,6 +755,7 @@ export class MailboxDO extends DurableObject<Env> {
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
+				lif.auth,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
 				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
 					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
@@ -756,7 +774,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const rows = [...result];
 		return this.#withFileAttachmentFlag(
-			rows.map((row: any) => ({
+			rows.map((row: any) => this.#withDecodedAuth({
 				...row,
 				read: !!row.read,
 				starred: !!row.starred,
@@ -843,6 +861,7 @@ export class MailboxDO extends DurableObject<Env> {
 			read: !!email.read,
 			starred: !!email.starred,
 			attachments: emailAttachments,
+			auth: parseStoredEmailAuth(email.auth),
 		};
 	}
 
@@ -881,7 +900,7 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 
 		return await Promise.all(
-			emailRows.map(async (email) => ({
+			emailRows.map(async (email) => this.#withDecodedAuth({
 				...email,
 				body: await this.#hydrateBody(email.id, email.body, email.snippet),
 				read: !!email.read,
@@ -1482,6 +1501,7 @@ export class MailboxDO extends DurableObject<Env> {
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,
+				e.auth,
 				f.name as folder_name
 			FROM emails e
 			${ftsJoin}
@@ -1493,7 +1513,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const result = this.ctx.storage.sql.exec(query, ...params);
 		return this.#withFileAttachmentFlag(
-			[...result].map((row: any) => ({
+			[...result].map((row: any) => this.#withDecodedAuth({
 				...row,
 				read: !!row.read,
 				starred: !!row.starred,
@@ -1748,6 +1768,11 @@ export class MailboxDO extends DurableObject<Env> {
 				provider_message_id: email.provider_message_id ?? null,
 				delivery_status: email.delivery_status ?? null,
 				delivery_error: email.delivery_error ?? null,
+				auth: serializeEmailAuth(
+					typeof email.auth === "string"
+						? parseStoredEmailAuth(email.auth)
+						: email.auth,
+				),
 			})
 			.run();
 
@@ -1784,6 +1809,9 @@ export class MailboxDO extends DurableObject<Env> {
 			provider_message_id: email.provider_message_id ?? null,
 			delivery_status: email.delivery_status ?? null,
 			delivery_error: email.delivery_error ?? null,
+			auth: typeof email.auth === "string"
+				? parseStoredEmailAuth(email.auth)
+				: email.auth ?? null,
 		});
 	}
 

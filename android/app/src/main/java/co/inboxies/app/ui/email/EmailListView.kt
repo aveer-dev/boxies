@@ -794,6 +794,15 @@ fun EmailRowView(
                             color = colors.deepDarkRed,
                         )
                     }
+                    if (email.isSpoofed) {
+                        Text(
+                            "Spoofed",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = list.badge,
+                            color = colors.deepDarkRed,
+                        )
+                    }
                 }
 
                 Spacer(Modifier.width(8.dp))
@@ -856,7 +865,7 @@ fun EmailRowView(
                             fontFamily = InterFontFamily,
                             fontWeight = FontWeight.Medium,
                             fontSize = list.badge,
-                            color = colors.muted,
+                            color = if (tag == "Spoofed") colors.deepDarkRed else colors.muted,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
@@ -956,6 +965,7 @@ private fun rowTags(email: Email, highlightQuery: String, folderLabel: String?):
         }
     }
     if (email.needsReply == true) tags += "Needs reply"
+    if (email.isSpoofed) tags += "Spoofed"
     return tags
 }
 
