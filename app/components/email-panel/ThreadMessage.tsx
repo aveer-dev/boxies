@@ -40,7 +40,12 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
     const isSelf = email.sender === mailboxEmail;
     const deliveryFailed = isDeliveryFailure(email.delivery_status);
     const spoofed = isAuthSpoofed(email);
-    const containerClassName = `${!isLast ? 'border-b border-kumo-line' : ''} ${isDraft || deliveryFailed || spoofed ? 'border-l-2 border-l-kumo-warning bg-kumo-warning/[0.02]' : ''}`;
+    const accent = spoofed
+        ? 'border-l-2 border-l-kumo-destructive bg-kumo-destructive/[0.02]'
+        : isDraft || deliveryFailed
+            ? 'border-l-2 border-l-kumo-warning bg-kumo-warning/[0.02]'
+            : '';
+    const containerClassName = `${!isLast ? 'border-b border-kumo-line' : ''} ${accent}`;
     const senderName = displaySenderName(email);
     const senderLabel = isDraft ? 'Draft reply' : isSelf ? 'You' : senderName;
 
@@ -104,25 +109,25 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                     </div>
                 </div>
 
-                <div className="md:ml-10.5">
-                    <EmailIframe body={rewriteInlineImages(email.body || '', mailboxId || '', email.id, email.attachments)} autoSize />
-                </div>
-
                 {spoofed && (
-                    <div className="mt-3 md:ml-10.5 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
+                    <div className="mb-3 md:ml-10.5 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
                         <div className="font-medium text-kumo-destructive">This sender isn’t authenticated.</div>
                         <div className="mt-0.5 text-kumo-subtle">The From address failed SPF/DKIM/DMARC alignment.</div>
                     </div>
                 )}
 
                 {deliveryFailed && (
-                    <div className="mt-3 md:ml-10.5 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
+                    <div className="mb-3 md:ml-10.5 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
                         <div className="font-medium">{deliveryStatusLabel(email.delivery_status)}</div>
                         {email.delivery_error && (
                             <div className="mt-0.5 text-kumo-subtle">{email.delivery_error}</div>
                         )}
                     </div>
                 )}
+
+                <div className="md:ml-10.5">
+                    <EmailIframe body={rewriteInlineImages(email.body || '', mailboxId || '', email.id, email.attachments)} autoSize />
+                </div>
 
                 {isDraft && (onSendDraft || onEditDraft || onDeleteDraft) && (
                     <div className="flex gap-2 mt-3 md:ml-10.5">

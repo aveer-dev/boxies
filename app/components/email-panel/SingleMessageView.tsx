@@ -54,6 +54,22 @@ export default function SingleMessageView({
 				</div>
 			</div>
 
+			{spoofed && (
+				<div className="mx-4 mt-3 md:mx-6 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
+					<div className="font-medium text-kumo-destructive">This sender isn’t authenticated.</div>
+					<div className="mt-0.5 text-kumo-subtle">The From address failed SPF/DKIM/DMARC alignment.</div>
+				</div>
+			)}
+
+			{deliveryFailed && (
+				<div className="mx-4 mt-3 md:mx-6 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
+					<div className="font-medium">{deliveryStatusLabel(email.delivery_status)}</div>
+					{email.delivery_error && (
+						<div className="mt-0.5 text-kumo-subtle">{email.delivery_error}</div>
+					)}
+				</div>
+			)}
+
 			<div className="flex-1 min-h-0">
 				<EmailIframe
 					body={rewriteInlineImages(
@@ -64,22 +80,6 @@ export default function SingleMessageView({
 					)}
 				/>
 			</div>
-
-			{spoofed && (
-				<div className="mx-4 mb-3 md:mx-6 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
-					<div className="font-medium text-kumo-destructive">This sender isn’t authenticated.</div>
-					<div className="mt-0.5 text-kumo-subtle">The From address failed SPF/DKIM/DMARC alignment.</div>
-				</div>
-			)}
-
-			{deliveryFailed && (
-				<div className="mx-4 mb-3 md:mx-6 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
-					<div className="font-medium">{deliveryStatusLabel(email.delivery_status)}</div>
-					{email.delivery_error && (
-						<div className="mt-0.5 text-kumo-subtle">{email.delivery_error}</div>
-					)}
-				</div>
-			)}
 
 			<EmailAttachmentList
 				mailboxId={mailboxId}
