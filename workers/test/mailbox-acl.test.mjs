@@ -214,6 +214,24 @@ function mockBucket(initial = {}) {
 	assert.ok(acl.owners.includes("email:ada@inboxies.email"));
 	assert.ok(acl.owners.includes("sub:ada-sub"));
 	assert.deepEqual(acl.members, []);
+	assert.equal(
+		acl.owners.includes("email:ada+tag@inboxies.email"),
+		false,
+		"creator ACL stores canonical email, not plus-tag",
+	);
+}
+
+{
+	const plusOwner = {
+		acl: { owners: ["email:ada+ops@inboxies.email"], members: [] },
+	};
+	assert.equal(
+		canAccessMailbox(plusOwner, ada, "team@inboxies.email"),
+		true,
+		"stored plus-tag owner matches untagged principal",
+	);
+	assert.equal(canManageAcl(plusOwner, ada), true);
+	assert.equal(canAccessMailbox(plusOwner, bob, "team@inboxies.email"), false);
 }
 
 {
@@ -222,6 +240,24 @@ function mockBucket(initial = {}) {
 	});
 	assert.deepEqual(parsed.owners, ["email:ada@inboxies.email"]);
 	assert.deepEqual(parsed.members, ["email:bob@inboxies.email"]);
+}
+
+{
+	const { mailboxIdFromAgentsUrl } = await import("../../shared/agent-conversations.ts");
+	assert.equal(
+		mailboxIdFromAgentsUrl("https://app.example/agents/email-agent/ada@inboxies.email::c1"),
+		"ada@inboxies.email",
+	);
+	assert.equal(
+		mailboxIdFromAgentsUrl("https://app.example/agents/email-agent/ada%40inboxies.email"),
+		"ada@inboxies.email",
+	);
+	assert.equal(
+		mailboxIdFromAgentsUrl("https://app.example/agents/email-agent/ada@inboxies.email"),
+		"ada@inboxies.email",
+	);
+	assert.equal(mailboxIdFromAgentsUrl("https://app.example/agents/email-agent"), null);
+	assert.equal(mailboxIdFromAgentsUrl("https://app.example/mcp"), null);
 }
 
 console.log("mailbox-acl tests passed");

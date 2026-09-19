@@ -16,7 +16,7 @@ import {
 	principalFromClaims,
 	type RequestPrincipal,
 } from "./lib/mailbox-acl";
-import { mailboxIdFromAgentName } from "../shared/agent-conversations";
+import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import type { Env } from "./types";
 
 export { MailboxDO } from "./durableObject";
@@ -103,24 +103,6 @@ type AppVariables = { principal?: RequestPrincipal };
 type ExecutionCtxWithProps = ExecutionContext & {
 	props?: { principal?: RequestPrincipal };
 };
-
-function mailboxIdFromAgentsUrl(url: string): string | null {
-	let pathname: string;
-	try {
-		pathname = new URL(url).pathname;
-	} catch {
-		return null;
-	}
-	const parts = pathname.split("/").filter(Boolean);
-	if (parts[0] !== "agents" || parts.length < 3) return null;
-	let instanceName = parts[2];
-	try {
-		instanceName = decodeURIComponent(instanceName);
-	} catch {
-		/* keep raw */
-	}
-	return mailboxIdFromAgentName(instanceName) || null;
-}
 
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();

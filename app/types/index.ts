@@ -33,6 +33,7 @@ export interface MailboxSettings {
 	agentSystemPrompt?: string;
 	filters?: InboxFilterRule[];
 	acl?: MailboxAcl;
+	canManage?: boolean;
 }
 
 export interface MeResponse {
@@ -46,6 +47,7 @@ export interface Mailbox {
 	email: string;
 	name: string;
 	settings?: MailboxSettings;
+	canManage?: boolean;
 }
 
 export interface EmailAuthSnapshot {

@@ -50,6 +50,7 @@ import {
 	canManageAcl,
 	creatorAcl,
 	filterMailboxesForPrincipal,
+	mailboxAccessPayload,
 	principalKeys,
 	type RequestPrincipal,
 } from "./lib/mailbox-acl";
@@ -233,7 +234,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 	await stub.reviveMailbox();
 	await stub.getFolders();
-	return c.json({ id: email, email, name, settings: finalSettings }, 201);
+	return c.json({ ...mailboxAccessPayload(email, finalSettings, principal), name }, 201);
 });
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
@@ -243,12 +244,13 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 		c.req.param("mailboxId"),
 	);
 	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	return c.json({
-		id: authz.mailboxId,
-		name: authz.mailboxId,
-		email: authz.mailboxId,
-		settings: authz.settings,
-	});
+	return c.json(
+		mailboxAccessPayload(
+			authz.mailboxId,
+			authz.settings,
+			c.get("principal") as RequestPrincipal | undefined,
+		),
+	);
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
@@ -270,12 +272,7 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const filtersError = inboxFiltersError(parseInboxFilters(next), authz.mailboxId);
 	if (filtersError) return c.json({ error: filtersError }, 400);
 	await c.env.BUCKET.put(mailboxMetadataKey(authz.mailboxId), JSON.stringify(next));
-	return c.json({
-		id: authz.mailboxId,
-		name: authz.mailboxId,
-		email: authz.mailboxId,
-		settings: next,
-	});
+	return c.json(mailboxAccessPayload(authz.mailboxId, next, principal));
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {

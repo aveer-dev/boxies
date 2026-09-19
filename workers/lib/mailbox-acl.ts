@@ -135,6 +135,23 @@ function principalSet(
 	return new Set(principalKeys(principal));
 }
 
+/** Stored `email:hello+tag@x` matches a principal keyed as `email:hello@x`. */
+function aclKeyMatchesPrincipal(aclKey: string, keys: Set<string>): boolean {
+	if (keys.has(aclKey)) return true;
+	if (!aclKey.startsWith("email:")) return false;
+	const canonical = canonicalMailboxId(aclKey.slice("email:".length));
+	return Boolean(canonical && keys.has(`email:${canonical}`));
+}
+
+function aclHasPrincipal(
+	aclKeys: string[],
+	principal: RequestPrincipal | null | undefined,
+): boolean {
+	const keys = principalSet(principal);
+	if (keys.size === 0) return false;
+	return aclKeys.some((key) => aclKeyMatchesPrincipal(key, keys));
+}
+
 function emailMatchesMailbox(
 	principal: RequestPrincipal | null | undefined,
 	mailboxId: string,
@@ -150,11 +167,9 @@ export function canAccessMailbox(
 	principal: RequestPrincipal | null | undefined,
 	mailboxId: string,
 ): boolean {
-	const keys = principalSet(principal);
-	if (keys.size === 0) return false;
 	const acl = parseAcl(settings);
-	if (acl.owners.some((key) => keys.has(key))) return true;
-	if (acl.members.some((key) => keys.has(key))) return true;
+	if (aclHasPrincipal(acl.owners, principal)) return true;
+	if (aclHasPrincipal(acl.members, principal)) return true;
 	return isUnclaimed(settings) && emailMatchesMailbox(principal, mailboxId);
 }
 
@@ -162,9 +177,7 @@ export function canManageAcl(
 	settings: unknown,
 	principal: RequestPrincipal | null | undefined,
 ): boolean {
-	const keys = principalSet(principal);
-	if (keys.size === 0) return false;
-	return parseAcl(settings).owners.some((key) => keys.has(key));
+	return aclHasPrincipal(parseAcl(settings).owners, principal);
 }
 
 /**
@@ -313,5 +326,25 @@ export async function filterMailboxesForPrincipal(
 }
 
 export function creatorAcl(principal: RequestPrincipal): MailboxAcl {
-	return { owners: principalKeys(principal), members: [] };
+	const owners: string[] = [];
+	if (principal.email) {
+		const canonical = canonicalMailboxId(principal.email) ?? principal.email;
+		owners.push(`email:${canonical}`);
+	}
+	if (principal.sub) owners.push(`sub:${principal.sub}`);
+	return { owners: uniqueKeys(owners), members: [] };
+}
+
+export function mailboxAccessPayload(
+	mailboxId: string,
+	settings: Record<string, unknown>,
+	principal: RequestPrincipal | undefined,
+) {
+	return {
+		id: mailboxId,
+		name: mailboxId,
+		email: mailboxId,
+		settings,
+		canManage: canManageAcl(settings, principal),
+	};
 }

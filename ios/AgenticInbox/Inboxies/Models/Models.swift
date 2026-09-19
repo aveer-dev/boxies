@@ -5,6 +5,7 @@ struct Mailbox: Identifiable, Codable, Hashable {
     let email: String
     let name: String
     var settings: MailboxSettings?
+    var canManage: Bool?
 }
 
 struct MailboxSettings: Codable, Hashable {

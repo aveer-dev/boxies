@@ -15,7 +15,12 @@ struct SharingSettingsView: View {
     @State private var saveMessage: String?
 
     private var canManage: Bool {
-        owners.contains { viewerKeys.contains($0) }
+        if let flag = app.selectedMailbox?.canManage {
+            return flag
+        }
+        return owners.contains { key in
+            viewerKeys.contains(key) || viewerKeys.contains(Self.canonicalEmailKey(key) ?? "")
+        }
     }
 
     var body: some View {
@@ -113,6 +118,10 @@ struct SharingSettingsView: View {
             members = acl?.members ?? []
             Task { await loadViewer() }
         }
+        .onChange(of: app.selectedMailbox?.settings?.acl) { _, acl in
+            owners = acl?.owners ?? []
+            members = acl?.members ?? []
+        }
         .applyThemeController()
     }
 
@@ -177,7 +186,7 @@ struct SharingSettingsView: View {
         }
         if let email = auth.userEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
            !email.isEmpty {
-            viewerKeys = ["email:\(email)"]
+            viewerKeys = Set(Self.keysForEmail(email))
         }
     }
 
@@ -239,6 +248,26 @@ struct SharingSettingsView: View {
             return String(key.dropFirst("email:".count))
         }
         return key
+    }
+
+    static func canonicalEmailKey(_ key: String) -> String? {
+        guard key.hasPrefix("email:") else { return nil }
+        let email = String(key.dropFirst("email:".count))
+        guard let at = email.lastIndex(of: "@"), at > email.startIndex else { return nil }
+        let local = email[..<at]
+        let domain = email[email.index(after: at)...]
+        if let plus = local.firstIndex(of: "+"), plus > local.startIndex {
+            return "email:\(local[..<plus])@\(domain)"
+        }
+        return "email:\(email)"
+    }
+
+    static func keysForEmail(_ email: String) -> [String] {
+        let tagged = "email:\(email)"
+        if let canonical = canonicalEmailKey(tagged), canonical != tagged {
+            return [tagged, canonical]
+        }
+        return [tagged]
     }
 
     static func normalizeKey(_ raw: String) -> String? {

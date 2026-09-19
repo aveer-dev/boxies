@@ -17,6 +17,30 @@ function displayAclKey(key: string): string {
 	return key;
 }
 
+function canonicalEmailAclKey(key: string): string | null {
+	if (!key.startsWith("email:")) return null;
+	const email = key.slice("email:".length);
+	const at = email.lastIndexOf("@");
+	if (at <= 0) return null;
+	const local = email.slice(0, at);
+	const plus = local.indexOf("+");
+	if (plus <= 0) return `email:${email}`;
+	return `email:${local.slice(0, plus)}@${email.slice(at + 1)}`;
+}
+
+function viewerCanManage(
+	owners: string[],
+	viewerKeys: Set<string>,
+	canManage?: boolean,
+): boolean {
+	if (typeof canManage === "boolean") return canManage;
+	return owners.some((key) => {
+		if (viewerKeys.has(key)) return true;
+		const canonical = canonicalEmailAclKey(key);
+		return Boolean(canonical && viewerKeys.has(canonical));
+	});
+}
+
 function toEmailKey(raw: string): string | null {
 	const trimmed = raw.trim().toLowerCase();
 	if (!trimmed) return null;
@@ -53,7 +77,7 @@ export default function SharingSettingsRoute() {
 	}, [mailbox]);
 
 	const viewerKeys = useMemo(() => new Set(me?.keys ?? []), [me?.keys]);
-	const canManage = owners.some((key) => viewerKeys.has(key));
+	const canManage = viewerCanManage(owners, viewerKeys, mailbox?.canManage);
 
 	const handleRemove = (key: string, role: "owner" | "member") => {
 		if (role === "owner") {

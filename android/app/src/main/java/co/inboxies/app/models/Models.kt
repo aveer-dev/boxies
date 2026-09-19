@@ -27,6 +27,7 @@ data class Mailbox(
     val email: String,
     val name: String,
     val settings: MailboxSettings? = null,
+    val canManage: Boolean? = null,
 )
 
 @Serializable

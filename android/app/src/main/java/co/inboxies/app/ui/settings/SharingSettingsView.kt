@@ -49,6 +49,26 @@ import co.inboxies.app.theme.inboxiesColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private fun canonicalEmailAclKey(key: String): String? {
+    if (!key.startsWith("email:")) return null
+    val email = key.removePrefix("email:")
+    val at = email.lastIndexOf('@')
+    if (at <= 0) return null
+    val local = email.substring(0, at)
+    val plus = local.indexOf('+')
+    return if (plus > 0) {
+        "email:${local.substring(0, plus)}@${email.substring(at + 1)}"
+    } else {
+        "email:$email"
+    }
+}
+
+private fun keysForEmail(email: String): Set<String> {
+    val tagged = "email:$email"
+    val canonical = canonicalEmailAclKey(tagged)
+    return if (canonical != null && canonical != tagged) setOf(tagged, canonical) else setOf(tagged)
+}
+
 @Composable
 fun SharingSettingsView(
     onBack: () -> Unit,
@@ -77,12 +97,19 @@ fun SharingSettingsView(
         viewerKeys = if (me != null) {
             me.keys.toSet()
         } else {
-            authEmail?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }?.let { setOf("email:$it") }
+            authEmail?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }?.let { keysForEmail(it) }
                 .orEmpty()
         }
     }
 
-    val canManage = owners.any { viewerKeys.contains(it) }
+    LaunchedEffect(mailbox?.id, mailbox?.settings?.acl) {
+        owners = mailbox?.settings?.acl?.owners.orEmpty()
+        members = mailbox?.settings?.acl?.members.orEmpty()
+    }
+
+    val canManage = mailbox?.canManage ?: owners.any { key ->
+        viewerKeys.contains(key) || canonicalEmailAclKey(key)?.let(viewerKeys::contains) == true
+    }
 
     fun toast(message: String, ok: Boolean = true) {
         scope.launch {
