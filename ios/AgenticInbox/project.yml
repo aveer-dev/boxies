@@ -11,12 +11,18 @@ settings:
     DEVELOPMENT_TEAM: B6X6773H7F
     SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: false
     SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: false
+packages:
+  SwiftSoup:
+    url: https://github.com/scinfu/SwiftSoup
+    from: 2.7.6
 targets:
   Inboxies:
     type: application
     platform: iOS
     sources:
       - path: Inboxies
+    dependencies:
+      - package: SwiftSoup
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app

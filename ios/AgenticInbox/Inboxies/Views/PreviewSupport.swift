@@ -50,6 +50,7 @@ enum PreviewSupport {
             date: "2026-09-03T14:30:00.000Z",
             read: false,
             starred: false,
+            body: HTMLHardenFixture.html,
             snippet: "Can we move Thursday's sync to the morning instead?",
             threadCount: 3
         ),
@@ -92,7 +93,38 @@ enum PreviewSupport {
             snippet: "Your itinerary for next week's trip is ready to view."
         ),
     ]
+
+    @MainActor
+    static func previewMailboxModel() -> AppModel {
+        let app = appModel()
+        app.selectedTab = .folder("inbox")
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-previewDetail"), let first = app.emails.first {
+            app.selectedEmail = first
+            app.threadEmails = [first]
+        }
+        return app
+    }
 }
+
+#if DEBUG
+struct PreviewMailboxRoot: View {
+    @State private var auth = PreviewSupport.authStore()
+    @State private var app = PreviewSupport.previewMailboxModel()
+
+    var body: some View {
+        RootView()
+            .environment(auth)
+            .environment(app)
+            .task {
+                if ProcessInfo.processInfo.arguments.contains("-previewCompose") {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    await app.startCompose(mode: .new)
+                }
+            }
+    }
+}
+#endif
 
 /// Holds preview `AppModel` / `AuthStore` so Canvas interactions don't rebuild them.
 struct PreviewHost<Content: View>: View {

@@ -101,6 +101,9 @@ dependencies {
 
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+
+    implementation(libs.jsoup)
+    testImplementation(libs.junit)
 }
 
 tasks.register("printApkPath") {
