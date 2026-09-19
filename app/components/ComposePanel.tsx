@@ -7,7 +7,7 @@ import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperPlaneTiltIcon, XIc
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
-import RichTextEditor from "./RichTextEditor";
+import ComposeBodyChrome from "./compose/ComposeBodyChrome";
 
 export default function ComposePanel() {
 	const { mailboxId, folder } = useParams<{
@@ -28,6 +28,10 @@ export default function ComposePanel() {
 		setSubject,
 		body,
 		setBody,
+		attachments,
+		addFiles,
+		removeAttachment,
+		overSize,
 		error,
 		isSavingDraft,
 		isSending,
@@ -141,9 +145,12 @@ export default function ComposePanel() {
 					</div>
 
 					<div className="border border-kumo-line rounded-md overflow-hidden bg-kumo-base">
-						<RichTextEditor
-							value={body}
-							onChange={setBody}
+						<ComposeBodyChrome
+							body={body}
+							onBodyChange={setBody}
+							attachments={attachments}
+							onAddFiles={addFiles}
+							onRemoveAttachment={removeAttachment}
 						/>
 					</div>
 				</div>
@@ -188,7 +195,7 @@ export default function ComposePanel() {
 								variant="primary"
 								size="sm"
 								loading={isSending}
-								disabled={isSavingDraft || isSending}
+								disabled={isSavingDraft || isSending || overSize}
 								icon={<PaperPlaneTiltIcon size={14} />}
 							>
 								{isSending ? "Sending..." : "Send"}

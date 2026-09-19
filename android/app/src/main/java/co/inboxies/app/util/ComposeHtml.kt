@@ -11,7 +11,7 @@ data class QuotedOriginal(
     val text: String,
 )
 
-/** Port of iOS `ComposeHTML` — plain-text compose with quoted original kept aside. */
+/** Port of iOS `ComposeHTML` — rich compose with quoted original kept aside. */
 object ComposeHtml {
     fun prefixedSubject(subject: String, prefix: String): String {
         val expected = "$prefix: "
@@ -43,7 +43,7 @@ object ComposeHtml {
         if (signature.isEmpty()) "" else "\n\n$signature"
 
     fun bodyHasUserContent(body: String, signature: String): Boolean {
-        var text = body
+        var text = stripHtml(body)
         if (signature.isNotEmpty()) {
             val index = text.indexOf(signature)
             if (index >= 0) {
