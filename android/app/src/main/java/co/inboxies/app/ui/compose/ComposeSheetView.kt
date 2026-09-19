@@ -532,11 +532,11 @@ fun ComposeSheetView(
                     icon = Icons.Outlined.ArrowUpward,
                     contentDescription = "Send",
                     onClick = {
-                        commitTokens()
                         if (!canSend || sending || form.isSending) return@HomeChromeToolbarButton
+                        sending = true
+                        commitTokens()
+                        persist()
                         scope.launch {
-                            sending = true
-                            persist()
                             try {
                                 onSend()
                             } finally {

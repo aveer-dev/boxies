@@ -808,6 +808,7 @@ class AppModel {
         try {
             runCatching {
                 form.commitPendingTokens()
+                if (form.toTokens.isEmpty()) error("Add at least one recipient.")
                 val mailboxId = form.fromMailboxId.ifBlank {
                     _selectedMailboxId.value ?: error("No mailbox")
                 }

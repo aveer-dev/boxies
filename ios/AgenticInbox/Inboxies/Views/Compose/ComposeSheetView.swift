@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
+import CoreTransferable
 
 /// System sheet compose chrome matching Ask AI / email detail, Notion-styled fields.
 struct ComposeSheetView: View {
@@ -648,7 +649,16 @@ struct ComposeSheetView: View {
 
     private func ingestPhotos(_ items: [PhotosPickerItem]) async {
         for item in items {
-            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            let data: Data?
+            if let picked = try? await item.loadTransferable(type: ComposePickedData.self) {
+                data = picked.data
+            } else {
+                data = try? await item.loadTransferable(type: Data.self)
+            }
+            guard let data, !data.isEmpty else {
+                form.showToast("Couldn't attach that photo", isError: true)
+                continue
+            }
             let mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
             let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
             ingestAttachment(data: data, filename: "photo-\(UUID().uuidString.prefix(8)).\(ext)", mime: mime)
@@ -661,7 +671,10 @@ struct ComposeSheetView: View {
         for url in urls {
             let accessed = url.startAccessingSecurityScopedResource()
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { continue }
+            guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+                form.showToast("Couldn't attach that file", isError: true)
+                continue
+            }
             ingestAttachment(
                 data: data,
                 filename: url.lastPathComponent,
@@ -1089,5 +1102,17 @@ private final class TokenUITextField: UITextField {
             return
         }
         super.deleteBackward()
+    }
+}
+
+/// PhotosPickerItem.loadTransferable(Data.self) often returns nil because the
+/// item exposes public.image, not public.data. Import the image bytes directly.
+private struct ComposePickedData: Transferable {
+    let data: Data
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .image) { data in
+            ComposePickedData(data: data)
+        }
     }
 }

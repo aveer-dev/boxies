@@ -41,18 +41,23 @@ assert.match(androidEditor, /Collapsed caret formats the current paragraph/);
 assert.match(androidEditor, /object ComposeEmailHtml/);
 assert.match(androidEditor, /#FAFAFC/);
 assert.match(androidEditor, /inboxiesColors\(\)\.ink\.toArgb\(\)/);
+assert.match(androidEditor, /applyStyle\(Typeface\.BOLD, enable = !state\.bold\)/);
+assert.match(androidEditor, /applyStyle\(Typeface\.ITALIC, enable = !state\.italic\)/);
 assert.match(androidSheet, /OpenableColumns\.DISPLAY_NAME/);
 assert.match(androidSheet, /uniquePhotoStem/);
-assert.match(androidSheet, /try \{\s*onSend\(\)/s);
+assert.match(androidSheet, /sending = true\n\s*commitTokens\(\)/);
 assert.match(androidForm, /put\("html", outgoingHtml\(\)\)/);
 assert.match(androidForm, /put\("disposition", "attachment"\)/);
 assert.match(androidApp, /suspend fun sendCompose/);
+assert.match(androidApp, /Add at least one recipient/);
 
 assert.match(iosEditor, /Email-safe HTML with inline styles/);
 assert.match(iosEditor, /#FAFAFC/);
 assert.match(iosEditor, /paragraphRange\(for: selected\)/);
 assert.match(iosSheet, /preferredFilenameExtension/);
 assert.match(iosSheet, /photo-\\\(UUID\(\)\.uuidString\.prefix\(8\)\)/);
+assert.match(iosSheet, /ComposePickedData/);
+assert.match(iosSheet, /importedContentType: \.image/);
 
 assert.match(webEditor, /skipEcho/);
 assert.match(webEditor, /emitUpdate: false/);
@@ -60,6 +65,7 @@ assert.match(webEditor, /immediatelyRender: false/);
 assert.match(webJpeg, /fillStyle = "#ffffff"/);
 assert.match(webForm, /disposition: item\.disposition/);
 assert.match(webForm, /html: body/);
+assert.match(webForm, /if \(isSendingRef\.current\) return;/);
 
 assert.match(schema, /disposition: z\.enum\(\["attachment", "inline"\]\)/);
 assert.match(schema, /html: z\.string\(\)\.optional\(\)/);

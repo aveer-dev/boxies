@@ -362,12 +362,22 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	};
 
 	const handleSend = async (e: FormEvent, onClose: () => void) => {
-		e.preventDefault(); if (isSending) return; setError(null);
-		if (!currentMailbox || !mailboxId) { setError("No mailbox selected."); return; }
-		const toRecipients = splitEmailList(to);
-		if (toRecipients.length === 0) { setError("Add at least one recipient."); return; }
-		saveGenerationRef.current += 1;
+		e.preventDefault();
+		if (isSendingRef.current) return;
 		isSendingRef.current = true;
+		setError(null);
+		if (!currentMailbox || !mailboxId) {
+			isSendingRef.current = false;
+			setError("No mailbox selected.");
+			return;
+		}
+		const toRecipients = splitEmailList(to);
+		if (toRecipients.length === 0) {
+			isSendingRef.current = false;
+			setError("Add at least one recipient.");
+			return;
+		}
+		saveGenerationRef.current += 1;
 		const ccRecipients = splitEmailList(cc); const bccRecipients = splitEmailList(bcc);
 		const fromName = currentMailbox.settings?.fromName || currentMailbox.name;
 		const from = fromName && fromName !== currentMailbox.email ? { email: currentMailbox.email, name: fromName } : currentMailbox.email;

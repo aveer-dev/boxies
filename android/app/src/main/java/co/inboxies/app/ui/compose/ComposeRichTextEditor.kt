@@ -61,8 +61,16 @@ class ComposeRichTextController {
         refresh()
     }
 
-    fun toggleBold() = toggleSpan { StyleSpan(Typeface.BOLD) }
-    fun toggleItalic() = toggleSpan { StyleSpan(Typeface.ITALIC) }
+    fun toggleBold() {
+        applyStyle(Typeface.BOLD, enable = !state.bold)
+        refresh()
+    }
+
+    fun toggleItalic() {
+        applyStyle(Typeface.ITALIC, enable = !state.italic)
+        refresh()
+    }
+
     fun toggleUnderline() = toggleSpan { UnderlineSpan() }
     fun toggleStrike() = toggleSpan { StrikethroughSpan() }
 
