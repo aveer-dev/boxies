@@ -2,6 +2,8 @@ package co.inboxies.app.util
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.util.Base64
 import java.io.ByteArrayOutputStream
 import java.util.UUID
@@ -84,10 +86,11 @@ object OutboundImageCompressor {
             val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: break
             try {
                 val scaled = scaleToEdge(decoded, edge)
+                val flattened = flattenOntoWhite(scaled)
                 try {
                     for (quality in OutboundLimits.jpegQualities) {
                         val out = ByteArrayOutputStream()
-                        scaled.compress(Bitmap.CompressFormat.JPEG, (quality * 100).roundToInt(), out)
+                        flattened.compress(Bitmap.CompressFormat.JPEG, (quality * 100).roundToInt(), out)
                         val jpeg = out.toByteArray()
                         if (jpeg.size <= budget) {
                             return ComposePendingAttachment(
@@ -99,6 +102,7 @@ object OutboundImageCompressor {
                         }
                     }
                 } finally {
+                    if (flattened !== scaled) flattened.recycle()
                     if (scaled !== decoded) scaled.recycle()
                 }
             } finally {
@@ -128,6 +132,16 @@ object OutboundImageCompressor {
         val w = max(1, (bitmap.width * scale).roundToInt())
         val h = max(1, (bitmap.height * scale).roundToInt())
         return Bitmap.createScaledBitmap(bitmap, w, h, true)
+    }
+
+    /** JPEG has no alpha; transparent PNG/HEIC pixels otherwise become black. */
+    private fun flattenOntoWhite(bitmap: Bitmap): Bitmap {
+        if (!bitmap.hasAlpha()) return bitmap
+        val out = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(Color.WHITE)
+        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        return out
     }
 
     private fun jpegFilename(filename: String): String {

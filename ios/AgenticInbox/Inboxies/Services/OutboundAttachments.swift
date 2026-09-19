@@ -147,6 +147,8 @@ enum OutboundImageCompressor {
             bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
         ) else { return nil }
         ctx.interpolationQuality = .high
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: size.width, height: size.height))
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
         return ctx.makeImage()
     }

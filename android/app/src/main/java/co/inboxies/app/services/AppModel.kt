@@ -796,12 +796,17 @@ class AppModel {
         _composeSession.value = session
     }
 
-    fun sendCompose() {
-        scope.launch {
-            showToast("Sending…", isLoading = true)
+    suspend fun sendCompose() {
+        val session = _composeSession.value ?: run {
+            showToast("Send failed", isError = true)
+            return
+        }
+        val form = session.form
+        if (form.isSending) return
+        form.isSending = true
+        showToast("Sending…", isLoading = true)
+        try {
             runCatching {
-                val session = _composeSession.value ?: error("No compose session")
-                val form = session.form
                 form.commitPendingTokens()
                 val mailboxId = form.fromMailboxId.ifBlank {
                     _selectedMailboxId.value ?: error("No mailbox")
@@ -839,6 +844,8 @@ class AppModel {
             }.onFailure {
                 showToast(it.message ?: "Send failed", isError = true)
             }
+        } finally {
+            form.isSending = false
         }
     }
 

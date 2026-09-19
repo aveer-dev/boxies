@@ -22,5 +22,8 @@ assert.match(source, /Videos aren't supported \(5 MiB send limit\)/);
 assert.match(source, /byteLength <= 256 \* 1024/);
 assert.match(source, /fun remainingBudget/);
 assert.match(source, /fun estimateMessageBytes/);
+assert.match(source, /flattenOntoWhite/);
+assert.match(source, /Color\.WHITE/);
+assert.match(source, /hasAlpha\(\)/);
 
 console.log("android outbound-limits tests passed");

@@ -10,7 +10,7 @@ import { FontSize, TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Indent } from "~/lib/tiptap-compose";
 
 interface RichTextEditorProps {
@@ -26,6 +26,8 @@ export default function RichTextEditor({
 	onEditorChange,
 	showToolbar = false,
 }: RichTextEditorProps) {
+	const skipEcho = useRef(false);
+
 	const editor = useEditor({
 		extensions: [
 			StarterKit,
@@ -39,6 +41,7 @@ export default function RichTextEditor({
 			Color,
 		],
 		content: value,
+		immediatelyRender: false,
 		editorProps: {
 			attributes: {
 				class:
@@ -46,6 +49,7 @@ export default function RichTextEditor({
 			},
 		},
 		onUpdate: ({ editor }) => {
+			skipEcho.current = true;
 			onChange(editor.getHTML());
 		},
 	});
@@ -56,14 +60,13 @@ export default function RichTextEditor({
 	}, [editor, onEditorChange]);
 
 	useEffect(() => {
-		if (editor && !editor.isDestroyed && value !== editor.getHTML()) {
-			editor.commands.setContent(value);
-			const rafId = requestAnimationFrame(() => {
-				if (!editor.isDestroyed) {
-					editor.commands.focus("start");
-				}
-			});
-			return () => cancelAnimationFrame(rafId);
+		if (!editor || editor.isDestroyed) return;
+		if (skipEcho.current) {
+			skipEcho.current = false;
+			return;
+		}
+		if (value !== editor.getHTML()) {
+			editor.commands.setContent(value, { emitUpdate: false });
 		}
 	}, [value, editor]);
 

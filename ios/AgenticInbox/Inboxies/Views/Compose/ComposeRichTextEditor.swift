@@ -203,11 +203,13 @@ final class ComposeRichTextSession {
         var attrs = textView.typingAttributes
         body(&attrs)
         textView.typingAttributes = attrs
-        let range = textView.selectedRange
-        if range.length > 0, let mutable = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
-            mutable.addAttributes(attrs, range: range)
+        let selected = textView.selectedRange
+        let nsText = (textView.text ?? "") as NSString
+        let target = selected.length > 0 ? selected : nsText.paragraphRange(for: selected)
+        if target.length > 0, let mutable = textView.attributedText?.mutableCopy() as? NSMutableAttributedString {
+            mutable.addAttributes(attrs, range: target)
             textView.attributedText = mutable
-            textView.selectedRange = range
+            textView.selectedRange = selected
         }
         emitHTML()
         refreshState()
@@ -247,13 +249,19 @@ struct ComposeRichTextEditor: UIViewRepresentable {
         session.textView = view
         session.onHTMLChange = { html = $0 }
         view.attributedText = ComposeHTML.attributed(from: html)
+        context.coordinator.lastHTML = html
         return view
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
         session.textView = uiView
-        if !context.coordinator.isEditing, ComposeHTML.fromAttributed(uiView.attributedText) != html {
+        session.onHTMLChange = { next in
+            context.coordinator.lastHTML = next
+            html = next
+        }
+        if !context.coordinator.isEditing, context.coordinator.lastHTML != html {
             uiView.attributedText = ComposeHTML.attributed(from: html)
+            context.coordinator.lastHTML = html
         }
         context.coordinator.html = $html
     }
@@ -262,6 +270,7 @@ struct ComposeRichTextEditor: UIViewRepresentable {
         var html: Binding<String>
         let session: ComposeRichTextSession
         var isEditing = false
+        var lastHTML = ""
 
         init(html: Binding<String>, session: ComposeRichTextSession) {
             self.html = html
@@ -327,27 +336,110 @@ extension ComposeHTML {
         return mutable
     }
 
+    /// Email-safe HTML with inline styles. Apple's HTML exporter uses <style>
+    /// classes that Gmail strips, so format would vanish on send.
     static func fromAttributed(_ attributed: NSAttributedString) -> String {
-        guard attributed.length > 0,
-              let data = try? attributed.data(
-                from: NSRange(location: 0, length: attributed.length),
-                documentAttributes: [.documentType: NSAttributedString.DocumentType.html]
-              ),
-              let raw = String(data: data, encoding: .utf8) else {
-            return textToHTML(attributed.string)
+        guard attributed.length > 0 else { return "<p><br></p>" }
+        let ns = attributed.string as NSString
+        var parts: [String] = []
+        var location = 0
+        while location < ns.length {
+            let paraRange = ns.paragraphRange(for: NSRange(location: location, length: 0))
+            var contentRange = paraRange
+            if ns.substring(with: paraRange).hasSuffix("\n"), contentRange.length > 0 {
+                contentRange.length -= 1
+            }
+            let paraStyle = attributed.attribute(
+                .paragraphStyle,
+                at: paraRange.location,
+                effectiveRange: nil
+            ) as? NSParagraphStyle
+            var blockCSS: [String] = []
+            switch paraStyle?.alignment {
+            case .center: blockCSS.append("text-align:center")
+            case .right: blockCSS.append("text-align:right")
+            default: break
+            }
+            let indent = paraStyle?.headIndent ?? 0
+            if indent > 0 {
+                blockCSS.append("margin-left:\(Int(indent))px")
+            }
+            let inner: String
+            if contentRange.length > 0 {
+                inner = inlineRuns(attributed, range: contentRange, ns: ns)
+            } else {
+                inner = "<br>"
+            }
+            let styleAttr = blockCSS.isEmpty ? "" : " style=\"\(blockCSS.joined(separator: ";"))\""
+            let lists = paraStyle?.textLists ?? []
+            if lists.contains(where: { $0.markerFormat == .disc }) {
+                parts.append("<ul><li\(styleAttr)>\(inner)</li></ul>")
+            } else if lists.contains(where: { $0.markerFormat == .decimal }) {
+                parts.append("<ol><li\(styleAttr)>\(inner)</li></ol>")
+            } else {
+                parts.append("<p\(styleAttr)>\(inner)</p>")
+            }
+            location = paraRange.location + paraRange.length
         }
-        if let body = raw.slice(between: "<body>", and: "</body>") {
-            return body.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return raw
+        return parts.joined()
     }
-}
 
-private extension String {
-    func slice(between start: String, and end: String) -> String? {
-        guard let startRange = range(of: start, options: .caseInsensitive),
-              let endRange = range(of: end, options: [.caseInsensitive, .backwards]),
-              startRange.upperBound < endRange.lowerBound else { return nil }
-        return String(self[startRange.upperBound..<endRange.lowerBound])
+    private static func inlineRuns(
+        _ attributed: NSAttributedString,
+        range: NSRange,
+        ns: NSString
+    ) -> String {
+        var html = ""
+        attributed.enumerateAttributes(in: range, options: []) { attrs, runRange, _ in
+            var piece = escapeHTML(ns.substring(with: runRange)).replacingOccurrences(of: "\n", with: "<br>")
+            var css: [String] = []
+            if let font = attrs[.font] as? UIFont {
+                css.append("font-size:\(Int(font.pointSize.rounded()))px")
+                css.append("font-family:sans-serif")
+                let traits = font.fontDescriptor.symbolicTraits
+                if traits.contains(.traitBold) { css.append("font-weight:700") }
+                if traits.contains(.traitItalic) { css.append("font-style:italic") }
+            }
+            if let color = attrs[.foregroundColor] as? UIColor {
+                let hex = cssColor(color)
+                // Skip theme ink (light or dark) so Gmail recipients don't get
+                // washed-out dark-mode text on a white canvas.
+                if hex != "#1F1F24" && hex != "#FAFAFC" {
+                    css.append("color:\(hex)")
+                }
+            }
+            let underline = (attrs[.underlineStyle] as? Int) ?? 0
+            let strike = (attrs[.strikethroughStyle] as? Int) ?? 0
+            if underline != 0 && strike != 0 {
+                css.append("text-decoration:underline line-through")
+            } else if underline != 0 {
+                css.append("text-decoration:underline")
+            } else if strike != 0 {
+                css.append("text-decoration:line-through")
+            }
+            if !css.isEmpty {
+                piece = "<span style=\"\(css.joined(separator: ";"))\">\(piece)</span>"
+            }
+            html += piece
+        }
+        return html
+    }
+
+    private static func cssColor(_ color: UIColor) -> String {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            return String(
+                format: "#%02X%02X%02X",
+                Int((r * 255).rounded()),
+                Int((g * 255).rounded()),
+                Int((b * 255).rounded())
+            )
+        }
+        var white: CGFloat = 0
+        if color.getWhite(&white, alpha: &a) {
+            let value = Int((white * 255).rounded())
+            return String(format: "#%02X%02X%02X", value, value, value)
+        }
+        return "#1F1F24"
     }
 }

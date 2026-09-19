@@ -115,9 +115,11 @@ import co.inboxies.app.util.QuotedOriginal
 import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -228,17 +230,59 @@ fun ComposeSheetView(
         }
     }
 
-    fun ingestUri(uri: Uri, fallbackName: String) {
-        val name = uri.lastPathSegment?.substringAfterLast('/') ?: fallbackName
+    fun ingestUri(uri: Uri, fallbackStem: String) {
         val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val fallback = if (fallbackStem.contains('.')) {
+            fallbackStem
+        } else {
+            "$fallbackStem.${extensionForMime(mime)}"
+        }
+        val name = uriDisplayName(uri, fallback)
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
         ingestBytes(bytes, name, mime)
     }
 
+    fun extensionForMime(mime: String): String {
+        val type = mime.lowercase()
+        return when {
+            "png" in type -> "png"
+            "gif" in type -> "gif"
+            "webp" in type -> "webp"
+            "jpeg" in type || "jpg" in type -> "jpg"
+            "heic" in type || "heif" in type -> "heic"
+            type.startsWith("image/") -> "jpg"
+            "pdf" in type -> "pdf"
+            else -> "bin"
+        }
+    }
+
+    fun uriDisplayName(uri: Uri, fallback: String): String {
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) {
+                    val value = cursor.getString(index)
+                    if (!value.isNullOrBlank()) return value
+                }
+            }
+        }
+        val segment = uri.lastPathSegment?.substringAfterLast('/')
+        if (!segment.isNullOrBlank() && segment.contains('.')) return segment
+        return fallback
+    }
+
+    fun uniquePhotoStem(): String = "photo-${UUID.randomUUID().toString().take(8)}"
+
     val photoLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(),
     ) { uris ->
-        uris.forEach { ingestUri(it, "photo.jpg") }
+        uris.forEach { ingestUri(it, uniquePhotoStem()) }
     }
     val fileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetMultipleContents(),
@@ -249,30 +293,29 @@ fun ComposeSheetView(
         ActivityResultContracts.TakePicture(),
     ) { success ->
         if (success) {
-            cameraUri?.let { ingestUri(it, "photo.jpg") }
+            cameraUri?.let { ingestUri(it, uniquePhotoStem()) }
         }
     }
+
+    fun launchCameraCapture() {
+        val dir = File(context.cacheDir, "compose").apply { mkdirs() }
+        val file = File(dir, "capture-${UUID.randomUUID().toString().take(8)}.jpg")
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        cameraUri = uri
+        cameraLauncher.launch(uri)
+    }
+
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) {
-            val dir = File(context.cacheDir, "compose").apply { mkdirs() }
-            val file = File(dir, "capture.jpg")
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            cameraUri = uri
-            cameraLauncher.launch(uri)
-        }
+        if (granted) launchCameraCapture()
     }
 
     fun launchCamera() {
         val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
         if (granted) {
-            val dir = File(context.cacheDir, "compose").apply { mkdirs() }
-            val file = File(dir, "capture.jpg")
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            cameraUri = uri
-            cameraLauncher.launch(uri)
+            launchCameraCapture()
         } else {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
@@ -494,8 +537,11 @@ fun ComposeSheetView(
                         scope.launch {
                             sending = true
                             persist()
-                            onSend()
-                            sending = false
+                            try {
+                                onSend()
+                            } finally {
+                                sending = false
+                            }
                         }
                     },
                     enabled = canSend && !sending && !form.isSending,

@@ -650,7 +650,8 @@ struct ComposeSheetView: View {
         for item in items {
             guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
             let mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
-            ingestAttachment(data: data, filename: "photo.jpg", mime: mime)
+            let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+            ingestAttachment(data: data, filename: "photo-\(UUID().uuidString.prefix(8)).\(ext)", mime: mime)
         }
         photoSelection = []
     }
@@ -671,7 +672,7 @@ struct ComposeSheetView: View {
 
     private func ingestCamera(_ image: UIImage) {
         guard let data = image.jpegData(compressionQuality: 0.9) else { return }
-        ingestAttachment(data: data, filename: "photo.jpg", mime: "image/jpeg")
+        ingestAttachment(data: data, filename: "photo-\(UUID().uuidString.prefix(8)).jpg", mime: "image/jpeg")
     }
 
     private func ingestAttachment(data: Data, filename: String, mime: String) {

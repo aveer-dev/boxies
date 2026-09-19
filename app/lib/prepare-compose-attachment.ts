@@ -57,6 +57,8 @@ async function encodeJpeg(
 	canvas.height = height;
 	const ctx = canvas.getContext("2d");
 	if (!ctx) return null;
+	ctx.fillStyle = "#ffffff";
+	ctx.fillRect(0, 0, width, height);
 	ctx.drawImage(source, 0, 0, width, height);
 	return await new Promise((resolve) => {
 		canvas.toBlob((blob) => resolve(blob), "image/jpeg", quality);
