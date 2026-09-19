@@ -114,9 +114,8 @@ struct SearchView: View {
     }
 
     private var shouldShowEmptyResults: Bool {
-        let parsed = parsedQuery
-        if parsed.hasStructuredFilters { return true }
-        return trimmedQuery.count >= 2
+        // Only after a finished search with no hits (loading handled above).
+        !isSearching && results.isEmpty && (parsedQuery.hasStructuredFilters || trimmedQuery.count >= 2)
     }
 
     private var operatorTip: some View {
@@ -219,8 +218,13 @@ struct SearchView: View {
         guard shouldSearch else {
             results = []
             errorMessage = nil
+            isSearching = false
             return
         }
+
+        // Mark loading before clearing so operator-only queries don't flash "No matching emails".
+        isSearching = true
+        errorMessage = nil
 
         // Instant local FTS5 on free-text only (operators are not local filters).
         if !parsed.query.isEmpty {
@@ -233,12 +237,9 @@ struct SearchView: View {
                 results = localMatches
             }
         } else {
-            // Operator-only: wait for network rather than FTS-matching "from:…"
             results = []
         }
 
-        isSearching = true
-        errorMessage = nil
         defer { isSearching = false }
         do {
             try await Task.sleep(nanoseconds: 200_000_000)
