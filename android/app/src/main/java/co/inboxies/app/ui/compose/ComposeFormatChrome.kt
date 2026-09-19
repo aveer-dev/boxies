@@ -206,7 +206,7 @@ private fun ColorDot(color: Color, onClick: () -> Unit) {
 @Composable
 fun ComposeFormatAttachBar(
     onFormat: () -> Unit,
-    onAttach: () -> Void,
+    onAttach: () -> Unit,
 ) {
     val colors = inboxiesColors()
     Row(

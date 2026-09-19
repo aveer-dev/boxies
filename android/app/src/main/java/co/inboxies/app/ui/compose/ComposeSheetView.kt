@@ -230,18 +230,6 @@ fun ComposeSheetView(
         }
     }
 
-    fun ingestUri(uri: Uri, fallbackStem: String) {
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-        val fallback = if (fallbackStem.contains('.')) {
-            fallbackStem
-        } else {
-            "$fallbackStem.${extensionForMime(mime)}"
-        }
-        val name = uriDisplayName(uri, fallback)
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
-        ingestBytes(bytes, name, mime)
-    }
-
     fun extensionForMime(mime: String): String {
         val type = mime.lowercase()
         return when {
@@ -275,6 +263,18 @@ fun ComposeSheetView(
         val segment = uri.lastPathSegment?.substringAfterLast('/')
         if (!segment.isNullOrBlank() && segment.contains('.')) return segment
         return fallback
+    }
+
+    fun ingestUri(uri: Uri, fallbackStem: String) {
+        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val fallback = if (fallbackStem.contains('.')) {
+            fallbackStem
+        } else {
+            "$fallbackStem.${extensionForMime(mime)}"
+        }
+        val name = uriDisplayName(uri, fallback)
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+        ingestBytes(bytes, name, mime)
     }
 
     fun uniquePhotoStem(): String = "photo-${UUID.randomUUID().toString().take(8)}"
@@ -737,7 +737,7 @@ fun ComposeSheetView(
                     dampingRatio = 0.86f,
                     stiffness = Spring.StiffnessMediumLow,
                 )
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = showFormatSheet,
                     enter = slideInVertically(formatSlide) { it } + fadeIn(formatFade),
                     exit = slideOutVertically(formatSlide) { it } + fadeOut(formatFade),
@@ -748,7 +748,7 @@ fun ComposeSheetView(
                         onClose = { showFormatSheet = false },
                     )
                 }
-                AnimatedVisibility(
+                androidx.compose.animation.AnimatedVisibility(
                     visible = !showFormatSheet,
                     enter = fadeIn(formatFade),
                     exit = fadeOut(formatFade),

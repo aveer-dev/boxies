@@ -845,6 +845,10 @@ private extension View {
     EmailDetailPreviewWrapper()
 }
 
+#Preview("EmailDetailView bounced delivery") {
+    EmailDetailBouncedPreviewWrapper()
+}
+
 struct EmailDetailPreviewWrapper: View {
     @State private var app: AppModel = {
         let model = PreviewSupport.appModel()
@@ -884,6 +888,25 @@ struct EmailDetailPreviewWrapper: View {
         )
         model.selectedEmail = msg2
         model.threadEmails = [msg1, msg2]
+        return model
+    }()
+    @State private var auth = PreviewSupport.authStore()
+
+    var body: some View {
+        EmailDetailView()
+            .environment(app)
+            .environment(auth)
+            .preferredColorScheme(.light)
+    }
+}
+
+struct EmailDetailBouncedPreviewWrapper: View {
+    @State private var app: AppModel = {
+        let model = PreviewSupport.appModel()
+        let bounced = PreviewSupport.bouncedSentEmail
+        model.selectedEmail = bounced
+        model.threadEmails = [bounced]
+        model.selectedTab = .folder("sent")
         return model
     }()
     @State private var auth = PreviewSupport.authStore()

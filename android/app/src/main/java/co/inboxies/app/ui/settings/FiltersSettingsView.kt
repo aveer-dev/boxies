@@ -426,7 +426,7 @@ fun FiltersSettingsView(
                     },
                 ) {
                     Icon(Icons.Outlined.Add, contentDescription = null, tint = colors.accent)
-                    Spacer(Modifier = Modifier.padding(horizontal = 4.dp))
+                    Spacer(modifier = Modifier.padding(horizontal = 4.dp))
                     Text(
                         "Add filter",
                         fontFamily = InterFontFamily,
@@ -435,11 +435,11 @@ fun FiltersSettingsView(
                     )
                 }
 
-                Spacer(Modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(24.dp))
             }
         }
 
-        AnimatedVisibility(
+        androidx.compose.animation.AnimatedVisibility(
             visible = saveMessage != null,
             enter = fadeIn(),
             exit = fadeOut(),

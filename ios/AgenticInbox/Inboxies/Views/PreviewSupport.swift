@@ -94,6 +94,24 @@ enum PreviewSupport {
         ),
     ]
 
+    /// Sent message with bounce — for delivery-badge canvas / Simulator fixtures.
+    static let bouncedSentEmail = Email(
+        id: "preview-bounced",
+        folderId: "sent",
+        subject: "Invoice attached",
+        sender: "you@inboxies.email",
+        senderName: "Alex Rivera",
+        recipient: "client@example.com",
+        date: "2026-09-18T16:00:00.000Z",
+        read: true,
+        starred: false,
+        body: "<p>Please find the invoice attached.</p>",
+        snippet: "Please find the invoice attached.",
+        folderName: "Sent",
+        deliveryStatus: "bounced",
+        deliveryError: "550 5.1.1 The email account that you tried to reach does not exist."
+    )
+
     @MainActor
     static func previewMailboxModel() -> AppModel {
         let app = appModel()
