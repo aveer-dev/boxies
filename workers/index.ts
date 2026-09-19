@@ -44,6 +44,15 @@ import { composePushAlert } from "./lib/push-payload";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
+	applyIncomingAcl,
+	authorizeMailbox,
+	canManageAcl,
+	creatorAcl,
+	filterMailboxesForPrincipal,
+	principalKeys,
+	type RequestPrincipal,
+} from "./lib/mailbox-acl";
+import {
 	issueMobileSessionToken,
 	verifyAppleIdentityToken,
 } from "./lib/apple-auth";
@@ -55,7 +64,6 @@ import {
 	canonicalMailboxId,
 	isDuplicateInbound,
 	mailboxMetadataKey,
-	resolveMailboxParam,
 	routeInboundEnvelope,
 } from "./lib/mailbox-routing";
 import {
@@ -179,14 +187,31 @@ app.get("/api/v1/config", (c) => {
 	return c.json({ domains, emailAddresses });
 });
 
+app.get("/api/v1/me", (c) => {
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	if (!principal) return c.json({ error: "Unauthorized" }, 401);
+	return c.json({
+		email: principal.email ?? null,
+		sub: principal.sub ?? null,
+		keys: principalKeys(principal),
+	});
+});
+
 // -- Mailboxes ------------------------------------------------------
 
 app.get("/api/v1/mailboxes", async (c) => {
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	if (!principal) return c.json({ error: "Forbidden" }, 403);
 	const allMailboxes = await listMailboxes(c.env.BUCKET);
-	return c.json(allMailboxes.map((m) => ({ ...m, name: m.id })));
+	const allowed = await filterMailboxesForPrincipal(c.env.BUCKET, allMailboxes, principal);
+	return c.json(allowed.map((m) => ({ ...m, name: m.id })));
 });
 
 app.post("/api/v1/mailboxes", async (c) => {
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	if (!principal || principalKeys(principal).length === 0) {
+		return c.json({ error: "Forbidden" }, 403);
+	}
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = canonicalMailboxId(rawEmail);
 	if (!email) return c.json({ error: "Invalid mailbox email address" }, 400);
@@ -197,7 +222,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const key = mailboxMetadataKey(email);
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
 	const defaultSettings = { fromName: name, forwarding: { enabled: false, email: "" }, signature: { enabled: false, text: "" }, autoReply: { enabled: false, subject: "", message: "" } };
-	const finalSettings = { ...defaultSettings, ...settings };
+	const finalSettings = { ...defaultSettings, ...settings, acl: creatorAcl(principal) };
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 	await stub.getFolders();
@@ -205,47 +230,55 @@ app.post("/api/v1/mailboxes", async (c) => {
 });
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const mailboxId = resolveMailboxParam(c.req.param("mailboxId"));
-	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
-	const obj = await c.env.BUCKET.get(mailboxMetadataKey(mailboxId));
-	if (!obj) return c.json({ error: "Not found" }, 404);
-	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings: await obj.json() });
+	const authz = await authorizeMailbox(
+		c.env.BUCKET,
+		c.get("principal") as RequestPrincipal | undefined,
+		c.req.param("mailboxId"),
+	);
+	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
+	return c.json({
+		id: authz.mailboxId,
+		name: authz.mailboxId,
+		email: authz.mailboxId,
+		settings: authz.settings,
+	});
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const mailboxId = resolveMailboxParam(c.req.param("mailboxId"));
-	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
+	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
+	if (!principal) return c.json({ error: "Forbidden" }, 403);
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
-	const key = mailboxMetadataKey(mailboxId);
-	const obj = await c.env.BUCKET.get(key);
-	if (!obj) return c.json({ error: "Not found" }, 404);
-	let existing: Record<string, unknown> = {};
-	try {
-		const parsed = await obj.json();
-		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-			existing = parsed as Record<string, unknown>;
-		}
-	} catch {
-		existing = {};
-	}
+	const existing = authz.settings;
 	const merged = mergeMailboxSettingsBlob(existing, settings);
+	const aclResult = applyIncomingAcl(existing, merged, settings, principal);
+	if (!aclResult.ok) return c.json({ error: aclResult.error }, 400);
+	const next = aclResult.settings;
 	const automationError = automationSettingsError(
-		parseAutomationSettings(merged),
-		mailboxId,
+		parseAutomationSettings(next),
+		authz.mailboxId,
 	);
 	if (automationError) return c.json({ error: automationError }, 400);
-	const filtersError = inboxFiltersError(parseInboxFilters(merged), mailboxId);
+	const filtersError = inboxFiltersError(parseInboxFilters(next), authz.mailboxId);
 	if (filtersError) return c.json({ error: filtersError }, 400);
-	await c.env.BUCKET.put(key, JSON.stringify(merged));
-	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings: merged });
+	await c.env.BUCKET.put(mailboxMetadataKey(authz.mailboxId), JSON.stringify(next));
+	return c.json({
+		id: authz.mailboxId,
+		name: authz.mailboxId,
+		email: authz.mailboxId,
+		settings: next,
+	});
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const mailboxId = resolveMailboxParam(c.req.param("mailboxId"));
-	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
-	const key = mailboxMetadataKey(mailboxId);
-	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
-	await c.env.BUCKET.delete(key); // TODO: also delete DO data and R2 attachment blobs
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
+	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
+	if (!canManageAcl(authz.settings, principal)) {
+		return c.json({ error: "Forbidden" }, 403);
+	}
+	await c.env.BUCKET.delete(mailboxMetadataKey(authz.mailboxId)); // TODO: also delete DO data and R2 attachment blobs
 	return c.body(null, 204);
 });
 

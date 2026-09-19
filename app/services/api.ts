@@ -114,8 +114,10 @@ const api = {
 	getConfig: () =>
 		get<{ domains: string[]; emailAddresses: string[] }>("/api/v1/config"),
 
-	// Mailboxes
+    // Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
+	getMe: () =>
+		get<{ email: string | null; sub: string | null; keys: string[] }>("/api/v1/me"),
 	createMailbox: (email: string, name: string, settings?: unknown) =>
 		post<Mailbox>("/api/v1/mailboxes", { email, name, settings }),
 	getMailbox: (mailboxId: string) =>

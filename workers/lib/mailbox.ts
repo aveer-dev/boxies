@@ -3,40 +3,38 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Hono middleware to handle repetitive Mailbox Durable Object instantiation.
- * Checks if the mailbox exists in R2, then instantiates the DO stub
- * and attaches it to the Hono context (`c.var.mailboxStub`).
+ * Hono middleware: authorize the mailbox for the request principal, then
+ * attach the Mailbox Durable Object stub (`c.var.mailboxStub`).
  */
 import { createMiddleware } from "hono/factory";
 import type { MailboxDO } from "../durableObject";
 import type { Env } from "../types";
-import { mailboxMetadataKey, resolveMailboxParam } from "./mailbox-routing";
+import { authorizeMailbox, type RequestPrincipal } from "./mailbox-acl.ts";
 
 export type MailboxContext = {
 	Bindings: Env;
 	Variables: {
 		mailboxStub: DurableObjectStub<MailboxDO>;
 		mailboxId: string;
+		principal?: RequestPrincipal;
 	};
 };
 
 export const requireMailbox = createMiddleware<MailboxContext>(async (c, next) => {
 	const rawId = c.req.param("mailboxId");
 	if (!rawId) return c.json({ error: "Mailbox ID required" }, 400);
-	const mailboxId = resolveMailboxParam(rawId);
-	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
 
-	const obj = await c.env.BUCKET.head(mailboxMetadataKey(mailboxId));
-	if (!obj) {
-		return c.json({ error: "Not found" }, 404);
+	const authz = await authorizeMailbox(c.env.BUCKET, c.get("principal"), rawId);
+	if (!authz.ok) {
+		return c.json({ error: authz.error }, authz.status);
 	}
 
 	const ns = c.env.MAILBOX;
-	const id = ns.idFromName(mailboxId);
+	const id = ns.idFromName(authz.mailboxId);
 	const stub = ns.get(id);
 
 	c.set("mailboxStub", stub);
-	c.set("mailboxId", mailboxId);
+	c.set("mailboxId", authz.mailboxId);
 
 	await next();
 });

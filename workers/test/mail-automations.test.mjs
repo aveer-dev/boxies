@@ -339,6 +339,24 @@ assert.equal(autoReplySubject("", "Re: Hello"), "Re: Hello");
 }
 
 {
+	const keptAcl = mergeMailboxSettingsBlob(
+		{
+			fromName: "Ada",
+			acl: { owners: ["email:ada@inboxies.email"], members: [] },
+			forwarding: { enabled: false, email: "" },
+		},
+		{
+			fromName: "Ada",
+			forwarding: { enabled: true, email: "ada@example.com" },
+		},
+	);
+	assert.deepEqual(keptAcl.acl, {
+		owners: ["email:ada@inboxies.email"],
+		members: [],
+	});
+}
+
+{
 	const keptPrompt = mergeMailboxSettingsBlob(
 		{ agentSystemPrompt: "Be brief.", fromName: "Ada" },
 		{ fromName: "Ada", agentSystemPrompt: "Be brief." },

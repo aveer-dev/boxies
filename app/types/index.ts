@@ -20,6 +20,11 @@ export interface InboxFilterRule {
 	forwardTo?: string;
 }
 
+export interface MailboxAcl {
+	owners?: string[];
+	members?: string[];
+}
+
 export interface MailboxSettings {
 	fromName?: string;
 	forwarding?: { enabled: boolean; email: string };
@@ -27,6 +32,13 @@ export interface MailboxSettings {
 	autoReply?: { enabled: boolean; subject: string; message: string };
 	agentSystemPrompt?: string;
 	filters?: InboxFilterRule[];
+	acl?: MailboxAcl;
+}
+
+export interface MeResponse {
+	email: string | null;
+	sub: string | null;
+	keys: string[];
 }
 
 export interface Mailbox {

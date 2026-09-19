@@ -36,6 +36,20 @@ data class MailboxSettings(
     val signature: SignatureSettings? = null,
     val autoReply: AutoReplySettings? = null,
     val filters: List<InboxFilterRule>? = null,
+    val acl: MailboxAcl? = null,
+)
+
+@Serializable
+data class MailboxAcl(
+    val owners: List<String>? = null,
+    val members: List<String>? = null,
+)
+
+@Serializable
+data class MeResponse(
+    val email: String? = null,
+    val sub: String? = null,
+    val keys: List<String> = emptyList(),
 )
 
 @Serializable

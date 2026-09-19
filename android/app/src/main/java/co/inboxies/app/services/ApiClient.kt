@@ -11,6 +11,7 @@ import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
+import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -165,6 +166,8 @@ class ApiClient private constructor() {
     }
 
     suspend fun listMailboxes(): List<Mailbox> = request("/api/v1/mailboxes")
+
+    suspend fun getMe(): MeResponse = request("/api/v1/me")
 
     suspend fun createMailbox(name: String, email: String): Mailbox = request(
         "/api/v1/mailboxes",

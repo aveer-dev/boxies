@@ -4,12 +4,19 @@
 
 import { routeAgentRequest } from "agents";
 import { Hono } from "hono";
-import { jwtVerify, createRemoteJWKSet } from "jose";
+import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 import { EmailMCP } from "./mcp";
 import { verifyMobileSessionToken } from "./lib/apple-auth";
+import {
+	authorizeMailbox,
+	devWebPrincipal,
+	principalFromClaims,
+	type RequestPrincipal,
+} from "./lib/mailbox-acl";
+import { mailboxIdFromAgentName } from "../shared/agent-conversations";
 import type { Env } from "./types";
 
 export { MailboxDO } from "./durableObject";
@@ -76,32 +83,51 @@ function getAccessJwt(c: { req: { header: (name: string) => string | undefined }
 async function verifyCfAccessToken(
 	token: string,
 	env: Env,
-): Promise<boolean> {
+): Promise<JWTPayload | null> {
 	const { POLICY_AUD, TEAM_DOMAIN } = env;
-	if (!POLICY_AUD || !TEAM_DOMAIN) return false;
+	if (!POLICY_AUD || !TEAM_DOMAIN) return null;
 	try {
 		const { issuer, certsUrl } = getAccessUrls(TEAM_DOMAIN);
 		const JWKS = createRemoteJWKSet(certsUrl);
-		await jwtVerify(token, JWKS, {
+		const { payload } = await jwtVerify(token, JWKS, {
 			issuer,
 			audience: POLICY_AUD,
 		});
-		return true;
+		return payload;
 	} catch {
-		return false;
+		return null;
 	}
 }
 
-// Main app that wraps the API and adds React Router fallback
-const app = new Hono<{ Bindings: Env }>();
+type AppVariables = { principal?: RequestPrincipal };
+type ExecutionCtxWithProps = ExecutionContext & {
+	props?: { principal?: RequestPrincipal };
+};
 
-// Auth middleware: Cloudflare Access (web) OR mobile Bearer JWT (iOS Apple Sign In).
-// Skipped in local development. Auth bootstrap endpoints are public.
-app.use("*", async (c, next) => {
-	if (import.meta.env.DEV) {
-		return next();
+function mailboxIdFromAgentsUrl(url: string): string | null {
+	let pathname: string;
+	try {
+		pathname = new URL(url).pathname;
+	} catch {
+		return null;
 	}
+	const parts = pathname.split("/").filter(Boolean);
+	if (parts[0] !== "agents" || parts.length < 3) return null;
+	let instanceName = parts[2];
+	try {
+		instanceName = decodeURIComponent(instanceName);
+	} catch {
+		/* keep raw */
+	}
+	return mailboxIdFromAgentName(instanceName) || null;
+}
 
+// Main app that wraps the API and adds React Router fallback
+const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
+
+// Auth middleware: Cloudflare Access (web) OR mobile Bearer JWT.
+// Auth bootstrap endpoints are public. DEV still attaches a principal so ACL is exercised.
+app.use("*", async (c, next) => {
 	if (isPublicAuthPath(new URL(c.req.url).pathname)) {
 		return next();
 	}
@@ -111,33 +137,47 @@ app.use("*", async (c, next) => {
 	const accessToken = getAccessJwt(c);
 	if (accessToken) {
 		if (!POLICY_AUD || !TEAM_DOMAIN) {
-			return c.text(
-				"Cloudflare Access must be configured in production. Set POLICY_AUD and TEAM_DOMAIN.",
-				500,
-			);
+			if (!import.meta.env.DEV) {
+				return c.text(
+					"Cloudflare Access must be configured in production. Set POLICY_AUD and TEAM_DOMAIN.",
+					500,
+				);
+			}
+			// Local wrangler often has no Access config; ignore leftover cookies.
+		} else {
+			const payload = await verifyCfAccessToken(accessToken, c.env);
+			if (!payload) {
+				return c.text("Invalid or expired Access token", 403);
+			}
+			c.set("principal", principalFromClaims(payload));
+			return next();
 		}
-		const ok = await verifyCfAccessToken(accessToken, c.env);
-		if (!ok) {
-			return c.text("Invalid or expired Access token", 403);
-		}
-		return next();
 	}
 
 	const authHeader = c.req.header("authorization");
 	const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
 	if (bearer) {
-		if (!MOBILE_JWT_SECRET) {
+		const mobileSecret =
+			MOBILE_JWT_SECRET ||
+			(import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
+		if (!mobileSecret) {
 			return c.text(
 				"Mobile auth is not configured. Set MOBILE_JWT_SECRET.",
 				500,
 			);
 		}
 		try {
-			await verifyMobileSessionToken(bearer, MOBILE_JWT_SECRET);
+			const claims = await verifyMobileSessionToken(bearer, mobileSecret);
+			c.set("principal", principalFromClaims(claims));
 			return next();
 		} catch {
 			return c.text("Invalid or expired mobile session token", 403);
 		}
+	}
+
+	if (import.meta.env.DEV) {
+		c.set("principal", devWebPrincipal());
+		return next();
 	}
 
 	// Fail closed: require Access config message if neither token present
@@ -157,18 +197,27 @@ app.use("*", async (c, next) => {
 // MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)
 // Must be before API routes and React Router catch-all
 const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
-app.all("/mcp", async (c) => {
-	return mcpHandler.fetch(c.req.raw, c.env, c.executionCtx as ExecutionContext);
-});
-app.all("/mcp/*", async (c) => {
-	return mcpHandler.fetch(c.req.raw, c.env, c.executionCtx as ExecutionContext);
-});
+function mcpFetch(c: { req: { raw: Request }; env: Env; executionCtx: ExecutionContext; get: (key: "principal") => RequestPrincipal | undefined }) {
+	const ctx = c.executionCtx as ExecutionCtxWithProps;
+	ctx.props = { principal: c.get("principal") };
+	return mcpHandler.fetch(c.req.raw, c.env, ctx);
+}
+app.all("/mcp", async (c) => mcpFetch(c));
+app.all("/mcp/*", async (c) => mcpFetch(c));
 
 // Mount the API routes
 app.route("/", apiApp);
 
 // Agent WebSocket routing - must be before React Router catch-all
 app.all("/agents/*", async (c) => {
+	const mailboxId = mailboxIdFromAgentsUrl(c.req.url);
+	if (!mailboxId) {
+		return c.json({ error: "Forbidden" }, 403);
+	}
+	const authz = await authorizeMailbox(c.env.BUCKET, c.get("principal"), mailboxId);
+	if (!authz.ok) {
+		return c.json({ error: authz.error }, authz.status);
+	}
 	const response = await routeAgentRequest(c.req.raw, c.env);
 	if (response) return response;
 	return c.text("Agent not found", 404);

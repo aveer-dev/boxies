@@ -139,6 +139,10 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes")
     }
 
+    func getMe() async throws -> MeResponse {
+        try await request(path: "/api/v1/me")
+    }
+
     func createMailbox(name: String, email: String) async throws -> Mailbox {
         try await request(
             path: "/api/v1/mailboxes",
