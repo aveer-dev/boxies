@@ -116,4 +116,37 @@ class EmailHtmlSanitizerTest {
         assertTrue(split.main.contains("Just a note"))
         assertNull(split.quote)
     }
+
+    @Test
+    fun stripsOnerrorHandlers() {
+        val clean = EmailHtmlSanitizer.sanitize(
+            """<img src="https://cdn.example/a.png" onerror="alert(1)"><p onload="alert(1)">Hi</p>""",
+        )
+        assertFalse(clean.contains("onerror", ignoreCase = true))
+        assertFalse(clean.contains("onload", ignoreCase = true))
+        assertFalse(clean.contains("alert"))
+        assertTrue(clean.contains("Hi") || clean.contains("cdn.example"))
+    }
+
+    @Test
+    fun stripsFormsAndInputs() {
+        val clean = EmailHtmlSanitizer.sanitize(
+            """<p>ok</p><form action="https://evil.example"><input name="x" value="y"></form>""",
+        )
+        assertFalse(clean.contains("<form", ignoreCase = true))
+        assertFalse(clean.contains("<input", ignoreCase = true))
+        assertTrue(clean.contains("ok"))
+    }
+
+    @Test
+    fun splitsNestedGmailQuotesFromOuter() {
+        val split = EmailHtmlSanitizer.prepare(
+            """<p>Thanks</p><div class="gmail_quote">On Mon, Bob wrote:<br>Hello<div class="gmail_quote">older</div></div>""",
+        )
+        assertTrue(split.main.contains("Thanks"))
+        assertFalse(split.main.contains("gmail_quote"))
+        assertNotNull(split.quote)
+        assertTrue(split.quote!!.contains("Hello") || split.quote!!.contains("Bob"))
+        assertTrue(split.quote!!.contains("older"))
+    }
 }

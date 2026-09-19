@@ -56,11 +56,18 @@ assert.match(androidView, /Content-Security-Policy/);
 assert.match(iosView, /Content-Security-Policy/);
 
 assert.match(androidView, /shouldOverrideUrlLoading/);
+assert.match(androidView, /hasGesture\(\)/);
 assert.match(iosView, /decidePolicyFor navigationAction/);
+assert.match(iosView, /createWebViewWith/);
 assert.match(iosView, /WKWebsiteDataStore\.nonPersistent|websiteDataStore = \.nonPersistent/);
 assert.match(iosView, /contentWorld/);
+assert.match(iosView, /WKContentWorld\.defaultClient/);
 assert.match(androidView, /allowFileAccess = false/);
 assert.match(androidView, /MIXED_CONTENT_NEVER_ALLOW/);
+assert.match(androidView, /javaScriptCanOpenWindowsAutomatically = false/);
+assert.match(iosView, /javaScriptCanOpenWindowsAutomatically = false/);
+assert.match(androidView, /EmailHtmlSanitizer\.sanitize/);
+assert.match(iosView, /EmailHTMLSanitizer\.sanitize/);
 
 assert.doesNotMatch(
 	androidView,

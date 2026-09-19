@@ -44,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -82,7 +83,7 @@ fun EmailBodyView(
     var isResolvingImages by remember(email.id) { mutableStateOf(false) }
     var webHeightPx by remember(email.id) { mutableFloatStateOf(1f) }
     var isWebLoading by remember(email.id) { mutableStateOf(isHtml) }
-    var showQuoted by remember { mutableStateOf(false) }
+    var showQuoted by remember(email.id) { mutableStateOf(false) }
 
     val bodyHtml = htmlWithImages ?: htmlOrText
     val prepared = remember(bodyHtml) { EmailHtmlSanitizer.prepare(bodyHtml) }
@@ -91,6 +92,7 @@ fun EmailBodyView(
     val showLoading = isHtml && (isWebLoading || webHeightPx <= 1f)
 
     LaunchedEffect(email.id, htmlOrText, attachments.map { it.id }.joinToString(",")) {
+        showQuoted = false
         webHeightPx = 1f
         isWebLoading = isHtml
         htmlWithImages = null
@@ -155,16 +157,15 @@ fun EmailBodyView(
             }
 
             Box(modifier = Modifier.fillMaxWidth()) {
-                if (!showLoading) {
-                    HtmlBodyWebView(
-                        html = wrapEmailHtml(prepared.main),
-                        onHeight = { webHeightPx = it },
-                        onLoadingChanged = { isWebLoading = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(with(LocalDensity.current) { webHeightPx.toDp().coerceAtLeast(1.dp) }),
-                    )
-                }
+                HtmlBodyWebView(
+                    html = wrapEmailHtml(prepared.main),
+                    onHeight = { webHeightPx = it },
+                    onLoadingChanged = { isWebLoading = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(with(LocalDensity.current) { webHeightPx.toDp().coerceAtLeast(1.dp) })
+                        .alpha(if (showLoading) 0f else 1f),
+                )
                 if (showLoading) {
                     BodySkeleton(isResolvingImages = isResolvingImages)
                 }
@@ -307,23 +308,29 @@ private fun QuotedRepliesSheet(
                         setBackgroundColor(android.graphics.Color.TRANSPARENT)
                         applyEmailHtmlWebViewSettings(javaScriptEnabled = false)
                         webViewClient = EmailLinkWebViewClient()
+                        val wrapped = wrapQuotedHtml(content)
+                        tag = wrapped
                         loadDataWithBaseURL(
                             EmailHtmlSanitizer.OPAQUE_ORIGIN,
-                            wrapQuotedHtml(content),
+                            wrapped,
                             "text/html",
                             "UTF-8",
                             null,
                         )
                     }
                 },
-                update = {
-                    it.loadDataWithBaseURL(
-                        EmailHtmlSanitizer.OPAQUE_ORIGIN,
-                        wrapQuotedHtml(content),
-                        "text/html",
-                        "UTF-8",
-                        null,
-                    )
+                update = { view ->
+                    val wrapped = wrapQuotedHtml(content)
+                    if (view.tag != wrapped) {
+                        view.tag = wrapped
+                        view.loadDataWithBaseURL(
+                            EmailHtmlSanitizer.OPAQUE_ORIGIN,
+                            wrapped,
+                            "text/html",
+                            "UTF-8",
+                            null,
+                        )
+                    }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -407,6 +414,7 @@ private fun WebView.applyEmailHtmlWebViewSettings(javaScriptEnabled: Boolean) {
     settings.allowUniversalAccessFromFileURLs = false
     settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
     settings.setSupportMultipleWindows(false)
+    settings.javaScriptCanOpenWindowsAutomatically = false
     settings.mediaPlaybackRequiresUserGesture = true
     CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
 }
@@ -414,12 +422,19 @@ private fun WebView.applyEmailHtmlWebViewSettings(javaScriptEnabled: Boolean) {
 private open class EmailLinkWebViewClient : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
         val uri = request?.url ?: return true
-        if (uri.host == "inboxies.invalid") return false
+        // Initial loadDataWithBaseURL uses this host with no gesture. Clicks must never stay in-WebView.
+        if (uri.host == "inboxies.invalid" && !request.hasGesture()) return false
         val scheme = uri.scheme?.lowercase().orEmpty()
-        if (scheme == "http" || scheme == "https" || scheme == "mailto") {
+        if (
+            request.hasGesture() &&
+            uri.host != "inboxies.invalid" &&
+            (scheme == "http" || scheme == "https" || scheme == "mailto")
+        ) {
             val context = view?.context ?: return true
             try {
-                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
             } catch (_: ActivityNotFoundException) {
             }
         }

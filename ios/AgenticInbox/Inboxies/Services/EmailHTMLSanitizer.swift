@@ -149,7 +149,7 @@ enum EmailHTMLSanitizer {
         }
         if target == nil {
             for bq in try body.select("blockquote") {
-                if bq.parent()?.ancestor(named: "blockquote") != nil { continue }
+                if bq.ancestor(named: "blockquote") != nil { continue }
                 let text = try bq.text().trimmingCharacters(in: .whitespacesAndNewlines)
                 let style = (try bq.attr("style")).lowercased()
                 let hasReplyPattern =
@@ -206,7 +206,7 @@ private extension Element {
             return hasClass(String(selector.dropFirst()))
         }
         if selector.hasPrefix("#") {
-            return (try? id()) == String(selector.dropFirst())
+            return id() == String(selector.dropFirst())
         }
         if selector == "blockquote[type=cite]" {
             return tagName().lowercased() == "blockquote"

@@ -337,6 +337,7 @@ private enum EmailWebViewIsolation {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = allowsJavaScript
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
         config.suppressesIncrementalRendering = false
         if let heightHandler, allowsJavaScript {
             config.userContentController.add(heightHandler, contentWorld: heightWorld, name: "bodyHeight")
@@ -351,6 +352,20 @@ private enum EmailWebViewIsolation {
         return config
     }
 
+    /// `target=_blank` never creates an in-app WKWebView; user-activated http(s)/mailto go to the system.
+    static func createPopup(for action: WKNavigationAction) -> WKWebView? {
+        openExternallyIfUserActivated(action)
+        return nil
+    }
+
+    static func openExternallyIfUserActivated(_ action: WKNavigationAction) {
+        guard action.navigationType == .linkActivated, let url = action.request.url else { return }
+        let scheme = url.scheme?.lowercased() ?? ""
+        guard ["http", "https", "mailto"].contains(scheme) else { return }
+        guard url.host != "inboxies.invalid" else { return }
+        UIApplication.shared.open(url)
+    }
+
     static func decidePolicy(
         for action: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
@@ -360,8 +375,14 @@ private enum EmailWebViewIsolation {
             return
         }
         let scheme = url.scheme?.lowercased() ?? ""
+        // Initial loadHTMLString uses this host with navigationType `.other`.
+        // Never allow in-WebView clicks to stay on the opaque origin.
         if url.host == "inboxies.invalid" {
-            decisionHandler(.allow)
+            if action.navigationType == .other || action.navigationType == .reload {
+                decisionHandler(.allow)
+            } else {
+                decisionHandler(.cancel)
+            }
             return
         }
         if action.navigationType == .other && (scheme == "about" || url.absoluteString.isEmpty) {
@@ -369,9 +390,7 @@ private enum EmailWebViewIsolation {
             return
         }
         if ["http", "https", "mailto"].contains(scheme) {
-            if action.navigationType == .linkActivated {
-                UIApplication.shared.open(url)
-            }
+            openExternallyIfUserActivated(action)
             decisionHandler(.cancel)
             return
         }
@@ -394,6 +413,7 @@ private struct HTMLWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
         webView.scrollView.backgroundColor = .clear
@@ -420,7 +440,7 @@ private struct HTMLWebView: UIViewRepresentable {
         )
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var height: Binding<CGFloat>
         var isLoading: Binding<Bool>
         var loadedHTML: String?
@@ -445,6 +465,15 @@ private struct HTMLWebView: UIViewRepresentable {
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
             EmailWebViewIsolation.decidePolicy(for: navigationAction, decisionHandler: decisionHandler)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            EmailWebViewIsolation.createPopup(for: navigationAction)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -487,6 +516,9 @@ private struct HTMLWebView: UIViewRepresentable {
             } else if let number = raw as? NSNumber {
                 measured = CGFloat(truncating: number)
             } else {
+                DispatchQueue.main.async {
+                    self.isLoading.wrappedValue = false
+                }
                 return
             }
             let next = max(measured.rounded(.up), 1)
@@ -622,6 +654,7 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.scrollView.isScrollEnabled = true
         webView.scrollView.bounces = true
         webView.scrollView.backgroundColor = .clear
@@ -639,7 +672,7 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         webView.loadHTMLString(fullHTML, baseURL: EmailHTMLSanitizer.opaqueOrigin)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var loadedHTML: String?
 
         func webView(
@@ -648,6 +681,15 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
             EmailWebViewIsolation.decidePolicy(for: navigationAction, decisionHandler: decisionHandler)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            EmailWebViewIsolation.createPopup(for: navigationAction)
         }
     }
 
