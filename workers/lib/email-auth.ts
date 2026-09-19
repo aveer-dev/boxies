@@ -102,7 +102,7 @@ export function domainFromAddress(value: string | null | undefined): string | nu
 	if (!trimmed) return null;
 	const addr = normalizeEmailAddress(trimmed) ?? trimmed.toLowerCase();
 	const at = addr.lastIndexOf("@");
-	if (at > 0 && at < addr.length - 1) {
+	if (at >= 0 && at < addr.length - 1) {
 		const domain = addr.slice(at + 1).replace(/^\./, "").replace(/\.+$/, "");
 		return domain || null;
 	}
@@ -277,26 +277,63 @@ function pickVerdict(hits: MethodHit[], method: string): MethodHit | null {
 	return matched.find((hit) => hit.result === "pass") ?? matched[matched.length - 1];
 }
 
-function emptyAuth(headerFrom: string, envelopeFrom: string): EmailAuth {
-	return {
-		headerFrom,
-		envelopeFrom,
-		aligned: null,
-		spoofed: false,
-		source: "none",
-	};
+const EVALUABLE_VERDICTS = new Set<AuthVerdict>([
+	"pass",
+	"fail",
+	"softfail",
+	"policy",
+]);
+
+function isEvaluableHit(hit: MethodHit | null): boolean {
+	return Boolean(hit && EVALUABLE_VERDICTS.has(hit.result));
+}
+
+/** Prefer getAll so duplicate Authentication-Results are not comma-joined. */
+function collectHeaderValues(source: HeaderSource, name: string): string[] {
+	if (!source) return [];
+	if (
+		typeof source === "object" &&
+		!Array.isArray(source) &&
+		typeof (source as { get?: unknown }).get === "function"
+	) {
+		const headers = source as {
+			get(name: string): string | null;
+			getAll?(name: string): string[];
+		};
+		if (typeof headers.getAll === "function") {
+			try {
+				const all = headers.getAll(name);
+				if (Array.isArray(all) && all.length > 0) {
+					return all.map((value) => String(value)).filter(Boolean);
+				}
+			} catch {
+				// Fall through to map / get().
+			}
+		}
+	}
+	return headerMapFromSource(source).get(name.toLowerCase()) ?? [];
 }
 
 export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	const headerFrom = (input.headerFrom ?? "").trim();
 	const envelopeFrom = (input.envelopeFrom ?? "").trim();
-	const envelopeMap = headerMapFromSource(input.envelopeHeaders);
-	const mimeMap = headerMapFromSource(input.mimeHeaders);
 
-	const envelopeAr = envelopeMap.get("authentication-results") ?? [];
-	const mimeAr = mimeMap.get("authentication-results") ?? [];
-	const envelopeArc = envelopeMap.get("arc-authentication-results") ?? [];
-	const mimeArc = mimeMap.get("arc-authentication-results") ?? [];
+	const envelopeAr = collectHeaderValues(
+		input.envelopeHeaders,
+		"authentication-results",
+	);
+	const mimeAr = collectHeaderValues(
+		input.mimeHeaders,
+		"authentication-results",
+	);
+	const envelopeArc = collectHeaderValues(
+		input.envelopeHeaders,
+		"arc-authentication-results",
+	);
+	const mimeArc = collectHeaderValues(
+		input.mimeHeaders,
+		"arc-authentication-results",
+	);
 
 	const trustedAr =
 		lastTrusted(envelopeAr) ?? lastTrusted(mimeAr);
@@ -313,7 +350,7 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 		methods = trustedArc.methods;
 	}
 
-	const envelopeSpf = envelopeMap.get("received-spf") ?? [];
+	const envelopeSpf = collectHeaderValues(input.envelopeHeaders, "received-spf");
 	if (envelopeSpf.length > 0 && !pickVerdict(methods, "spf")) {
 		const spfHit = parseReceivedSpf(envelopeSpf[envelopeSpf.length - 1] ?? "");
 		if (spfHit) methods = [...methods, spfHit];
@@ -324,7 +361,9 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	const dmarcHit = pickVerdict(methods, "dmarc");
 
 	const dkimDomain = domainFromAddress(
-		dkimHit?.properties["header.d"] ?? dkimHit?.properties["d"],
+		dkimHit?.properties["header.d"] ??
+			dkimHit?.properties["d"] ??
+			dkimHit?.properties["header.i"],
 	);
 	const spfMailfrom =
 		spfHit?.properties["smtp.mailfrom"] ??
@@ -340,12 +379,17 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	const spfAligned =
 		spfHit?.result === "pass" && domainsAligned(headerFromDomain, spfDomain);
 	const dmarcPass = dmarcHit?.result === "pass";
+	const hasEvaluableVerdict =
+		isEvaluableHit(dkimHit) || isEvaluableHit(spfHit) || isEvaluableHit(dmarcHit);
 
 	const auth: EmailAuth = {
 		headerFrom,
 		envelopeFrom,
 		source,
-		aligned: source === "none" ? null : Boolean(dkimAligned || spfAligned || dmarcPass),
+		aligned:
+			source === "none" || !hasEvaluableVerdict
+				? null
+				: Boolean(dkimAligned || spfAligned || dmarcPass),
 		spoofed: false,
 	};
 	if (dkimHit) auth.dkim = dkimHit.result;
@@ -354,7 +398,8 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	if (dkimDomain) auth.dkimDomain = dkimDomain;
 	if (spfMailfrom) auth.spfMailfrom = spfMailfrom;
 
-	if (source !== "none") {
+	// Fail-open when CF only stamped arc=none, or every method is none/neutral.
+	if (source !== "none" && hasEvaluableVerdict) {
 		auth.spoofed = auth.aligned !== true;
 	}
 
@@ -453,9 +498,8 @@ export function mergeTrustedAuthHeaders(
 	envelopeHeaders: HeaderSource,
 ): HeaderEntry[] {
 	const merged = headerEntriesFromSource(mimeHeaders);
-	const envelopeMap = headerMapFromSource(envelopeHeaders);
 	for (const name of TRUSTED_AR_NAMES) {
-		for (const value of envelopeMap.get(name) ?? []) {
+		for (const value of collectHeaderValues(envelopeHeaders, name)) {
 			if (!value) continue;
 			if (name !== "received-spf") {
 				const parsed = parseAuthenticationResultsValue(value);

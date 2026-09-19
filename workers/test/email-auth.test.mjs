@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { Folders } from "../../shared/folders.ts";
 import {
+	domainFromAddress,
 	domainsAligned,
 	isAuthSpoofed,
 	isTrustedAuthserv,
@@ -20,6 +21,7 @@ import {
 	shouldAutoDraft,
 } from "../lib/classify-email.ts";
 import { applyInboxFilters, parseInboxFilters } from "../lib/inbox-filters.ts";
+import PostalMime from "postal-mime";
 
 function headers(...pairs) {
 	return pairs.map(([key, value]) => ({ key, value }));
@@ -52,6 +54,8 @@ assert.equal(domainsAligned("paypal.com", "paypal.com"), true);
 assert.equal(domainsAligned("notify.paypal.com", "paypal.com"), true);
 assert.equal(domainsAligned("paypal.com", "mail.paypal.com"), true);
 assert.equal(domainsAligned("paypal.com", "evil.example"), false);
+assert.equal(domainFromAddress("PayPal <notify@paypal.com>"), "paypal.com");
+assert.equal(domainFromAddress("@paypal.com"), "paypal.com");
 
 {
 	const parsed = parseAuthenticationResultsValue(CF_PASS);
@@ -313,6 +317,141 @@ assert.equal(domainsAligned("paypal.com", "evil.example"), false);
 		auth: spoofed,
 	});
 	assert.equal(hit?.folderId, "promotions");
+}
+
+const CF_BLOG_ARC =
+	"i=1; mx.cloudflare.net; dkim=pass header.d=cloudflare.com header.s=example09082023 header.b=IRdayjbb; dmarc=pass header.from=example.com policy.dmarc=reject; spf=none (mx.cloudflare.net: no SPF records found for postmaster@example.com) smtp.helo=smtp.example.com; spf=pass (mx.cloudflare.net: domain of joe@example.com designates 2a00:1440:4824:20::32e as permitted sender) smtp.mailfrom=joe@example.com; arc=none smtp.remote-ip=2a00:1440:4824:20::32e";
+
+{
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(["ARC-Authentication-Results", CF_BLOG_ARC]),
+		headerFrom: "Joe <joe@example.com>",
+		envelopeFrom: "joe@example.com",
+	});
+	assert.equal(auth.source, "arc-authentication-results");
+	assert.equal(auth.dkim, "pass");
+	assert.equal(auth.spf, "pass");
+	assert.equal(auth.dmarc, "pass");
+	assert.equal(auth.spfMailfrom, "joe@example.com");
+	assert.equal(auth.aligned, true);
+	assert.equal(auth.spoofed, false);
+}
+
+{
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"ARC-Authentication-Results",
+			"i=1; mx.cloudflare.net; arc=none",
+		]),
+		headerFrom: "ada@example.com",
+		envelopeFrom: "ada@example.com",
+	});
+	assert.equal(auth.source, "arc-authentication-results");
+	assert.equal(auth.aligned, null);
+	assert.equal(auth.spoofed, false);
+}
+
+{
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=none; spf=none; dmarc=none",
+		]),
+		headerFrom: "ada@example.com",
+		envelopeFrom: "ada@example.com",
+	});
+	assert.equal(auth.dkim, "none");
+	assert.equal(auth.aligned, null);
+	assert.equal(auth.spoofed, false);
+}
+
+{
+	const getOnly = {
+		get(name) {
+			return name.toLowerCase() === "arc-authentication-results"
+				? CF_BLOG_ARC
+				: null;
+		},
+	};
+	const auth = parseAuthSignals({
+		envelopeHeaders: getOnly,
+		headerFrom: "joe@example.com",
+		envelopeFrom: "joe@example.com",
+	});
+	assert.equal(auth.source, "arc-authentication-results");
+	assert.equal(auth.dmarc, "pass");
+	assert.equal(auth.spoofed, false);
+	const merged = mergeTrustedAuthHeaders(
+		headers(["From", "Joe <joe@example.com>"]),
+		getOnly,
+	);
+	assert.equal(
+		merged.some(
+			(h) =>
+				(h.key || "").toLowerCase() === "arc-authentication-results" &&
+				h.value === CF_BLOG_ARC,
+		),
+		true,
+	);
+}
+
+{
+	const getAllHeaders = {
+		get(name) {
+			const all = this.getAll(name);
+			return all.length ? all.join(", ") : null;
+		},
+		getAll(name) {
+			if (name.toLowerCase() !== "authentication-results") return [];
+			return [ATTACKER_PASS, CF_PASS];
+		},
+	};
+	const auth = parseAuthSignals({
+		envelopeHeaders: getAllHeaders,
+		headerFrom: "PayPal <notify@paypal.com>",
+		envelopeFrom: "notify@paypal.com",
+	});
+	assert.equal(auth.source, "authentication-results");
+	assert.equal(auth.dmarc, "pass");
+	assert.equal(auth.spoofed, false);
+}
+
+{
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=pass header.i=@paypal.com",
+		]),
+		headerFrom: "notify@paypal.com",
+		envelopeFrom: "notify@paypal.com",
+	});
+	assert.equal(auth.dkimDomain, "paypal.com");
+	assert.equal(auth.aligned, true);
+	assert.equal(auth.spoofed, false);
+}
+
+{
+	const raw = [
+		"From: Joe <joe@example.com>",
+		"To: you@inboxies.email",
+		"Subject: Hello",
+		`ARC-Authentication-Results: ${CF_BLOG_ARC}`,
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=utf-8",
+		"",
+		"Hi",
+	].join("\r\n");
+	const parsed = await PostalMime.parse(raw);
+	const auth = parseAuthSignals({
+		mimeHeaders: parsed.headers,
+		headerFrom: parsed.from?.address,
+		envelopeFrom: "joe@example.com",
+	});
+	assert.equal(auth.source, "arc-authentication-results");
+	assert.equal(auth.dmarc, "pass");
+	assert.equal(auth.spf, "pass");
+	assert.equal(auth.aligned, true);
+	assert.equal(auth.spoofed, false);
 }
 
 console.log("email-auth tests passed");
