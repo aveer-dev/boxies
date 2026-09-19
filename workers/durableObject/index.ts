@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/durable-sqlite";
 import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
-import { Folders } from "../../shared/folders";
+import { Folders, FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "../../shared/folders";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
@@ -23,9 +23,16 @@ import {
 	buildSimpleMime,
 	computeSnippet,
 	deleteEmailContent,
+	emailContentKeys,
 	loadEmailBody,
 	storeEmailContent,
 } from "../lib/email-content";
+import {
+	collectMailboxPurgeR2Keys,
+	deleteEmailAttachments,
+	deleteR2Keys,
+} from "../lib/attachments";
+import { mailboxMetadataKey } from "../lib/mailbox-routing";
 import {
 	FTS_BACKFILL_BATCH_SIZE,
 	FTS_BACKFILL_MIGRATION,
@@ -60,6 +67,9 @@ const folderIdSql = (id: string) =>
 	`(SELECT id FROM folders WHERE name = '${id}' OR id = '${id}' LIMIT 1)`;
 const DRAFT_FOLDER_ID_SQL = folderIdSql(Folders.DRAFT);
 const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
+
+/** KV flag set after a successful purge so in-flight writers cannot resurrect mail. */
+const MAILBOX_DELETED_KEY = "mailbox_deleted";
 
 const ALLOWED_SORT_COLUMNS = [
 	"id",
@@ -185,6 +195,27 @@ export class MailboxDO extends DurableObject<Env> {
 				this.#subscribers.delete(controller);
 			}
 		}
+	}
+
+	async #isMailboxDeleted(): Promise<boolean> {
+		return (await this.ctx.storage.get(MAILBOX_DELETED_KEY)) != null;
+	}
+
+	async #assertMailboxWritable(): Promise<void> {
+		if (await this.#isMailboxDeleted()) {
+			throw new Error("Mailbox has been deleted");
+		}
+	}
+
+	/** Clear the post-purge write lock when recreating the same address. */
+	async reviveMailbox(): Promise<{ status: string }> {
+		await this.ctx.storage.delete(MAILBOX_DELETED_KEY);
+		return { status: "revived" };
+	}
+
+	/** True when the mailbox has not been purged (safe for inbound preflight). */
+	async isWritable(): Promise<boolean> {
+		return !(await this.#isMailboxDeleted());
 	}
 
 	constructor(state: DurableObjectState, env: Env) {
@@ -949,6 +980,7 @@ export class MailboxDO extends DurableObject<Env> {
 			thread_id: string | null;
 		},
 	) {
+		await this.#assertMailboxWritable();
 		const existing = this.db
 			.select({
 				id: schema.emails.id,
@@ -1154,9 +1186,87 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#deleteEmailFts(id);
 
 		await deleteEmailContent(this.env.BUCKET, id);
+		await deleteEmailAttachments(this.env.BUCKET, id, emailAttachments);
 
 		this.broadcastEvent("email_deleted", { id });
 		return emailAttachments;
+	}
+
+	/**
+	 * Wipe mailbox SQLite + all inventoried R2 email/attachment blobs, then
+	 * remove `mailboxes/{id}.json` so inbound/API stop treating it as live.
+	 * Returns conversation ids so the HTTP layer can purge EmailAgent DOs.
+	 */
+	async purgeMailbox(
+		mailboxId: string,
+	): Promise<{ conversationIds: string[] }> {
+		const emailRows = this.db
+			.select({ id: schema.emails.id })
+			.from(schema.emails)
+			.all();
+		const emailIds = emailRows.map((row) => row.id);
+
+		const attachmentRows = this.db
+			.select({
+				email_id: schema.attachments.email_id,
+				id: schema.attachments.id,
+				filename: schema.attachments.filename,
+			})
+			.from(schema.attachments)
+			.all();
+
+		const conversationRows = this.db
+			.select({ id: schema.agentConversations.id })
+			.from(schema.agentConversations)
+			.all();
+		const conversationIds = conversationRows.map((row) => row.id);
+
+		const keys = collectMailboxPurgeR2Keys(
+			emailIds,
+			attachmentRows,
+			emailContentKeys,
+		);
+		await deleteR2Keys(this.env.BUCKET, keys);
+
+		// Wipe tables first; only then clear FTS / alarm so a failed txn
+		// leaves searchable mail + backfill alarm intact.
+		this.ctx.storage.transactionSync(() => {
+			const sql = this.ctx.storage.sql;
+			sql.exec(`DELETE FROM attachments`);
+			sql.exec(`DELETE FROM emails`);
+			sql.exec(`DELETE FROM folders`);
+			sql.exec(`DELETE FROM agent_conversations`);
+			sql.exec(`DELETE FROM device_tokens`);
+			sql.exec(`DELETE FROM dismissed_todos`);
+			sql.exec(`DELETE FROM auto_reply_receipts`);
+
+			for (const folderId of SYSTEM_FOLDER_IDS) {
+				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;
+				sql.exec(
+					`INSERT INTO folders (id, name, is_deletable) VALUES (?, ?, 0)`,
+					folderId,
+					name,
+				);
+			}
+		});
+
+		try {
+			this.ctx.storage.sql.exec(`DELETE FROM emails_fts`);
+		} catch (e) {
+			console.error("purgeMailbox emails_fts wipe failed:", (e as Error).message);
+		}
+
+		try {
+			await this.ctx.storage.deleteAlarm();
+		} catch (e) {
+			console.error("purgeMailbox deleteAlarm failed:", (e as Error).message);
+		}
+
+		// Block createEmail/updateDraft until reviveMailbox on recreate.
+		await this.ctx.storage.put(MAILBOX_DELETED_KEY, "1");
+		await this.env.BUCKET.delete(mailboxMetadataKey(mailboxId));
+
+		return { conversationIds };
 	}
 
 	async getAttachment(id: string) {
@@ -1699,6 +1809,7 @@ export class MailboxDO extends DurableObject<Env> {
 		email: EmailData,
 		attachments: AttachmentData[],
 	) {
+		await this.#assertMailboxWritable();
 		// Resolve folder name or ID to the actual folder ID.
 		const folderRow = this.db
 			.select({ id: schema.folders.id })

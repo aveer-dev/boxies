@@ -12,10 +12,11 @@ import {
 	OutboundSizeError,
 } from "./lib/outbound-limits";
 import { deliverOutboundInBackground } from "./lib/outbound-delivery";
-import { storeAttachments, type StoredAttachment } from "./lib/attachments";
+import { storeAttachments, attachmentKey, sanitizeAttachmentFilename, deleteR2Keys, type StoredAttachment } from "./lib/attachments";
 import {
 	computeSnippet,
 	storeEmailContent,
+	emailContentKeys,
 } from "./lib/email-content";
 import { computeSearchText } from "./lib/email-fts";
 import {
@@ -205,6 +206,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const finalSettings = { ...defaultSettings, ...settings };
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
+	await stub.reviveMailbox();
 	await stub.getFolders();
 	return c.json({ id: email, email, name, settings: finalSettings }, 201);
 });
@@ -250,7 +252,37 @@ app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 	if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
 	const key = mailboxMetadataKey(mailboxId);
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
-	await c.env.BUCKET.delete(key); // TODO: also delete DO data and R2 attachment blobs
+
+	// Purge DO + R2 and remove metadata inside the DO RPC (closes inbound HEAD).
+	const stub = getMailboxStub(c.env, mailboxId);
+	const { conversationIds } = await stub.purgeMailbox(mailboxId);
+	const agentNames = new Set<string>([
+		mailboxId, // legacy single-chat EmailAgent name
+		...conversationIds.map((id) => agentInstanceName(mailboxId, id)),
+	]);
+	for (const name of agentNames) {
+		try {
+			const agentStub = c.env.EMAIL_AGENT.get(c.env.EMAIL_AGENT.idFromName(name));
+			// Prefer RPC; fall back to HTTP for agent stubs that only expose fetch.
+			const purgable = agentStub as {
+				purge?: () => Promise<unknown>;
+				fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
+			};
+			if (typeof purgable.purge === "function") {
+				await purgable.purge();
+			} else {
+				await purgable.fetch(new Request("https://agents/purge", { method: "POST" }));
+			}
+		} catch (e) {
+			// Best-effort: conversation ids are already captured; chat storage
+			// orphans are lower impact than blocking mailbox delete.
+			console.error(
+				`EmailAgent purge failed for ${name}:`,
+				(e as Error).message,
+			);
+		}
+	}
+
 	return c.body(null, 204);
 });
 
@@ -428,7 +460,6 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	const id = c.req.param("id")!;
 	const attachments = await c.var.mailboxStub.deleteEmail(id);
 	if (attachments === null) return c.json({ error: "Not found" }, 404);
-	if (attachments.length > 0) await c.env.BUCKET.delete(attachments.map((att: any) => `attachments/${id}/${att.id}/${att.filename}`));
 	return c.body(null, 204);
 });
 
@@ -783,7 +814,7 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 	const attachmentId = c.req.param("attachmentId")!;
 	const attachment = await c.var.mailboxStub.getAttachment(attachmentId);
 	if (!attachment) return c.json({ error: "Attachment not found" }, 404);
-	const obj = await c.env.BUCKET.get(`attachments/${emailId}/${attachmentId}/${attachment.filename}`);
+	const obj = await c.env.BUCKET.get(attachmentKey(emailId, attachmentId, attachment.filename));
 	if (!obj) return c.json({ error: "Attachment file not found" }, 404);
 	const headers = new Headers();
 	headers.set("Content-Type", attachment.mimetype);
@@ -1060,6 +1091,10 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const messageId = crypto.randomUUID();
 
 	const stub = getMailboxStub(env, mailboxId);
+	if (!(await stub.isWritable())) {
+		console.log(`Skipping inbound for deleted mailbox ${mailboxId}`);
+		return;
+	}
 	const fromAddress = (parsedEmail.from?.address || message.from || "").toLowerCase();
 	const extractMsgId = (s: string) => { const m = s.match(/<([^>]+)>/); return m ? m[1] : s.trim().split(/\s+/)[0]; };
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
@@ -1084,8 +1119,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	if (parsedEmail.attachments) {
 		for (const att of parsedEmail.attachments) {
 			const attId = crypto.randomUUID();
-			const filename = (att.filename || "untitled").replace(/[\/\\:*?"<>|\x00-\x1f]/g, "_");
-			await env.BUCKET.put(`attachments/${messageId}/${attId}/${filename}`, att.content);
+			const filename = sanitizeAttachmentFilename(att.filename);
+			await env.BUCKET.put(attachmentKey(messageId, attId, filename), att.content);
 			attachmentData.push({ id: attId, email_id: messageId, filename, mimetype: att.mimeType,
 				size: typeof att.content === "string" ? att.content.length : att.content.byteLength,
 				content_id: att.contentId || null, disposition: att.disposition || "attachment" });
@@ -1190,12 +1225,36 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	try {
 		await stub.createEmail(targetFolder, inboundEmail, attachmentData);
 	} catch (e) {
+		if ((e as Error).message === "Mailbox has been deleted") {
+			console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+			await deleteR2Keys(env.BUCKET, [
+				...emailContentKeys(messageId),
+				...attachmentData.map((att) =>
+					attachmentKey(messageId, att.id, att.filename),
+				),
+			]);
+			return;
+		}
 		if (!shouldFallbackToInbox(targetFolder, e)) throw e;
 		console.error(
 			`Failed to file inbound mail to ${targetFolder}, falling back to inbox:`,
 			(e as Error).message,
 		);
-		await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
+		try {
+			await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
+		} catch (inboxErr) {
+			if ((inboxErr as Error).message === "Mailbox has been deleted") {
+				console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+				await deleteR2Keys(env.BUCKET, [
+					...emailContentKeys(messageId),
+					...attachmentData.map((att) =>
+						attachmentKey(messageId, att.id, att.filename),
+					),
+				]);
+				return;
+			}
+			throw inboxErr;
+		}
 		filedFolder = Folders.INBOX;
 	}
 
