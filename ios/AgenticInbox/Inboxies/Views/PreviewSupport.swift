@@ -98,6 +98,11 @@ enum PreviewSupport {
     static func previewMailboxModel() -> AppModel {
         let app = appModel()
         app.selectedTab = .folder("inbox")
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-previewDetail"), let first = app.emails.first {
+            app.selectedEmail = first
+            app.threadEmails = [first]
+        }
         return app
     }
 }
@@ -111,6 +116,12 @@ struct PreviewMailboxRoot: View {
         RootView()
             .environment(auth)
             .environment(app)
+            .task {
+                if ProcessInfo.processInfo.arguments.contains("-previewCompose") {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    await app.startCompose(mode: .new)
+                }
+            }
     }
 }
 #endif

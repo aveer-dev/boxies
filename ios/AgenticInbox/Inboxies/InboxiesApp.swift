@@ -20,7 +20,9 @@ struct InboxiesApp: App {
             if ProcessInfo.processInfo.arguments.contains("-htmlHardenFixture") {
                 HTMLHardenFixtureView()
                     .applyThemeController()
-            } else if ProcessInfo.processInfo.arguments.contains("-previewMailbox") {
+            } else if ProcessInfo.processInfo.arguments.contains("-previewMailbox")
+                || ProcessInfo.processInfo.arguments.contains("-previewDetail")
+                || ProcessInfo.processInfo.arguments.contains("-previewCompose") {
                 PreviewMailboxRoot()
                     .applyThemeController()
             } else {

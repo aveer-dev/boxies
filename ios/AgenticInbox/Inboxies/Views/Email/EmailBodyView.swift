@@ -821,11 +821,25 @@ enum HTMLHardenFixture {
 
 #if DEBUG
 struct HTMLHardenFixtureView: View {
+    @State private var quoted: QuotedMailContent?
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     EmailBodyView(htmlOrText: HTMLHardenFixture.html)
+                    Button("Open quoted sheet") {
+                        if let quote = EmailHTMLSanitizer.prepare(HTMLHardenFixture.html).quote {
+                            quoted = QuotedMailContent(text: quote, isHTML: true)
+                        }
+                    }
+                    .font(.inter(size: 15, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(AppTheme.pillFill)
+                    .foregroundStyle(AppTheme.ink)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityIdentifier("html-harden-open-quoted")
                     checks("Sanitizer", HTMLHardenFixture.sanitizerChecks)
                     checks("Link policy", HTMLHardenFixture.policyChecks)
                 }
@@ -834,6 +848,15 @@ struct HTMLHardenFixtureView: View {
             .background(AppTheme.background)
             .navigationTitle("HTML harden")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $quoted) { item in
+                QuotedRepliesModalView(content: item.text, isHTML: true)
+            }
+            .task {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if quoted == nil, let quote = EmailHTMLSanitizer.prepare(HTMLHardenFixture.html).quote {
+                    quoted = QuotedMailContent(text: quote, isHTML: true)
+                }
+            }
         }
     }
 
