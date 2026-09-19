@@ -28,6 +28,7 @@ import { formatListDate } from "shared/dates";
 import { formatParticipants } from "shared/sender";
 import MailboxSplitView from "~/components/MailboxSplitView";
 import { getSnippetText, hasFileAttachment } from "~/lib/utils";
+import { isAuthSpoofed } from "~/lib/email-auth";
 import {
 	useDeleteEmail,
 	useEmails,
@@ -384,6 +385,11 @@ export default function EmailListRoute() {
 												{email.has_draft && (
 													<span className="shrink-0 text-xs text-kumo-destructive font-medium">
 														Draft
+													</span>
+												)}
+												{isAuthSpoofed(email) && (
+													<span className="shrink-0 text-xs text-kumo-destructive font-medium">
+														Spoofed
 													</span>
 												)}
 												{email.needs_reply && !email.has_draft && (

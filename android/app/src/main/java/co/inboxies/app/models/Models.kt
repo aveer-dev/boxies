@@ -194,6 +194,22 @@ data class MailAddress(
 }
 
 @Serializable
+data class EmailAuth(
+    val spf: String? = null,
+    val dkim: String? = null,
+    val dmarc: String? = null,
+    val dkimDomain: String? = null,
+    val spfMailfrom: String? = null,
+    val headerFrom: String? = null,
+    val envelopeFrom: String? = null,
+    val aligned: Boolean? = null,
+    val spoofed: Boolean = false,
+    val source: String? = null,
+) {
+    val isSpoofed: Boolean get() = spoofed
+}
+
+@Serializable
 data class Email(
     val id: String,
     @SerialName("thread_id") val threadId: String? = null,
@@ -220,12 +236,16 @@ data class Email(
     @SerialName("needs_reply") val needsReply: Boolean? = null,
     @SerialName("has_attachment") val hasAttachment: Boolean? = null,
     val attachments: List<Attachment>? = null,
+    val auth: EmailAuth? = null,
 ) {
     val isDraft: Boolean
         get() {
             val name = folderName?.lowercase()
             return folderId == "draft" || name == "drafts" || name == "draft"
         }
+
+    val isSpoofed: Boolean
+        get() = auth?.isSpoofed == true
 
     val bodyLooksLikeHTML: Boolean
         get() {

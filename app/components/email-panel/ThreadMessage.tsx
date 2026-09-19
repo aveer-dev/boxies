@@ -10,6 +10,7 @@ import { formatDetailDate, formatShortDate, hasFileAttachment, rewriteInlineImag
 import { displaySenderName } from 'shared/sender';
 import type { Email } from '~/types';
 import { deliveryStatusLabel, isDeliveryFailure } from '~/lib/delivery-status';
+import { isAuthSpoofed } from '~/lib/email-auth';
 
 interface ThreadMessageProps {
     email: Email;
@@ -38,7 +39,8 @@ function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolea
 export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage }: ThreadMessageProps) {
     const isSelf = email.sender === mailboxEmail;
     const deliveryFailed = isDeliveryFailure(email.delivery_status);
-    const containerClassName = `${!isLast ? 'border-b border-kumo-line' : ''} ${isDraft || deliveryFailed ? 'border-l-2 border-l-kumo-warning bg-kumo-warning/[0.02]' : ''}`;
+    const spoofed = isAuthSpoofed(email);
+    const containerClassName = `${!isLast ? 'border-b border-kumo-line' : ''} ${isDraft || deliveryFailed || spoofed ? 'border-l-2 border-l-kumo-warning bg-kumo-warning/[0.02]' : ''}`;
     const senderName = displaySenderName(email);
     const senderLabel = isDraft ? 'Draft reply' : isSelf ? 'You' : senderName;
 
@@ -52,6 +54,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                             <span className="text-sm font-medium text-kumo-default truncate">{senderLabel}</span>
                             <span className="text-xs text-kumo-subtle shrink-0 flex items-center gap-1.5">
                                 {deliveryFailed && <Badge variant="outline">{deliveryStatusLabel(email.delivery_status)}</Badge>}
+                                {spoofed && <Badge variant="outline">Spoofed</Badge>}
                                 {hasFileAttachment(email) && <PaperclipIcon size={12} className="shrink-0" aria-label="Has attachment" />}
                                 {formatDetailDate(email.date)}
                             </span>
@@ -81,6 +84,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                                 {deliveryFailed && (
                                     <Badge variant="outline">{deliveryStatusLabel(email.delivery_status)}</Badge>
                                 )}
+                                {spoofed && <Badge variant="outline">Spoofed</Badge>}
                             </div>
                             {!isDraft && !isSelf && senderName !== email.sender && <div className="text-xs text-kumo-subtle truncate">{email.sender}</div>}
                             <div className="text-xs text-kumo-subtle">To: {email.recipient}</div>
@@ -103,6 +107,13 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                 <div className="md:ml-10.5">
                     <EmailIframe body={rewriteInlineImages(email.body || '', mailboxId || '', email.id, email.attachments)} autoSize />
                 </div>
+
+                {spoofed && (
+                    <div className="mt-3 md:ml-10.5 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
+                        <div className="font-medium text-kumo-destructive">This sender isn’t authenticated.</div>
+                        <div className="mt-0.5 text-kumo-subtle">The From address failed SPF/DKIM/DMARC alignment.</div>
+                    </div>
+                )}
 
                 {deliveryFailed && (
                     <div className="mt-3 md:ml-10.5 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
