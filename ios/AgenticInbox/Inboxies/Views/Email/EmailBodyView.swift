@@ -354,47 +354,63 @@ private enum EmailWebViewIsolation {
 
     /// `target=_blank` never creates an in-app WKWebView; user-activated http(s)/mailto go to the system.
     static func createPopup(for action: WKNavigationAction) -> WKWebView? {
-        openExternallyIfUserActivated(action)
+        apply(EmailLinkPolicy.decide(url: action.request.url, navigationType: action.navigationType))
         return nil
-    }
-
-    static func openExternallyIfUserActivated(_ action: WKNavigationAction) {
-        guard action.navigationType == .linkActivated, let url = action.request.url else { return }
-        let scheme = url.scheme?.lowercased() ?? ""
-        guard ["http", "https", "mailto"].contains(scheme) else { return }
-        guard url.host != "inboxies.invalid" else { return }
-        UIApplication.shared.open(url)
     }
 
     static func decidePolicy(
         for action: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard let url = action.request.url else {
-            decisionHandler(.cancel)
-            return
+        let decision = EmailLinkPolicy.decide(url: action.request.url, navigationType: action.navigationType)
+        apply(decision)
+        decisionHandler(decision.navigationPolicy)
+    }
+
+    private static func apply(_ decision: EmailLinkPolicy.Decision) {
+        if case .openExternally(let url) = decision {
+            UIApplication.shared.open(url)
         }
+    }
+}
+
+/// Pure navigation policy for sanitized mail WebViews. Isolated from WKWebView so Simulator
+/// fixtures and source tests can assert the same rules the delegates use.
+enum EmailLinkPolicy {
+    enum Decision: Equatable {
+        case allow
+        case cancel
+        case openExternally(URL)
+
+        var navigationPolicy: WKNavigationActionPolicy {
+            switch self {
+            case .allow: return .allow
+            case .cancel, .openExternally: return .cancel
+            }
+        }
+    }
+
+    static func decide(url: URL?, navigationType: WKNavigationType) -> Decision {
+        guard let url else { return .cancel }
         let scheme = url.scheme?.lowercased() ?? ""
         // Initial loadHTMLString uses this host with navigationType `.other`.
         // Never allow in-WebView clicks to stay on the opaque origin.
         if url.host == "inboxies.invalid" {
-            if action.navigationType == .other || action.navigationType == .reload {
-                decisionHandler(.allow)
-            } else {
-                decisionHandler(.cancel)
+            if navigationType == .other || navigationType == .reload {
+                return .allow
             }
-            return
+            return .cancel
         }
-        if action.navigationType == .other && (scheme == "about" || url.absoluteString.isEmpty) {
-            decisionHandler(.allow)
-            return
+        if navigationType == .other && (scheme == "about" || url.absoluteString.isEmpty) {
+            return .allow
         }
         if ["http", "https", "mailto"].contains(scheme) {
-            openExternallyIfUserActivated(action)
-            decisionHandler(.cancel)
-            return
+            if navigationType == .linkActivated {
+                return .openExternally(url)
+            }
+            return .cancel
         }
-        decisionHandler(.cancel)
+        return .cancel
     }
 }
 
@@ -752,6 +768,94 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         """
     }
 }
+
+enum HTMLHardenFixture {
+    static let html = """
+    <p>Hello from the HTML harden fixture.</p>
+    <p>Safe links:
+      <a href="https://example.com/ok">https example</a>
+      <a href="mailto:jordan@example.com">mailto Jordan</a>
+      <a href="https://example.com/blank" target="_blank">target blank</a>
+    </p>
+    <p>Blocked:
+      <a href="javascript:alert(1)">javascript alert</a>
+      <a href="https://inboxies.invalid/stay">opaque origin</a>
+      <img src="x" onerror="alert(1)">
+    </p>
+    <script>document.title = "xss"</script>
+    <blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em;">
+    On Tue, Sep 8, 2026, at 4:32 PM, Alex Rivera wrote:<br>
+    Previous message with a <a href="https://quoted.example/thread">quoted link</a>
+    and <script>document.write("quoted-xss")</script>
+    </blockquote>
+    """
+
+    static var sanitizerChecks: [(label: String, passed: Bool)] {
+        let cleaned = EmailHTMLSanitizer.sanitize(html)
+        let split = EmailHTMLSanitizer.prepare(html)
+        return [
+            ("strips script tags", !cleaned.lowercased().contains("<script")),
+            ("strips onerror", !cleaned.lowercased().contains("onerror")),
+            ("keeps https links", cleaned.contains("https://example.com/ok")),
+            ("strips javascript: href", !cleaned.lowercased().contains("javascript:")),
+            ("splits quoted replies", split.quote != nil),
+        ]
+    }
+
+    static var policyChecks: [(label: String, passed: Bool)] {
+        let load = URL(string: "https://inboxies.invalid/")!
+        let https = URL(string: "https://example.com/ok")!
+        let mailto = URL(string: "mailto:jordan@example.com")!
+        let js = URL(string: "javascript:alert(1)")!
+        let opaqueClick = URL(string: "https://inboxies.invalid/stay")!
+        return [
+            ("initial opaque load allowed", EmailLinkPolicy.decide(url: load, navigationType: .other) == .allow),
+            ("https tap opens externally", EmailLinkPolicy.decide(url: https, navigationType: .linkActivated) == .openExternally(https)),
+            ("mailto tap opens externally", EmailLinkPolicy.decide(url: mailto, navigationType: .linkActivated) == .openExternally(mailto)),
+            ("javascript: cancelled", EmailLinkPolicy.decide(url: js, navigationType: .linkActivated) == .cancel),
+            ("inboxies.invalid click cancelled", EmailLinkPolicy.decide(url: opaqueClick, navigationType: .linkActivated) == .cancel),
+            ("target=_blank uses cancel+external, not a new WebView", EmailLinkPolicy.decide(url: https, navigationType: .linkActivated) == .openExternally(https)),
+        ]
+    }
+}
+
+#if DEBUG
+struct HTMLHardenFixtureView: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    EmailBodyView(htmlOrText: HTMLHardenFixture.html)
+                    checks("Sanitizer", HTMLHardenFixture.sanitizerChecks)
+                    checks("Link policy", HTMLHardenFixture.policyChecks)
+                }
+                .padding(16)
+            }
+            .background(AppTheme.background)
+            .navigationTitle("HTML harden")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    private func checks(_ title: String, _ rows: [(label: String, passed: Bool)]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.inter(size: 13, weight: .semibold))
+                .foregroundStyle(AppTheme.muted)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: row.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(row.passed ? AppTheme.accent : AppTheme.deepDarkRed)
+                    Text(row.label)
+                        .font(.inter(size: 13))
+                        .foregroundStyle(AppTheme.ink)
+                }
+                .accessibilityIdentifier("html-harden-\(row.passed ? "pass" : "fail")-\(row.label)")
+            }
+        }
+    }
+}
+#endif
 
 #Preview("Email Body with Quoted Replies") {
     ScrollView {

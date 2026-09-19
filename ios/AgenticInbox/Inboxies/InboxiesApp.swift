@@ -16,10 +16,25 @@ struct InboxiesApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-htmlHardenFixture") {
+                HTMLHardenFixtureView()
+                    .applyThemeController()
+            } else if ProcessInfo.processInfo.arguments.contains("-previewMailbox") {
+                PreviewMailboxRoot()
+                    .applyThemeController()
+            } else {
+                RootView()
+                    .environment(authStore)
+                    .environment(appModel)
+                    .applyThemeController()
+            }
+            #else
             RootView()
                 .environment(authStore)
                 .environment(appModel)
                 .applyThemeController()
+            #endif
         }
     }
 }
