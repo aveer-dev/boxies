@@ -11,6 +11,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -59,6 +60,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -79,6 +81,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
@@ -88,12 +91,15 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.MailAddress
+import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.EmailActionAvailability
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.HomeChromeToolbarCluster
 import co.inboxies.app.theme.HomeChromeToolbarClusterItem
+import co.inboxies.app.theme.InboxiesPalette
+import co.inboxies.app.theme.InboxiesTheme
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.TransparentSystemBars
 import co.inboxies.app.theme.inboxiesColors
@@ -102,6 +108,7 @@ import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuHeader
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.ui.search.SearchView
+import co.inboxies.app.util.DeliveryStatus
 import co.inboxies.app.utils.DateUtils
 import kotlinx.coroutines.launch
 
@@ -177,6 +184,8 @@ fun EmailDetailView(
             if (current.isUnread) add("Unread")
             if (current.needsReply == true) add("Needs reply")
             if (current.hasDraft == true) add("Has draft")
+            if (current.isSpoofed) add("Spoofed")
+            current.deliveryStatusLabel?.let { add(it) }
             val messageCount = maxOf(messages.size, current.threadCount ?: 1)
             if (messageCount > 1) add("$messageCount messages")
         }
@@ -423,6 +432,21 @@ fun EmailDetailView(
                                 onSearch = { personSearchQuery = it },
                             )
 
+                            if (message.isSpoofed) {
+                                SpoofWarningBanner(
+                                    modifier = Modifier.padding(top = 10.dp),
+                                )
+                            }
+
+                            if (message.isDeliveryFailure) {
+                                DeliveryFailureBanner(
+                                    title = message.deliveryStatusLabel
+                                        ?: DeliveryStatus.label(message.deliveryStatus),
+                                    detail = message.deliveryError,
+                                    modifier = Modifier.padding(top = 10.dp),
+                                )
+                            }
+
                             AnimatedVisibility(
                                 visible = isExpanded,
                                 enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 6 },
@@ -557,25 +581,88 @@ private fun TagsRow(
                     )
                 }
             }
-            tags.forEach { TagChip(it) }
+            tags.forEach { TagChip(it, destructive = it == "Spoofed") }
         }
     }
 }
 
 @Composable
-private fun TagChip(title: String) {
+private fun TagChip(title: String, destructive: Boolean = false) {
     val colors = inboxiesColors()
     Text(
         title,
         fontFamily = InterFontFamily,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
-        color = colors.muted,
+        color = if (destructive) colors.deepDarkRed else colors.muted,
         modifier = Modifier
             .clip(RoundedCornerShape(7.dp))
             .background(colors.pillFill)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
+}
+
+@Composable
+private fun SpoofWarningBanner(modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, colors.deepDarkRed.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            "This sender isn’t authenticated.",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.deepDarkRed,
+        )
+        Text(
+            "The From address failed SPF/DKIM/DMARC alignment.",
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+        )
+    }
+}
+
+@Composable
+private fun DeliveryFailureBanner(
+    title: String,
+    detail: String?,
+    modifier: Modifier = Modifier,
+) {
+    val colors = inboxiesColors()
+    val warning = Color(0xFFFFC107)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, warning.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            title,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = warning,
+        )
+        if (!detail.isNullOrBlank()) {
+            Text(
+                detail,
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+            )
+        }
+    }
 }
 
 @Composable
@@ -747,6 +834,9 @@ private fun MessagePeopleHeader(
                     selfAddress = selfAddress,
                     onSearch = onSearch,
                 )
+                message.deliveryStatusLabel?.let { label ->
+                    DeliveryStatusChip(label = label, colors = colors)
+                }
                 Spacer(modifier = Modifier.weight(1f))
                 DateAndToggle(
                     message = message,
@@ -764,18 +854,27 @@ private fun MessagePeopleHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    message.fromAddress.label(selfAddress),
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = AppThemeDims.FontSize.sender,
-                    color = colors.ink,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Row(
                     modifier = Modifier
                         .weight(1f)
                         .clickable(onClick = senderOrToAction),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        message.fromAddress.label(selfAddress),
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = AppThemeDims.FontSize.sender,
+                        color = colors.ink,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    message.deliveryStatusLabel?.let { label ->
+                        DeliveryStatusChip(label = label, colors = colors)
+                    }
+                }
                 DateAndToggle(
                     message = message,
                     formattedDate = formattedDate,
@@ -800,6 +899,25 @@ private fun MessagePeopleHeader(
             }
         }
     }
+}
+
+@Composable
+private fun DeliveryStatusChip(
+    label: String,
+    colors: InboxiesPalette,
+) {
+    Text(
+        label,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.sp,
+        color = Color(0xFFFFC107),
+        maxLines = 1,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 7.dp, vertical = 2.dp),
+    )
 }
 
 @Composable
@@ -1013,4 +1131,35 @@ private fun MessageContextMenu(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+/** Sent message with bounce — mirrors iOS `PreviewSupport.bouncedSentEmail`. */
+private val bouncedSentEmailFixture = Email(
+    id = "preview-bounced",
+    folderId = "sent",
+    subject = "Invoice attached",
+    sender = "you@inboxies.email",
+    senderName = "Alex Rivera",
+    recipient = "client@example.com",
+    date = "2026-09-18T16:00:00.000Z",
+    read = true,
+    starred = false,
+    body = "<p>Please find the invoice attached.</p>",
+    snippet = "Please find the invoice attached.",
+    folderName = "Sent",
+    deliveryStatus = "bounced",
+    deliveryError = "550 5.1.1 The email account that you tried to reach does not exist.",
+)
+
+@Preview(showBackground = true, name = "EmailDetail bounced delivery")
+@Composable
+private fun EmailDetailBouncedDeliveryPreview() {
+    val model = remember {
+        AppModel().also { it.seedOpenThreadForPreview(bouncedSentEmailFixture) }
+    }
+    InboxiesTheme {
+        CompositionLocalProvider(LocalAppModel provides model) {
+            EmailDetailView(onClose = {})
+        }
+    }
 }

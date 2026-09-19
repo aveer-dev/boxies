@@ -405,13 +405,56 @@ class AppModel {
     }
 
     suspend fun refreshCurrentTabSilently() {
-        val folderId = _selectedTab.value.syncFolderId ?: return
         val mailboxId = _selectedMailboxId.value ?: return
-        runCatching { MailboxSyncService.syncFolder(mailboxId, folderId) }.getOrNull()?.let {
-            _emails.value = it
+        val folderId = _selectedTab.value.syncFolderId
+        if (folderId != null) {
+            runCatching { MailboxSyncService.syncFolder(mailboxId, folderId) }.getOrNull()?.let {
+                _emails.value = it
+            }
+            if (_selectedTab.value is HomeTab.AiInbox) {
+                loadInboxDigest(showLoading = false)
+            }
         }
-        if (_selectedTab.value is HomeTab.AiInbox) {
-            loadInboxDigest(showLoading = false)
+        refreshOpenEmailDetailSilently()
+    }
+
+    /** Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh. */
+    private suspend fun refreshOpenEmailDetailSilently() {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val email = _selectedEmail.value ?: return
+        try {
+            val threadId = email.threadId
+            val shouldLoadThread = threadId != null && (
+                (email.threadCount ?: 1) > 1 ||
+                    _threadEmails.value.size > 1 ||
+                    _threadEmails.value.any { it.isDraft }
+            )
+            if (threadId != null && shouldLoadThread) {
+                val remote = ApiClient.shared.getThread(mailboxId, threadId)
+                db.upsertEmails(mailboxId, remote, defaultFolder = email.folderId)
+                if (_selectedEmail.value?.id == email.id ||
+                    _selectedEmail.value?.threadId == threadId
+                ) {
+                    _threadEmails.value = remote
+                    remote.firstOrNull { it.id == email.id }?.let { updated ->
+                        _selectedEmail.value = mergeListMetadata(email, updated)
+                    }
+                }
+            } else {
+                val full = ApiClient.shared.getEmail(mailboxId, email.id)
+                db.upsertEmails(mailboxId, listOf(full), defaultFolder = email.folderId)
+                if (_selectedEmail.value?.id == email.id) {
+                    _selectedEmail.value = mergeListMetadata(email, full)
+                    if (_threadEmails.value.size <= 1) {
+                        _threadEmails.value = listOf(full)
+                    } else {
+                        _threadEmails.update { list ->
+                            list.map { if (it.id == full.id) full else it }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
         }
     }
 
@@ -626,6 +669,15 @@ class AppModel {
         _isEmailDetailLoading.value = false
     }
 
+    /** Preview / Simulator fixture — open a thread without hitting the network. */
+    fun seedOpenThreadForPreview(email: Email, thread: List<Email> = listOf(email)) {
+        _selectedEmail.value = email
+        _threadEmails.value = thread.ifEmpty { listOf(email) }
+        _isEmailDetailLoading.value = false
+        _isLoading.value = false
+        _isMailboxLoading.value = false
+    }
+
     /** Readable (non-draft) emails in the current list, in display order. */
     val navigableEmails: List<Email>
         get() = _emails.value.filter { !it.isDraft }
@@ -827,38 +879,47 @@ class AppModel {
         _composeSession.value = session
     }
 
-    fun sendCompose() {
-        scope.launch {
-            showToast("Sending…", isLoading = true)
+    suspend fun sendCompose() {
+        val session = _composeSession.value ?: run {
+            showToast("Send failed", isError = true)
+            return
+        }
+        val form = session.form
+        if (form.isSending) return
+        form.isSending = true
+        showToast("Sending…", isLoading = true)
+        try {
             runCatching {
-                val session = _composeSession.value ?: error("No compose session")
-                val form = session.form
                 form.commitPendingTokens()
+                if (form.toTokens.isEmpty()) error("Add at least one recipient.")
                 val mailboxId = form.fromMailboxId.ifBlank {
                     _selectedMailboxId.value ?: error("No mailbox")
                 }
                 val html = form.bodyHtml
+                val text = form.outgoingPlainText()
+                val estimated = co.inboxies.app.util.OutboundLimits.estimateMessageBytes(
+                    html,
+                    text,
+                    form.attachments.map { it.size },
+                )
+                if (estimated > co.inboxies.app.util.OutboundLimits.MAX_MESSAGE_BYTES) {
+                    error(co.inboxies.app.util.OutboundLimits.SIZE_ERROR)
+                }
+                val payload = form.toSendPayload()
                 when (form.mode) {
                     ComposeMode.Reply -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyEmail(mailboxId, origId, html, replyAll = false)
+                        ApiClient.shared.replyToEmail(mailboxId, origId, payload)
                     }
                     ComposeMode.ReplyAll -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyEmail(mailboxId, origId, html, replyAll = true)
+                        ApiClient.shared.replyToEmail(mailboxId, origId, payload)
                     }
                     ComposeMode.Forward -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.forwardEmail(mailboxId, origId, form.toJoined(), html)
+                        ApiClient.shared.forwardEmail(mailboxId, origId, payload)
                     }
-                    else -> ApiClient.shared.sendEmail(
-                        mailboxId = mailboxId,
-                        to = form.toJoined(),
-                        subject = form.subject,
-                        body = html,
-                        cc = form.ccJoined().ifBlank { null },
-                        bcc = form.bccJoined().ifBlank { null },
-                    )
+                    else -> ApiClient.shared.sendEmail(mailboxId, payload)
                 }
             }.onSuccess {
                 showToast("Sent")
@@ -867,6 +928,8 @@ class AppModel {
             }.onFailure {
                 showToast(it.message ?: "Send failed", isError = true)
             }
+        } finally {
+            form.isSending = false
         }
     }
 

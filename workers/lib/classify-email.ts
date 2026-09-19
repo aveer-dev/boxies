@@ -9,8 +9,11 @@
  *   1. Explicit spam headers (wins over list headers)
  *   2. Bulk via List-Unsubscribe / List-Id / List-Unsubscribe-Post
  *      (and Precedence: list|bulk), then Promotions vs Updates
- *   3. Remaining mail: Workers AI spam vs ham, fail-open to ham
+ *   3. Spoofed personal mail (trusted CF auth, From not aligned) → spam
+ *   4. Remaining mail: Workers AI spam vs ham, fail-open to ham
  */
+
+import { isAuthSpoofed, type EmailAuth } from "./email-auth.ts";
 
 export type InboundClass = "spam" | "ham" | "bulk";
 
@@ -34,6 +37,7 @@ export interface ClassifyEmailInput {
 	sender?: string | null;
 	bodyText?: string | null;
 	bodyHtml?: string | null;
+	auth?: EmailAuth | null;
 }
 
 /** Minimal AI binding used by the spam/ham step (Workers AI `env.AI`). */
@@ -228,6 +232,13 @@ export function classifyFromHeaders(
 	if (isBulk(map)) {
 		return bulkClassification(map, input.subject ?? "", input.sender ?? "");
 	}
+	if (isAuthSpoofed(input.auth)) {
+		return {
+			class: "spam",
+			folderId: "spam",
+			reason: "auth-spoofed",
+		};
+	}
 	return null;
 }
 
@@ -305,8 +316,12 @@ export function shouldClassifyInbound(options: {
 	return options.routeAction === "deliver" && !options.isDuplicate;
 }
 
-/** Only personal ham is auto-drafted. */
-export function shouldAutoDraft(classification: EmailClassification): boolean {
+/** Only personal ham is auto-drafted. Spoofed From never auto-drafts. */
+export function shouldAutoDraft(
+	classification: EmailClassification,
+	auth?: EmailAuth | null,
+): boolean {
+	if (isAuthSpoofed(auth)) return false;
 	return classification.class === "ham";
 }
 

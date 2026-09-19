@@ -7,7 +7,7 @@ import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperPlaneTiltIcon } fr
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
-import RichTextEditor from "./RichTextEditor";
+import ComposeBodyChrome from "./compose/ComposeBodyChrome";
 import { useUIStore } from "~/hooks/useUIStore";
 
 export default function ComposeEmail() {
@@ -31,6 +31,10 @@ export default function ComposeEmail() {
 		setSubject,
 		body,
 		setBody,
+		attachments,
+		addFiles,
+		removeAttachment,
+		overSize,
 		error,
 		isSavingDraft,
 		isSending,
@@ -104,7 +108,13 @@ export default function ComposeEmail() {
 						<Text size="sm" DANGEROUS_className="font-medium mb-1.5 block">
 							Message
 						</Text>
-						<RichTextEditor value={body} onChange={setBody} />
+						<ComposeBodyChrome
+							body={body}
+							onBodyChange={setBody}
+							attachments={attachments}
+							onAddFiles={addFiles}
+							onRemoveAttachment={removeAttachment}
+						/>
 					</div>
 					<div className="flex justify-between items-center pt-2">
 						<div className="flex items-center gap-3">
@@ -150,7 +160,7 @@ export default function ComposeEmail() {
 								variant="primary"
 								size="sm"
 								loading={isSending}
-								disabled={isSavingDraft || isSending}
+								disabled={isSavingDraft || isSending || overSize}
 								icon={<PaperPlaneTiltIcon size={14} />}
 							>
 								{isSending ? "Sending..." : "Send"}

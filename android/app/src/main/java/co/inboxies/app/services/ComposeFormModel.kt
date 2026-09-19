@@ -6,7 +6,16 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.util.ComposeHtml
+import co.inboxies.app.util.ComposePendingAttachment
 import co.inboxies.app.util.QuotedOriginal
+import co.inboxies.app.util.OutboundLimits
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,6 +74,7 @@ class ComposeFormModel(
     var bccDraft: String = ""
     var subject: String = ""
     var body: String = ""
+    var attachments: List<ComposePendingAttachment> = emptyList()
     var showCcBcc: Boolean = false
     var draftId: String? = draft?.id
     var originalEmailId: String? = original?.id ?: draft?.inReplyTo
@@ -109,6 +119,7 @@ class ComposeFormModel(
             ccDraft.trim().isEmpty() &&
             bccDraft.trim().isEmpty() &&
             subject.trim().isEmpty() &&
+            attachments.isEmpty() &&
             !ComposeHtml.bodyHasUserContent(body, signature)
 
     val hasUnsavedChanges: Boolean
@@ -119,7 +130,8 @@ class ComposeFormModel(
             bccTokens.isNotEmpty() ||
             toDraft.isNotBlank() ||
             ccDraft.isNotBlank() ||
-            bccDraft.isNotBlank()
+            bccDraft.isNotBlank() ||
+            attachments.isNotEmpty()
 
     init {
         signature = ComposeHtml.signatureText(
@@ -215,15 +227,79 @@ class ComposeFormModel(
     }
 
     fun outgoingHtml(): String {
-        var html = ComposeHtml.textToHtml(body)
-        quotedOriginal?.let { html += ComposeHtml.quotedHtml(it) }
+        val html = if (body.contains('<')) body else ComposeHtml.textToHtml(body)
+        quotedOriginal?.let { return html + ComposeHtml.quotedHtml(it) }
         return html
     }
 
     fun outgoingPlainText(): String {
-        val quoted = quotedOriginal ?: return body
+        val plain = ComposeHtml.stripHtml(body)
+        val quoted = quotedOriginal ?: return plain
         val quotedLines = quoted.text.split("\n").map { "> $it" }
-        return (listOf(body, "", quoted.header) + quotedLines).joinToString("\n")
+        return (listOf(plain, "", quoted.header) + quotedLines).joinToString("\n")
+    }
+
+    fun remainingAttachmentBudget(): Int =
+        OutboundLimits.remainingBudget(
+            html = outgoingHtml(),
+            text = outgoingPlainText(),
+            attachmentBytes = attachments.map { it.size },
+        )
+
+    fun exceedsOutboundLimit(): Boolean =
+        OutboundLimits.estimateMessageBytes(
+            html = outgoingHtml(),
+            text = outgoingPlainText(),
+            attachmentBytes = attachments.map { it.size },
+        ) > OutboundLimits.MAX_MESSAGE_BYTES
+
+    fun addAttachment(attachment: ComposePendingAttachment) {
+        attachments = attachments + attachment
+    }
+
+    fun removeAttachment(id: String) {
+        attachments = attachments.filterNot { it.id == id }
+    }
+
+    fun toSendPayload(): JsonObject {
+        fun emails(tokens: List<MailAddress>): kotlinx.serialization.json.JsonElement {
+            val list = tokens.map { it.email }
+            return if (list.size == 1) JsonPrimitive(list[0]) else JsonArray(list.map { JsonPrimitive(it) })
+        }
+        return buildJsonObject {
+            put("to", emails(toTokens))
+            if (ccTokens.isNotEmpty()) put("cc", emails(ccTokens))
+            if (bccTokens.isNotEmpty()) put("bcc", emails(bccTokens))
+            put("subject", subject)
+            put("html", outgoingHtml())
+            put("text", outgoingPlainText())
+            val name = fromName
+            if (!name.isNullOrBlank()) {
+                put("from", buildJsonObject {
+                    put("email", fromEmail)
+                    put("name", name)
+                })
+            } else {
+                put("from", fromEmail)
+            }
+            if (attachments.isNotEmpty()) {
+                put(
+                    "attachments",
+                    buildJsonArray {
+                        attachments.forEach { att ->
+                            add(
+                                buildJsonObject {
+                                    put("content", att.base64)
+                                    put("filename", att.filename)
+                                    put("type", att.mimeType)
+                                    put("disposition", "attachment")
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+        }
     }
 
     suspend fun saveDraft(explicit: Boolean = true): Boolean {

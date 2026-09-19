@@ -110,7 +110,7 @@ Any authenticated user is authorized **per mailbox**. Each mailbox stores an exp
                      └──────────────────┘     └─────────────────┘
 ```
 
-Full HTML and raw MIME are stored in R2 (`emails/{id}/body.html`, `emails/{id}/raw.eml`). The Durable Object SQLite database keeps metadata and a short `snippet` for list previews, plus an **FTS5** index (`emails_fts`) over subject, sender, recipients, and plain-text body so free-text search matches the full message — not just the first 300 characters. Existing mail is backfilled from R2 in alarm-driven batches.
+Full HTML and raw MIME are stored in R2 (`emails/{id}/body.html`, `emails/{id}/raw.eml`). The Durable Object SQLite database keeps metadata and a short `snippet` for list previews, plus an **FTS5** index (`emails_fts`) over subject, sender, recipients, and plain-text body so free-text search matches the full message — not just the first 300 characters. Existing mail is backfilled from R2 in alarm-driven batches. Deleting a mailbox purges the Durable Object inventory, R2 bodies/attachments, and related EmailAgent chat storage before removing `mailboxes/{id}.json`.
 
 ## License
 

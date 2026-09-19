@@ -19,15 +19,13 @@ Designed for people coming from **web / Ionic / Capacitor**: SwiftUI views ≈ R
 ### Phase 2
 - **Mail-like compose interactions** (Notion look): drag grabber to **minimize** to a bottom dock (not dismiss); tap dock to expand
 - **New / Reply / Reply All / Forward / Edit Draft** with save draft + send
+- **Outbound attachments** (photo / camera / files) with client JPEG compression under the 5 MiB cap
+- **Mail-like Format sheet** (Aa dock) on a rich `UITextView` editor; quoted original stays split
 - **HTML body rendering** (`WKWebView`) and **attachment download** (Quick Look)
 - Compose chrome uses `AppTheme` (not Apple Mail blue branding)
 
 ### Phase 3 (not yet)
 - Push notifications
-- Outbound attachment upload from Photos/Files
-- Rich-text Format toolbar
-
-## Open in Xcode (Mac required)
 
 1. Install Xcode 15+ (iOS 17 SDK).
 2. Open `Inboxies.xcodeproj`.

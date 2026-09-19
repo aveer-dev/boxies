@@ -9,6 +9,7 @@
  * skip auto-draft, and/or forward. First enabled matching rule wins.
  */
 
+import { isAuthSpoofed, type EmailAuth } from "./email-auth.ts";
 import {
 	headerMapFromSource,
 	normalizeEmailAddress,
@@ -36,6 +37,7 @@ export interface InboxFilterMatchInput {
 	sender?: string | null;
 	subject?: string | null;
 	headers?: HeaderSource;
+	auth?: EmailAuth | null;
 }
 
 export interface InboxFilterHit {
@@ -219,6 +221,7 @@ export function matchInboxFilter(
 	if (!hasCondition(rule)) return false;
 
 	if (rule.from) {
+		if (isAuthSpoofed(input.auth)) return false;
 		if (!matchFromCondition(rule.from, input.sender)) return false;
 	}
 	if (rule.list) {

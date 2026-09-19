@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import WebKit
 
 /// Renders HTML email bodies; falls back to plain text when needed.
@@ -14,15 +15,18 @@ struct EmailBodyView: View {
     @State private var webHeight: CGFloat = 1
     @State private var isWebLoading = true
     @State private var isResolvingImages = false
-    @State private var extractedHTMLQuote: String? = nil
     @State private var activeQuotedContent: QuotedMailContent? = nil
 
     private var isHTML: Bool {
         htmlOrText.range(of: #"</?[a-zA-Z][^>]*>"#, options: .regularExpression) != nil
     }
 
+    private var sanitizedSplit: EmailHTMLSanitizer.SplitBody {
+        EmailHTMLSanitizer.prepare(htmlWithImages ?? htmlOrText)
+    }
+
     private var bodyHTML: String {
-        htmlWithImages ?? htmlOrText
+        sanitizedSplit.main
     }
 
     private var showLoading: Bool {
@@ -31,7 +35,7 @@ struct EmailBodyView: View {
 
     private var hasQuotedReplies: Bool {
         if isHTML {
-            return extractedHTMLQuote != nil
+            return sanitizedSplit.quote != nil
         } else {
             return plainTextParts.quote != nil
         }
@@ -48,10 +52,7 @@ struct EmailBodyView: View {
                     HTMLWebView(
                         html: wrappedHTML,
                         contentHeight: $webHeight,
-                        isLoading: $isWebLoading,
-                        onQuoteExtracted: { quote in
-                            extractedHTMLQuote = quote
-                        }
+                        isLoading: $isWebLoading
                     )
                     .frame(maxWidth: .infinity, alignment: .top)
                     .frame(height: max(webHeight, 1))
@@ -74,7 +75,7 @@ struct EmailBodyView: View {
 
             if hasQuotedReplies && !showLoading {
                 Button {
-                    if let quote = (isHTML ? extractedHTMLQuote : plainTextParts.quote) {
+                    if let quote = (isHTML ? sanitizedSplit.quote : plainTextParts.quote) {
                         activeQuotedContent = QuotedMailContent(text: quote, isHTML: isHTML)
                     }
                 } label: {
@@ -91,13 +92,11 @@ struct EmailBodyView: View {
             await resolveInlineImages()
         }
         .onChange(of: resolveTaskID) { _, _ in
-            extractedHTMLQuote = nil
             activeQuotedContent = nil
             webHeight = 1
             isWebLoading = true
         }
         .onChange(of: emailId) { _, _ in
-            extractedHTMLQuote = nil
             activeQuotedContent = nil
             webHeight = 1
             isWebLoading = true
@@ -200,6 +199,7 @@ struct EmailBodyView: View {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="\(EmailHTMLSanitizer.contentSecurityPolicy)">
         <style>
           :root { color-scheme: light dark; }
           html, body {
@@ -222,6 +222,9 @@ struct EmailBodyView: View {
           img { max-width: 100%; height: auto; }
           a { color: #2659d9; }
           pre, code { white-space: pre-wrap; }
+          [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
+            position: relative !important;
+          }
 
           @media (prefers-color-scheme: dark) {
             body {
@@ -230,191 +233,12 @@ struct EmailBodyView: View {
             a { color: #5888fb; }
           }
 
-          /* Pre-emptively hide standard quotes so they take 0 layout space */
           .gmail_quote, .yahoo_quoted, .protonmail_quote, #divRplyFwdMsg, blockquote[type="cite"], #appendonsend {
             display: none !important;
           }
         </style>
         </head>
         <body>\(bodyHTML)
-        <script>
-          function postHeight() {
-            const h = Math.ceil(
-              Math.max(
-                document.body.offsetHeight,
-                document.body.getBoundingClientRect().height,
-                document.body.scrollHeight
-              )
-            );
-            if (window.webkit && window.webkit.messageHandlers.bodyHeight) {
-              window.webkit.messageHandlers.bodyHeight.postMessage(h);
-            }
-          }
-
-          function extractQuotedReplies() {
-            var explicitSelectors = [
-              '.gmail_quote',
-              '.yahoo_quoted',
-              '.protonmail_quote',
-              '#divRplyFwdMsg',
-              'blockquote[type="cite"]'
-            ];
-
-            var targetRoot = null;
-            var headerEl = null;
-
-            for (var i = 0; i < explicitSelectors.length; i++) {
-              var found = document.querySelector(explicitSelectors[i]);
-              if (found) {
-                targetRoot = found;
-                while (targetRoot.parentElement && targetRoot.parentElement !== document.body) {
-                  var pMatches = false;
-                  for (var s = 0; s < explicitSelectors.length; s++) {
-                    if (targetRoot.parentElement.matches && targetRoot.parentElement.matches(explicitSelectors[s])) {
-                      pMatches = true;
-                      break;
-                    }
-                  }
-                  if (pMatches) {
-                    targetRoot = targetRoot.parentElement;
-                  } else {
-                    break;
-                  }
-                }
-                break;
-              }
-            }
-
-            if (!targetRoot) {
-              var append = document.getElementById('appendonsend');
-              if (append && append.nextElementSibling) {
-                targetRoot = append;
-              }
-            }
-
-            if (!targetRoot) {
-              var bqs = document.querySelectorAll('blockquote');
-              for (var j = 0; j < bqs.length; j++) {
-                var bq = bqs[j];
-                if (bq.parentElement && bq.parentElement.closest('blockquote')) continue;
-
-                var text = (bq.textContent || '').trim();
-                var style = (bq.getAttribute('style') || '').toLowerCase();
-                var hasReplyPattern = /on\\s.+wrote:\\s*/i.test(text) ||
-                                      /wrote:\\s*$/im.test(text) ||
-                                      /original message/i.test(text) ||
-                                      /from:\\s.+\\n?(sent|date):/i.test(text) ||
-                                      style.indexOf('border-left') !== -1;
-
-                var hasSubstantialAfter = false;
-                var sibling = bq.nextElementSibling;
-                while (sibling) {
-                  var sibText = (sibling.textContent || '').trim();
-                  var isSig = sibling.className && (typeof sibling.className === 'string') &&
-                              (sibling.className.indexOf('signature') !== -1 || sibling.className.indexOf('gmail_signature') !== -1);
-                  if (sibText.length > 40 && !isSig) {
-                    hasSubstantialAfter = true;
-                    break;
-                  }
-                  sibling = sibling.nextElementSibling;
-                }
-
-                if (hasReplyPattern || !hasSubstantialAfter) {
-                  targetRoot = bq;
-                  break;
-                }
-              }
-            }
-
-            if (!targetRoot) {
-              postHeight();
-              return;
-            }
-
-            var prev = targetRoot.previousElementSibling;
-            while (prev && (prev.tagName === 'BR' || (prev.textContent || '').trim() === '')) {
-              prev = prev.previousElementSibling;
-            }
-            if (prev) {
-              var pText = (prev.textContent || '').trim();
-              var isAttr = prev.classList && (prev.classList.contains('gmail_attr') || prev.classList.contains('moz-cite-prefix'));
-              if (/^(on\\s.+wrote:|from:\\s.+|---\\s*original message|-----original message)/i.test(pText) || isAttr) {
-                headerEl = prev;
-              }
-            }
-
-            var startEl = headerEl || targetRoot;
-            var parent = startEl.parentNode;
-            if (!parent) {
-              postHeight();
-              return;
-            }
-
-            var quoteHtmlParts = [];
-            var curr = startEl;
-            var nodesToRemove = [];
-            while (curr) {
-              var nextNode = curr.nextSibling;
-              if (curr.nodeType === 1) {
-                if (curr.tagName !== 'SCRIPT') {
-                  curr.style.removeProperty('display');
-                  quoteHtmlParts.push(curr.outerHTML);
-                  nodesToRemove.push(curr);
-                }
-              } else if (curr.nodeType === 3) {
-                quoteHtmlParts.push(curr.textContent);
-                nodesToRemove.push(curr);
-              }
-              curr = nextNode;
-            }
-
-            for (var k = 0; k < nodesToRemove.length; k++) {
-              var node = nodesToRemove[k];
-              if (node.parentNode) {
-                node.parentNode.removeChild(node);
-              }
-            }
-
-            while (parent.lastChild) {
-              var last = parent.lastChild;
-              if (last.nodeType === 3 && (last.textContent || '').trim() === '') {
-                parent.removeChild(last);
-              } else if (last.nodeType === 1) {
-                var tag = last.tagName;
-                var isBlank = (last.textContent || '').trim() === '' && !last.querySelector('img');
-                if (tag === 'BR' || (isBlank && (tag === 'P' || tag === 'DIV'))) {
-                  parent.removeChild(last);
-                } else {
-                  break;
-                }
-              } else {
-                break;
-              }
-            }
-
-            var fullQuoteHtml = quoteHtmlParts.join('').trim();
-            if (fullQuoteHtml && window.webkit && window.webkit.messageHandlers.quotedContent) {
-              window.webkit.messageHandlers.quotedContent.postMessage(fullQuoteHtml);
-            }
-
-            postHeight();
-          }
-
-          extractQuotedReplies();
-          window.addEventListener('load', function() {
-            extractQuotedReplies();
-            postHeight();
-          });
-          window.addEventListener('resize', postHeight);
-          document.querySelectorAll('img').forEach(function (img) {
-            img.addEventListener('load', postHeight);
-            img.addEventListener('error', postHeight);
-          });
-          if (typeof ResizeObserver !== 'undefined') {
-            new ResizeObserver(postHeight).observe(document.body);
-          }
-          postHeight();
-        </script>
         </body>
         </html>
         """
@@ -483,24 +307,129 @@ struct EmailBodyView: View {
     }
 }
 
+private enum EmailWebViewIsolation {
+    static let heightWorld = WKContentWorld.defaultClient
+
+    static let heightScriptSource = """
+    function postHeight() {
+      const h = Math.ceil(Math.max(
+        document.body.offsetHeight,
+        document.body.getBoundingClientRect().height,
+        document.body.scrollHeight
+      ));
+      if (window.webkit && window.webkit.messageHandlers.bodyHeight) {
+        window.webkit.messageHandlers.bodyHeight.postMessage(h);
+      }
+    }
+    window.addEventListener('load', postHeight);
+    window.addEventListener('resize', postHeight);
+    document.querySelectorAll('img').forEach(function (img) {
+      img.addEventListener('load', postHeight);
+      img.addEventListener('error', postHeight);
+    });
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(postHeight).observe(document.body);
+    }
+    postHeight();
+    """
+
+    static func configuration(allowsJavaScript: Bool, heightHandler: WKScriptMessageHandler?) -> WKWebViewConfiguration {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        config.defaultWebpagePreferences.allowsContentJavaScript = allowsJavaScript
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        config.suppressesIncrementalRendering = false
+        if let heightHandler, allowsJavaScript {
+            config.userContentController.add(heightHandler, contentWorld: heightWorld, name: "bodyHeight")
+            let script = WKUserScript(
+                source: heightScriptSource,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: true,
+                in: heightWorld
+            )
+            config.userContentController.addUserScript(script)
+        }
+        return config
+    }
+
+    /// `target=_blank` never creates an in-app WKWebView; user-activated http(s)/mailto go to the system.
+    static func createPopup(for action: WKNavigationAction) -> WKWebView? {
+        apply(EmailLinkPolicy.decide(url: action.request.url, navigationType: action.navigationType))
+        return nil
+    }
+
+    static func decidePolicy(
+        for action: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        let decision = EmailLinkPolicy.decide(url: action.request.url, navigationType: action.navigationType)
+        apply(decision)
+        decisionHandler(decision.navigationPolicy)
+    }
+
+    private static func apply(_ decision: EmailLinkPolicy.Decision) {
+        if case .openExternally(let url) = decision {
+            UIApplication.shared.open(url)
+        }
+    }
+}
+
+/// Pure navigation policy for sanitized mail WebViews. Isolated from WKWebView so Simulator
+/// fixtures and source tests can assert the same rules the delegates use.
+enum EmailLinkPolicy {
+    enum Decision: Equatable {
+        case allow
+        case cancel
+        case openExternally(URL)
+
+        var navigationPolicy: WKNavigationActionPolicy {
+            switch self {
+            case .allow: return .allow
+            case .cancel, .openExternally: return .cancel
+            }
+        }
+    }
+
+    static func decide(url: URL?, navigationType: WKNavigationType) -> Decision {
+        guard let url else { return .cancel }
+        let scheme = url.scheme?.lowercased() ?? ""
+        // Initial loadHTMLString uses this host with navigationType `.other`.
+        // Never allow in-WebView clicks to stay on the opaque origin.
+        if url.host == "inboxies.invalid" {
+            if navigationType == .other || navigationType == .reload {
+                return .allow
+            }
+            return .cancel
+        }
+        if navigationType == .other && (scheme == "about" || url.absoluteString.isEmpty) {
+            return .allow
+        }
+        if ["http", "https", "mailto"].contains(scheme) {
+            if navigationType == .linkActivated {
+                return .openExternally(url)
+            }
+            return .cancel
+        }
+        return .cancel
+    }
+}
+
 private struct HTMLWebView: UIViewRepresentable {
     let html: String
     @Binding var contentHeight: CGFloat
     @Binding var isLoading: Bool
-    var onQuoteExtracted: ((String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(height: $contentHeight, isLoading: $isLoading, onQuoteExtracted: onQuoteExtracted)
+        Coordinator(height: $contentHeight, isLoading: $isLoading)
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.userContentController.add(context.coordinator, name: "bodyHeight")
-        config.userContentController.add(context.coordinator, name: "quotedContent")
+        let config = EmailWebViewIsolation.configuration(allowsJavaScript: true, heightHandler: context.coordinator)
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
         webView.scrollView.backgroundColor = .clear
@@ -511,36 +440,30 @@ private struct HTMLWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.height = $contentHeight
         context.coordinator.isLoading = $isLoading
-        context.coordinator.onQuoteExtracted = onQuoteExtracted
         guard context.coordinator.loadedHTML != html else { return }
         context.coordinator.loadedHTML = html
         DispatchQueue.main.async {
             self.isLoading = true
         }
-        // A real https origin lets remote images load. Do not use the API host —
-        // email HTML is unsanitized and must not be same-origin with the backend.
-        webView.loadHTMLString(html, baseURL: URL(string: "https://inboxies.invalid/"))
+        // Opaque-to-API origin so sanitized mail still cannot read backend cookies.
+        webView.loadHTMLString(html, baseURL: EmailHTMLSanitizer.opaqueOrigin)
     }
 
     static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "bodyHeight")
-        uiView.configuration.userContentController.removeScriptMessageHandler(forName: "quotedContent")
+        uiView.configuration.userContentController.removeScriptMessageHandler(
+            forName: "bodyHeight",
+            contentWorld: EmailWebViewIsolation.heightWorld
+        )
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var height: Binding<CGFloat>
         var isLoading: Binding<Bool>
-        var onQuoteExtracted: ((String) -> Void)?
         var loadedHTML: String?
 
-        init(
-            height: Binding<CGFloat>,
-            isLoading: Binding<Bool>,
-            onQuoteExtracted: ((String) -> Void)? = nil
-        ) {
+        init(height: Binding<CGFloat>, isLoading: Binding<Bool>) {
             self.height = height
             self.isLoading = isLoading
-            self.onQuoteExtracted = onQuoteExtracted
         }
 
         func userContentController(
@@ -549,25 +472,39 @@ private struct HTMLWebView: UIViewRepresentable {
         ) {
             if message.name == "bodyHeight" {
                 applyHeight(message.body)
-            } else if message.name == "quotedContent" {
-                if let quote = message.body as? String, !quote.isEmpty {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onQuoteExtracted?(quote)
-                    }
-                }
             }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            EmailWebViewIsolation.decidePolicy(for: navigationAction, decisionHandler: decisionHandler)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            EmailWebViewIsolation.createPopup(for: navigationAction)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             webView.evaluateJavaScript(
-                """
-                if (typeof extractQuotedReplies === 'function') { extractQuotedReplies(); }
-                Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))
-                """
-            ) { [weak self] result, _ in
-                self?.applyHeight(result)
-                DispatchQueue.main.async {
-                    self?.isLoading.wrappedValue = false
+                "Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))",
+                in: nil,
+                in: EmailWebViewIsolation.heightWorld
+            ) { [weak self] result in
+                switch result {
+                case .success(let value):
+                    self?.applyHeight(value)
+                case .failure:
+                    DispatchQueue.main.async {
+                        self?.isLoading.wrappedValue = false
+                    }
                 }
             }
         }
@@ -592,7 +529,12 @@ private struct HTMLWebView: UIViewRepresentable {
                 measured = number
             } else if let number = raw as? Int {
                 measured = CGFloat(number)
+            } else if let number = raw as? NSNumber {
+                measured = CGFloat(truncating: number)
             } else {
+                DispatchQueue.main.async {
+                    self.isLoading.wrappedValue = false
+                }
                 return
             }
             let next = max(measured.rounded(.up), 1)
@@ -723,9 +665,12 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
+        let config = EmailWebViewIsolation.configuration(allowsJavaScript: false, heightHandler: nil)
+        let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
         webView.backgroundColor = .clear
+        webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.scrollView.isScrollEnabled = true
         webView.scrollView.bounces = true
         webView.scrollView.backgroundColor = .clear
@@ -740,20 +685,39 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         guard context.coordinator.loadedHTML != html else { return }
         context.coordinator.loadedHTML = html
         let fullHTML = wrapQuotedHTML(html)
-        webView.loadHTMLString(fullHTML, baseURL: URL(string: "https://inboxies.invalid/"))
+        webView.loadHTMLString(fullHTML, baseURL: EmailHTMLSanitizer.opaqueOrigin)
     }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var loadedHTML: String?
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            EmailWebViewIsolation.decidePolicy(for: navigationAction, decisionHandler: decisionHandler)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            createWebViewWith configuration: WKWebViewConfiguration,
+            for navigationAction: WKNavigationAction,
+            windowFeatures: WKWindowFeatures
+        ) -> WKWebView? {
+            EmailWebViewIsolation.createPopup(for: navigationAction)
+        }
     }
 
     private func wrapQuotedHTML(_ bodyContent: String) -> String {
-        """
+        let sanitized = EmailHTMLSanitizer.sanitize(bodyContent)
+        return """
         <!DOCTYPE html>
         <html>
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="\(EmailHTMLSanitizer.contentSecurityPolicy)">
         <style>
           :root { color-scheme: light dark; }
           html, body {
@@ -774,6 +738,9 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
           img { max-width: 100%; height: auto; }
           a { color: #2659d9; }
           pre, code { white-space: pre-wrap; }
+          [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
+            position: relative !important;
+          }
           blockquote {
             border-left: 2px solid #d0d0d4;
             margin: 10px 0;
@@ -795,12 +762,123 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         </style>
         </head>
         <body>
-          \(bodyContent)
+          \(sanitized)
         </body>
         </html>
         """
     }
 }
+
+enum HTMLHardenFixture {
+    static let html = """
+    <p>Hello from the HTML harden fixture.</p>
+    <p>Safe links:
+      <a href="https://example.com/ok">https example</a>
+      <a href="mailto:jordan@example.com">mailto Jordan</a>
+      <a href="https://example.com/blank" target="_blank">target blank</a>
+    </p>
+    <p>Blocked:
+      <a href="javascript:alert(1)">javascript alert</a>
+      <a href="https://inboxies.invalid/stay">opaque origin</a>
+      <img src="x" onerror="alert(1)">
+    </p>
+    <script>document.title = "xss"</script>
+    <blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em;">
+    On Tue, Sep 8, 2026, at 4:32 PM, Alex Rivera wrote:<br>
+    Previous message with a <a href="https://quoted.example/thread">quoted link</a>
+    and <script>document.write("quoted-xss")</script>
+    </blockquote>
+    """
+
+    static var sanitizerChecks: [(label: String, passed: Bool)] {
+        let cleaned = EmailHTMLSanitizer.sanitize(html)
+        let split = EmailHTMLSanitizer.prepare(html)
+        return [
+            ("strips script tags", !cleaned.lowercased().contains("<script")),
+            ("strips onerror", !cleaned.lowercased().contains("onerror")),
+            ("keeps https links", cleaned.contains("https://example.com/ok")),
+            ("strips javascript: href", !cleaned.lowercased().contains("javascript:")),
+            ("splits quoted replies", split.quote != nil),
+        ]
+    }
+
+    static var policyChecks: [(label: String, passed: Bool)] {
+        let load = URL(string: "https://inboxies.invalid/")!
+        let https = URL(string: "https://example.com/ok")!
+        let mailto = URL(string: "mailto:jordan@example.com")!
+        let js = URL(string: "javascript:alert(1)")!
+        let opaqueClick = URL(string: "https://inboxies.invalid/stay")!
+        return [
+            ("initial opaque load allowed", EmailLinkPolicy.decide(url: load, navigationType: .other) == .allow),
+            ("https tap opens externally", EmailLinkPolicy.decide(url: https, navigationType: .linkActivated) == .openExternally(https)),
+            ("mailto tap opens externally", EmailLinkPolicy.decide(url: mailto, navigationType: .linkActivated) == .openExternally(mailto)),
+            ("javascript: cancelled", EmailLinkPolicy.decide(url: js, navigationType: .linkActivated) == .cancel),
+            ("inboxies.invalid click cancelled", EmailLinkPolicy.decide(url: opaqueClick, navigationType: .linkActivated) == .cancel),
+            ("target=_blank uses cancel+external, not a new WebView", EmailLinkPolicy.decide(url: https, navigationType: .linkActivated) == .openExternally(https)),
+        ]
+    }
+}
+
+#if DEBUG
+struct HTMLHardenFixtureView: View {
+    @State private var quoted: QuotedMailContent?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    EmailBodyView(htmlOrText: HTMLHardenFixture.html)
+                    Button("Open quoted sheet") {
+                        if let quote = EmailHTMLSanitizer.prepare(HTMLHardenFixture.html).quote {
+                            quoted = QuotedMailContent(text: quote, isHTML: true)
+                        }
+                    }
+                    .font(.inter(size: 15, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(AppTheme.pillFill)
+                    .foregroundStyle(AppTheme.ink)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityIdentifier("html-harden-open-quoted")
+                    checks("Sanitizer", HTMLHardenFixture.sanitizerChecks)
+                    checks("Link policy", HTMLHardenFixture.policyChecks)
+                }
+                .padding(16)
+            }
+            .background(AppTheme.background)
+            .navigationTitle("HTML harden")
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $quoted) { item in
+                QuotedRepliesModalView(content: item.text, isHTML: true)
+            }
+            .task {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                if quoted == nil, let quote = EmailHTMLSanitizer.prepare(HTMLHardenFixture.html).quote {
+                    quoted = QuotedMailContent(text: quote, isHTML: true)
+                }
+            }
+        }
+    }
+
+    private func checks(_ title: String, _ rows: [(label: String, passed: Bool)]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.inter(size: 13, weight: .semibold))
+                .foregroundStyle(AppTheme.muted)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: row.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundStyle(row.passed ? AppTheme.accent : AppTheme.deepDarkRed)
+                    Text(row.label)
+                        .font(.inter(size: 13))
+                        .foregroundStyle(AppTheme.ink)
+                }
+                .accessibilityIdentifier("html-harden-\(row.passed ? "pass" : "fail")-\(row.label)")
+            }
+        }
+    }
+}
+#endif
 
 #Preview("Email Body with Quoted Replies") {
     ScrollView {

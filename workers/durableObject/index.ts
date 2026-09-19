@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/durable-sqlite";
 import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
-import { Folders } from "../../shared/folders";
+import { Folders, FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "../../shared/folders";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
@@ -23,9 +23,16 @@ import {
 	buildSimpleMime,
 	computeSnippet,
 	deleteEmailContent,
+	emailContentKeys,
 	loadEmailBody,
 	storeEmailContent,
 } from "../lib/email-content";
+import {
+	collectMailboxPurgeR2Keys,
+	deleteEmailAttachments,
+	deleteR2Keys,
+} from "../lib/attachments";
+import { mailboxMetadataKey } from "../lib/mailbox-routing";
 import {
 	FTS_BACKFILL_BATCH_SIZE,
 	FTS_BACKFILL_MIGRATION,
@@ -35,6 +42,11 @@ import {
 	type FtsEmailFields,
 } from "../lib/email-fts";
 import { aggregateRecentRecipients } from "../../shared/recent-recipients";
+import {
+	parseStoredEmailAuth,
+	serializeEmailAuth,
+	type EmailAuth,
+} from "../lib/email-auth";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -55,6 +67,9 @@ const folderIdSql = (id: string) =>
 	`(SELECT id FROM folders WHERE name = '${id}' OR id = '${id}' LIMIT 1)`;
 const DRAFT_FOLDER_ID_SQL = folderIdSql(Folders.DRAFT);
 const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
+
+/** KV flag set after a successful purge so in-flight writers cannot resurrect mail. */
+const MAILBOX_DELETED_KEY = "mailbox_deleted";
 
 const ALLOWED_SORT_COLUMNS = [
 	"id",
@@ -136,6 +151,7 @@ interface EmailData {
 	provider_message_id?: string | null;
 	delivery_status?: DeliveryStatus | null;
 	delivery_error?: string | null;
+	auth?: EmailAuth | string | null;
 }
 
 interface AttachmentData {
@@ -179,6 +195,27 @@ export class MailboxDO extends DurableObject<Env> {
 				this.#subscribers.delete(controller);
 			}
 		}
+	}
+
+	async #isMailboxDeleted(): Promise<boolean> {
+		return (await this.ctx.storage.get(MAILBOX_DELETED_KEY)) != null;
+	}
+
+	async #assertMailboxWritable(): Promise<void> {
+		if (await this.#isMailboxDeleted()) {
+			throw new Error("Mailbox has been deleted");
+		}
+	}
+
+	/** Clear the post-purge write lock when recreating the same address. */
+	async reviveMailbox(): Promise<{ status: string }> {
+		await this.ctx.storage.delete(MAILBOX_DELETED_KEY);
+		return { status: "revived" };
+	}
+
+	/** True when the mailbox has not been purged (safe for inbound preflight). */
+	async isWritable(): Promise<boolean> {
+		return !(await this.#isMailboxDeleted());
 	}
 
 	constructor(state: DurableObjectState, env: Env) {
@@ -426,6 +463,15 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 	}
 
+	#withDecodedAuth<T extends { auth?: unknown }>(
+		email: T,
+	): T & { auth: EmailAuth | null } {
+		return {
+			...email,
+			auth: parseStoredEmailAuth(email.auth),
+		};
+	}
+
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────
 
 	async getEmails(options: GetEmailsOptions = {}) {
@@ -482,6 +528,7 @@ export class MailboxDO extends DurableObject<Env> {
 				delivery_status: schema.emails.delivery_status,
 				delivery_error: schema.emails.delivery_error,
 				snippet: schema.emails.snippet,
+				auth: schema.emails.auth,
 			})
 			.from(schema.emails)
 			.where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -491,7 +538,7 @@ export class MailboxDO extends DurableObject<Env> {
 			.all();
 
 		return this.#withFileAttachmentFlag(
-			result.map((email) => ({
+			result.map((email) => this.#withDecodedAuth({
 				...email,
 				read: !!email.read,
 				starred: !!email.starred,
@@ -647,6 +694,7 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
+					lp.auth,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
@@ -658,7 +706,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 			const rows = [...result];
 			return this.#withFileAttachmentFlag(
-				rows.map((row: any) => ({
+				rows.map((row: any) => this.#withDecodedAuth({
 					...row,
 					read: !!row.read,
 					starred: !!row.starred,
@@ -738,6 +786,7 @@ export class MailboxDO extends DurableObject<Env> {
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
+				lif.auth,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
 				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
 					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
@@ -756,7 +805,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const rows = [...result];
 		return this.#withFileAttachmentFlag(
-			rows.map((row: any) => ({
+			rows.map((row: any) => this.#withDecodedAuth({
 				...row,
 				read: !!row.read,
 				starred: !!row.starred,
@@ -843,6 +892,7 @@ export class MailboxDO extends DurableObject<Env> {
 			read: !!email.read,
 			starred: !!email.starred,
 			attachments: emailAttachments,
+			auth: parseStoredEmailAuth(email.auth),
 		};
 	}
 
@@ -881,7 +931,7 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 
 		return await Promise.all(
-			emailRows.map(async (email) => ({
+			emailRows.map(async (email) => this.#withDecodedAuth({
 				...email,
 				body: await this.#hydrateBody(email.id, email.body, email.snippet),
 				read: !!email.read,
@@ -930,6 +980,7 @@ export class MailboxDO extends DurableObject<Env> {
 			thread_id: string | null;
 		},
 	) {
+		await this.#assertMailboxWritable();
 		const existing = this.db
 			.select({
 				id: schema.emails.id,
@@ -1135,9 +1186,87 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#deleteEmailFts(id);
 
 		await deleteEmailContent(this.env.BUCKET, id);
+		await deleteEmailAttachments(this.env.BUCKET, id, emailAttachments);
 
 		this.broadcastEvent("email_deleted", { id });
 		return emailAttachments;
+	}
+
+	/**
+	 * Wipe mailbox SQLite + all inventoried R2 email/attachment blobs, then
+	 * remove `mailboxes/{id}.json` so inbound/API stop treating it as live.
+	 * Returns conversation ids so the HTTP layer can purge EmailAgent DOs.
+	 */
+	async purgeMailbox(
+		mailboxId: string,
+	): Promise<{ conversationIds: string[] }> {
+		const emailRows = this.db
+			.select({ id: schema.emails.id })
+			.from(schema.emails)
+			.all();
+		const emailIds = emailRows.map((row) => row.id);
+
+		const attachmentRows = this.db
+			.select({
+				email_id: schema.attachments.email_id,
+				id: schema.attachments.id,
+				filename: schema.attachments.filename,
+			})
+			.from(schema.attachments)
+			.all();
+
+		const conversationRows = this.db
+			.select({ id: schema.agentConversations.id })
+			.from(schema.agentConversations)
+			.all();
+		const conversationIds = conversationRows.map((row) => row.id);
+
+		const keys = collectMailboxPurgeR2Keys(
+			emailIds,
+			attachmentRows,
+			emailContentKeys,
+		);
+		await deleteR2Keys(this.env.BUCKET, keys);
+
+		// Wipe tables first; only then clear FTS / alarm so a failed txn
+		// leaves searchable mail + backfill alarm intact.
+		this.ctx.storage.transactionSync(() => {
+			const sql = this.ctx.storage.sql;
+			sql.exec(`DELETE FROM attachments`);
+			sql.exec(`DELETE FROM emails`);
+			sql.exec(`DELETE FROM folders`);
+			sql.exec(`DELETE FROM agent_conversations`);
+			sql.exec(`DELETE FROM device_tokens`);
+			sql.exec(`DELETE FROM dismissed_todos`);
+			sql.exec(`DELETE FROM auto_reply_receipts`);
+
+			for (const folderId of SYSTEM_FOLDER_IDS) {
+				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;
+				sql.exec(
+					`INSERT INTO folders (id, name, is_deletable) VALUES (?, ?, 0)`,
+					folderId,
+					name,
+				);
+			}
+		});
+
+		try {
+			this.ctx.storage.sql.exec(`DELETE FROM emails_fts`);
+		} catch (e) {
+			console.error("purgeMailbox emails_fts wipe failed:", (e as Error).message);
+		}
+
+		try {
+			await this.ctx.storage.deleteAlarm();
+		} catch (e) {
+			console.error("purgeMailbox deleteAlarm failed:", (e as Error).message);
+		}
+
+		// Block createEmail/updateDraft until reviveMailbox on recreate.
+		await this.ctx.storage.put(MAILBOX_DELETED_KEY, "1");
+		await this.env.BUCKET.delete(mailboxMetadataKey(mailboxId));
+
+		return { conversationIds };
 	}
 
 	async getAttachment(id: string) {
@@ -1482,6 +1611,7 @@ export class MailboxDO extends DurableObject<Env> {
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,
+				e.auth,
 				f.name as folder_name
 			FROM emails e
 			${ftsJoin}
@@ -1493,7 +1623,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const result = this.ctx.storage.sql.exec(query, ...params);
 		return this.#withFileAttachmentFlag(
-			[...result].map((row: any) => ({
+			[...result].map((row: any) => this.#withDecodedAuth({
 				...row,
 				read: !!row.read,
 				starred: !!row.starred,
@@ -1679,6 +1809,7 @@ export class MailboxDO extends DurableObject<Env> {
 		email: EmailData,
 		attachments: AttachmentData[],
 	) {
+		await this.#assertMailboxWritable();
 		// Resolve folder name or ID to the actual folder ID.
 		const folderRow = this.db
 			.select({ id: schema.folders.id })
@@ -1748,6 +1879,11 @@ export class MailboxDO extends DurableObject<Env> {
 				provider_message_id: email.provider_message_id ?? null,
 				delivery_status: email.delivery_status ?? null,
 				delivery_error: email.delivery_error ?? null,
+				auth: serializeEmailAuth(
+					typeof email.auth === "string"
+						? parseStoredEmailAuth(email.auth)
+						: email.auth,
+				),
 			})
 			.run();
 
@@ -1784,6 +1920,9 @@ export class MailboxDO extends DurableObject<Env> {
 			provider_message_id: email.provider_message_id ?? null,
 			delivery_status: email.delivery_status ?? null,
 			delivery_error: email.delivery_error ?? null,
+			auth: typeof email.auth === "string"
+				? parseStoredEmailAuth(email.auth)
+				: email.auth ?? null,
 		});
 	}
 

@@ -431,6 +431,12 @@ struct EmailRowView: View {
                     .foregroundStyle(AppTheme.deepDarkRed)
             }
 
+            if email.isSpoofed {
+                Text("Spoofed")
+                    .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                    .foregroundStyle(AppTheme.deepDarkRed)
+            }
+
             Spacer(minLength: 8)
 
             HStack(alignment: .center, spacing: 4) {
@@ -481,7 +487,7 @@ struct EmailRowView: View {
             .padding(.vertical, 3)
             .background(AppTheme.pillFill)
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .foregroundStyle(AppTheme.muted)
+            .foregroundStyle(tag == "Spoofed" ? AppTheme.deepDarkRed : AppTheme.muted)
             .lineLimit(1)
     }
 
@@ -502,6 +508,7 @@ struct EmailRowView: View {
             }
         }
         if email.needsReply == true { tags.append("Needs reply") }
+        if email.isSpoofed { tags.append("Spoofed") }
         return tags
     }
 

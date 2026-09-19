@@ -382,6 +382,38 @@ final class AppModel {
                 await loadInboxDigest(showLoading: false)
             }
         }
+        await refreshOpenEmailDetailSilently()
+    }
+
+    /// Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh.
+    private func refreshOpenEmailDetailSilently() async {
+        guard let mailboxId = selectedMailboxId, let email = selectedEmail else { return }
+        do {
+            let threadId = email.threadId
+            let shouldLoadThread = threadId != nil
+                && ((email.threadCount ?? 1) > 1 || threadEmails.count > 1 || threadEmails.contains(where: \.isDraft))
+            if let threadId, shouldLoadThread {
+                let remoteThread = try await APIClient.shared.getThread(mailboxId: mailboxId, threadId: threadId)
+                db.upsertEmails(mailboxId: mailboxId, emails: remoteThread, defaultFolder: email.folderId)
+                guard selectedEmail?.id == email.id || selectedEmail?.threadId == threadId else { return }
+                threadEmails = remoteThread
+                if let updated = remoteThread.first(where: { $0.id == email.id }) {
+                    selectedEmail = mergeListMetadata(email, with: updated)
+                }
+            } else {
+                let full = try await APIClient.shared.getEmail(mailboxId: mailboxId, id: email.id)
+                db.upsertEmails(mailboxId: mailboxId, emails: [full], defaultFolder: email.folderId)
+                guard selectedEmail?.id == email.id else { return }
+                selectedEmail = mergeListMetadata(email, with: full)
+                if threadEmails.count <= 1 {
+                    threadEmails = [full]
+                } else if let idx = threadEmails.firstIndex(where: { $0.id == full.id }) {
+                    threadEmails[idx] = full
+                }
+            }
+        } catch {
+            // Ignore background detail refresh errors
+        }
     }
 
     func loadInboxDigest(showLoading: Bool = true) async {

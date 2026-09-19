@@ -61,6 +61,7 @@ import co.inboxies.app.theme.homeChromeToolbarSurface
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.chat.ChatSheetView
 import co.inboxies.app.ui.email.EmailListView
+import co.inboxies.app.util.SearchQueryParser
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -83,20 +84,26 @@ fun SearchView(
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var showChat by remember { mutableStateOf(false) }
     val trimmed = query.trim()
+    val parsed = remember(trimmed) { SearchQueryParser.parse(trimmed) }
+    val highlightText = parsed.query
+    val shouldSearch = parsed.hasStructuredFilters || trimmed.length >= 2
+    val shouldShowEmptyResults = shouldSearch && !loading && results.isEmpty()
 
     fun runSearch(value: String) {
         searchJob?.cancel()
         searchJob = scope.launch {
             delay(if (value == initialQuery && initialQuery.isNotBlank()) 0 else 300)
             val mailboxId = app.selectedMailboxId.value ?: return@launch
-            if (value.isBlank()) {
+            val parsedQuery = SearchQueryParser.parse(value.trim())
+            val canSearch = parsedQuery.hasStructuredFilters || value.trim().length >= 2
+            if (!canSearch) {
                 results = emptyList()
                 loading = false
                 return@launch
             }
             loading = true
             results = runCatching {
-                ApiClient.shared.searchEmails(mailboxId, value).emails
+                ApiClient.shared.searchEmails(mailboxId, parsedQuery).emails
             }.getOrElse { emptyList() }
             loading = false
         }
@@ -191,7 +198,7 @@ fun SearchView(
                             EmailListView(
                                 emails = results,
                                 isLoading = loading,
-                                highlightQuery = query,
+                                highlightQuery = highlightText,
                                 bottomInset = 0.dp,
                                 onOpen = { email ->
                                     scope.launch {
@@ -203,7 +210,7 @@ fun SearchView(
                             )
                         }
                     }
-                    trimmed.length >= 2 -> {
+                    shouldShowEmptyResults -> {
                         Text(
                             "No matching emails",
                             fontFamily = InterFontFamily,
@@ -216,7 +223,19 @@ fun SearchView(
                         )
                         Spacer(modifier = Modifier.weight(1f))
                     }
-                    else -> Spacer(modifier = Modifier.weight(1f))
+                    else -> {
+                        Text(
+                            "Tip: Use operators like from:name, is:unread, has:attachment, before:2025-01-01",
+                            fontFamily = InterFontFamily,
+                            fontSize = 13.sp,
+                            color = colors.muted,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .padding(top = 24.dp),
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
                 }
             }
 
@@ -264,10 +283,12 @@ fun SearchView(
                             Box {
                                 if (query.isEmpty()) {
                                     Text(
-                                        "Search mail",
+                                        "Search mail (try from:, is:unread)",
                                         fontFamily = InterFontFamily,
                                         fontSize = 16.sp,
                                         color = colors.muted,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 inner()

@@ -200,6 +200,50 @@ export function automationSettingsError(
 	return null;
 }
 
+type HeadersLike = {
+	get(name: string): string | null;
+	getAll?(name: string): string[];
+	forEach?(callback: (value: string, key: string) => void): void;
+};
+
+function valuesFromHeadersObject(
+	headers: HeadersLike,
+	name: string,
+): string[] {
+	if (typeof headers.getAll === "function") {
+		try {
+			const all = headers.getAll(name);
+			if (Array.isArray(all) && all.length > 0) {
+				return all.map((value) => String(value)).filter(Boolean);
+			}
+		} catch {
+			// Some runtimes expose getAll but reject it.
+		}
+	}
+	const single = headers.get(name);
+	return single ? [single] : [];
+}
+
+/** Named lookup when Headers.forEach is missing (Email Workers often use .get()). */
+class HeadersLookupMap extends Map<string, string[]> {
+	#headers: HeadersLike;
+
+	constructor(headers: HeadersLike) {
+		super();
+		this.#headers = headers;
+	}
+
+	override get(name: string): string[] | undefined {
+		const key = name.trim().toLowerCase();
+		const cached = super.get(key);
+		if (cached) return cached;
+		const values = valuesFromHeadersObject(this.#headers, key);
+		if (values.length === 0) return undefined;
+		super.set(key, values);
+		return values;
+	}
+}
+
 export function headerMapFromSource(source: HeaderSource): Map<string, string[]> {
 	if (!source) return new Map();
 	if (
@@ -207,13 +251,9 @@ export function headerMapFromSource(source: HeaderSource): Map<string, string[]>
 		!Array.isArray(source) &&
 		typeof (source as { get?: unknown }).get === "function"
 	) {
-		const headers = source as {
-			get(name: string): string | null;
-			getAll?(name: string): string[];
-			forEach?(callback: (value: string, key: string) => void): void;
-		};
-		const map = new Map<string, string[]>();
+		const headers = source as HeadersLike;
 		if (typeof headers.forEach === "function") {
+			const map = new Map<string, string[]>();
 			headers.forEach((value, key) => {
 				const name = key.trim().toLowerCase();
 				if (!name) return;
@@ -223,7 +263,7 @@ export function headerMapFromSource(source: HeaderSource): Map<string, string[]>
 			});
 			return map;
 		}
-		return map;
+		return new HeadersLookupMap(headers);
 	}
 	return parseHeaderList(source as HeaderEntry[] | string | null);
 }

@@ -124,11 +124,9 @@ struct MailAddress: Hashable, Identifiable {
         return email
     }
 
-    /// Query used when searching mail for this person.
+    /// Query used when searching mail for this person (`from:` operator).
     var searchQuery: String {
-        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty { return trimmed }
-        return email
+        "from:\(email)"
     }
 
     static func parseList(_ raw: String?) -> [MailAddress] {
@@ -194,6 +192,21 @@ struct MailAddress: Hashable, Identifiable {
     }
 }
 
+struct EmailAuth: Codable, Hashable {
+    var spf: String?
+    var dkim: String?
+    var dmarc: String?
+    var dkimDomain: String?
+    var spfMailfrom: String?
+    var headerFrom: String?
+    var envelopeFrom: String?
+    var aligned: Bool?
+    var spoofed: Bool?
+    var source: String?
+
+    var isSpoofed: Bool { spoofed == true }
+}
+
 struct Email: Identifiable, Codable, Hashable {
     let id: String
     var threadId: String?
@@ -220,9 +233,13 @@ struct Email: Identifiable, Codable, Hashable {
     var needsReply: Bool?
     var hasAttachment: Bool? = nil
     var attachments: [Attachment]?
+    var auth: EmailAuth? = nil
+    var providerMessageId: String? = nil
+    var deliveryStatus: String? = nil
+    var deliveryError: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments
+        case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
         case senderName = "sender_name"
         case threadId = "thread_id"
         case folderId = "folder_id"
@@ -235,6 +252,9 @@ struct Email: Identifiable, Codable, Hashable {
         case hasDraft = "has_draft"
         case needsReply = "needs_reply"
         case hasAttachment = "has_attachment"
+        case providerMessageId = "provider_message_id"
+        case deliveryStatus = "delivery_status"
+        case deliveryError = "delivery_error"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -423,6 +443,15 @@ struct Email: Identifiable, Codable, Hashable {
 
     var isDraft: Bool {
         folderId == "draft" || folderName?.lowercased() == "drafts" || folderName?.lowercased() == "draft"
+    }
+
+    var isSpoofed: Bool { auth?.isSpoofed == true }
+
+    var isDeliveryFailure: Bool { DeliveryStatusHelpers.isFailure(deliveryStatus) }
+
+    var deliveryStatusLabel: String? {
+        guard isDeliveryFailure else { return nil }
+        return DeliveryStatusHelpers.label(for: deliveryStatus)
     }
 
     var nonInlineAttachments: [Attachment] {

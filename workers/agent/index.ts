@@ -322,7 +322,27 @@ export class EmailAgent extends AIChatAgent<any> {
 				);
 			}
 		}
+		if (url.pathname === "/purge" && request.method === "POST") {
+			const result = await this.purge();
+			return new Response(JSON.stringify(result), {
+				headers: { "Content-Type": "application/json" },
+			});
+		}
 		return super.onRequest(request);
+	}
+
+	/**
+	 * Clear persisted chat history when the owning mailbox is deleted.
+	 * No platform DO destroy API — wipe storage so recreate starts empty.
+	 */
+	async purge(): Promise<{ status: string }> {
+		try {
+			await this.persistMessages([]);
+		} catch (e) {
+			console.error("EmailAgent persistMessages([]) failed:", (e as Error).message);
+		}
+		await this.ctx.storage.deleteAll();
+		return { status: "purged" };
 	}
 
 	/**

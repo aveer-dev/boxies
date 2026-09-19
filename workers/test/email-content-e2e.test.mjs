@@ -128,7 +128,7 @@ const migrated = await hydrateBody(bucket, legacyId, legacyHtml, null);
 assert.equal(migrated, legacyHtml);
 assert.equal(await loadEmailBody(bucket, legacyId), legacyHtml);
 
-// --- Delete removes both keys (matches MailboxDO.deleteEmail cleanup) ---
+// --- Delete removes both keys (matches MailboxDO.deleteEmail body cleanup) ---
 await deleteEmailContent(bucket, emailId);
 assert.equal(bucket.store.has(emailBodyKey(emailId)), false);
 assert.equal(bucket.store.has(emailRawKey(emailId)), false);
@@ -137,6 +137,21 @@ assert.deepEqual(emailContentKeys(emailId), [
 	emailRawKey(emailId),
 ]);
 
+// --- deleteEmail also removes attachment blobs (regression: MCP orphan) ---
+const {
+	attachmentKey,
+	deleteEmailAttachments,
+} = await import("../lib/attachments.ts");
+const withAtt = "e2e-with-att";
+await storeEmailContent(bucket, withAtt, { htmlOrText: "<p>a</p>" });
+const attKey = attachmentKey(withAtt, "att-1", "clip.txt");
+await bucket.put(attKey, "hello");
+await deleteEmailContent(bucket, withAtt);
+await deleteEmailAttachments(bucket, withAtt, [
+	{ id: "att-1", filename: "clip.txt" },
+]);
+assert.equal(bucket.store.has(emailBodyKey(withAtt)), false);
+assert.equal(bucket.store.has(attKey), false);
 // --- Inbound empty body still stores .eml; hydrate returns empty html ---
 const emptyId = "e2e-empty-1";
 await storeEmailContent(bucket, emptyId, {

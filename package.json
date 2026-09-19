@@ -25,7 +25,7 @@
 		"dev": "react-router dev",
 		"preview": "npm run build && vite preview",
 		"typecheck": "npm run cf-typegen && react-router typegen && tsc -b",
-		"test:unit": "node workers/test/agent-conversations.test.mjs && node workers/test/mobile-auth.test.mjs && node workers/test/apns.test.mjs && node --experimental-strip-types workers/test/reply-recipients.test.mjs && node --experimental-strip-types workers/test/recent-recipients.test.mjs && node --experimental-strip-types workers/test/compose-body.test.mjs && node --experimental-strip-types workers/test/mailbox-routing.test.mjs && node --experimental-strip-types workers/test/mailbox-acl.test.mjs && node --experimental-strip-types workers/test/classify-email.test.mjs && node --experimental-strip-types workers/test/mail-automations.test.mjs && node --experimental-strip-types workers/test/inbox-filters.test.mjs && node --experimental-strip-types workers/test/inbox-filters-e2e.test.mjs && node --experimental-strip-types workers/test/outbound-delivery.test.mjs && node --experimental-strip-types workers/test/email-content.test.mjs && node --experimental-strip-types workers/test/email-content-e2e.test.mjs && node --experimental-strip-types workers/test/email-fts.test.mjs && node --experimental-strip-types workers/test/email-fts-e2e.test.mjs && node --experimental-strip-types workers/test/push-payload.test.mjs && node android/test/folder-tabs.test.mjs"
+		"test:unit": "node workers/test/agent-conversations.test.mjs && node workers/test/mobile-auth.test.mjs && node workers/test/apns.test.mjs && node --experimental-strip-types workers/test/reply-recipients.test.mjs && node --experimental-strip-types workers/test/recent-recipients.test.mjs && node --experimental-strip-types workers/test/compose-body.test.mjs && node --experimental-strip-types workers/test/compose-attachments.test.mjs && node --experimental-strip-types workers/test/mailbox-routing.test.mjs && node --experimental-strip-types workers/test/mailbox-acl.test.mjs && node --experimental-strip-types workers/test/classify-email.test.mjs && node --experimental-strip-types workers/test/mail-automations.test.mjs && node --experimental-strip-types workers/test/inbox-filters.test.mjs && node --experimental-strip-types workers/test/inbox-filters-e2e.test.mjs && node --experimental-strip-types workers/test/email-auth.test.mjs && node --experimental-strip-types workers/test/outbound-delivery.test.mjs && node --experimental-strip-types workers/test/email-content.test.mjs && node --experimental-strip-types workers/test/email-content-e2e.test.mjs && node --experimental-strip-types workers/test/attachments.test.mjs && node --experimental-strip-types workers/test/mailbox-purge.test.mjs && node --experimental-strip-types workers/test/mailbox-purge-guard.test.mjs && node --experimental-strip-types workers/test/email-fts.test.mjs && node --experimental-strip-types workers/test/email-fts-e2e.test.mjs && node --experimental-strip-types workers/test/push-payload.test.mjs && node android/test/folder-tabs.test.mjs && node android/test/outbound-limits.test.mjs && node android/test/compose-attach-runtime.test.mjs && node android/test/email-html-hardening.test.mjs"
 	},
 	"dependencies": {
 		"@cloudflare/ai-chat": "^0.1.8",
@@ -33,6 +33,7 @@
 		"@modelcontextprotocol/sdk": "^1.30.0",
 		"@phosphor-icons/react": "^2.1.10",
 		"@tanstack/react-query": "^5.99.0",
+		"@tiptap/core": "3.20.2",
 		"@tiptap/extension-color": "3.20.2",
 		"@tiptap/extension-highlight": "3.20.2",
 		"@tiptap/extension-image": "3.20.2",
@@ -87,6 +88,34 @@
 		"@tiptap/extension-paragraph": "3.20.2",
 		"@tiptap/extension-strike": "3.20.2",
 		"@tiptap/extension-text": "3.20.2"
+	},
+	"pnpm": {
+		"overrides": {
+			"@tiptap/core": "3.20.2",
+			"@tiptap/pm": "3.20.2",
+			"@tiptap/extensions": "3.20.2",
+			"@tiptap/extension-blockquote": "3.20.2",
+			"@tiptap/extension-bold": "3.20.2",
+			"@tiptap/extension-bubble-menu": "3.20.2",
+			"@tiptap/extension-bullet-list": "3.20.2",
+			"@tiptap/extension-code": "3.20.2",
+			"@tiptap/extension-code-block": "3.20.2",
+			"@tiptap/extension-document": "3.20.2",
+			"@tiptap/extension-dropcursor": "3.20.2",
+			"@tiptap/extension-floating-menu": "3.20.2",
+			"@tiptap/extension-gapcursor": "3.20.2",
+			"@tiptap/extension-hard-break": "3.20.2",
+			"@tiptap/extension-heading": "3.20.2",
+			"@tiptap/extension-horizontal-rule": "3.20.2",
+			"@tiptap/extension-italic": "3.20.2",
+			"@tiptap/extension-list": "3.20.2",
+			"@tiptap/extension-list-item": "3.20.2",
+			"@tiptap/extension-list-keymap": "3.20.2",
+			"@tiptap/extension-ordered-list": "3.20.2",
+			"@tiptap/extension-paragraph": "3.20.2",
+			"@tiptap/extension-strike": "3.20.2",
+			"@tiptap/extension-text": "3.20.2"
+		}
 	},
 	"devDependencies": {
 		"@cloudflare/vite-plugin": "^1.0.12",

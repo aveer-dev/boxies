@@ -9,6 +9,7 @@ import { formatDetailDate, hasFileAttachment, rewriteInlineImages } from "~/lib/
 import { displaySenderName } from "shared/sender";
 import type { Email } from "~/types";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
+import { isAuthSpoofed } from "~/lib/email-auth";
 
 interface SingleMessageViewProps {
 	email: Email;
@@ -23,6 +24,7 @@ export default function SingleMessageView({
 }: SingleMessageViewProps) {
 	const senderName = displaySenderName(email);
 	const deliveryFailed = isDeliveryFailure(email.delivery_status);
+	const spoofed = isAuthSpoofed(email);
 
 	return (
 		<div className="flex flex-col h-full">
@@ -37,6 +39,9 @@ export default function SingleMessageView({
 								{senderName}
 							</div>
 							<div className="text-xs text-kumo-subtle truncate">{email.sender}</div>
+							{spoofed && (
+								<div className="text-xs text-kumo-destructive font-medium">Spoofed</div>
+							)}
 							<div className="text-xs text-kumo-subtle">To: {email.recipient}</div>
 						</div>
 					</div>
@@ -49,6 +54,22 @@ export default function SingleMessageView({
 				</div>
 			</div>
 
+			{spoofed && (
+				<div className="mx-4 mt-3 md:mx-6 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
+					<div className="font-medium text-kumo-destructive">This sender isn’t authenticated.</div>
+					<div className="mt-0.5 text-kumo-subtle">The From address failed SPF/DKIM/DMARC alignment.</div>
+				</div>
+			)}
+
+			{deliveryFailed && (
+				<div className="mx-4 mt-3 md:mx-6 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
+					<div className="font-medium">{deliveryStatusLabel(email.delivery_status)}</div>
+					{email.delivery_error && (
+						<div className="mt-0.5 text-kumo-subtle">{email.delivery_error}</div>
+					)}
+				</div>
+			)}
+
 			<div className="flex-1 min-h-0">
 				<EmailIframe
 					body={rewriteInlineImages(
@@ -59,15 +80,6 @@ export default function SingleMessageView({
 					)}
 				/>
 			</div>
-
-			{deliveryFailed && (
-				<div className="mx-4 mb-3 md:mx-6 rounded-md border border-kumo-warning/40 bg-kumo-warning/10 px-3 py-2 text-xs text-kumo-default" role="status">
-					<div className="font-medium">{deliveryStatusLabel(email.delivery_status)}</div>
-					{email.delivery_error && (
-						<div className="mt-0.5 text-kumo-subtle">{email.delivery_error}</div>
-					)}
-				</div>
-			)}
 
 			<EmailAttachmentList
 				mailboxId={mailboxId}
