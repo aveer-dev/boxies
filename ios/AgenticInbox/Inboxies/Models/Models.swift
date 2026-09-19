@@ -14,6 +14,18 @@ struct MailboxSettings: Codable, Hashable {
     var signature: SignatureSettings?
     var autoReply: AutoReplySettings?
     var filters: [InboxFilterRule]?
+    var acl: MailboxAcl?
+}
+
+struct MailboxAcl: Codable, Hashable {
+    var owners: [String]?
+    var members: [String]?
+}
+
+struct MeResponse: Codable {
+    var email: String?
+    var sub: String?
+    var keys: [String]
 }
 
 struct InboxFilterRule: Codable, Hashable, Identifiable {

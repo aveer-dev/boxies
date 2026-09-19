@@ -78,6 +78,12 @@ struct SettingsSheetView: View {
                         settingsLabel("Filters", systemImage: "line.3.horizontal.decrease.circle")
                     }
 
+                    NavigationLink {
+                        SharingSettingsView()
+                    } label: {
+                        settingsLabel("Sharing", systemImage: "person.2")
+                    }
+
                     notificationsToggle
                     signatureToggle
                 } header: {

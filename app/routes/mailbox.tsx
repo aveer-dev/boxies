@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useEffect, useRef } from "react";
-import { Outlet, useParams } from "react-router";
+import { Outlet, useNavigate, useParams } from "react-router";
 import AgentSidebar from "~/components/AgentSidebar";
 import ComposeEmail from "~/components/ComposeEmail";
 import Header from "~/components/Header";
@@ -11,11 +11,12 @@ import Sidebar from "~/components/Sidebar";
 import { useMailbox } from "~/queries/mailboxes";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
+import { ApiError } from "~/services/api";
 
 export default function MailboxRoute() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
-	// Prefetch mailbox data for child components
-	useMailbox(mailboxId);
+	const navigate = useNavigate();
+	const mailboxQuery = useMailbox(mailboxId);
 	useMailboxEvents(mailboxId);
 	const prevMailboxIdRef = useRef<string | undefined>(undefined);
 	const {
@@ -39,6 +40,13 @@ export default function MailboxRoute() {
 
 		prevMailboxIdRef.current = mailboxId;
 	}, [mailboxId, closeComposeModal, closePanel, closeSidebar]);
+
+	useEffect(() => {
+		const err = mailboxQuery.error;
+		if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+			navigate("/", { replace: true });
+		}
+	}, [mailboxQuery.error, navigate]);
 
 	return (
 		<div className="flex h-screen overflow-hidden">

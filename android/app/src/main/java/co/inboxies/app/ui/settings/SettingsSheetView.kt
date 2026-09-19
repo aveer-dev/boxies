@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.Edit
@@ -83,6 +84,7 @@ private sealed class SettingsPage {
     data object Forwarding : SettingsPage()
     data object AutoReply : SettingsPage()
     data object Filters : SettingsPage()
+    data object Sharing : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
 }
@@ -210,6 +212,7 @@ fun SettingsSheetView(
                     onOpenForwarding = { page = SettingsPage.Forwarding },
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenFilters = { page = SettingsPage.Filters },
+                    onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
                         if (enabled) enableNotifications() else disableNotifications()
@@ -240,6 +243,9 @@ fun SettingsSheetView(
                 SettingsPage.Filters -> FiltersSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.Sharing -> SharingSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.Support -> SupportSettingsView(
                     onBack = { page = SettingsPage.Root },
                     onCloseSettings = onClose,
@@ -265,6 +271,7 @@ private fun SettingsRootPage(
     onOpenForwarding: () -> Unit,
     onOpenAutoReply: () -> Unit,
     onOpenFilters: () -> Unit,
+    onOpenSharing: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
     onDeleteMailbox: (String) -> Unit,
@@ -399,6 +406,11 @@ private fun SettingsRootPage(
                 title = "Filters",
                 icon = Icons.Outlined.FilterList,
                 onClick = onOpenFilters,
+            )
+            SettingsNavRow(
+                title = "Sharing",
+                icon = Icons.Outlined.Group,
+                onClick = onOpenSharing,
             )
             SettingsToggleRow(
                 title = "Notifications",
