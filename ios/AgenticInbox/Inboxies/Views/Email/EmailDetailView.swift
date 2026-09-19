@@ -41,6 +41,9 @@ struct EmailDetailView: View {
         if email.needsReply == true { tags.append("Needs reply") }
         if email.hasDraft == true { tags.append("Has draft") }
         if email.isSpoofed { tags.append("Spoofed") }
+        if let label = email.deliveryStatusLabel {
+            tags.append(label)
+        }
         let messageCount = max(app.threadEmails.count, email.threadCount ?? 1)
         if messageCount > 1 {
             tags.append("\(messageCount) messages")
@@ -303,6 +306,14 @@ struct EmailDetailView: View {
                 if message.isSpoofed {
                     SpoofWarningBanner()
                         .padding(.top, 10)
+                }
+
+                if message.isDeliveryFailure {
+                    DeliveryFailureBanner(
+                        title: message.deliveryStatusLabel ?? DeliveryStatusHelpers.label(for: message.deliveryStatus),
+                        detail: message.deliveryError
+                    )
+                    .padding(.top, 10)
                 }
 
                 if isExpanded {
@@ -578,12 +589,17 @@ private struct MessagePeopleHeader: View {
     private var collapsedTopRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Button(action: senderOrToAction) {
-                Text(message.fromAddress.label(selfAddress: selfAddress))
-                    .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                HStack(spacing: 6) {
+                    Text(message.fromAddress.label(selfAddress: selfAddress))
+                        .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                    if let label = message.deliveryStatusLabel {
+                        deliveryStatusChip(label)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isBodyExpanded ? "Show recipient details" : "Show message")
@@ -632,9 +648,22 @@ private struct MessagePeopleHeader: View {
                 selfAddress: selfAddress,
                 onSearch: onSearch
             )
+            if let label = message.deliveryStatusLabel {
+                deliveryStatusChip(label)
+            }
             Spacer(minLength: 8)
             dateAndToggle
         }
+    }
+
+    private func deliveryStatusChip(_ label: String) -> some View {
+        Text(label)
+            .font(.inter(size: 11, weight: .medium))
+            .foregroundStyle(Color.orange)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(AppTheme.pillFill)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private var dateAndToggle: some View {
@@ -775,6 +804,34 @@ private struct SpoofWarningBanner: View {
     }
 }
 
+private struct DeliveryFailureBanner: View {
+    let title: String
+    let detail: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
+                .foregroundStyle(Color.orange)
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.inter(size: AppTheme.FontSize.meta))
+                    .foregroundStyle(AppTheme.muted)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.pillFill)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private extension View {
     @ViewBuilder
     func conditionalContextMenu<M: View>(
@@ -793,6 +850,10 @@ private extension View {
 
 #Preview("EmailDetailView with Thread Reply") {
     EmailDetailPreviewWrapper()
+}
+
+#Preview("EmailDetailView bounced delivery") {
+    EmailDetailBouncedPreviewWrapper()
 }
 
 struct EmailDetailPreviewWrapper: View {
@@ -834,6 +895,25 @@ struct EmailDetailPreviewWrapper: View {
         )
         model.selectedEmail = msg2
         model.threadEmails = [msg1, msg2]
+        return model
+    }()
+    @State private var auth = PreviewSupport.authStore()
+
+    var body: some View {
+        EmailDetailView()
+            .environment(app)
+            .environment(auth)
+            .preferredColorScheme(.light)
+    }
+}
+
+struct EmailDetailBouncedPreviewWrapper: View {
+    @State private var app: AppModel = {
+        let model = PreviewSupport.appModel()
+        let bounced = PreviewSupport.bouncedSentEmail
+        model.selectedEmail = bounced
+        model.threadEmails = [bounced]
+        model.selectedTab = .folder("sent")
         return model
     }()
     @State private var auth = PreviewSupport.authStore()

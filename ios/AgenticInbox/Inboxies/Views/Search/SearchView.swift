@@ -25,6 +25,15 @@ struct SearchView: View {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var parsedQuery: ParsedSearch {
+        SearchQueryParser.parse(trimmedQuery)
+    }
+
+    private var highlightText: String {
+        let free = parsedQuery.query
+        return free.isEmpty ? "" : free
+    }
+
     private var hasResults: Bool {
         !results.isEmpty
     }
@@ -56,7 +65,7 @@ struct SearchView: View {
 
                     EmailListView(
                         emails: results,
-                        highlightQuery: query,
+                        highlightQuery: highlightText,
                         isLoading: isSearching,
                         bottomInset: 0
                     ) { email in
@@ -64,7 +73,7 @@ struct SearchView: View {
                             await app.openEmail(email)
                         }
                     }
-                } else if trimmedQuery.count >= 2 {
+                } else if shouldShowEmptyResults {
                     Text("No matching emails")
                         .font(.inter(size: 15))
                         .foregroundStyle(AppTheme.muted)
@@ -72,6 +81,7 @@ struct SearchView: View {
                         .padding(.top, 24)
                     Spacer()
                 } else {
+                    operatorTip
                     Spacer()
                 }
             }
@@ -101,6 +111,23 @@ struct SearchView: View {
                 forceNewChat: true
             )
         }
+    }
+
+    private var shouldShowEmptyResults: Bool {
+        // Only after a finished search with no hits (loading handled above).
+        !isSearching && results.isEmpty && (parsedQuery.hasStructuredFilters || trimmedQuery.count >= 2)
+    }
+
+    private var operatorTip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tip: Use operators like from:name, is:unread, has:attachment, before:2025-01-01")
+                .font(.inter(size: 13))
+                .foregroundStyle(AppTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var askAIButton: some View {
@@ -139,7 +166,7 @@ struct SearchView: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(AppTheme.muted)
-            TextField("Search mail", text: $query)
+            TextField("Search mail (try from:, is:unread)", text: $query)
                 .focused($focused)
                 .submitLabel(.search)
                 .textInputAutocapitalization(.never)
@@ -185,25 +212,39 @@ struct SearchView: View {
     private func runSearch() async {
         let q = trimmedQuery
         guard let mailboxId = app.selectedMailboxId else { return }
-        guard q.count >= 2 else {
+        let parsed = SearchQueryParser.parse(q)
+
+        let shouldSearch = parsed.hasStructuredFilters || q.count >= 2
+        guard shouldSearch else {
             results = []
             errorMessage = nil
+            isSearching = false
             return
         }
 
-        // 1. Instant local FTS5 search (0ms)
-        let localMatches = DatabaseService.shared.searchEmails(mailboxId: mailboxId, query: q, limit: 30)
-        if !localMatches.isEmpty {
-            results = localMatches
-        }
-
+        // Mark loading before clearing so operator-only queries don't flash "No matching emails".
         isSearching = true
         errorMessage = nil
+
+        // Instant local FTS5 on free-text only (operators are not local filters).
+        if !parsed.query.isEmpty {
+            let localMatches = DatabaseService.shared.searchEmails(
+                mailboxId: mailboxId,
+                query: parsed.query,
+                limit: 30
+            )
+            if !localMatches.isEmpty {
+                results = localMatches
+            }
+        } else {
+            results = []
+        }
+
         defer { isSearching = false }
         do {
             try await Task.sleep(nanoseconds: 200_000_000)
             guard !Task.isCancelled else { return }
-            let response = try await APIClient.shared.searchEmails(mailboxId: mailboxId, query: q)
+            let response = try await APIClient.shared.searchEmails(mailboxId: mailboxId, parsed: parsed)
             results = response.emails
             DatabaseService.shared.upsertEmails(mailboxId: mailboxId, emails: response.emails)
         } catch is CancellationError {

@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import co.inboxies.app.util.DeliveryStatus
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -121,12 +122,9 @@ data class MailAddress(
         return resolvedName
     }
 
-    /** Query used when searching mail for this person. */
+    /** Query used when searching mail for this person (`from:` operator). */
     val searchQuery: String
-        get() {
-            val trimmed = name?.trim().orEmpty()
-            return if (trimmed.isNotEmpty()) trimmed else email
-        }
+        get() = "from:$email"
 
     val tokenLabel: String
         get() {
@@ -237,6 +235,9 @@ data class Email(
     @SerialName("has_attachment") val hasAttachment: Boolean? = null,
     val attachments: List<Attachment>? = null,
     val auth: EmailAuth? = null,
+    @SerialName("provider_message_id") val providerMessageId: String? = null,
+    @SerialName("delivery_status") val deliveryStatus: String? = null,
+    @SerialName("delivery_error") val deliveryError: String? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -246,6 +247,12 @@ data class Email(
 
     val isSpoofed: Boolean
         get() = auth?.isSpoofed == true
+
+    val isDeliveryFailure: Boolean
+        get() = DeliveryStatus.isFailure(deliveryStatus)
+
+    val deliveryStatusLabel: String?
+        get() = if (isDeliveryFailure) DeliveryStatus.label(deliveryStatus) else null
 
     val bodyLooksLikeHTML: Boolean
         get() {

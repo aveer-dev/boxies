@@ -14,6 +14,8 @@ import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
+import co.inboxies.app.util.ParsedSearch
+import co.inboxies.app.util.SearchQueryParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -268,9 +270,19 @@ class ApiClient private constructor() {
         )
     }
 
-    suspend fun searchEmails(mailboxId: String, query: String, page: Int = 1): EmailListResponse = request(
+    suspend fun searchEmails(mailboxId: String, query: String, page: Int = 1): EmailListResponse =
+        searchEmails(mailboxId, SearchQueryParser.parse(query), page)
+
+    suspend fun searchEmails(
+        mailboxId: String,
+        parsed: ParsedSearch,
+        page: Int = 1,
+    ): EmailListResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/search",
-        query = mapOf("query" to query, "page" to page.toString(), "limit" to "25"),
+        query = parsed.toApiQuery() + mapOf(
+            "page" to page.toString(),
+            "limit" to "25",
+        ),
     )
 
     suspend fun listRecipients(mailboxId: String, q: String = "", limit: Int = 20): List<RecentRecipient> {
