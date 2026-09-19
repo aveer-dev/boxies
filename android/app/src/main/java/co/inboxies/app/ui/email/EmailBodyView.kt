@@ -1,8 +1,12 @@
 package co.inboxies.app.ui.email
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.util.Base64
-import android.webkit.JavascriptInterface
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -31,7 +35,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -55,6 +58,7 @@ import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.MarkdownContentView
+import co.inboxies.app.util.EmailHtmlSanitizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -78,16 +82,15 @@ fun EmailBodyView(
     var isResolvingImages by remember(email.id) { mutableStateOf(false) }
     var webHeightPx by remember(email.id) { mutableFloatStateOf(1f) }
     var isWebLoading by remember(email.id) { mutableStateOf(isHtml) }
-    var extractedHtmlQuote by remember(email.id) { mutableStateOf<String?>(null) }
     var showQuoted by remember { mutableStateOf(false) }
 
     val bodyHtml = htmlWithImages ?: htmlOrText
+    val prepared = remember(bodyHtml) { EmailHtmlSanitizer.prepare(bodyHtml) }
     val plainParts = remember(htmlOrText) { splitPlainTextReplies(htmlOrText) }
-    val hasQuoted = if (isHtml) extractedHtmlQuote != null else plainParts.second != null
+    val hasQuoted = if (isHtml) prepared.quote != null else plainParts.second != null
     val showLoading = isHtml && (isWebLoading || webHeightPx <= 1f)
 
     LaunchedEffect(email.id, htmlOrText, attachments.map { it.id }.joinToString(",")) {
-        extractedHtmlQuote = null
         webHeightPx = 1f
         isWebLoading = isHtml
         htmlWithImages = null
@@ -154,9 +157,8 @@ fun EmailBodyView(
             Box(modifier = Modifier.fillMaxWidth()) {
                 if (!showLoading) {
                     HtmlBodyWebView(
-                        html = wrapEmailHtml(bodyHtml),
+                        html = wrapEmailHtml(prepared.main),
                         onHeight = { webHeightPx = it },
-                        onQuoteExtracted = { extractedHtmlQuote = it },
                         onLoadingChanged = { isWebLoading = it },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -180,7 +182,7 @@ fun EmailBodyView(
     }
 
     if (showQuoted) {
-        val quote = if (isHtml) extractedHtmlQuote.orEmpty() else plainParts.second.orEmpty()
+        val quote = if (isHtml) prepared.quote.orEmpty() else plainParts.second.orEmpty()
         ModalBottomSheet(
             onDismissRequest = { showQuoted = false },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false),
@@ -303,9 +305,10 @@ private fun QuotedRepliesSheet(
                 factory = { context ->
                     WebView(context).apply {
                         setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        settings.javaScriptEnabled = false
+                        applyEmailHtmlWebViewSettings(javaScriptEnabled = false)
+                        webViewClient = EmailLinkWebViewClient()
                         loadDataWithBaseURL(
-                            "https://inboxies.invalid/",
+                            EmailHtmlSanitizer.OPAQUE_ORIGIN,
                             wrapQuotedHtml(content),
                             "text/html",
                             "UTF-8",
@@ -315,7 +318,7 @@ private fun QuotedRepliesSheet(
                 },
                 update = {
                     it.loadDataWithBaseURL(
-                        "https://inboxies.invalid/",
+                        EmailHtmlSanitizer.OPAQUE_ORIGIN,
                         wrapQuotedHtml(content),
                         "text/html",
                         "UTF-8",
@@ -347,45 +350,40 @@ private fun QuotedRepliesSheet(
 private fun HtmlBodyWebView(
     html: String,
     onHeight: (Float) -> Unit,
-    onQuoteExtracted: (String) -> Unit,
     onLoadingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val bridge = remember {
-        EmailBodyJsBridge(
-            onHeight = onHeight,
-            onQuote = onQuoteExtracted,
-        )
+    val heightMeasurer = remember {
+        """
+        Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))
+        """.trimIndent()
     }
-    DisposableEffect(Unit) {
-        onDispose { bridge.detached = true }
-    }
-
     AndroidView(
         factory = { context ->
             WebView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = false
+                applyEmailHtmlWebViewSettings(javaScriptEnabled = true)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
-                addJavascriptInterface(bridge, "InboxiesNative")
-                webViewClient = object : WebViewClient() {
+                webViewClient = object : EmailLinkWebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
-                        view?.evaluateJavascript(
-                            """
-                            if (typeof extractQuotedReplies === 'function') { extractQuotedReplies(); }
-                            Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))
-                            """.trimIndent(),
-                        ) { result ->
+                        view?.evaluateJavascript(heightMeasurer) { result ->
                             val measured = result?.trim('"')?.toFloatOrNull()
                             if (measured != null && measured > 0f) onHeight(measured)
                             onLoadingChanged(false)
                         }
                     }
+
+                    override fun onLoadResource(view: WebView?, url: String?) {
+                        super.onLoadResource(view, url)
+                        view?.evaluateJavascript(heightMeasurer) { result ->
+                            val measured = result?.trim('"')?.toFloatOrNull()
+                            if (measured != null && measured > 0f) onHeight(measured)
+                        }
+                    }
                 }
                 tag = html
-                loadDataWithBaseURL("https://inboxies.invalid/", html, "text/html", "UTF-8", null)
+                loadDataWithBaseURL(EmailHtmlSanitizer.OPAQUE_ORIGIN, html, "text/html", "UTF-8", null)
             }
         },
         update = { webView ->
@@ -393,35 +391,39 @@ private fun HtmlBodyWebView(
             if (tag != html) {
                 onLoadingChanged(true)
                 webView.tag = html
-                webView.loadDataWithBaseURL("https://inboxies.invalid/", html, "text/html", "UTF-8", null)
+                webView.loadDataWithBaseURL(EmailHtmlSanitizer.OPAQUE_ORIGIN, html, "text/html", "UTF-8", null)
             }
         },
         modifier = modifier,
     )
 }
 
-private class EmailBodyJsBridge(
-    private val onHeight: (Float) -> Unit,
-    private val onQuote: (String) -> Unit,
-) {
-    @Volatile
-    var detached = false
+private fun WebView.applyEmailHtmlWebViewSettings(javaScriptEnabled: Boolean) {
+    settings.javaScriptEnabled = javaScriptEnabled
+    settings.domStorageEnabled = false
+    settings.allowFileAccess = false
+    settings.allowContentAccess = false
+    settings.allowFileAccessFromFileURLs = false
+    settings.allowUniversalAccessFromFileURLs = false
+    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+    settings.setSupportMultipleWindows(false)
+    settings.mediaPlaybackRequiresUserGesture = true
+    CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
+}
 
-    @JavascriptInterface
-    fun postHeight(height: Double) {
-        if (detached) return
-        val next = height.toFloat().coerceAtLeast(1f)
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            if (!detached) onHeight(next)
+private open class EmailLinkWebViewClient : WebViewClient() {
+    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+        val uri = request?.url ?: return true
+        if (uri.host == "inboxies.invalid") return false
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        if (scheme == "http" || scheme == "https" || scheme == "mailto") {
+            val context = view?.context ?: return true
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            } catch (_: ActivityNotFoundException) {
+            }
         }
-    }
-
-    @JavascriptInterface
-    fun postQuotedContent(html: String) {
-        if (detached || html.isBlank()) return
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            if (!detached) onQuote(html)
-        }
+        return true
     }
 }
 
@@ -461,6 +463,7 @@ private fun wrapEmailHtml(bodyHtml: String): String {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="${EmailHtmlSanitizer.CONTENT_SECURITY_POLICY}">
         <style>
           :root { color-scheme: light dark; }
           html, body {
@@ -483,6 +486,9 @@ private fun wrapEmailHtml(bodyHtml: String): String {
           img { max-width: 100%; height: auto; }
           a { color: #2659d9; }
           pre, code { white-space: pre-wrap; }
+          [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
+            position: relative !important;
+          }
           @media (prefers-color-scheme: dark) {
             body { color: #f7f7f8; }
             a { color: #5888fb; }
@@ -492,198 +498,21 @@ private fun wrapEmailHtml(bodyHtml: String): String {
           }
         </style>
         </head>
-        <body>$bodyHtml
-        <script>
-          function postHeight() {
-            const h = Math.ceil(
-              Math.max(
-                document.body.offsetHeight,
-                document.body.getBoundingClientRect().height,
-                document.body.scrollHeight
-              )
-            );
-            if (window.InboxiesNative && window.InboxiesNative.postHeight) {
-              window.InboxiesNative.postHeight(h);
-            }
-          }
-
-          function extractQuotedReplies() {
-            var explicitSelectors = [
-              '.gmail_quote',
-              '.yahoo_quoted',
-              '.protonmail_quote',
-              '#divRplyFwdMsg',
-              'blockquote[type="cite"]'
-            ];
-
-            var targetRoot = null;
-            var headerEl = null;
-
-            for (var i = 0; i < explicitSelectors.length; i++) {
-              var found = document.querySelector(explicitSelectors[i]);
-              if (found) {
-                targetRoot = found;
-                while (targetRoot.parentElement && targetRoot.parentElement !== document.body) {
-                  var pMatches = false;
-                  for (var s = 0; s < explicitSelectors.length; s++) {
-                    if (targetRoot.parentElement.matches && targetRoot.parentElement.matches(explicitSelectors[s])) {
-                      pMatches = true;
-                      break;
-                    }
-                  }
-                  if (pMatches) {
-                    targetRoot = targetRoot.parentElement;
-                  } else {
-                    break;
-                  }
-                }
-                break;
-              }
-            }
-
-            if (!targetRoot) {
-              var append = document.getElementById('appendonsend');
-              if (append && append.nextElementSibling) {
-                targetRoot = append;
-              }
-            }
-
-            if (!targetRoot) {
-              var bqs = document.querySelectorAll('blockquote');
-              for (var j = 0; j < bqs.length; j++) {
-                var bq = bqs[j];
-                if (bq.parentElement && bq.parentElement.closest('blockquote')) continue;
-
-                var text = (bq.textContent || '').trim();
-                var style = (bq.getAttribute('style') || '').toLowerCase();
-                var hasReplyPattern = /on\s.+wrote:\s*/i.test(text) ||
-                                      /wrote:\s*$/im.test(text) ||
-                                      /original message/i.test(text) ||
-                                      /from:\s.+\n?(sent|date):/i.test(text) ||
-                                      style.indexOf('border-left') !== -1;
-
-                var hasSubstantialAfter = false;
-                var sibling = bq.nextElementSibling;
-                while (sibling) {
-                  var sibText = (sibling.textContent || '').trim();
-                  var isSig = sibling.className && (typeof sibling.className === 'string') &&
-                              (sibling.className.indexOf('signature') !== -1 || sibling.className.indexOf('gmail_signature') !== -1);
-                  if (sibText.length > 40 && !isSig) {
-                    hasSubstantialAfter = true;
-                    break;
-                  }
-                  sibling = sibling.nextElementSibling;
-                }
-
-                if (hasReplyPattern || !hasSubstantialAfter) {
-                  targetRoot = bq;
-                  break;
-                }
-              }
-            }
-
-            if (!targetRoot) {
-              postHeight();
-              return;
-            }
-
-            var prev = targetRoot.previousElementSibling;
-            while (prev && (prev.tagName === 'BR' || (prev.textContent || '').trim() === '')) {
-              prev = prev.previousElementSibling;
-            }
-            if (prev) {
-              var pText = (prev.textContent || '').trim();
-              var isAttr = prev.classList && (prev.classList.contains('gmail_attr') || prev.classList.contains('moz-cite-prefix'));
-              if (/^(on\s.+wrote:|from:\s.+|---\s*original message|-----original message)/i.test(pText) || isAttr) {
-                headerEl = prev;
-              }
-            }
-
-            var startEl = headerEl || targetRoot;
-            var parent = startEl.parentNode;
-            if (!parent) {
-              postHeight();
-              return;
-            }
-
-            var quoteHtmlParts = [];
-            var curr = startEl;
-            var nodesToRemove = [];
-            while (curr) {
-              var nextNode = curr.nextSibling;
-              if (curr.nodeType === 1) {
-                if (curr.tagName !== 'SCRIPT') {
-                  curr.style.removeProperty('display');
-                  quoteHtmlParts.push(curr.outerHTML);
-                  nodesToRemove.push(curr);
-                }
-              } else if (curr.nodeType === 3) {
-                quoteHtmlParts.push(curr.textContent);
-                nodesToRemove.push(curr);
-              }
-              curr = nextNode;
-            }
-
-            for (var k = 0; k < nodesToRemove.length; k++) {
-              var node = nodesToRemove[k];
-              if (node.parentNode) {
-                node.parentNode.removeChild(node);
-              }
-            }
-
-            while (parent.lastChild) {
-              var last = parent.lastChild;
-              if (last.nodeType === 3 && (last.textContent || '').trim() === '') {
-                parent.removeChild(last);
-              } else if (last.nodeType === 1) {
-                var tag = last.tagName;
-                var isBlank = (last.textContent || '').trim() === '' && !last.querySelector('img');
-                if (tag === 'BR' || (isBlank && (tag === 'P' || tag === 'DIV'))) {
-                  parent.removeChild(last);
-                } else {
-                  break;
-                }
-              } else {
-                break;
-              }
-            }
-
-            var fullQuoteHtml = quoteHtmlParts.join('').trim();
-            if (fullQuoteHtml && window.InboxiesNative && window.InboxiesNative.postQuotedContent) {
-              window.InboxiesNative.postQuotedContent(fullQuoteHtml);
-            }
-
-            postHeight();
-          }
-
-          extractQuotedReplies();
-          window.addEventListener('load', function() {
-            extractQuotedReplies();
-            postHeight();
-          });
-          window.addEventListener('resize', postHeight);
-          document.querySelectorAll('img').forEach(function (img) {
-            img.addEventListener('load', postHeight);
-            img.addEventListener('error', postHeight);
-          });
-          if (typeof ResizeObserver !== 'undefined') {
-            new ResizeObserver(postHeight).observe(document.body);
-          }
-          postHeight();
-        </script>
-        </body>
+        <body>$bodyHtml</body>
         </html>
     """.trimIndent()
 }
 
 private fun wrapQuotedHtml(bodyContent: String): String {
     val bodySize = AppThemeDims.FontSize.body.value.toInt()
+    val sanitized = EmailHtmlSanitizer.sanitize(bodyContent)
     return """
         <!DOCTYPE html>
         <html>
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+        <meta http-equiv="Content-Security-Policy" content="${EmailHtmlSanitizer.CONTENT_SECURITY_POLICY}">
         <style>
           :root { color-scheme: light dark; }
           html, body {
@@ -704,6 +533,9 @@ private fun wrapQuotedHtml(bodyContent: String): String {
           img { max-width: 100%; height: auto; }
           a { color: #2659d9; }
           pre, code { white-space: pre-wrap; }
+          [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
+            position: relative !important;
+          }
           blockquote {
             border-left: 2px solid #d0d0d4;
             margin: 10px 0;
@@ -720,7 +552,7 @@ private fun wrapQuotedHtml(bodyContent: String): String {
           }
         </style>
         </head>
-        <body>$bodyContent</body>
+        <body>$sanitized</body>
         </html>
     """.trimIndent()
 }
