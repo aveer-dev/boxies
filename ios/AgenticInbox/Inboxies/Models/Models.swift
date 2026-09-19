@@ -112,11 +112,9 @@ struct MailAddress: Hashable, Identifiable {
         return email
     }
 
-    /// Query used when searching mail for this person.
+    /// Query used when searching mail for this person (`from:` operator).
     var searchQuery: String {
-        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmed.isEmpty { return trimmed }
-        return email
+        "from:\(email)"
     }
 
     static func parseList(_ raw: String?) -> [MailAddress] {
@@ -224,6 +222,9 @@ struct Email: Identifiable, Codable, Hashable {
     var hasAttachment: Bool? = nil
     var attachments: [Attachment]?
     var auth: EmailAuth? = nil
+    var providerMessageId: String? = nil
+    var deliveryStatus: String? = nil
+    var deliveryError: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -239,6 +240,9 @@ struct Email: Identifiable, Codable, Hashable {
         case hasDraft = "has_draft"
         case needsReply = "needs_reply"
         case hasAttachment = "has_attachment"
+        case providerMessageId = "provider_message_id"
+        case deliveryStatus = "delivery_status"
+        case deliveryError = "delivery_error"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -430,6 +434,13 @@ struct Email: Identifiable, Codable, Hashable {
     }
 
     var isSpoofed: Bool { auth?.isSpoofed == true }
+
+    var isDeliveryFailure: Bool { DeliveryStatusHelpers.isFailure(deliveryStatus) }
+
+    var deliveryStatusLabel: String? {
+        guard isDeliveryFailure else { return nil }
+        return DeliveryStatusHelpers.label(for: deliveryStatus)
+    }
 
     var nonInlineAttachments: [Attachment] {
         (attachments ?? []).filter { !$0.isInline }

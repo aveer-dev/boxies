@@ -247,13 +247,24 @@ final class APIClient: @unchecked Sendable {
     }
 
     func searchEmails(mailboxId: String, query: String, page: Int = 1) async throws -> EmailListResponse {
-        try await request(
+        try await searchEmails(
+            mailboxId: mailboxId,
+            parsed: SearchQueryParser.parse(query),
+            page: page
+        )
+    }
+
+    func searchEmails(
+        mailboxId: String,
+        parsed: ParsedSearch,
+        page: Int = 1
+    ) async throws -> EmailListResponse {
+        var params = parsed.apiQueryItems
+        params["page"] = String(page)
+        params["limit"] = "25"
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/search",
-            query: [
-                "query": query,
-                "page": String(page),
-                "limit": "25",
-            ]
+            query: params
         )
     }
 

@@ -103,6 +103,7 @@ import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuHeader
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.ui.search.SearchView
+import co.inboxies.app.util.DeliveryStatus
 import co.inboxies.app.utils.DateUtils
 import kotlinx.coroutines.launch
 
@@ -179,6 +180,7 @@ fun EmailDetailView(
             if (current.needsReply == true) add("Needs reply")
             if (current.hasDraft == true) add("Has draft")
             if (current.isSpoofed) add("Spoofed")
+            current.deliveryStatusLabel?.let { add(it) }
             val messageCount = maxOf(messages.size, current.threadCount ?: 1)
             if (messageCount > 1) add("$messageCount messages")
         }
@@ -431,6 +433,15 @@ fun EmailDetailView(
                                 )
                             }
 
+                            if (message.isDeliveryFailure) {
+                                DeliveryFailureBanner(
+                                    title = message.deliveryStatusLabel
+                                        ?: DeliveryStatus.label(message.deliveryStatus),
+                                    detail = message.deliveryError,
+                                    modifier = Modifier.padding(top = 10.dp),
+                                )
+                            }
+
                             AnimatedVisibility(
                                 visible = isExpanded,
                                 enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 6 },
@@ -611,6 +622,41 @@ private fun SpoofWarningBanner(modifier: Modifier = Modifier) {
             fontSize = AppThemeDims.FontSize.meta,
             color = colors.muted,
         )
+    }
+}
+
+@Composable
+private fun DeliveryFailureBanner(
+    title: String,
+    detail: String?,
+    modifier: Modifier = Modifier,
+) {
+    val colors = inboxiesColors()
+    val warning = Color(0xFFFFC107)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, warning.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            title,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = warning,
+        )
+        if (!detail.isNullOrBlank()) {
+            Text(
+                detail,
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+            )
+        }
     }
 }
 
@@ -800,18 +846,38 @@ private fun MessagePeopleHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    message.fromAddress.label(selfAddress),
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = AppThemeDims.FontSize.sender,
-                    color = colors.ink,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Row(
                     modifier = Modifier
                         .weight(1f)
                         .clickable(onClick = senderOrToAction),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        message.fromAddress.label(selfAddress),
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = AppThemeDims.FontSize.sender,
+                        color = colors.ink,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    message.deliveryStatusLabel?.let { label ->
+                        Text(
+                            label,
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 11.sp,
+                            color = Color(0xFFFFC107),
+                            maxLines = 1,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(colors.pillFill)
+                                .padding(horizontal = 7.dp, vertical = 2.dp),
+                        )
+                    }
+                }
                 DateAndToggle(
                     message = message,
                     formattedDate = formattedDate,

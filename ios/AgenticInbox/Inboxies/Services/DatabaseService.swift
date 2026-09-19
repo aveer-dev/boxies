@@ -181,6 +181,13 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN auth_json TEXT;")
             setVersion(2)
         }
+
+        if (getVersion() < 3) {
+            exec("ALTER TABLE emails ADD COLUMN delivery_status TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN delivery_error TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN provider_message_id TEXT;")
+            setVersion(3)
+        }
     }
 
     private func getVersion() -> Int {
@@ -382,12 +389,14 @@ final class DatabaseService: @unchecked Sendable {
                 id, mailbox_id, thread_id, folder_id, subject, sender, sender_name,
                 recipient, cc, bcc, date, read, starred, body, snippet, in_reply_to,
                 message_id, raw_headers, thread_count, thread_unread_count, participants,
-                folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json, updated_at
+                folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json,
+                delivery_status, delivery_error, provider_message_id, updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -416,6 +425,9 @@ final class DatabaseService: @unchecked Sendable {
                 has_attachment = COALESCE(excluded.has_attachment, emails.has_attachment),
                 attachments_json = COALESCE(excluded.attachments_json, emails.attachments_json),
                 auth_json = COALESCE(excluded.auth_json, emails.auth_json),
+                delivery_status = COALESCE(excluded.delivery_status, emails.delivery_status),
+                delivery_error = COALESCE(excluded.delivery_error, emails.delivery_error),
+                provider_message_id = COALESCE(excluded.provider_message_id, emails.provider_message_id),
                 updated_at = excluded.updated_at;
             """
             var stmt: OpaquePointer?
@@ -458,7 +470,10 @@ final class DatabaseService: @unchecked Sendable {
                     }
 
                     bindOptionalString(stmt, 27, encodeAuth(e.auth))
-                    bindString(stmt, 28, now)
+                    bindOptionalString(stmt, 28, e.deliveryStatus)
+                    bindOptionalString(stmt, 29, e.deliveryError)
+                    bindOptionalString(stmt, 30, e.providerMessageId)
+                    bindString(stmt, 31, now)
 
                     sqlite3_step(stmt)
                 }
@@ -478,7 +493,8 @@ final class DatabaseService: @unchecked Sendable {
                 recipient, cc, bcc, date, read, starred, body, snippet,
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
-                needs_reply, has_attachment, attachments_json, auth_json
+                needs_reply, has_attachment, attachments_json, auth_json,
+                delivery_status, delivery_error, provider_message_id
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ?
             ORDER BY date DESC
@@ -510,7 +526,8 @@ final class DatabaseService: @unchecked Sendable {
                 recipient, cc, bcc, date, read, starred, body, snippet,
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
-                needs_reply, has_attachment, attachments_json, auth_json
+                needs_reply, has_attachment, attachments_json, auth_json,
+                delivery_status, delivery_error, provider_message_id
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -537,7 +554,8 @@ final class DatabaseService: @unchecked Sendable {
                 recipient, cc, bcc, date, read, starred, body, snippet,
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
-                needs_reply, has_attachment, attachments_json, auth_json
+                needs_reply, has_attachment, attachments_json, auth_json,
+                delivery_status, delivery_error, provider_message_id
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -753,7 +771,8 @@ final class DatabaseService: @unchecked Sendable {
                 e.recipient, e.cc, e.bcc, e.date, e.read, e.starred, e.body, e.snippet,
                 e.in_reply_to, e.message_id, e.raw_headers, e.thread_count,
                 e.thread_unread_count, e.participants, e.folder_name, e.has_draft,
-                e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json
+                e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json,
+                e.delivery_status, e.delivery_error, e.provider_message_id
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -907,7 +926,10 @@ final class DatabaseService: @unchecked Sendable {
             needsReply: needsReply,
             hasAttachment: hasAttachment,
             attachments: attachments,
-            auth: decodeAuth(columnOptionalString(stmt, 25))
+            auth: decodeAuth(columnOptionalString(stmt, 25)),
+            providerMessageId: columnOptionalString(stmt, 28),
+            deliveryStatus: columnOptionalString(stmt, 26),
+            deliveryError: columnOptionalString(stmt, 27)
         )
     }
 
