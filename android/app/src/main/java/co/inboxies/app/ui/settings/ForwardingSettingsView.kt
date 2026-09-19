@@ -17,9 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,7 +26,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -120,51 +116,34 @@ fun ForwardingSettingsView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(bottom = 24.dp),
             ) {
-                Text(
-                    "When this is on, a copy of each incoming message is sent to another address. This mailbox still keeps the original.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 13.sp,
-                    color = colors.muted,
-                )
-                Text(
-                    "The destination must be a verified Email Routing destination in your Cloudflare account. Unverified addresses are skipped; the original still arrives here. Spam and messages already in a forwarding loop are not forwarded.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 12.sp,
-                    color = colors.muted,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "Forward incoming mail",
-                        fontFamily = InterFontFamily,
-                        fontSize = 16.sp,
-                        color = colors.ink,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Switch(
+                SettingsFormSectionHeader("Forwarding")
+                SettingsFormGroup {
+                    SettingsFormSwitchRow(
+                        title = "Forward Incoming Mail",
                         checked = enabled,
                         onCheckedChange = { enabled = it },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = colors.accent,
-                            checkedThumbColor = Color.White,
-                        ),
                     )
                 }
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Forward to") },
-                    placeholder = { Text("you@example.com") },
-                    singleLine = true,
-                    enabled = enabled,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
+                SettingsFormFooter(
+                    "When on, a copy of each incoming message is sent to another address. This mailbox still keeps the original.",
                 )
+
+                SettingsFormSectionHeader("Destination")
+                SettingsFormGroup {
+                    SettingsFormTextRow(
+                        title = "Forward To",
+                        value = email,
+                        onValueChange = { email = it },
+                        placeholder = "you@example.com",
+                        enabled = enabled,
+                    )
+                }
+                SettingsFormFooter(
+                    "Must be a verified Email Routing destination in your Cloudflare account. Unverified addresses are skipped. Spam and messages already in a forwarding loop are not forwarded.",
+                )
+
                 Spacer(Modifier.height(24.dp))
             }
         }

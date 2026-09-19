@@ -37,10 +37,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -69,6 +66,7 @@ import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.InboxiesMenuItem
 import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -594,7 +592,7 @@ private fun FilterEditorDialog(
                         onClick = onDismiss,
                     )
                     Text(
-                        if (draft.isNew) "New filter" else "Edit filter",
+                        if (draft.isNew) "New Filter" else "Edit Filter",
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 16.sp,
@@ -648,88 +646,71 @@ private fun FilterEditorDialog(
                         .fillMaxWidth()
                         .weight(1f)
                         .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(bottom = 24.dp),
                 ) {
                     errorMessage?.let { message ->
-                        Text(
-                            message,
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 13.sp,
-                            color = colors.deepDarkRed,
+                        SettingsFormErrorBanner(message)
+                    }
+
+                    SettingsFormSectionHeader("Name")
+                    SettingsFormGroup {
+                        SettingsFormPlainFieldRow(
+                            value = rule.name.orEmpty(),
+                            onValueChange = { value -> rule = rule.copy(name = value) },
+                            placeholder = "Newsletters",
                         )
                     }
-                    OutlinedTextField(
-                        value = rule.name.orEmpty(),
-                        onValueChange = { value -> rule = rule.copy(name = value) },
-                        label = { Text("Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
+                    SettingsFormFooter(
+                        "Optional label so you can recognize this filter in the list.",
                     )
-                    Text(
-                        "Conditions",
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = colors.muted,
+
+                    SettingsFormSectionHeader("Conditions")
+                    SettingsFormGroup {
+                        SettingsFormTextRow(
+                            title = "From",
+                            value = rule.from.orEmpty(),
+                            onValueChange = { value -> rule = rule.copy(from = value) },
+                            placeholder = "name@ or @domain.com",
+                        )
+                        SettingsFormDivider()
+                        SettingsFormTextRow(
+                            title = "List",
+                            value = rule.list.orEmpty(),
+                            onValueChange = { value -> rule = rule.copy(list = value) },
+                            placeholder = "* or list-id",
+                        )
+                        SettingsFormDivider()
+                        SettingsFormTextRow(
+                            title = "Subject",
+                            value = rule.subject.orEmpty(),
+                            onValueChange = { value -> rule = rule.copy(subject = value) },
+                            placeholder = "Contains…",
+                        )
+                    }
+                    SettingsFormFooter(
+                        "Match sender, mailing list, or subject text. At least one condition is required. Multiple conditions use AND.",
                     )
-                    OutlinedTextField(
-                        value = rule.from.orEmpty(),
-                        onValueChange = { value -> rule = rule.copy(from = value) },
-                        label = { Text("From") },
-                        placeholder = { Text("boss@company.com or @company.com") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                    )
-                    OutlinedTextField(
-                        value = rule.list.orEmpty(),
-                        onValueChange = { value -> rule = rule.copy(list = value) },
-                        label = { Text("List") },
-                        placeholder = { Text("* or list-id fragment") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                    )
-                    OutlinedTextField(
-                        value = rule.subject.orEmpty(),
-                        onValueChange = { value -> rule = rule.copy(subject = value) },
-                        label = { Text("Subject contains") },
-                        placeholder = { Text("invoice") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                    )
-                    Text(
-                        "Actions",
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = colors.muted,
-                    )
-                    Box {
-                        TextButton(onClick = { folderMenuExpanded = true }) {
-                            val label = rule.folderId
+
+                    SettingsFormSectionHeader("Actions")
+                    SettingsFormGroup {
+                        SettingsFormMenuRow(
+                            title = "Move to Folder",
+                            valueLabel = rule.folderId
                                 ?.let { id -> folders.firstOrNull { it.id == id }?.name ?: id }
-                                ?: "Keep classified folder"
-                            Text(label, color = colors.ink)
-                        }
-                        DropdownMenu(
+                                ?: "Keep classified",
                             expanded = folderMenuExpanded,
-                            onDismissRequest = { folderMenuExpanded = false },
+                            onExpandChange = { folderMenuExpanded = it },
                         ) {
-                            DropdownMenuItem(
-                                text = { Text("Keep classified folder") },
+                            InboxiesMenuItem(
+                                text = "Keep classified",
                                 onClick = {
                                     rule = rule.copy(folderId = null)
                                     folderMenuExpanded = false
                                 },
                             )
                             folders.forEach { folder ->
-                                DropdownMenuItem(
-                                    text = { Text(folder.name) },
+                                InboxiesMenuItem(
+                                    text = folder.name,
                                     onClick = {
                                         rule = rule.copy(folderId = folder.id)
                                         folderMenuExpanded = false
@@ -737,39 +718,25 @@ private fun FilterEditorDialog(
                                 )
                             }
                         }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "Skip auto-draft",
-                            fontFamily = InterFontFamily,
-                            fontSize = 16.sp,
-                            color = colors.ink,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Switch(
+                        SettingsFormDivider()
+                        SettingsFormSwitchRow(
+                            title = "Skip Auto-Draft",
                             checked = rule.skipAutoDraft == true,
                             onCheckedChange = { checked ->
                                 rule = rule.copy(skipAutoDraft = checked)
                             },
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = colors.accent,
-                                checkedThumbColor = Color.White,
-                            ),
+                        )
+                        SettingsFormDivider()
+                        SettingsFormTextRow(
+                            title = "Forward To",
+                            value = rule.forwardTo.orEmpty(),
+                            onValueChange = { value -> rule = rule.copy(forwardTo = value) },
+                            placeholder = "optional@example.com",
                         )
                     }
-                    OutlinedTextField(
-                        value = rule.forwardTo.orEmpty(),
-                        onValueChange = { value -> rule = rule.copy(forwardTo = value) },
-                        label = { Text("Forward to") },
-                        placeholder = { Text("optional@example.com") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
+                    SettingsFormFooter(
+                        "Choose what happens when mail matches. At least one action is required.",
                     )
-                    Spacer(modifier = Modifier.height(24.dp))
                 }
             }
         }

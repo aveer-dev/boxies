@@ -15,12 +15,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,7 +28,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,7 +78,7 @@ fun AutoReplySettingsView(
                     onClick = onBack,
                 )
                 Text(
-                    "Auto-reply",
+                    "Auto-Reply",
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp,
@@ -120,62 +120,69 @@ fun AutoReplySettingsView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(bottom = 24.dp),
             ) {
-                Text(
-                    "When this is on, people who email this mailbox get one automatic reply. You still receive their message.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 13.sp,
-                    color = colors.muted,
-                )
-                Text(
-                    "Each sender gets at most one auto-reply every 24 hours. Mail from lists, bulk senders, no-reply addresses, and other automated systems is skipped so this cannot loop.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 12.sp,
-                    color = colors.muted,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        "Send automatic replies",
-                        fontFamily = InterFontFamily,
-                        fontSize = 16.sp,
-                        color = colors.ink,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Switch(
+                SettingsFormSectionHeader("Auto-Reply")
+                SettingsFormGroup {
+                    SettingsFormSwitchRow(
+                        title = "Send Automatic Replies",
                         checked = enabled,
                         onCheckedChange = { enabled = it },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = colors.accent,
-                            checkedThumbColor = Color.White,
-                        ),
                     )
                 }
-                OutlinedTextField(
-                    value = subject,
-                    onValueChange = { subject = it },
-                    label = { Text("Subject") },
-                    placeholder = { Text("Leave blank to use Re: original subject") },
-                    singleLine = true,
-                    enabled = enabled,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
+                SettingsFormFooter(
+                    "When on, people who email this mailbox get one automatic reply. You still receive their message.",
                 )
-                OutlinedTextField(
-                    value = message,
-                    onValueChange = { message = it },
-                    label = { Text("Message") },
-                    placeholder = { Text("Thanks for your email. I am away and will reply when I return.") },
-                    enabled = enabled,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp),
-                    shape = RoundedCornerShape(10.dp),
+
+                SettingsFormSectionHeader("Subject")
+                SettingsFormGroup {
+                    SettingsFormTextRow(
+                        title = "Subject",
+                        value = subject,
+                        onValueChange = { subject = it },
+                        placeholder = "Re: original subject",
+                        enabled = enabled,
+                    )
+                }
+                SettingsFormFooter("Leave blank to use Re: followed by the original subject.")
+
+                SettingsFormSectionHeader("Message")
+                SettingsFormGroup {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { alpha = if (enabled) 1f else 0.45f }
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .heightIn(min = 140.dp),
+                    ) {
+                        if (message.isBlank()) {
+                            Text(
+                                "Write your auto-reply…",
+                                fontFamily = InterFontFamily,
+                                fontSize = 16.sp,
+                                color = colors.muted.copy(alpha = 0.7f),
+                            )
+                        }
+                        BasicTextField(
+                            value = message,
+                            onValueChange = { message = it },
+                            enabled = enabled,
+                            textStyle = TextStyle(
+                                fontFamily = InterFontFamily,
+                                fontSize = 16.sp,
+                                color = colors.ink,
+                            ),
+                            cursorBrush = SolidColor(colors.accent),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 140.dp),
+                        )
+                    }
+                }
+                SettingsFormFooter(
+                    "Each sender gets at most one auto-reply every 24 hours. Lists, bulk senders, no-reply addresses, and other automated mail are skipped.",
                 )
+
                 Spacer(Modifier.height(24.dp))
             }
         }

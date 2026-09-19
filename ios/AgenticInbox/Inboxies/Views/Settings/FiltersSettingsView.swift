@@ -380,80 +380,108 @@ private struct FilterEditorSheet: View {
         self.onSave = onSave
     }
 
+    private var folderSelection: Binding<String> {
+        Binding(
+            get: { rule.folderId ?? "" },
+            set: { rule.folderId = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    private var skipAutoDraft: Binding<Bool> {
+        Binding(
+            get: { rule.skipAutoDraft ?? false },
+            set: { rule.skipAutoDraft = $0 }
+        )
+    }
+
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.inter(size: 13, weight: .medium))
-                            .foregroundStyle(AppTheme.deepDarkRed)
+            List {
+                if let errorMessage {
+                    Section {
+                        SettingsFormErrorBanner(message: errorMessage)
                     }
-
-                    field("Name", text: Binding(
-                        get: { rule.name ?? "" },
-                        set: { rule.name = $0 }
-                    ), placeholder: "Newsletters")
-
-                    Text("Conditions")
-                        .font(.inter(size: 12, weight: .semibold))
-                        .foregroundStyle(AppTheme.muted)
-                        .padding(.top, 4)
-
-                    field("From", text: Binding(
-                        get: { rule.from ?? "" },
-                        set: { rule.from = $0 }
-                    ), placeholder: "boss@company.com or @company.com")
-
-                    field("List", text: Binding(
-                        get: { rule.list ?? "" },
-                        set: { rule.list = $0 }
-                    ), placeholder: "* or list-id fragment")
-
-                    field("Subject contains", text: Binding(
-                        get: { rule.subject ?? "" },
-                        set: { rule.subject = $0 }
-                    ), placeholder: "invoice")
-
-                    Text("Actions")
-                        .font(.inter(size: 12, weight: .semibold))
-                        .foregroundStyle(AppTheme.muted)
-                        .padding(.top, 4)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Move to folder")
-                            .font(.inter(size: 13, weight: .medium))
-                            .foregroundStyle(AppTheme.ink)
-                        Picker("Folder", selection: Binding(
-                            get: { rule.folderId ?? "" },
-                            set: { rule.folderId = $0.isEmpty ? nil : $0 }
-                        )) {
-                            Text("Keep classified folder").tag("")
-                            ForEach(folders) { folder in
-                                Text(folder.name).tag(folder.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(AppTheme.ink)
-                    }
-
-                    Toggle("Skip auto-draft", isOn: Binding(
-                        get: { rule.skipAutoDraft ?? false },
-                        set: { rule.skipAutoDraft = $0 }
-                    ))
-                    .font(.inter(size: 16))
-                    .tint(AppTheme.accent)
-
-                    field("Forward to", text: Binding(
-                        get: { rule.forwardTo ?? "" },
-                        set: { rule.forwardTo = $0 }
-                    ), placeholder: "optional@example.com")
-                    .keyboardType(.emailAddress)
                 }
-                .padding(16)
+
+                Section {
+                    SettingsPlainTextFieldRow(
+                        text: Binding(
+                            get: { rule.name ?? "" },
+                            set: { rule.name = $0 }
+                        ),
+                        placeholder: "Newsletters"
+                    )
+                } header: {
+                    Text("Name")
+                } footer: {
+                    SettingsFormFooter(text: "Optional label so you can recognize this filter in the list.")
+                }
+
+                Section {
+                    SettingsTextFieldRow(
+                        title: "From",
+                        text: Binding(
+                            get: { rule.from ?? "" },
+                            set: { rule.from = $0 }
+                        ),
+                        placeholder: "name@ or @domain.com",
+                        keyboardType: .emailAddress,
+                        textContentType: .emailAddress
+                    )
+                    SettingsTextFieldRow(
+                        title: "List",
+                        text: Binding(
+                            get: { rule.list ?? "" },
+                            set: { rule.list = $0 }
+                        ),
+                        placeholder: "* or list-id"
+                    )
+                    SettingsTextFieldRow(
+                        title: "Subject",
+                        text: Binding(
+                            get: { rule.subject ?? "" },
+                            set: { rule.subject = $0 }
+                        ),
+                        placeholder: "Contains…"
+                    )
+                } header: {
+                    Text("Conditions")
+                } footer: {
+                    SettingsFormFooter(
+                        text: "Match sender, mailing list, or subject text. At least one condition is required. Multiple conditions use AND."
+                    )
+                }
+
+                Section {
+                    SettingsMenuPickerRow(title: "Move to Folder", selection: folderSelection) {
+                        Text("Keep classified").tag("")
+                        ForEach(folders) { folder in
+                            Text(folder.name).tag(folder.id)
+                        }
+                    }
+
+                    SettingsToggleRow(title: "Skip Auto-Draft", isOn: skipAutoDraft)
+
+                    SettingsTextFieldRow(
+                        title: "Forward To",
+                        text: Binding(
+                            get: { rule.forwardTo ?? "" },
+                            set: { rule.forwardTo = $0 }
+                        ),
+                        placeholder: "optional@example.com",
+                        keyboardType: .emailAddress,
+                        textContentType: .emailAddress
+                    )
+                } header: {
+                    Text("Actions")
+                } footer: {
+                    SettingsFormFooter(
+                        text: "Choose what happens when mail matches. At least one action is required."
+                    )
+                }
             }
-            .background(AppTheme.background)
-            .navigationTitle(isNew ? "New filter" : "Edit filter")
+            .settingsFormListStyle()
+            .navigationTitle(isNew ? "New Filter" : "Edit Filter")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -466,24 +494,6 @@ private struct FilterEditorSheet: View {
                     .fontWeight(.semibold)
                 }
             }
-        }
-    }
-
-    private func field(_ label: String, text: Binding<String>, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.inter(size: 13, weight: .medium))
-                .foregroundStyle(AppTheme.ink)
-            TextField(placeholder, text: text)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.inter(size: 16))
-                .padding(12)
-                .background(AppTheme.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(AppTheme.line, lineWidth: 1)
-                )
         }
     }
 
