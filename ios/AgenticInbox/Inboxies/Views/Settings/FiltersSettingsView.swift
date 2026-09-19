@@ -6,7 +6,10 @@ struct FiltersSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var rules: [InboxFilterRule] = []
-    @State private var editingId: String?
+    @State private var editorDraft: FilterEditorDraft?
+    @State private var actionRuleId: String?
+    @State private var isSelectMode = false
+    @State private var selectedIds: Set<String> = []
     @State private var isSaving = false
     @State private var saveMessage: String?
 
@@ -14,11 +17,9 @@ struct FiltersSettingsView: View {
         app.selectedMailbox?.email ?? ""
     }
 
-    private var editingBinding: Binding<InboxFilterRule>? {
-        guard let editingId,
-              let index = rules.firstIndex(where: { $0.id == editingId })
-        else { return nil }
-        return $rules[index]
+    private var actionRule: InboxFilterRule? {
+        guard let actionRuleId else { return nil }
+        return rules.first(where: { $0.id == actionRuleId })
     }
 
     var body: some View {
@@ -43,54 +44,57 @@ struct FiltersSettingsView: View {
                     filterRow(rule: $rule)
                 }
 
-                if let editingBinding {
-                    editor(rule: editingBinding)
+                if !isSelectMode {
+                    Button {
+                        editorDraft = FilterEditorDraft.new()
+                    } label: {
+                        Text("Add filter")
+                            .font(.inter(size: 15, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .padding(.top, 4)
                 }
-
-                Button {
-                    let rule = InboxFilterRule(
-                        id: UUID().uuidString,
-                        enabled: true,
-                        name: "",
-                        from: nil,
-                        list: nil,
-                        subject: nil,
-                        folderId: nil,
-                        skipAutoDraft: false,
-                        forwardTo: nil
-                    )
-                    rules.append(rule)
-                    editingId = rule.id
-                } label: {
-                    Text("Add filter")
-                        .font(.inter(size: 15, weight: .medium))
-                        .foregroundStyle(AppTheme.accent)
-                }
-                .padding(.top, 4)
             }
             .padding(16)
         }
         .background(AppTheme.background)
-        .navigationTitle("Filters")
+        .navigationTitle(isSelectMode
+            ? (selectedIds.isEmpty ? "Select filters" : "\(selectedIds.count) selected")
+            : "Filters")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.inter(size: 14, weight: .semibold))
-                        .foregroundStyle(AppTheme.ink)
-                        .frame(width: 32, height: 32)
+                if isSelectMode {
+                    Button("Cancel") {
+                        exitSelectMode()
+                    }
+                    .fontWeight(.medium)
+                } else {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.inter(size: 14, weight: .semibold))
+                            .foregroundStyle(AppTheme.ink)
+                            .frame(width: 32, height: 32)
+                    }
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Save") {
-                    Task { await save() }
+                if isSelectMode {
+                    Button("Delete", role: .destructive) {
+                        deleteSelected()
+                    }
+                    .disabled(selectedIds.isEmpty)
+                    .fontWeight(.semibold)
+                } else {
+                    Button("Save") {
+                        Task { await save() }
+                    }
+                    .disabled(isSaving || app.selectedMailbox == nil)
+                    .fontWeight(.semibold)
                 }
-                .disabled(isSaving || app.selectedMailbox == nil)
-                .fontWeight(.semibold)
             }
         }
         .overlay(alignment: .bottom) {
@@ -105,25 +109,72 @@ struct FiltersSettingsView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .sheet(item: $editorDraft) { draft in
+            FilterEditorSheet(
+                draft: draft,
+                folders: app.folders,
+                mailboxEmail: mailboxEmail,
+                onCancel: { editorDraft = nil },
+                onSave: { rule in
+                    if rules.contains(where: { $0.id == rule.id }) {
+                        if let index = rules.firstIndex(where: { $0.id == rule.id }) {
+                            rules[index] = rule
+                        }
+                    } else {
+                        rules.append(rule)
+                    }
+                    editorDraft = nil
+                }
+            )
+            .presentationDetents([.large])
+            .applyThemeController()
+        }
+        .confirmationDialog(
+            actionRuleTitle,
+            isPresented: Binding(
+                get: { actionRuleId != nil },
+                set: { if !$0 { actionRuleId = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = actionRuleId {
+                    rules.removeAll { $0.id == id }
+                }
+                actionRuleId = nil
+            }
+            Button("Cancel", role: .cancel) {
+                actionRuleId = nil
+            }
+        }
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isSelectMode)
+        .sensoryFeedback(.selection, trigger: isSelectMode)
         .onAppear {
             rules = app.selectedMailbox?.settings?.filters ?? []
         }
         .applyThemeController()
     }
 
+    private var actionRuleTitle: String {
+        guard let rule = actionRule else { return "Filter" }
+        return rule.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? "Untitled filter"
+    }
+
     @ViewBuilder
     private func filterRow(rule: Binding<InboxFilterRule>) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Toggle("", isOn: Binding(
-                get: { rule.wrappedValue.enabled ?? true },
-                set: { rule.wrappedValue.enabled = $0 }
-            ))
-            .labelsHidden()
-            .tint(AppTheme.accent)
+        let id = rule.wrappedValue.id
+        let isSelected = selectedIds.contains(id)
 
-            Button {
-                editingId = editingId == rule.wrappedValue.id ? nil : rule.wrappedValue.id
-            } label: {
+        HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
+                if isSelectMode {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 22))
+                        .foregroundStyle(isSelected ? AppTheme.ink : AppTheme.muted.opacity(0.6))
+                        .transition(.scale.combined(with: .opacity))
+                }
+
                 VStack(alignment: .leading, spacing: 4) {
                     Text(rule.wrappedValue.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
                         ?? "Untitled filter")
@@ -136,19 +187,29 @@ struct FiltersSettingsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(.plain)
-
-            Button {
-                let id = rule.wrappedValue.id
-                rules.removeAll { $0.id == id }
-                if editingId == id { editingId = nil }
-            } label: {
-                Image(systemName: "trash")
-                    .font(.inter(size: 14))
-                    .foregroundStyle(AppTheme.muted)
-                    .frame(width: 32, height: 32)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if isSelectMode {
+                    toggleSelection(id)
+                } else {
+                    actionRuleId = id
+                }
             }
-            .buttonStyle(.plain)
+            .onLongPressGesture(minimumDuration: 0.35) {
+                guard !isSelectMode else { return }
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                    isSelectMode = true
+                    selectedIds = [id]
+                }
+            }
+
+            Toggle("", isOn: Binding(
+                get: { rule.wrappedValue.enabled ?? true },
+                set: { rule.wrappedValue.enabled = $0 }
+            ))
+            .labelsHidden()
+            .tint(AppTheme.accent)
         }
         .padding(12)
         .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -158,95 +219,24 @@ struct FiltersSettingsView: View {
         )
     }
 
-    @ViewBuilder
-    private func editor(rule: Binding<InboxFilterRule>) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Edit filter")
-                .font(.inter(size: 14, weight: .semibold))
-                .foregroundStyle(AppTheme.ink)
-
-            field("Name", text: Binding(
-                get: { rule.wrappedValue.name ?? "" },
-                set: { rule.wrappedValue.name = $0 }
-            ), placeholder: "Newsletters")
-
-            Text("Conditions")
-                .font(.inter(size: 12, weight: .semibold))
-                .foregroundStyle(AppTheme.muted)
-
-            field("From", text: Binding(
-                get: { rule.wrappedValue.from ?? "" },
-                set: { rule.wrappedValue.from = $0 }
-            ), placeholder: "boss@company.com or @company.com")
-
-            field("List", text: Binding(
-                get: { rule.wrappedValue.list ?? "" },
-                set: { rule.wrappedValue.list = $0 }
-            ), placeholder: "* or list-id fragment")
-
-            field("Subject contains", text: Binding(
-                get: { rule.wrappedValue.subject ?? "" },
-                set: { rule.wrappedValue.subject = $0 }
-            ), placeholder: "invoice")
-
-            Text("Actions")
-                .font(.inter(size: 12, weight: .semibold))
-                .foregroundStyle(AppTheme.muted)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Move to folder")
-                    .font(.inter(size: 13, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                Picker("Folder", selection: Binding(
-                    get: { rule.wrappedValue.folderId ?? "" },
-                    set: { rule.wrappedValue.folderId = $0.isEmpty ? nil : $0 }
-                )) {
-                    Text("Keep classified folder").tag("")
-                    ForEach(app.folders) { folder in
-                        Text(folder.name).tag(folder.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .tint(AppTheme.ink)
-            }
-
-            Toggle("Skip auto-draft", isOn: Binding(
-                get: { rule.wrappedValue.skipAutoDraft ?? false },
-                set: { rule.wrappedValue.skipAutoDraft = $0 }
-            ))
-            .font(.inter(size: 16))
-            .tint(AppTheme.accent)
-
-            field("Forward to", text: Binding(
-                get: { rule.wrappedValue.forwardTo ?? "" },
-                set: { rule.wrappedValue.forwardTo = $0 }
-            ), placeholder: "optional@example.com")
-            .keyboardType(.emailAddress)
+    private func toggleSelection(_ id: String) {
+        if selectedIds.contains(id) {
+            selectedIds.remove(id)
+        } else {
+            selectedIds.insert(id)
         }
-        .padding(14)
-        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(AppTheme.line, lineWidth: 1)
-        )
     }
 
-    private func field(_ label: String, text: Binding<String>, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label)
-                .font(.inter(size: 13, weight: .medium))
-                .foregroundStyle(AppTheme.ink)
-            TextField(placeholder, text: text)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(.inter(size: 16))
-                .padding(12)
-                .background(AppTheme.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(AppTheme.line, lineWidth: 1)
-                )
+    private func exitSelectMode() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+            isSelectMode = false
+            selectedIds = []
         }
+    }
+
+    private func deleteSelected() {
+        rules.removeAll { selectedIds.contains($0.id) }
+        exitSelectMode()
     }
 
     private func summary(for rule: InboxFilterRule) -> String {
@@ -335,6 +325,203 @@ struct FiltersSettingsView: View {
         withAnimation { saveMessage = message }
         try? await Task.sleep(nanoseconds: success ? 1_200_000_000 : 2_000_000_000)
         withAnimation { saveMessage = nil }
+    }
+}
+
+// MARK: - Editor modal
+
+private struct FilterEditorDraft: Identifiable {
+    let id: String
+    var rule: InboxFilterRule
+    var isNew: Bool
+
+    static func new() -> FilterEditorDraft {
+        let id = UUID().uuidString
+        return FilterEditorDraft(
+            id: id,
+            rule: InboxFilterRule(
+                id: id,
+                enabled: true,
+                name: "",
+                from: nil,
+                list: nil,
+                subject: nil,
+                folderId: nil,
+                skipAutoDraft: false,
+                forwardTo: nil
+            ),
+            isNew: true
+        )
+    }
+}
+
+private struct FilterEditorSheet: View {
+    @State private var rule: InboxFilterRule
+    @State private var errorMessage: String?
+
+    let isNew: Bool
+    let folders: [Folder]
+    let mailboxEmail: String
+    var onCancel: () -> Void
+    var onSave: (InboxFilterRule) -> Void
+
+    init(
+        draft: FilterEditorDraft,
+        folders: [Folder],
+        mailboxEmail: String,
+        onCancel: @escaping () -> Void,
+        onSave: @escaping (InboxFilterRule) -> Void
+    ) {
+        _rule = State(initialValue: draft.rule)
+        self.isNew = draft.isNew
+        self.folders = folders
+        self.mailboxEmail = mailboxEmail
+        self.onCancel = onCancel
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.inter(size: 13, weight: .medium))
+                            .foregroundStyle(AppTheme.deepDarkRed)
+                    }
+
+                    field("Name", text: Binding(
+                        get: { rule.name ?? "" },
+                        set: { rule.name = $0 }
+                    ), placeholder: "Newsletters")
+
+                    Text("Conditions")
+                        .font(.inter(size: 12, weight: .semibold))
+                        .foregroundStyle(AppTheme.muted)
+                        .padding(.top, 4)
+
+                    field("From", text: Binding(
+                        get: { rule.from ?? "" },
+                        set: { rule.from = $0 }
+                    ), placeholder: "boss@company.com or @company.com")
+
+                    field("List", text: Binding(
+                        get: { rule.list ?? "" },
+                        set: { rule.list = $0 }
+                    ), placeholder: "* or list-id fragment")
+
+                    field("Subject contains", text: Binding(
+                        get: { rule.subject ?? "" },
+                        set: { rule.subject = $0 }
+                    ), placeholder: "invoice")
+
+                    Text("Actions")
+                        .font(.inter(size: 12, weight: .semibold))
+                        .foregroundStyle(AppTheme.muted)
+                        .padding(.top, 4)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Move to folder")
+                            .font(.inter(size: 13, weight: .medium))
+                            .foregroundStyle(AppTheme.ink)
+                        Picker("Folder", selection: Binding(
+                            get: { rule.folderId ?? "" },
+                            set: { rule.folderId = $0.isEmpty ? nil : $0 }
+                        )) {
+                            Text("Keep classified folder").tag("")
+                            ForEach(folders) { folder in
+                                Text(folder.name).tag(folder.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(AppTheme.ink)
+                    }
+
+                    Toggle("Skip auto-draft", isOn: Binding(
+                        get: { rule.skipAutoDraft ?? false },
+                        set: { rule.skipAutoDraft = $0 }
+                    ))
+                    .font(.inter(size: 16))
+                    .tint(AppTheme.accent)
+
+                    field("Forward to", text: Binding(
+                        get: { rule.forwardTo ?? "" },
+                        set: { rule.forwardTo = $0 }
+                    ), placeholder: "optional@example.com")
+                    .keyboardType(.emailAddress)
+                }
+                .padding(16)
+            }
+            .background(AppTheme.background)
+            .navigationTitle(isNew ? "New filter" : "Edit filter")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isNew ? "Add" : "Done") {
+                        commit()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func field(_ label: String, text: Binding<String>, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.inter(size: 13, weight: .medium))
+                .foregroundStyle(AppTheme.ink)
+            TextField(placeholder, text: text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .font(.inter(size: 16))
+                .padding(12)
+                .background(AppTheme.background, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(AppTheme.line, lineWidth: 1)
+                )
+        }
+    }
+
+    private func commit() {
+        let cleaned = InboxFilterRule(
+            id: rule.id,
+            enabled: rule.enabled ?? true,
+            name: rule.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            from: rule.from?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            list: rule.list?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            subject: rule.subject?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            folderId: rule.folderId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            skipAutoDraft: (rule.skipAutoDraft == true) ? true : nil,
+            forwardTo: rule.forwardTo?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        )
+
+        let hasCondition = cleaned.from != nil || cleaned.list != nil || cleaned.subject != nil
+        let hasAction = cleaned.folderId != nil || cleaned.skipAutoDraft == true || cleaned.forwardTo != nil
+        if !hasCondition {
+            errorMessage = "Add a from, list, or subject condition"
+            return
+        }
+        if !hasAction {
+            errorMessage = "Add a folder, skip auto-draft, or forward action"
+            return
+        }
+        if let forwardTo = cleaned.forwardTo {
+            if !forwardTo.contains("@") {
+                errorMessage = "Enter a valid forward address"
+                return
+            }
+            if forwardTo.lowercased() == mailboxEmail.lowercased() {
+                errorMessage = "Forward address cannot be this mailbox"
+                return
+            }
+        }
+
+        onSave(cleaned)
     }
 }
 

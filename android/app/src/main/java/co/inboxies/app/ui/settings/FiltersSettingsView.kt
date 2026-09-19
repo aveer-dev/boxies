@@ -1,29 +1,45 @@
 package co.inboxies.app.ui.settings
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -38,11 +54,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import co.inboxies.app.LocalAppModel
+import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxFilterRule
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
@@ -52,6 +73,12 @@ import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private data class FilterEditorDraft(
+    val rule: InboxFilterRule,
+    val isNew: Boolean,
+)
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FiltersSettingsView(
     onBack: () -> Unit,
@@ -59,18 +86,21 @@ fun FiltersSettingsView(
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
     val mailbox = app.selectedMailbox
     val folders by app.folders.collectAsState()
 
     var rules by remember(mailbox?.id) {
         mutableStateOf(mailbox?.settings?.filters.orEmpty())
     }
-    var editingId by remember { mutableStateOf<String?>(null) }
+    var editorDraft by remember { mutableStateOf<FilterEditorDraft?>(null) }
+    var actionRuleId by remember { mutableStateOf<String?>(null) }
+    var isSelectMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var isSaving by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
-    var folderMenuExpanded by remember { mutableStateOf(false) }
 
-    val editing = rules.firstOrNull { it.id == editingId }
+    val actionRule = rules.firstOrNull { it.id == actionRuleId }
 
     fun summarize(rule: InboxFilterRule): String {
         val conditions = buildList {
@@ -96,6 +126,16 @@ fun FiltersSettingsView(
         rules = rules.map { if (it.id == id) transform(it) else it }
     }
 
+    fun exitSelectMode() {
+        isSelectMode = false
+        selectedIds = emptySet()
+    }
+
+    fun deleteSelected() {
+        rules = rules.filterNot { selectedIds.contains(it.id) }
+        exitSelectMode()
+    }
+
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
@@ -105,93 +145,111 @@ fun FiltersSettingsView(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.toolbarControlSpacing),
             ) {
-                HomeChromeToolbarButton(
-                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = "Back",
-                    onClick = onBack,
-                )
+                if (isSelectMode) {
+                    SettingsChromeTextButton(
+                        label = "Cancel",
+                        onClick = { exitSelectMode() },
+                    )
+                } else {
+                    HomeChromeToolbarButton(
+                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Back",
+                        onClick = onBack,
+                    )
+                }
                 Text(
-                    "Filters",
+                    when {
+                        isSelectMode && selectedIds.isEmpty() -> "Select filters"
+                        isSelectMode -> "${selectedIds.size} selected"
+                        else -> "Filters"
+                    },
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp,
                     color = colors.ink,
                     modifier = Modifier.weight(1f),
                 )
-                SettingsChromeTextButton(
-                    label = "Save",
-                    enabled = !isSaving && mailbox != null,
-                    onClick = {
-                        scope.launch {
-                            val cleaned = rules.map { rule ->
-                                rule.copy(
-                                    enabled = rule.enabled != false,
-                                    name = rule.name?.trim()?.ifEmpty { null },
-                                    from = rule.from?.trim()?.ifEmpty { null },
-                                    list = rule.list?.trim()?.ifEmpty { null },
-                                    subject = rule.subject?.trim()?.ifEmpty { null },
-                                    folderId = rule.folderId?.trim()?.ifEmpty { null },
-                                    skipAutoDraft = if (rule.skipAutoDraft == true) true else null,
-                                    forwardTo = rule.forwardTo?.trim()?.ifEmpty { null },
-                                )
-                            }
-                            for (rule in cleaned) {
-                                val hasCondition =
-                                    rule.from != null || rule.list != null || rule.subject != null
-                                val hasAction =
-                                    rule.folderId != null ||
-                                        rule.skipAutoDraft == true ||
-                                        rule.forwardTo != null
-                                if (!hasCondition) {
-                                    saveMessage =
-                                        "Each filter needs a from, list, or subject condition"
-                                    delay(2000)
-                                    saveMessage = null
-                                    return@launch
+                if (isSelectMode) {
+                    SettingsChromeTextButton(
+                        label = "Delete",
+                        enabled = selectedIds.isNotEmpty(),
+                        onClick = { deleteSelected() },
+                    )
+                } else {
+                    SettingsChromeTextButton(
+                        label = "Save",
+                        enabled = !isSaving && mailbox != null,
+                        onClick = {
+                            scope.launch {
+                                val cleaned = rules.map { rule ->
+                                    rule.copy(
+                                        enabled = rule.enabled != false,
+                                        name = rule.name?.trim()?.ifEmpty { null },
+                                        from = rule.from?.trim()?.ifEmpty { null },
+                                        list = rule.list?.trim()?.ifEmpty { null },
+                                        subject = rule.subject?.trim()?.ifEmpty { null },
+                                        folderId = rule.folderId?.trim()?.ifEmpty { null },
+                                        skipAutoDraft = if (rule.skipAutoDraft == true) true else null,
+                                        forwardTo = rule.forwardTo?.trim()?.ifEmpty { null },
+                                    )
                                 }
-                                if (!hasAction) {
-                                    saveMessage =
-                                        "Each filter needs a folder, skip auto-draft, or forward action"
-                                    delay(2000)
-                                    saveMessage = null
-                                    return@launch
-                                }
-                                val forwardTo = rule.forwardTo
-                                if (forwardTo != null) {
-                                    if (!forwardTo.contains("@")) {
-                                        saveMessage = "Enter a valid filter forward address"
-                                        delay(2000)
-                                        saveMessage = null
-                                        return@launch
-                                    }
-                                    if (forwardTo.equals(mailbox?.email, ignoreCase = true)) {
+                                for (rule in cleaned) {
+                                    val hasCondition =
+                                        rule.from != null || rule.list != null || rule.subject != null
+                                    val hasAction =
+                                        rule.folderId != null ||
+                                            rule.skipAutoDraft == true ||
+                                            rule.forwardTo != null
+                                    if (!hasCondition) {
                                         saveMessage =
-                                            "Filter forward address cannot be this mailbox"
+                                            "Each filter needs a from, list, or subject condition"
                                         delay(2000)
                                         saveMessage = null
                                         return@launch
                                     }
+                                    if (!hasAction) {
+                                        saveMessage =
+                                            "Each filter needs a folder, skip auto-draft, or forward action"
+                                        delay(2000)
+                                        saveMessage = null
+                                        return@launch
+                                    }
+                                    val forwardTo = rule.forwardTo
+                                    if (forwardTo != null) {
+                                        if (!forwardTo.contains("@")) {
+                                            saveMessage = "Enter a valid filter forward address"
+                                            delay(2000)
+                                            saveMessage = null
+                                            return@launch
+                                        }
+                                        if (forwardTo.equals(mailbox?.email, ignoreCase = true)) {
+                                            saveMessage =
+                                                "Filter forward address cannot be this mailbox"
+                                            delay(2000)
+                                            saveMessage = null
+                                            return@launch
+                                        }
+                                    }
                                 }
-                            }
-                            if (cleaned.size > 50) {
-                                saveMessage = "At most 50 filters allowed"
-                                delay(2000)
-                                saveMessage = null
-                                return@launch
-                            }
+                                if (cleaned.size > 50) {
+                                    saveMessage = "At most 50 filters allowed"
+                                    delay(2000)
+                                    saveMessage = null
+                                    return@launch
+                                }
 
-                            isSaving = true
-                            val ok = app.updateMailboxSettings { settings ->
-                                settings.copy(filters = cleaned)
+                                isSaving = true
+                                val ok = app.updateMailboxSettings { settings ->
+                                    settings.copy(filters = cleaned)
+                                }
+                                saveMessage = if (ok) "Filters saved" else "Failed to save"
+                                isSaving = false
+                                delay(if (ok) 1200 else 2000)
+                                saveMessage = null
                             }
-                            saveMessage = if (ok) "Filters saved" else "Failed to save"
-                            isSaving = false
-                            if (ok) editingId = null
-                            delay(if (ok) 1200 else 2000)
-                            saveMessage = null
-                        }
-                    },
-                )
+                        },
+                    )
+                }
             }
 
             Column(
@@ -224,14 +282,90 @@ fun FiltersSettingsView(
                 }
 
                 rules.forEach { rule ->
+                    val isSelected = selectedIds.contains(rule.id)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(colors.surface, RoundedCornerShape(12.dp))
+                            .border(1.dp, colors.line, RoundedCornerShape(12.dp))
                             .padding(12.dp),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .combinedClickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {
+                                        if (isSelectMode) {
+                                            selectedIds = if (isSelected) {
+                                                selectedIds - rule.id
+                                            } else {
+                                                selectedIds + rule.id
+                                            }
+                                        } else {
+                                            actionRuleId = rule.id
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (!isSelectMode) {
+                                            view.performHapticFeedback(
+                                                HapticFeedbackConstants.LONG_PRESS,
+                                            )
+                                            isSelectMode = true
+                                            selectedIds = setOf(rule.id)
+                                        }
+                                    },
+                                ),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            AnimatedVisibility(
+                                visible = isSelectMode,
+                                enter = fadeIn(settingsNavSpring()) +
+                                    expandHorizontally(
+                                        animationSpec = settingsNavSpring(),
+                                        expandFrom = Alignment.Start,
+                                        clip = false,
+                                    ) +
+                                    scaleIn(animationSpec = settingsNavSpring(), initialScale = 0.72f),
+                                exit = fadeOut(settingsNavSpring()) +
+                                    shrinkHorizontally(
+                                        animationSpec = settingsNavSpring(),
+                                        shrinkTowards = Alignment.Start,
+                                        clip = false,
+                                    ) +
+                                    scaleOut(animationSpec = settingsNavSpring(), targetScale = 0.72f),
+                            ) {
+                                Icon(
+                                    imageVector = if (isSelected) {
+                                        Icons.Outlined.CheckCircle
+                                    } else {
+                                        Icons.Outlined.Circle
+                                    },
+                                    contentDescription = if (isSelected) "Selected" else "Not selected",
+                                    tint = if (isSelected) colors.ink else colors.muted.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    rule.name?.trim()?.ifEmpty { null } ?: "Untitled filter",
+                                    fontFamily = InterFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 15.sp,
+                                    color = colors.ink,
+                                )
+                                Text(
+                                    summarize(rule),
+                                    fontFamily = InterFontFamily,
+                                    fontSize = 12.sp,
+                                    color = colors.muted,
+                                )
+                            }
+                        }
                         Switch(
                             checked = rule.enabled != false,
                             onCheckedChange = { checked ->
@@ -242,197 +376,28 @@ fun FiltersSettingsView(
                                 checkedThumbColor = Color.White,
                             ),
                         )
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable {
-                                    editingId = if (editingId == rule.id) null else rule.id
-                                },
-                        ) {
-                            Text(
-                                rule.name?.trim()?.ifEmpty { null } ?: "Untitled filter",
-                                fontFamily = InterFontFamily,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 15.sp,
-                                color = colors.ink,
-                            )
-                            Text(
-                                summarize(rule),
-                                fontFamily = InterFontFamily,
-                                fontSize = 12.sp,
-                                color = colors.muted,
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                rules = rules.filterNot { it.id == rule.id }
-                                if (editingId == rule.id) editingId = null
-                            },
-                        ) {
-                            Icon(
-                                Icons.Outlined.Delete,
-                                contentDescription = "Delete filter",
-                                tint = colors.muted,
-                            )
-                        }
                     }
                 }
 
-                editing?.let { rule ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(colors.surface, RoundedCornerShape(12.dp))
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                if (!isSelectMode) {
+                    TextButton(
+                        onClick = {
+                            val id = UUID.randomUUID().toString()
+                            editorDraft = FilterEditorDraft(
+                                rule = InboxFilterRule(id = id, enabled = true),
+                                isNew = true,
+                            )
+                        },
                     ) {
+                        Icon(Icons.Outlined.Add, contentDescription = null, tint = colors.accent)
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            "Edit filter",
+                            "Add filter",
                             fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 14.sp,
-                            color = colors.ink,
-                        )
-                        OutlinedTextField(
-                            value = rule.name.orEmpty(),
-                            onValueChange = { value ->
-                                updateRule(rule.id) { it.copy(name = value) }
-                            },
-                            label = { Text("Name") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                        )
-                        Text(
-                            "Conditions",
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = colors.muted,
-                        )
-                        OutlinedTextField(
-                            value = rule.from.orEmpty(),
-                            onValueChange = { value ->
-                                updateRule(rule.id) { it.copy(from = value) }
-                            },
-                            label = { Text("From") },
-                            placeholder = { Text("boss@company.com or @company.com") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                        )
-                        OutlinedTextField(
-                            value = rule.list.orEmpty(),
-                            onValueChange = { value ->
-                                updateRule(rule.id) { it.copy(list = value) }
-                            },
-                            label = { Text("List") },
-                            placeholder = { Text("* or list-id fragment") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                        )
-                        OutlinedTextField(
-                            value = rule.subject.orEmpty(),
-                            onValueChange = { value ->
-                                updateRule(rule.id) { it.copy(subject = value) }
-                            },
-                            label = { Text("Subject contains") },
-                            placeholder = { Text("invoice") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                        )
-                        Text(
-                            "Actions",
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            color = colors.muted,
-                        )
-                        Box {
-                            TextButton(onClick = { folderMenuExpanded = true }) {
-                                val label = rule.folderId
-                                    ?.let { id -> folders.firstOrNull { it.id == id }?.name ?: id }
-                                    ?: "Keep classified folder"
-                                Text(label, color = colors.ink)
-                            }
-                            DropdownMenu(
-                                expanded = folderMenuExpanded,
-                                onDismissRequest = { folderMenuExpanded = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Keep classified folder") },
-                                    onClick = {
-                                        updateRule(rule.id) { it.copy(folderId = null) }
-                                        folderMenuExpanded = false
-                                    },
-                                )
-                                folders.forEach { folder ->
-                                    DropdownMenuItem(
-                                        text = { Text(folder.name) },
-                                        onClick = {
-                                            updateRule(rule.id) { it.copy(folderId = folder.id) }
-                                            folderMenuExpanded = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "Skip auto-draft",
-                                fontFamily = InterFontFamily,
-                                fontSize = 16.sp,
-                                color = colors.ink,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Switch(
-                                checked = rule.skipAutoDraft == true,
-                                onCheckedChange = { checked ->
-                                    updateRule(rule.id) { it.copy(skipAutoDraft = checked) }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedTrackColor = colors.accent,
-                                    checkedThumbColor = Color.White,
-                                ),
-                            )
-                        }
-                        OutlinedTextField(
-                            value = rule.forwardTo.orEmpty(),
-                            onValueChange = { value ->
-                                updateRule(rule.id) { it.copy(forwardTo = value) }
-                            },
-                            label = { Text("Forward to") },
-                            placeholder = { Text("optional@example.com") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
+                            fontWeight = FontWeight.Medium,
+                            color = colors.accent,
                         )
                     }
-                }
-
-                TextButton(
-                    onClick = {
-                        val rule = InboxFilterRule(
-                            id = UUID.randomUUID().toString(),
-                            enabled = true,
-                        )
-                        rules = rules + rule
-                        editingId = rule.id
-                    },
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null, tint = colors.accent)
-                    Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                    Text(
-                        "Add filter",
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.accent,
-                    )
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -457,6 +422,356 @@ fun FiltersSettingsView(
                     .background(colors.pillFill, RoundedCornerShape(50))
                     .padding(horizontal = 14.dp, vertical = 10.dp),
             )
+        }
+    }
+
+    editorDraft?.let { draft ->
+        FilterEditorDialog(
+            draft = draft,
+            folders = folders,
+            mailboxEmail = mailbox?.email.orEmpty(),
+            onDismiss = { editorDraft = null },
+            onSave = { rule ->
+                rules = if (rules.any { it.id == rule.id }) {
+                    rules.map { if (it.id == rule.id) rule else it }
+                } else {
+                    rules + rule
+                }
+                editorDraft = null
+            },
+        )
+    }
+
+    if (actionRule != null) {
+        FilterActionsSheet(
+            title = actionRule.name?.trim()?.ifEmpty { null } ?: "Untitled filter",
+            onDismiss = { actionRuleId = null },
+            onDelete = {
+                rules = rules.filterNot { it.id == actionRule.id }
+                actionRuleId = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun FilterActionsSheet(
+    title: String,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(HomeChromeMetrics.modalScrim)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onDismiss,
+                    ),
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .background(colors.background)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 20.dp),
+            ) {
+                Text(
+                    title,
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    color = colors.ink,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(onClick = onDelete)
+                        .padding(horizontal = 14.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Delete,
+                        contentDescription = null,
+                        tint = colors.deepDarkRed,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        "Delete",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 16.sp,
+                        color = colors.deepDarkRed,
+                    )
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                ) {
+                    Text(
+                        "Cancel",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.muted,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterEditorDialog(
+    draft: FilterEditorDraft,
+    folders: List<Folder>,
+    mailboxEmail: String,
+    onDismiss: () -> Unit,
+    onSave: (InboxFilterRule) -> Unit,
+) {
+    val colors = inboxiesColors()
+    var rule by remember(draft.rule.id) { mutableStateOf(draft.rule) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var folderMenuExpanded by remember { mutableStateOf(false) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(HomeChromeMetrics.modalScrim)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onDismiss,
+                    ),
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.92f)
+                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .background(colors.background)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = {},
+                    )
+                    .navigationBarsPadding(),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    HomeChromeToolbarButton(
+                        icon = Icons.Outlined.Close,
+                        contentDescription = "Cancel",
+                        onClick = onDismiss,
+                    )
+                    Text(
+                        if (draft.isNew) "New filter" else "Edit filter",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = colors.ink,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp),
+                    )
+                    SettingsChromeTextButton(
+                        label = if (draft.isNew) "Add" else "Done",
+                        onClick = {
+                            val cleaned = rule.copy(
+                                enabled = rule.enabled != false,
+                                name = rule.name?.trim()?.ifEmpty { null },
+                                from = rule.from?.trim()?.ifEmpty { null },
+                                list = rule.list?.trim()?.ifEmpty { null },
+                                subject = rule.subject?.trim()?.ifEmpty { null },
+                                folderId = rule.folderId?.trim()?.ifEmpty { null },
+                                skipAutoDraft = if (rule.skipAutoDraft == true) true else null,
+                                forwardTo = rule.forwardTo?.trim()?.ifEmpty { null },
+                            )
+                            val hasCondition =
+                                cleaned.from != null || cleaned.list != null || cleaned.subject != null
+                            val hasAction =
+                                cleaned.folderId != null ||
+                                    cleaned.skipAutoDraft == true ||
+                                    cleaned.forwardTo != null
+                            when {
+                                !hasCondition -> {
+                                    errorMessage = "Add a from, list, or subject condition"
+                                }
+                                !hasAction -> {
+                                    errorMessage =
+                                        "Add a folder, skip auto-draft, or forward action"
+                                }
+                                cleaned.forwardTo != null && !cleaned.forwardTo.contains("@") -> {
+                                    errorMessage = "Enter a valid forward address"
+                                }
+                                cleaned.forwardTo != null &&
+                                    cleaned.forwardTo.equals(mailboxEmail, ignoreCase = true) -> {
+                                    errorMessage = "Forward address cannot be this mailbox"
+                                }
+                                else -> onSave(cleaned)
+                            }
+                        },
+                    )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    errorMessage?.let { message ->
+                        Text(
+                            message,
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            color = colors.deepDarkRed,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = rule.name.orEmpty(),
+                        onValueChange = { value -> rule = rule.copy(name = value) },
+                        label = { Text("Name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    Text(
+                        "Conditions",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        color = colors.muted,
+                    )
+                    OutlinedTextField(
+                        value = rule.from.orEmpty(),
+                        onValueChange = { value -> rule = rule.copy(from = value) },
+                        label = { Text("From") },
+                        placeholder = { Text("boss@company.com or @company.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    OutlinedTextField(
+                        value = rule.list.orEmpty(),
+                        onValueChange = { value -> rule = rule.copy(list = value) },
+                        label = { Text("List") },
+                        placeholder = { Text("* or list-id fragment") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    OutlinedTextField(
+                        value = rule.subject.orEmpty(),
+                        onValueChange = { value -> rule = rule.copy(subject = value) },
+                        label = { Text("Subject contains") },
+                        placeholder = { Text("invoice") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    Text(
+                        "Actions",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 12.sp,
+                        color = colors.muted,
+                    )
+                    Box {
+                        TextButton(onClick = { folderMenuExpanded = true }) {
+                            val label = rule.folderId
+                                ?.let { id -> folders.firstOrNull { it.id == id }?.name ?: id }
+                                ?: "Keep classified folder"
+                            Text(label, color = colors.ink)
+                        }
+                        DropdownMenu(
+                            expanded = folderMenuExpanded,
+                            onDismissRequest = { folderMenuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Keep classified folder") },
+                                onClick = {
+                                    rule = rule.copy(folderId = null)
+                                    folderMenuExpanded = false
+                                },
+                            )
+                            folders.forEach { folder ->
+                                DropdownMenuItem(
+                                    text = { Text(folder.name) },
+                                    onClick = {
+                                        rule = rule.copy(folderId = folder.id)
+                                        folderMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Skip auto-draft",
+                            fontFamily = InterFontFamily,
+                            fontSize = 16.sp,
+                            color = colors.ink,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Switch(
+                            checked = rule.skipAutoDraft == true,
+                            onCheckedChange = { checked ->
+                                rule = rule.copy(skipAutoDraft = checked)
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = colors.accent,
+                                checkedThumbColor = Color.White,
+                            ),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = rule.forwardTo.orEmpty(),
+                        onValueChange = { value -> rule = rule.copy(forwardTo = value) },
+                        label = { Text("Forward to") },
+                        placeholder = { Text("optional@example.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            }
         }
     }
 }
