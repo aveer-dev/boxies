@@ -13,6 +13,13 @@ struct RootView: View {
                 } else {
                     HomeShellView()
                         .task(id: auth.token) {
+                            #if DEBUG
+                            if ProcessInfo.processInfo.arguments.contains("-previewMailbox")
+                                || ProcessInfo.processInfo.arguments.contains("-previewDetail")
+                                || ProcessInfo.processInfo.arguments.contains("-previewCompose") {
+                                return
+                            }
+                            #endif
                             await app.bootstrap(authToken: auth.token)
                         }
                         .task(id: pushManager.pendingDeepLink) {

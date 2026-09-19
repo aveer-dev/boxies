@@ -87,6 +87,11 @@ struct HomeShellView: View {
             .onChange(of: isComposeExpanded) { _, expanded in
                 showComposeSheet = expanded
             }
+            .onAppear {
+                if isComposeExpanded {
+                    showComposeSheet = true
+                }
+            }
             .onChange(of: app.pendingUndoAction?.id) { _, newID in
                 registerUndoIfNeeded(newID)
             }

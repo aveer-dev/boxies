@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		08C8AEBB61714B47A9B57E95 /* ComposeDockBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 276C8945F603459A8A0C1FBE /* ComposeDockBar.swift */; };
+		F3A1B2C3D4E5478990ABCD12 /* EmailHTMLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A1B2C3D4E5478990ABCD11 /* EmailHTMLSanitizer.swift */; };
+		F3A1B2C3D4E5478990ABCD15 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = F3A1B2C3D4E5478990ABCD14 /* SwiftSoup */; };
 		0A8E360836CB41A7892396E2 /* AttachmentListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF772F64F27842E2A7E84279 /* AttachmentListView.swift */; };
 		12FD0B712C114D8F82E0825F /* AgentChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2153D18D975F436E94786CB2 /* AgentChatClient.swift */; };
 		18F25040136B47988CE9E925 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28CDA4BA87F547B6A4A0DD65 /* AppTheme.swift */; };
@@ -67,6 +69,7 @@
 
 /* Begin PBXFileReference section */
 		010262344D5842BD893A671C /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/AppModel.swift; sourceTree = "<group>"; };
+		F3A1B2C3D4E5478990ABCD11 /* EmailHTMLSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/EmailHTMLSanitizer.swift; sourceTree = "<group>"; };
 		063B7A93C3B6424791462165 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/RootView.swift; sourceTree = "<group>"; };
 		083DA184D3E44E4895F6F2E1 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/APIClient.swift; sourceTree = "<group>"; };
 		09C42367266B46FF855AE6E5 /* ComposeFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/ComposeFormModel.swift; sourceTree = "<group>"; };
@@ -132,6 +135,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F3A1B2C3D4E5478990ABCD15 /* SwiftSoup in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -191,6 +195,7 @@
 				010262344D5842BD893A671C /* AppModel.swift */,
 				43432D294A6A4E8886288B5C /* AuthStore.swift */,
 				09C42367266B46FF855AE6E5 /* ComposeFormModel.swift */,
+				F3A1B2C3D4E5478990ABCD11 /* EmailHTMLSanitizer.swift */,
 				C4D5E6F7A8B9478990ABCD21 /* OutboundAttachments.swift */,
 				F1A1B2C3D4E5478990ABCD01 /* DatabaseService.swift */,
 				F1A1B2C3D4E5478990ABCD02 /* MailboxSyncService.swift */,
@@ -259,6 +264,9 @@
 			dependencies = (
 			);
 			name = Inboxies;
+			packageProductDependencies = (
+				F3A1B2C3D4E5478990ABCD14 /* SwiftSoup */,
+			);
 			productName = Inboxies;
 			productReference = 84F2F99145F3443BBB8E283E /* Inboxies.app */;
 			productType = "com.apple.product-type.application";
@@ -282,6 +290,9 @@
 				Base,
 			);
 			mainGroup = 718F166D78714FA78A5A37E8;
+			packageReferences = (
+				F3A1B2C3D4E5478990ABCD13 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
+			);
 			productRefGroup = C44B4DF80ADE4AD9902FB46E /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -320,6 +331,7 @@
 				2EC70370129F423785536DB2 /* AppModel.swift in Sources */,
 				340C18C527B44FD1B96E612C /* AuthStore.swift in Sources */,
 				7E8CC069F60B4F6283899600 /* ComposeFormModel.swift in Sources */,
+				F3A1B2C3D4E5478990ABCD12 /* EmailHTMLSanitizer.swift in Sources */,
 				D4E5F6A7B8C0478990ABCD21 /* OutboundAttachments.swift in Sources */,
 				D4E5F6A7B8C0478990ABCD22 /* ComposeFormatChrome.swift in Sources */,
 				D4E5F6A7B8C0478990ABCD23 /* ComposeRichTextEditor.swift in Sources */,
@@ -539,6 +551,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F3A1B2C3D4E5478990ABCD13 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/scinfu/SwiftSoup.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.7.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F3A1B2C3D4E5478990ABCD14 /* SwiftSoup */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F3A1B2C3D4E5478990ABCD13 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
+			productName = SwiftSoup;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 9BB052F9A81F42B8830069B2 /* Project object */;
 }
