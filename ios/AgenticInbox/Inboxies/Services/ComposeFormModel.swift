@@ -72,6 +72,11 @@ final class ComposeFormModel {
             if body != oldValue { scheduleAutoSave() }
         }
     }
+    var attachments: [ComposePendingAttachment] = [] {
+        didSet {
+            if attachments != oldValue { scheduleAutoSave() }
+        }
+    }
     let quotedOriginal: QuotedOriginal?
 
     var originalEmailId: String?
@@ -223,6 +228,7 @@ final class ComposeFormModel {
         toTokens.isEmpty && ccTokens.isEmpty && bccTokens.isEmpty
             && toDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && attachments.isEmpty
             && !ComposeHTML.bodyHasUserContent(body, signature: signature)
     }
 
@@ -449,6 +455,19 @@ final class ComposeFormModel {
         } else {
             payload["from"] = fromEmail
         }
+        if !attachments.isEmpty {
+            payload["attachments"] = attachments.map(\.sendPayload)
+        }
+
+        let estimated = OutboundLimits.estimateMessageBytes(
+            html: html,
+            text: text,
+            attachmentBytes: attachments.map(\.size)
+        )
+        if estimated > OutboundLimits.maxMessageBytes {
+            errorMessage = OutboundLimits.sizeError
+            return false
+        }
 
         do {
             switch mode {
@@ -504,7 +523,7 @@ final class ComposeFormModel {
     }
 
     private func outgoingHTML() -> String {
-        var html = ComposeHTML.textToHTML(body)
+        var html = body.contains("<") ? body : ComposeHTML.textToHTML(body)
         if let quotedOriginal {
             html += ComposeHTML.quotedHTML(from: quotedOriginal)
         }
@@ -512,11 +531,36 @@ final class ComposeFormModel {
     }
 
     private func outgoingPlainText() -> String {
-        guard let quotedOriginal else { return body }
+        let plain = ComposeHTML.stripHTML(body)
+        guard let quotedOriginal else { return plain }
         let quotedLines = quotedOriginal.text
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { "> \($0)" }
-        return ([body, "", quotedOriginal.header] + quotedLines).joined(separator: "\n")
+        return ([plain, "", quotedOriginal.header] + quotedLines).joined(separator: "\n")
+    }
+
+    var remainingAttachmentBudget: Int {
+        OutboundLimits.remainingBudget(
+            html: outgoingHTML(),
+            text: outgoingPlainText(),
+            attachmentBytes: attachments.map(\.size)
+        )
+    }
+
+    var exceedsOutboundLimit: Bool {
+        OutboundLimits.estimateMessageBytes(
+            html: outgoingHTML(),
+            text: outgoingPlainText(),
+            attachmentBytes: attachments.map(\.size)
+        ) > OutboundLimits.maxMessageBytes
+    }
+
+    func addPreparedAttachment(_ attachment: ComposePendingAttachment) {
+        attachments.append(attachment)
+    }
+
+    func removeAttachment(_ id: UUID) {
+        attachments.removeAll { $0.id == id }
     }
 
     private func commit(_ draft: inout String, into tokens: inout [MailAddress]) {
@@ -588,7 +632,7 @@ enum ComposeHTML {
 
     /// True when compose text has user-authored content beyond the mailbox signature.
     static func bodyHasUserContent(_ body: String, signature: String) -> Bool {
-        var text = body
+        var text = stripHTML(body)
         if !signature.isEmpty, let range = text.range(of: signature) {
             text.removeSubrange(range)
         }

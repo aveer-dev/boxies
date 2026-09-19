@@ -4,6 +4,7 @@
 
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "~/services/api";
 import {
 	buildQuotedReplyBlock,
 	escapeHtml,
@@ -21,9 +22,21 @@ import {
 	rewriteSelfReplyTo,
 } from "shared/reply-recipients";
 import { composeBodyHasUserContent } from "shared/compose-body";
+import {
+	OUTBOUND_SIZE_ERROR,
+	remainingOutboundBudget,
+} from "shared/compose-attachments";
+import {
+	estimateOutboundMessageBytes,
+	MAX_OUTBOUND_MESSAGE_BYTES,
+} from "shared/outbound-limits";
 import { useDeleteEmail, useForwardEmail, useReplyToEmail, useSaveDraft, useSendEmail } from "~/queries/emails";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
+import {
+	prepareComposeAttachment,
+	type PreparedAttachment,
+} from "~/lib/prepare-compose-attachment";
 
 interface ComposeFormFields {
 	to: string;
@@ -89,12 +102,14 @@ function isComposeDraftEmpty(
 	subject: string,
 	body: string,
 	sigBlock: string,
+	attachmentCount = 0,
 ) {
 	return (
 		!to.trim() &&
 		!cc.trim() &&
 		!bcc.trim() &&
 		!subject.trim() &&
+		attachmentCount === 0 &&
 		!composeBodyHasUserContent(body, sigBlock)
 	);
 }
@@ -185,6 +200,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const [showCcBcc, setShowCcBcc] = useState(false);
 	const [subject, setSubject] = useState("");
 	const [body, setBody] = useState("");
+	const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
 	const [error, setError] = useState<string | null>(null);
 	const [isSavingDraft, setIsSavingDraft] = useState(false);
 	const [isSending, setIsSending] = useState(false);
@@ -220,6 +236,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		setShowCcBcc(initialFields.showCcBcc);
 		setSubject(initialFields.subject);
 		setBody(initialFields.body);
+		setAttachments([]);
 		setSavedDraftId(composeOptions.draftEmail?.id);
 		lastSavedSnapshotRef.current = `${initialFields.to}|${initialFields.cc}|${initialFields.bcc}|${initialFields.subject}|${initialFields.body}`;
 		setSaveStatus("idle");
@@ -236,7 +253,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	useEffect(() => {
 		if (!mailboxId || isSending) return;
 		const currentSnapshot = `${to}|${cc}|${bcc}|${subject}|${body}`;
-		const isEmpty = isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock);
+		const isEmpty = isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock, attachments.length);
 
 		if (isEmpty || currentSnapshot === lastSavedSnapshotRef.current) {
 			return;
@@ -293,7 +310,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 
 	const handleSaveDraft = async () => {
 		if (!mailboxId || isSending) return;
-		if (isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock)) return;
+		if (isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock, attachments.length)) return;
 		setIsSavingDraft(true);
 		setSaveStatus("saving");
 		setError(null);
@@ -360,6 +377,18 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		if ((mode === "reply" || mode === "reply-all") && original) {
 			sendTo = rewriteSelfReplyTo(sendTo, original, currentMailbox.email || mailboxId);
 		}
+		const text = htmlToPlainText(body);
+		const sizeInput = {
+			html: body,
+			text,
+			attachments: attachments.map((item) => ({ content: item.content })),
+		};
+		if (estimateOutboundMessageBytes(sizeInput) > MAX_OUTBOUND_MESSAGE_BYTES) {
+			isSendingRef.current = false;
+			setError(OUTBOUND_SIZE_ERROR);
+			toastManager.add({ title: OUTBOUND_SIZE_ERROR, variant: "error" });
+			return;
+		}
 		const emailData = {
 			to: sendTo,
 			cc: toEmailListValue(ccRecipients),
@@ -367,7 +396,15 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 			from,
 			subject,
 			html: body,
-			text: htmlToPlainText(body),
+			text,
+			attachments: attachments.length
+				? attachments.map((item) => ({
+					content: item.content,
+					filename: item.filename,
+					type: item.type,
+					disposition: item.disposition,
+				}))
+				: undefined,
 		};
 		const draftId = savedDraftId || composeOptions.draftEmail?.id;
 		const originalId = original?.id || composeOptions.draftEmail?.in_reply_to;
@@ -381,13 +418,54 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 			onClose();
 		} catch (err: unknown) {
 			isSendingRef.current = false;
-			const message = (err instanceof Error ? err.message : null) || "Failed to send email.";
+			let message = (err instanceof Error ? err.message : null) || "Failed to send email.";
+			if (
+				(err instanceof ApiError && err.status === 413) ||
+				/5\s*mib|too large|content_too_large/i.test(message)
+			) {
+				message = OUTBOUND_SIZE_ERROR;
+			}
 			setError(message);
 			toastManager.add({ title: message, variant: "error" });
 		} finally {
 			setIsSending(false);
 		}
 	};
+
+	const addFiles = async (files: File[]) => {
+		let budget = remainingOutboundBudget({
+			html: body,
+			text: htmlToPlainText(body),
+			attachments: attachments.map((item) => ({ content: item.content })),
+		});
+		const next: PreparedAttachment[] = [];
+		for (const file of files) {
+			const result = await prepareComposeAttachment(file, budget);
+			if (!result.ok) {
+				toastManager.add({ title: result.error, variant: "error" });
+				continue;
+			}
+			next.push(result.attachment);
+			budget = Math.max(0, budget - result.attachment.size);
+		}
+		if (next.length) {
+			setAttachments((current) => [...current, ...next]);
+		}
+	};
+
+	const removeAttachment = (id: string) => {
+		setAttachments((current) => current.filter((item) => item.id !== id));
+	};
+
+	const overSize = useMemo(
+		() =>
+			estimateOutboundMessageBytes({
+				html: body,
+				text: htmlToPlainText(body),
+				attachments: attachments.map((item) => ({ content: item.content })),
+			}) > MAX_OUTBOUND_MESSAGE_BYTES,
+		[body, attachments],
+	);
 
 	return {
 		to,
@@ -402,7 +480,11 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		setSubject,
 		body,
 		setBody,
-		error,
+		attachments,
+		addFiles,
+		removeAttachment,
+		overSize,
+		error: overSize ? OUTBOUND_SIZE_ERROR : error,
 		setError,
 		isSavingDraft,
 		isSending,

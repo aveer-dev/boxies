@@ -807,27 +807,30 @@ class AppModel {
                     _selectedMailboxId.value ?: error("No mailbox")
                 }
                 val html = form.bodyHtml
+                val text = form.outgoingPlainText()
+                val estimated = co.inboxies.app.util.OutboundLimits.estimateMessageBytes(
+                    html,
+                    text,
+                    form.attachments.map { it.size },
+                )
+                if (estimated > co.inboxies.app.util.OutboundLimits.MAX_MESSAGE_BYTES) {
+                    error(co.inboxies.app.util.OutboundLimits.SIZE_ERROR)
+                }
+                val payload = form.toSendPayload()
                 when (form.mode) {
                     ComposeMode.Reply -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyEmail(mailboxId, origId, html, replyAll = false)
+                        ApiClient.shared.replyToEmail(mailboxId, origId, payload)
                     }
                     ComposeMode.ReplyAll -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyEmail(mailboxId, origId, html, replyAll = true)
+                        ApiClient.shared.replyToEmail(mailboxId, origId, payload)
                     }
                     ComposeMode.Forward -> {
                         val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.forwardEmail(mailboxId, origId, form.toJoined(), html)
+                        ApiClient.shared.forwardEmail(mailboxId, origId, payload)
                     }
-                    else -> ApiClient.shared.sendEmail(
-                        mailboxId = mailboxId,
-                        to = form.toJoined(),
-                        subject = form.subject,
-                        body = html,
-                        cc = form.ccJoined().ifBlank { null },
-                        bcc = form.bccJoined().ifBlank { null },
-                    )
+                    else -> ApiClient.shared.sendEmail(mailboxId, payload)
                 }
             }.onSuccess {
                 showToast("Sent")

@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+import PhotosUI
+import UniformTypeIdentifiers
 
 /// System sheet compose chrome matching Ask AI / email detail, Notion-styled fields.
 struct ComposeSheetView: View {
@@ -10,6 +12,13 @@ struct ComposeSheetView: View {
     @State private var viewportHeight: CGFloat = 0
     @State private var headerHeight: CGFloat = 0
     @State private var showQuotedOriginal = false
+    @State private var showFormatSheet = false
+    @State private var showAttachMenu = false
+    @State private var showCamera = false
+    @State private var showFileImporter = false
+    @State private var showPhotosPicker = false
+    @State private var photoSelection: [PhotosPickerItem] = []
+    @State private var richText = ComposeRichTextSession()
     @State private var suggestions: [RecentRecipient] = []
     @State private var suggestionRequestID = UUID()
     @FocusState private var focusedField: Field?
@@ -43,7 +52,7 @@ struct ComposeSheetView: View {
                     proxy.size.height
                 } action: { viewportHeight = $0 }
 
-                if let error = form.errorMessage {
+                if let error = form.errorMessage ?? (form.exceedsOutboundLimit ? OutboundLimits.sizeError : nil) {
                     Text(error)
                         .font(.inter(.footnote))
                         .foregroundStyle(.red)
@@ -52,12 +61,38 @@ struct ComposeSheetView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let quoted = form.quotedOriginal, !showQuotedOriginal {
-                    quotedOriginalDock(quoted)
+                VStack(spacing: 0) {
+                    ComposeAttachChips(attachments: form.attachments) { id in
+                        form.removeAttachment(id)
+                    }
+                    if showFormatSheet {
+                        ComposeFormatSheet(session: richText) {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                showFormatSheet = false
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        ComposeFormatAttachBar(
+                            onFormat: {
+                                focusedField = .body
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                    showFormatSheet = true
+                                }
+                            },
+                            onAttach: { showAttachMenu = true }
+                        )
+                    }
+                    if let quoted = form.quotedOriginal, !showQuotedOriginal {
+                        quotedOriginalDock(quoted)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
             }
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showQuotedOriginal)
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showFormatSheet)
             .background(AppTheme.background)
             .background(DetailNavigationTitleFont())
             .navigationTitle(form.displayTitle)
@@ -118,7 +153,7 @@ struct ComposeSheetView: View {
                         Image(systemName: "arrow.up")
                             .symbolRenderingMode(.hierarchical)
                     }
-                    .disabled(!canSend || form.isSending)
+                    .disabled(!canSend || form.isSending || form.exceedsOutboundLimit)
                     .accessibilityLabel("Send")
                 }
             }
@@ -135,6 +170,40 @@ struct ComposeSheetView: View {
                 if let quoted = form.quotedOriginal {
                     quotedOriginalSheet(quoted)
                 }
+            }
+            .confirmationDialog("Attach", isPresented: $showAttachMenu, titleVisibility: .visible) {
+                Button("Photo Library") { showPhotosPicker = true }
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button("Take Photo") { showCamera = true }
+                }
+                Button("Files") { showFileImporter = true }
+                Button("Cancel", role: .cancel) {}
+            }
+            .photosPicker(
+                isPresented: $showPhotosPicker,
+                selection: $photoSelection,
+                maxSelectionCount: 8,
+                matching: .images
+            )
+            .onChange(of: photoSelection) { _, items in
+                Task { await ingestPhotos(items) }
+            }
+            .fileImporter(
+                isPresented: $showFileImporter,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: true
+            ) { result in
+                ingestFiles(result)
+            }
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraImagePicker(
+                    onImage: { image in
+                        showCamera = false
+                        ingestCamera(image)
+                    },
+                    onCancel: { showCamera = false }
+                )
+                .ignoresSafeArea()
             }
             .overlay(alignment: .bottom) {
                 if let toast = form.toast {
@@ -306,16 +375,16 @@ struct ComposeSheetView: View {
     }
 
     private var bodyEditor: some View {
-        TextEditor(text: Binding(
-            get: { form.body },
-            set: { form.body = $0 }
-        ))
-        .focused($focusedField, equals: .body)
-        .font(.inter(size: AppTheme.FontSize.body))
-        .foregroundStyle(AppTheme.ink)
-        .scrollContentBackground(.hidden)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        ComposeRichTextEditor(
+            html: Binding(
+                get: { form.body },
+                set: { form.body = $0 }
+            ),
+            session: richText,
+            minHeight: editorMinHeight
+        )
+        .frame(minHeight: editorMinHeight, alignment: .top)
+        .padding(.horizontal, 4)
     }
 
     private func quotedOriginalDock(_ quoted: QuotedOriginal) -> some View {
@@ -575,6 +644,48 @@ struct ComposeSheetView: View {
         let hasDelimiter = text.contains { $0 == "," || $0 == ";" }
         let hasSpacedEmail = text.contains { $0 == " " } && text.contains { $0 == "@" }
         return hasDelimiter || hasSpacedEmail
+    }
+
+    private func ingestPhotos(_ items: [PhotosPickerItem]) async {
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+            let mime = item.supportedContentTypes.first?.preferredMIMEType ?? "image/jpeg"
+            ingestAttachment(data: data, filename: "photo.jpg", mime: mime)
+        }
+        photoSelection = []
+    }
+
+    private func ingestFiles(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        for url in urls {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else { continue }
+            ingestAttachment(
+                data: data,
+                filename: url.lastPathComponent,
+                mime: OutboundImageCompressor.mime(for: url.lastPathComponent)
+            )
+        }
+    }
+
+    private func ingestCamera(_ image: UIImage) {
+        guard let data = image.jpegData(compressionQuality: 0.9) else { return }
+        ingestAttachment(data: data, filename: "photo.jpg", mime: "image/jpeg")
+    }
+
+    private func ingestAttachment(data: Data, filename: String, mime: String) {
+        do {
+            let prepared = try OutboundImageCompressor.prepare(
+                data: data,
+                filename: filename,
+                mimeType: mime,
+                budget: form.remainingAttachmentBudget
+            )
+            form.addPreparedAttachment(prepared)
+        } catch {
+            form.showToast(error.localizedDescription, isError: true)
+        }
     }
 
     private func send() async {

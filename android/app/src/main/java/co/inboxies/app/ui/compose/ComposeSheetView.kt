@@ -1,7 +1,12 @@
 package co.inboxies.app.ui.compose
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -71,20 +76,19 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -106,7 +110,14 @@ import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.util.ComposeHtml
+import co.inboxies.app.util.OutboundImageCompressor
 import co.inboxies.app.util.QuotedOriginal
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.max
@@ -129,6 +140,7 @@ fun ComposeSheetView(
     val keyboard = LocalSoftwareKeyboardController.current
     val mailboxes by app.mailboxes.collectAsState()
     val density = LocalDensity.current
+    val context = LocalContext.current
 
     var toTokens by remember(form) { mutableStateOf(form.toTokens) }
     var ccTokens by remember(form) { mutableStateOf(form.ccTokens) }
@@ -137,7 +149,13 @@ fun ComposeSheetView(
     var ccDraft by remember(form) { mutableStateOf(form.ccDraft) }
     var bccDraft by remember(form) { mutableStateOf(form.bccDraft) }
     var subject by remember(form) { mutableStateOf(form.subject) }
-    var body by remember(form) { mutableStateOf(TextFieldValue(form.body, TextRange(0))) }
+    var body by remember(form) { mutableStateOf(form.body) }
+    var attachments by remember(form) { mutableStateOf(form.attachments) }
+    var showFormatSheet by remember { mutableStateOf(false) }
+    var showAttachMenu by remember { mutableStateOf(false) }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val richText = remember(form) { ComposeRichTextController() }
+    var formatState by remember { mutableStateOf(ComposeFormatState()) }
     var showCcBcc by remember(form) { mutableStateOf(form.showCcBcc) }
     var fromMailboxId by remember(form) { mutableStateOf(form.fromMailboxId) }
     var fromName by remember(form) { mutableStateOf(form.fromName) }
@@ -158,8 +176,10 @@ fun ComposeSheetView(
     val displayTitle = subject.trim().ifEmpty { form.title }
     val isEmpty = toTokens.isEmpty() && ccTokens.isEmpty() && bccTokens.isEmpty() &&
         toDraft.isBlank() && ccDraft.isBlank() && bccDraft.isBlank() &&
-        subject.isBlank() && !ComposeHtml.bodyHasUserContent(body.text, form.signatureText)
-    val canSend = toTokens.isNotEmpty() || toDraft.trim().isNotEmpty()
+        subject.isBlank() && attachments.isEmpty() &&
+        !ComposeHtml.bodyHasUserContent(body, form.signatureText)
+    val overSize = form.exceedsOutboundLimit()
+    val canSend = (toTokens.isNotEmpty() || toDraft.trim().isNotEmpty()) && !overSize
 
     fun persist() {
         form.toTokens = toTokens
@@ -169,7 +189,8 @@ fun ComposeSheetView(
         form.ccDraft = ccDraft
         form.bccDraft = bccDraft
         form.subject = subject
-        form.body = body.text
+        form.body = body
+        form.attachments = attachments
         form.showCcBcc = showCcBcc
         form.fromMailboxId = fromMailboxId
         form.fromEmail = fromEmail
@@ -191,10 +212,80 @@ fun ComposeSheetView(
         onDispose { persist() }
     }
 
+    fun ingestBytes(bytes: ByteArray, filename: String, mime: String) {
+        try {
+            persist()
+            val prepared = OutboundImageCompressor.prepare(
+                bytes = bytes,
+                filename = filename,
+                mimeType = mime,
+                budget = form.remainingAttachmentBudget(),
+            )
+            attachments = attachments + prepared
+            form.attachments = attachments
+        } catch (e: Exception) {
+            toast = ComposeToast(e.message ?: "Couldn't attach file", isError = true)
+        }
+    }
+
+    fun ingestUri(uri: Uri, fallbackName: String) {
+        val name = uri.lastPathSegment?.substringAfterLast('/') ?: fallbackName
+        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
+        ingestBytes(bytes, name, mime)
+    }
+
+    val photoLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(),
+    ) { uris ->
+        uris.forEach { ingestUri(it, "photo.jpg") }
+    }
+    val fileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        uris.forEach { ingestUri(it, "file") }
+    }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture(),
+    ) { success ->
+        if (success) {
+            cameraUri?.let { ingestUri(it, "photo.jpg") }
+        }
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            val dir = File(context.cacheDir, "compose").apply { mkdirs() }
+            val file = File(dir, "capture.jpg")
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            cameraUri = uri
+            cameraLauncher.launch(uri)
+        }
+    }
+
+    fun launchCamera() {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            val dir = File(context.cacheDir, "compose").apply { mkdirs() }
+            val file = File(dir, "capture.jpg")
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            cameraUri = uri
+            cameraLauncher.launch(uri)
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     LaunchedEffect(toast?.id) {
         val current = toast ?: return@LaunchedEffect
         delay(2500)
         if (toast?.id == current.id) toast = null
+    }
+
+    LaunchedEffect(richText) {
+        richText.onStateChange = { formatState = it }
     }
 
     val suggestionDraft = when (recipientFocus) {
@@ -558,15 +649,12 @@ fun ComposeSheetView(
                         )
                     }
 
-                    BodyEditor(
-                        value = body,
-                        onValueChange = {
+                    ComposeRichTextEditor(
+                        html = body,
+                        controller = richText,
+                        onHtmlChange = {
                             body = it
-                            form.body = it.text
-                        },
-                        onFocus = {
-                            recipientFocus = null
-                            commitTokens()
+                            form.body = it
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -575,7 +663,8 @@ fun ComposeSheetView(
                 }
             }
 
-            form.errorMessage?.let { error ->
+            val sizeError = if (overSize) co.inboxies.app.util.OutboundLimits.SIZE_ERROR else null
+            (form.errorMessage ?: sizeError)?.let { error ->
                 Text(
                     error,
                     fontFamily = InterFontFamily,
@@ -583,6 +672,74 @@ fun ComposeSheetView(
                     color = colors.deepDarkRed,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
+            }
+
+            ComposeAttachChips(
+                attachments = attachments,
+                onRemove = { id ->
+                    attachments = attachments.filterNot { it.id == id }
+                    form.removeAttachment(id)
+                },
+            )
+
+            Box {
+                val formatSlide = spring<androidx.compose.ui.unit.IntOffset>(
+                    dampingRatio = 0.86f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+                val formatFade = spring<Float>(
+                    dampingRatio = 0.86f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+                AnimatedVisibility(
+                    visible = showFormatSheet,
+                    enter = slideInVertically(formatSlide) { it } + fadeIn(formatFade),
+                    exit = slideOutVertically(formatSlide) { it } + fadeOut(formatFade),
+                ) {
+                    ComposeFormatSheet(
+                        state = formatState,
+                        controller = richText,
+                        onClose = { showFormatSheet = false },
+                    )
+                }
+                AnimatedVisibility(
+                    visible = !showFormatSheet,
+                    enter = fadeIn(formatFade),
+                    exit = fadeOut(formatFade),
+                ) {
+                    ComposeFormatAttachBar(
+                        onFormat = { showFormatSheet = true },
+                        onAttach = { showAttachMenu = true },
+                    )
+                }
+                InboxiesDropdownMenu(
+                    expanded = showAttachMenu,
+                    onDismiss = { showAttachMenu = false },
+                ) {
+                    InboxiesMenuItem(
+                        text = "Photo library",
+                        onClick = {
+                            showAttachMenu = false
+                            photoLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                    )
+                    InboxiesMenuItem(
+                        text = "Take photo",
+                        onClick = {
+                            showAttachMenu = false
+                            launchCamera()
+                        },
+                    )
+                    InboxiesMenuItem(
+                        text = "Files",
+                        onClick = {
+                            showAttachMenu = false
+                            fileLauncher.launch("*/*")
+                        },
+                    )
+                }
             }
 
             val quoted = form.quotedOriginal
@@ -1175,34 +1332,6 @@ private fun SubjectField(
                 inner()
             }
         },
-    )
-}
-
-@Composable
-private fun BodyEditor(
-    value: TextFieldValue,
-    onValueChange: (TextFieldValue) -> Unit,
-    onFocus: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = inboxiesColors()
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = modifier
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-            .onFocusChanged { if (it.isFocused) onFocus() },
-        textStyle = TextStyle(
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Normal,
-            fontSize = AppThemeDims.FontSize.body,
-            color = colors.ink,
-        ),
-        cursorBrush = SolidColor(colors.ink),
-        keyboardOptions = KeyboardOptions(
-            capitalization = KeyboardCapitalization.Sentences,
-            keyboardType = KeyboardType.Text,
-        ),
     )
 }
 
