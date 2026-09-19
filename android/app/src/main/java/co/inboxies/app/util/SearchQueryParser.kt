@@ -102,6 +102,10 @@ object SearchQueryParser {
         )
     }
 
+    /**
+     * Normalize to ISO-8601. Mirrors web `new Date(value).toISOString()` for
+     * single-token values: ISO instants, `YYYY-MM-DD`, and `M/D/YYYY`.
+     */
     private fun normalizeDate(value: String): String? {
         val trimmed = value.trim()
         if (trimmed.isEmpty()) return null
@@ -111,8 +115,21 @@ object SearchQueryParser {
             try {
                 LocalDate.parse(trimmed).atStartOfDay(ZoneOffset.UTC).toInstant().toString()
             } catch (_: DateTimeParseException) {
-                null
+                parseSlashDate(trimmed)
             }
+        }
+    }
+
+    private fun parseSlashDate(value: String): String? {
+        val parts = value.split('/')
+        if (parts.size != 3) return null
+        val month = parts[0].toIntOrNull() ?: return null
+        val day = parts[1].toIntOrNull() ?: return null
+        val year = parts[2].toIntOrNull() ?: return null
+        return try {
+            LocalDate.of(year, month, day).atStartOfDay(ZoneOffset.UTC).toInstant().toString()
+        } catch (_: Exception) {
+            null
         }
     }
 }

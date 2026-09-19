@@ -124,7 +124,8 @@ enum SearchQueryParser {
         return result
     }
 
-    /// Normalize to ISO-8601. Accepts YYYY-MM-DD or ISO date-times.
+    /// Normalize to ISO-8601. Mirrors web `new Date(value).toISOString()` for
+    /// single-token values: ISO date-times, `YYYY-MM-DD`, and `M/D/YYYY`.
     private static func normalizeDate(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -145,9 +146,11 @@ enum SearchQueryParser {
         day.calendar = Calendar(identifier: .gregorian)
         day.locale = Locale(identifier: "en_US_POSIX")
         day.timeZone = TimeZone(secondsFromGMT: 0)
-        day.dateFormat = "yyyy-MM-dd"
-        if let d = day.date(from: trimmed) {
-            return out.string(from: d)
+        for format in ["yyyy-MM-dd", "M/d/yyyy", "MM/dd/yyyy"] {
+            day.dateFormat = format
+            if let d = day.date(from: trimmed) {
+                return out.string(from: d)
+            }
         }
 
         return nil

@@ -595,13 +595,7 @@ private struct MessagePeopleHeader: View {
                         .foregroundStyle(AppTheme.ink)
                         .lineLimit(1)
                     if let label = message.deliveryStatusLabel {
-                        Text(label)
-                            .font(.inter(size: 11, weight: .medium))
-                            .foregroundStyle(Color.orange)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(AppTheme.pillFill)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        deliveryStatusChip(label)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -654,9 +648,22 @@ private struct MessagePeopleHeader: View {
                 selfAddress: selfAddress,
                 onSearch: onSearch
             )
+            if let label = message.deliveryStatusLabel {
+                deliveryStatusChip(label)
+            }
             Spacer(minLength: 8)
             dateAndToggle
         }
+    }
+
+    private func deliveryStatusChip(_ label: String) -> some View {
+        Text(label)
+            .font(.inter(size: 11, weight: .medium))
+            .foregroundStyle(Color.orange)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(AppTheme.pillFill)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private var dateAndToggle: some View {

@@ -638,6 +638,15 @@ class AppModel {
         _isEmailDetailLoading.value = false
     }
 
+    /** Preview / Simulator fixture — open a thread without hitting the network. */
+    fun seedOpenThreadForPreview(email: Email, thread: List<Email> = listOf(email)) {
+        _selectedEmail.value = email
+        _threadEmails.value = thread.ifEmpty { listOf(email) }
+        _isEmailDetailLoading.value = false
+        _isLoading.value = false
+        _isMailboxLoading.value = false
+    }
+
     /** Readable (non-draft) emails in the current list, in display order. */
     val navigableEmails: List<Email>
         get() = _emails.value.filter { !it.isDraft }

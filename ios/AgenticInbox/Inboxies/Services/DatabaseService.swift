@@ -425,9 +425,9 @@ final class DatabaseService: @unchecked Sendable {
                 has_attachment = COALESCE(excluded.has_attachment, emails.has_attachment),
                 attachments_json = COALESCE(excluded.attachments_json, emails.attachments_json),
                 auth_json = COALESCE(excluded.auth_json, emails.auth_json),
-                delivery_status = COALESCE(excluded.delivery_status, emails.delivery_status),
-                delivery_error = COALESCE(excluded.delivery_error, emails.delivery_error),
-                provider_message_id = COALESCE(excluded.provider_message_id, emails.provider_message_id),
+                delivery_status = excluded.delivery_status,
+                delivery_error = excluded.delivery_error,
+                provider_message_id = excluded.provider_message_id,
                 updated_at = excluded.updated_at;
             """
             var stmt: OpaquePointer?

@@ -36,6 +36,13 @@ class SearchQueryParserTest {
     }
 
     @Test
+    fun parsesSlashDatesLikeWeb() {
+        val parsed = SearchQueryParser.parse("before:01/01/2025 after:12/31/2024")
+        assertEquals("2025-01-01T00:00:00Z", parsed.dateEnd)
+        assertEquals("2024-12-31T00:00:00Z", parsed.dateStart)
+    }
+
+    @Test
     fun lastDuplicateOperatorWins() {
         val parsed = SearchQueryParser.parse("from:a from:b is:starred in:sent")
         assertEquals("b", parsed.from)
