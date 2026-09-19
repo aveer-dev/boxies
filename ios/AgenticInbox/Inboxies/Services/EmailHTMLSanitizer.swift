@@ -23,7 +23,7 @@ enum EmailHTMLSanitizer {
             guard let cleaned = try SwiftSoup.clean(html, "", mailWhitelist()) else { return "" }
             let doc = try SwiftSoup.parseBodyFragment(cleaned, "")
             try stripDangerousCss(doc)
-            doc.outputSettings().prettyPrint(false)
+            doc.outputSettings().prettyPrint(pretty: false)
             return try doc.body()?.html() ?? ""
         } catch {
             return ""
@@ -36,7 +36,7 @@ enum EmailHTMLSanitizer {
         }
         do {
             let doc = try SwiftSoup.parseBodyFragment(html, "")
-            doc.outputSettings().prettyPrint(false)
+            doc.outputSettings().prettyPrint(pretty: false)
             guard let body = doc.body() else { return SplitBody(main: html, quote: nil) }
             guard let start = try findQuoteStart(in: body) else {
                 return SplitBody(main: html, quote: nil)
@@ -144,7 +144,7 @@ enum EmailHTMLSanitizer {
             }
             break
         }
-        if target == nil, let append = try body.getElementById("appendonsend"), append.nextElementSibling() != nil {
+        if target == nil, let append = try body.getElementById("appendonsend"), try append.nextElementSibling() != nil {
             target = append
         }
         if target == nil {
@@ -159,7 +159,7 @@ enum EmailHTMLSanitizer {
                     || text.range(of: #"from:\s.+\n?(sent|date):"#, options: [.regularExpression, .caseInsensitive]) != nil
                     || style.contains("border-left")
                 var hasSubstantialAfter = false
-                var sibling = bq.nextElementSibling()
+                var sibling = try bq.nextElementSibling()
                 while let next = sibling {
                     let sibText = try next.text().trimmingCharacters(in: .whitespacesAndNewlines)
                     let className = (try? next.className()) ?? ""
@@ -168,7 +168,7 @@ enum EmailHTMLSanitizer {
                         hasSubstantialAfter = true
                         break
                     }
-                    sibling = next.nextElementSibling()
+                    sibling = try next.nextElementSibling()
                 }
                 if hasReplyPattern || !hasSubstantialAfter {
                     target = bq
@@ -177,12 +177,12 @@ enum EmailHTMLSanitizer {
             }
         }
         guard let root = target else { return nil }
-        var prev = root.previousElementSibling()
+        var prev = try root.previousElementSibling()
         while let current = prev {
             let tag = current.tagName().lowercased()
             let text = (try? current.text().trimmingCharacters(in: .whitespacesAndNewlines)) ?? ""
             if tag == "br" || text.isEmpty {
-                prev = current.previousElementSibling()
+                prev = try current.previousElementSibling()
                 continue
             }
             break
