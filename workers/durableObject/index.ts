@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/durable-sqlite";
 import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
-import { Folders } from "../../shared/folders";
+import { Folders, FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "../../shared/folders";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
@@ -23,9 +23,15 @@ import {
 	buildSimpleMime,
 	computeSnippet,
 	deleteEmailContent,
+	emailContentKeys,
 	loadEmailBody,
 	storeEmailContent,
 } from "../lib/email-content";
+import {
+	collectMailboxPurgeR2Keys,
+	deleteEmailAttachments,
+	deleteR2Keys,
+} from "../lib/attachments";
 import {
 	FTS_BACKFILL_BATCH_SIZE,
 	FTS_BACKFILL_MIGRATION,
@@ -1154,9 +1160,80 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#deleteEmailFts(id);
 
 		await deleteEmailContent(this.env.BUCKET, id);
+		await deleteEmailAttachments(this.env.BUCKET, id, emailAttachments);
 
 		this.broadcastEvent("email_deleted", { id });
 		return emailAttachments;
+	}
+
+	/**
+	 * Wipe mailbox SQLite + all inventoried R2 email/attachment blobs.
+	 * Returns conversation ids so the HTTP layer can purge EmailAgent DOs.
+	 * Does not delete `mailboxes/{id}.json` — caller deletes metadata last.
+	 */
+	async purgeMailbox(): Promise<{ conversationIds: string[] }> {
+		const emailRows = this.db
+			.select({ id: schema.emails.id })
+			.from(schema.emails)
+			.all();
+		const emailIds = emailRows.map((row) => row.id);
+
+		const attachmentRows = this.db
+			.select({
+				email_id: schema.attachments.email_id,
+				id: schema.attachments.id,
+				filename: schema.attachments.filename,
+			})
+			.from(schema.attachments)
+			.all();
+
+		const conversationRows = this.db
+			.select({ id: schema.agentConversations.id })
+			.from(schema.agentConversations)
+			.all();
+		const conversationIds = conversationRows.map((row) => row.id);
+
+		const keys = collectMailboxPurgeR2Keys(
+			emailIds,
+			attachmentRows,
+			emailContentKeys,
+		);
+		await deleteR2Keys(this.env.BUCKET, keys);
+
+		try {
+			await this.ctx.storage.deleteAlarm();
+		} catch (e) {
+			console.error("purgeMailbox deleteAlarm failed:", (e as Error).message);
+		}
+
+		// Clear FTS outside the data wipe (virtual table; keep d1_migrations / schema).
+		try {
+			this.ctx.storage.sql.exec(`DELETE FROM emails_fts`);
+		} catch (e) {
+			console.error("purgeMailbox emails_fts wipe failed:", (e as Error).message);
+		}
+
+		this.ctx.storage.transactionSync(() => {
+			const sql = this.ctx.storage.sql;
+			sql.exec(`DELETE FROM attachments`);
+			sql.exec(`DELETE FROM emails`);
+			sql.exec(`DELETE FROM folders`);
+			sql.exec(`DELETE FROM agent_conversations`);
+			sql.exec(`DELETE FROM device_tokens`);
+			sql.exec(`DELETE FROM dismissed_todos`);
+			sql.exec(`DELETE FROM auto_reply_receipts`);
+
+			for (const folderId of SYSTEM_FOLDER_IDS) {
+				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;
+				sql.exec(
+					`INSERT INTO folders (id, name, is_deletable) VALUES (?, ?, 0)`,
+					folderId,
+					name,
+				);
+			}
+		});
+
+		return { conversationIds };
 	}
 
 	async getAttachment(id: string) {
