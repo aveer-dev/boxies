@@ -341,11 +341,7 @@ export class EmailAgent extends AIChatAgent<any> {
 		} catch (e) {
 			console.error("EmailAgent persistMessages([]) failed:", (e as Error).message);
 		}
-		try {
-			await this.ctx.storage.deleteAll();
-		} catch (e) {
-			console.error("EmailAgent storage.deleteAll failed:", (e as Error).message);
-		}
+		await this.ctx.storage.deleteAll();
 		return { status: "purged" };
 	}
 

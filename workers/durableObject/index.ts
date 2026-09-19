@@ -32,6 +32,7 @@ import {
 	deleteEmailAttachments,
 	deleteR2Keys,
 } from "../lib/attachments";
+import { mailboxMetadataKey } from "../lib/mailbox-routing";
 import {
 	FTS_BACKFILL_BATCH_SIZE,
 	FTS_BACKFILL_MIGRATION,
@@ -66,6 +67,9 @@ const folderIdSql = (id: string) =>
 	`(SELECT id FROM folders WHERE name = '${id}' OR id = '${id}' LIMIT 1)`;
 const DRAFT_FOLDER_ID_SQL = folderIdSql(Folders.DRAFT);
 const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
+
+/** KV flag set after a successful purge so in-flight writers cannot resurrect mail. */
+const MAILBOX_DELETED_KEY = "mailbox_deleted";
 
 const ALLOWED_SORT_COLUMNS = [
 	"id",
@@ -191,6 +195,27 @@ export class MailboxDO extends DurableObject<Env> {
 				this.#subscribers.delete(controller);
 			}
 		}
+	}
+
+	async #isMailboxDeleted(): Promise<boolean> {
+		return (await this.ctx.storage.get(MAILBOX_DELETED_KEY)) != null;
+	}
+
+	async #assertMailboxWritable(): Promise<void> {
+		if (await this.#isMailboxDeleted()) {
+			throw new Error("Mailbox has been deleted");
+		}
+	}
+
+	/** Clear the post-purge write lock when recreating the same address. */
+	async reviveMailbox(): Promise<{ status: string }> {
+		await this.ctx.storage.delete(MAILBOX_DELETED_KEY);
+		return { status: "revived" };
+	}
+
+	/** True when the mailbox has not been purged (safe for inbound preflight). */
+	async isWritable(): Promise<boolean> {
+		return !(await this.#isMailboxDeleted());
 	}
 
 	constructor(state: DurableObjectState, env: Env) {
@@ -955,6 +980,7 @@ export class MailboxDO extends DurableObject<Env> {
 			thread_id: string | null;
 		},
 	) {
+		await this.#assertMailboxWritable();
 		const existing = this.db
 			.select({
 				id: schema.emails.id,
@@ -1167,11 +1193,13 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
-	 * Wipe mailbox SQLite + all inventoried R2 email/attachment blobs.
+	 * Wipe mailbox SQLite + all inventoried R2 email/attachment blobs, then
+	 * remove `mailboxes/{id}.json` so inbound/API stop treating it as live.
 	 * Returns conversation ids so the HTTP layer can purge EmailAgent DOs.
-	 * Does not delete `mailboxes/{id}.json` — caller deletes metadata last.
 	 */
-	async purgeMailbox(): Promise<{ conversationIds: string[] }> {
+	async purgeMailbox(
+		mailboxId: string,
+	): Promise<{ conversationIds: string[] }> {
 		const emailRows = this.db
 			.select({ id: schema.emails.id })
 			.from(schema.emails)
@@ -1200,19 +1228,8 @@ export class MailboxDO extends DurableObject<Env> {
 		);
 		await deleteR2Keys(this.env.BUCKET, keys);
 
-		try {
-			await this.ctx.storage.deleteAlarm();
-		} catch (e) {
-			console.error("purgeMailbox deleteAlarm failed:", (e as Error).message);
-		}
-
-		// Clear FTS outside the data wipe (virtual table; keep d1_migrations / schema).
-		try {
-			this.ctx.storage.sql.exec(`DELETE FROM emails_fts`);
-		} catch (e) {
-			console.error("purgeMailbox emails_fts wipe failed:", (e as Error).message);
-		}
-
+		// Wipe tables first; only then clear FTS / alarm so a failed txn
+		// leaves searchable mail + backfill alarm intact.
 		this.ctx.storage.transactionSync(() => {
 			const sql = this.ctx.storage.sql;
 			sql.exec(`DELETE FROM attachments`);
@@ -1232,6 +1249,22 @@ export class MailboxDO extends DurableObject<Env> {
 				);
 			}
 		});
+
+		try {
+			this.ctx.storage.sql.exec(`DELETE FROM emails_fts`);
+		} catch (e) {
+			console.error("purgeMailbox emails_fts wipe failed:", (e as Error).message);
+		}
+
+		try {
+			await this.ctx.storage.deleteAlarm();
+		} catch (e) {
+			console.error("purgeMailbox deleteAlarm failed:", (e as Error).message);
+		}
+
+		// Block createEmail/updateDraft until reviveMailbox on recreate.
+		await this.ctx.storage.put(MAILBOX_DELETED_KEY, "1");
+		await this.env.BUCKET.delete(mailboxMetadataKey(mailboxId));
 
 		return { conversationIds };
 	}
@@ -1776,6 +1809,7 @@ export class MailboxDO extends DurableObject<Env> {
 		email: EmailData,
 		attachments: AttachmentData[],
 	) {
+		await this.#assertMailboxWritable();
 		// Resolve folder name or ID to the actual folder ID.
 		const folderRow = this.db
 			.select({ id: schema.folders.id })

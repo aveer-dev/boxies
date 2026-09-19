@@ -78,7 +78,7 @@ assert.ok(bucket.store.has(emailRawKey(emailB)));
 assert.ok(bucket.store.has(attA));
 assert.ok(bucket.store.has(metaKey));
 
-// Simulate purgeMailbox inventory delete (metadata kept until after purge).
+// Simulate purgeMailbox: inventory R2 delete, then metadata delete (closes HEAD).
 const keys = collectMailboxPurgeR2Keys(
 	[emailA, emailB],
 	[
@@ -88,6 +88,7 @@ const keys = collectMailboxPurgeR2Keys(
 	emailContentKeys,
 );
 await deleteR2Keys(bucket, keys);
+await bucket.delete(metaKey);
 
 assert.equal(bucket.store.has(emailBodyKey(emailA)), false);
 assert.equal(bucket.store.has(emailRawKey(emailA)), false);
@@ -95,10 +96,6 @@ assert.equal(bucket.store.has(emailBodyKey(emailB)), false);
 assert.equal(bucket.store.has(emailRawKey(emailB)), false);
 assert.equal(bucket.store.has(attA), false);
 assert.equal(bucket.store.has(attB), false);
-// Metadata survives until the HTTP handler deletes it last.
-assert.equal(bucket.store.has(metaKey), true);
-
-await bucket.delete(metaKey);
 assert.equal(bucket.store.has(metaKey), false);
 
 // deleteEmail-style path: body + attachments for one message
