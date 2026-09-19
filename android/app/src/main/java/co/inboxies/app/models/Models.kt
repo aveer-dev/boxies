@@ -35,6 +35,20 @@ data class MailboxSettings(
     val forwarding: ForwardingSettings? = null,
     val signature: SignatureSettings? = null,
     val autoReply: AutoReplySettings? = null,
+    val filters: List<InboxFilterRule>? = null,
+)
+
+@Serializable
+data class InboxFilterRule(
+    val id: String,
+    val enabled: Boolean? = true,
+    val name: String? = null,
+    val from: String? = null,
+    val list: String? = null,
+    val subject: String? = null,
+    val folderId: String? = null,
+    val skipAutoDraft: Boolean? = null,
+    val forwardTo: String? = null,
 )
 
 @Serializable

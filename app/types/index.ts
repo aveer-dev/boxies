@@ -8,12 +8,25 @@ export interface SignatureSettings {
 	html?: string;
 }
 
+export interface InboxFilterRule {
+	id: string;
+	enabled: boolean;
+	name?: string;
+	from?: string;
+	list?: string;
+	subject?: string;
+	folderId?: string;
+	skipAutoDraft?: boolean;
+	forwardTo?: string;
+}
+
 export interface MailboxSettings {
 	fromName?: string;
 	forwarding?: { enabled: boolean; email: string };
 	signature?: SignatureSettings;
 	autoReply?: { enabled: boolean; subject: string; message: string };
 	agentSystemPrompt?: string;
+	filters?: InboxFilterRule[];
 }
 
 export interface Mailbox {
