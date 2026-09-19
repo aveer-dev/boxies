@@ -343,5 +343,9 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		name: "20_email_auth",
+		sql: txn(`ALTER TABLE emails ADD COLUMN auth TEXT;`),
+	},
 ];
 

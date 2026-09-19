@@ -123,6 +123,33 @@ assert.equal(matchSubjectCondition("invoice", "Hello there"), false);
 }
 
 {
+	const rules = parseInboxFilters([
+		{ id: "acme", from: "@acme.com", folderId: "archive" },
+	]);
+	assert.equal(
+		applyInboxFilters(rules, {
+			sender: "boss@acme.com",
+			subject: "Hello",
+			headers: [],
+			auth: {
+				spoofed: true,
+				source: "authentication-results",
+				aligned: false,
+				headerFrom: "boss@acme.com",
+				envelopeFrom: "x",
+			},
+		}),
+		null,
+	);
+	const hit = applyInboxFilters(rules, {
+		sender: "boss@acme.com",
+		subject: "Hello",
+		headers: [],
+	});
+	assert.equal(hit?.folderId, "archive");
+}
+
+{
 	const parsed = parseInboxFilters({
 		filters: [{ id: "x", from: "a@b.com" }],
 	});
@@ -195,6 +222,27 @@ assert.equal(matchSubjectCondition("invoice", "Hello there"), false);
 	assert.deepEqual(merged.filters, [
 		{ id: "new", from: "c@d.com", skipAutoDraft: true },
 	]);
+}
+
+{
+	const rules = parseInboxFilters([
+		{ id: "acme", from: "@acme.com", folderId: "archive" },
+	]);
+	assert.equal(
+		applyInboxFilters(rules, {
+			sender: "boss@acme.com",
+			subject: "Hello",
+			headers: [],
+			auth: { spoofed: true, source: "authentication-results", aligned: false, headerFrom: "boss@acme.com", envelopeFrom: "x" },
+		}),
+		null,
+	);
+	const hit = applyInboxFilters(rules, {
+		sender: "boss@acme.com",
+		subject: "Hello",
+		headers: [],
+	});
+	assert.equal(hit?.folderId, "archive");
 }
 
 console.log("inbox-filters tests passed");

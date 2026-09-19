@@ -33,16 +33,18 @@ function inboundFilterPipeline(options) {
 		subject,
 		messageHeaders,
 		canBeForwarded = true,
+		auth = null,
 	} = options;
 
 	const filterHit = applyInboxFilters(parseInboxFilters(rawSettings), {
 		sender,
 		subject,
 		headers: messageHeaders,
+		auth,
 	});
 	const targetFolder = filterHit?.folderId || classification.folderId;
 	const autoDraft =
-		shouldAutoDraft(classification) && !filterHit?.skipAutoDraft;
+		shouldAutoDraft(classification, auth) && !filterHit?.skipAutoDraft;
 
 	const override = filterHit?.forwardTo?.trim() || "";
 	const useOverride = Boolean(override);
@@ -293,6 +295,39 @@ function inboundFilterPipeline(options) {
 		mailbox,
 	);
 	assert.equal(err, "Filter forward address cannot be this mailbox");
+}
+
+// Spoofed From does not match from-filters (no archive / forward)
+{
+	const spoofed = {
+		spoofed: true,
+		source: "authentication-results",
+		aligned: false,
+		headerFrom: "boss@acme.com",
+		envelopeFrom: "bad@evil.example",
+	};
+	const result = inboundFilterPipeline({
+		classification: ham,
+		rawSettings: {
+			filters: [
+				{
+					id: "boss",
+					enabled: true,
+					from: "@acme.com",
+					folderId: "archive",
+					forwardTo: "backup@example.com",
+				},
+			],
+		},
+		sender: "boss@acme.com",
+		subject: "Hello",
+		messageHeaders: headers(["From", "Boss <boss@acme.com>"]),
+		auth: spoofed,
+	});
+	assert.equal(result.filterHit, null);
+	assert.equal(result.targetFolder, "inbox");
+	assert.equal(result.autoDraft, false);
+	assert.equal(result.forwardDest, null);
 }
 
 // shouldAutoDraft export from classify is what receiveEmail uses

@@ -14,6 +14,19 @@ import { z } from "zod";
 
 // ── TypeScript Interfaces ──────────────────────────────────────────
 
+export interface EmailAuthSnapshot {
+	spf?: string;
+	dkim?: string;
+	dmarc?: string;
+	dkimDomain?: string;
+	spfMailfrom?: string;
+	headerFrom?: string;
+	envelopeFrom?: string;
+	aligned?: boolean | null;
+	spoofed?: boolean;
+	source?: "authentication-results" | "arc-authentication-results" | "none";
+}
+
 export interface EmailMetadata {
 	id: string;
 	subject: string;
@@ -33,6 +46,7 @@ export interface EmailMetadata {
 	provider_message_id?: string | null;
 	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
 	delivery_error?: string | null;
+	auth?: EmailAuthSnapshot | null;
 }
 
 export interface EmailFull extends EmailMetadata {

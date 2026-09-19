@@ -86,6 +86,11 @@ import {
 	inboxFiltersError,
 	parseInboxFilters,
 } from "./lib/inbox-filters";
+import {
+	mergeTrustedAuthHeaders,
+	parseAuthSignals,
+	serializeEmailAuth,
+} from "./lib/email-auth";
 
 type AppContext = Context<MailboxContext>;
 
@@ -1116,18 +1121,29 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		threadId = messageId;
 	}
 
-	const fromHeaders = JSON.stringify(parsedEmail.headers);
+	const auth = parseAuthSignals({
+		mimeHeaders: parsedEmail.headers,
+		envelopeHeaders: message.headers,
+		headerFrom: parsedEmail.from?.address || fromAddress,
+		envelopeFrom: message.from,
+	});
+	const storedHeaders = mergeTrustedAuthHeaders(
+		parsedEmail.headers,
+		message.headers,
+	);
+	const fromHeaders = JSON.stringify(storedHeaders);
 	const senderName =
 		normalizeDisplayName(parsedEmail.from?.name) ??
 		senderNameFromRawHeaders(fromHeaders);
 
 	const classification = await classifyInboundEmail(
 		{
-			headers: parsedEmail.headers,
+			headers: storedHeaders,
 			subject: parsedEmail.subject,
 			sender: fromAddress,
 			bodyText: parsedEmail.text,
 			bodyHtml: parsedEmail.html,
+			auth,
 		},
 		env.AI as ClassifyAi,
 	);
@@ -1151,6 +1167,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		search_text: computeSearchText(bodyText, { plainText: parsedEmail.text }),
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
+		auth: serializeEmailAuth(auth),
 	};
 
 	const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -1158,7 +1175,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const filterHit = applyInboxFilters(parseInboxFilters(rawMailboxSettings), {
 		sender: fromAddress,
 		subject: parsedEmail.subject || "",
-		headers: parsedEmail.headers,
+		headers: storedHeaders,
+		auth,
 	});
 	if (filterHit) {
 		console.log(
@@ -1216,7 +1234,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	}
 
 	// Auto-draft personal ham only. Spam and bulk skip the agent entirely.
-	if (shouldAutoDraft(classification) && !filterHit?.skipAutoDraft) {
+	if (shouldAutoDraft(classification, auth) && !filterHit?.skipAutoDraft) {
 		ctx.waitUntil(
 			(async () => {
 				await stub.ensureAutoAgentConversation();
