@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -272,7 +273,8 @@ private fun DomainAdminCreateDialog(
     var inviteName by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    val domain = "inboxies.email"
+    val app = LocalAppModel.current
+    val domain by app.mailDomain.collectAsState()
 
     AlertDialog(
         onDismissRequest = onDismiss,

@@ -43,6 +43,7 @@ import {
 	canonicalMailboxId,
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
+import { resolveMailDomain } from "../lib/mail-domain";
 import { listMailboxes, getMailboxStub } from "../lib/email-helpers";
 import {
 	clearPasswordSessionCookieHeader,
@@ -141,12 +142,7 @@ function appBaseUrl(c: C): string {
 
 function inviteFromAddress(c: C): string {
 	if (c.env.INVITE_FROM_EMAIL?.trim()) return c.env.INVITE_FROM_EMAIL.trim();
-	const domains = (c.env.DOMAINS || "")
-		.split(",")
-		.map((d) => d.trim())
-		.filter(Boolean);
-	const domain = domains[0] || "inboxies.email";
-	return `noreply@${domain}`;
+	return `noreply@${resolveMailDomain(c.env)}`;
 }
 
 async function trySendInviteEmail(

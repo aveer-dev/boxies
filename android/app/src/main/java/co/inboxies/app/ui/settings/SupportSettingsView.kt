@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.LocalAppModel
+import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.theme.HomeChromeMetrics
@@ -35,6 +36,8 @@ import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 
 @Composable
 fun SupportSettingsView(
@@ -45,6 +48,7 @@ fun SupportSettingsView(
     val colors = inboxiesColors()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val mailDomain by app.mailDomain.collectAsState()
     val versionLabel = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
 
     fun openUrl(url: String) {
@@ -69,7 +73,7 @@ fun SupportSettingsView(
         scope.launch {
             app.startCompose(
                 mode = ComposeMode.New,
-                initialTo = listOf(MailAddress(name = name, email = "support@inboxies.email")),
+                initialTo = listOf(MailAddress(name = name, email = "support@$mailDomain")),
             )
         }
     }
@@ -106,7 +110,7 @@ fun SupportSettingsView(
             SettingsActionRow(
                 title = "Help Center",
                 icon = Icons.AutoMirrored.Outlined.MenuBook,
-                onClick = { openUrl("https://inboxies.email/help") },
+                onClick = { openUrl("${AppConfig.apiBaseURL.trimEnd('/')}/help") },
             )
             SettingsActionRow(
                 title = "Contact Support",

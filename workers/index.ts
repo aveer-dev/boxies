@@ -73,6 +73,7 @@ import {
 	mailboxMetadataKey,
 	routeInboundEnvelope,
 } from "./lib/mailbox-routing";
+import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
 	shouldAutoDraft,
@@ -205,21 +206,23 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 // -- Config ---------------------------------------------------------
 
 app.get("/api/v1/config", (c) => {
-	const domainsRaw = c.env.DOMAINS || "";
-	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
+	const { mailDomain, domains } = mailDomainConfig(c.env);
 	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
-	return c.json({ domains, emailAddresses });
+	return c.json({ mailDomain, domains, emailAddresses });
 });
 
 app.get("/api/v1/me", async (c) => {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
 	if (!principal) return c.json({ error: "Unauthorized" }, 401);
 	const admin = await isDomainAdmin(c.env, principal);
+	const { mailDomain, domains } = mailDomainConfig(c.env);
 	return c.json({
 		email: principal.email ?? null,
 		sub: principal.sub ?? null,
 		keys: principalKeys(principal),
 		isAdmin: admin,
+		mailDomain,
+		domains,
 	});
 });
 

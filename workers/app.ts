@@ -61,6 +61,8 @@ function isPublicAuthPath(pathname: string): boolean {
 		return true;
 	}
 	if (pathname.startsWith("/api/v1/invites/")) return true;
+	// Public deployment config (mail domain) for native create-address UI.
+	if (pathname === "/api/v1/config") return true;
 	// Invite accept + password login SPA shells (Access bypass required at edge too).
 	if (pathname === "/login" || pathname.startsWith("/login/")) return true;
 	if (pathname === "/invite" || pathname.startsWith("/invite/")) return true;

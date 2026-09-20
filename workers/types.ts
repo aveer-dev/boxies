@@ -29,8 +29,14 @@ export interface Env extends Cloudflare.Env {
 	 * When unset: `admin_only` if DOMAIN_ADMINS is non-empty, else `open`.
 	 */
 	MAILBOX_CREATE_POLICY?: string;
-	/** From address for invite emails (defaults to noreply@ first DOMAINS entry). */
+	/** From address for invite emails (defaults to noreply@`MAIL_DOMAIN` / first `DOMAINS` / fallback). */
 	INVITE_FROM_EMAIL?: string;
 	/** Public site origin for invite links (defaults to request origin). */
 	APP_BASE_URL?: string;
+	/**
+	 * Primary mailbox domain suffix (e.g. `mail.example.com`).
+	 * Wins over the first `DOMAINS` entry for create-address UI and invite From.
+	 * When unset, falls back to first `DOMAINS` entry, then `inboxies.email`.
+	 */
+	MAIL_DOMAIN?: string;
 }

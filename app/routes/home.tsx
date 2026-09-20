@@ -54,6 +54,7 @@ export default function HomeRoute() {
 	});
 
 	const domains = configData?.domains ?? [];
+	const mailDomain = configData?.mailDomain ?? domains[0] ?? "";
 	const emailAddresses = configData?.emailAddresses ?? [];
 
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -71,10 +72,11 @@ export default function HomeRoute() {
 
 	// Set default domain when config loads
 	useEffect(() => {
-		if (domains.length > 0 && !selectedDomain) {
-			setSelectedDomain(domains[0]);
+		if (!selectedDomain) {
+			const preferred = mailDomain || domains[0];
+			if (preferred) setSelectedDomain(preferred);
 		}
-	}, [domains, selectedDomain]);
+	}, [domains, mailDomain, selectedDomain]);
 
 	// Auto-create mailboxes from config (run once when both data sources are ready)
 	const autoCreateDone = useRef(false);
