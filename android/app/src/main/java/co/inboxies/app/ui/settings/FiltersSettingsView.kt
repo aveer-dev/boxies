@@ -479,56 +479,60 @@ private fun FilterActionsSheet(
             )
             Column(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-                    .background(colors.background)
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                    .align(Alignment.Center)
+                    .padding(horizontal = 32.dp)
+                    .fillMaxWidth(0.88f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(colors.surface)
+                    .border(1.dp, colors.line, RoundedCornerShape(16.dp))
+                    .padding(20.dp),
             ) {
                 Text(
                     title,
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
+                    fontSize = 16.sp,
                     color = colors.ink,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                )
+                Text(
+                    "Remove this filter from the list. Save to apply the change.",
+                    fontFamily = InterFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.muted,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
                 )
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onDelete)
-                        .padding(horizontal = 14.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Icon(
-                        Icons.Outlined.Delete,
-                        contentDescription = null,
-                        tint = colors.deepDarkRed,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Text(
-                        "Delete",
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp,
-                        color = colors.deepDarkRed,
-                    )
-                }
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp),
-                ) {
-                    Text(
-                        "Cancel",
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.Medium,
-                        color = colors.muted,
-                    )
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.pillFill),
+                    ) {
+                        Text(
+                            "Cancel",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.ink,
+                        )
+                    }
+                    TextButton(
+                        onClick = onDelete,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.deepDarkRed),
+                    ) {
+                        Text(
+                            "Delete",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White,
+                        )
+                    }
                 }
             }
         }
