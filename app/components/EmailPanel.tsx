@@ -152,8 +152,9 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	};
 
 	const hasThread = allMessages.length > 1;
-	const isScreenerFolder =
-		folder === Folders.SCREENER || email.folder_id === Folders.SCREENER;
+	// Gate on the message folder only (match iOS/Android) so a Screener
+	// sidebar selection cannot triage a non-screener thread message.
+	const isScreenerFolder = email.folder_id === Folders.SCREENER;
 
 	return (
 		<div className="flex flex-col h-full">
