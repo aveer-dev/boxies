@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -478,60 +479,81 @@ private fun FilterActionsSheet(
             )
             Column(
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 32.dp)
-                    .fillMaxWidth(0.88f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(colors.surface)
-                    .border(1.dp, colors.line, RoundedCornerShape(16.dp))
-                    .padding(20.dp),
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .background(colors.background)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = {},
+                    )
+                    .navigationBarsPadding(),
             ) {
-                Text(
-                    title,
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
-                    color = colors.ink,
-                )
-                Text(
-                    "Remove this filter from the list. Save to apply the change.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 13.sp,
-                    color = colors.muted,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                Box(
+                    modifier = Modifier
+                        .padding(top = 10.dp, bottom = 6.dp)
+                        .align(Alignment.CenterHorizontally)
+                        .size(width = 36.dp, height = 5.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(colors.muted.copy(alpha = 0.35f)),
                 )
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TextButton(
-                        onClick = onDismiss,
+                    Text(
+                        title,
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = colors.ink,
                         modifier = Modifier
                             .weight(1f)
+                            .padding(horizontal = 12.dp),
+                        maxLines = 1,
+                    )
+                    SettingsChromeTextButton(label = "Done", onClick = onDismiss)
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 20.dp),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(colors.pillFill),
+                            .background(colors.surface)
+                            .clickable(onClick = onDelete)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
+                        Icon(
+                            Icons.Outlined.Delete,
+                            contentDescription = null,
+                            tint = colors.deepDarkRed,
+                            modifier = Modifier.size(20.dp),
+                        )
                         Text(
-                            "Cancel",
+                            "Delete Filter",
                             fontFamily = InterFontFamily,
                             fontWeight = FontWeight.Medium,
-                            color = colors.ink,
+                            fontSize = 16.sp,
+                            color = colors.deepDarkRed,
                         )
                     }
-                    TextButton(
-                        onClick = onDelete,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(colors.deepDarkRed),
-                    ) {
-                        Text(
-                            "Delete",
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                        )
-                    }
+                    Text(
+                        "Remove this filter from the list. Save to apply the change.",
+                        fontFamily = InterFontFamily,
+                        fontSize = 12.sp,
+                        color = colors.muted,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp),
+                    )
                 }
             }
         }

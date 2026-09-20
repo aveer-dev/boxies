@@ -7,7 +7,7 @@ struct FiltersSettingsView: View {
 
     @State private var rules: [InboxFilterRule] = []
     @State private var editorDraft: FilterEditorDraft?
-    @State private var actionRuleId: String?
+    @State private var actionItem: FilterActionItem?
     @State private var isSelectMode = false
     @State private var selectedIds: Set<String> = []
     @State private var suppressTapAfterLongPress = false
@@ -16,11 +16,6 @@ struct FiltersSettingsView: View {
 
     private var mailboxEmail: String {
         app.selectedMailbox?.email ?? ""
-    }
-
-    private var actionRule: InboxFilterRule? {
-        guard let actionRuleId else { return nil }
-        return rules.first(where: { $0.id == actionRuleId })
     }
 
     var body: some View {
@@ -130,35 +125,18 @@ struct FiltersSettingsView: View {
             .presentationDetents([.large])
             .applyThemeController()
         }
-        .overlay {
-            if actionRuleId != nil {
-                FilterDeleteModal(
-                    title: actionRuleTitle,
-                    onCancel: { actionRuleId = nil },
-                    onDelete: {
-                        let id = actionRuleId
-                        actionRuleId = nil
-                        if let id {
-                            rules.removeAll { $0.id == id }
-                        }
-                    }
-                )
-                .transition(.opacity)
+        .sheet(item: $actionItem) { item in
+            FilterDeleteSheet(title: item.title) {
+                rules.removeAll { $0.id == item.id }
             }
+            .applyThemeController()
         }
-        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: actionRuleId != nil)
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isSelectMode)
         .sensoryFeedback(.selection, trigger: isSelectMode)
         .onAppear {
             rules = app.selectedMailbox?.settings?.filters ?? []
         }
         .applyThemeController()
-    }
-
-    private var actionRuleTitle: String {
-        guard let rule = actionRule else { return "Filter" }
-        return rule.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            ?? "Untitled filter"
     }
 
     @ViewBuilder
@@ -197,7 +175,11 @@ struct FiltersSettingsView: View {
                 if isSelectMode {
                     toggleSelection(id)
                 } else {
-                    actionRuleId = id
+                    actionItem = FilterActionItem(
+                        id: id,
+                        title: rule.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                            ?? "Untitled filter"
+                    )
                 }
             }
             .onLongPressGesture(minimumDuration: 0.35) {
@@ -341,61 +323,51 @@ struct FiltersSettingsView: View {
     }
 }
 
-// MARK: - Delete modal
+// MARK: - Delete sheet
 
-private struct FilterDeleteModal: View {
+private struct FilterActionItem: Identifiable, Hashable {
+    let id: String
     let title: String
-    var onCancel: () -> Void
+}
+
+/// Compact native sheet — same presentation pattern as email actions.
+private struct FilterDeleteSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let title: String
     var onDelete: () -> Void
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.22)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onCancel)
-
-            VStack(alignment: .leading, spacing: 16) {
-                Text(title)
-                    .font(.inter(size: 16, weight: .semibold))
-                    .foregroundStyle(AppTheme.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text("Remove this filter from the list. Save to apply the change.")
-                    .font(.inter(size: 13))
-                    .foregroundStyle(AppTheme.muted)
-
-                HStack(spacing: 10) {
-                    Button(action: onCancel) {
-                        Text("Cancel")
-                            .font(.inter(size: 15, weight: .medium))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(AppTheme.pillFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        NavigationStack {
+            List {
+                Section {
+                    Button(role: .destructive) {
+                        onDelete()
+                        dismiss()
+                    } label: {
+                        Label("Delete Filter", systemImage: "trash")
                     }
-                    .buttonStyle(.plain)
-
-                    Button(action: onDelete) {
-                        Text("Delete")
-                            .font(.inter(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(AppTheme.deepDarkRed, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
+                } footer: {
+                    Text("Remove this filter from the list. Save to apply the change.")
+                        .font(.inter(size: 12))
                 }
             }
-            .padding(20)
-            .frame(maxWidth: 320)
-            .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(AppTheme.line, lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.12), radius: 24, y: 8)
-            .padding(.horizontal, 32)
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
         }
+        .tint(AppTheme.ink)
+        .presentationDetents([.height(240)])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(AppTheme.background)
     }
 }
 
