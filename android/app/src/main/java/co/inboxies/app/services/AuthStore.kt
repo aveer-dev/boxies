@@ -101,6 +101,23 @@ class AuthStore(context: Context) {
         persist(token, email)
     }
 
+    /**
+     * In-memory session for DEBUG emulator previews. Does not write EncryptedSharedPreferences,
+     * so a preview launch cannot clobber a real signed-in session on disk.
+     */
+    fun applyEphemeralSession(token: String, email: String?) {
+        _token.value = token
+        _userEmail.value = email
+        ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
+    /** Re-read session from disk — undoes a DEBUG [applyEphemeralSession] after a preview launch. */
+    fun resyncFromStorage() {
+        _token.value = prefs.getString(TOKEN_KEY, null)
+        _userEmail.value = prefs.getString(EMAIL_KEY, null)
+        ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
     fun signOut() {
         _token.value = null
         _userEmail.value = null

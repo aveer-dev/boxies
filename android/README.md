@@ -98,3 +98,22 @@ export ANDROID_HOME=/path/to/Android/Sdk
 ```
 
 Debug APK: `app/build/outputs/apk/debug/app-debug.apk`
+
+## DEBUG preview harness (emulator)
+
+Offline UI surfaces for review — same role as iOS Simulator launch args (`-previewDomainAdmin`, …). **DEBUG builds only.**
+
+```bash
+cd android
+./gradlew :app:assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
+./scripts/run-debug-preview.sh domainAdmin      # Domain Admin console
+./scripts/run-debug-preview.sh passwordSignIn   # Password form on Sign In
+./scripts/run-debug-preview.sh inviteAccept     # Accept-invite form
+./scripts/run-debug-preview.sh mailbox          # Inbox New/Seen fixtures
+./scripts/run-debug-preview.sh screener         # Screener + detail
+./scripts/run-debug-preview.sh replyLater       # Reply Later pile
+# Or: INSTALL=1 ./scripts/run-debug-preview.sh mailbox
+```
+
+Raw adb: `adb shell am start -n co.inboxies.app/.MainActivity --ez previewDomainAdmin true`  
+(or `-e preview mailbox`). See `.cursor/skills/inboxies-android-ui` for the full mode table.

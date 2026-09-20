@@ -75,3 +75,7 @@ Cite `file:line`. Pull exact springs from STANDARDS.md, never approximate.
 **Block** if: feel-breaking easing, high-frequency animation, scale(0), ease-in on UI, or an easy GPU fix left on the table.
 
 **Approve** if: no feel-breaking issues, nothing obvious to delete, durations/springs in bounds, interruptibility where needed, reduced motion respected.
+
+## Platform evidence
+
+When the diff touches both clients (or Android alone), do **not** approve on iOS Simulator screenshots alone. For Android, use the DEBUG preview harness (`android/scripts/run-debug-preview.sh` / intent extras documented in `inboxies-android-ui`) so motion is felt on an emulator/device the same way iOS launch args are used.
