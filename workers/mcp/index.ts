@@ -6,7 +6,6 @@ import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-	toolListMailboxes,
 	toolListEmails,
 	toolGetEmail,
 	toolGetThread,
@@ -22,7 +21,12 @@ import {
 } from "../lib/tools";
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
-import { canonicalMailboxId, mailboxMetadataKey } from "../lib/mailbox-routing";
+import { listMailboxes } from "../lib/email-helpers";
+import {
+	authorizeMailbox,
+	filterMailboxesForPrincipal,
+	type RequestPrincipal,
+} from "../lib/mailbox-acl";
 
 /** Wrap a plain result object into MCP content format. */
 function mcpText(result: unknown) {
@@ -62,7 +66,7 @@ function mcpResult(result: Record<string, unknown>) {
  * `/mcp` endpoint and can list mailboxes, read/search emails,
  * draft replies, send messages, and manage folders.
  */
-export class EmailMCP extends McpAgent<Env> {
+export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrincipal }> {
 	server = new McpServer({
 		name: "agentic-inbox",
 		version: "1.0.0",
@@ -72,17 +76,20 @@ export class EmailMCP extends McpAgent<Env> {
 		const env = this.env;
 
 		/**
-		 * Verify a mailbox exists in R2 before operating on it.
-		 * Returns an MCP error response if the mailbox is not found, or null if valid.
+		 * Verify the caller can access this mailbox, claiming it when unclaimed
+		 * and the principal email matches. Returns an MCP error or null if ok.
 		 */
 		const verifyMailbox = async (mailboxId: string) => {
-			const canonical = canonicalMailboxId(mailboxId);
-			if (!canonical) {
-				return mcpError(`Invalid mailbox "${mailboxId}".`);
-			}
-			const obj = await env.BUCKET.head(mailboxMetadataKey(canonical));
-			if (!obj) {
-				return mcpError(`Mailbox "${mailboxId}" not found. Use list_mailboxes to see available mailboxes.`);
+			const principal = this.props?.principal;
+			const authz = await authorizeMailbox(env.BUCKET, principal, mailboxId);
+			if (!authz.ok) {
+				if (authz.status === 404) {
+					return mcpError(`Mailbox "${mailboxId}" not found. Use list_mailboxes to see available mailboxes.`);
+				}
+				if (authz.status === 400) {
+					return mcpError(`Invalid mailbox "${mailboxId}".`);
+				}
+				return mcpError(`Not allowed to access mailbox "${mailboxId}".`);
 			}
 			return null;
 		};
@@ -90,10 +97,19 @@ export class EmailMCP extends McpAgent<Env> {
 		// ── list_mailboxes ─────────────────────────────────────────
 		this.server.tool(
 			"list_mailboxes",
-			"List all available mailboxes",
+			"List mailboxes the caller can access",
 			{},
 			async () => {
-				const result = await toolListMailboxes(env);
+				const principal = this.props?.principal;
+				if (!principal) {
+					return mcpError("Not authenticated");
+				}
+				const all = await listMailboxes(env.BUCKET);
+				const result = await filterMailboxesForPrincipal(
+					env.BUCKET,
+					all,
+					principal,
+				);
 				return mcpText(result);
 			},
 		);

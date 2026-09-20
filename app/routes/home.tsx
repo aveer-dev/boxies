@@ -129,13 +129,7 @@ export default function HomeRoute() {
 	};
 
 	const isConfigured = emailAddresses.length > 0;
-	const accounts = isConfigured
-		? emailAddresses.map((addr) => ({
-				id: addr,
-				email: addr,
-				name: addr.split("@")[0] || addr,
-			}))
-		: mailboxes;
+	const accounts = mailboxes;
 
 	const isLoading = !configData;
 
@@ -233,7 +227,7 @@ export default function HomeRoute() {
 							</h3>
 							<p className="text-sm text-kumo-subtle max-w-sm mb-5">
 								{isConfigured
-									? "Your email routing is configured but no mailboxes have been created yet. They will appear here automatically."
+									? "No mailboxes you can access yet. Configured addresses are created on first visit if they do not already exist. An owner must share existing mailboxes with your Access email."
 									: "Create a mailbox to start sending and receiving emails with your domain."}
 							</p>
 							{!isConfigured && (

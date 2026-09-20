@@ -134,6 +134,7 @@ const NESTED_SETTING_KEYS = [
 	"autoReply",
 	"signature",
 	"filters",
+	"acl",
 ] as const;
 
 /**

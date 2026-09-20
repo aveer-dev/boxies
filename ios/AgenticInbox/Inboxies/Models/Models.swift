@@ -5,6 +5,7 @@ struct Mailbox: Identifiable, Codable, Hashable {
     let email: String
     let name: String
     var settings: MailboxSettings?
+    var canManage: Bool?
 }
 
 struct MailboxSettings: Codable, Hashable {
@@ -14,6 +15,18 @@ struct MailboxSettings: Codable, Hashable {
     var signature: SignatureSettings?
     var autoReply: AutoReplySettings?
     var filters: [InboxFilterRule]?
+    var acl: MailboxAcl?
+}
+
+struct MailboxAcl: Codable, Hashable {
+    var owners: [String]?
+    var members: [String]?
+}
+
+struct MeResponse: Codable {
+    var email: String?
+    var sub: String?
+    var keys: [String]
 }
 
 struct InboxFilterRule: Codable, Hashable, Identifiable {

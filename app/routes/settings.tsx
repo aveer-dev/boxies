@@ -10,6 +10,7 @@ import {
 	PaperPlaneTiltIcon,
 	ArrowBendUpLeftIcon,
 	FunnelSimpleIcon,
+	UsersThreeIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
@@ -143,6 +144,19 @@ export default function SettingsRoute() {
 								<div className="text-sm text-kumo-default">Filters</div>
 								<p className="text-xs text-kumo-subtle">
 									File, skip auto-draft, or forward matching mail
+								</p>
+							</div>
+							<CaretRightIcon size={16} className="text-kumo-subtle shrink-0" />
+						</Link>
+						<Link
+							to={`/mailbox/${mailboxId}/settings/sharing`}
+							className="flex items-center gap-3 px-1 py-3 hover:bg-kumo-tint rounded-md"
+						>
+							<UsersThreeIcon size={18} className="text-kumo-subtle shrink-0" />
+							<div className="min-w-0 flex-1">
+								<div className="text-sm text-kumo-default">Sharing</div>
+								<p className="text-xs text-kumo-subtle">
+									Owners and members who can access this mailbox
 								</p>
 							</div>
 							<CaretRightIcon size={16} className="text-kumo-subtle shrink-0" />

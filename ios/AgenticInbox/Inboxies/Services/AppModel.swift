@@ -167,8 +167,11 @@ final class AppModel {
         }
         errorMessage = nil
         do {
-            mailboxes = try await APIClient.shared.listMailboxes()
+			mailboxes = try await APIClient.shared.listMailboxes()
             db.upsertMailboxes(mailboxes)
+            if let selected = selectedMailboxId, !mailboxes.contains(where: { $0.id == selected }) {
+                selectedMailboxId = mailboxes.first?.id
+            }
             if selectedMailboxId == nil {
                 selectedMailboxId = mailboxes.first?.id
             }
@@ -225,8 +228,8 @@ final class AppModel {
         isSyncing = true
         defer { isSyncing = false }
         do {
-            if let detailed = try? await APIClient.shared.getMailbox(mailboxId: id),
-               let idx = mailboxes.firstIndex(where: { $0.id == detailed.id }) {
+            let detailed = try await APIClient.shared.getMailbox(mailboxId: id)
+            if let idx = mailboxes.firstIndex(where: { $0.id == detailed.id }) {
                 mailboxes[idx] = detailed
                 db.upsertMailboxes([detailed])
             }
@@ -242,9 +245,36 @@ final class AppModel {
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: inboxDigest == nil)
             }
+        } catch let error as APIError {
+            if case .http(let code, _) = error, code == 403 || code == 404 {
+                await dropInaccessibleMailbox(id)
+                return
+            }
+            errorMessage = error.localizedDescription
+            isMailboxLoading = false
+            isLoading = false
         } catch {
             errorMessage = error.localizedDescription
             isMailboxLoading = false
+            isLoading = false
+        }
+    }
+
+    private func dropInaccessibleMailbox(_ id: String) async {
+        db.deleteMailbox(id: id)
+        mailboxes.removeAll(where: { $0.id == id })
+        if selectedMailboxId == id {
+            selectedMailboxId = mailboxes.first?.id
+        }
+        isMailboxLoading = false
+        if let next = selectedMailboxId, next != id {
+            await loadMailbox(next)
+        } else {
+            emails = []
+            folders = []
+            inboxDigest = nil
+            conversations = []
+            activeConversationId = nil
             isLoading = false
         }
     }

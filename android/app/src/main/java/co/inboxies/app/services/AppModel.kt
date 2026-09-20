@@ -220,6 +220,10 @@ class AppModel {
             }
             _mailboxes.value = merged
             db.upsertMailboxes(merged)
+            val selected = _selectedMailboxId.value
+            if (selected != null && list.none { it.id == selected }) {
+                _selectedMailboxId.value = list.firstOrNull()?.id
+            }
             if (_selectedMailboxId.value == null) {
                 _selectedMailboxId.value = list.firstOrNull()?.id
             }
@@ -270,11 +274,18 @@ class AppModel {
 
         _isSyncing.value = true
         try {
-            runCatching { ApiClient.shared.getMailbox(id) }.getOrNull()?.let { detailed ->
+            try {
+                val detailed = ApiClient.shared.getMailbox(id)
                 _mailboxes.update { list ->
                     list.map { if (it.id == detailed.id) detailed else it }
                 }
                 db.upsertMailboxes(listOf(detailed))
+            } catch (e: ApiException.Http) {
+                if (e.code == 403 || e.code == 404) {
+                    dropInaccessibleMailbox(id)
+                    return
+                }
+                throw e
             }
             _isMailboxLoading.value = false
             _folders.value = MailboxSyncService.syncMailbox(id)
@@ -292,6 +303,26 @@ class AppModel {
             _isLoading.value = false
         } finally {
             _isSyncing.value = false
+        }
+    }
+
+    private suspend fun dropInaccessibleMailbox(id: String) {
+        db.deleteMailbox(id)
+        _mailboxes.update { it.filterNot { m -> m.id == id } }
+        if (_selectedMailboxId.value == id) {
+            _selectedMailboxId.value = _mailboxes.value.firstOrNull()?.id
+        }
+        _isMailboxLoading.value = false
+        val next = _selectedMailboxId.value
+        if (next != null && next != id) {
+            loadMailbox(next)
+        } else {
+            _emails.value = emptyList()
+            _folders.value = emptyList()
+            _inboxDigest.value = null
+            _conversations.value = emptyList()
+            _activeConversationId.value = null
+            _isLoading.value = false
         }
     }
 

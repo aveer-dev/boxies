@@ -35,3 +35,27 @@ export function conversationIdFromAgentName(agentName: string): string | null {
 	if (idx === -1) return null;
 	return agentName.slice(idx + AGENT_NAME_SEPARATOR.length) || null;
 }
+
+/**
+ * Mailbox id from `/agents/{agentClass}/{instanceName}` where instanceName is
+ * `mailboxId` or `mailboxId::conversationId`. Decodes `%40` / `%3A%3A`.
+ */
+export function mailboxIdFromAgentPath(pathname: string): string | null {
+	const parts = pathname.split("/").filter(Boolean);
+	if (parts[0] !== "agents" || parts.length < 3) return null;
+	let instanceName = parts[2];
+	try {
+		instanceName = decodeURIComponent(instanceName);
+	} catch {
+		/* keep raw */
+	}
+	return mailboxIdFromAgentName(instanceName) || null;
+}
+
+export function mailboxIdFromAgentsUrl(url: string): string | null {
+	try {
+		return mailboxIdFromAgentPath(new URL(url).pathname);
+	} catch {
+		return null;
+	}
+}

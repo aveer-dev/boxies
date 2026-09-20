@@ -86,7 +86,7 @@ npm run deploy
 - [Workers AI](https://developers.cloudflare.com/workers-ai/) enabled (for the agent)
 - [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) configured for deployed/shared environments (required in production)
 
-Any user who passes the shared Cloudflare Access policy can access all mailboxes in this app by design. This includes the MCP server at `/mcp` -- external AI tools (Claude Code, Cursor, etc.) connected via MCP can operate on any mailbox by passing a `mailboxId` parameter. There is no per-mailbox authorization; the Cloudflare Access policy is the single trust boundary.
+Any authenticated user is authorized **per mailbox**. Each mailbox stores an explicit ACL (`acl.owners` + `acl.members`) in its R2 settings blob. Owners can share access by adding another person's Access or mobile email (`email:you@example.com`). A principal may own many mailboxes. Unclaimed mailboxes (missing `acl` or empty `owners`) are claimed on first access when the caller's email matches the canonical mailbox address. If your Access email is not the mailbox address (for example personal Gmail Access into `you@inboxies.email`), you cannot auto-claim it — create the mailbox, or have an owner add your Access email. `EMAIL_ADDRESSES` remains a create allowlist only, not authorization. MCP `/mcp` and Agents `/agents/*` use the same helper.
 
 ## Architecture
 
