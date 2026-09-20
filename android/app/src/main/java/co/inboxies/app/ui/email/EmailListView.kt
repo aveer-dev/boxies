@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
@@ -98,8 +99,10 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.FolderIds
 import co.inboxies.app.services.EmailActionAvailability
 import co.inboxies.app.services.EmailSwipeLayout
+import co.inboxies.app.services.SwipeActionPreferences
 import co.inboxies.app.services.SwipeQuickAction
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
@@ -213,6 +216,7 @@ private fun EmailRows(
 ) {
     val app = LocalAppModel.current
     val swipePreferences by app.swipePreferences.collectAsState()
+    val colors = inboxiesColors()
 
     LazyColumn(
         contentPadding = PaddingValues(top = 12.dp, bottom = bottomInset),
@@ -226,7 +230,126 @@ private fun EmailRows(
                 }
             }
         }
-        items(emails, key = { it.id }) { email ->
+
+        val showNewSeen = fallbackFolderId == FolderIds.INBOX
+        if (showNewSeen) {
+            val newEmails = emails.filter { it.resolvedListSection == "new" }
+            val seenEmails = emails.filter { it.resolvedListSection == "seen" }
+
+            item(key = "section-new") {
+                ListSectionHeader(title = "New", count = newEmails.size)
+            }
+            if (newEmails.isEmpty()) {
+                item(key = "empty-new") {
+                    Text(
+                        text = "You’re caught up",
+                        color = colors.muted,
+                        fontFamily = InterFontFamily,
+                        fontSize = AppThemeDims.List.preview,
+                        modifier = Modifier.padding(horizontal = AppThemeDims.List.rowHorizontalPadding, vertical = 8.dp),
+                    )
+                }
+            } else {
+                items(newEmails, key = { "new-${it.id}" }) { email ->
+                    EmailRowItem(
+                        email = email,
+                        isSelectMode = isSelectMode,
+                        selectedEmailIds = selectedEmailIds,
+                        onToggleSelect = onToggleSelect,
+                        highlightQuery = highlightQuery,
+                        folderLabel = folderLabel,
+                        fallbackFolderId = fallbackFolderId,
+                        swipePreferences = swipePreferences,
+                        onOpen = onOpen,
+                        onMore = onMore,
+                    )
+                }
+            }
+            if (seenEmails.isNotEmpty()) {
+                item(key = "section-seen") {
+                    ListSectionHeader(title = "Seen", count = seenEmails.size)
+                }
+                items(seenEmails, key = { "seen-${it.id}" }) { email ->
+                    EmailRowItem(
+                        email = email,
+                        isSelectMode = isSelectMode,
+                        selectedEmailIds = selectedEmailIds,
+                        onToggleSelect = onToggleSelect,
+                        highlightQuery = highlightQuery,
+                        folderLabel = folderLabel,
+                        fallbackFolderId = fallbackFolderId,
+                        swipePreferences = swipePreferences,
+                        onOpen = onOpen,
+                        onMore = onMore,
+                    )
+                }
+            }
+        } else {
+            items(emails, key = { it.id }) { email ->
+                EmailRowItem(
+                    email = email,
+                    isSelectMode = isSelectMode,
+                    selectedEmailIds = selectedEmailIds,
+                    onToggleSelect = onToggleSelect,
+                    highlightQuery = highlightQuery,
+                    folderLabel = folderLabel,
+                    fallbackFolderId = fallbackFolderId,
+                    swipePreferences = swipePreferences,
+                    onOpen = onOpen,
+                    onMore = onMore,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ListSectionHeader(title: String, count: Int) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                start = AppThemeDims.List.rowHorizontalPadding,
+                end = AppThemeDims.List.rowHorizontalPadding,
+                top = 12.dp,
+                bottom = 6.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = title.uppercase(),
+            color = colors.muted,
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.List.sectionHeader,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = AppThemeDims.List.tracking,
+        )
+        Text(
+            text = "· $count",
+            color = colors.muted,
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.List.sectionHeader,
+            fontWeight = FontWeight.Normal,
+            letterSpacing = AppThemeDims.List.tracking,
+        )
+    }
+}
+
+@Composable
+private fun EmailRowItem(
+    email: Email,
+    isSelectMode: Boolean,
+    selectedEmailIds: Set<String>,
+    onToggleSelect: ((String) -> Unit)?,
+    highlightQuery: String,
+    folderLabel: String?,
+    fallbackFolderId: String?,
+    swipePreferences: SwipeActionPreferences,
+    onOpen: (Email) -> Unit,
+    onMore: (Email) -> Unit,
+) {
             val isSelected = selectedEmailIds.contains(email.id)
             val layout = remember(email.id, email.folderId, fallbackFolderId, swipePreferences) {
                 EmailSwipeLayout.resolve(email, fallbackFolderId, swipePreferences)
@@ -242,8 +365,6 @@ private fun EmailRows(
                 onToggleSelect = { onToggleSelect?.invoke(email.id) },
                 onMore = { onMore(email) },
             )
-        }
-    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -816,6 +937,14 @@ fun EmailRowView(
                             Icons.Outlined.AttachFile,
                             contentDescription = "Has attachment",
                             tint = colors.muted,
+                            modifier = Modifier.size(list.badge.value.dp),
+                        )
+                    }
+                    if (email.replyLater) {
+                        Icon(
+                            Icons.Outlined.Schedule,
+                            contentDescription = "Reply later",
+                            tint = colors.accent,
                             modifier = Modifier.size(list.badge.value.dp),
                         )
                     }

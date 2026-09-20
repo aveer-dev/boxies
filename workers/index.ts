@@ -105,6 +105,10 @@ import {
 	screenerSettingsError,
 } from "./lib/sender-triage";
 import {
+	normalizeSenderPreferenceAddress,
+	senderPreferenceUpsertError,
+} from "./lib/sender-preferences";
+import {
 	mergeTrustedAuthHeaders,
 	parseAuthSignals,
 	serializeEmailAuth,
@@ -340,20 +344,46 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const folder = c.req.query("folder");
 	const thread_id = c.req.query("thread_id");
 	const threaded = boolQuery(c, "threaded");
+	const reply_later = boolQuery(c, "reply_later");
+	const include_junk = boolQuery(c, "include_junk");
 	const page = intQuery(c, "page");
 	const limit = intQuery(c, "limit");
 	const sortColumn = c.req.query("sortColumn") as any;
 	const sortDirection = c.req.query("sortDirection") as "ASC" | "DESC" | undefined;
 	const stub = c.var.mailboxStub;
 
-	if (threaded && folder) {
+	if (threaded && folder && !reply_later) {
 		const emails = await (stub as any).getThreadedEmails({ folder, page, limit });
 		const totalCount = await (stub as any).countThreadedEmails(folder);
+		if (folder === Folders.INBOX) {
+			const sections = await (stub as any).countThreadedEmailSections(folder);
+			return c.json({
+				emails,
+				totalCount: sections.totalCount ?? totalCount,
+				newCount: sections.newCount,
+				seenCount: sections.seenCount,
+			});
+		}
 		return c.json({ emails, totalCount });
 	}
-	const emails = await stub.getEmails({ folder, thread_id, page, limit, sortColumn, sortDirection });
-	if (folder) {
-		const totalCount = await stub.countEmails({ folder, thread_id });
+
+	const emails = await stub.getEmails({
+		folder,
+		thread_id,
+		page,
+		limit,
+		sortColumn,
+		sortDirection,
+		reply_later: reply_later || undefined,
+		include_junk: include_junk || undefined,
+	});
+	if (folder || reply_later) {
+		const totalCount = await stub.countEmails({
+			folder,
+			thread_id,
+			reply_later: reply_later || undefined,
+			include_junk: include_junk || undefined,
+		});
 		return c.json({ emails, totalCount });
 	}
 	return c.json(emails);
@@ -421,6 +451,9 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 
 	// Screener-lite: people you email bypass the review queue on reply.
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
+	if (in_reply_to || thread_id) {
+		await (stub as any).clearReplyLaterForThread(resolvedThreadId);
+	}
 
 	c.executionCtx.waitUntil(
 		deliverOutboundInBackground(c.env, mailboxId, messageId, {
@@ -502,8 +535,16 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
-	const { read, starred } = (await c.req.json()) as { read?: boolean; starred?: boolean };
-	const email = await c.var.mailboxStub.updateEmail(c.req.param("id")!, { read, starred });
+	const { read, starred, reply_later } = (await c.req.json()) as {
+		read?: boolean;
+		starred?: boolean;
+		reply_later?: boolean;
+	};
+	const email = await c.var.mailboxStub.updateEmail(c.req.param("id")!, {
+		read,
+		starred,
+		reply_later,
+	});
 	return email ? c.json(email) : c.json({ error: "Email not found" }, 404);
 });
 
@@ -515,10 +556,152 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
-	const { folderId } = (await c.req.json()) as { folderId: string };
-	const success = await c.var.mailboxStub.moveEmail(c.req.param("id")!, folderId);
-	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
+	const body = (await c.req.json()) as {
+		folderId: string;
+		setSenderPreference?: boolean;
+	};
+	const { folderId, setSenderPreference } = body;
+	const emailId = c.req.param("id")!;
+	const stub = c.var.mailboxStub;
+
+	const success = await stub.moveEmail(emailId, folderId);
+	if (!success) return c.json({ error: "Folder not found" }, 400);
+
+	if (!setSenderPreference) {
+		return c.json({ status: "moved" });
+	}
+
+	const email = await stub.getEmail(emailId);
+	if (!email?.sender) {
+		return c.json({ status: "moved" });
+	}
+
+	const upsertError = senderPreferenceUpsertError({
+		address: email.sender,
+		folderId,
+	});
+	if (upsertError) {
+		// Move already succeeded; preference is optional on this path.
+		return c.json({ status: "moved", preferenceError: upsertError });
+	}
+
+	const result = await stub.upsertSenderPreference({
+		address: email.sender,
+		folderId,
+		displayName: email.sender_name ?? null,
+		source: "user",
+		refile: true,
+	});
+	const triageSender = normalizeTriageSender(email.sender);
+	if (triageSender) {
+		const triage = await (stub as any).getSenderTriage?.(triageSender);
+		if (triage?.status === "allowed") {
+			await (stub as any).upsertSenderTriage({
+				sender: triageSender,
+				status: "allowed",
+				destination_folder_id: folderId,
+				display_name: email.sender_name ?? triage.display_name ?? null,
+			});
+		}
+	}
+	return c.json({
+		status: "moved",
+		preference: result?.preference ?? null,
+		refiledCount: result?.refiledCount ?? 0,
+	});
 });
+
+// -- Sender purpose-box preferences ---------------------------------
+
+app.get("/api/v1/mailboxes/:mailboxId/sender-preferences", async (c: AppContext) => {
+	const stub = c.var.mailboxStub as {
+		listSenderPreferences: (opts: {
+			q?: string;
+			folder?: string;
+			limit?: number;
+		}) => Promise<unknown>;
+	};
+	const preferences = await stub.listSenderPreferences({
+		q: c.req.query("q") || "",
+		folder: c.req.query("folder") || undefined,
+		limit: intQuery(c, "limit"),
+	});
+	return c.json({ preferences });
+});
+
+app.get(
+	"/api/v1/mailboxes/:mailboxId/sender-preferences/:address",
+	async (c: AppContext) => {
+		const address = normalizeSenderPreferenceAddress(
+			decodeURIComponent(c.req.param("address")!),
+		);
+		if (!address) return c.json({ error: "Invalid sender address" }, 400);
+		const preference = await c.var.mailboxStub.getSenderPreference(address);
+		if (!preference) return c.json({ error: "Not found" }, 404);
+		return c.json(preference);
+	},
+);
+
+app.put(
+	"/api/v1/mailboxes/:mailboxId/sender-preferences/:address",
+	async (c: AppContext) => {
+		const addressParam = decodeURIComponent(c.req.param("address")!);
+		const body = (await c.req.json()) as {
+			folderId?: string;
+			displayName?: string | null;
+			refile?: boolean;
+			source?: string;
+		};
+		const folderId = body.folderId ?? "";
+		const upsertError = senderPreferenceUpsertError({
+			address: addressParam,
+			folderId,
+			displayName: body.displayName,
+			source: body.source as "user" | "screener" | "seeded" | undefined,
+			refile: body.refile,
+		});
+		if (upsertError) return c.json({ error: upsertError }, 400);
+
+		const result = await c.var.mailboxStub.upsertSenderPreference({
+			address: addressParam,
+			folderId,
+			displayName: body.displayName,
+			source: body.source ?? "user",
+			refile: body.refile !== false,
+		});
+		if (!result) return c.json({ error: "Invalid preference" }, 400);
+
+		// Keep Screener allow-list destination in sync when a preference changes.
+		const address = normalizeSenderPreferenceAddress(addressParam);
+		if (address) {
+			const stub = c.var.mailboxStub as any;
+			const triage = await stub.getSenderTriage?.(address);
+			if (triage?.status === "allowed") {
+				await stub.upsertSenderTriage({
+					sender: address,
+					status: "allowed",
+					destination_folder_id: folderId,
+					display_name: body.displayName ?? triage.display_name ?? null,
+				});
+			}
+		}
+
+		return c.json(result);
+	},
+);
+
+app.delete(
+	"/api/v1/mailboxes/:mailboxId/sender-preferences/:address",
+	async (c: AppContext) => {
+		const address = normalizeSenderPreferenceAddress(
+			decodeURIComponent(c.req.param("address")!),
+		);
+		if (!address) return c.json({ error: "Invalid sender address" }, 400);
+		const deleted = await c.var.mailboxStub.deleteSenderPreference(address);
+		if (!deleted) return c.json({ error: "Not found" }, 404);
+		return c.body(null, 204);
+	},
+);
 
 // -- Threads --------------------------------------------------------
 
@@ -595,6 +778,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
 // -- Folders --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
+
+app.get("/api/v1/mailboxes/:mailboxId/workflow-piles", async (c: AppContext) => {
+	const piles = await (c.var.mailboxStub as any).getWorkflowPiles();
+	return c.json({ piles });
+});
 
 app.get("/api/v1/mailboxes/:mailboxId/inbox-digest", async (c: AppContext) => {
 	const mailboxId = c.var.mailboxId;
@@ -696,6 +884,13 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/approve", async (c: AppCont
 		destination_folder_id: destinationFolderId,
 		display_name: body.displayName ?? null,
 	});
+	await stub.upsertSenderPreference({
+		address: sender,
+		folderId: destinationFolderId,
+		displayName: body.displayName ?? null,
+		source: "screener",
+		refile: false,
+	});
 
 	const refileQueued = body.refileQueued !== false;
 	let moved = { moved: 0, ids: [] as string[] };
@@ -730,6 +925,7 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/reject", async (c: AppConte
 		destination_folder_id: null,
 		display_name: body.displayName ?? null,
 	});
+	await stub.deleteSenderPreference(sender);
 
 	const refileQueued = body.refileQueued !== false;
 	let moved = { moved: 0, ids: [] as string[] };
@@ -787,6 +983,17 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 		destination_folder_id: destinationFolderId,
 		display_name: body.displayName ?? existing?.display_name ?? null,
 	});
+	if (status === "allowed" && destinationFolderId) {
+		await stub.upsertSenderPreference({
+			address: sender,
+			folderId: destinationFolderId,
+			displayName: body.displayName ?? existing?.display_name ?? null,
+			source: "screener",
+			refile: false,
+		});
+	} else if (status === "rejected") {
+		await stub.deleteSenderPreference(sender);
+	}
 
 	let moved = { moved: 0, ids: [] as string[] };
 	if (body.refileQueued) {
@@ -1021,7 +1228,9 @@ app.get("/api/v1/mailboxes/:mailboxId/search", async (c: AppContext) => {
 		query: c.req.query("query") || "", folder: c.req.query("folder"), from: c.req.query("from"),
 		to: c.req.query("to"), subject: c.req.query("subject"), date_start: c.req.query("date_start"),
 		date_end: c.req.query("date_end"), is_read: boolQuery(c, "is_read"),
-		is_starred: boolQuery(c, "is_starred"), has_attachment: boolQuery(c, "has_attachment"),
+		is_starred: boolQuery(c, "is_starred"),
+		is_reply_later: boolQuery(c, "is_reply_later"),
+		has_attachment: boolQuery(c, "has_attachment"),
 	};
 	const stub = c.var.mailboxStub as any;
 	const emails = await stub.searchEmails({ ...searchOpts, page: intQuery(c, "page"), limit: intQuery(c, "limit") });
@@ -1458,15 +1667,25 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const triageRow = triageSender
 		? await (stub as any).getSenderTriage(triageSender)
 		: null;
+	const purposePref =
+		classification.folderId === Folders.SPAM
+			? null
+			: await stub.getSenderPreference(fromAddress);
 	const triageDecision = resolveInboundFolder({
 		classification,
 		triage: triageRow,
 		filterHit,
 		screenerEnabled,
+		preferenceFolderId: purposePref?.folderId ?? null,
 	});
 	console.log(
 		`Triage for ${mailboxId} sender=${fromAddress}: action=${triageDecision.triageAction} -> ${triageDecision.folderId}`,
 	);
+	if (purposePref && triageDecision.folderId === purposePref.folderId) {
+		console.log(
+			`Sender preference filed ${fromAddress} → ${purposePref.folderId} for ${mailboxId}`,
+		);
+	}
 
 	const targetFolder = triageDecision.folderId;
 	let filedFolder: string = targetFolder;

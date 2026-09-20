@@ -47,7 +47,8 @@
 		B1C2D3E4F5A6478990ABCD07 /* ForwardingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD07 /* ForwardingSettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD08 /* AutoReplySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD08 /* AutoReplySettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD17 /* FiltersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD17 /* FiltersSettingsView.swift */; };
-		B1C2D3E4F5A6478990ABCD18 /* SharingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD18 /* SharingSettingsView.swift */; };
+		B1C2D3E4F5A6478990ABCD18 /* SendersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD18 /* SendersSettingsView.swift */; };
+		B1C2D3E4F5A6478990ABCD19 /* SharingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD19 /* SharingSettingsView.swift */; };
 		B79E45379B0F49C6AB6CD957 /* ComposeSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 898D73DC019C4035B7FA5403 /* ComposeSheetView.swift */; };
 		C1D2E3F4A5B6478990ABCD04 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6A7478990ABCD04 /* LiquidGlass.swift */; };
 		C543C24F6A504509B345B919 /* EmailListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA619084E624222B919A7C4 /* EmailListView.swift */; };
@@ -113,7 +114,8 @@
 		A1B2C3D4E5F6478990ABCD07 /* ForwardingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/ForwardingSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD08 /* AutoReplySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/AutoReplySettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD17 /* FiltersSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/FiltersSettingsView.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6478990ABCD18 /* SharingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SharingSettingsView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6478990ABCD18 /* SendersSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SendersSettingsView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6478990ABCD19 /* SharingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SharingSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990DLVR00 /* DeliveryStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/DeliveryStatus.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990SRCH00 /* SearchQueryParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SearchQueryParser.swift; sourceTree = "<group>"; };
 		A2D50AE4A35F064918C6153F /* ThemeSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Views/Settings/ThemeSettingsView.swift; sourceTree = "<group>"; };
@@ -273,7 +275,8 @@
 				A1B2C3D4E5F6478990ABCD05 /* SwipeSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD07 /* ForwardingSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD17 /* FiltersSettingsView.swift */,
-				A1B2C3D4E5F6478990ABCD18 /* SharingSettingsView.swift */,
+				A1B2C3D4E5F6478990ABCD18 /* SendersSettingsView.swift */,
+				A1B2C3D4E5F6478990ABCD19 /* SharingSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD08 /* AutoReplySettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD06 /* PreviewSupport.swift */,
 				063B7A93C3B6424791462165 /* RootView.swift */,
@@ -465,7 +468,8 @@
 				B1C2D3E4F5A6478990ABCD05 /* SwipeSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD07 /* ForwardingSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD17 /* FiltersSettingsView.swift in Sources */,
-				B1C2D3E4F5A6478990ABCD18 /* SharingSettingsView.swift in Sources */,
+				B1C2D3E4F5A6478990ABCD18 /* SendersSettingsView.swift in Sources */,
+				B1C2D3E4F5A6478990ABCD19 /* SharingSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD08 /* AutoReplySettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD06 /* PreviewSupport.swift in Sources */,
 				E69F3F4A5B0665C9A28E96FD /* ThemeMode.swift in Sources */,

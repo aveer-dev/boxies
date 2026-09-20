@@ -68,6 +68,26 @@ data class InboxFilterRule(
 )
 
 @Serializable
+data class SenderPreference(
+    val address: String,
+    val folderId: String,
+    val displayName: String? = null,
+    val source: String? = null,
+    val updatedAt: String? = null,
+)
+
+@Serializable
+data class SenderPreferencesResponse(
+    val preferences: List<SenderPreference> = emptyList(),
+)
+
+@Serializable
+data class UpsertSenderPreferenceResponse(
+    val preference: SenderPreference,
+    val refiledCount: Int = 0,
+)
+
+@Serializable
 data class ForwardingSettings(
     val enabled: Boolean? = null,
     val email: String? = null,
@@ -236,6 +256,8 @@ data class Email(
     val date: String = "",
     val read: Boolean = false,
     val starred: Boolean = false,
+    @SerialName("reply_later") val replyLater: Boolean = false,
+    @SerialName("reply_later_at") val replyLaterAt: String? = null,
     val body: String? = null,
     val snippet: String? = null,
     @SerialName("in_reply_to") val inReplyTo: String? = null,
@@ -253,6 +275,8 @@ data class Email(
     @SerialName("provider_message_id") val providerMessageId: String? = null,
     @SerialName("delivery_status") val deliveryStatus: String? = null,
     @SerialName("delivery_error") val deliveryError: String? = null,
+    /** Inbox New vs Seen (`new` | `seen`); derived from read state when absent. */
+    @SerialName("list_section") val listSection: String? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -280,6 +304,13 @@ data class Email(
             if (isDraft) return false
             if ((threadUnreadCount ?: 0) > 0) return true
             return !read
+        }
+
+    /** Resolved New vs Seen membership for inbox list IA. */
+    val resolvedListSection: String
+        get() = when (listSection) {
+            "new", "seen" -> listSection
+            else -> if (isUnread) "new" else "seen"
         }
 
     val nonInlineAttachments: List<Attachment>
@@ -452,6 +483,7 @@ enum class EmailDateFilter(val label: String) {
 data class EmailFilterState(
     val unreadOnly: Boolean = false,
     val starredOnly: Boolean = false,
+    val replyLaterOnly: Boolean = false,
     val toMeOnly: Boolean = false,
     val ccOrBccMeOnly: Boolean = false,
     val withAttachmentsOnly: Boolean = false,
@@ -459,7 +491,7 @@ data class EmailFilterState(
     val needsReplyOnly: Boolean = false,
 ) {
     val isActive: Boolean
-        get() = unreadOnly || starredOnly || toMeOnly || ccOrBccMeOnly ||
+        get() = unreadOnly || starredOnly || replyLaterOnly || toMeOnly || ccOrBccMeOnly ||
             withAttachmentsOnly || dateFilter != EmailDateFilter.ANY || needsReplyOnly
 
     val activeCount: Int
@@ -467,6 +499,7 @@ data class EmailFilterState(
             var count = 0
             if (unreadOnly) count++
             if (starredOnly) count++
+            if (replyLaterOnly) count++
             if (toMeOnly) count++
             if (ccOrBccMeOnly) count++
             if (withAttachmentsOnly) count++
@@ -480,6 +513,7 @@ data class EmailFilterState(
     fun matches(email: Email, userEmail: String, now: Date = Date()): Boolean {
         if (unreadOnly && !email.isUnread) return false
         if (starredOnly && !email.starred) return false
+        if (replyLaterOnly && !email.replyLater) return false
         if (withAttachmentsOnly && !email.hasFileAttachment) return false
         if (needsReplyOnly && email.needsReply != true) return false
 
@@ -536,6 +570,19 @@ data class EmailFilterState(
 data class EmailListResponse(
     val emails: List<Email> = emptyList(),
     val totalCount: Int = 0,
+    val newCount: Int? = null,
+    val seenCount: Int? = null,
+)
+
+@Serializable
+data class WorkflowPile(
+    val id: String,
+    val count: Int = 0,
+)
+
+@Serializable
+data class WorkflowPilesResponse(
+    val piles: List<WorkflowPile> = emptyList(),
 )
 
 @Serializable
@@ -705,12 +752,13 @@ sealed class HomeTab {
     data class Folder(val id: String) : HomeTab()
     data object Chats : HomeTab()
     data object AiInbox : HomeTab()
+    data object ReplyLater : HomeTab()
 
     val syncFolderId: String?
         get() = when (this) {
             is Folder -> id
             AiInbox -> "inbox"
-            Chats -> null
+            Chats, ReplyLater -> null
         }
 
     val title: String
@@ -730,6 +778,7 @@ sealed class HomeTab {
             }
             Chats -> "AI"
             AiInbox -> "For you"
+            ReplyLater -> "Reply Later"
         }
 
     companion object {
@@ -748,6 +797,18 @@ object FolderIds {
     const val SPAM = "spam"
     const val SCREENED_OUT = "screened_out"
     const val TRASH = "trash"
+
+    /** Purpose boxes — sender defaults may only target these. */
+    val purposeFolderIds: Set<String> = setOf(INBOX, PROMOTIONS, UPDATES)
+
+    fun isPurposeFolder(id: String): Boolean = id in purposeFolderIds
+
+    fun purposeDisplayName(id: String): String = when (id) {
+        INBOX -> "Inbox"
+        PROMOTIONS -> "Promotions"
+        UPDATES -> "Updates"
+        else -> id.replaceFirstChar { it.uppercase() }
+    }
 
     /** Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). */
     val swipeFolderIds: List<String> = listOf(

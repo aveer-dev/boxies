@@ -219,15 +219,24 @@ final class APIClient: @unchecked Sendable {
         try await updateEmail(mailboxId: mailboxId, id: id, read: true)
     }
 
+    func markThreadRead(mailboxId: String, threadId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/read",
+            method: "POST"
+        )
+    }
+
     func updateEmail(
         mailboxId: String,
         id: String,
         read: Bool? = nil,
-        starred: Bool? = nil
+        starred: Bool? = nil,
+        replyLater: Bool? = nil
     ) async throws -> Email {
         var body: [String: Any] = [:]
         if let read { body["read"] = read }
         if let starred { body["starred"] = starred }
+        if let replyLater { body["reply_later"] = replyLater }
         return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)",
             method: "PUT",
@@ -235,11 +244,76 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func moveEmail(mailboxId: String, id: String, folderId: String) async throws {
+    func listReplyLaterEmails(mailboxId: String, page: Int = 1) async throws -> EmailListResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
+            query: [
+                "reply_later": "true",
+                "page": String(page),
+                "limit": "25",
+            ]
+        )
+    }
+
+    func listWorkflowPiles(mailboxId: String) async throws -> WorkflowPilesResponse {
+        try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/workflow-piles")
+    }
+
+    func moveEmail(
+        mailboxId: String,
+        id: String,
+        folderId: String,
+        setSenderPreference: Bool = false
+    ) async throws {
+        var body: [String: Any] = ["folderId": folderId]
+        if setSenderPreference {
+            body["setSenderPreference"] = true
+        }
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)/move",
             method: "POST",
-            body: ["folderId": folderId]
+            body: body
+        )
+    }
+
+    func listSenderPreferences(
+        mailboxId: String,
+        q: String = "",
+        folder: String? = nil
+    ) async throws -> [SenderPreference] {
+        var query: [String: String] = ["limit": "200"]
+        if !q.isEmpty { query["q"] = q }
+        if let folder, !folder.isEmpty { query["folder"] = folder }
+        let response: SenderPreferencesResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-preferences",
+            query: query
+        )
+        return response.preferences
+    }
+
+    func upsertSenderPreference(
+        mailboxId: String,
+        address: String,
+        folderId: String,
+        displayName: String? = nil,
+        refile: Bool = true
+    ) async throws -> UpsertSenderPreferenceResponse {
+        var body: [String: Any] = [
+            "folderId": folderId,
+            "refile": refile,
+        ]
+        if let displayName { body["displayName"] = displayName }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-preferences/\(address.urlPathEncoded)",
+            method: "PUT",
+            body: body
+        )
+    }
+
+    func deleteSenderPreference(mailboxId: String, address: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-preferences/\(address.urlPathEncoded)",
+            method: "DELETE"
         )
     }
 
@@ -409,6 +483,15 @@ final class APIClient: @unchecked Sendable {
 }
 
 struct EmptyResponse: Decodable {}
+
+struct WorkflowPile: Decodable {
+    let id: String
+    let count: Int
+}
+
+struct WorkflowPilesResponse: Decodable {
+    let piles: [WorkflowPile]
+}
 
 /// Do not follow Cloudflare Access's 302 to the login HTML page — that body is
 /// not JSON and surfaces as a confusing decode error.

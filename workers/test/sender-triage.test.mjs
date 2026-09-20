@@ -104,6 +104,54 @@ const bulk = { class: "bulk", folderId: "promotions", reason: "bulk-list-headers
 	assert.equal(withFilter.skipAutoDraft, true);
 }
 
+// ── Allowed: purpose preference beats triage dest; filter still wins ─
+{
+	const withPref = resolveInboundFolder({
+		classification: bulk,
+		triage: {
+			sender: "news@x.com",
+			status: "allowed",
+			destination_folder_id: "updates",
+			decided_at: "t",
+			updated_at: "t",
+		},
+		filterHit: null,
+		preferenceFolderId: "promotions",
+	});
+	assert.equal(withPref.folderId, "promotions");
+
+	const filterWins = resolveInboundFolder({
+		classification: ham,
+		triage: {
+			sender: "boss@acme.com",
+			status: "allowed",
+			destination_folder_id: "inbox",
+			decided_at: "t",
+			updated_at: "t",
+		},
+		filterHit: {
+			ruleId: "boss",
+			folderId: "archive",
+			skipAutoDraft: true,
+		},
+		preferenceFolderId: "promotions",
+	});
+	assert.equal(filterWins.folderId, "archive");
+}
+
+// ── Screener disabled: preference between filter and classify ─────
+{
+	const withPref = resolveInboundFolder({
+		classification: bulk,
+		triage: null,
+		filterHit: null,
+		screenerEnabled: false,
+		preferenceFolderId: "updates",
+	});
+	assert.equal(withPref.folderId, "updates");
+	assert.equal(withPref.triageAction, "disabled");
+}
+
 // ── Screener disabled → legacy classify+filter ────────────────────
 {
 	const result = resolveInboundFolder({

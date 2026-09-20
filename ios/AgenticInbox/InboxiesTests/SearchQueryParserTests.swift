@@ -47,6 +47,16 @@ final class SearchQueryParserTests: XCTestCase {
         XCTAssertNil(parsed.hasAttachment)
         XCTAssertFalse(parsed.hasStructuredFilters)
     }
+
+    func testParsesReplyLaterOperator() {
+        let parsed = SearchQueryParser.parse("is:reply-later meeting")
+        XCTAssertEqual(parsed.query, "meeting")
+        XCTAssertEqual(parsed.isReplyLater, true)
+        XCTAssertEqual(parsed.apiQueryItems["is_reply_later"], "true")
+        let alias = SearchQueryParser.parse("is:reply_later is:starred")
+        XCTAssertEqual(alias.isReplyLater, true)
+        XCTAssertEqual(alias.isStarred, true)
+    }
 }
 
 final class DeliveryStatusTests: XCTestCase {

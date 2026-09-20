@@ -17,6 +17,20 @@ export function useFolders(mailboxId: string | undefined) {
 	});
 }
 
+export function useWorkflowPiles(mailboxId: string | undefined) {
+	return useQuery<{ id: string; count: number }[]>({
+		queryKey: mailboxId
+			? queryKeys.workflowPiles.list(mailboxId)
+			: ["workflow-piles", "_disabled"],
+		queryFn: async () => {
+			const data = await api.listWorkflowPiles(mailboxId!);
+			return data.piles ?? [];
+		},
+		enabled: !!mailboxId,
+		refetchInterval: 30_000,
+	});
+}
+
 export function useCreateFolder() {
 	const qc = useQueryClient();
 	return useMutation({

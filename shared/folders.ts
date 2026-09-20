@@ -60,6 +60,22 @@ export const PRIMARY_FOLDER_IDS: readonly FolderId[] = SYSTEM_FOLDER_IDS.filter(
 );
 
 /**
+ * Purpose boxes — sender defaults may only target these.
+ * Inbox / Promotions / Updates (Hey-shaped Imbox / Feed / Paper Trail).
+ */
+export const PURPOSE_FOLDER_IDS = [
+	Folders.INBOX,
+	Folders.PROMOTIONS,
+	Folders.UPDATES,
+] as const;
+
+export type PurposeFolderId = (typeof PURPOSE_FOLDER_IDS)[number];
+
+export function isPurposeFolderId(folderId: string): folderId is PurposeFolderId {
+	return (PURPOSE_FOLDER_IDS as readonly string[]).includes(folderId);
+}
+
+/**
  * Human-readable display names for folder IDs.
  * Used in the sidebar, search result badges, and tool descriptions.
  */

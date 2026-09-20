@@ -12,6 +12,7 @@
  *   in:inbox / in:sent        — filter by folder
  *   is:unread / is:read       — filter by read status
  *   is:starred                — filter by starred status
+ *   is:reply-later            — filter by Reply Later pile
  *   has:attachment             — filter by attachment presence
  *   before:2025-01-01         — emails before date
  *   after:2025-01-01          — emails after date
@@ -28,6 +29,7 @@ export interface ParsedSearch {
 	folder?: string;
 	is_read?: boolean;
 	is_starred?: boolean;
+	is_reply_later?: boolean;
 	has_attachment?: boolean;
 	date_start?: string;
 	date_end?: string;
@@ -90,6 +92,10 @@ export function parseSearchQuery(input: string): ParsedSearch {
 						break;
 					case "unstarred":
 						result.is_starred = false;
+						break;
+					case "reply-later":
+					case "reply_later":
+						result.is_reply_later = true;
 						break;
 				}
 				break;

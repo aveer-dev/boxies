@@ -15,6 +15,7 @@ import {
 	shouldForward,
 } from "../lib/mail-automations.ts";
 import { shouldAutoDraft } from "../lib/classify-email.ts";
+import { resolveInboundFolder } from "../lib/sender-preferences.ts";
 
 const mailbox = "hello@inboxies.email";
 const ham = { class: "ham", folderId: "inbox", reason: "personal-ham" };
@@ -42,7 +43,11 @@ function inboundFilterPipeline(options) {
 		headers: messageHeaders,
 		auth,
 	});
-	const targetFolder = filterHit?.folderId || classification.folderId;
+	const targetFolder = resolveInboundFolder({
+		classificationFolderId: classification.folderId,
+		filterFolderId: filterHit?.folderId,
+		preferenceFolderId: null,
+	});
 	const autoDraft =
 		shouldAutoDraft(classification, auth) && !filterHit?.skipAutoDraft;
 
@@ -147,7 +152,7 @@ function inboundFilterPipeline(options) {
 	assert.equal(result.forwardDest, "global@example.com");
 }
 
-// ── Spam still skips forward even with filter forwardTo ───────────
+// ── Spam folder wins over filter folder; forward still skipped ────
 {
 	const result = inboundFilterPipeline({
 		classification: spam,
@@ -166,7 +171,7 @@ function inboundFilterPipeline(options) {
 		subject: "Urgent",
 		messageHeaders: [],
 	});
-	assert.equal(result.targetFolder, "trash");
+	assert.equal(result.targetFolder, "spam");
 	assert.equal(result.autoDraft, false);
 	assert.equal(result.forwardSkip, "spam");
 }

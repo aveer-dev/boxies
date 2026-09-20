@@ -81,12 +81,26 @@ extension AppModel {
         )
     }
 
-    func moveEmail(_ email: Email, to folderId: String, fromList: Bool = false) async {
+    func moveEmail(
+        _ email: Email,
+        to folderId: String,
+        fromList: Bool = false,
+        setSenderPreference: Bool = false
+    ) async {
         guard let mailboxId = selectedMailboxId else { return }
 
         // 1. Instant local optimistic move (<1ms)
         DatabaseService.shared.moveEmail(id: email.id, toFolderId: folderId)
-        DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "move", payload: ["folderId": folderId])
+        var payload: [String: Any] = ["folderId": folderId]
+        if setSenderPreference {
+            payload["setSenderPreference"] = true
+        }
+        DatabaseService.shared.enqueueMutation(
+            mailboxId: mailboxId,
+            emailId: email.id,
+            actionType: "move",
+            payload: payload
+        )
         OutboxQueueWorker.shared.trigger()
 
         threadEmails.removeAll { $0.id == email.id }
@@ -99,6 +113,12 @@ extension AppModel {
         }
         if email.isUnread {
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
+        }
+        if folderId == "trash" || folderId == "spam" {
+            await refreshReplyLaterCount()
+            if selectedTab == .replyLater {
+                await loadEmailsForCurrentTab(showLoading: false)
+            }
         }
     }
 

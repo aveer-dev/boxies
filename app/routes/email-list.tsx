@@ -27,6 +27,7 @@ import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
 import { formatParticipants } from "shared/sender";
 import MailboxSplitView from "~/components/MailboxSplitView";
+import { buildInboxListItems } from "~/lib/list-sections";
 import { getSnippetText, hasFileAttachment } from "~/lib/utils";
 import { isAuthSpoofed } from "~/lib/email-auth";
 import {
@@ -82,13 +83,13 @@ const FOLDER_EMPTY_STATES: Record<
 		icon: <MegaphoneIcon size={48} weight="thin" className="text-kumo-subtle" />,
 		title: "No promotions",
 		description:
-			"Newsletters and marketing mail with List-Unsubscribe or List-Id land here.",
+			"Newsletters and marketing you assign here. Move a message and set that sender’s default to keep them out of Inbox.",
 	},
 	[Folders.UPDATES]: {
 		icon: <NewspaperIcon size={48} weight="thin" className="text-kumo-subtle" />,
 		title: "No updates",
 		description:
-			"Receipts, shipping notices, and other transactional bulk mail land here.",
+			"Receipts and transactional mail you file here. Assign senders so they land here automatically.",
 	},
 	[Folders.SPAM]: {
 		icon: <WarningIcon size={48} weight="thin" className="text-kumo-subtle" />,
@@ -198,6 +199,22 @@ export default function EmailListRoute() {
 
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
+	const newCount = emailData?.newCount;
+	const seenCount = emailData?.seenCount;
+	const showNewSeen = folder === Folders.INBOX;
+
+	const hasUnread = (email: Email): boolean => {
+		if (email.folder_id === Folders.DRAFT) return false;
+		if ((email.thread_unread_count ?? 0) > 0) return true;
+		return !email.read;
+	};
+
+	const listItems = useMemo(() => {
+		if (!showNewSeen || emails.length === 0) {
+			return emails.map((email) => ({ type: "email" as const, email }));
+		}
+		return buildInboxListItems(emails, { page, newCount, seenCount });
+	}, [emails, showNewSeen, newCount, seenCount, page]);
 
 	const { data: folders = [] } = useFolders(mailboxId);
 
@@ -251,13 +268,6 @@ export default function EmailListRoute() {
 				queryKey: queryKeys.folders.list(mailboxId),
 			});
 		}
-	};
-
-	// Thread-aware helpers
-	const hasUnread = (email: Email): boolean => {
-		if (email.folder_id === Folders.DRAFT) return false;
-		if ((email.thread_unread_count ?? 0) > 0) return true;
-		return !email.read;
 	};
 
 	const handleRowClick = (email: Email) => {
@@ -323,7 +333,35 @@ export default function EmailListRoute() {
 					<EmailListSkeleton />
 				) : emails.length > 0 ? (
 						<div>
-							{emails.map((email) => {
+							{listItems.map((item) => {
+								if (item.type === "section") {
+									return (
+										<div
+											key={`section-${item.id}`}
+											className="sticky top-0 z-[1] flex items-center gap-2 bg-kumo-background/95 backdrop-blur-sm px-4 pt-3 pb-1.5 md:px-6"
+										>
+											<span className="text-[11px] font-medium tracking-wide uppercase text-kumo-subtle">
+												{item.label}
+											</span>
+											{item.count != null && (
+												<span className="text-[11px] text-kumo-subtle">
+													· {item.count}
+												</span>
+											)}
+										</div>
+									);
+								}
+								if (item.type === "empty-new") {
+									return (
+										<p
+											key="empty-new"
+											className="px-4 py-3 text-sm text-kumo-subtle md:px-6"
+										>
+											You’re caught up
+										</p>
+									);
+								}
+								const email = item.email;
 								const isSelected = selectedEmailId === email.id;
 								const snippet = getSnippetText(email.snippet);
 								return (
