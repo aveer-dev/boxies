@@ -97,6 +97,7 @@ import {
 	parseInboxFilters,
 } from "./lib/inbox-filters";
 import {
+	allowOutboundRecipients,
 	isScreenerDestination,
 	normalizeTriageSender,
 	parseScreenerEnabled,
@@ -417,6 +418,9 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 			{ key: "message-id", value: `<${outgoingMessageId}>` },
 		]),
 	}, attachmentData);
+
+	// Screener-lite: people you email bypass the review queue on reply.
+	await allowOutboundRecipients(stub as any, to, cc, bcc);
 
 	c.executionCtx.waitUntil(
 		deliverOutboundInBackground(c.env, mailboxId, messageId, {
@@ -1313,7 +1317,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		console.log(`Skipping inbound for deleted mailbox ${mailboxId}`);
 		return;
 	}
-	const fromAddress = (parsedEmail.from?.address || message.from || "").toLowerCase();
+	const fromRaw = (parsedEmail.from?.address || message.from || "").toLowerCase();
+	const fromAddress = normalizeTriageSender(fromRaw) ?? fromRaw;
 	const extractMsgId = (s: string) => { const m = s.match(/<([^>]+)>/); return m ? m[1] : s.trim().split(/\s+/)[0]; };
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 

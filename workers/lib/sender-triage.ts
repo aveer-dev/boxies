@@ -201,3 +201,79 @@ export function buildBootstrapAllowSeeds(input: {
 
 	return Array.from(bySender.values());
 }
+
+/** Flatten to/cc/bcc fields from a send payload into address strings. */
+export function collectOutboundRecipientAddresses(
+	to: unknown,
+	cc?: unknown,
+	bcc?: unknown,
+): string[] {
+	const out: string[] = [];
+	const push = (value: unknown) => {
+		if (value == null) return;
+		if (Array.isArray(value)) {
+			for (const item of value) push(item);
+			return;
+		}
+		if (typeof value === "object" && value !== null && "email" in value) {
+			const email = (value as { email?: unknown }).email;
+			if (typeof email === "string") out.push(email);
+			return;
+		}
+		if (typeof value === "string") {
+			for (const part of value.split(",")) {
+				const trimmed = part.trim();
+				if (trimmed) out.push(trimmed);
+			}
+		}
+	};
+	push(to);
+	push(cc);
+	push(bcc);
+	return out;
+}
+
+export type SenderTriageStub = {
+	getSenderTriage: (sender: string) => Promise<SenderTriageRow | null>;
+	upsertSenderTriage: (row: {
+		sender: string;
+		status: "allowed" | "rejected";
+		destination_folder_id?: string | null;
+		display_name?: string | null;
+	}) => Promise<unknown>;
+};
+
+/**
+ * After a successful send, allow-list recipients so their replies skip Screener.
+ * Never overrides an explicit reject.
+ */
+export async function allowOutboundRecipients(
+	stub: SenderTriageStub,
+	to: unknown,
+	cc?: unknown,
+	bcc?: unknown,
+): Promise<number> {
+	let upserted = 0;
+	for (const raw of collectOutboundRecipientAddresses(to, cc, bcc)) {
+		const dest = normalizeTriageSender(raw);
+		if (!dest) continue;
+		try {
+			const existing = await stub.getSenderTriage(dest);
+			if (existing?.status === "rejected" || existing?.status === "allowed") {
+				continue;
+			}
+			await stub.upsertSenderTriage({
+				sender: dest,
+				status: "allowed",
+				destination_folder_id: Folders.INBOX,
+			});
+			upserted += 1;
+		} catch (e) {
+			console.error(
+				`Outbound triage allow failed for ${dest}:`,
+				(e as Error).message,
+			);
+		}
+	}
+	return upserted;
+}

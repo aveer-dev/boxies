@@ -33,7 +33,6 @@ export default function ScreenerTriageBar({
 		await Promise.all([
 			queryClient.invalidateQueries({ queryKey: ["emails", mailboxId] }),
 			queryClient.invalidateQueries({ queryKey: ["folders", mailboxId] }),
-			queryClient.invalidateQueries({ queryKey: ["email", mailboxId, emailId] }),
 		]);
 	};
 

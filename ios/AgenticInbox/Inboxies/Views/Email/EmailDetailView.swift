@@ -16,10 +16,7 @@ struct EmailDetailView: View {
     }
 
     private var isScreenerEmail: Bool {
-        guard let email else { return false }
-        if email.folderId == "screener" { return true }
-        if case .folder("screener") = app.selectedTab { return true }
-        return false
+        email?.folderId == "screener"
     }
 
     private var source: Email? {

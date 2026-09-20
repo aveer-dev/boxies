@@ -12,6 +12,7 @@ import {
 	screenerSettingsError,
 } from "../lib/sender-triage.ts";
 import { shouldFallbackToInbox } from "../lib/classify-email.ts";
+import { aggregateRecentRecipients } from "../../shared/recent-recipients.ts";
 
 const ham = { class: "ham", folderId: "inbox", reason: "personal-ham" };
 const spam = { class: "spam", folderId: "spam", reason: "spam-headers" };
@@ -157,5 +158,17 @@ assert.equal(
 	shouldFallbackToInbox("promotions", new Error('createEmail: folder "promotions" not found')),
 	true,
 );
+
+// ── Bootstrap hardCap can exceed autocomplete 50 ──────────────────
+{
+	const rows = Array.from({ length: 80 }, (_, i) => ({
+		recipient: `user${i}@x.com`,
+		date: `2026-01-${String((i % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+	}));
+	const capped = aggregateRecentRecipients(rows, { limit: 500 });
+	assert.equal(capped.length, 50);
+	const wide = aggregateRecentRecipients(rows, { limit: 500, hardCap: 500 });
+	assert.equal(wide.length, 80);
+}
 
 console.log("sender-triage.test.mjs: ok");

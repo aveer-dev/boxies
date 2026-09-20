@@ -26,8 +26,13 @@ export interface RecentRecipient {
 export interface AggregateRecentRecipientsOptions {
 	/** Case-insensitive substring filter on email or name. */
 	q?: string | null;
-	/** Max results to return (default 20, capped at 50). */
+	/** Max results to return (default 20, capped at hardCap). */
 	limit?: number;
+	/**
+	 * Upper bound for `limit`. Autocomplete keeps 50; bootstrap may raise
+	 * this to scan a larger Sent graph.
+	 */
+	hardCap?: number;
 	/** Optional email → display name map from inbound senders. */
 	knownNames?: Map<string, string> | Record<string, string | null | undefined>;
 }
@@ -96,7 +101,8 @@ export function aggregateRecentRecipients(
 	rows: SentRecipientRow[],
 	options: AggregateRecentRecipientsOptions = {},
 ): RecentRecipient[] {
-	const limit = Math.min(Math.max(options.limit ?? 20, 1), 50);
+	const hardCap = Math.max(options.hardCap ?? 50, 1);
+	const limit = Math.min(Math.max(options.limit ?? 20, 1), hardCap);
 	const query = (options.q || "").trim().toLowerCase();
 
 	const byEmail = new Map<string, RecentRecipient>();

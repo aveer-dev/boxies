@@ -81,6 +81,13 @@ class DatabaseService private constructor() {
         emails[id] = existing.copy(folderId = folderId)
     }
 
+    /** Remove local rows for this folder that are not on the server page. */
+    fun pruneEmailsNotInFolder(mailboxId: String, folderId: String, serverIds: Set<String>) {
+        emails.entries.removeIf { (_, email) ->
+            email.folderId == folderId && email.id !in serverIds
+        }
+    }
+
     fun deleteDrafts(
         mailboxId: String,
         threadId: String?,

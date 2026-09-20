@@ -126,11 +126,9 @@ fun EmailDetailView(
     val thread by app.threadEmails.collectAsState()
     val listEmails by app.emails.collectAsState()
     val loading by app.isEmailDetailLoading.collectAsState()
-    val selectedTab by app.selectedTab.collectAsState()
     val current = email ?: return
 
-    val isScreenerEmail = current.folderId == FolderIds.SCREENER ||
-        (selectedTab as? HomeTab.Folder)?.id == FolderIds.SCREENER
+    val isScreenerEmail = current.folderId == FolderIds.SCREENER
 
     val navigable = remember(listEmails) { listEmails.filter { !it.isDraft } }
     val navIndex = navigable.indexOfFirst { it.id == current.id }

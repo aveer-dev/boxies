@@ -1095,13 +1095,14 @@ class AppModel {
                 emailId = email.id,
                 displayName = email.senderName,
             )
-            _emails.update {
-                it.filterNot { e ->
-                    e.sender.trim().lowercase() == sender &&
-                        (e.folderId == FolderIds.SCREENER || e.folderId == null)
-                }
+            val queued = _emails.value.filter {
+                it.sender.trim().lowercase() == sender &&
+                    (it.folderId == FolderIds.SCREENER || it.id == email.id)
             }
-            if (_selectedEmail.value?.id == email.id ||
+            queued.forEach { db.moveEmail(it.id, destinationFolderId) }
+            val queuedIds = queued.map { it.id }.toSet()
+            _emails.update { list -> list.filterNot { it.id in queuedIds } }
+            if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
                 _selectedEmail.value = null
@@ -1125,13 +1126,14 @@ class AppModel {
                 emailId = email.id,
                 displayName = email.senderName,
             )
-            _emails.update {
-                it.filterNot { e ->
-                    e.sender.trim().lowercase() == sender &&
-                        (e.folderId == FolderIds.SCREENER || e.folderId == null)
-                }
+            val queued = _emails.value.filter {
+                it.sender.trim().lowercase() == sender &&
+                    (it.folderId == FolderIds.SCREENER || it.id == email.id)
             }
-            if (_selectedEmail.value?.id == email.id ||
+            queued.forEach { db.moveEmail(it.id, FolderIds.SCREENED_OUT) }
+            val queuedIds = queued.map { it.id }.toSet()
+            _emails.update { list -> list.filterNot { it.id in queuedIds } }
+            if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
                 _selectedEmail.value = null

@@ -715,18 +715,24 @@ final class DatabaseService: @unchecked Sendable {
         oldestDate: String? = nil,
         isFullPage: Bool = false
     ) {
-        guard !currentServerIDs.isEmpty else { return }
         queue.sync {
             var stmt: OpaquePointer?
-            let sql = (isFullPage && oldestDate != nil)
-                ? "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ? AND date >= ?;"
-                : "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ?;"
+            // Empty server page = folder is empty; clear local rows.
+            // Non-empty: only prune within the fetched window when isFullPage.
+            let sql: String
+            if currentServerIDs.isEmpty {
+                sql = "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ?;"
+            } else if isFullPage && oldestDate != nil {
+                sql = "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ? AND date >= ?;"
+            } else {
+                sql = "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ?;"
+            }
 
             var localIDs: [String] = []
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
                 sqlite3_bind_text(stmt, 2, (folderId as NSString).utf8String, -1, nil)
-                if isFullPage, let oldestDate {
+                if !currentServerIDs.isEmpty, isFullPage, let oldestDate {
                     sqlite3_bind_text(stmt, 3, (oldestDate as NSString).utf8String, -1, nil)
                 }
                 while sqlite3_step(stmt) == SQLITE_ROW {
@@ -735,7 +741,9 @@ final class DatabaseService: @unchecked Sendable {
             }
             sqlite3_finalize(stmt)
 
-            let toDelete = localIDs.filter { !currentServerIDs.contains($0) }
+            let toDelete = currentServerIDs.isEmpty
+                ? localIDs
+                : localIDs.filter { !currentServerIDs.contains($0) }
             if !toDelete.isEmpty {
                 sqlite3_exec(db, "BEGIN TRANSACTION;", nil, nil, nil)
                 var delStmt: OpaquePointer?

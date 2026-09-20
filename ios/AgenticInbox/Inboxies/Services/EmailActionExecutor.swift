@@ -134,20 +134,24 @@ extension AppModel {
                 emailId: email.id,
                 displayName: email.senderName
             )
-            // Refile may move multiple queued messages — refresh the list.
-            emails.removeAll {
+            // Mirror archive: update local SQLite so empty-folder sync cannot revive ghosts.
+            let queued = emails.filter {
                 $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
-                    && ($0.folderId == "screener" || $0.folderId == nil)
+                    && ($0.folderId == "screener" || $0.id == email.id)
             }
-            if selectedEmail?.id == email.id
-                || selectedEmail?.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+            for item in queued {
+                DatabaseService.shared.moveEmail(id: item.id, toFolderId: destinationFolderId)
+            }
+            let queuedIds = Set(queued.map(\.id))
+            emails.removeAll { queuedIds.contains($0.id) }
+            if let selected = selectedEmail, queuedIds.contains(selected.id)
+                || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
             {
                 selectedEmail = nil
                 threadEmails = []
             }
             await loadEmailsForCurrentTab(showLoading: false)
-            if let mailboxId = selectedMailboxId,
-               let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
+            if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
                 folders = synced
             }
         } catch {
@@ -168,12 +172,17 @@ extension AppModel {
                 emailId: email.id,
                 displayName: email.senderName
             )
-            emails.removeAll {
+            let queued = emails.filter {
                 $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
-                    && ($0.folderId == "screener" || $0.folderId == nil)
+                    && ($0.folderId == "screener" || $0.id == email.id)
             }
-            if selectedEmail?.id == email.id
-                || selectedEmail?.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+            for item in queued {
+                DatabaseService.shared.moveEmail(id: item.id, toFolderId: "screened_out")
+            }
+            let queuedIds = Set(queued.map(\.id))
+            emails.removeAll { queuedIds.contains($0.id) }
+            if let selected = selectedEmail, queuedIds.contains(selected.id)
+                || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
             {
                 selectedEmail = nil
                 threadEmails = []

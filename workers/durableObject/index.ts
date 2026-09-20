@@ -2239,7 +2239,10 @@ export class MailboxDO extends DurableObject<Env> {
 			...this.ctx.storage.sql.exec(
 				`SELECT id FROM emails
 				 WHERE folder_id = ?1
-				   AND LOWER(TRIM(sender)) = ?2`,
+				   AND (
+				     LOWER(TRIM(sender)) = ?2
+				     OR LOWER(TRIM(sender)) LIKE '%<' || ?2 || '>%'
+				   )`,
 				fromFolder,
 				normalized,
 			),
@@ -2251,7 +2254,10 @@ export class MailboxDO extends DurableObject<Env> {
 			`UPDATE emails
 			 SET folder_id = ?1
 			 WHERE folder_id = ?2
-			   AND LOWER(TRIM(sender)) = ?3`,
+			   AND (
+			     LOWER(TRIM(sender)) = ?3
+			     OR LOWER(TRIM(sender)) LIKE '%<' || ?3 || '>%'
+			   )`,
 			toFolder,
 			fromFolder,
 			normalized,
@@ -2290,7 +2296,10 @@ export class MailboxDO extends DurableObject<Env> {
 			bcc: string | null;
 			date: string | null;
 		}[];
-		const sentAgg = aggregateRecentRecipients(sentScan, { limit: 500 });
+		const sentAgg = aggregateRecentRecipients(sentScan, {
+			limit: 500,
+			hardCap: 500,
+		});
 
 		const folderSenders = (folderId: string) => {
 			try {
@@ -2312,13 +2321,22 @@ export class MailboxDO extends DurableObject<Env> {
 			}
 		};
 
+		const inboxSenders = folderSenders(Folders.INBOX);
+		const promotionsSenders = folderSenders(Folders.PROMOTIONS);
+		const updatesSenders = folderSenders(Folders.UPDATES);
+		const hasAnySeedSource =
+			sentScan.length > 0 ||
+			inboxSenders.length > 0 ||
+			promotionsSenders.length > 0 ||
+			updatesSenders.length > 0;
+
 		const seeds = buildBootstrapAllowSeeds({
 			sentAddresses: (sentAgg.length > 0 ? sentAgg : sentRecipients).map(
 				(r) => ({ email: r.email, name: r.name }),
 			),
-			inboxSenders: folderSenders(Folders.INBOX),
-			promotionsSenders: folderSenders(Folders.PROMOTIONS),
-			updatesSenders: folderSenders(Folders.UPDATES),
+			inboxSenders,
+			promotionsSenders,
+			updatesSenders,
 		});
 
 		let seeded = 0;
@@ -2334,7 +2352,12 @@ export class MailboxDO extends DurableObject<Env> {
 			seeded += 1;
 		}
 
-		await this.ctx.storage.put(flagKey, "1");
+		// Only lock bootstrap once we had something to seed from (or force).
+		// Empty greenfield mailboxes keep retrying until Sent/inbox exists,
+		// and outbound send also upserts allow-list entries.
+		if (force || hasAnySeedSource || seeded > 0) {
+			await this.ctx.storage.put(flagKey, "1");
+		}
 		return { seeded };
 	}
 }
