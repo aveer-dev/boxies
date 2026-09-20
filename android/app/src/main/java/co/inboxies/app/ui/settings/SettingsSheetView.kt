@@ -32,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Group
@@ -87,6 +88,7 @@ private sealed class SettingsPage {
     data object Filters : SettingsPage()
     data object Senders : SettingsPage()
     data object Sharing : SettingsPage()
+    data object DomainAdmin : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
 }
@@ -216,6 +218,7 @@ fun SettingsSheetView(
                     onOpenFilters = { page = SettingsPage.Filters },
                     onOpenSenders = { page = SettingsPage.Senders },
                     onOpenSharing = { page = SettingsPage.Sharing },
+                    onOpenDomainAdmin = { page = SettingsPage.DomainAdmin },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
                         if (enabled) enableNotifications() else disableNotifications()
@@ -252,6 +255,9 @@ fun SettingsSheetView(
                 SettingsPage.Sharing -> SharingSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.DomainAdmin -> DomainAdminSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.Support -> SupportSettingsView(
                     onBack = { page = SettingsPage.Root },
                     onCloseSettings = onClose,
@@ -279,6 +285,7 @@ private fun SettingsRootPage(
     onOpenFilters: () -> Unit,
     onOpenSenders: () -> Unit,
     onOpenSharing: () -> Unit,
+    onOpenDomainAdmin: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
     onDeleteMailbox: (String) -> Unit,
@@ -286,6 +293,7 @@ private fun SettingsRootPage(
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val isAdmin by app.isAdmin.collectAsState()
 
     val displayName = remember(mailbox) { mailboxDisplayName(mailbox) }
     val emailAddress = mailbox?.email.orEmpty()
@@ -424,6 +432,13 @@ private fun SettingsRootPage(
                 icon = Icons.Outlined.Group,
                 onClick = onOpenSharing,
             )
+            if (isAdmin) {
+                SettingsNavRow(
+                    title = "Domain Admin",
+                    icon = Icons.Outlined.AdminPanelSettings,
+                    onClick = onOpenDomainAdmin,
+                )
+            }
             SettingsToggleRow(
                 title = "Notifications",
                 subtitle = "Receive alerts for new messages.",

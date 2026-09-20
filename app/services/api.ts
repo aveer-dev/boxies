@@ -110,17 +110,37 @@ interface EmailListResponse {
 	seenCount?: number;
 }
 
+interface InviteCreateResponse {
+	token: string;
+	inviteUrl: string;
+	emailSent: boolean;
+	emailError: string | null;
+	mailboxId: string;
+	inviteeEmail: string;
+	role: string;
+	expiresAt: string;
+}
+
 // ---------- API client ----------
 
 const api = {
 	// Config
 	getConfig: () =>
-		get<{ domains: string[]; emailAddresses: string[] }>("/api/v1/config"),
+		get<{ mailDomain: string; domains: string[]; emailAddresses: string[] }>(
+			"/api/v1/config",
+		),
 
     // Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
 	getMe: () =>
-		get<{ email: string | null; sub: string | null; keys: string[] }>("/api/v1/me"),
+		get<{
+			email: string | null;
+			sub: string | null;
+			keys: string[];
+			isAdmin?: boolean;
+			mailDomain?: string;
+			domains?: string[];
+		}>("/api/v1/me"),
 	createMailbox: (email: string, name: string, settings?: unknown) =>
 		post<Mailbox>("/api/v1/mailboxes", { email, name, settings }),
 	getMailbox: (mailboxId: string) =>
@@ -129,6 +149,110 @@ const api = {
 		put<Mailbox>(`/api/v1/mailboxes/${mailboxId}`, { settings }),
 	deleteMailbox: (mailboxId: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}`),
+
+	// Domain admin
+	listAdminMailboxes: () =>
+		get<
+			{
+				id: string;
+				email: string;
+				name: string;
+				acl: { owners: string[]; members: string[] };
+				claimed: boolean;
+				fromName: string | null;
+			}[]
+		>("/api/v1/admin/mailboxes"),
+	createAdminMailbox: (body: {
+		email: string;
+		name?: string;
+		assignTo?:
+			| "self"
+			| { inviteEmail: string; inviteeName?: string; role?: "owner" | "member" };
+	}) =>
+		post<
+			Mailbox & {
+				invite: {
+					token: string;
+					inviteUrl: string;
+					emailSent: boolean;
+					emailError: string | null;
+					inviteeEmail: string;
+					role: string;
+				} | null;
+			}
+		>("/api/v1/admin/mailboxes", body),
+	assignAdminMailbox: (
+		mailboxId: string,
+		assignTo:
+			| "self"
+			| { inviteEmail: string; inviteeName?: string; role?: "owner" | "member" },
+	) =>
+		post<unknown>(`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/assign`, {
+			assignTo,
+		}),
+	transferAdminAcl: (
+		mailboxId: string,
+		acl: { owners: string[]; members?: string[] },
+	) =>
+		put<Mailbox>(
+			`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/acl`,
+			acl,
+		),
+	deleteAdminMailbox: (mailboxId: string) =>
+		del<void>(`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}`),
+	createAdminInvite: (body: {
+		mailboxId: string;
+		inviteEmail: string;
+		inviteeName?: string;
+		role?: "owner" | "member";
+	}) => post<InviteCreateResponse>("/api/v1/admin/invites", body),
+	revokeAdminInvite: (token: string) =>
+		post<unknown>(`/api/v1/admin/invites/${encodeURIComponent(token)}/revoke`),
+	resendAdminInvite: (token: string) =>
+		post<InviteCreateResponse>(
+			`/api/v1/admin/invites/${encodeURIComponent(token)}/resend`,
+		),
+
+	// Invites + password (public)
+	getInvite: (token: string) =>
+		get<{
+			mailboxId: string;
+			role: string;
+			inviteeEmail: string;
+			inviteeName: string | null;
+			expiresAt: string;
+			status: string;
+		}>(`/api/v1/invites/${encodeURIComponent(token)}`),
+	acceptInvite: (
+		token: string,
+		body: { password: string; displayName?: string },
+	) =>
+		post<{
+			mailboxId: string;
+			userId: string;
+			token: string;
+			expiresAt: string;
+		}>(`/api/v1/invites/${encodeURIComponent(token)}/accept`, body),
+	passwordLogin: (email: string, password: string) =>
+		post<{ token: string; expiresAt: string; email: string | null }>(
+			"/api/v1/auth/password",
+			{ email, password },
+		),
+	passwordLogout: () => post<{ ok: boolean }>("/api/v1/auth/password/logout"),
+
+	// Sharing invite (owner)
+	createMailboxInvite: (
+		mailboxId: string,
+		body: {
+			inviteEmail: string;
+			inviteeName?: string;
+			role?: "owner" | "member";
+		},
+	) =>
+		post<InviteCreateResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/invites`,
+			body,
+		),
 
 	// Emails
 	listEmails: (mailboxId: string, params: Record<string, string>, opts?: { signal?: AbortSignal }) =>

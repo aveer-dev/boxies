@@ -40,7 +40,21 @@ export default function HomeRoute() {
 		staleTime: Infinity, // config rarely changes
 	});
 
+	const { data: me } = useQuery({
+		queryKey: ["me"],
+		queryFn: () => api.getMe(),
+		staleTime: 60_000,
+	});
+	const isAdmin = Boolean(me?.isAdmin);
+
+	const { data: adminMailboxes = [] } = useQuery({
+		queryKey: ["admin-mailboxes"],
+		queryFn: () => api.listAdminMailboxes(),
+		enabled: isAdmin && mailboxesFetched && mailboxes.length === 0,
+	});
+
 	const domains = configData?.domains ?? [];
+	const mailDomain = configData?.mailDomain ?? domains[0] ?? "";
 	const emailAddresses = configData?.emailAddresses ?? [];
 
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -58,10 +72,11 @@ export default function HomeRoute() {
 
 	// Set default domain when config loads
 	useEffect(() => {
-		if (domains.length > 0 && !selectedDomain) {
-			setSelectedDomain(domains[0]);
+		if (!selectedDomain) {
+			const preferred = mailDomain || domains[0];
+			if (preferred) setSelectedDomain(preferred);
 		}
-	}, [domains, selectedDomain]);
+	}, [domains, mailDomain, selectedDomain]);
 
 	// Auto-create mailboxes from config (run once when both data sources are ready)
 	const autoCreateDone = useRef(false);
@@ -140,7 +155,12 @@ export default function HomeRoute() {
 					<div className="flex items-center justify-between">
 						<h1 className="text-2xl font-bold text-kumo-default">Mailboxes</h1>
 						<div className="flex items-center gap-2">
-							{!isConfigured && (
+							{isAdmin && (
+								<RouterLink to="/admin" className="no-underline">
+									<Button variant="secondary">Admin</Button>
+								</RouterLink>
+							)}
+							{!isConfigured && !isAdmin && (
 								<Button
 									variant="primary"
 									icon={<PlusIcon size={16} />}
@@ -222,22 +242,51 @@ export default function HomeRoute() {
 									className="text-kumo-subtle"
 								/>
 							</div>
-							<h3 className="text-base font-semibold text-kumo-default mb-1.5">
-								No mailboxes yet
-							</h3>
-							<p className="text-sm text-kumo-subtle max-w-sm mb-5">
-								{isConfigured
-									? "No mailboxes you can access yet. Configured addresses are created on first visit if they do not already exist. An owner must share existing mailboxes with your Access email."
-									: "Create a mailbox to start sending and receiving emails with your domain."}
-							</p>
-							{!isConfigured && (
-								<Button
-									variant="primary"
-									icon={<PlusIcon size={16} />}
-									onClick={() => setIsCreateOpen(true)}
-								>
-									Create Mailbox
-								</Button>
+							{isAdmin && adminMailboxes.length > 0 ? (
+								<>
+									<h3 className="text-base font-semibold text-kumo-default mb-1.5">
+										Manage domain mailboxes
+									</h3>
+									<p className="text-sm text-kumo-subtle max-w-sm mb-5">
+										{adminMailboxes.length} mailbox
+										{adminMailboxes.length === 1 ? "" : "es"} exist on this
+										domain. Open Admin to assign one to yourself or invite
+										someone.
+									</p>
+									<RouterLink to="/admin" className="no-underline">
+										<Button variant="primary">Open Admin</Button>
+									</RouterLink>
+								</>
+							) : (
+								<>
+									<h3 className="text-base font-semibold text-kumo-default mb-1.5">
+										No mailboxes yet
+									</h3>
+									<p className="text-sm text-kumo-subtle max-w-sm mb-5">
+										{isAdmin
+											? "Create the first address for this domain from Admin."
+											: isConfigured
+												? "No mailboxes you can access yet. Configured addresses are created on first visit if they do not already exist. An owner must share existing mailboxes with your Access email."
+												: "Create a mailbox to start sending and receiving emails with your domain."}
+									</p>
+									{isAdmin ? (
+										<RouterLink to="/admin" className="no-underline">
+											<Button variant="primary" icon={<PlusIcon size={16} />}>
+												Open Admin
+											</Button>
+										</RouterLink>
+									) : (
+										!isConfigured && (
+											<Button
+												variant="primary"
+												icon={<PlusIcon size={16} />}
+												onClick={() => setIsCreateOpen(true)}
+											>
+												Create Mailbox
+											</Button>
+										)
+									)}
+								</>
 							)}
 						</div>
 					</div>

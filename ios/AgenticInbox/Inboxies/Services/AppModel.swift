@@ -21,6 +21,12 @@ final class AppModel {
     private var pendingConversationIds: Set<String> = []
     /// True until the first mailbox identity is available (top bar skeleton).
     var isMailboxLoading = true
+    /// Domain admin from `/api/v1/me` (optional lightweight native admin).
+    var isAdmin = false
+    /// Primary mailbox domain suffix from Worker config (`MAIL_DOMAIN` / `DOMAINS`).
+    var mailDomain = "inboxies.email"
+    /// Configured mailbox domains for create-address pickers.
+    var domains: [String] = ["inboxies.email"]
     /// True while the current folder's email list is fetching with no cached data.
     var isLoading = true
     /// True while the open email's body/thread is fetching with no cached body.
@@ -169,6 +175,19 @@ final class AppModel {
         }
         errorMessage = nil
         do {
+            if let config = try? await APIClient.shared.getConfig() {
+                mailDomain = config.mailDomain
+                domains = config.domains.isEmpty ? [config.mailDomain] : config.domains
+            }
+            if let me = try? await APIClient.shared.getMe() {
+                isAdmin = me.isAdmin ?? false
+                if let domain = me.mailDomain, !domain.isEmpty {
+                    mailDomain = domain
+                }
+                if let meDomains = me.domains, !meDomains.isEmpty {
+                    domains = meDomains
+                }
+            }
 			mailboxes = try await APIClient.shared.listMailboxes()
             db.upsertMailboxes(mailboxes)
             if let selected = selectedMailboxId, !mailboxes.contains(where: { $0.id == selected }) {

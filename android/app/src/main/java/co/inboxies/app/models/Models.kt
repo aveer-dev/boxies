@@ -52,6 +52,83 @@ data class MeResponse(
     val email: String? = null,
     val sub: String? = null,
     val keys: List<String> = emptyList(),
+    val isAdmin: Boolean? = null,
+    val mailDomain: String? = null,
+    val domains: List<String> = emptyList(),
+)
+
+@Serializable
+data class AppConfigResponse(
+    val mailDomain: String,
+    val domains: List<String> = emptyList(),
+    val emailAddresses: List<String> = emptyList(),
+)
+
+@Serializable
+data class InvitePublic(
+    val mailboxId: String,
+    val role: String,
+    val inviteeEmail: String,
+    val inviteeName: String? = null,
+    val expiresAt: String,
+    val status: String,
+)
+
+@Serializable
+data class InviteAcceptResponse(
+    val mailboxId: String,
+    val userId: String,
+    val token: String,
+    val expiresAt: String,
+)
+
+@Serializable
+data class PasswordLoginResponse(
+    val token: String,
+    val expiresAt: String,
+    val email: String? = null,
+    val sub: String? = null,
+    val keys: List<String> = emptyList(),
+)
+
+@Serializable
+data class InviteCreateResponse(
+    val token: String,
+    val inviteUrl: String,
+    val emailSent: Boolean,
+    val emailError: String? = null,
+    val mailboxId: String,
+    val inviteeEmail: String,
+    val role: String,
+    val expiresAt: String,
+)
+
+@Serializable
+data class AdminMailboxRow(
+    val id: String,
+    val email: String,
+    val name: String,
+    val acl: MailboxAcl? = null,
+    val claimed: Boolean = false,
+    val fromName: String? = null,
+)
+
+@Serializable
+data class AdminCreateMailboxInvite(
+    val token: String? = null,
+    val inviteUrl: String? = null,
+    val emailSent: Boolean? = null,
+    val emailError: String? = null,
+    val inviteeEmail: String? = null,
+    val role: String? = null,
+)
+
+@Serializable
+data class AdminCreateMailboxResponse(
+    val id: String? = null,
+    val email: String? = null,
+    val name: String? = null,
+    val invite: AdminCreateMailboxInvite? = null,
 )
 
 @Serializable

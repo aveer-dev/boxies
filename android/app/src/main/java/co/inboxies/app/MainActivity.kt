@@ -21,6 +21,9 @@ import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.InboxiesTheme
 import co.inboxies.app.theme.ThemeMode
 import co.inboxies.app.ui.RootView
+import co.inboxies.app.ui.preview.PreviewHarness
+import co.inboxies.app.ui.preview.PreviewMode
+import co.inboxies.app.ui.preview.PreviewRoot
 
 val LocalAuthStore = staticCompositionLocalOf<AuthStore> { error("AuthStore missing") }
 val LocalAppModel = staticCompositionLocalOf<AppModel> { error("AppModel missing") }
@@ -42,7 +45,14 @@ class MainActivity : ComponentActivity() {
         val auth = (application as InboxiesApplication).authStore
         appModel = AppModel()
         val model = appModel
-        handlePushIntent(intent)
+        val previewMode = PreviewMode.fromIntent(intent)
+        if (previewMode != null) {
+            PreviewHarness.seed(previewMode, auth, model)
+        } else {
+            auth.resyncFromStorage()
+            handlePushIntent(intent)
+            handleInviteIntent(intent)
+        }
         setContent {
             var themeMode by remember {
                 mutableStateOf(
@@ -57,18 +67,34 @@ class MainActivity : ComponentActivity() {
                     LocalAuthStore provides auth,
                     LocalAppModel provides model,
                 ) {
-                    RootView(
-                        auth = auth,
-                        appModel = model,
-                        themeMode = themeMode,
-                        onThemeModeChange = { mode ->
-                            themeMode = mode
-                            getSharedPreferences("inboxies_prefs", MODE_PRIVATE)
-                                .edit()
-                                .putString("app_theme", mode.name)
-                                .apply()
-                        },
-                    )
+                    if (previewMode != null) {
+                        PreviewRoot(
+                            mode = previewMode,
+                            auth = auth,
+                            appModel = model,
+                            themeMode = themeMode,
+                            onThemeModeChange = { mode ->
+                                themeMode = mode
+                                getSharedPreferences("inboxies_prefs", MODE_PRIVATE)
+                                    .edit()
+                                    .putString("app_theme", mode.name)
+                                    .apply()
+                            },
+                        )
+                    } else {
+                        RootView(
+                            auth = auth,
+                            appModel = model,
+                            themeMode = themeMode,
+                            onThemeModeChange = { mode ->
+                                themeMode = mode
+                                getSharedPreferences("inboxies_prefs", MODE_PRIVATE)
+                                    .edit()
+                                    .putString("app_theme", mode.name)
+                                    .apply()
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -77,7 +103,25 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (PreviewMode.fromIntent(intent) != null) return
         handlePushIntent(intent)
+        handleInviteIntent(intent)
+    }
+
+    private fun handleInviteIntent(intent: Intent?) {
+        if (intent == null) return
+        val data = intent.data ?: return
+        val token = when {
+            data.scheme == "inboxies" && data.host == "invite" ->
+                data.pathSegments.firstOrNull()
+            data.host == "inboxies.email" && data.path?.startsWith("/invite/") == true ->
+                data.path!!.removePrefix("/invite/").trim('/')
+            else -> null
+        }?.takeIf { it.isNotBlank() } ?: return
+        if (::appModel.isInitialized) {
+            appModel.setPendingInviteToken(token)
+        }
+        intent.data = null
     }
 
     private fun handlePushIntent(intent: Intent?) {

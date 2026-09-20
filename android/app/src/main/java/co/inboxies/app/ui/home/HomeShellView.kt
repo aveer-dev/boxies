@@ -150,6 +150,7 @@ fun HomeShellView(
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
     val authEmail by auth.userEmail.collectAsState()
+    val mailDomain by appModel.mailDomain.collectAsState()
     val mailbox = appModel.selectedMailbox
 
     var showSearch by remember { mutableStateOf(false) }
@@ -852,6 +853,7 @@ fun HomeShellView(
             AddMailboxDialog(
                 name = newMailboxName,
                 emailLocal = newMailboxEmail,
+                mailDomain = mailDomain,
                 onNameChange = { newMailboxName = it },
                 onEmailChange = { value ->
                     newMailboxEmail = value.substringBefore("@")
@@ -863,7 +865,7 @@ fun HomeShellView(
                 },
                 onCreate = {
                     scope.launch {
-                        appModel.createMailbox(newMailboxName, "$newMailboxEmail@inboxies.email")
+                        appModel.createMailbox(newMailboxName, "$newMailboxEmail@$mailDomain")
                         showAddMailbox = false
                         newMailboxName = ""
                         newMailboxEmail = ""
@@ -1333,6 +1335,7 @@ private fun CircleAction(
 private fun AddMailboxDialog(
     name: String,
     emailLocal: String,
+    mailDomain: String,
     onNameChange: (String) -> Unit,
     onEmailChange: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -1367,7 +1370,7 @@ private fun AddMailboxDialog(
             label = { Text("Username") },
             singleLine = true,
             trailingIcon = {
-                Text("@inboxies.email", color = colors.muted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
+                Text("@$mailDomain", color = colors.muted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
             },
             modifier = Modifier.fillMaxWidth(),
         )

@@ -57,7 +57,10 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 @Composable
-fun SignInView() {
+fun SignInView(
+    /** DEBUG preview: open the password form without tapping the toggle. */
+    expandPasswordForm: Boolean = false,
+) {
     val auth = LocalAuthStore.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -147,10 +150,62 @@ fun SignInView() {
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = Color.White),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                 shape = RoundedCornerShape(12.dp),
             ) {
                 Text("Continue with Google", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium)
+            }
+
+            var showPassword by remember { mutableStateOf(expandPasswordForm) }
+            var passwordEmail by remember { mutableStateOf("") }
+            var password by remember { mutableStateOf("") }
+            Spacer(Modifier.height(12.dp))
+            TextButton(
+                onClick = { showPassword = !showPassword },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .background(colors.pillFill, RoundedCornerShape(12.dp)),
+            ) {
+                Text(
+                    if (showPassword) "Hide password sign-in" else "Sign in with password",
+                    fontFamily = InterFontFamily,
+                    color = colors.ink,
+                )
+            }
+            if (showPassword) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = passwordEmail,
+                    onValueChange = { passwordEmail = it },
+                    label = { Text("Mailbox email") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        scope.launch {
+                            commitApiBase()
+                            auth.signInWithPassword(passwordEmail, password)
+                        }
+                    },
+                    enabled = passwordEmail.isNotBlank() && password.isNotBlank() && !isBusy,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("Continue", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold)
+                }
             }
 
             if (showDevLogin) {
@@ -186,7 +241,7 @@ fun SignInView() {
                 CircularProgressIndicator(color = colors.ink)
             }
             error?.let {
-                Text(it, color = Color.Red, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+                Text(it, color = colors.deepDarkRed, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
             }
 
             Spacer(Modifier.weight(1f))

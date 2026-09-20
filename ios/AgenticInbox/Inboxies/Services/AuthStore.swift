@@ -42,7 +42,7 @@ final class AuthStore {
     /// Local-dev shortcut when Apple Sign In isn't configured in the simulator.
     func signInDev(email: String = "dev@example.com") async {
         guard AppConfig.isLocalDevelopmentAPI else {
-            errorMessage = "Dev login only works against a local Worker (http://127.0.0.1:5173). Use Sign in with Apple for inboxies.email."
+            errorMessage = "Dev login only works against a local Worker (http://127.0.0.1:5173). Use Sign in with Apple against your deployed API."
             return
         }
         isBusy = true
@@ -59,6 +59,22 @@ final class AuthStore {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func signInWithPassword(email: String, password: String) async {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            let response = try await APIClient.shared.passwordLogin(email: email, password: password)
+            persist(token: response.token, email: response.email ?? email)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func applySession(token: String, email: String?) {
+        persist(token: token, email: email)
     }
 
     func signOut() {

@@ -19,7 +19,7 @@ enum APIError: LocalizedError {
         case .notJSON(let preview):
             return "API returned HTML instead of JSON. \(preview)"
         case .cloudflareAccess:
-            return "Cloudflare Access is blocking the API. Add a Bypass policy for inboxies.email/api/* (and /agents/* for chat) in Zero Trust, or the Worker never sees Sign in with Apple."
+            return "Cloudflare Access is blocking the API. Add a Bypass policy for <your-api-host>/api/* (and /agents/* for chat) in Zero Trust, or the Worker never sees Sign in with Apple."
         case .transport(let err): return err.localizedDescription
         }
     }
@@ -139,6 +139,10 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes")
     }
 
+    func getConfig() async throws -> AppConfigResponse {
+        try await request(path: "/api/v1/config", authed: false)
+    }
+
     func getMe() async throws -> MeResponse {
         try await request(path: "/api/v1/me")
     }
@@ -169,6 +173,103 @@ final class APIClient: @unchecked Sendable {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)",
             method: "DELETE"
+        )
+    }
+
+    func getInvite(token: String) async throws -> InvitePublic {
+        try await request(path: "/api/v1/invites/\(token.urlPathEncoded)", authed: false)
+    }
+
+    func acceptInvite(token: String, password: String, displayName: String?) async throws -> InviteAcceptResponse {
+        var body: [String: Any] = ["password": password]
+        if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
+        return try await request(
+            path: "/api/v1/invites/\(token.urlPathEncoded)/accept",
+            method: "POST",
+            body: body,
+            authed: false
+        )
+    }
+
+    func passwordLogin(email: String, password: String) async throws -> PasswordLoginResponse {
+        try await request(
+            path: "/api/v1/auth/password",
+            method: "POST",
+            body: ["email": email, "password": password],
+            authed: false
+        )
+    }
+
+    func listAdminMailboxes() async throws -> [AdminMailboxRow] {
+        try await request(path: "/api/v1/admin/mailboxes")
+    }
+
+    func assignAdminMailboxToSelf(mailboxId: String) async throws -> Mailbox {
+        try await request(
+            path: "/api/v1/admin/mailboxes/\(mailboxId.urlPathEncoded)/assign",
+            method: "POST",
+            body: ["assignTo": "self"]
+        )
+    }
+
+    func createAdminMailbox(
+        email: String,
+        name: String?,
+        assignToSelf: Bool,
+        inviteEmail: String? = nil,
+        inviteeName: String? = nil
+    ) async throws -> AdminCreateMailboxResponse {
+        var body: [String: Any] = ["email": email]
+        if let name, !name.isEmpty { body["name"] = name }
+        if assignToSelf {
+            body["assignTo"] = "self"
+        } else if let inviteEmail {
+            var invite: [String: Any] = ["inviteEmail": inviteEmail, "role": "owner"]
+            if let inviteeName, !inviteeName.isEmpty { invite["inviteeName"] = inviteeName }
+            body["assignTo"] = invite
+        }
+        return try await request(
+            path: "/api/v1/admin/mailboxes",
+            method: "POST",
+            body: body
+        )
+    }
+
+    func deleteAdminMailbox(mailboxId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/admin/mailboxes/\(mailboxId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
+    func createAdminInvite(
+        mailboxId: String,
+        inviteEmail: String,
+        inviteeName: String? = nil,
+        role: String = "owner"
+    ) async throws -> InviteCreateResponse {
+        var body: [String: Any] = [
+            "mailboxId": mailboxId,
+            "inviteEmail": inviteEmail,
+            "role": role,
+        ]
+        if let inviteeName, !inviteeName.isEmpty { body["inviteeName"] = inviteeName }
+        return try await request(
+            path: "/api/v1/admin/invites",
+            method: "POST",
+            body: body
+        )
+    }
+
+    func createMailboxInvite(
+        mailboxId: String,
+        inviteEmail: String,
+        role: String = "member"
+    ) async throws -> InviteCreateResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/invites",
+            method: "POST",
+            body: ["inviteEmail": inviteEmail, "role": role]
         )
     }
 

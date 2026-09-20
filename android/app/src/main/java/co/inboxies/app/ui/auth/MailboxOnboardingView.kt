@@ -17,6 +17,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,9 +29,131 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.LocalAuthStore
+import co.inboxies.app.models.InvitePublic
+import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.settings.DomainAdminSettingsView
 import kotlinx.coroutines.launch
+
+@Composable
+fun InviteAcceptView(
+    token: String,
+    onDone: () -> Unit,
+) {
+    val auth = LocalAuthStore.current
+    val app = LocalAppModel.current
+    val colors = inboxiesColors()
+    val scope = rememberCoroutineScope()
+    var invite by remember { mutableStateOf<InvitePublic?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var displayName by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var formError by remember { mutableStateOf<String?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(token) {
+        runCatching { ApiClient.shared.getInvite(token) }
+            .onSuccess { invite = it }
+            .onFailure { loadError = it.message }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+    ) {
+        TextButton(onClick = onDone) {
+            Text("Cancel", color = colors.muted, fontFamily = InterFontFamily)
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Accept invite",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 24.sp,
+            color = colors.ink,
+        )
+        when {
+            loadError != null -> Text(loadError!!, color = colors.deepDarkRed, modifier = Modifier.padding(top = 12.dp))
+            invite == null -> CircularProgressIndicator(modifier = Modifier.padding(top = 24.dp))
+            else -> {
+                Text(
+                    "Set a password for ${invite!!.mailboxId}",
+                    color = colors.muted,
+                    fontFamily = InterFontFamily,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+                )
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = { displayName = it },
+                    label = { Text("Display name (optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = confirm,
+                    onValueChange = { confirm = it },
+                    label = { Text("Confirm password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                formError?.let {
+                    Text(it, color = colors.deepDarkRed, modifier = Modifier.padding(top = 8.dp))
+                }
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        scope.launch {
+                            formError = null
+                            if (password != confirm) {
+                                formError = "Passwords do not match"
+                                return@launch
+                            }
+                            if (password.length < 10) {
+                                formError = "Password must be at least 10 characters"
+                                return@launch
+                            }
+                            submitting = true
+                            try {
+                                val result = ApiClient.shared.acceptInvite(
+                                    token,
+                                    password,
+                                    displayName.ifBlank { null },
+                                )
+                                auth.applySession(result.token, result.mailboxId)
+                                app.bootstrap(result.token)
+                                onDone()
+                            } catch (e: Exception) {
+                                formError = e.message
+                            } finally {
+                                submitting = false
+                            }
+                        }
+                    },
+                    enabled = !submitting && password.length >= 10,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (submitting) CircularProgressIndicator()
+                    else Text("Create account", fontFamily = InterFontFamily)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun MailboxOnboardingView() {
@@ -38,9 +161,28 @@ fun MailboxOnboardingView() {
     val auth = LocalAuthStore.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val isAdmin by app.isAdmin.collectAsState()
+    val mailDomain by app.mailDomain.collectAsState()
     var name by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
+
+    if (isAdmin) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+        ) {
+            TextButton(
+                onClick = { auth.signOut() },
+                modifier = Modifier.padding(horizontal = 8.dp),
+            ) {
+                Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
+            }
+            DomainAdminSettingsView()
+        }
+        return
+    }
 
     Column(
         modifier = Modifier
@@ -85,7 +227,7 @@ fun MailboxOnboardingView() {
                 singleLine = true,
             )
             Text(
-                "@inboxies.email",
+                "@$mailDomain",
                 color = colors.muted,
                 modifier = Modifier.padding(start = 8.dp, top = 20.dp),
             )
@@ -96,17 +238,17 @@ fun MailboxOnboardingView() {
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 8.dp),
         )
-        Spacer(Modifier.height(24.dp))
+        Spacer(modifier.height(24.dp))
         Button(
             onClick = {
                 scope.launch {
                     creating = true
-                    app.createMailbox(name, "$username@inboxies.email")
+                    app.createMailbox(name, "$username@$mailDomain")
                     creating = false
                 }
             },
             enabled = name.isNotBlank() && username.isNotBlank() && !creating,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             if (creating) CircularProgressIndicator()
             else Text("Create Email", fontFamily = InterFontFamily)

@@ -1,6 +1,8 @@
 package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
+import co.inboxies.app.models.AdminCreateMailboxResponse
+import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AuthResponse
 import co.inboxies.app.models.DigestStatusResponse
@@ -10,9 +12,13 @@ import co.inboxies.app.models.EmailListResponse
 import co.inboxies.app.models.WorkflowPilesResponse
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxDigest
+import co.inboxies.app.models.InviteAcceptResponse
+import co.inboxies.app.models.InviteCreateResponse
+import co.inboxies.app.models.InvitePublic
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.MeResponse
+import co.inboxies.app.models.PasswordLoginResponse
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -46,7 +52,7 @@ sealed class ApiException(message: String) : Exception(message) {
     class Decoding(cause: Throwable) : ApiException("Decode error: ${cause.message}")
     class NotJson(preview: String) : ApiException("API returned HTML instead of JSON. $preview")
     class CloudflareAccess : ApiException(
-        "Cloudflare Access is blocking the API. Add a Bypass policy for inboxies.email/api/* " +
+        "Cloudflare Access is blocking the API. Add a Bypass policy for <your-api-host>/api/* " +
             "(and /agents/* for chat) in Zero Trust.",
     )
     class Transport(cause: Throwable) : ApiException(cause.message ?: "Network error")
@@ -173,6 +179,9 @@ class ApiClient private constructor() {
 
     suspend fun listMailboxes(): List<Mailbox> = request("/api/v1/mailboxes")
 
+    suspend fun getConfig(): AppConfigResponse =
+        request("/api/v1/config", method = "GET", authed = false)
+
     suspend fun getMe(): MeResponse = request("/api/v1/me")
 
     suspend fun createMailbox(name: String, email: String): Mailbox = request(
@@ -199,6 +208,105 @@ class ApiClient private constructor() {
     suspend fun deleteMailbox(mailboxId: String) {
         request<EmptyResponse>("/api/v1/mailboxes/${pathEncode(mailboxId)}", method = "DELETE")
     }
+
+    suspend fun getInvite(token: String): InvitePublic =
+        request("/api/v1/invites/${pathEncode(token)}", method = "GET", authed = false)
+
+    suspend fun acceptInvite(
+        token: String,
+        password: String,
+        displayName: String? = null,
+    ): InviteAcceptResponse = request(
+        "/api/v1/invites/${pathEncode(token)}/accept",
+        method = "POST",
+        body = buildJsonObject {
+            put("password", password)
+            if (!displayName.isNullOrBlank()) put("displayName", displayName)
+        },
+        authed = false,
+    )
+
+    suspend fun passwordLogin(email: String, password: String): PasswordLoginResponse = request(
+        "/api/v1/auth/password",
+        method = "POST",
+        body = buildJsonObject {
+            put("email", email)
+            put("password", password)
+        },
+        authed = false,
+    )
+
+    suspend fun listAdminMailboxes(): List<AdminMailboxRow> =
+        request("/api/v1/admin/mailboxes")
+
+    suspend fun assignAdminMailboxToSelf(mailboxId: String): Mailbox = request(
+        "/api/v1/admin/mailboxes/${pathEncode(mailboxId)}/assign",
+        method = "POST",
+        body = buildJsonObject { put("assignTo", "self") },
+    )
+
+    suspend fun createAdminMailbox(
+        email: String,
+        name: String? = null,
+        assignToSelf: Boolean = true,
+        inviteEmail: String? = null,
+        inviteeName: String? = null,
+    ): AdminCreateMailboxResponse = request(
+        "/api/v1/admin/mailboxes",
+        method = "POST",
+        body = buildJsonObject {
+            put("email", email)
+            if (!name.isNullOrBlank()) put("name", name)
+            if (assignToSelf) {
+                put("assignTo", "self")
+            } else {
+                put(
+                    "assignTo",
+                    buildJsonObject {
+                        put("inviteEmail", inviteEmail ?: "")
+                        put("role", "owner")
+                        if (!inviteeName.isNullOrBlank()) put("inviteeName", inviteeName)
+                    },
+                )
+            }
+        },
+    )
+
+    suspend fun deleteAdminMailbox(mailboxId: String) {
+        request<EmptyResponse>(
+            "/api/v1/admin/mailboxes/${pathEncode(mailboxId)}",
+            method = "DELETE",
+        )
+    }
+
+    suspend fun createAdminInvite(
+        mailboxId: String,
+        inviteEmail: String,
+        inviteeName: String? = null,
+        role: String = "owner",
+    ): InviteCreateResponse = request(
+        "/api/v1/admin/invites",
+        method = "POST",
+        body = buildJsonObject {
+            put("mailboxId", mailboxId)
+            put("inviteEmail", inviteEmail)
+            put("role", role)
+            if (!inviteeName.isNullOrBlank()) put("inviteeName", inviteeName)
+        },
+    )
+
+    suspend fun createMailboxInvite(
+        mailboxId: String,
+        inviteEmail: String,
+        role: String = "member",
+    ): InviteCreateResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/invites",
+        method = "POST",
+        body = buildJsonObject {
+            put("inviteEmail", inviteEmail)
+            put("role", role)
+        },
+    )
 
     suspend fun listFolders(mailboxId: String): List<Folder> =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders")

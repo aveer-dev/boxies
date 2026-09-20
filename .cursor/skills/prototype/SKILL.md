@@ -43,11 +43,11 @@ Default **3** variants, max 5. Name the axis ("Quiet chrome", "Dock-first compos
 
 ### Phase 4 — Harness
 
-**iOS** — new file under `ios/AgenticInbox/Inboxies/Views/Prototypes/` (create the group if needed). One `enum PrototypeVariant` + a container `View` that switches with a segmented control **only in the preview** (or separate `#Preview("Quiet")` blocks). Use `PreviewSupport` fixtures. Do not import the prototype from `HomeShellView`.
+**iOS** — new file under `ios/AgenticInbox/Inboxies/Views/Prototypes/` (create the group if needed). One `enum PrototypeVariant` + a container `View` that switches with a segmented control **only in the preview** (or separate `#Preview("Quiet")` blocks). Use `PreviewSupport` fixtures. Do not import the prototype from `HomeShellView`. For full-activity Simulator certainty (not Canvas-only), also launch with DEBUG args from `InboxiesApp` / `PreviewSupport` (`-previewMailbox`, `-previewDomainAdmin`, …).
 
-**Android** — new file under `android/app/src/main/java/co/inboxies/app/ui/prototypes/`. `@Preview(name = "Quiet")` per variant, or `PreviewParameterProvider`. Wrap in `InboxiesTheme`. Do not reference from `HomeShellView`.
+**Android** — new file under `android/app/src/main/java/co/inboxies/app/ui/prototypes/`. `@Preview(name = "Quiet")` per variant, or `PreviewParameterProvider`. Wrap in `InboxiesTheme`. Prefer `ui/preview/PreviewSupport` fixtures. Do not reference from `HomeShellView`. For full-activity emulator certainty (required parity with iOS Simulator launch-arg reviews), use the DEBUG intent harness: `android/scripts/run-debug-preview.sh <mode>` or `adb … --ez previewMailbox true` — see `inboxies-android-ui` “DEBUG preview harness”.
 
-Never a standalone HTML file. Never `/prototypes` web route.
+Never a standalone HTML file. Never `/prototypes` web route. **Do not** treat iOS Simulator-only evidence as enough when the change also ships on Android — run the matching Android preview mode.
 
 Render **one variant at a time, full size**, with realistic surroundings (a toast needs a home list behind it).
 

@@ -16,6 +16,7 @@ import {
 	principalFromClaims,
 	type RequestPrincipal,
 } from "./lib/mailbox-acl";
+import { PASSWORD_SESSION_COOKIE } from "./lib/password-auth";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import type { Env } from "./types";
 
@@ -48,12 +49,24 @@ function getAccessUrls(teamDomain: string) {
 	return { issuer, certsUrl };
 }
 
+/** Public API + SPA paths that must work without Access / Bearer (token-gated later). */
 function isPublicAuthPath(pathname: string): boolean {
-	return (
+	if (
 		pathname === "/api/v1/auth/apple" ||
 		pathname === "/api/v1/auth/google" ||
-		pathname === "/api/v1/auth/dev"
-	);
+		pathname === "/api/v1/auth/dev" ||
+		pathname === "/api/v1/auth/password" ||
+		pathname === "/api/v1/auth/password/logout"
+	) {
+		return true;
+	}
+	if (pathname.startsWith("/api/v1/invites/")) return true;
+	// Public deployment config (mail domain) for native create-address UI.
+	if (pathname === "/api/v1/config") return true;
+	// Invite accept + password login SPA shells (Access bypass required at edge too).
+	if (pathname === "/login" || pathname.startsWith("/login/")) return true;
+	if (pathname === "/invite" || pathname.startsWith("/invite/")) return true;
+	return false;
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -107,10 +120,11 @@ type ExecutionCtxWithProps = ExecutionContext & {
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-// Auth middleware: Cloudflare Access (web) OR mobile Bearer JWT.
-// Auth bootstrap endpoints are public. DEV still attaches a principal so ACL is exercised.
+// Auth middleware: Cloudflare Access (web) OR mobile Bearer JWT OR password session cookie.
+// Auth bootstrap + invite endpoints are public. DEV still attaches a principal so ACL is exercised.
 app.use("*", async (c, next) => {
-	if (isPublicAuthPath(new URL(c.req.url).pathname)) {
+	const pathname = new URL(c.req.url).pathname;
+	if (isPublicAuthPath(pathname)) {
 		return next();
 	}
 
@@ -138,7 +152,9 @@ app.use("*", async (c, next) => {
 
 	const authHeader = c.req.header("authorization");
 	const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
-	if (bearer) {
+	const cookieSession = readCookie(c.req.header("cookie"), PASSWORD_SESSION_COOKIE);
+	const sessionToken = bearer || cookieSession;
+	if (sessionToken) {
 		const mobileSecret =
 			MOBILE_JWT_SECRET ||
 			(import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
@@ -149,11 +165,14 @@ app.use("*", async (c, next) => {
 			);
 		}
 		try {
-			const claims = await verifyMobileSessionToken(bearer, mobileSecret);
+			const claims = await verifyMobileSessionToken(sessionToken, mobileSecret);
 			c.set("principal", principalFromClaims(claims));
 			return next();
 		} catch {
-			return c.text("Invalid or expired mobile session token", 403);
+			if (bearer) {
+				return c.text("Invalid or expired mobile session token", 403);
+			}
+			// Invalid password cookie: fall through to Access / DEV / fail-closed.
 		}
 	}
 

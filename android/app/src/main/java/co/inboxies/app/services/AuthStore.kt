@@ -82,6 +82,42 @@ class AuthStore(context: Context) {
         }
     }
 
+    suspend fun signInWithPassword(email: String, password: String) {
+        _isBusy.value = true
+        _errorMessage.value = null
+        try {
+            val response = withContext(Dispatchers.IO) {
+                ApiClient.shared.passwordLogin(email, password)
+            }
+            persist(response.token, response.email ?: email)
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+        } finally {
+            _isBusy.value = false
+        }
+    }
+
+    fun applySession(token: String, email: String?) {
+        persist(token, email)
+    }
+
+    /**
+     * In-memory session for DEBUG emulator previews. Does not write EncryptedSharedPreferences,
+     * so a preview launch cannot clobber a real signed-in session on disk.
+     */
+    fun applyEphemeralSession(token: String, email: String?) {
+        _token.value = token
+        _userEmail.value = email
+        ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
+    /** Re-read session from disk — undoes a DEBUG [applyEphemeralSession] after a preview launch. */
+    fun resyncFromStorage() {
+        _token.value = prefs.getString(TOKEN_KEY, null)
+        _userEmail.value = prefs.getString(EMAIL_KEY, null)
+        ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
     fun signOut() {
         _token.value = null
         _userEmail.value = null

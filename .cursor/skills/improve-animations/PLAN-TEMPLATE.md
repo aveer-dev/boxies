@@ -51,7 +51,7 @@ Never "use a nicer easing."
 ## Verification
 
 - **Mechanical**: iOS — build the Inboxies scheme if Xcode is available; Android — `./gradlew :app:assembleDebug` from `android/`.
-- **Feel check**: trigger <interaction> on a simulator/emulator/device:
+- **Feel check**: trigger <interaction> on a simulator/emulator/device (Android: matching `run-debug-preview.sh` mode when reviewing Hey/admin surfaces):
   - <observable, e.g. dock springs with the chrome spring, not ease-in>
   - spam the action — animation retargets, does not jump to 0
   - reduced motion — large travel dropped, opacity remains

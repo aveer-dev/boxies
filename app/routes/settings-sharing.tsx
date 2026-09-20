@@ -68,6 +68,10 @@ export default function SharingSettingsRoute() {
 	const [draft, setDraft] = useState("");
 	const [addAsOwner, setAddAsOwner] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
+	const [inviteEmail, setInviteEmail] = useState("");
+	const [inviteAsOwner, setInviteAsOwner] = useState(false);
+	const [isInviting, setIsInviting] = useState(false);
+	const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null);
 
 	useEffect(() => {
 		if (!mailbox) return;
@@ -141,6 +145,38 @@ export default function SharingSettingsRoute() {
 		}
 	};
 
+	const handleInvite = async () => {
+		if (!mailboxId || !inviteEmail.trim()) {
+			toastManager.add({
+				title: "Enter an email to invite",
+				variant: "error",
+			});
+			return;
+		}
+		setIsInviting(true);
+		setLastInviteUrl(null);
+		try {
+			const result = await api.createMailboxInvite(mailboxId, {
+				inviteEmail: inviteEmail.trim(),
+				role: inviteAsOwner ? "owner" : "member",
+			});
+			setLastInviteUrl(result.inviteUrl);
+			toastManager.add({
+				title: result.emailSent
+					? "Invite emailed"
+					: "Invite created — copy the link",
+			});
+			setInviteEmail("");
+		} catch (e) {
+			toastManager.add({
+				title: e instanceof Error ? e.message : "Invite failed",
+				variant: "error",
+			});
+		} finally {
+			setIsInviting(false);
+		}
+	};
+
 	if (!mailbox || !mailboxId) {
 		return (
 			<div className="flex justify-center py-20">
@@ -154,12 +190,13 @@ export default function SharingSettingsRoute() {
 			<div className="space-y-4">
 				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
 					<p className="text-sm text-kumo-default leading-relaxed">
-						Owners can manage this list. Members can use the mailbox but cannot
-						change who has access.
+						People with access. Owners can manage this list. Members can use the
+						mailbox but cannot change who has access.
 					</p>
 					<p className="text-xs text-kumo-subtle leading-relaxed">
-						Add people by the email on their Cloudflare Access or mobile sign-in
-						account. That address may differ from the mailbox address.
+						Add someone who already signs in with Access or Apple/Google by
+						email key below. To onboard a new person with a password, use Invite
+						by email.
 					</p>
 				</div>
 
@@ -224,7 +261,59 @@ export default function SharingSettingsRoute() {
 
 				{canManage && (
 					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
-						<div className="text-sm font-medium text-kumo-default">Add person</div>
+						<div className="text-sm font-medium text-kumo-default">
+							Invite by email
+						</div>
+						<p className="text-xs text-kumo-subtle">
+							Sends an invite link so they can set a password and join this
+							mailbox.
+						</p>
+						<Input
+							label="Invitee email"
+							value={inviteEmail}
+							onChange={(e) => setInviteEmail(e.target.value)}
+							placeholder="person@gmail.com"
+						/>
+						<label className="flex items-center gap-2 text-sm text-kumo-default">
+							<input
+								type="checkbox"
+								checked={inviteAsOwner}
+								onChange={(e) => setInviteAsOwner(e.target.checked)}
+							/>
+							Invite as owner
+						</label>
+						{lastInviteUrl && (
+							<div className="rounded-md bg-kumo-tint p-3 space-y-2">
+								<code className="text-xs break-all text-kumo-default block">
+									{lastInviteUrl}
+								</code>
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={() => {
+										void navigator.clipboard.writeText(lastInviteUrl);
+										toastManager.add({ title: "Invite link copied" });
+									}}
+								>
+									Copy link
+								</Button>
+							</div>
+						)}
+						<Button
+							variant="primary"
+							onClick={handleInvite}
+							loading={isInviting}
+						>
+							Send invite
+						</Button>
+					</div>
+				)}
+
+				{canManage && (
+					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+						<div className="text-sm font-medium text-kumo-default">
+							Add person (already has Access)
+						</div>
 						<Input
 							label="Email"
 							value={draft}

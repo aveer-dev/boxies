@@ -77,6 +77,22 @@ class AppModel {
     private val _isMailboxLoading = MutableStateFlow(true)
     val isMailboxLoading: StateFlow<Boolean> = _isMailboxLoading.asStateFlow()
 
+    private val _isAdmin = MutableStateFlow(false)
+    val isAdmin: StateFlow<Boolean> = _isAdmin.asStateFlow()
+
+    private val _mailDomain = MutableStateFlow("inboxies.email")
+    val mailDomain: StateFlow<String> = _mailDomain.asStateFlow()
+
+    private val _domains = MutableStateFlow(listOf("inboxies.email"))
+    val domains: StateFlow<List<String>> = _domains.asStateFlow()
+
+    private val _pendingInviteToken = MutableStateFlow<String?>(null)
+    val pendingInviteToken: StateFlow<String?> = _pendingInviteToken.asStateFlow()
+
+    fun setPendingInviteToken(token: String?) {
+        _pendingInviteToken.value = token
+    }
+
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -212,6 +228,15 @@ class AppModel {
         }
         _errorMessage.value = null
         try {
+            runCatching { ApiClient.shared.getConfig() }.getOrNull()?.let { config ->
+                _mailDomain.value = config.mailDomain
+                _domains.value = config.domains.ifEmpty { listOf(config.mailDomain) }
+            }
+            runCatching { ApiClient.shared.getMe() }.getOrNull()?.let { me ->
+                _isAdmin.value = me.isAdmin == true
+                me.mailDomain?.takeIf { it.isNotBlank() }?.let { _mailDomain.value = it }
+                if (me.domains.isNotEmpty()) _domains.value = me.domains
+            }
             val list = ApiClient.shared.listMailboxes()
             val previous = _mailboxes.value.associateBy { it.id }
             val merged = list.map { incoming ->
@@ -929,9 +954,54 @@ class AppModel {
         _conversations.value = emptyList()
         _isMailboxLoading.value = true
         _isLoading.value = true
+        _isAdmin.value = false
+        _pendingInviteToken.value = null
         _errorMessage.value = null
         _toast.value = null
+        isDebugPreview = false
     }
+
+    /**
+     * Seed in-memory mailbox state for DEBUG emulator previews.
+     * Skips network/bootstrap; [isDebugPreview] stays true so RootView must not call [bootstrap].
+     */
+    fun applyDebugPreview(
+        mailboxes: List<Mailbox>,
+        selectedMailboxId: String?,
+        folders: List<Folder>,
+        emails: List<Email>,
+        selectedTab: HomeTab,
+        selectedEmail: Email?,
+        threadEmails: List<Email>,
+        replyLaterCount: Int,
+        isAdmin: Boolean,
+    ) {
+        streamClient.stop()
+        isDebugPreview = true
+        _mailboxes.value = mailboxes
+        _selectedMailboxId.value = selectedMailboxId
+        _folders.value = folders
+        _emails.value = emails
+        _selectedTab.value = selectedTab
+        _selectedEmail.value = selectedEmail
+        _threadEmails.value = threadEmails
+        _replyLaterCount.value = replyLaterCount
+        _isAdmin.value = isAdmin
+        _inboxDigest.value = null
+        _composeSession.value = null
+        _chatSession.value = ChatSession.Dismissed
+        _conversations.value = emptyList()
+        _pendingInviteToken.value = null
+        _errorMessage.value = null
+        _toast.value = null
+        _isMailboxLoading.value = false
+        _isLoading.value = false
+    }
+
+    /** When true, UI must not call [bootstrap] / real-time sync (DEBUG preview fixtures). */
+    @Volatile
+    var isDebugPreview: Boolean = false
+        private set
 
     fun updateComposeFromMailbox(mailboxId: String) {
         val session = _composeSession.value ?: return
