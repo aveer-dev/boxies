@@ -592,6 +592,18 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 		source: "user",
 		refile: true,
 	});
+	const triageSender = normalizeTriageSender(email.sender);
+	if (triageSender) {
+		const triage = await (stub as any).getSenderTriage?.(triageSender);
+		if (triage?.status === "allowed") {
+			await (stub as any).upsertSenderTriage({
+				sender: triageSender,
+				status: "allowed",
+				destination_folder_id: folderId,
+				display_name: email.sender_name ?? triage.display_name ?? null,
+			});
+		}
+	}
 	return c.json({
 		status: "moved",
 		preference: result?.preference ?? null,
@@ -658,6 +670,22 @@ app.put(
 			refile: body.refile !== false,
 		});
 		if (!result) return c.json({ error: "Invalid preference" }, 400);
+
+		// Keep Screener allow-list destination in sync when a preference changes.
+		const address = normalizeSenderPreferenceAddress(addressParam);
+		if (address) {
+			const stub = c.var.mailboxStub as any;
+			const triage = await stub.getSenderTriage?.(address);
+			if (triage?.status === "allowed") {
+				await stub.upsertSenderTriage({
+					sender: address,
+					status: "allowed",
+					destination_folder_id: folderId,
+					display_name: body.displayName ?? triage.display_name ?? null,
+				});
+			}
+		}
+
 		return c.json(result);
 	},
 );
@@ -856,6 +884,13 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/approve", async (c: AppCont
 		destination_folder_id: destinationFolderId,
 		display_name: body.displayName ?? null,
 	});
+	await stub.upsertSenderPreference({
+		address: sender,
+		folderId: destinationFolderId,
+		displayName: body.displayName ?? null,
+		source: "screener",
+		refile: false,
+	});
 
 	const refileQueued = body.refileQueued !== false;
 	let moved = { moved: 0, ids: [] as string[] };
@@ -890,6 +925,7 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/reject", async (c: AppConte
 		destination_folder_id: null,
 		display_name: body.displayName ?? null,
 	});
+	await stub.deleteSenderPreference(sender);
 
 	const refileQueued = body.refileQueued !== false;
 	let moved = { moved: 0, ids: [] as string[] };
@@ -947,6 +983,17 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 		destination_folder_id: destinationFolderId,
 		display_name: body.displayName ?? existing?.display_name ?? null,
 	});
+	if (status === "allowed" && destinationFolderId) {
+		await stub.upsertSenderPreference({
+			address: sender,
+			folderId: destinationFolderId,
+			displayName: body.displayName ?? existing?.display_name ?? null,
+			source: "screener",
+			refile: false,
+		});
+	} else if (status === "rejected") {
+		await stub.deleteSenderPreference(sender);
+	}
 
 	let moved = { moved: 0, ids: [] as string[] };
 	if (body.refileQueued) {
