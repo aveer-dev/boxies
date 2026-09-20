@@ -29,7 +29,7 @@ import {
 } from "../lib/invites";
 import {
 	canManageAcl,
-	creatorAcl,
+	aclFromOwnerKeys,
 	loadMailboxSettingsRaw,
 	mailboxAccessPayload,
 	parseAcl,
@@ -37,6 +37,15 @@ import {
 	validateAclWrite,
 	type RequestPrincipal,
 } from "../lib/mailbox-acl";
+import {
+	createIdentityLinkCode,
+	identityLinkCodeIsActive,
+	loadIdentityLinkCode,
+	ownerKeysForAssign,
+	resolveAdminLinkEmails,
+	saveIdentityLinkCode,
+	upsertIdentityLink,
+} from "../lib/identity-links";
 import type { MailboxContext } from "../lib/mailbox";
 import {
 	allowedMailboxSet,
@@ -281,7 +290,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const assignTo = body.assignTo ?? "self";
 		// Always provisional-own as admin until invitee accepts — empty ACL
 		// would be auto-claimable via claimIfUnclaimed.
-		const acl = creatorAcl(principal);
+		const ownerKeys = await ownerKeysForAssign(c.env.BUCKET, principal);
+		const acl = aclFromOwnerKeys(ownerKeys);
 		const settings = { ...defaultSettings(name), acl };
 		await c.env.BUCKET.put(key, JSON.stringify(settings));
 		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
@@ -341,7 +351,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const body = AssignBody.parse(await c.req.json());
 
 		if (body.assignTo === "self") {
-			const acl = creatorAcl(principal);
+			const ownerKeys = await ownerKeysForAssign(c.env.BUCKET, principal);
+			const acl = aclFromOwnerKeys(ownerKeys);
 			const next = { ...settings, acl };
 			await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
 			await appendAdminAudit(c.env.BUCKET, {
@@ -784,6 +795,93 @@ export function registerAdminAndInviteRoutes(app: App) {
 			userId: user.id,
 			linkedSubs: user.linkedSubs,
 			keys: aclKeysForPlatformUser(user),
+		});
+	});
+
+	/**
+	 * Domain Admin (web Access): mint a short-lived code that a mobile Apple/Google
+	 * session can redeem to link its IdP `sub` to the admin's DOMAIN_ADMINS emails.
+	 * Use when Sign in with Apple hides the email claim.
+	 */
+	app.post("/api/v1/me/identity-link-codes", async (c) => {
+		const principal = c.get("principal");
+		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
+		const emails = await resolveAdminLinkEmails(c.env, principal);
+		if (emails.length === 0) {
+			return c.json(
+				{
+					error:
+						"No admin emails to link. Set DOMAIN_ADMINS to your Access email (and optional sub:…).",
+				},
+				400,
+			);
+		}
+		const record = createIdentityLinkCode({
+			emails,
+			createdByKeys: principalKeys(principal),
+		});
+		await saveIdentityLinkCode(c.env.BUCKET, record);
+		await appendAdminAudit(c.env.BUCKET, {
+			actorKeys: principalKeys(principal),
+			action: "identity_link_code.create",
+			detail: { emails },
+		});
+		return c.json({
+			code: record.code,
+			emails: record.emails,
+			expiresAt: record.expiresAt,
+		});
+	});
+
+	/**
+	 * Mobile session (Apple/Google): redeem an admin link code → durable sub↔email.
+	 * After redeem, /me reports isAdmin and list sees mailboxes owned by those emails.
+	 */
+	app.post("/api/v1/auth/redeem-identity-link", async (c) => {
+		const principal = c.get("principal");
+		if (!principal?.sub) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+		if (principal.sub.startsWith("user:")) {
+			return c.json(
+				{
+					error:
+						"Password accounts use POST /api/v1/auth/link-provider instead",
+				},
+				400,
+			);
+		}
+		const body = z.object({ code: z.string().min(4).max(64) }).parse(await c.req.json());
+		const record = await loadIdentityLinkCode(c.env.BUCKET, body.code.trim());
+		if (!record || !identityLinkCodeIsActive(record)) {
+			return c.json({ error: "Invalid or expired link code" }, 400);
+		}
+		const link = await upsertIdentityLink(c.env.BUCKET, {
+			sub: principal.sub,
+			provider: "unknown",
+			emails: record.emails,
+			linkedByKeys: record.createdByKeys,
+		});
+		record.usedAt = new Date().toISOString();
+		record.usedBySub = principal.sub;
+		await saveIdentityLinkCode(c.env.BUCKET, record);
+
+		const expanded = {
+			...principal,
+			email: principal.email ?? link.emails[0],
+			linkedEmails: [
+				...new Set([...(principal.linkedEmails ?? []), ...link.emails]),
+			],
+		};
+		const admin = await isDomainAdmin(c.env, expanded);
+		return c.json({
+			ok: true,
+			linkedEmails: link.emails,
+			sub: link.sub,
+			keys: principalKeys(expanded),
+			isAdmin: admin,
 		});
 	});
 }

@@ -419,4 +419,82 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	assert.deepEqual(res.json.settings.acl.owners, ["email:admin@example.com"]);
 }
 
+// ── Identity link code + Apple principal list / isAdmin ───────────
+
+{
+	const bucket = mockBucket({
+		[mailboxMetadataKey("ops@inboxies.email")]: {
+			fromName: "Ops",
+			acl: { owners: ["email:admin@example.com"], members: [] },
+		},
+	});
+	const env = mockEnv(bucket);
+
+	const mint = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identity-link-codes",
+		principal: admin,
+	});
+	assert.equal(mint.status, 200);
+	assert.ok(mint.json.code);
+	assert.ok(mint.json.emails.includes("admin@example.com"));
+
+	const apple = principalFromClaims({ sub: "apple.hide.email.sub" });
+	const before = await jsonRequest(apiApp, env, {
+		path: "/api/v1/me",
+		principal: apple,
+	});
+	assert.equal(before.json.isAdmin, false);
+
+	const redeem = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/redeem-identity-link",
+		principal: apple,
+		body: { code: mint.json.code },
+	});
+	assert.equal(redeem.status, 200);
+	assert.equal(redeem.json.isAdmin, true);
+	assert.ok(redeem.json.linkedEmails.includes("admin@example.com"));
+
+	// Middleware expands from R2 on subsequent requests.
+	const afterMe = await jsonRequest(apiApp, env, {
+		path: "/api/v1/me",
+		principal: apple,
+	});
+	assert.equal(afterMe.json.isAdmin, true);
+	assert.ok(afterMe.json.keys.includes("email:admin@example.com"));
+
+	const list = await jsonRequest(apiApp, env, {
+		path: "/api/v1/mailboxes",
+		principal: apple,
+	});
+	assert.equal(list.status, 200);
+	assert.deepEqual(
+		list.json.map((m) => m.id),
+		["ops@inboxies.email"],
+	);
+
+	// Assign-to-me from Access also stamps linked Apple sub.
+	const assign = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/mailboxes/ops@inboxies.email/assign",
+		principal: admin,
+		body: { assignTo: "self" },
+	});
+	assert.equal(assign.status, 200);
+	assert.ok(assign.json.settings.acl.owners.includes("email:admin@example.com"));
+	assert.ok(assign.json.settings.acl.owners.includes("sub:apple.hide.email.sub"));
+}
+
+{
+	const bucket = mockBucket();
+	const env = mockEnv(bucket);
+	const eveMint = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identity-link-codes",
+		principal: eve,
+	});
+	assert.equal(eveMint.status, 403);
+}
+
 console.log("domain-admin-http: ok");

@@ -16,6 +16,7 @@ import {
 	principalFromClaims,
 	type RequestPrincipal,
 } from "./lib/mailbox-acl";
+import { expandPrincipalWithLinks } from "./lib/identity-links";
 import { PASSWORD_SESSION_COOKIE } from "./lib/password-auth";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import type { Env } from "./types";
@@ -145,7 +146,11 @@ app.use("*", async (c, next) => {
 			if (!payload) {
 				return c.text("Invalid or expired Access token", 403);
 			}
-			c.set("principal", principalFromClaims(payload));
+			const principal = await expandPrincipalWithLinks(
+				c.env.BUCKET,
+				principalFromClaims(payload),
+			);
+			c.set("principal", principal);
 			return next();
 		}
 	}
@@ -166,7 +171,11 @@ app.use("*", async (c, next) => {
 		}
 		try {
 			const claims = await verifyMobileSessionToken(sessionToken, mobileSecret);
-			c.set("principal", principalFromClaims(claims));
+			const principal = await expandPrincipalWithLinks(
+				c.env.BUCKET,
+				principalFromClaims(claims),
+			);
+			c.set("principal", principal);
 			return next();
 		} catch {
 			if (bearer) {
@@ -177,7 +186,7 @@ app.use("*", async (c, next) => {
 	}
 
 	if (import.meta.env.DEV) {
-		c.set("principal", devWebPrincipal());
+		c.set("principal", await expandPrincipalWithLinks(c.env.BUCKET, devWebPrincipal()));
 		return next();
 	}
 

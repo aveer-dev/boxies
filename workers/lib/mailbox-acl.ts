@@ -19,6 +19,11 @@ export const DEV_WEB_PRINCIPAL_EMAIL = "dev@localhost";
 export type RequestPrincipal = {
 	email?: string;
 	sub?: string;
+	/**
+	 * Additional verified emails from durable identity links (Apple/Google sub
+	 * ↔ Access / Domain Admin email). Populated by expandPrincipalWithLinks.
+	 */
+	linkedEmails?: string[];
 };
 
 export type MailboxAcl = {
@@ -73,10 +78,14 @@ export function principalKeys(
 ): string[] {
 	if (!principal) return [];
 	const keys = new Set<string>();
-	if (principal.email) {
-		keys.add(`email:${principal.email}`);
-		const canonical = canonicalMailboxId(principal.email);
+	const addEmail = (raw: string) => {
+		keys.add(`email:${raw}`);
+		const canonical = canonicalMailboxId(raw);
 		if (canonical) keys.add(`email:${canonical}`);
+	};
+	if (principal.email) addEmail(principal.email);
+	for (const linked of principal.linkedEmails ?? []) {
+		if (linked) addEmail(linked);
 	}
 	if (principal.sub) {
 		keys.add(`sub:${principal.sub}`);
@@ -339,12 +348,21 @@ export async function filterMailboxesForPrincipal(
 
 export function creatorAcl(principal: RequestPrincipal): MailboxAcl {
 	const owners: string[] = [];
-	if (principal.email) {
-		const canonical = canonicalMailboxId(principal.email) ?? principal.email;
+	const addEmail = (raw: string) => {
+		const canonical = canonicalMailboxId(raw) ?? raw;
 		owners.push(`email:${canonical}`);
+	};
+	if (principal.email) addEmail(principal.email);
+	for (const linked of principal.linkedEmails ?? []) {
+		if (linked) addEmail(linked);
 	}
 	if (principal.sub) owners.push(`sub:${principal.sub}`);
 	return { owners: uniqueKeys(owners), members: [] };
+}
+
+/** Build owner ACL from an explicit key list (assign-to-me with linked IdP subs). */
+export function aclFromOwnerKeys(ownerKeys: string[]): MailboxAcl {
+	return { owners: uniqueKeys(ownerKeys), members: [] };
 }
 
 export function mailboxAccessPayload(

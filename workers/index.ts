@@ -48,13 +48,18 @@ import {
 	applyIncomingAcl,
 	authorizeMailbox,
 	canManageAcl,
-	creatorAcl,
+	aclFromOwnerKeys,
 	filterMailboxesForPrincipal,
 	mailboxAccessPayload,
 	principalKeys,
 	type RequestPrincipal,
 } from "./lib/mailbox-acl";
 import { isDomainAdmin } from "./lib/domain-admin";
+import {
+	expandPrincipalWithLinks,
+	autoLinkSubIfAdminEmail,
+	ownerKeysForAssign,
+} from "./lib/identity-links";
 import {
 	registerAdminAndInviteRoutes,
 	resolveCreateGate,
@@ -201,6 +206,14 @@ app.use("/api/*", cors({
 		return undefined;
 	},
 }));
+// Expand Apple/Google sub → linked Access / Domain Admin emails (R2).
+app.use("/api/*", async (c, next) => {
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	if (principal?.sub && c.env.BUCKET) {
+		c.set("principal", await expandPrincipalWithLinks(c.env.BUCKET, principal));
+	}
+	await next();
+});
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
@@ -219,6 +232,7 @@ app.get("/api/v1/me", async (c) => {
 	return c.json({
 		email: principal.email ?? null,
 		sub: principal.sub ?? null,
+		linkedEmails: principal.linkedEmails ?? [],
 		keys: principalKeys(principal),
 		isAdmin: admin,
 		mailDomain,
@@ -272,7 +286,11 @@ app.post("/api/v1/mailboxes", async (c) => {
 		screener: { enabled: true },
 	};
 
-	const finalSettings = { ...defaultSettings, ...settings, acl: creatorAcl(principal) };
+	const finalSettings = {
+		...defaultSettings,
+		...settings,
+		acl: aclFromOwnerKeys(await ownerKeysForAssign(c.env.BUCKET, principal)),
+	};
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 	await stub.reviveMailbox();
@@ -1141,6 +1159,11 @@ app.post("/api/v1/auth/apple", async (c) => {
 			parsed.data.identityToken,
 			appleClientId,
 		);
+		await autoLinkSubIfAdminEmail(c.env, {
+			sub: claims.sub,
+			email: claims.email,
+			provider: "apple",
+		});
 		const session = await issueMobileSessionToken(mobileSecret, {
 			sub: claims.sub,
 			email: claims.email,
@@ -1188,6 +1211,11 @@ app.post("/api/v1/auth/google", async (c) => {
 			parsed.data.idToken,
 			googleClientId,
 		);
+		await autoLinkSubIfAdminEmail(c.env, {
+			sub: claims.sub,
+			email: claims.email,
+			provider: "google",
+		});
 		const session = await issueMobileSessionToken(mobileSecret, {
 			sub: claims.sub,
 			email: claims.email,
