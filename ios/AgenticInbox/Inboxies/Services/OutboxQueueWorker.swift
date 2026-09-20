@@ -49,7 +49,13 @@ actor OutboxQueueWorker {
 
         case "move":
             guard let folderId = payload["folderId"] as? String else { return }
-            try await APIClient.shared.moveEmail(mailboxId: mailboxId, id: emailId, folderId: folderId)
+            let setPref = (payload["setSenderPreference"] as? Bool) ?? false
+            try await APIClient.shared.moveEmail(
+                mailboxId: mailboxId,
+                id: emailId,
+                folderId: folderId,
+                setSenderPreference: setPref
+            )
 
         case "delete":
             try await APIClient.shared.deleteEmail(mailboxId: mailboxId, id: emailId)

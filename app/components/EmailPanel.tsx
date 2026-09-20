@@ -2,10 +2,10 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { useKumoToastManager } from "@cloudflare/kumo";
+import { Button, Dialog, useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { Folders } from "shared/folders";
+import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
 import { rewriteSelfReplyTo } from "shared/reply-recipients";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
@@ -20,6 +20,7 @@ import { useFolders } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { Email, Folder, Mailbox } from "~/types";
+import { displaySenderName } from "shared/sender";
 
 function EmailPanelSkeleton() {
 	return (
@@ -52,6 +53,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const [sourceViewEmail, setSourceViewEmail] = useState<Email | null>(null);
 	const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
 	const [previewImage, setPreviewImage] = useState<{ url: string; filename: string } | null>(null);
+	const [pendingPurposeMove, setPendingPurposeMove] = useState<string | null>(null);
 	const isDraftFolder = folder === Folders.DRAFT;
 
 	const threadReplies = useMemo(() => {
@@ -90,7 +92,33 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	if (!email) return <EmailPanelSkeleton />;
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
-	const handleMove = (folderId: string) => { if (mailboxId) { moveEmailMut.mutate({ mailboxId, id: email.id, folderId }); closePanel(); } };
+	const runMove = (folderId: string, setSenderPreference: boolean) => {
+		if (!mailboxId) return;
+		moveEmailMut.mutate(
+			{ mailboxId, id: email.id, folderId, setSenderPreference },
+			{
+				onSuccess: (result) => {
+					if (setSenderPreference && result?.refiledCount && result.refiledCount > 0) {
+						toastManager.add({
+							title: `Moved — updated ${result.refiledCount} from this sender`,
+						});
+					}
+					closePanel();
+				},
+			},
+		);
+	};
+	const handleMove = (folderId: string) => {
+		if (!mailboxId) return;
+		const isSelf =
+			Boolean(currentMailbox?.email) &&
+			email.sender?.toLowerCase() === currentMailbox?.email?.toLowerCase();
+		if (isPurposeFolderId(folderId) && email.sender && !isSelf) {
+			setPendingPurposeMove(folderId);
+			return;
+		}
+		runMove(folderId, false);
+	};
 	const handleDelete = () => { if (mailboxId) { if (!window.confirm("Are you sure you want to delete this email?")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
 
 	const handleEditDraft = (draftMsg?: Email) => {
@@ -250,6 +278,50 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				onCloseSource={() => setSourceViewEmail(null)}
 				onClosePreview={() => setPreviewImage(null)}
 			/>
+
+			<Dialog.Root
+				open={pendingPurposeMove !== null}
+				onOpenChange={(open) => {
+					if (!open) setPendingPurposeMove(null);
+				}}
+			>
+				<Dialog size="sm">
+					<Dialog.Title>Put future mail here?</Dialog.Title>
+					<Dialog.Description>
+						Also file future messages from{" "}
+						<span className="font-medium text-kumo-default">
+							{displaySenderName(email)}
+						</span>{" "}
+						into{" "}
+						{pendingPurposeMove
+							? FOLDER_DISPLAY_NAMES[pendingPurposeMove] ?? pendingPurposeMove
+							: "this folder"}
+						, and move their existing Inbox / Promotions / Updates mail.
+					</Dialog.Description>
+					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-4">
+						<Button
+							variant="ghost"
+							onClick={() => {
+								const folderId = pendingPurposeMove;
+								setPendingPurposeMove(null);
+								if (folderId) runMove(folderId, false);
+							}}
+						>
+							Just this message
+						</Button>
+						<Button
+							variant="primary"
+							onClick={() => {
+								const folderId = pendingPurposeMove;
+								setPendingPurposeMove(null);
+								if (folderId) runMove(folderId, true);
+							}}
+						>
+							Yes, for this sender
+						</Button>
+					</div>
+				</Dialog>
+			</Dialog.Root>
 		</div>
 	);
 }

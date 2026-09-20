@@ -105,6 +105,10 @@ import {
 	screenerSettingsError,
 } from "./lib/sender-triage";
 import {
+	normalizeSenderPreferenceAddress,
+	senderPreferenceUpsertError,
+} from "./lib/sender-preferences";
+import {
 	mergeTrustedAuthHeaders,
 	parseAuthSignals,
 	serializeEmailAuth,
@@ -515,10 +519,124 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
-	const { folderId } = (await c.req.json()) as { folderId: string };
-	const success = await c.var.mailboxStub.moveEmail(c.req.param("id")!, folderId);
-	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
+	const body = (await c.req.json()) as {
+		folderId: string;
+		setSenderPreference?: boolean;
+	};
+	const { folderId, setSenderPreference } = body;
+	const emailId = c.req.param("id")!;
+	const stub = c.var.mailboxStub;
+
+	const success = await stub.moveEmail(emailId, folderId);
+	if (!success) return c.json({ error: "Folder not found" }, 400);
+
+	if (!setSenderPreference) {
+		return c.json({ status: "moved" });
+	}
+
+	const email = await stub.getEmail(emailId);
+	if (!email?.sender) {
+		return c.json({ status: "moved" });
+	}
+
+	const upsertError = senderPreferenceUpsertError({
+		address: email.sender,
+		folderId,
+	});
+	if (upsertError) {
+		// Move already succeeded; preference is optional on this path.
+		return c.json({ status: "moved", preferenceError: upsertError });
+	}
+
+	const result = await stub.upsertSenderPreference({
+		address: email.sender,
+		folderId,
+		displayName: email.sender_name ?? null,
+		source: "user",
+		refile: true,
+	});
+	return c.json({
+		status: "moved",
+		preference: result?.preference ?? null,
+		refiledCount: result?.refiledCount ?? 0,
+	});
 });
+
+// -- Sender purpose-box preferences ---------------------------------
+
+app.get("/api/v1/mailboxes/:mailboxId/sender-preferences", async (c: AppContext) => {
+	const stub = c.var.mailboxStub as {
+		listSenderPreferences: (opts: {
+			q?: string;
+			folder?: string;
+			limit?: number;
+		}) => Promise<unknown>;
+	};
+	const preferences = await stub.listSenderPreferences({
+		q: c.req.query("q") || "",
+		folder: c.req.query("folder") || undefined,
+		limit: intQuery(c, "limit"),
+	});
+	return c.json({ preferences });
+});
+
+app.get(
+	"/api/v1/mailboxes/:mailboxId/sender-preferences/:address",
+	async (c: AppContext) => {
+		const address = normalizeSenderPreferenceAddress(
+			decodeURIComponent(c.req.param("address")!),
+		);
+		if (!address) return c.json({ error: "Invalid sender address" }, 400);
+		const preference = await c.var.mailboxStub.getSenderPreference(address);
+		if (!preference) return c.json({ error: "Not found" }, 404);
+		return c.json(preference);
+	},
+);
+
+app.put(
+	"/api/v1/mailboxes/:mailboxId/sender-preferences/:address",
+	async (c: AppContext) => {
+		const addressParam = decodeURIComponent(c.req.param("address")!);
+		const body = (await c.req.json()) as {
+			folderId?: string;
+			displayName?: string | null;
+			refile?: boolean;
+			source?: string;
+		};
+		const folderId = body.folderId ?? "";
+		const upsertError = senderPreferenceUpsertError({
+			address: addressParam,
+			folderId,
+			displayName: body.displayName,
+			source: body.source as "user" | "screener" | "seeded" | undefined,
+			refile: body.refile,
+		});
+		if (upsertError) return c.json({ error: upsertError }, 400);
+
+		const result = await c.var.mailboxStub.upsertSenderPreference({
+			address: addressParam,
+			folderId,
+			displayName: body.displayName,
+			source: body.source ?? "user",
+			refile: body.refile !== false,
+		});
+		if (!result) return c.json({ error: "Invalid preference" }, 400);
+		return c.json(result);
+	},
+);
+
+app.delete(
+	"/api/v1/mailboxes/:mailboxId/sender-preferences/:address",
+	async (c: AppContext) => {
+		const address = normalizeSenderPreferenceAddress(
+			decodeURIComponent(c.req.param("address")!),
+		);
+		if (!address) return c.json({ error: "Invalid sender address" }, 400);
+		const deleted = await c.var.mailboxStub.deleteSenderPreference(address);
+		if (!deleted) return c.json({ error: "Not found" }, 404);
+		return c.body(null, 204);
+	},
+);
 
 // -- Threads --------------------------------------------------------
 
@@ -1458,15 +1576,25 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const triageRow = triageSender
 		? await (stub as any).getSenderTriage(triageSender)
 		: null;
+	const purposePref =
+		classification.folderId === Folders.SPAM
+			? null
+			: await stub.getSenderPreference(fromAddress);
 	const triageDecision = resolveInboundFolder({
 		classification,
 		triage: triageRow,
 		filterHit,
 		screenerEnabled,
+		preferenceFolderId: purposePref?.folderId ?? null,
 	});
 	console.log(
 		`Triage for ${mailboxId} sender=${fromAddress}: action=${triageDecision.triageAction} -> ${triageDecision.folderId}`,
 	);
+	if (purposePref && triageDecision.folderId === purposePref.folderId) {
+		console.log(
+			`Sender preference filed ${fromAddress} → ${purposePref.folderId} for ${mailboxId}`,
+		);
+	}
 
 	const targetFolder = triageDecision.folderId;
 	let filedFolder: string = targetFolder;

@@ -1075,12 +1075,24 @@ class AppModel {
         )
     }
 
-    suspend fun moveEmailToFolder(email: Email, folderId: String) {
+    suspend fun moveEmailToFolder(
+        email: Email,
+        folderId: String,
+        setSenderPreference: Boolean = false,
+    ) {
         val mailboxId = _selectedMailboxId.value ?: return
         db.moveEmail(email.id, folderId)
-        db.enqueueMutation(mailboxId, email.id, "move", mapOf("folderId" to folderId))
-        OutboxQueueWorker.trigger()
         removeEmailLocally(email)
+        runCatching {
+            ApiClient.shared.moveEmail(
+                mailboxId,
+                email.id,
+                folderId,
+                setSenderPreference = setSenderPreference,
+            )
+        }.onFailure {
+            showToast("Couldn't sync move", isError = true)
+        }
     }
 
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {

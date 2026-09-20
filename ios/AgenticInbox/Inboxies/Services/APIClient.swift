@@ -235,11 +235,61 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func moveEmail(mailboxId: String, id: String, folderId: String) async throws {
+    func moveEmail(
+        mailboxId: String,
+        id: String,
+        folderId: String,
+        setSenderPreference: Bool = false
+    ) async throws {
+        var body: [String: Any] = ["folderId": folderId]
+        if setSenderPreference {
+            body["setSenderPreference"] = true
+        }
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)/move",
             method: "POST",
-            body: ["folderId": folderId]
+            body: body
+        )
+    }
+
+    func listSenderPreferences(
+        mailboxId: String,
+        q: String = "",
+        folder: String? = nil
+    ) async throws -> [SenderPreference] {
+        var query: [String: String] = ["limit": "200"]
+        if !q.isEmpty { query["q"] = q }
+        if let folder, !folder.isEmpty { query["folder"] = folder }
+        let response: SenderPreferencesResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-preferences",
+            query: query
+        )
+        return response.preferences
+    }
+
+    func upsertSenderPreference(
+        mailboxId: String,
+        address: String,
+        folderId: String,
+        displayName: String? = nil,
+        refile: Bool = true
+    ) async throws -> UpsertSenderPreferenceResponse {
+        var body: [String: Any] = [
+            "folderId": folderId,
+            "refile": refile,
+        ]
+        if let displayName { body["displayName"] = displayName }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-preferences/\(address.urlPathEncoded)",
+            method: "PUT",
+            body: body
+        )
+    }
+
+    func deleteSenderPreference(mailboxId: String, address: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-preferences/\(address.urlPathEncoded)",
+            method: "DELETE"
         )
     }
 

@@ -41,6 +41,25 @@ struct InboxFilterRule: Codable, Hashable, Identifiable {
     var forwardTo: String?
 }
 
+struct SenderPreference: Codable, Hashable, Identifiable {
+    var address: String
+    var folderId: String
+    var displayName: String?
+    var source: String?
+    var updatedAt: String?
+
+    var id: String { address }
+}
+
+struct SenderPreferencesResponse: Codable {
+    var preferences: [SenderPreference]
+}
+
+struct UpsertSenderPreferenceResponse: Codable {
+    var preference: SenderPreference
+    var refiledCount: Int
+}
+
 struct ForwardingSettings: Codable, Hashable {
     var enabled: Bool?
     var email: String?

@@ -20,6 +20,16 @@ export interface InboxFilterRule {
 	forwardTo?: string;
 }
 
+export type PurposeFolderId = "inbox" | "promotions" | "updates";
+
+export interface SenderPreference {
+	address: string;
+	folderId: PurposeFolderId;
+	displayName?: string | null;
+	source?: "user" | "screener" | "seeded";
+	updatedAt?: string;
+}
+
 export interface MailboxAcl {
 	owners?: string[];
 	members?: string[];

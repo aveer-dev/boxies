@@ -8,6 +8,7 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders, FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "../../shared/folders";
+import { isPurposeFolderId, type PurposeFolderId } from "../../shared/folders";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
@@ -48,6 +49,12 @@ import {
 	type EmailAuth,
 } from "../lib/email-auth";
 import { buildBootstrapAllowSeeds } from "../lib/sender-triage";
+import {
+	normalizeSenderPreferenceAddress,
+	parseSenderPreferenceSource,
+	purposeFoldersSqlList,
+	type SenderPreference,
+} from "../lib/sender-preferences";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -1241,6 +1248,7 @@ export class MailboxDO extends DurableObject<Env> {
 			sql.exec(`DELETE FROM dismissed_todos`);
 			sql.exec(`DELETE FROM auto_reply_receipts`);
 			sql.exec(`DELETE FROM sender_triage`);
+			sql.exec(`DELETE FROM sender_preferences`);
 
 			for (const folderId of SYSTEM_FOLDER_IDS) {
 				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;
@@ -1498,6 +1506,195 @@ export class MailboxDO extends DurableObject<Env> {
 
 		this.broadcastEvent("email_moved", { id, folder_id: folderId });
 		return true;
+	}
+
+	// ── Sender purpose-box preferences ─────────────────────────────
+
+	async getSenderPreference(address: string): Promise<SenderPreference | null> {
+		const normalized = normalizeSenderPreferenceAddress(address);
+		if (!normalized) return null;
+		const row = [
+			...this.ctx.storage.sql.exec(
+				`SELECT address, folder_id, display_name, source, updated_at
+				 FROM sender_preferences WHERE address = ?1`,
+				normalized,
+			),
+		][0] as
+			| {
+					address: string;
+					folder_id: string;
+					display_name: string | null;
+					source: string;
+					updated_at: string;
+			  }
+			| undefined;
+		if (!row || !isPurposeFolderId(row.folder_id)) return null;
+		return {
+			address: row.address,
+			folderId: row.folder_id,
+			displayName: row.display_name,
+			source: parseSenderPreferenceSource(row.source),
+			updatedAt: row.updated_at,
+		};
+	}
+
+	async listSenderPreferences(options: {
+		q?: string;
+		folder?: string;
+		limit?: number;
+	} = {}): Promise<SenderPreference[]> {
+		const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+		const q = (options.q ?? "").trim().toLowerCase();
+		const folder =
+			options.folder && isPurposeFolderId(options.folder)
+				? options.folder
+				: null;
+
+		const clauses: string[] = [];
+		const params: (string | number)[] = [];
+		let i = 1;
+		if (folder) {
+			clauses.push(`folder_id = ?${i++}`);
+			params.push(folder);
+		}
+		if (q) {
+			clauses.push(
+				`(lower(address) LIKE ?${i} OR lower(COALESCE(display_name, '')) LIKE ?${i + 1})`,
+			);
+			params.push(`%${q}%`, `%${q}%`);
+			i += 2;
+		}
+		const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+		params.push(limit);
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT address, folder_id, display_name, source, updated_at
+				 FROM sender_preferences
+				 ${where}
+				 ORDER BY lower(COALESCE(display_name, address)) ASC
+				 LIMIT ?${i}`,
+				...params,
+			),
+		] as Array<{
+			address: string;
+			folder_id: string;
+			display_name: string | null;
+			source: string;
+			updated_at: string;
+		}>;
+
+		return rows
+			.filter((row) => isPurposeFolderId(row.folder_id))
+			.map((row) => ({
+				address: row.address,
+				folderId: row.folder_id as PurposeFolderId,
+				displayName: row.display_name,
+				source: parseSenderPreferenceSource(row.source),
+				updatedAt: row.updated_at,
+			}));
+	}
+
+	/**
+	 * Upsert a purpose-box default for a sender. When `refile` is true
+	 * (default), move their existing purpose-box mail to the new folder.
+	 */
+	async upsertSenderPreference(input: {
+		address: string;
+		folderId: string;
+		displayName?: string | null;
+		source?: string;
+		refile?: boolean;
+	}): Promise<{ preference: SenderPreference; refiledCount: number } | null> {
+		const address = normalizeSenderPreferenceAddress(input.address);
+		if (!address || !isPurposeFolderId(input.folderId)) return null;
+
+		const source = parseSenderPreferenceSource(input.source);
+		const displayName =
+			typeof input.displayName === "string" && input.displayName.trim()
+				? input.displayName.trim()
+				: null;
+		const updatedAt = new Date().toISOString();
+		const refile = input.refile !== false;
+
+		this.ctx.storage.sql.exec(
+			`INSERT INTO sender_preferences (address, folder_id, display_name, source, updated_at)
+			 VALUES (?1, ?2, ?3, ?4, ?5)
+			 ON CONFLICT(address) DO UPDATE SET
+			   folder_id = excluded.folder_id,
+			   display_name = COALESCE(excluded.display_name, sender_preferences.display_name),
+			   source = excluded.source,
+			   updated_at = excluded.updated_at`,
+			address,
+			input.folderId,
+			displayName,
+			source,
+			updatedAt,
+		);
+
+		let refiledCount = 0;
+		if (refile) {
+			refiledCount = this.#refileSenderPurposeMail(address, input.folderId);
+		}
+
+		const preference = await this.getSenderPreference(address);
+		if (!preference) return null;
+
+		this.broadcastEvent("sender_preference_updated", {
+			address,
+			folder_id: input.folderId,
+			refiled_count: refiledCount,
+		});
+
+		return { preference, refiledCount };
+	}
+
+	async deleteSenderPreference(address: string): Promise<boolean> {
+		const normalized = normalizeSenderPreferenceAddress(address);
+		if (!normalized) return false;
+		const existing = await this.getSenderPreference(normalized);
+		if (!existing) return false;
+		this.ctx.storage.sql.exec(
+			`DELETE FROM sender_preferences WHERE address = ?1`,
+			normalized,
+		);
+		this.broadcastEvent("sender_preference_deleted", { address: normalized });
+		return true;
+	}
+
+	/**
+	 * Move this sender's mail among inbox / promotions / updates only.
+	 * Spam, trash, archive, sent, draft, and custom folders are untouched.
+	 */
+	#refileSenderPurposeMail(address: string, folderId: PurposeFolderId): number {
+		const before = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id FROM emails
+				 WHERE lower(sender) = ?1
+				   AND folder_id IN (${purposeFoldersSqlList()})
+				   AND folder_id != ?2`,
+				address,
+				folderId,
+			),
+		] as Array<{ id: string }>;
+
+		if (before.length === 0) return 0;
+
+		this.ctx.storage.sql.exec(
+			`UPDATE emails SET folder_id = ?1
+			 WHERE lower(sender) = ?2
+			   AND folder_id IN (${purposeFoldersSqlList()})
+			   AND folder_id != ?1`,
+			folderId,
+			address,
+		);
+
+		this.broadcastEvent("emails_refiled", {
+			sender: address,
+			folder_id: folderId,
+			count: before.length,
+			ids: before.map((row) => row.id),
+		});
+		return before.length;
 	}
 
 	// ── Search (raw SQL — dynamic condition builder) ───────────────

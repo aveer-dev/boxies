@@ -223,8 +223,14 @@ export function useMoveEmail() {
 			mailboxId,
 			id,
 			folderId,
-		}: { mailboxId: string; id: string; folderId: string }) =>
-			api.moveEmail(mailboxId, id, folderId),
+			setSenderPreference,
+		}: {
+			mailboxId: string;
+			id: string;
+			folderId: string;
+			setSenderPreference?: boolean;
+		}) =>
+			api.moveEmail(mailboxId, id, folderId, { setSenderPreference }),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }

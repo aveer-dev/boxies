@@ -82,13 +82,13 @@ const FOLDER_EMPTY_STATES: Record<
 		icon: <MegaphoneIcon size={48} weight="thin" className="text-kumo-subtle" />,
 		title: "No promotions",
 		description:
-			"Newsletters and marketing mail with List-Unsubscribe or List-Id land here.",
+			"Newsletters and marketing you assign here. Move a message and set that sender’s default to keep them out of Inbox.",
 	},
 	[Folders.UPDATES]: {
 		icon: <NewspaperIcon size={48} weight="thin" className="text-kumo-subtle" />,
 		title: "No updates",
 		description:
-			"Receipts, shipping notices, and other transactional bulk mail land here.",
+			"Receipts and transactional mail you file here. Assign senders so they land here automatically.",
 	},
 	[Folders.SPAM]: {
 		icon: <WarningIcon size={48} weight="thin" className="text-kumo-subtle" />,

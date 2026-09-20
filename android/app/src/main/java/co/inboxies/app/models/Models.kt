@@ -68,6 +68,26 @@ data class InboxFilterRule(
 )
 
 @Serializable
+data class SenderPreference(
+    val address: String,
+    val folderId: String,
+    val displayName: String? = null,
+    val source: String? = null,
+    val updatedAt: String? = null,
+)
+
+@Serializable
+data class SenderPreferencesResponse(
+    val preferences: List<SenderPreference> = emptyList(),
+)
+
+@Serializable
+data class UpsertSenderPreferenceResponse(
+    val preference: SenderPreference,
+    val refiledCount: Int = 0,
+)
+
+@Serializable
 data class ForwardingSettings(
     val enabled: Boolean? = null,
     val email: String? = null,
@@ -748,6 +768,18 @@ object FolderIds {
     const val SPAM = "spam"
     const val SCREENED_OUT = "screened_out"
     const val TRASH = "trash"
+
+    /** Purpose boxes — sender defaults may only target these. */
+    val purposeFolderIds: Set<String> = setOf(INBOX, PROMOTIONS, UPDATES)
+
+    fun isPurposeFolder(id: String): Boolean = id in purposeFolderIds
+
+    fun purposeDisplayName(id: String): String = when (id) {
+        INBOX -> "Inbox"
+        PROMOTIONS -> "Promotions"
+        UPDATES -> "Updates"
+        else -> id.replaceFirstChar { it.uppercase() }
+    }
 
     /** Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). */
     val swipeFolderIds: List<String> = listOf(

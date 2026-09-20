@@ -15,6 +15,9 @@ import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
+import co.inboxies.app.models.SenderPreference
+import co.inboxies.app.models.SenderPreferencesResponse
+import co.inboxies.app.models.UpsertSenderPreferenceResponse
 import co.inboxies.app.util.ParsedSearch
 import co.inboxies.app.util.SearchQueryParser
 import kotlinx.coroutines.Dispatchers
@@ -258,11 +261,58 @@ class ApiClient private constructor() {
     suspend fun markRead(mailboxId: String, id: String): Email =
         updateEmail(mailboxId, id, read = true)
 
-    suspend fun moveEmail(mailboxId: String, id: String, folderId: String) {
+    suspend fun moveEmail(
+        mailboxId: String,
+        id: String,
+        folderId: String,
+        setSenderPreference: Boolean = false,
+    ) {
         request<EmptyResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}/move",
             method = "POST",
-            body = buildJsonObject { put("folderId", folderId) },
+            body = buildJsonObject {
+                put("folderId", folderId)
+                if (setSenderPreference) put("setSenderPreference", true)
+            },
+        )
+    }
+
+    suspend fun listSenderPreferences(
+        mailboxId: String,
+        q: String = "",
+        folder: String? = null,
+    ): List<SenderPreference> {
+        val response: SenderPreferencesResponse = request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-preferences",
+            query = buildMap {
+                put("limit", "200")
+                if (q.isNotBlank()) put("q", q)
+                if (!folder.isNullOrBlank()) put("folder", folder)
+            },
+        )
+        return response.preferences
+    }
+
+    suspend fun upsertSenderPreference(
+        mailboxId: String,
+        address: String,
+        folderId: String,
+        displayName: String? = null,
+        refile: Boolean = true,
+    ): UpsertSenderPreferenceResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-preferences/${pathEncode(address)}",
+        method = "PUT",
+        body = buildJsonObject {
+            put("folderId", folderId)
+            put("refile", refile)
+            if (displayName != null) put("displayName", displayName)
+        },
+    )
+
+    suspend fun deleteSenderPreference(mailboxId: String, address: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-preferences/${pathEncode(address)}",
+            method = "DELETE",
         )
     }
 

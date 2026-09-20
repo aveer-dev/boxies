@@ -368,5 +368,20 @@ export const mailboxMigrations: Migration[] = [
                 ON sender_triage(status);
         `),
 	},
+	{
+		name: "22_sender_preferences",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS sender_preferences (
+                address TEXT PRIMARY KEY,
+                folder_id TEXT NOT NULL,
+                display_name TEXT,
+                source TEXT NOT NULL DEFAULT 'user',
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sender_preferences_folder
+                ON sender_preferences(folder_id);
+            CREATE INDEX IF NOT EXISTS idx_emails_sender ON emails(sender);
+        `),
+	},
 ];
 

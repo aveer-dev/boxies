@@ -40,6 +40,7 @@ import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ForwardToInbox
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -84,6 +85,7 @@ private sealed class SettingsPage {
     data object Forwarding : SettingsPage()
     data object AutoReply : SettingsPage()
     data object Filters : SettingsPage()
+    data object Senders : SettingsPage()
     data object Sharing : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
@@ -212,6 +214,7 @@ fun SettingsSheetView(
                     onOpenForwarding = { page = SettingsPage.Forwarding },
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenFilters = { page = SettingsPage.Filters },
+                    onOpenSenders = { page = SettingsPage.Senders },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
@@ -243,6 +246,9 @@ fun SettingsSheetView(
                 SettingsPage.Filters -> FiltersSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.Senders -> SendersSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.Sharing -> SharingSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
@@ -271,6 +277,7 @@ private fun SettingsRootPage(
     onOpenForwarding: () -> Unit,
     onOpenAutoReply: () -> Unit,
     onOpenFilters: () -> Unit,
+    onOpenSenders: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
@@ -406,6 +413,11 @@ private fun SettingsRootPage(
                 title = "Filters",
                 icon = Icons.Outlined.FilterList,
                 onClick = onOpenFilters,
+            )
+            SettingsNavRow(
+                title = "Senders",
+                icon = Icons.Outlined.Person,
+                onClick = onOpenSenders,
             )
             SettingsNavRow(
                 title = "Sharing",
