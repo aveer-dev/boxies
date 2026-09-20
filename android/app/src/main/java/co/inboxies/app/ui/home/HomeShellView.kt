@@ -449,8 +449,7 @@ fun HomeShellView(
                                         onDismiss = { showFilterMenu = false },
                                         filterState = filterState,
                                         onChange = { filterState = it },
-                                        isInbox = selectedTab is HomeTab.Folder &&
-                                            selectedTab.id == FolderIds.INBOX,
+                                        isInbox = (selectedTab as? HomeTab.Folder)?.id == FolderIds.INBOX,
                                     )
                                 }
                             }
