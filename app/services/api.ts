@@ -106,6 +106,8 @@ function del<T>(url: string) {
 interface EmailListResponse {
 	emails: Email[];
 	totalCount: number;
+	newCount?: number;
+	seenCount?: number;
 }
 
 // ---------- API client ----------

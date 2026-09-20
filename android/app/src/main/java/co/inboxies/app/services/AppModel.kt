@@ -379,14 +379,15 @@ class AppModel {
         }
         val cached = db.getEmails(mailboxId, folderId, 50)
         if (cached.isNotEmpty()) {
-            _emails.value = cached
+            _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(cached) else cached
             _isLoading.value = false
         } else if (showLoading) {
             _isLoading.value = true
         }
         _isSyncing.value = true
         try {
-            _emails.value = MailboxSyncService.syncFolder(mailboxId, folderId)
+            val synced = MailboxSyncService.syncFolder(mailboxId, folderId)
+            _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(synced) else synced
         } catch (e: Exception) {
             if (_emails.value.isEmpty()) _errorMessage.value = e.message
         } finally {
@@ -517,16 +518,38 @@ class AppModel {
         _isEmailDetailLoading.value = !hasBody
 
         if (email.isUnread) {
-            db.updateEmailFlags(email.id, read = true)
-            db.enqueueMutation(mailboxId, email.id, "mark_read", mapOf("read" to true))
-            OutboxQueueWorker.trigger()
+            val threadId = email.threadId
+            val isMulti = (email.threadCount ?: 1) > 1 || localThread.size > 1
+            if (threadId != null && isMulti) {
+                localThread.filter { it.isUnread }.forEach { db.updateEmailFlags(it.id, read = true) }
+                db.updateEmailFlags(email.id, read = true)
+            } else {
+                db.updateEmailFlags(email.id, read = true)
+            }
             _emails.update { list ->
-                list.map {
-                    if (it.id == email.id) it.copy(read = true, threadUnreadCount = 0) else it
+                val updated = list.map {
+                    if (it.id == email.id || (threadId != null && isMulti && it.threadId == threadId)) {
+                        it.copy(read = true, threadUnreadCount = 0, listSection = "seen")
+                    } else it
+                }
+                if (_selectedTab.value.syncFolderId == FolderIds.INBOX) {
+                    orderNewThenSeen(updated)
+                } else {
+                    updated
                 }
             }
-            _selectedEmail.update { it?.copy(read = true, threadUnreadCount = 0) }
+            _selectedEmail.update { it?.copy(read = true, threadUnreadCount = 0, listSection = "seen") }
             adjustFolderUnread(email, wasUnread = true, isUnread = false)
+            scope.launch {
+                try {
+                    if (threadId != null && isMulti) {
+                        ApiClient.shared.markThreadRead(mailboxId, threadId)
+                    } else {
+                        ApiClient.shared.markRead(mailboxId, email.id)
+                    }
+                } catch (_: Exception) {
+                }
+            }
         }
 
         val shouldLoadThread = email.hasDraft == true || (email.threadCount ?: 1) > 1 ||
@@ -1017,14 +1040,16 @@ class AppModel {
         if (_selectedEmail.value?.id == updated.id) _selectedEmail.value = updated
         _threadEmails.update { list -> list.map { if (it.id == updated.id) updated else it } }
         _emails.update { list ->
-            list.map {
+            val mapped = list.map {
                 if (it.id != updated.id) it
                 else it.copy(
                     read = updated.read,
                     starred = updated.starred,
                     threadUnreadCount = if (updated.read) 0 else it.threadUnreadCount,
+                    listSection = if (updated.read) "seen" else "new",
                 )
             }
+            if (_selectedTab.value.syncFolderId == FolderIds.INBOX) orderNewThenSeen(mapped) else mapped
         }
         if (previous != null) {
             adjustFolderUnread(previous, wasUnread = !previous.read, isUnread = !updated.read)
@@ -1438,5 +1463,12 @@ class AppModel {
 
         private fun visibleConversations(conversations: List<AgentConversation>) =
             conversations.filter { it.id != AUTO_CONVERSATION_ID }
+
+        /** Inbox New (unread) then Seen, each by date DESC. */
+        fun orderNewThenSeen(emails: List<Email>): List<Email> {
+            val (newEmails, seenEmails) = emails.partition { it.isUnread }
+            fun byDateDesc(a: Email, b: Email) = b.date.compareTo(a.date)
+            return newEmails.sortedWith(::byDateDesc) + seenEmails.sortedWith(::byDateDesc)
+        }
     }
 }

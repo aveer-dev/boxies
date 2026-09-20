@@ -273,6 +273,8 @@ data class Email(
     @SerialName("provider_message_id") val providerMessageId: String? = null,
     @SerialName("delivery_status") val deliveryStatus: String? = null,
     @SerialName("delivery_error") val deliveryError: String? = null,
+    /** Inbox New vs Seen (`new` | `seen`); derived from read state when absent. */
+    @SerialName("list_section") val listSection: String? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -300,6 +302,13 @@ data class Email(
             if (isDraft) return false
             if ((threadUnreadCount ?: 0) > 0) return true
             return !read
+        }
+
+    /** Resolved New vs Seen membership for inbox list IA. */
+    val resolvedListSection: String
+        get() = when (listSection) {
+            "new", "seen" -> listSection
+            else -> if (isUnread) "new" else "seen"
         }
 
     val nonInlineAttachments: List<Attachment>
@@ -556,6 +565,8 @@ data class EmailFilterState(
 data class EmailListResponse(
     val emails: List<Email> = emptyList(),
     val totalCount: Int = 0,
+    val newCount: Int? = null,
+    val seenCount: Int? = null,
 )
 
 @Serializable

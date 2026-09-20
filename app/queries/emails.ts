@@ -12,6 +12,8 @@ import { queryKeys } from "./keys";
 interface EmailListResponse {
 	emails: Email[];
 	totalCount: number;
+	newCount?: number;
+	seenCount?: number;
 }
 
 // ---------- Queries ----------
@@ -34,9 +36,12 @@ export function useEmails(
 				| EmailListResponse
 				| Email[];
 			if (data && typeof data === "object" && "emails" in data) {
+				const typed = data as EmailListResponse;
 				return {
-					emails: (data as EmailListResponse).emails ?? [],
-					totalCount: (data as EmailListResponse).totalCount ?? 0,
+					emails: typed.emails ?? [],
+					totalCount: typed.totalCount ?? 0,
+					newCount: typed.newCount,
+					seenCount: typed.seenCount,
 				};
 			}
 			const arr = Array.isArray(data) ? data : [];

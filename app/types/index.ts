@@ -104,6 +104,8 @@ export interface Email {
 	needs_reply?: boolean;
 	has_draft?: boolean;
 	has_attachment?: boolean;
+	/** Inbox New vs Seen section (threaded inbox list only). */
+	list_section?: "new" | "seen";
 }
 
 export interface Attachment {

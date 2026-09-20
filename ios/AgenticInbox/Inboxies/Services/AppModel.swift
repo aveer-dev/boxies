@@ -336,7 +336,7 @@ final class AppModel {
 
         let cached = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
         if !cached.isEmpty {
-            emails = cached
+            emails = folderId == "inbox" ? Self.orderNewThenSeen(cached) : cached
             isLoading = false
         } else if showLoading {
             isLoading = true
@@ -350,7 +350,7 @@ final class AppModel {
 
         do {
             let synced = try await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId)
-            emails = synced
+            emails = folderId == "inbox" ? Self.orderNewThenSeen(synced) : synced
             lastSyncedAt = Date()
         } catch {
             if emails.isEmpty {
@@ -490,18 +490,39 @@ final class AppModel {
         let hasBody = (localEmail.body != nil && !(localEmail.body?.isEmpty ?? true))
         isEmailDetailLoading = !hasBody
 
-        // 2. Optimistic mark read
+        // 2. Optimistic mark read (whole thread when multi-message — web parity)
         if email.isUnread {
-            db.updateEmailFlags(id: email.id, read: true)
-            db.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "mark_read", payload: ["read": true])
+            let threadId = email.threadId
+            let isMulti = (email.threadCount ?? 1) > 1 || localThread.count > 1
+            if let threadId, isMulti {
+                for member in localThread where member.isUnread {
+                    db.updateEmailFlags(id: member.id, read: true)
+                }
+                db.updateEmailFlags(id: email.id, read: true)
+                db.enqueueMutation(
+                    mailboxId: mailboxId,
+                    emailId: email.id,
+                    actionType: "mark_thread_read",
+                    payload: ["threadId": threadId]
+                )
+            } else {
+                db.updateEmailFlags(id: email.id, read: true)
+                db.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "mark_read", payload: ["read": true])
+            }
             outbox.trigger()
 
             if let idx = emails.firstIndex(where: { $0.id == email.id }) {
                 emails[idx].read = true
                 emails[idx].threadUnreadCount = 0
+                emails[idx].listSection = "seen"
+            }
+            // Keep inbox New→Seen order after optimistic read
+            if selectedTab.syncFolderId == "inbox" {
+                emails = Self.orderNewThenSeen(emails)
             }
             selectedEmail?.read = true
             selectedEmail?.threadUnreadCount = 0
+            selectedEmail?.listSection = "seen"
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
         }
 
@@ -1019,7 +1040,13 @@ final class AppModel {
             emails[idx].starred = updated.starred
             if updated.read {
                 emails[idx].threadUnreadCount = 0
+                emails[idx].listSection = "seen"
+            } else {
+                emails[idx].listSection = "new"
             }
+        }
+        if selectedTab.syncFolderId == "inbox" {
+            emails = Self.orderNewThenSeen(emails)
         }
         if let previous {
             adjustFolderUnread(for: previous, wasUnread: !previous.read, isUnread: !updated.read)
@@ -1248,6 +1275,13 @@ final class AppModel {
 
     private static func visibleConversations(_ conversations: [AgentConversation]) -> [AgentConversation] {
         conversations.filter { $0.id != autoConversationId }
+    }
+
+    /// Inbox New (unread) then Seen, each by date DESC.
+    static func orderNewThenSeen(_ emails: [Email]) -> [Email] {
+        let newEmails = emails.filter(\.isUnread).sorted { $0.date > $1.date }
+        let seenEmails = emails.filter { !$0.isUnread }.sorted { $0.date > $1.date }
+        return newEmails + seenEmails
     }
 
     private func isKnownConversation(_ id: String) -> Bool {

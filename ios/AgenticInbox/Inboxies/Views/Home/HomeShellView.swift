@@ -807,7 +807,10 @@ struct HomeShellView: View {
     private var filterMenu: some View {
         Section("Status") {
             Toggle(isOn: $filterState.unreadOnly) {
-                Label("Unread", systemImage: "envelope.badge")
+                Label(
+                    currentFolderId == "inbox" ? "New only" : "Unread",
+                    systemImage: "envelope.badge"
+                )
             }
 
             Toggle(isOn: $filterState.starredOnly) {
@@ -883,7 +886,9 @@ struct HomeShellView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 if filterState.unreadOnly {
-                    filterChip(title: "Unread") { filterState.unreadOnly = false }
+                    filterChip(title: currentFolderId == "inbox" ? "New only" : "Unread") {
+                        filterState.unreadOnly = false
+                    }
                 }
                 if filterState.starredOnly {
                     filterChip(title: "Starred") { filterState.starredOnly = false }

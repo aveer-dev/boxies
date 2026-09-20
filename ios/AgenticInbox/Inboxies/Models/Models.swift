@@ -257,6 +257,8 @@ struct Email: Identifiable, Codable, Hashable {
     var providerMessageId: String? = nil
     var deliveryStatus: String? = nil
     var deliveryError: String? = nil
+    /// Inbox New vs Seen (`new` | `seen`); derived from read state when absent.
+    var listSection: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -275,6 +277,7 @@ struct Email: Identifiable, Codable, Hashable {
         case providerMessageId = "provider_message_id"
         case deliveryStatus = "delivery_status"
         case deliveryError = "delivery_error"
+        case listSection = "list_section"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -459,6 +462,14 @@ struct Email: Identifiable, Codable, Hashable {
         if isDraft { return false }
         if let threadUnreadCount, threadUnreadCount > 0 { return true }
         return !read
+    }
+
+    /// Resolved New vs Seen membership for inbox list IA.
+    var resolvedListSection: String {
+        if let listSection, listSection == "new" || listSection == "seen" {
+            return listSection
+        }
+        return isUnread ? "new" : "seen"
     }
 
     var isDraft: Bool {
@@ -661,6 +672,8 @@ struct EmailFilterState: Equatable {
 struct EmailListResponse: Codable {
     let emails: [Email]
     let totalCount: Int
+    let newCount: Int?
+    let seenCount: Int?
 }
 
 struct RecentRecipient: Codable, Hashable, Identifiable {

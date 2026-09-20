@@ -43,6 +43,10 @@ actor OutboxQueueWorker {
             let read = (payload["read"] as? Bool) ?? true
             _ = try await APIClient.shared.updateEmail(mailboxId: mailboxId, id: emailId, read: read)
 
+        case "mark_thread_read":
+            guard let threadId = payload["threadId"] as? String else { return }
+            try await APIClient.shared.markThreadRead(mailboxId: mailboxId, threadId: threadId)
+
         case "star":
             let starred = (payload["starred"] as? Bool) ?? true
             _ = try await APIClient.shared.updateEmail(mailboxId: mailboxId, id: emailId, starred: starred)

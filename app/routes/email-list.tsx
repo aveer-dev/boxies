@@ -198,6 +198,80 @@ export default function EmailListRoute() {
 
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
+	const newCount = emailData?.newCount;
+	const seenCount = emailData?.seenCount;
+	const showNewSeen = folder === Folders.INBOX;
+
+	const hasUnread = (email: Email): boolean => {
+		if (email.folder_id === Folders.DRAFT) return false;
+		if ((email.thread_unread_count ?? 0) > 0) return true;
+		return !email.read;
+	};
+
+	const listItems = useMemo(() => {
+		if (!showNewSeen || emails.length === 0) {
+			return emails.map((email) => ({ type: "email" as const, email }));
+		}
+
+		const items: Array<
+			| { type: "section"; id: "new" | "seen"; label: string; count?: number }
+			| { type: "empty-new" }
+			| { type: "email"; email: Email }
+		> = [];
+
+		let lastSection: "new" | "seen" | null = null;
+		let sawNew = false;
+		let sawSeen = false;
+
+		for (const email of emails) {
+			const section: "new" | "seen" =
+				email.list_section ??
+				((email.folder_id !== Folders.DRAFT &&
+					((email.thread_unread_count ?? 0) > 0 || !email.read))
+					? "new"
+					: "seen");
+			if (section === "new") sawNew = true;
+			if (section === "seen") sawSeen = true;
+			if (section !== lastSection) {
+				if (
+					section === "seen" &&
+					!sawNew &&
+					page === 1 &&
+					(newCount === 0 || newCount === undefined)
+				) {
+					items.push({
+						type: "section",
+						id: "new",
+						label: "New",
+						count: newCount ?? 0,
+					});
+					items.push({ type: "empty-new" });
+				}
+				items.push({
+					type: "section",
+					id: section,
+					label: section === "new" ? "New" : "Seen",
+					count: section === "new" ? newCount : seenCount,
+				});
+				lastSection = section;
+			}
+			items.push({ type: "email", email });
+		}
+
+		if (
+			page === 1 &&
+			!sawNew &&
+			sawSeen &&
+			!items.some((i) => i.type === "empty-new")
+		) {
+			items.unshift(
+				{ type: "section", id: "new", label: "New", count: newCount ?? 0 },
+				{ type: "empty-new" },
+			);
+		}
+
+		return items;
+	}, [emails, showNewSeen, newCount, seenCount, page]);
 
 	const { data: folders = [] } = useFolders(mailboxId);
 
@@ -251,13 +325,6 @@ export default function EmailListRoute() {
 				queryKey: queryKeys.folders.list(mailboxId),
 			});
 		}
-	};
-
-	// Thread-aware helpers
-	const hasUnread = (email: Email): boolean => {
-		if (email.folder_id === Folders.DRAFT) return false;
-		if ((email.thread_unread_count ?? 0) > 0) return true;
-		return !email.read;
 	};
 
 	const handleRowClick = (email: Email) => {
@@ -323,7 +390,35 @@ export default function EmailListRoute() {
 					<EmailListSkeleton />
 				) : emails.length > 0 ? (
 						<div>
-							{emails.map((email) => {
+							{listItems.map((item) => {
+								if (item.type === "section") {
+									return (
+										<div
+											key={`section-${item.id}`}
+											className="sticky top-0 z-[1] flex items-center gap-2 bg-kumo-background/95 backdrop-blur-sm px-4 pt-3 pb-1.5 md:px-6"
+										>
+											<span className="text-[11px] font-medium tracking-wide uppercase text-kumo-subtle">
+												{item.label}
+											</span>
+											{item.count != null && (
+												<span className="text-[11px] text-kumo-subtle">
+													· {item.count}
+												</span>
+											)}
+										</div>
+									);
+								}
+								if (item.type === "empty-new") {
+									return (
+										<p
+											key="empty-new"
+											className="px-4 py-3 text-sm text-kumo-subtle md:px-6"
+										>
+											You’re caught up
+										</p>
+									);
+								}
+								const email = item.email;
 								const isSelected = selectedEmailId === email.id;
 								const snippet = getSnippetText(email.snippet);
 								return (

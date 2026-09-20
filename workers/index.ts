@@ -353,6 +353,15 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	if (threaded && folder) {
 		const emails = await (stub as any).getThreadedEmails({ folder, page, limit });
 		const totalCount = await (stub as any).countThreadedEmails(folder);
+		if (folder === Folders.INBOX) {
+			const sections = await (stub as any).countThreadedEmailSections(folder);
+			return c.json({
+				emails,
+				totalCount: sections.totalCount ?? totalCount,
+				newCount: sections.newCount,
+				seenCount: sections.seenCount,
+			});
+		}
 		return c.json({ emails, totalCount });
 	}
 	const emails = await stub.getEmails({ folder, thread_id, page, limit, sortColumn, sortDirection });

@@ -219,6 +219,13 @@ final class APIClient: @unchecked Sendable {
         try await updateEmail(mailboxId: mailboxId, id: id, read: true)
     }
 
+    func markThreadRead(mailboxId: String, threadId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/read",
+            method: "POST"
+        )
+    }
+
     func updateEmail(
         mailboxId: String,
         id: String,

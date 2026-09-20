@@ -449,6 +449,8 @@ fun HomeShellView(
                                         onDismiss = { showFilterMenu = false },
                                         filterState = filterState,
                                         onChange = { filterState = it },
+                                        isInbox = selectedTab is HomeTab.Folder &&
+                                            selectedTab.id == FolderIds.INBOX,
                                     )
                                 }
                             }
@@ -553,6 +555,7 @@ fun HomeShellView(
                                         ActiveFilterChipsBar(
                                             filterState = filterState,
                                             onChange = { filterState = it },
+                                            isInbox = tab.id == FolderIds.INBOX,
                                         )
                                     }
                                 } else {
@@ -899,9 +902,13 @@ private fun FilterDropdown(
     onDismiss: () -> Unit,
     filterState: EmailFilterState,
     onChange: (EmailFilterState) -> Unit,
+    isInbox: Boolean = false,
 ) {
     InboxiesDropdownMenu(expanded = expanded, onDismiss = onDismiss) {
-        FilterToggle("Unread", filterState.unreadOnly) {
+        FilterToggle(
+            if (isInbox) "New only" else "Unread",
+            filterState.unreadOnly,
+        ) {
             onChange(filterState.copy(unreadOnly = it))
         }
         FilterToggle("Starred", filterState.starredOnly) {
@@ -955,6 +962,7 @@ private fun FilterToggle(label: String, checked: Boolean, onCheckedChange: (Bool
 private fun ActiveFilterChipsBar(
     filterState: EmailFilterState,
     onChange: (EmailFilterState) -> Unit,
+    isInbox: Boolean = false,
 ) {
     val colors = inboxiesColors()
     Row(
@@ -966,7 +974,9 @@ private fun ActiveFilterChipsBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (filterState.unreadOnly) {
-            FilterChip("Unread") { onChange(filterState.copy(unreadOnly = false)) }
+            FilterChip(if (isInbox) "New only" else "Unread") {
+                onChange(filterState.copy(unreadOnly = false))
+            }
         }
         if (filterState.starredOnly) {
             FilterChip("Starred") { onChange(filterState.copy(starredOnly = false)) }

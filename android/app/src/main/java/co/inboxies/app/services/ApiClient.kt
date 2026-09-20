@@ -261,6 +261,13 @@ class ApiClient private constructor() {
     suspend fun markRead(mailboxId: String, id: String): Email =
         updateEmail(mailboxId, id, read = true)
 
+    suspend fun markThreadRead(mailboxId: String, threadId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/read",
+            method = "POST",
+        )
+    }
+
     suspend fun moveEmail(
         mailboxId: String,
         id: String,

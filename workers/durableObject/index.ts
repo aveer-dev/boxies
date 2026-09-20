@@ -9,6 +9,10 @@ import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders, FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "../../shared/folders";
 import { isPurposeFolderId, type PurposeFolderId } from "../../shared/folders";
+import {
+	annotateListSections,
+	folderUsesNewSeen,
+} from "../../shared/list-sections.ts";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
@@ -668,6 +672,8 @@ export class MailboxDO extends DurableObject<Env> {
 		//   2. Fallback: group by normalized subject (strips Re:/Fwd:/FW: prefixes)
 		//      for legacy emails that lack threading headers (thread_id IS NULL).
 		const isDraftFolder = folder === Folders.DRAFT;
+		/** Inbox only: New (unread) conversations first, then Seen. */
+		const useNewSeen = folderUsesNewSeen(folder);
 
 		if (isDraftFolder) {
 			const result = this.ctx.storage.sql.exec(
@@ -806,23 +812,28 @@ export class MailboxDO extends DurableObject<Env> {
 			LEFT JOIN latest_message_per_conversation lmc
 				ON lmc.conversation_id = lif.conversation_id AND lmc.rn = 1
 			WHERE lif.rn = 1
-			ORDER BY lif.date DESC
+			ORDER BY ${
+				useNewSeen
+					? `CASE WHEN cs.thread_unread_count > 0 THEN 0 ELSE 1 END ASC, lif.date DESC`
+					: `lif.date DESC`
+			}
 			LIMIT ?2 OFFSET ?3`,
 			folder, limit, offset
 		);
 
 		const rows = [...result];
+		const mapped = rows.map((row: any) => this.#withDecodedAuth({
+			...row,
+			read: !!row.read,
+			starred: !!row.starred,
+			thread_count: row.thread_count || 1,
+			thread_unread_count: row.thread_unread_count || 0,
+			participants: row.participants || row.sender,
+			needs_reply: !!row.needs_reply,
+			has_draft: !!row.has_draft,
+		}));
 		return this.#withFileAttachmentFlag(
-			rows.map((row: any) => this.#withDecodedAuth({
-				...row,
-				read: !!row.read,
-				starred: !!row.starred,
-				thread_count: row.thread_count || 1,
-				thread_unread_count: row.thread_unread_count || 0,
-				participants: row.participants || row.sender,
-				needs_reply: !!row.needs_reply,
-				has_draft: !!row.has_draft,
-			})),
+			annotateListSections(mapped, useNewSeen),
 		);
 	}
 
@@ -873,6 +884,77 @@ export class MailboxDO extends DurableObject<Env> {
 			),
 		][0] as { total: number } | undefined;
 		return row?.total ?? 0;
+	}
+
+	/**
+	 * Inbox New vs Seen conversation counts (same grouping as getThreadedEmails).
+	 */
+	async countThreadedEmailSections(folder: string): Promise<{
+		newCount: number;
+		seenCount: number;
+		totalCount: number;
+	}> {
+		if (!folderUsesNewSeen(folder)) {
+			const totalCount = await this.countThreadedEmails(folder);
+			return { newCount: 0, seenCount: totalCount, totalCount };
+		}
+
+		const row = [
+			...this.ctx.storage.sql.exec(
+				`WITH
+				folder_emails AS (
+					SELECT *,
+						COALESCE(thread_id, id) as raw_thread_id,
+						${NORMALIZED_SUBJECT_SQL} as normalized_subject
+					FROM emails
+					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
+				),
+				thread_to_conversation AS (
+					SELECT
+						raw_thread_id,
+						normalized_subject,
+						CASE
+							WHEN thread_id IS NOT NULL THEN raw_thread_id
+							ELSE MIN(raw_thread_id) OVER (PARTITION BY normalized_subject)
+						END as conversation_id
+					FROM folder_emails
+					GROUP BY raw_thread_id, normalized_subject, thread_id
+				),
+				all_emails_with_conversation AS (
+					SELECT
+						e.*,
+						COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
+					FROM emails e
+					LEFT JOIN thread_to_conversation tc
+						ON COALESCE(e.thread_id, e.id) = tc.raw_thread_id
+				),
+				conversation_stats AS (
+					SELECT
+						conversation_id,
+						SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count
+					FROM all_emails_with_conversation
+					WHERE conversation_id IN (
+						SELECT DISTINCT conversation_id FROM all_emails_with_conversation
+						WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
+					)
+					GROUP BY conversation_id
+				)
+				SELECT
+					COALESCE(SUM(CASE WHEN thread_unread_count > 0 THEN 1 ELSE 0 END), 0) as new_count,
+					COALESCE(SUM(CASE WHEN thread_unread_count = 0 THEN 1 ELSE 0 END), 0) as seen_count,
+					COUNT(*) as total_count
+				FROM conversation_stats`,
+				folder,
+			),
+		][0] as
+			| { new_count: number; seen_count: number; total_count: number }
+			| undefined;
+
+		return {
+			newCount: Number(row?.new_count ?? 0),
+			seenCount: Number(row?.seen_count ?? 0),
+			totalCount: Number(row?.total_count ?? 0),
+		};
 	}
 
 	// ── Single email operations (Drizzle) ──────────────────────────
