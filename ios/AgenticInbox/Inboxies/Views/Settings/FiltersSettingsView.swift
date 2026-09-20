@@ -20,24 +20,40 @@ struct FiltersSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("If a message matches, file it, skip auto-draft, or forward. First matching rule wins.")
-                    .font(.inter(size: 13))
-                    .foregroundStyle(AppTheme.muted)
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("If a message matches, file it, skip auto-draft, or forward. First matching rule wins.")
+                        .font(.inter(size: 13))
+                        .foregroundStyle(AppTheme.muted)
 
-                Text("Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list.")
-                    .font(.inter(size: 12))
-                    .foregroundStyle(AppTheme.muted)
+                    Text("Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list.")
+                        .font(.inter(size: 12))
+                        .foregroundStyle(AppTheme.muted)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
 
                 if rules.isEmpty {
                     Text("No filters yet.")
                         .font(.inter(size: 14))
                         .foregroundStyle(AppTheme.muted)
-                        .padding(.vertical, 8)
-                }
-
-                ForEach(rules) { rule in
-                    filterRow(for: rule)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
+                            filterRow(for: rule)
+                            if index < rules.count - 1 {
+                                Divider()
+                                    .overlay(AppTheme.line)
+                                    .padding(.leading, 16)
+                            }
+                        }
+                    }
+                    .background(AppTheme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(.horizontal, 16)
                 }
 
                 if !isSelectMode {
@@ -48,10 +64,11 @@ struct FiltersSettingsView: View {
                             .font(.inter(size: 15, weight: .medium))
                             .foregroundStyle(AppTheme.accent)
                     }
-                    .padding(.top, 4)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
                 }
             }
-            .padding(16)
+            .padding(.bottom, 24)
         }
         .background(AppTheme.background)
         .navigationTitle(isSelectMode
@@ -192,15 +209,11 @@ struct FiltersSettingsView: View {
             }
 
             Toggle("", isOn: enabledBinding(for: id))
-            .labelsHidden()
-            .tint(AppTheme.accent)
+                .labelsHidden()
+                .tint(AppTheme.accent)
         }
-        .padding(12)
-        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(AppTheme.line, lineWidth: 1)
-        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     /// ID-based binding so Toggle does not crash when a rule is removed mid-update.
@@ -359,8 +372,13 @@ private struct FilterDeleteSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .fontWeight(.semibold)
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.inter(size: 13, weight: .semibold))
+                            .foregroundStyle(AppTheme.ink)
+                            .frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel("Close")
                 }
             }
         }

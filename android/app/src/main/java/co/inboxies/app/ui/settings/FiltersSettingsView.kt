@@ -10,7 +10,6 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,6 +36,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -254,21 +254,28 @@ fun FiltersSettingsView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .padding(bottom = 24.dp),
             ) {
-                Text(
-                    "If a message matches, file it, skip auto-draft, or forward. First matching rule wins.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 13.sp,
-                    color = colors.muted,
-                )
-                Text(
-                    "Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 12.sp,
-                    color = colors.muted,
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 8.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "If a message matches, file it, skip auto-draft, or forward. First matching rule wins.",
+                        fontFamily = InterFontFamily,
+                        fontSize = 13.sp,
+                        color = colors.muted,
+                    )
+                    Text(
+                        "Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list.",
+                        fontFamily = InterFontFamily,
+                        fontSize = 12.sp,
+                        color = colors.muted,
+                    )
+                }
 
                 if (rules.isEmpty()) {
                     Text(
@@ -276,104 +283,133 @@ fun FiltersSettingsView(
                         fontFamily = InterFontFamily,
                         fontSize = 14.sp,
                         color = colors.muted,
+                        modifier = Modifier
+                            .padding(horizontal = 20.dp)
+                            .padding(bottom = 12.dp),
                     )
-                }
-
-                rules.forEach { rule ->
-                    val isSelected = selectedIds.contains(rule.id)
-                    Row(
+                } else {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(colors.surface, RoundedCornerShape(12.dp))
-                            .border(1.dp, colors.line, RoundedCornerShape(12.dp))
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            .padding(horizontal = 16.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.surface),
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .combinedClickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = {
-                                        if (isSelectMode) {
-                                            selectedIds = if (isSelected) {
-                                                selectedIds - rule.id
-                                            } else {
-                                                selectedIds + rule.id
-                                            }
-                                        } else {
-                                            actionRuleId = rule.id
-                                        }
-                                    },
-                                    onLongClick = {
-                                        if (!isSelectMode) {
-                                            view.performHapticFeedback(
-                                                HapticFeedbackConstants.LONG_PRESS,
-                                            )
-                                            isSelectMode = true
-                                            selectedIds = setOf(rule.id)
-                                        }
-                                    },
-                                ),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            AnimatedVisibility(
-                                visible = isSelectMode,
-                                enter = fadeIn(settingsNavSpring()) +
-                                    expandHorizontally(
-                                        animationSpec = settingsNavSpring(),
-                                        expandFrom = Alignment.Start,
-                                        clip = false,
-                                    ) +
-                                    scaleIn(animationSpec = settingsNavSpring(), initialScale = 0.72f),
-                                exit = fadeOut(settingsNavSpring()) +
-                                    shrinkHorizontally(
-                                        animationSpec = settingsNavSpring(),
-                                        shrinkTowards = Alignment.Start,
-                                        clip = false,
-                                    ) +
-                                    scaleOut(animationSpec = settingsNavSpring(), targetScale = 0.72f),
+                        rules.forEachIndexed { index, rule ->
+                            val isSelected = selectedIds.contains(rule.id)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
-                                Icon(
-                                    imageVector = if (isSelected) {
-                                        Icons.Outlined.CheckCircle
-                                    } else {
-                                        Icons.Outlined.Circle
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .combinedClickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                            onClick = {
+                                                if (isSelectMode) {
+                                                    selectedIds = if (isSelected) {
+                                                        selectedIds - rule.id
+                                                    } else {
+                                                        selectedIds + rule.id
+                                                    }
+                                                } else {
+                                                    actionRuleId = rule.id
+                                                }
+                                            },
+                                            onLongClick = {
+                                                if (!isSelectMode) {
+                                                    view.performHapticFeedback(
+                                                        HapticFeedbackConstants.LONG_PRESS,
+                                                    )
+                                                    isSelectMode = true
+                                                    selectedIds = setOf(rule.id)
+                                                }
+                                            },
+                                        ),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    AnimatedVisibility(
+                                        visible = isSelectMode,
+                                        enter = fadeIn(settingsNavSpring()) +
+                                            expandHorizontally(
+                                                animationSpec = settingsNavSpring(),
+                                                expandFrom = Alignment.Start,
+                                                clip = false,
+                                            ) +
+                                            scaleIn(
+                                                animationSpec = settingsNavSpring(),
+                                                initialScale = 0.72f,
+                                            ),
+                                        exit = fadeOut(settingsNavSpring()) +
+                                            shrinkHorizontally(
+                                                animationSpec = settingsNavSpring(),
+                                                shrinkTowards = Alignment.Start,
+                                                clip = false,
+                                            ) +
+                                            scaleOut(
+                                                animationSpec = settingsNavSpring(),
+                                                targetScale = 0.72f,
+                                            ),
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isSelected) {
+                                                Icons.Outlined.CheckCircle
+                                            } else {
+                                                Icons.Outlined.Circle
+                                            },
+                                            contentDescription = if (isSelected) {
+                                                "Selected"
+                                            } else {
+                                                "Not selected"
+                                            },
+                                            tint = if (isSelected) {
+                                                colors.ink
+                                            } else {
+                                                colors.muted.copy(alpha = 0.6f)
+                                            },
+                                            modifier = Modifier.size(22.dp),
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            rule.name?.trim()?.ifEmpty { null } ?: "Untitled filter",
+                                            fontFamily = InterFontFamily,
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 15.sp,
+                                            color = colors.ink,
+                                        )
+                                        Text(
+                                            summarize(rule),
+                                            fontFamily = InterFontFamily,
+                                            fontSize = 12.sp,
+                                            color = colors.muted,
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = rule.enabled != false,
+                                    onCheckedChange = { checked ->
+                                        updateRule(rule.id) { it.copy(enabled = checked) }
                                     },
-                                    contentDescription = if (isSelected) "Selected" else "Not selected",
-                                    tint = if (isSelected) colors.ink else colors.muted.copy(alpha = 0.6f),
-                                    modifier = Modifier.size(22.dp),
+                                    colors = SwitchDefaults.colors(
+                                        checkedTrackColor = colors.accent,
+                                        checkedThumbColor = Color.White,
+                                    ),
                                 )
                             }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    rule.name?.trim()?.ifEmpty { null } ?: "Untitled filter",
-                                    fontFamily = InterFontFamily,
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 15.sp,
-                                    color = colors.ink,
-                                )
-                                Text(
-                                    summarize(rule),
-                                    fontFamily = InterFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.muted,
+                            if (index < rules.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 16.dp),
+                                    color = colors.line,
                                 )
                             }
                         }
-                        Switch(
-                            checked = rule.enabled != false,
-                            onCheckedChange = { checked ->
-                                updateRule(rule.id) { it.copy(enabled = checked) }
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedTrackColor = colors.accent,
-                                checkedThumbColor = Color.White,
-                            ),
-                        )
                     }
                 }
 
@@ -386,6 +422,7 @@ fun FiltersSettingsView(
                                 isNew = true,
                             )
                         },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                     ) {
                         Icon(Icons.Outlined.Add, contentDescription = null, tint = colors.accent)
                         Spacer(modifier = Modifier.width(4.dp))
@@ -397,8 +434,6 @@ fun FiltersSettingsView(
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(24.dp))
             }
         }
 
@@ -515,7 +550,11 @@ private fun FilterActionsSheet(
                             .padding(horizontal = 12.dp),
                         maxLines = 1,
                     )
-                    SettingsChromeTextButton(label = "Done", onClick = onDismiss)
+                    HomeChromeToolbarButton(
+                        icon = Icons.Outlined.Close,
+                        contentDescription = "Close",
+                        onClick = onDismiss,
+                    )
                 }
                 Column(
                     modifier = Modifier
