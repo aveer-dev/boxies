@@ -153,6 +153,58 @@ fun SignInView() {
                 Text("Continue with Google", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium)
             }
 
+            var showPassword by remember { mutableStateOf(false) }
+            var passwordEmail by remember { mutableStateOf("") }
+            var password by remember { mutableStateOf("") }
+            Spacer(Modifier.height(12.dp))
+            TextButton(
+                onClick = { showPassword = !showPassword },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .background(colors.pillFill, RoundedCornerShape(12.dp)),
+            ) {
+                Text(
+                    if (showPassword) "Hide password sign-in" else "Sign in with password",
+                    fontFamily = InterFontFamily,
+                    color = colors.ink,
+                )
+            }
+            if (showPassword) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = passwordEmail,
+                    onValueChange = { passwordEmail = it },
+                    label = { Text("Mailbox email") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        scope.launch {
+                            commitApiBase()
+                            auth.signInWithPassword(passwordEmail, password)
+                        }
+                    },
+                    enabled = passwordEmail.isNotBlank() && password.isNotBlank() && !isBusy,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = Color.White),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("Continue", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
             if (showDevLogin) {
                 Spacer(Modifier.height(12.dp))
                 TextButton(

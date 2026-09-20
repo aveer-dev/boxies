@@ -88,6 +88,8 @@ npm run deploy
 
 Any authenticated user is authorized **per mailbox**. Each mailbox stores an explicit ACL (`acl.owners` + `acl.members`) in its R2 settings blob. Owners can share access by adding another person's Access or mobile email (`email:you@example.com`). A principal may own many mailboxes. Unclaimed mailboxes (missing `acl` or empty `owners`) are claimed on first access when the caller's email matches the canonical mailbox address. If your Access email is not the mailbox address (for example personal Gmail Access into `you@inboxies.email`), you cannot auto-claim it — create the mailbox, or have an owner add your Access email. `EMAIL_ADDRESSES` remains a create allowlist only, not authorization. MCP `/mcp` and Agents `/agents/*` use the same helper.
 
+**Domain Admin:** set Worker secret/var `DOMAIN_ADMINS` to a comma-separated list of Access emails and optional `sub:…` keys (matched against `GET /api/v1/me` → `keys`). Admins get `isAdmin: true`, can list/create/assign/delete via `/api/v1/admin/*`, and are not subject to silent mailbox-content omniscience (ACL still gates mail). When `DOMAIN_ADMINS` is non-empty, mailbox create defaults to **admin-only** unless you set `MAILBOX_CREATE_POLICY=open`. Invitees set a password via `/invite/<token>` (public Worker paths; also add Cloudflare Access **bypass** for `/invite/*`, `/login`, and `/api/v1/invites/*` + `/api/v1/auth/password*`). Optional: `INVITE_FROM_EMAIL`, `APP_BASE_URL`. Password sessions reuse `MOBILE_JWT_SECRET` (cookie `inboxies_session` or Bearer).
+
 ## Architecture
 
 ```

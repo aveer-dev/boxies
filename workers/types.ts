@@ -19,4 +19,18 @@ export interface Env extends Cloudflare.Env {
 	APNS_SANDBOX?: string;
 	/** Firebase service-account JSON string for FCM HTTP v1 (Android push). */
 	FCM_SERVICE_ACCOUNT_JSON?: string;
+	/**
+	 * Domain Admin allowlist: comma-separated emails and optional `sub:…` keys.
+	 * Matched against `principalKeys` from Access / mobile / password sessions.
+	 */
+	DOMAIN_ADMINS?: string;
+	/**
+	 * `open` (anyone authenticated may create) or `admin_only`.
+	 * When unset: `admin_only` if DOMAIN_ADMINS is non-empty, else `open`.
+	 */
+	MAILBOX_CREATE_POLICY?: string;
+	/** From address for invite emails (defaults to noreply@ first DOMAINS entry). */
+	INVITE_FROM_EMAIL?: string;
+	/** Public site origin for invite links (defaults to request origin). */
+	APP_BASE_URL?: string;
 }

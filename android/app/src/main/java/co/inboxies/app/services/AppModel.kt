@@ -77,6 +77,16 @@ class AppModel {
     private val _isMailboxLoading = MutableStateFlow(true)
     val isMailboxLoading: StateFlow<Boolean> = _isMailboxLoading.asStateFlow()
 
+    private val _isAdmin = MutableStateFlow(false)
+    val isAdmin: StateFlow<Boolean> = _isAdmin.asStateFlow()
+
+    private val _pendingInviteToken = MutableStateFlow<String?>(null)
+    val pendingInviteToken: StateFlow<String?> = _pendingInviteToken.asStateFlow()
+
+    fun setPendingInviteToken(token: String?) {
+        _pendingInviteToken.value = token
+    }
+
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -212,6 +222,9 @@ class AppModel {
         }
         _errorMessage.value = null
         try {
+            runCatching { ApiClient.shared.getMe() }.getOrNull()?.let { me ->
+                _isAdmin.value = me.isAdmin == true
+            }
             val list = ApiClient.shared.listMailboxes()
             val previous = _mailboxes.value.associateBy { it.id }
             val merged = list.map { incoming ->

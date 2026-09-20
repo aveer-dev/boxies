@@ -27,6 +27,7 @@ struct MeResponse: Codable {
     var email: String?
     var sub: String?
     var keys: [String]
+    var isAdmin: Bool?
 }
 
 struct InboxFilterRule: Codable, Hashable, Identifiable {
@@ -975,4 +976,48 @@ enum ComposeMode: String, Hashable {
 enum ComposePresentation: Hashable {
     case expanded
     case minimized
+}
+
+struct InvitePublic: Codable {
+    var mailboxId: String
+    var role: String
+    var inviteeEmail: String
+    var inviteeName: String?
+    var expiresAt: String
+    var status: String
+}
+
+struct InviteAcceptResponse: Codable {
+    var mailboxId: String
+    var userId: String
+    var token: String
+    var expiresAt: String
+}
+
+struct PasswordLoginResponse: Codable {
+    var token: String
+    var expiresAt: String
+    var email: String?
+    var sub: String?
+    var keys: [String]?
+}
+
+struct InviteCreateResponse: Codable {
+    var token: String
+    var inviteUrl: String
+    var emailSent: Bool
+    var emailError: String?
+    var mailboxId: String
+    var inviteeEmail: String
+    var role: String
+    var expiresAt: String
+}
+
+struct AdminMailboxRow: Codable, Identifiable {
+    var id: String
+    var email: String
+    var name: String
+    var acl: MailboxAcl?
+    var claimed: Bool?
+    var fromName: String?
 }

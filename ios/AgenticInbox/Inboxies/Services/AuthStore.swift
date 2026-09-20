@@ -61,6 +61,22 @@ final class AuthStore {
         }
     }
 
+    func signInWithPassword(email: String, password: String) async {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            let response = try await APIClient.shared.passwordLogin(email: email, password: password)
+            persist(token: response.token, email: response.email ?? email)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func applySession(token: String, email: String?) {
+        persist(token: token, email: email)
+    }
+
     func signOut() {
         token = nil
         userEmail = nil

@@ -21,6 +21,8 @@ final class AppModel {
     private var pendingConversationIds: Set<String> = []
     /// True until the first mailbox identity is available (top bar skeleton).
     var isMailboxLoading = true
+    /// Domain admin from `/api/v1/me` (optional lightweight native admin).
+    var isAdmin = false
     /// True while the current folder's email list is fetching with no cached data.
     var isLoading = true
     /// True while the open email's body/thread is fetching with no cached body.
@@ -169,6 +171,9 @@ final class AppModel {
         }
         errorMessage = nil
         do {
+            if let me = try? await APIClient.shared.getMe() {
+                isAdmin = me.isAdmin ?? false
+            }
 			mailboxes = try await APIClient.shared.listMailboxes()
             db.upsertMailboxes(mailboxes)
             if let selected = selectedMailboxId, !mailboxes.contains(where: { $0.id == selected }) {

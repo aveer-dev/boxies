@@ -54,6 +54,11 @@ import {
 	principalKeys,
 	type RequestPrincipal,
 } from "./lib/mailbox-acl";
+import { isDomainAdmin } from "./lib/domain-admin";
+import {
+	registerAdminAndInviteRoutes,
+	resolveCreateGate,
+} from "./routes/admin-invites";
 import {
 	issueMobileSessionToken,
 	verifyAppleIdentityToken,
@@ -206,15 +211,19 @@ app.get("/api/v1/config", (c) => {
 	return c.json({ domains, emailAddresses });
 });
 
-app.get("/api/v1/me", (c) => {
+app.get("/api/v1/me", async (c) => {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
 	if (!principal) return c.json({ error: "Unauthorized" }, 401);
+	const admin = await isDomainAdmin(c.env, principal);
 	return c.json({
 		email: principal.email ?? null,
 		sub: principal.sub ?? null,
 		keys: principalKeys(principal),
+		isAdmin: admin,
 	});
 });
+
+registerAdminAndInviteRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
@@ -230,6 +239,18 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
 	if (!principal || principalKeys(principal).length === 0) {
 		return c.json({ error: "Forbidden" }, 403);
+	}
+	const createGate = await resolveCreateGate(c.env, principal);
+	if (!createGate.allowed) {
+		return c.json(
+			{
+				error:
+					createGate.policy === "admin_only"
+						? "Only domain admins can create mailboxes"
+						: "Forbidden",
+			},
+			403,
+		);
 	}
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = canonicalMailboxId(rawEmail);

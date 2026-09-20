@@ -78,7 +78,13 @@ export function principalKeys(
 		const canonical = canonicalMailboxId(principal.email);
 		if (canonical) keys.add(`email:${canonical}`);
 	}
-	if (principal.sub) keys.add(`sub:${principal.sub}`);
+	if (principal.sub) {
+		keys.add(`sub:${principal.sub}`);
+		// Password sessions use sub `user:<uuid>` — also match ACL `user:<uuid>`.
+		if (principal.sub.startsWith("user:")) {
+			keys.add(principal.sub);
+		}
+	}
 	return [...keys];
 }
 
@@ -96,6 +102,12 @@ export function normalizeAclKey(raw: string): string | null {
 	if (prefix === "sub") {
 		const sub = rest.trim();
 		return sub ? `sub:${sub}` : null;
+	}
+	if (prefix === "user") {
+		const id = rest.trim();
+		// Opaque password-account id (uuid). Also accept nested `user:user:<uuid>`.
+		if (!id || id.includes(" ")) return null;
+		return id.startsWith("user:") ? id : `user:${id}`;
 	}
 	const email = normalizeEmailAddress(trimmed);
 	return email ? `email:${email}` : null;

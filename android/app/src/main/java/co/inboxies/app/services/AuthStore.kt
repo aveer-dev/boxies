@@ -82,6 +82,25 @@ class AuthStore(context: Context) {
         }
     }
 
+    suspend fun signInWithPassword(email: String, password: String) {
+        _isBusy.value = true
+        _errorMessage.value = null
+        try {
+            val response = withContext(Dispatchers.IO) {
+                ApiClient.shared.passwordLogin(email, password)
+            }
+            persist(response.token, response.email ?: email)
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+        } finally {
+            _isBusy.value = false
+        }
+    }
+
+    fun applySession(token: String, email: String?) {
+        persist(token, email)
+    }
+
     fun signOut() {
         _token.value = null
         _userEmail.value = null

@@ -172,6 +172,54 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func getInvite(token: String) async throws -> InvitePublic {
+        try await request(path: "/api/v1/invites/\(token.urlPathEncoded)", authed: false)
+    }
+
+    func acceptInvite(token: String, password: String, displayName: String?) async throws -> InviteAcceptResponse {
+        var body: [String: Any] = ["password": password]
+        if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
+        return try await request(
+            path: "/api/v1/invites/\(token.urlPathEncoded)/accept",
+            method: "POST",
+            body: body,
+            authed: false
+        )
+    }
+
+    func passwordLogin(email: String, password: String) async throws -> PasswordLoginResponse {
+        try await request(
+            path: "/api/v1/auth/password",
+            method: "POST",
+            body: ["email": email, "password": password],
+            authed: false
+        )
+    }
+
+    func listAdminMailboxes() async throws -> [AdminMailboxRow] {
+        try await request(path: "/api/v1/admin/mailboxes")
+    }
+
+    func assignAdminMailboxToSelf(mailboxId: String) async throws -> Mailbox {
+        try await request(
+            path: "/api/v1/admin/mailboxes/\(mailboxId.urlPathEncoded)/assign",
+            method: "POST",
+            body: ["assignTo": "self"]
+        )
+    }
+
+    func createMailboxInvite(
+        mailboxId: String,
+        inviteEmail: String,
+        role: String = "member"
+    ) async throws -> InviteCreateResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/invites",
+            method: "POST",
+            body: ["inviteEmail": inviteEmail, "role": role]
+        )
+    }
+
     func listFolders(mailboxId: String) async throws -> [Folder] {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders")
     }

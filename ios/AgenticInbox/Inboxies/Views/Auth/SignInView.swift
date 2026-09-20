@@ -7,6 +7,9 @@ import SwiftUI
 struct SignInView: View {
     @Environment(AuthStore.self) private var auth
     @State private var apiBase = AppConfig.apiBaseURL.absoluteString
+    @State private var passwordEmail = ""
+    @State private var password = ""
+    @State private var showPassword = false
 
     var body: some View {
         ZStack {
@@ -49,6 +52,56 @@ struct SignInView: View {
                     .signInWithAppleButtonStyle(.black)
                     .frame(height: 52)
                     .padding(.horizontal, 32)
+
+                    Button {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                            showPassword.toggle()
+                        }
+                    } label: {
+                        Text(showPassword ? "Hide password sign-in" : "Sign in with password")
+                            .font(.inter(size: 15, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 48)
+                            .background(AppTheme.pillFill)
+                            .foregroundStyle(AppTheme.ink)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .padding(.horizontal, 32)
+
+                    if showPassword {
+                        VStack(spacing: 10) {
+                            TextField("Mailbox email", text: $passwordEmail)
+                                .textInputAutocapitalization(.never)
+                                .keyboardType(.emailAddress)
+                                .autocorrectionDisabled()
+                                .padding(12)
+                                .background(AppTheme.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                            SecureField("Password", text: $password)
+                                .padding(12)
+                                .background(AppTheme.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                            Button {
+                                Task {
+                                    commitAPIBaseURL()
+                                    await auth.signInWithPassword(
+                                        email: passwordEmail,
+                                        password: password
+                                    )
+                                }
+                            } label: {
+                                Text("Continue")
+                                    .font(.inter(size: 15, weight: .semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 48)
+                                    .background(AppTheme.ink)
+                                    .foregroundStyle(AppTheme.surface)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .disabled(passwordEmail.isEmpty || password.isEmpty || auth.isBusy)
+                        }
+                        .padding(.horizontal, 32)
+                    }
 
                     #if DEBUG
                     if AppConfig.isLocalDevelopmentAPI {
@@ -128,11 +181,11 @@ struct SignInView: View {
         switch result {
         case .failure(let error):
             auth.errorMessage = error.localizedDescription
-        case .success(let authResult):
-            guard let credential = authResult.credential as? ASAuthorizationAppleIDCredential,
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
                   let tokenData = credential.identityToken,
                   let token = String(data: tokenData, encoding: .utf8) else {
-                auth.errorMessage = "Apple did not return an identity token"
+                auth.errorMessage = "Apple Sign In failed"
                 return
             }
             await auth.signInWithApple(identityToken: token, email: credential.email)

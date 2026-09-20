@@ -23,6 +23,7 @@ import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.InboxiesTheme
 import co.inboxies.app.theme.ThemeMode
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.auth.InviteAcceptView
 import co.inboxies.app.ui.auth.MailboxOnboardingView
 import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
@@ -38,6 +39,7 @@ fun RootView(
     val isAuthenticated = !token.isNullOrBlank()
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
+    val pendingInvite by appModel.pendingInviteToken.collectAsState()
 
     LaunchedEffect(token) {
         if (!token.isNullOrBlank()) {
@@ -53,6 +55,18 @@ fun RootView(
         if (!isAuthenticated || isMailboxLoading || mailboxes.isEmpty()) return@LaunchedEffect
         PushNotificationManager.shared.clearPendingDeepLink()
         appModel.openEmailFromNotification(link.mailboxId, link.emailId, link.folderId)
+    }
+
+    if (pendingInvite != null) {
+        CompositionLocalProvider(
+            LocalAuthStore provides auth,
+            LocalAppModel provides appModel,
+        ) {
+            InviteAcceptView(token = pendingInvite!!) {
+                appModel.setPendingInviteToken(null)
+            }
+        }
+        return
     }
 
     RootViewContent(

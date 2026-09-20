@@ -21,6 +21,10 @@
         // The worker now fails closed outside local development if Access is not configured.
         "DOMAINS": "inboxies.email",
         "EMAIL_ADDRESSES": [],
+        // Domain Admin allowlist (comma-separated Access emails and optional sub:…).
+        // Set via `wrangler secret put DOMAIN_ADMINS` or vars in non-prod.
+        // "DOMAIN_ADMINS": "you@example.com",
+        // Recommended once admins exist: "MAILBOX_CREATE_POLICY": "admin_only",
         "APNS_SANDBOX": "true",
         "APNS_TOPIC": "co.inboxies.app",
     },

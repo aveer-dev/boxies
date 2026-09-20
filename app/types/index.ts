@@ -50,6 +50,27 @@ export interface MeResponse {
 	email: string | null;
 	sub: string | null;
 	keys: string[];
+	isAdmin?: boolean;
+}
+
+export interface AdminMailboxRow {
+	id: string;
+	email: string;
+	name: string;
+	acl: MailboxAcl;
+	claimed: boolean;
+	fromName: string | null;
+}
+
+export interface InviteInfo {
+	token: string;
+	inviteUrl: string;
+	emailSent: boolean;
+	emailError?: string | null;
+	inviteeEmail: string;
+	role: "owner" | "member";
+	expiresAt?: string;
+	mailboxId?: string;
 }
 
 export interface Mailbox {

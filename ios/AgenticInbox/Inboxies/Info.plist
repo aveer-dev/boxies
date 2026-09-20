@@ -44,6 +44,17 @@
 	<array>
 		<string>remote-notification</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>co.inboxies.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>inboxies</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Inter-Regular.ttf</string>

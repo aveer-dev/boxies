@@ -91,6 +91,10 @@ fun SharingSettingsView(
     var addAsOwner by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
+    var inviteEmail by remember { mutableStateOf("") }
+    var inviteAsOwner by remember { mutableStateOf(false) }
+    var isInviting by remember { mutableStateOf(false) }
+    var lastInviteUrl by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(mailbox?.id) {
         val me = runCatching { ApiClient.shared.getMe() }.getOrNull()
@@ -208,13 +212,13 @@ fun SharingSettingsView(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text(
-                    "Owners can manage this list. Members can use the mailbox but cannot change who has access.",
+                    "People with access. Owners can manage this list. Members can use the mailbox but cannot change who has access.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
                     color = colors.muted,
                 )
                 Text(
-                    "Add people by the email on their Cloudflare Access or mobile sign-in account. That address may differ from the mailbox address.",
+                    "Invite by email sends a password setup link. Add person is for someone who already signs in with Access or Google.",
                     fontFamily = InterFontFamily,
                     fontSize = 12.sp,
                     color = colors.muted,
@@ -271,7 +275,80 @@ fun SharingSettingsView(
 
                 if (canManage) {
                     Text(
-                        "Add person",
+                        "Invite by email",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        color = colors.ink,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    OutlinedTextField(
+                        value = inviteEmail,
+                        onValueChange = { inviteEmail = it },
+                        label = { Text("Invitee email") },
+                        placeholder = { Text("person@gmail.com") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { inviteAsOwner = !inviteAsOwner },
+                    ) {
+                        Checkbox(
+                            checked = inviteAsOwner,
+                            onCheckedChange = { inviteAsOwner = it },
+                            colors = CheckboxDefaults.colors(checkedColor = colors.accent),
+                        )
+                        Text(
+                            "Invite as owner",
+                            fontFamily = InterFontFamily,
+                            fontSize = 16.sp,
+                            color = colors.ink,
+                        )
+                    }
+                    lastInviteUrl?.let { url ->
+                        Text(
+                            url,
+                            fontFamily = InterFontFamily,
+                            fontSize = 11.sp,
+                            color = colors.muted,
+                        )
+                    }
+                    Text(
+                        if (isInviting) "Sending…" else "Send invite",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 15.sp,
+                        color = colors.accent,
+                        modifier = Modifier.clickable(enabled = !isInviting && inviteEmail.isNotBlank()) {
+                            val id = mailbox?.id ?: return@clickable
+                            scope.launch {
+                                isInviting = true
+                                try {
+                                    val result = ApiClient.shared.createMailboxInvite(
+                                        id,
+                                        inviteEmail.trim(),
+                                        if (inviteAsOwner) "owner" else "member",
+                                    )
+                                    lastInviteUrl = result.inviteUrl
+                                    inviteEmail = ""
+                                    toast(
+                                        if (result.emailSent) "Invite emailed" else "Invite created — copy the link",
+                                    )
+                                } catch (e: Exception) {
+                                    toast(e.message ?: "Invite failed", ok = false)
+                                } finally {
+                                    isInviting = false
+                                }
+                            }
+                        },
+                    )
+
+                    Text(
+                        "Add person (already has Access)",
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp,

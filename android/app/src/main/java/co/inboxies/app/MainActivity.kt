@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
         appModel = AppModel()
         val model = appModel
         handlePushIntent(intent)
+        handleInviteIntent(intent)
         setContent {
             var themeMode by remember {
                 mutableStateOf(
@@ -78,6 +79,23 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handlePushIntent(intent)
+        handleInviteIntent(intent)
+    }
+
+    private fun handleInviteIntent(intent: Intent?) {
+        if (intent == null) return
+        val data = intent.data ?: return
+        val token = when {
+            data.scheme == "inboxies" && data.host == "invite" ->
+                data.pathSegments.firstOrNull()
+            data.host == "inboxies.email" && data.path?.startsWith("/invite/") == true ->
+                data.path!!.removePrefix("/invite/").trim('/')
+            else -> null
+        }?.takeIf { it.isNotBlank() } ?: return
+        if (::appModel.isInitialized) {
+            appModel.setPendingInviteToken(token)
+        }
+        intent.data = null
     }
 
     private fun handlePushIntent(intent: Intent?) {

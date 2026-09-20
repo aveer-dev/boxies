@@ -13,6 +13,10 @@ struct SharingSettingsView: View {
     @State private var addAsOwner = false
     @State private var isSaving = false
     @State private var saveMessage: String?
+    @State private var inviteEmail = ""
+    @State private var inviteAsOwner = false
+    @State private var isInviting = false
+    @State private var lastInviteUrl: String?
 
     private var canManage: Bool {
         if let flag = app.selectedMailbox?.canManage {
@@ -26,11 +30,11 @@ struct SharingSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Owners can manage this list. Members can use the mailbox but cannot change who has access.")
+                Text("People with access. Owners can manage this list. Members can use the mailbox but cannot change who has access.")
                     .font(.inter(size: 13))
                     .foregroundStyle(AppTheme.muted)
 
-                Text("Add people by the email on their Cloudflare Access or mobile sign-in account. That address may differ from the mailbox address.")
+                Text("Invite by email sends a password setup link. Add person is for someone who already signs in with Access or Apple/Google.")
                     .font(.inter(size: 12))
                     .foregroundStyle(AppTheme.muted)
 
@@ -39,7 +43,53 @@ struct SharingSettingsView: View {
 
                 if canManage {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Add person")
+                        Text("Invite by email")
+                            .font(.inter(size: 14, weight: .semibold))
+                            .foregroundStyle(AppTheme.ink)
+
+                        TextField("person@gmail.com", text: $inviteEmail)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            .autocorrectionDisabled()
+                            .font(.inter(size: 16))
+                            .padding(12)
+                            .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(AppTheme.line, lineWidth: 1)
+                            )
+
+                        Toggle("Invite as owner", isOn: $inviteAsOwner)
+                            .font(.inter(size: 16))
+                            .tint(AppTheme.accent)
+
+                        if let lastInviteUrl {
+                            Text(lastInviteUrl)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(AppTheme.muted)
+                                .textSelection(.enabled)
+                        }
+
+                        Button {
+                            Task { await sendInvite() }
+                        } label: {
+                            Text(isInviting ? "Sending…" : "Send invite")
+                                .font(.inter(size: 15, weight: .medium))
+                                .foregroundStyle(AppTheme.accent)
+                        }
+                        .disabled(isInviting || inviteEmail.isEmpty)
+                    }
+                    .padding(14)
+                    .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AppTheme.line, lineWidth: 1)
+                    )
+                }
+
+                if canManage {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Add person (already has Access)")
                             .font(.inter(size: 14, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)
 
@@ -233,6 +283,24 @@ struct SharingSettingsView: View {
             settings.acl = MailboxAcl(owners: nextOwners, members: nextMembers)
         }
         showToast(success ? "Sharing saved" : "Failed to save")
+    }
+
+    private func sendInvite() async {
+        guard let mailboxId = app.selectedMailbox?.id else { return }
+        isInviting = true
+        defer { isInviting = false }
+        do {
+            let result = try await APIClient.shared.createMailboxInvite(
+                mailboxId: mailboxId,
+                inviteEmail: inviteEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+                role: inviteAsOwner ? "owner" : "member"
+            )
+            lastInviteUrl = result.inviteUrl
+            inviteEmail = ""
+            showToast(result.emailSent ? "Invite emailed" : "Invite created — copy the link")
+        } catch {
+            showToast(error.localizedDescription)
+        }
     }
 
     private func showToast(_ message: String) {
