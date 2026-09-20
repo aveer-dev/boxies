@@ -90,17 +90,10 @@ fun SendersSettingsView(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 HomeChromeToolbarButton(
-                    onClick = onBack,
+                    icon = Icons.AutoMirrored.Outlined.ArrowBack,
                     contentDescription = "Back",
-                    size = HomeChromeMetrics.ToolbarButton,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = null,
-                        tint = colors.ink,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
+                    onClick = onBack,
+                )
                 Text(
                     "Senders",
                     fontFamily = InterFontFamily,
