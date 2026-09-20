@@ -75,7 +75,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -169,7 +168,6 @@ fun ComposeSheetView(
     var showQuotedOriginal by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<ComposeToast?>(null) }
-    var headerHeightPx by remember { mutableStateOf(0) }
     val dragY = remember { mutableFloatStateOf(0f) }
     val dismissThresholdPx = with(density) { 96.dp.toPx() }
     val minimizeAction = rememberUpdatedState(onMinimize)
@@ -563,150 +561,147 @@ fun ComposeSheetView(
             )
             }
 
-            BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                val viewportHeight = maxHeight
-                val headerHeight = with(density) { headerHeightPx.toDp() }
-                val editorMin = (viewportHeight - headerHeight).coerceAtLeast(160.dp)
-
+            // Keep From/To/Subject outside the rich EditText. Nesting AndroidView
+            // inside verticalScroll with unbounded height collapsed the form so
+            // only the large title showed (mirrors the iOS ScrollView+UITextView bug).
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .onGloballyPositioned { headerHeightPx = it.size.height },
-                    ) {
-                        FromRow(
-                            displayName = fromDisplayName,
-                            mailboxes = mailboxes,
-                            showMenu = showFromMenu,
-                            onShowMenu = { showFromMenu = it },
-                            onSelect = { mailbox ->
-                                form.selectFrom(mailbox)
-                                fromMailboxId = mailbox.id
-                                fromEmail = mailbox.email
-                                fromName = mailbox.settings?.fromName
-                                    ?: mailbox.name.takeIf { it != mailbox.email }
-                            },
-                        )
+                    FromRow(
+                        displayName = fromDisplayName,
+                        mailboxes = mailboxes,
+                        showMenu = showFromMenu,
+                        onShowMenu = { showFromMenu = it },
+                        onSelect = { mailbox ->
+                            form.selectFrom(mailbox)
+                            fromMailboxId = mailbox.id
+                            fromEmail = mailbox.email
+                            fromName = mailbox.settings?.fromName
+                                ?: mailbox.name.takeIf { it != mailbox.email }
+                        },
+                    )
+                    RecipientRow(
+                        label = "To:",
+                        tokens = toTokens,
+                        draft = toDraft,
+                        focused = recipientFocus == ComposeField.To,
+                        showsOverflowMenu = true,
+                        showCcBcc = showCcBcc,
+                        onDraftChange = {
+                            toDraft = it
+                            form.toDraft = it
+                            if (shouldCommitToken(it)) {
+                                commitTokens()
+                                recipientFocus = ComposeField.To
+                            }
+                        },
+                        onCommit = { commitTokens() },
+                        onRemove = {
+                            toTokens = toTokens.filterNot { token -> token.id == it.id }
+                            form.toTokens = toTokens
+                        },
+                        onFocus = {
+                            recipientFocus = ComposeField.To
+                        },
+                        onToggleCcBcc = {
+                            showCcBcc = !showCcBcc
+                            form.showCcBcc = showCcBcc
+                            if (showCcBcc) recipientFocus = ComposeField.Cc
+                        },
+                    )
+                    if (showCcBcc) {
                         RecipientRow(
-                            label = "To:",
-                            tokens = toTokens,
-                            draft = toDraft,
-                            focused = recipientFocus == ComposeField.To,
-                            showsOverflowMenu = true,
-                            showCcBcc = showCcBcc,
+                            label = "Cc",
+                            tokens = ccTokens,
+                            draft = ccDraft,
+                            focused = recipientFocus == ComposeField.Cc,
                             onDraftChange = {
-                                toDraft = it
-                                form.toDraft = it
+                                ccDraft = it
+                                form.ccDraft = it
                                 if (shouldCommitToken(it)) {
                                     commitTokens()
-                                    recipientFocus = ComposeField.To
+                                    recipientFocus = ComposeField.Cc
                                 }
                             },
                             onCommit = { commitTokens() },
                             onRemove = {
-                                toTokens = toTokens.filterNot { token -> token.id == it.id }
-                                form.toTokens = toTokens
+                                ccTokens = ccTokens.filterNot { token -> token.id == it.id }
+                                form.ccTokens = ccTokens
                             },
-                            onFocus = {
-                                recipientFocus = ComposeField.To
-                            },
-                            onToggleCcBcc = {
-                                showCcBcc = !showCcBcc
-                                form.showCcBcc = showCcBcc
-                                if (showCcBcc) recipientFocus = ComposeField.Cc
-                            },
+                            onFocus = { recipientFocus = ComposeField.Cc },
                         )
-                        if (showCcBcc) {
-                            RecipientRow(
-                                label = "Cc",
-                                tokens = ccTokens,
-                                draft = ccDraft,
-                                focused = recipientFocus == ComposeField.Cc,
-                                onDraftChange = {
-                                    ccDraft = it
-                                    form.ccDraft = it
-                                    if (shouldCommitToken(it)) {
-                                        commitTokens()
-                                        recipientFocus = ComposeField.Cc
-                                    }
-                                },
-                                onCommit = { commitTokens() },
-                                onRemove = {
-                                    ccTokens = ccTokens.filterNot { token -> token.id == it.id }
-                                    form.ccTokens = ccTokens
-                                },
-                                onFocus = { recipientFocus = ComposeField.Cc },
-                            )
-                            RecipientRow(
-                                label = "Bcc",
-                                tokens = bccTokens,
-                                draft = bccDraft,
-                                focused = recipientFocus == ComposeField.Bcc,
-                                onDraftChange = {
-                                    bccDraft = it
-                                    form.bccDraft = it
-                                    if (shouldCommitToken(it)) {
-                                        commitTokens()
-                                        recipientFocus = ComposeField.Bcc
-                                    }
-                                },
-                                onCommit = { commitTokens() },
-                                onRemove = {
-                                    bccTokens = bccTokens.filterNot { token -> token.id == it.id }
-                                    form.bccTokens = bccTokens
-                                },
-                                onFocus = { recipientFocus = ComposeField.Bcc },
-                            )
-                        }
-                        if (suggestions.isNotEmpty() &&
-                            (recipientFocus == ComposeField.To ||
-                                recipientFocus == ComposeField.Cc ||
-                                recipientFocus == ComposeField.Bcc)
-                        ) {
-                            RecipientSuggestions(
-                                suggestions = suggestions,
-                                onSelect = { selectSuggestion(it) },
-                            )
-                        }
-                        SubjectField(
-                            value = subject,
-                            onValueChange = {
-                                subject = it
-                                form.subject = it
-                                recipientFocus = null
+                        RecipientRow(
+                            label = "Bcc",
+                            tokens = bccTokens,
+                            draft = bccDraft,
+                            focused = recipientFocus == ComposeField.Bcc,
+                            onDraftChange = {
+                                bccDraft = it
+                                form.bccDraft = it
+                                if (shouldCommitToken(it)) {
+                                    commitTokens()
+                                    recipientFocus = ComposeField.Bcc
+                                }
                             },
-                            onFocus = {
-                                recipientFocus = null
-                                suggestions = emptyList()
-                                commitTokens()
+                            onCommit = { commitTokens() },
+                            onRemove = {
+                                bccTokens = bccTokens.filterNot { token -> token.id == it.id }
+                                form.bccTokens = bccTokens
                             },
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 16.dp)
-                                .height(1.dp)
-                                .background(colors.line),
+                            onFocus = { recipientFocus = ComposeField.Bcc },
                         )
                     }
-
-                    ComposeRichTextEditor(
-                        html = body,
-                        controller = richText,
-                        onHtmlChange = {
-                            body = it
-                            form.body = it
+                    if (suggestions.isNotEmpty() &&
+                        (recipientFocus == ComposeField.To ||
+                            recipientFocus == ComposeField.Cc ||
+                            recipientFocus == ComposeField.Bcc)
+                    ) {
+                        RecipientSuggestions(
+                            suggestions = suggestions,
+                            onSelect = { selectSuggestion(it) },
+                        )
+                    }
+                    SubjectField(
+                        value = subject,
+                        onValueChange = {
+                            subject = it
+                            form.subject = it
+                            recipientFocus = null
                         },
+                        onFocus = {
+                            recipientFocus = null
+                            suggestions = emptyList()
+                            commitTokens()
+                        },
+                    )
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(min = editorMin),
+                            .padding(start = 16.dp)
+                            .height(1.dp)
+                            .background(colors.line),
                     )
                 }
+
+                ComposeRichTextEditor(
+                    html = body,
+                    controller = richText,
+                    onHtmlChange = {
+                        body = it
+                        form.body = it
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .heightIn(min = 160.dp),
+                )
             }
 
             val sizeError = if (overSize) co.inboxies.app.util.OutboundLimits.SIZE_ERROR else null

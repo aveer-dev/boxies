@@ -10,8 +10,6 @@ struct ComposeSheetView: View {
     var session: ComposeSession
 
     @State private var recipientFocus: Field?
-    @State private var viewportHeight: CGFloat = 0
-    @State private var headerHeight: CGFloat = 0
     @State private var showQuotedOriginal = false
     @State private var showFormatSheet = false
     @State private var showAttachMenu = false
@@ -37,21 +35,16 @@ struct ComposeSheetView: View {
 
     var body: some View {
         NavigationStack {
+            // Header (From/To/Subject) stays outside the body editor. Nesting a
+            // scrolling UITextView inside ScrollView collapsed the whole form to
+            // zero height after the rich-text editor landed — only the nav title
+            // remained visible.
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        composeHeader
-                            .onGeometryChange(for: CGFloat.self) { proxy in
-                                proxy.size.height
-                            } action: { headerHeight = $0 }
+                composeHeader
+                    .fixedSize(horizontal: false, vertical: true)
 
-                        bodyEditor
-                            .frame(minHeight: editorMinHeight, alignment: .top)
-                    }
-                }
-                .onGeometryChange(for: CGFloat.self) { proxy in
-                    proxy.size.height
-                } action: { viewportHeight = $0 }
+                bodyEditor
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 if let error = form.errorMessage ?? (form.exceedsOutboundLimit ? OutboundLimits.sizeError : nil) {
                     Text(error)
@@ -233,10 +226,6 @@ struct ComposeSheetView: View {
         }
     }
 
-    private var editorMinHeight: CGFloat {
-        max(0, viewportHeight - headerHeight)
-    }
-
     private var composeHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
             fromRow
@@ -382,9 +371,9 @@ struct ComposeSheetView: View {
                 set: { form.body = $0 }
             ),
             session: richText,
-            minHeight: editorMinHeight
+            minHeight: 160
         )
-        .frame(minHeight: editorMinHeight, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, 4)
     }
 

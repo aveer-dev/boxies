@@ -245,7 +245,10 @@ struct ComposeRichTextEditor: UIViewRepresentable {
         ]
         view.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         view.adjustsFontForContentSizeCategory = false
+        // Own scrolling — parent no longer wraps this in ScrollView (that nested
+        // pair collapsed the compose form to title-only).
         view.isScrollEnabled = true
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         session.textView = view
         session.onHTMLChange = { html = $0 }
         view.attributedText = ComposeHTML.attributed(from: html)
@@ -264,6 +267,17 @@ struct ComposeRichTextEditor: UIViewRepresentable {
             context.coordinator.lastHTML = html
         }
         context.coordinator.html = $html
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? uiView.bounds.width
+        guard width.isFinite, width > 0 else {
+            return CGSize(width: UIView.noIntrinsicMetric, height: minHeight)
+        }
+        if let height = proposal.height, height.isFinite, height > 0 {
+            return CGSize(width: width, height: max(minHeight, height))
+        }
+        return CGSize(width: width, height: minHeight)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {

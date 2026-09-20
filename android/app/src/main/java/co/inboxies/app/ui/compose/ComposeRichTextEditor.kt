@@ -15,6 +15,7 @@ import android.text.style.UnderlineSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.widget.EditText
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
@@ -268,7 +269,9 @@ fun ComposeRichTextEditor(
 ) {
     val ink = inboxiesColors().ink.toArgb()
     AndroidView(
-        modifier = modifier,
+        // Parent must pass a bounded height (e.g. weight/fillMaxHeight). Nesting this
+        // inside verticalScroll with only heightIn(min) collapses sibling form fields.
+        modifier = modifier.fillMaxSize(),
         factory = { context ->
             EditText(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
@@ -277,6 +280,8 @@ fun ComposeRichTextEditor(
                 setPadding(32, 24, 32, 24)
                 gravity = Gravity.TOP or Gravity.START
                 hint = ""
+                isVerticalScrollBarEnabled = true
+                overScrollMode = android.view.View.OVER_SCROLL_IF_CONTENT_SCROLLS
                 val spanned = Html.fromHtml(
                     if (html.contains('<')) html else ComposeHtml.textToHtml(html),
                     Html.FROM_HTML_MODE_COMPACT,
