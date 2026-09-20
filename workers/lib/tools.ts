@@ -35,6 +35,7 @@ import {
 } from "./outbound-limits";
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
+import { allowOutboundRecipients } from "./sender-triage";
 import type { Env } from "../types";
 
 // ── Type casts for DO methods not on the base stub type ────────────
@@ -493,7 +494,9 @@ export async function toolSendReply(
 		},
 		[],
 	);
+	await allowOutboundRecipients(stub as any, to);
 	await stub.deleteDraftsForThread(threadId);
+	await (stub as any).clearReplyLaterForThread(threadId);
 
 	return { status: "sent", messageId, message: `Reply sent to ${to}` };
 }
@@ -570,6 +573,7 @@ export async function toolSendEmail(
 		},
 		[],
 	);
+	await allowOutboundRecipients(stub as any, params.to);
 
 	return { status: "sent", messageId, message: `Email sent to ${params.to}` };
 }

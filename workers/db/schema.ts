@@ -24,6 +24,10 @@ export const emails = sqliteTable("emails", {
 	date: text("date"),
 	read: integer("read").default(0),
 	starred: integer("starred").default(0),
+	/** Reply Later pile membership (orthogonal to folder_id / starred). */
+	reply_later: integer("reply_later").default(0),
+	/** ISO timestamp when added to Reply Later; used for FIFO pile order. */
+	reply_later_at: text("reply_later_at"),
 	/** @deprecated Full HTML/text lives in R2; kept nullable for legacy rows during lazy offload. */
 	body: text("body"),
 	/** List/search preview; full body is in R2 (`emails/{id}/body.html`). */
@@ -59,4 +63,14 @@ export const agentConversations = sqliteTable("agent_conversations", {
 	created_at: text("created_at").notNull(),
 	updated_at: text("updated_at").notNull(),
 	last_message_preview: text("last_message_preview"),
+});
+
+/** Screener-lite: allow/deny decisions per sender address. */
+export const senderTriage = sqliteTable("sender_triage", {
+	sender: text("sender").primaryKey(),
+	status: text("status").notNull(),
+	destination_folder_id: text("destination_folder_id"),
+	display_name: text("display_name"),
+	decided_at: text("decided_at").notNull(),
+	updated_at: text("updated_at").notNull(),
 });

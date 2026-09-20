@@ -1,5 +1,5 @@
 /**
- * Android swipe tabs must expose Promotions, Updates, and Spam
+ * Android swipe tabs must expose Screener, Promotions, Updates, and Spam
  * in the same order as iOS HomeShellView.folderTabs.
  * Run: node android/test/folder-tabs.test.mjs
  */
@@ -33,6 +33,7 @@ const fcm = readFileSync(
 
 const expectedSwipe = [
 	"INBOX",
+	"SCREENER",
 	"PROMOTIONS",
 	"UPDATES",
 	"SENT",
@@ -53,6 +54,7 @@ assert.match(shell, /FolderIds\.swipeFolderIds\.map \{ HomeTab\.Folder\(it\) \}/
 assert.match(shell, /listOf\(HomeTab\.AiInbox\) \+ FolderIds\.swipeFolderIds/);
 
 for (const [id, title] of [
+	["SCREENER", "Screener"],
 	["PROMOTIONS", "Promotions"],
 	["UPDATES", "Updates"],
 	["SPAM", "Spam"],

@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.services.AppModel
@@ -126,6 +127,8 @@ fun EmailDetailView(
     val listEmails by app.emails.collectAsState()
     val loading by app.isEmailDetailLoading.collectAsState()
     val current = email ?: return
+
+    val isScreenerEmail = current.folderId == FolderIds.SCREENER
 
     val navigable = remember(listEmails) { listEmails.filter { !it.isDraft } }
     val navIndex = navigable.indexOfFirst { it.id == current.id }
@@ -369,6 +372,14 @@ fun EmailDetailView(
                 .padding(padding)
                 .verticalScroll(rememberScrollState()),
         ) {
+            if (isScreenerEmail) {
+                ScreenerTriageBar(
+                    email = current,
+                    onDone = onClose,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+
             TagsRow(
                 tags = detailTags,
                 starred = current.starred,
@@ -600,6 +611,110 @@ private fun TagChip(title: String, destructive: Boolean = false) {
             .background(colors.pillFill)
             .padding(horizontal = 10.dp, vertical = 5.dp),
     )
+}
+
+@Composable
+private fun ScreenerTriageBar(
+    email: Email,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val app = LocalAppModel.current
+    val colors = inboxiesColors()
+    val scope = rememberCoroutineScope()
+    var picking by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    val destinations = listOf(
+        FolderIds.INBOX to "Inbox",
+        FolderIds.PROMOTIONS to "Promotions",
+        FolderIds.UPDATES to "Updates",
+    )
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .border(0.5.dp, colors.line, RoundedCornerShape(12.dp))
+            .background(colors.surface)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "New sender — approve where their mail should go, or screen them out privately.",
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+        )
+        if (picking) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                destinations.forEach { (id, title) ->
+                    val primary = id == FolderIds.INBOX
+                    Text(
+                        title,
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = AppThemeDims.FontSize.meta,
+                        color = if (primary) colors.surface else colors.ink,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(if (primary) colors.ink else colors.pillFill)
+                            .clickable(enabled = !busy) {
+                                scope.launch {
+                                    busy = true
+                                    app.approveScreenerSender(email, id)
+                                    busy = false
+                                    onDone()
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                    )
+                }
+                Text(
+                    "Cancel",
+                    fontFamily = InterFontFamily,
+                    fontSize = AppThemeDims.FontSize.meta,
+                    color = colors.muted,
+                    modifier = Modifier
+                        .clickable(enabled = !busy) { picking = false }
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                )
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Approve",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = AppThemeDims.FontSize.meta,
+                    color = colors.surface,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(colors.ink)
+                        .clickable(enabled = !busy) { picking = true }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+                Text(
+                    "Reject",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = AppThemeDims.FontSize.meta,
+                    color = colors.ink,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(colors.pillFill)
+                        .clickable(enabled = !busy) {
+                            scope.launch {
+                                busy = true
+                                app.rejectScreenerSender(email)
+                                busy = false
+                                onDone()
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable

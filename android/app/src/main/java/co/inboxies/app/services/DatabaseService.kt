@@ -64,11 +64,23 @@ class DatabaseService private constructor() {
         }
     }
 
-    fun updateEmailFlags(id: String, read: Boolean? = null, starred: Boolean? = null) {
+    fun updateEmailFlags(
+        id: String,
+        read: Boolean? = null,
+        starred: Boolean? = null,
+        replyLater: Boolean? = null,
+    ) {
         val existing = emails[id] ?: return
         emails[id] = existing.copy(
             read = read ?: existing.read,
             starred = starred ?: existing.starred,
+            replyLater = replyLater ?: existing.replyLater,
+            replyLaterAt = when {
+                replyLater == true && existing.replyLaterAt == null ->
+                    java.time.Instant.now().toString()
+                replyLater == false -> null
+                else -> existing.replyLaterAt
+            },
         )
     }
 
@@ -78,7 +90,19 @@ class DatabaseService private constructor() {
 
     fun moveEmail(id: String, folderId: String) {
         val existing = emails[id] ?: return
-        emails[id] = existing.copy(folderId = folderId)
+        val clearReplyLater = folderId == "trash" || folderId == "spam"
+        emails[id] = existing.copy(
+            folderId = folderId,
+            replyLater = if (clearReplyLater) false else existing.replyLater,
+            replyLaterAt = if (clearReplyLater) null else existing.replyLaterAt,
+        )
+    }
+
+    /** Remove local rows for this folder that are not on the server page. */
+    fun pruneEmailsNotInFolder(mailboxId: String, folderId: String, serverIds: Set<String>) {
+        emails.entries.removeIf { (_, email) ->
+            email.folderId == folderId && email.id !in serverIds
+        }
     }
 
     fun deleteDrafts(

@@ -15,7 +15,10 @@ object MailboxSyncService {
     suspend fun syncFolder(mailboxId: String, folderId: String): List<Email> {
         val response = ApiClient.shared.listEmails(mailboxId, folder = folderId, threaded = true)
         DatabaseService.shared.upsertEmails(mailboxId, response.emails, defaultFolder = folderId)
-        return response.emails
+        // Drop local ghosts that the server no longer lists in this folder.
+        val serverIds = response.emails.map { it.id }.toSet()
+        DatabaseService.shared.pruneEmailsNotInFolder(mailboxId, folderId, serverIds)
+        return DatabaseService.shared.getEmails(mailboxId, folderId, limit = 50)
     }
 
     suspend fun syncMailboxes(): List<Mailbox> {

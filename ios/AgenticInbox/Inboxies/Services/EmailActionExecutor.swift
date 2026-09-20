@@ -81,12 +81,26 @@ extension AppModel {
         )
     }
 
-    func moveEmail(_ email: Email, to folderId: String, fromList: Bool = false) async {
+    func moveEmail(
+        _ email: Email,
+        to folderId: String,
+        fromList: Bool = false,
+        setSenderPreference: Bool = false
+    ) async {
         guard let mailboxId = selectedMailboxId else { return }
 
         // 1. Instant local optimistic move (<1ms)
         DatabaseService.shared.moveEmail(id: email.id, toFolderId: folderId)
-        DatabaseService.shared.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "move", payload: ["folderId": folderId])
+        var payload: [String: Any] = ["folderId": folderId]
+        if setSenderPreference {
+            payload["setSenderPreference"] = true
+        }
+        DatabaseService.shared.enqueueMutation(
+            mailboxId: mailboxId,
+            emailId: email.id,
+            actionType: "move",
+            payload: payload
+        )
         OutboxQueueWorker.shared.trigger()
 
         threadEmails.removeAll { $0.id == email.id }
@@ -99,6 +113,12 @@ extension AppModel {
         }
         if email.isUnread {
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
+        }
+        if folderId == "trash" || folderId == "spam" {
+            await refreshReplyLaterCount()
+            if selectedTab == .replyLater {
+                await loadEmailsForCurrentTab(showLoading: false)
+            }
         }
     }
 
@@ -115,6 +135,85 @@ extension AppModel {
     func moveCurrentEmail(to folderId: String) async {
         guard let email = selectedEmail ?? threadEmails.last else { return }
         await moveEmail(email, to: folderId)
+    }
+
+    /// Screener-lite: allow sender and file queued mail to a purpose box.
+    func approveScreenerSender(
+        _ email: Email,
+        destinationFolderId: String
+    ) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let sender = email.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !sender.isEmpty else { return }
+
+        do {
+            try await APIClient.shared.approveSender(
+                mailboxId: mailboxId,
+                sender: sender,
+                destinationFolderId: destinationFolderId,
+                emailId: email.id,
+                displayName: email.senderName
+            )
+            // Mirror archive: update local SQLite so empty-folder sync cannot revive ghosts.
+            let queued = emails.filter {
+                $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+                    && ($0.folderId == "screener" || $0.id == email.id)
+            }
+            for item in queued {
+                DatabaseService.shared.moveEmail(id: item.id, toFolderId: destinationFolderId)
+            }
+            let queuedIds = Set(queued.map(\.id))
+            emails.removeAll { queuedIds.contains($0.id) }
+            if let selected = selectedEmail, queuedIds.contains(selected.id)
+                || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+            {
+                selectedEmail = nil
+                threadEmails = []
+            }
+            await loadEmailsForCurrentTab(showLoading: false)
+            if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
+                folders = synced
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Screener-lite: reject sender into screened_out (silent).
+    func rejectScreenerSender(_ email: Email) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let sender = email.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !sender.isEmpty else { return }
+
+        do {
+            try await APIClient.shared.rejectSender(
+                mailboxId: mailboxId,
+                sender: sender,
+                emailId: email.id,
+                displayName: email.senderName
+            )
+            let queued = emails.filter {
+                $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+                    && ($0.folderId == "screener" || $0.id == email.id)
+            }
+            for item in queued {
+                DatabaseService.shared.moveEmail(id: item.id, toFolderId: "screened_out")
+            }
+            let queuedIds = Set(queued.map(\.id))
+            emails.removeAll { queuedIds.contains($0.id) }
+            if let selected = selectedEmail, queuedIds.contains(selected.id)
+                || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+            {
+                selectedEmail = nil
+                threadEmails = []
+            }
+            await loadEmailsForCurrentTab(showLoading: false)
+            if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
+                folders = synced
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func deleteEmails(_ emailIDs: Set<String>) async {

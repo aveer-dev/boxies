@@ -9,6 +9,7 @@ import type {
 	InboxDigest,
 	Mailbox,
 	RecentRecipient,
+	SenderPreference,
 } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -105,6 +106,8 @@ function del<T>(url: string) {
 interface EmailListResponse {
 	emails: Email[];
 	totalCount: number;
+	newCount?: number;
+	seenCount?: number;
 }
 
 // ---------- API client ----------
@@ -138,8 +141,52 @@ const api = {
 		put<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, data),
 	deleteEmail: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`),
-	moveEmail: (mailboxId: string, id: string, folderId: string) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, { folderId }),
+	moveEmail: (
+		mailboxId: string,
+		id: string,
+		folderId: string,
+		opts?: { setSenderPreference?: boolean },
+	) =>
+		post<{
+			status: string;
+			preference?: SenderPreference | null;
+			refiledCount?: number;
+			preferenceError?: string;
+		}>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, {
+			folderId,
+			setSenderPreference: opts?.setSenderPreference,
+		}),
+	listSenderPreferences: (
+		mailboxId: string,
+		params?: { q?: string; folder?: string; limit?: number },
+		opts?: { signal?: AbortSignal },
+	) => {
+		const query: Record<string, string> = {};
+		if (params?.q) query.q = params.q;
+		if (params?.folder) query.folder = params.folder;
+		if (params?.limit != null) query.limit = String(params.limit);
+		return get<{ preferences: SenderPreference[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-preferences`,
+			{ params: query, signal: opts?.signal },
+		);
+	},
+	upsertSenderPreference: (
+		mailboxId: string,
+		address: string,
+		data: {
+			folderId: string;
+			displayName?: string | null;
+			refile?: boolean;
+		},
+	) =>
+		put<{ preference: SenderPreference; refiledCount: number }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-preferences/${encodeURIComponent(address)}`,
+			data,
+		),
+	deleteSenderPreference: (mailboxId: string, address: string) =>
+		del<void>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-preferences/${encodeURIComponent(address)}`,
+		),
 	getThread: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
 		get<Email[]>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}`, { signal: opts?.signal }),
 	listRecentRecipients: (
@@ -180,12 +227,43 @@ const api = {
 	// Folders
 	listFolders: (mailboxId: string) =>
 		get<Folder[]>(`/api/v1/mailboxes/${mailboxId}/folders`),
+	listWorkflowPiles: (mailboxId: string) =>
+		get<{ piles: { id: string; count: number }[] }>(
+			`/api/v1/mailboxes/${mailboxId}/workflow-piles`,
+		),
 	createFolder: (mailboxId: string, name: string) =>
 		post<Folder>(`/api/v1/mailboxes/${mailboxId}/folders`, { name }),
 	updateFolder: (mailboxId: string, id: string, name: string) =>
 		put<Folder>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`, { name }),
 	deleteFolder: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`),
+
+	// Sender triage (Screener-lite)
+	approveSender: (
+		mailboxId: string,
+		body: {
+			sender: string;
+			destinationFolderId: string;
+			emailId?: string;
+			displayName?: string;
+		},
+	) =>
+		post<{ triage: unknown; moved: { moved: number; ids: string[] } }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-triage/approve`,
+			body,
+		),
+	rejectSender: (
+		mailboxId: string,
+		body: { sender: string; emailId?: string; displayName?: string },
+	) =>
+		post<{ triage: unknown; moved: { moved: number; ids: string[] } }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-triage/reject`,
+			body,
+		),
+	deleteSenderTriage: (mailboxId: string, sender: string) =>
+		del<void>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-triage/${encodeURIComponent(sender)}`,
+		),
 
 	// Inbox digest (For You)
 	getInboxDigest: (mailboxId: string, opts?: { signal?: AbortSignal }) =>

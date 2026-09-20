@@ -188,6 +188,12 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN provider_message_id TEXT;")
             setVersion(3)
         }
+
+        if (getVersion() < 4) {
+            exec("ALTER TABLE emails ADD COLUMN reply_later INTEGER NOT NULL DEFAULT 0;")
+            exec("ALTER TABLE emails ADD COLUMN reply_later_at TEXT;")
+            setVersion(4)
+        }
     }
 
     private func getVersion() -> Int {
@@ -390,13 +396,15 @@ final class DatabaseService: @unchecked Sendable {
                 recipient, cc, bcc, date, read, starred, body, snippet, in_reply_to,
                 message_id, raw_headers, thread_count, thread_unread_count, participants,
                 folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json,
-                delivery_status, delivery_error, provider_message_id, updated_at
+                delivery_status, delivery_error, provider_message_id, reply_later, reply_later_at,
+                updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?
+                ?, ?, ?, ?, ?,
+                ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -428,6 +436,8 @@ final class DatabaseService: @unchecked Sendable {
                 delivery_status = excluded.delivery_status,
                 delivery_error = excluded.delivery_error,
                 provider_message_id = excluded.provider_message_id,
+                reply_later = excluded.reply_later,
+                reply_later_at = excluded.reply_later_at,
                 updated_at = excluded.updated_at;
             """
             var stmt: OpaquePointer?
@@ -473,7 +483,9 @@ final class DatabaseService: @unchecked Sendable {
                     bindOptionalString(stmt, 28, e.deliveryStatus)
                     bindOptionalString(stmt, 29, e.deliveryError)
                     bindOptionalString(stmt, 30, e.providerMessageId)
-                    bindString(stmt, 31, now)
+                    sqlite3_bind_int(stmt, 31, e.replyLater ? 1 : 0)
+                    bindOptionalString(stmt, 32, e.replyLaterAt)
+                    bindString(stmt, 33, now)
 
                     sqlite3_step(stmt)
                 }
@@ -494,7 +506,8 @@ final class DatabaseService: @unchecked Sendable {
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
-                delivery_status, delivery_error, provider_message_id
+                delivery_status, delivery_error, provider_message_id,
+                reply_later, reply_later_at
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ?
             ORDER BY date DESC
@@ -527,7 +540,8 @@ final class DatabaseService: @unchecked Sendable {
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
-                delivery_status, delivery_error, provider_message_id
+                delivery_status, delivery_error, provider_message_id,
+                reply_later, reply_later_at
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -555,7 +569,8 @@ final class DatabaseService: @unchecked Sendable {
                 in_reply_to, message_id, raw_headers, thread_count,
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
-                delivery_status, delivery_error, provider_message_id
+                delivery_status, delivery_error, provider_message_id,
+                reply_later, reply_later_at
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -576,11 +591,15 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
-    func updateEmailFlags(id: String, read: Bool? = nil, starred: Bool? = nil) {
+    func updateEmailFlags(id: String, read: Bool? = nil, starred: Bool? = nil, replyLater: Bool? = nil) {
         queue.sync {
             var clauses: [String] = []
             if read != nil { clauses.append("read = ?") }
             if starred != nil { clauses.append("starred = ?") }
+            if replyLater != nil {
+                clauses.append("reply_later = ?")
+                clauses.append("reply_later_at = ?")
+            }
             guard !clauses.isEmpty else { return }
 
             let sql = "UPDATE emails SET \(clauses.joined(separator: ", ")) WHERE id = ?;"
@@ -595,6 +614,17 @@ final class DatabaseService: @unchecked Sendable {
                     sqlite3_bind_int(stmt, idx, starred ? 1 : 0)
                     idx += 1
                 }
+                if let replyLater {
+                    sqlite3_bind_int(stmt, idx, replyLater ? 1 : 0)
+                    idx += 1
+                    if replyLater {
+                        let now = ISO8601DateFormatter().string(from: Date())
+                        sqlite3_bind_text(stmt, idx, (now as NSString).utf8String, -1, nil)
+                    } else {
+                        sqlite3_bind_null(stmt, idx)
+                    }
+                    idx += 1
+                }
                 sqlite3_bind_text(stmt, idx, (id as NSString).utf8String, -1, nil)
                 sqlite3_step(stmt)
             }
@@ -605,7 +635,10 @@ final class DatabaseService: @unchecked Sendable {
     func moveEmail(id: String, toFolderId: String) {
         queue.sync {
             var stmt: OpaquePointer?
-            let sql = "UPDATE emails SET folder_id = ? WHERE id = ?;"
+            let clearReplyLater = toFolderId == "trash" || toFolderId == "spam"
+            let sql = clearReplyLater
+                ? "UPDATE emails SET folder_id = ?, reply_later = 0, reply_later_at = NULL WHERE id = ?;"
+                : "UPDATE emails SET folder_id = ? WHERE id = ?;"
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (toFolderId as NSString).utf8String, -1, nil)
                 sqlite3_bind_text(stmt, 2, (id as NSString).utf8String, -1, nil)
@@ -715,18 +748,24 @@ final class DatabaseService: @unchecked Sendable {
         oldestDate: String? = nil,
         isFullPage: Bool = false
     ) {
-        guard !currentServerIDs.isEmpty else { return }
         queue.sync {
             var stmt: OpaquePointer?
-            let sql = (isFullPage && oldestDate != nil)
-                ? "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ? AND date >= ?;"
-                : "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ?;"
+            // Empty server page = folder is empty; clear local rows.
+            // Non-empty: only prune within the fetched window when isFullPage.
+            let sql: String
+            if currentServerIDs.isEmpty {
+                sql = "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ?;"
+            } else if isFullPage && oldestDate != nil {
+                sql = "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ? AND date >= ?;"
+            } else {
+                sql = "SELECT id FROM emails WHERE mailbox_id = ? AND folder_id = ?;"
+            }
 
             var localIDs: [String] = []
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
                 sqlite3_bind_text(stmt, 2, (folderId as NSString).utf8String, -1, nil)
-                if isFullPage, let oldestDate {
+                if !currentServerIDs.isEmpty, isFullPage, let oldestDate {
                     sqlite3_bind_text(stmt, 3, (oldestDate as NSString).utf8String, -1, nil)
                 }
                 while sqlite3_step(stmt) == SQLITE_ROW {
@@ -735,7 +774,9 @@ final class DatabaseService: @unchecked Sendable {
             }
             sqlite3_finalize(stmt)
 
-            let toDelete = localIDs.filter { !currentServerIDs.contains($0) }
+            let toDelete = currentServerIDs.isEmpty
+                ? localIDs
+                : localIDs.filter { !currentServerIDs.contains($0) }
             if !toDelete.isEmpty {
                 sqlite3_exec(db, "BEGIN TRANSACTION;", nil, nil, nil)
                 var delStmt: OpaquePointer?
@@ -772,7 +813,8 @@ final class DatabaseService: @unchecked Sendable {
                 e.in_reply_to, e.message_id, e.raw_headers, e.thread_count,
                 e.thread_unread_count, e.participants, e.folder_name, e.has_draft,
                 e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json,
-                e.delivery_status, e.delivery_error, e.provider_message_id
+                e.delivery_status, e.delivery_error, e.provider_message_id,
+                e.reply_later, e.reply_later_at
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -913,6 +955,8 @@ final class DatabaseService: @unchecked Sendable {
             date: date,
             read: read,
             starred: starred,
+            replyLater: sqlite3_column_int(stmt, 29) != 0,
+            replyLaterAt: columnOptionalString(stmt, 30),
             body: body,
             snippet: snippet,
             inReplyTo: inReplyTo,

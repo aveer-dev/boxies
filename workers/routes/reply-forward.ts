@@ -23,6 +23,7 @@ import { SendEmailRequestSchema } from "../lib/schemas";
 import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
+import { allowOutboundRecipients } from "../lib/sender-triage";
 
 type AppContext = Context<MailboxContext>;
 type RateLimitStub = { checkSendRateLimit: () => Promise<string | null> };
@@ -102,8 +103,10 @@ export async function handleReplyEmail(c: AppContext) {
 		attachmentData,
 	);
 
+	await allowOutboundRecipients(stub as any, to, cc, bcc);
 	await stub.markThreadRead(thread_id);
 	await stub.deleteDraftsForThread(thread_id);
+	await (stub as any).clearReplyLaterForThread(thread_id);
 
 	c.executionCtx.waitUntil(
 		deliverOutboundInBackground(c.env, mailboxId, messageId, {
@@ -198,6 +201,8 @@ export async function handleForwardEmail(c: AppContext) {
 		},
 		attachmentData,
 	);
+
+	await allowOutboundRecipients(stub as any, to, cc, bcc);
 
 	c.executionCtx.waitUntil(
 		deliverOutboundInBackground(c.env, mailboxId, messageId, {

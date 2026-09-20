@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Icon
@@ -69,7 +70,10 @@ import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.Folder
+import co.inboxies.app.models.FolderIds
 import co.inboxies.app.services.EmailActionAvailability
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
@@ -312,6 +316,12 @@ fun EmailActionsSheet(
                     scope.launch { app.toggleStar(email); onDismiss() }
                 }
                 ActionRow(
+                    if (email.replyLater) "Remove from Reply Later" else "Reply later",
+                    Icons.Outlined.Schedule,
+                ) {
+                    scope.launch { app.toggleReplyLater(email); onDismiss() }
+                }
+                ActionRow(
                     if (email.read) "Mark as Unread" else "Mark as Read",
                     if (email.read) Icons.Outlined.MarkEmailUnread else Icons.Outlined.MarkEmailRead,
                 ) {
@@ -364,12 +374,14 @@ fun EmailActionsSheet(
 
             ActionsScreen.Move -> MoveToFolderScreen(
             folders = moveTargets,
+            email = email,
+            mailboxEmail = app.selectedMailbox?.email,
             onClose = onDismiss,
             onBack = { screen = ActionsScreen.Main },
-            onMove = { folderId ->
+            onMove = { folderId, setPreference ->
                 scope.launch {
                     onDismiss()
-                    app.moveEmailToFolder(email, folderId)
+                    app.moveEmailToFolder(email, folderId, setSenderPreference = setPreference)
                     if (fromList) onRemoveFromList?.invoke(email.id)
                     else onDone()
                 }
@@ -467,11 +479,50 @@ private fun ActionRow(
 @Composable
 private fun MoveToFolderScreen(
     folders: List<Folder>,
+    email: Email,
+    mailboxEmail: String?,
     onClose: () -> Unit,
     onBack: () -> Unit,
-    onMove: (String) -> Unit,
+    onMove: (folderId: String, setSenderPreference: Boolean) -> Unit,
 ) {
     val colors = inboxiesColors()
+    var pendingFolderId by remember { mutableStateOf<String?>(null) }
+    val senderLabel = email.displaySender.ifBlank { email.sender }
+    val isSelf = !mailboxEmail.isNullOrBlank() &&
+        email.sender.equals(mailboxEmail, ignoreCase = true)
+
+    pendingFolderId?.let { folderId ->
+        AlertDialog(
+            onDismissRequest = { pendingFolderId = null },
+            title = { Text("Put future mail here?") },
+            text = {
+                Text(
+                    "Also file future messages from $senderLabel here, and move their existing Inbox / Promotions / Updates mail.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingFolderId = null
+                        onMove(folderId, true)
+                    },
+                ) {
+                    Text("Yes, for this sender")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingFolderId = null
+                        onMove(folderId, false)
+                    },
+                ) {
+                    Text("Just this message")
+                }
+            },
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -495,7 +546,16 @@ private fun MoveToFolderScreen(
                     color = colors.ink,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onMove(folder.id) }
+                        .clickable {
+                            if (FolderIds.isPurposeFolder(folder.id) &&
+                                email.sender.isNotBlank() &&
+                                !isSelf
+                            ) {
+                                pendingFolderId = folder.id
+                            } else {
+                                onMove(folder.id, false)
+                            }
+                        }
                         .padding(horizontal = 16.dp, vertical = 11.dp),
                 )
             }

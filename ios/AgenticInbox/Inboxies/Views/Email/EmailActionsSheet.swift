@@ -50,6 +50,13 @@ struct EmailActionsSheet: View {
                     }
 
                     actionRow(
+                        source.replyLater ? "Remove from Reply Later" : "Reply later",
+                        systemImage: source.replyLater ? "clock.arrow.circlepath" : "clock"
+                    ) {
+                        Task { await app.toggleReplyLater(on: source) }
+                    }
+
+                    actionRow(
                         source.read ? "Mark as Unread" : "Mark as Read",
                         systemImage: source.read ? "envelope.badge" : "envelope.open"
                     ) {
@@ -58,10 +65,20 @@ struct EmailActionsSheet: View {
 
                     if !moveTargets.isEmpty {
                         NavigationLink {
-                            MoveToFolderView(folders: moveTargets, onClose: dismissSheet) { folderId in
+                            MoveToFolderView(
+                                folders: moveTargets,
+                                sender: source,
+                                mailboxEmail: app.selectedMailbox?.email,
+                                onClose: dismissSheet
+                            ) { folderId, setPreference in
                                 Task {
                                     dismiss()
-                                    await app.moveEmail(source, to: folderId, fromList: fromList)
+                                    await app.moveEmail(
+                                        source,
+                                        to: folderId,
+                                        fromList: fromList,
+                                        setSenderPreference: setPreference
+                                    )
                                     if fromList { onRemoveFromList?(source.id) }
                                 }
                             }
@@ -134,7 +151,7 @@ struct EmailActionsSheet: View {
         if availability.showsReplyActions {
             h += 130 // quick actions row + section spacing
         }
-        var rows = 2 // Star, Read
+        var rows = 3 // Star, Reply Later, Read
         if !moveTargets.isEmpty { rows += 1 }
         rows += 1 // View Source
         if availability.showsDelete { rows += 1 }
@@ -221,18 +238,67 @@ struct EmailActionsSheet: View {
 
 private struct MoveToFolderView: View {
     let folders: [Folder]
+    let sender: Email
+    var mailboxEmail: String?
     var onClose: () -> Void
-    var onMove: (String) -> Void
+    var onMove: (String, Bool) -> Void
+
+    @State private var pendingFolderId: String?
+
+    private static let purposeFolderIds: Set<String> = ["inbox", "promotions", "updates"]
+
+    private var senderLabel: String {
+        let name = sender.displaySender.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        return sender.sender
+    }
+
+    private var isSelfSender: Bool {
+        guard let mailboxEmail else { return false }
+        return sender.sender.caseInsensitiveCompare(mailboxEmail) == .orderedSame
+    }
 
     var body: some View {
         List(folders) { folder in
             Button(folder.name) {
-                onMove(folder.id)
+                if Self.purposeFolderIds.contains(folder.id),
+                   !sender.sender.isEmpty,
+                   !isSelfSender {
+                    pendingFolderId = folder.id
+                } else {
+                    onMove(folder.id, false)
+                }
             }
             .foregroundStyle(AppTheme.ink)
         }
         .navigationTitle("Move to")
         .actionsSheetChrome(onClose: onClose)
+        .confirmationDialog(
+            "Put future mail from \(senderLabel) here?",
+            isPresented: Binding(
+                get: { pendingFolderId != nil },
+                set: { if !$0 { pendingFolderId = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Yes, for this sender") {
+                if let pendingFolderId {
+                    onMove(pendingFolderId, true)
+                }
+                pendingFolderId = nil
+            }
+            Button("Just this message") {
+                if let pendingFolderId {
+                    onMove(pendingFolderId, false)
+                }
+                pendingFolderId = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingFolderId = nil
+            }
+        } message: {
+            Text("Also move their existing Inbox, Promotions, and Updates mail.")
+        }
     }
 }
 

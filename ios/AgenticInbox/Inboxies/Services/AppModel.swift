@@ -33,6 +33,8 @@ final class AppModel {
     var threadEmails: [Email] = []
     var composeSession: ComposeSession?
     var toast: AppToast?
+    /// Count for bottom Reply Later chrome (workflow pile).
+    var replyLaterCount: Int = 0
     private var toastDismissTask: Task<Void, Never>?
     
     struct UndoableAction: Identifiable {
@@ -245,6 +247,7 @@ final class AppModel {
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: inboxDigest == nil)
             }
+            await refreshReplyLaterCount()
         } catch let error as APIError {
             if case .http(let code, _) = error, code == 403 || code == 404 {
                 await dropInaccessibleMailbox(id)
@@ -328,6 +331,29 @@ final class AppModel {
             isLoading = false
             return
         }
+
+        if selectedTab == .replyLater {
+            if showLoading && emails.isEmpty {
+                isLoading = true
+            }
+            isSyncing = true
+            defer {
+                isLoading = false
+                isSyncing = false
+            }
+            do {
+                let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId)
+                emails = response.emails
+                replyLaterCount = response.totalCount
+                lastSyncedAt = Date()
+            } catch {
+                if emails.isEmpty {
+                    errorMessage = error.localizedDescription
+                }
+            }
+            return
+        }
+
         guard let folderId = selectedTab.syncFolderId else {
             emails = []
             isLoading = false
@@ -336,7 +362,7 @@ final class AppModel {
 
         let cached = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
         if !cached.isEmpty {
-            emails = cached
+            emails = folderId == "inbox" ? Self.orderNewThenSeen(cached) : cached
             isLoading = false
         } else if showLoading {
             isLoading = true
@@ -350,8 +376,9 @@ final class AppModel {
 
         do {
             let synced = try await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId)
-            emails = synced
+            emails = folderId == "inbox" ? Self.orderNewThenSeen(synced) : synced
             lastSyncedAt = Date()
+            await refreshReplyLaterCount()
         } catch {
             if emails.isEmpty {
                 errorMessage = error.localizedDescription
@@ -359,10 +386,20 @@ final class AppModel {
         }
     }
 
+    func refreshReplyLaterCount() async {
+        guard let mailboxId = selectedMailboxId else {
+            replyLaterCount = 0
+            return
+        }
+        if let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId) {
+            replyLaterCount = piles.piles.first(where: { $0.id == "reply_later" })?.count ?? 0
+        }
+    }
+
     /// Reloads the visible tab without swapping in the list skeleton.
     func refreshCurrentTab() async {
         switch selectedTab {
-        case .folder, .aiInbox:
+        case .folder, .aiInbox, .replyLater:
             await loadEmailsForCurrentTab(showLoading: false)
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: false)
@@ -490,18 +527,39 @@ final class AppModel {
         let hasBody = (localEmail.body != nil && !(localEmail.body?.isEmpty ?? true))
         isEmailDetailLoading = !hasBody
 
-        // 2. Optimistic mark read
+        // 2. Optimistic mark read (whole thread when multi-message — web parity)
         if email.isUnread {
-            db.updateEmailFlags(id: email.id, read: true)
-            db.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "mark_read", payload: ["read": true])
+            let threadId = email.threadId
+            let isMulti = (email.threadCount ?? 1) > 1 || localThread.count > 1
+            if let threadId, isMulti {
+                for member in localThread where member.isUnread {
+                    db.updateEmailFlags(id: member.id, read: true)
+                }
+                db.updateEmailFlags(id: email.id, read: true)
+                db.enqueueMutation(
+                    mailboxId: mailboxId,
+                    emailId: email.id,
+                    actionType: "mark_thread_read",
+                    payload: ["threadId": threadId]
+                )
+            } else {
+                db.updateEmailFlags(id: email.id, read: true)
+                db.enqueueMutation(mailboxId: mailboxId, emailId: email.id, actionType: "mark_read", payload: ["read": true])
+            }
             outbox.trigger()
 
             if let idx = emails.firstIndex(where: { $0.id == email.id }) {
                 emails[idx].read = true
                 emails[idx].threadUnreadCount = 0
+                emails[idx].listSection = "seen"
+            }
+            // Keep inbox New→Seen order after optimistic read
+            if selectedTab.syncFolderId == "inbox" {
+                emails = Self.orderNewThenSeen(emails)
             }
             selectedEmail?.read = true
             selectedEmail?.threadUnreadCount = 0
+            selectedEmail?.listSection = "seen"
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
         }
 
@@ -990,6 +1048,52 @@ final class AppModel {
         applyEmailUpdate(updated)
     }
 
+    func toggleReplyLater(on email: Email? = nil) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let target = email ?? selectedEmail ?? threadEmails.last
+        guard let target else { return }
+        let next = !target.replyLater
+
+        db.updateEmailFlags(id: target.id, replyLater: next)
+        db.enqueueMutation(
+            mailboxId: mailboxId,
+            emailId: target.id,
+            actionType: "reply_later",
+            payload: ["reply_later": next]
+        )
+        outbox.trigger()
+
+        var updated = target
+        updated.replyLater = next
+        if next {
+            updated.replyLaterAt = ISO8601DateFormatter().string(from: Date())
+        } else {
+            updated.replyLaterAt = nil
+        }
+        applyEmailUpdate(updated)
+        await refreshReplyLaterCount()
+        if selectedTab == .replyLater {
+            await loadEmailsForCurrentTab(showLoading: false)
+        }
+    }
+
+    func setReplyLater(_ emailIDs: Set<String>, replyLater: Bool) async {
+        guard let mailboxId = selectedMailboxId, !emailIDs.isEmpty else { return }
+        for id in emailIDs {
+            if let updated = try? await APIClient.shared.updateEmail(
+                mailboxId: mailboxId,
+                id: id,
+                replyLater: replyLater
+            ) {
+                applyEmailUpdate(updated)
+            }
+        }
+        await refreshReplyLaterCount()
+        if selectedTab == .replyLater {
+            await loadEmailsForCurrentTab(showLoading: false)
+        }
+    }
+
     func toggleRead(on email: Email? = nil) async {
         guard let mailboxId = selectedMailboxId else { return }
         let target = email ?? selectedEmail ?? threadEmails.last
@@ -1019,7 +1123,13 @@ final class AppModel {
             emails[idx].starred = updated.starred
             if updated.read {
                 emails[idx].threadUnreadCount = 0
+                emails[idx].listSection = "seen"
+            } else {
+                emails[idx].listSection = "new"
             }
+        }
+        if selectedTab.syncFolderId == "inbox" {
+            emails = Self.orderNewThenSeen(emails)
         }
         if let previous {
             adjustFolderUnread(for: previous, wasUnread: !previous.read, isUnread: !updated.read)
@@ -1250,6 +1360,13 @@ final class AppModel {
         conversations.filter { $0.id != autoConversationId }
     }
 
+    /// Inbox New (unread) then Seen, each by date DESC.
+    static func orderNewThenSeen(_ emails: [Email]) -> [Email] {
+        let newEmails = emails.filter(\.isUnread).sorted { $0.date > $1.date }
+        let seenEmails = emails.filter { !$0.isUnread }.sorted { $0.date > $1.date }
+        return newEmails + seenEmails
+    }
+
     private func isKnownConversation(_ id: String) -> Bool {
         pendingConversationIds.contains(id) || conversations.contains(where: { $0.id == id })
     }
@@ -1313,6 +1430,7 @@ enum HomeTab: Hashable {
     case folder(String)
     case chats
     case aiInbox
+    case replyLater
 
     static var inbox: HomeTab { .folder("inbox") }
 
@@ -1321,7 +1439,7 @@ enum HomeTab: Hashable {
         switch self {
         case .folder(let id): return id
         case .aiInbox: return "inbox"
-        case .chats: return nil
+        case .chats, .replyLater: return nil
         }
     }
 
@@ -1330,12 +1448,14 @@ enum HomeTab: Hashable {
         case .folder(let id):
             switch id {
             case "inbox": return "Inbox"
+            case "screener": return "Screener"
             case "promotions": return "Promotions"
             case "updates": return "Updates"
             case "sent": return "Sent"
             case "draft": return "Drafts"
             case "archive": return "Archive"
             case "spam": return "Spam"
+            case "screened_out": return "Screened out"
             case "trash": return "Trash"
             default: return id.capitalized
             }
@@ -1343,6 +1463,8 @@ enum HomeTab: Hashable {
             return "AI"
         case .aiInbox:
             return "For you"
+        case .replyLater:
+            return "Reply Later"
         }
     }
 
@@ -1351,12 +1473,14 @@ enum HomeTab: Hashable {
         case .folder(let id):
             switch id {
             case "inbox": return "tray"
+            case "screener": return "checkmark.shield"
             case "promotions": return "megaphone"
             case "updates": return "newspaper"
             case "sent": return "paperplane"
             case "draft": return "pencil.and.scribble"
             case "archive": return "archivebox"
             case "spam": return "exclamationmark.triangle"
+            case "screened_out": return "hand.raised"
             case "trash": return "trash"
             default: return "folder"
             }
@@ -1364,6 +1488,8 @@ enum HomeTab: Hashable {
             return "bubble.left.and.bubble.right"
         case .aiInbox:
             return "sparkles"
+        case .replyLater:
+            return "clock.arrow.circlepath"
         }
     }
 }

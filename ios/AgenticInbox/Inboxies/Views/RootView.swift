@@ -16,7 +16,9 @@ struct RootView: View {
                             #if DEBUG
                             if ProcessInfo.processInfo.arguments.contains("-previewMailbox")
                                 || ProcessInfo.processInfo.arguments.contains("-previewDetail")
-                                || ProcessInfo.processInfo.arguments.contains("-previewCompose") {
+                                || ProcessInfo.processInfo.arguments.contains("-previewCompose")
+                                || ProcessInfo.processInfo.arguments.contains("-previewScreener")
+                                || ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
                                 return
                             }
                             #endif

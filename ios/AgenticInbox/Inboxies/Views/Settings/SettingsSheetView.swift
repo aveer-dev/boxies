@@ -79,6 +79,12 @@ struct SettingsSheetView: View {
                     }
 
                     NavigationLink {
+                        SendersSettingsView()
+                    } label: {
+                        settingsLabel("Senders", systemImage: "person.crop.circle")
+                    }
+
+                    NavigationLink {
                         SharingSettingsView()
                     } label: {
                         settingsLabel("Sharing", systemImage: "person.2")

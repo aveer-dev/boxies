@@ -9,6 +9,7 @@ import {
 	ArrowBendUpRightIcon,
 	ArrowLeftIcon,
 	ChatCircleIcon,
+	ClockCounterClockwiseIcon,
 	CodeIcon,
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
@@ -35,6 +36,7 @@ interface EmailPanelToolbarProps {
 	onReplyAll: () => void;
 	onForward: () => void;
 	onToggleStar: () => void;
+	onToggleReplyLater: () => void;
 	onToggleRead: () => void;
 	onMove: (folderId: string) => void;
 	onViewSource: () => void;
@@ -54,6 +56,7 @@ export default function EmailPanelToolbar({
 	onReplyAll,
 	onForward,
 	onToggleStar,
+	onToggleReplyLater,
 	onToggleRead,
 	onMove,
 	onViewSource,
@@ -142,6 +145,29 @@ export default function EmailPanelToolbar({
 					}
 					onClick={onToggleStar}
 					aria-label={email.starred ? "Unstar" : "Star"}
+				/>
+			</Tooltip>
+
+			<Tooltip
+				content={email.reply_later ? "Remove from Reply Later" : "Reply later"}
+				side="bottom"
+				asChild
+			>
+				<Button
+					variant="ghost"
+					shape="square"
+					size="sm"
+					icon={
+						<ClockCounterClockwiseIcon
+							size={18}
+							weight={email.reply_later ? "fill" : "regular"}
+							className={email.reply_later ? "text-kumo-accent" : ""}
+						/>
+					}
+					onClick={onToggleReplyLater}
+					aria-label={
+						email.reply_later ? "Remove from Reply Later" : "Reply later"
+					}
 				/>
 			</Tooltip>
 
