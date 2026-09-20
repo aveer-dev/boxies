@@ -7,6 +7,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.Folder
+import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.MailAddress
@@ -1080,6 +1081,67 @@ class AppModel {
         db.enqueueMutation(mailboxId, email.id, "move", mapOf("folderId" to folderId))
         OutboxQueueWorker.trigger()
         removeEmailLocally(email)
+    }
+
+    suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val sender = email.sender.trim().lowercase()
+        if (sender.isEmpty()) return
+        try {
+            ApiClient.shared.approveSender(
+                mailboxId = mailboxId,
+                sender = sender,
+                destinationFolderId = destinationFolderId,
+                emailId = email.id,
+                displayName = email.senderName,
+            )
+            _emails.update {
+                it.filterNot { e ->
+                    e.sender.trim().lowercase() == sender &&
+                        (e.folderId == FolderIds.SCREENER || e.folderId == null)
+                }
+            }
+            if (_selectedEmail.value?.id == email.id ||
+                _selectedEmail.value?.sender?.trim()?.lowercase() == sender
+            ) {
+                _selectedEmail.value = null
+                _threadEmails.value = emptyList()
+            }
+            loadEmailsForCurrentTab(showLoading = false)
+            runCatching { _folders.value = MailboxSyncService.syncMailbox(mailboxId) }
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+        }
+    }
+
+    suspend fun rejectScreenerSender(email: Email) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val sender = email.sender.trim().lowercase()
+        if (sender.isEmpty()) return
+        try {
+            ApiClient.shared.rejectSender(
+                mailboxId = mailboxId,
+                sender = sender,
+                emailId = email.id,
+                displayName = email.senderName,
+            )
+            _emails.update {
+                it.filterNot { e ->
+                    e.sender.trim().lowercase() == sender &&
+                        (e.folderId == FolderIds.SCREENER || e.folderId == null)
+                }
+            }
+            if (_selectedEmail.value?.id == email.id ||
+                _selectedEmail.value?.sender?.trim()?.lowercase() == sender
+            ) {
+                _selectedEmail.value = null
+                _threadEmails.value = emptyList()
+            }
+            loadEmailsForCurrentTab(showLoading = false)
+            runCatching { _folders.value = MailboxSyncService.syncMailbox(mailboxId) }
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+        }
     }
 
     suspend fun markEmailsRead(ids: Set<String>, read: Boolean) {

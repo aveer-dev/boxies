@@ -331,7 +331,9 @@ export function shouldSendPush(classification: EmailClassification): boolean {
 }
 
 /**
- * Inbox fallback is only for a missing Promotions/Updates/Spam folder.
+ * Inbox fallback is only for a missing Promotions/Updates/Spam/Screener folder.
+ * Never fall back when the target is already inbox, screener, or screened_out
+ * (dumping screener failures into Inbox would defeat the consent gate).
  * Unique-constraint, attachment, or other Durable Object errors must
  * propagate so Email Routing retries instead of inserting a second copy.
  */
@@ -339,7 +341,13 @@ export function shouldFallbackToInbox(
 	classifiedFolderId: string,
 	error: unknown,
 ): boolean {
-	if (classifiedFolderId === "inbox") return false;
+	if (
+		classifiedFolderId === "inbox" ||
+		classifiedFolderId === "screener" ||
+		classifiedFolderId === "screened_out"
+	) {
+		return false;
+	}
 	const message = error instanceof Error ? error.message : String(error);
 	return (
 		message.includes('createEmail: folder "') &&

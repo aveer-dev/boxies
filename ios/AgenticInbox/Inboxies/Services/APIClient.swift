@@ -243,6 +243,42 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func approveSender(
+        mailboxId: String,
+        sender: String,
+        destinationFolderId: String,
+        emailId: String? = nil,
+        displayName: String? = nil
+    ) async throws {
+        var body: [String: Any] = [
+            "sender": sender,
+            "destinationFolderId": destinationFolderId,
+        ]
+        if let emailId { body["emailId"] = emailId }
+        if let displayName { body["displayName"] = displayName }
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/approve",
+            method: "POST",
+            body: body
+        )
+    }
+
+    func rejectSender(
+        mailboxId: String,
+        sender: String,
+        emailId: String? = nil,
+        displayName: String? = nil
+    ) async throws {
+        var body: [String: Any] = ["sender": sender]
+        if let emailId { body["emailId"] = emailId }
+        if let displayName { body["displayName"] = displayName }
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/reject",
+            method: "POST",
+            body: body
+        )
+    }
+
     func deleteEmail(mailboxId: String, id: String) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)",

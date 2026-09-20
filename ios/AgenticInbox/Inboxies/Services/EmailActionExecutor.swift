@@ -117,6 +117,76 @@ extension AppModel {
         await moveEmail(email, to: folderId)
     }
 
+    /// Screener-lite: allow sender and file queued mail to a purpose box.
+    func approveScreenerSender(
+        _ email: Email,
+        destinationFolderId: String
+    ) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let sender = email.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !sender.isEmpty else { return }
+
+        do {
+            try await APIClient.shared.approveSender(
+                mailboxId: mailboxId,
+                sender: sender,
+                destinationFolderId: destinationFolderId,
+                emailId: email.id,
+                displayName: email.senderName
+            )
+            // Refile may move multiple queued messages — refresh the list.
+            emails.removeAll {
+                $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+                    && ($0.folderId == "screener" || $0.folderId == nil)
+            }
+            if selectedEmail?.id == email.id
+                || selectedEmail?.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+            {
+                selectedEmail = nil
+                threadEmails = []
+            }
+            await loadEmailsForCurrentTab(showLoading: false)
+            if let mailboxId = selectedMailboxId,
+               let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
+                folders = synced
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Screener-lite: reject sender into screened_out (silent).
+    func rejectScreenerSender(_ email: Email) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let sender = email.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !sender.isEmpty else { return }
+
+        do {
+            try await APIClient.shared.rejectSender(
+                mailboxId: mailboxId,
+                sender: sender,
+                emailId: email.id,
+                displayName: email.senderName
+            )
+            emails.removeAll {
+                $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+                    && ($0.folderId == "screener" || $0.folderId == nil)
+            }
+            if selectedEmail?.id == email.id
+                || selectedEmail?.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+            {
+                selectedEmail = nil
+                threadEmails = []
+            }
+            await loadEmailsForCurrentTab(showLoading: false)
+            if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
+                folders = synced
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func deleteEmails(_ emailIDs: Set<String>) async {
         guard let mailboxId = selectedMailboxId, !emailIDs.isEmpty else { return }
         for id in emailIDs {

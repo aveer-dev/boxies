@@ -266,6 +266,42 @@ class ApiClient private constructor() {
         )
     }
 
+    suspend fun approveSender(
+        mailboxId: String,
+        sender: String,
+        destinationFolderId: String,
+        emailId: String? = null,
+        displayName: String? = null,
+    ) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/approve",
+            method = "POST",
+            body = buildJsonObject {
+                put("sender", sender)
+                put("destinationFolderId", destinationFolderId)
+                if (emailId != null) put("emailId", emailId)
+                if (displayName != null) put("displayName", displayName)
+            },
+        )
+    }
+
+    suspend fun rejectSender(
+        mailboxId: String,
+        sender: String,
+        emailId: String? = null,
+        displayName: String? = null,
+    ) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/reject",
+            method = "POST",
+            body = buildJsonObject {
+                put("sender", sender)
+                if (emailId != null) put("emailId", emailId)
+                if (displayName != null) put("displayName", displayName)
+            },
+        )
+    }
+
     suspend fun deleteEmail(mailboxId: String, id: String) {
         request<EmptyResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",

@@ -10,6 +10,7 @@ import { rewriteSelfReplyTo } from "shared/reply-recipients";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
 import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
+import ScreenerTriageBar from "~/components/email-panel/ScreenerTriageBar";
 import SingleMessageView from "~/components/email-panel/SingleMessageView";
 import ThreadMessage from "~/components/email-panel/ThreadMessage";
 import { splitEmailList, toEmailListValue } from "~/lib/utils";
@@ -151,6 +152,8 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	};
 
 	const hasThread = allMessages.length > 1;
+	const isScreenerFolder =
+		folder === Folders.SCREENER || email.folder_id === Folders.SCREENER;
 
 	return (
 		<div className="flex flex-col h-full">
@@ -187,6 +190,16 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
 			/>
+
+			{isScreenerFolder && mailboxId && email.sender && (
+				<ScreenerTriageBar
+					mailboxId={mailboxId}
+					emailId={email.id}
+					sender={email.sender}
+					senderName={email.sender_name}
+					onDone={closePanel}
+				/>
+			)}
 
 			<EmailPanelHeader
 				subject={email.subject}

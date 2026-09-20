@@ -135,6 +135,7 @@ const NESTED_SETTING_KEYS = [
 	"signature",
 	"filters",
 	"acl",
+	"screener",
 ] as const;
 
 /**

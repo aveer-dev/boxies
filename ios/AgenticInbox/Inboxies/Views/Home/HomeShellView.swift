@@ -38,6 +38,7 @@ struct HomeShellView: View {
         .aiInbox,
 //        .chats,
         .folder("inbox"),
+        .folder("screener"),
         .folder("promotions"),
         .folder("updates"),
         .folder("sent"),

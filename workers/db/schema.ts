@@ -60,3 +60,13 @@ export const agentConversations = sqliteTable("agent_conversations", {
 	updated_at: text("updated_at").notNull(),
 	last_message_preview: text("last_message_preview"),
 });
+
+/** Screener-lite: allow/deny decisions per sender address. */
+export const senderTriage = sqliteTable("sender_triage", {
+	sender: text("sender").primaryKey(),
+	status: text("status").notNull(),
+	destination_folder_id: text("destination_folder_id"),
+	display_name: text("display_name"),
+	decided_at: text("decided_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+});

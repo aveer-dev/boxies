@@ -13,6 +13,8 @@ import {
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
 	PlusIcon,
+	ProhibitIcon,
+	ShieldCheckIcon,
 	TrashIcon,
 	TrayIcon,
 	WarningIcon,
@@ -30,12 +32,14 @@ import { useUIStore } from "~/hooks/useUIStore";
 
 const FOLDER_ICONS: Record<string, React.ReactNode> = {
 	[Folders.INBOX]: <TrayIcon size={18} weight="regular" />,
+	[Folders.SCREENER]: <ShieldCheckIcon size={18} weight="regular" />,
 	[Folders.PROMOTIONS]: <MegaphoneIcon size={18} weight="regular" />,
 	[Folders.UPDATES]: <NewspaperIcon size={18} weight="regular" />,
 	[Folders.SENT]: <PaperPlaneTiltIcon size={18} weight="regular" />,
 	[Folders.DRAFT]: <FileIcon size={18} weight="regular" />,
 	[Folders.ARCHIVE]: <ArchiveIcon size={18} weight="regular" />,
 	[Folders.SPAM]: <WarningIcon size={18} weight="regular" />,
+	[Folders.SCREENED_OUT]: <ProhibitIcon size={18} weight="regular" />,
 	[Folders.TRASH]: <TrashIcon size={18} weight="regular" />,
 };
 

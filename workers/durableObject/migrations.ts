@@ -347,5 +347,26 @@ export const mailboxMigrations: Migration[] = [
 		name: "20_email_auth",
 		sql: txn(`ALTER TABLE emails ADD COLUMN auth TEXT;`),
 	},
+	{
+		name: "21_screener_folders_and_sender_triage",
+		sql: txn(`
+            INSERT OR IGNORE INTO folders (id, name, is_deletable) VALUES
+                ('screener', 'Screener', 0),
+                ('screened_out', 'Screened out', 0);
+            UPDATE folders SET is_deletable = 0
+             WHERE id IN ('screener', 'screened_out');
+
+            CREATE TABLE IF NOT EXISTS sender_triage (
+                sender TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                destination_folder_id TEXT,
+                display_name TEXT,
+                decided_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sender_triage_status
+                ON sender_triage(status);
+        `),
+	},
 ];
 

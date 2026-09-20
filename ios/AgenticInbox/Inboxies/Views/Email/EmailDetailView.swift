@@ -15,6 +15,13 @@ struct EmailDetailView: View {
         app.selectedEmail
     }
 
+    private var isScreenerEmail: Bool {
+        guard let email else { return false }
+        if email.folderId == "screener" { return true }
+        if case .folder("screener") = app.selectedTab { return true }
+        return false
+    }
+
     private var source: Email? {
         app.actionSourceEmail ?? email
     }
@@ -55,6 +62,13 @@ struct EmailDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    if isScreenerEmail, let email {
+                        ScreenerTriageBar(email: email)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
+                    }
+
                     tagsRow
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
@@ -845,6 +859,103 @@ private extension View {
         } else {
             self
         }
+    }
+}
+
+/// Approve / reject chrome for Screener-lite review queue.
+private struct ScreenerTriageBar: View {
+    @Environment(AppModel.self) private var app
+    let email: Email
+
+    @State private var pickingDestination = false
+    @State private var busy = false
+
+    private let destinations: [(id: String, title: String)] = [
+        ("inbox", "Inbox"),
+        ("promotions", "Promotions"),
+        ("updates", "Updates"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("New sender — approve where their mail should go, or screen them out privately.")
+                .font(.inter(size: AppTheme.FontSize.meta))
+                .foregroundStyle(AppTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if pickingDestination {
+                HStack(spacing: 8) {
+                    ForEach(destinations, id: \.id) { dest in
+                        Button {
+                            Task {
+                                busy = true
+                                await app.approveScreenerSender(email, destinationFolderId: dest.id)
+                                busy = false
+                            }
+                        } label: {
+                            Text(dest.title)
+                                .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(dest.id == "inbox" ? AppTheme.ink : AppTheme.pillFill)
+                                .foregroundStyle(dest.id == "inbox" ? AppTheme.surface : AppTheme.ink)
+                                .clipShape(Capsule())
+                        }
+                        .disabled(busy)
+                        .buttonStyle(.plain)
+                    }
+                    Button("Cancel") {
+                        pickingDestination = false
+                    }
+                    .font(.inter(size: AppTheme.FontSize.meta))
+                    .foregroundStyle(AppTheme.muted)
+                    .disabled(busy)
+                    .buttonStyle(.plain)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button {
+                        pickingDestination = true
+                    } label: {
+                        Text("Approve")
+                            .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(AppTheme.ink)
+                            .foregroundStyle(AppTheme.surface)
+                            .clipShape(Capsule())
+                    }
+                    .disabled(busy)
+                    .buttonStyle(.plain)
+
+                    Button {
+                        Task {
+                            busy = true
+                            await app.rejectScreenerSender(email)
+                            busy = false
+                        }
+                    } label: {
+                        Text("Reject")
+                            .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(AppTheme.pillFill)
+                            .foregroundStyle(AppTheme.ink)
+                            .clipShape(Capsule())
+                    }
+                    .disabled(busy)
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(AppTheme.line, lineWidth: 0.5)
+        )
     }
 }
 

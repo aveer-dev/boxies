@@ -47,6 +47,7 @@ import {
 	serializeEmailAuth,
 	type EmailAuth,
 } from "../lib/email-auth";
+import { buildBootstrapAllowSeeds } from "../lib/sender-triage";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -1239,6 +1240,7 @@ export class MailboxDO extends DurableObject<Env> {
 			sql.exec(`DELETE FROM device_tokens`);
 			sql.exec(`DELETE FROM dismissed_todos`);
 			sql.exec(`DELETE FROM auto_reply_receipts`);
+			sql.exec(`DELETE FROM sender_triage`);
 
 			for (const folderId of SYSTEM_FOLDER_IDS) {
 				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;
@@ -1260,6 +1262,12 @@ export class MailboxDO extends DurableObject<Env> {
 			await this.ctx.storage.deleteAlarm();
 		} catch (e) {
 			console.error("purgeMailbox deleteAlarm failed:", (e as Error).message);
+		}
+
+		try {
+			await this.ctx.storage.delete("sender_triage_bootstrapped");
+		} catch {
+			/* ignore */
 		}
 
 		// Block createEmail/updateDraft until reviveMailbox on recreate.
@@ -2116,5 +2124,217 @@ export class MailboxDO extends DurableObject<Env> {
 			console.error("attachment count lookup failed:", (e as Error).message);
 		}
 		return counts;
+	}
+
+	// ── Sender triage (Screener-lite) ──────────────────────────────
+
+	async getSenderTriage(sender: string) {
+		const normalized = sender.trim().toLowerCase();
+		if (!normalized) return null;
+		return (
+			this.db
+				.select()
+				.from(schema.senderTriage)
+				.where(eq(schema.senderTriage.sender, normalized))
+				.get() ?? null
+		);
+	}
+
+	async listSenderTriage(options: {
+		status?: string;
+		limit?: number;
+		offset?: number;
+	} = {}) {
+		const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+		const offset = Math.max(options.offset ?? 0, 0);
+		const conditions = [];
+		if (options.status === "allowed" || options.status === "rejected") {
+			conditions.push(eq(schema.senderTriage.status, options.status));
+		}
+		return this.db
+			.select()
+			.from(schema.senderTriage)
+			.where(conditions.length > 0 ? and(...conditions) : undefined)
+			.orderBy(desc(schema.senderTriage.updated_at))
+			.limit(limit)
+			.offset(offset)
+			.all();
+	}
+
+	async upsertSenderTriage(row: {
+		sender: string;
+		status: "allowed" | "rejected";
+		destination_folder_id?: string | null;
+		display_name?: string | null;
+	}) {
+		const sender = row.sender.trim().toLowerCase();
+		if (!sender) throw new Error("sender is required");
+		const now = new Date().toISOString();
+		const existing = await this.getSenderTriage(sender);
+		const decided_at = existing?.decided_at ?? now;
+		const destination =
+			row.status === "allowed"
+				? row.destination_folder_id ?? Folders.INBOX
+				: null;
+
+		this.db
+			.insert(schema.senderTriage)
+			.values({
+				sender,
+				status: row.status,
+				destination_folder_id: destination,
+				display_name: row.display_name ?? null,
+				decided_at,
+				updated_at: now,
+			})
+			.onConflictDoUpdate({
+				target: schema.senderTriage.sender,
+				set: {
+					status: row.status,
+					destination_folder_id: destination,
+					display_name: row.display_name ?? existing?.display_name ?? null,
+					updated_at: now,
+				},
+			})
+			.run();
+
+		this.broadcastEvent("sender_triage_updated", {
+			sender,
+			status: row.status,
+			destination_folder_id: destination,
+		});
+		return this.getSenderTriage(sender);
+	}
+
+	async deleteSenderTriage(sender: string) {
+		const normalized = sender.trim().toLowerCase();
+		if (!normalized) return false;
+		const existing = await this.getSenderTriage(normalized);
+		if (!existing) return false;
+		this.db
+			.delete(schema.senderTriage)
+			.where(eq(schema.senderTriage.sender, normalized))
+			.run();
+		this.broadcastEvent("sender_triage_deleted", { sender: normalized });
+		return true;
+	}
+
+	/** Move all messages from a sender in fromFolder into toFolder. */
+	async refileSenderInFolder(
+		sender: string,
+		fromFolder: string,
+		toFolder: string,
+	): Promise<{ moved: number; ids: string[] }> {
+		const normalized = sender.trim().toLowerCase();
+		if (!normalized) return { moved: 0, ids: [] };
+
+		const dest = this.db
+			.select({ id: schema.folders.id })
+			.from(schema.folders)
+			.where(eq(schema.folders.id, toFolder))
+			.get();
+		if (!dest) return { moved: 0, ids: [] };
+
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id FROM emails
+				 WHERE folder_id = ?1
+				   AND LOWER(TRIM(sender)) = ?2`,
+				fromFolder,
+				normalized,
+			),
+		] as { id: string }[];
+
+		if (rows.length === 0) return { moved: 0, ids: [] };
+
+		this.ctx.storage.sql.exec(
+			`UPDATE emails
+			 SET folder_id = ?1
+			 WHERE folder_id = ?2
+			   AND LOWER(TRIM(sender)) = ?3`,
+			toFolder,
+			fromFolder,
+			normalized,
+		);
+
+		const ids = rows.map((r) => r.id);
+		for (const id of ids) {
+			this.broadcastEvent("email_moved", { id, folder_id: toFolder });
+		}
+		return { moved: ids.length, ids };
+	}
+
+	/**
+	 * One-shot allow-list from Sent + existing inbox/promotions/updates senders.
+	 * Idempotent via storage flag after first successful run.
+	 */
+	async bootstrapSenderTriage(force = false): Promise<{ seeded: number }> {
+		const flagKey = "sender_triage_bootstrapped";
+		if (!force && (await this.ctx.storage.get(flagKey))) {
+			return { seeded: 0 };
+		}
+
+		const sentRecipients = await this.listRecentRecipients({ limit: 50 });
+		// listRecentRecipients caps at 50 — scan more Sent rows for bootstrap.
+		const sentScan = [
+			...this.ctx.storage.sql.exec(
+				`SELECT recipient, cc, bcc, date
+				 FROM emails
+				 WHERE folder_id = ${SENT_FOLDER_ID_SQL}
+				 ORDER BY date DESC
+				 LIMIT 500`,
+			),
+		] as {
+			recipient: string | null;
+			cc: string | null;
+			bcc: string | null;
+			date: string | null;
+		}[];
+		const sentAgg = aggregateRecentRecipients(sentScan, { limit: 500 });
+
+		const folderSenders = (folderId: string) => {
+			try {
+				return [
+					...this.ctx.storage.sql.exec(
+						`SELECT LOWER(TRIM(sender)) AS email,
+						        MAX(sender_name) AS name
+						 FROM emails
+						 WHERE folder_id = ?1
+						   AND sender IS NOT NULL
+						   AND TRIM(sender) != ''
+						 GROUP BY LOWER(TRIM(sender))
+						 LIMIT 1000`,
+						folderId,
+					),
+				] as { email: string; name: string | null }[];
+			} catch {
+				return [];
+			}
+		};
+
+		const seeds = buildBootstrapAllowSeeds({
+			sentAddresses: (sentAgg.length > 0 ? sentAgg : sentRecipients).map(
+				(r) => ({ email: r.email, name: r.name }),
+			),
+			inboxSenders: folderSenders(Folders.INBOX),
+			promotionsSenders: folderSenders(Folders.PROMOTIONS),
+			updatesSenders: folderSenders(Folders.UPDATES),
+		});
+
+		let seeded = 0;
+		for (const seed of seeds) {
+			const existing = await this.getSenderTriage(seed.sender);
+			if (existing) continue;
+			await this.upsertSenderTriage({
+				sender: seed.sender,
+				status: "allowed",
+				destination_folder_id: seed.destination_folder_id,
+				display_name: seed.display_name,
+			});
+			seeded += 1;
+		}
+
+		await this.ctx.storage.put(flagKey, "1");
+		return { seeded };
 	}
 }

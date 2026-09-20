@@ -12,31 +12,52 @@
 
 export const Folders = {
 	INBOX: "inbox",
+	SCREENER: "screener",
 	PROMOTIONS: "promotions",
 	UPDATES: "updates",
 	SENT: "sent",
 	DRAFT: "draft",
 	ARCHIVE: "archive",
 	SPAM: "spam",
+	SCREENED_OUT: "screened_out",
 	TRASH: "trash",
 } as const;
 
 export type FolderId = (typeof Folders)[keyof typeof Folders];
 
+/** Approve destinations for Screener-lite v1 (purpose boxes). */
+export const SCREENER_DESTINATION_IDS = [
+	Folders.INBOX,
+	Folders.PROMOTIONS,
+	Folders.UPDATES,
+] as const;
+
+export type ScreenerDestinationId = (typeof SCREENER_DESTINATION_IDS)[number];
+
 /**
  * System folder IDs that appear in the sidebar.
  * Order here matches the sidebar display order.
+ * `screened_out` is secondary history — clients may hide it from swipe tabs.
  */
 export const SYSTEM_FOLDER_IDS: readonly FolderId[] = [
 	Folders.INBOX,
+	Folders.SCREENER,
 	Folders.PROMOTIONS,
 	Folders.UPDATES,
 	Folders.SENT,
 	Folders.DRAFT,
 	Folders.ARCHIVE,
 	Folders.SPAM,
+	Folders.SCREENED_OUT,
 	Folders.TRASH,
 ];
+
+/**
+ * Primary swipe / home-chrome folders (excludes screened_out history).
+ */
+export const PRIMARY_FOLDER_IDS: readonly FolderId[] = SYSTEM_FOLDER_IDS.filter(
+	(id) => id !== Folders.SCREENED_OUT,
+);
 
 /**
  * Human-readable display names for folder IDs.
@@ -44,6 +65,7 @@ export const SYSTEM_FOLDER_IDS: readonly FolderId[] = [
  */
 export const FOLDER_DISPLAY_NAMES: Record<string, string> = {
 	[Folders.INBOX]: "Inbox",
+	[Folders.SCREENER]: "Screener",
 	[Folders.PROMOTIONS]: "Promotions",
 	[Folders.UPDATES]: "Updates",
 	[Folders.SENT]: "Sent",
@@ -51,15 +73,16 @@ export const FOLDER_DISPLAY_NAMES: Record<string, string> = {
 	[Folders.ARCHIVE]: "Archive",
 	[Folders.TRASH]: "Trash",
 	[Folders.SPAM]: "Spam",
+	[Folders.SCREENED_OUT]: "Screened out",
 };
 
 /** Formatted string for tool parameter descriptions (agent + MCP). */
 export const FOLDER_TOOL_DESCRIPTION =
-	"Folder to list: inbox, promotions, updates, sent, draft, archive, spam, trash";
+	"Folder to list: inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash";
 
 /** Formatted string for move-email tool descriptions. */
 export const MOVE_FOLDER_TOOL_DESCRIPTION =
-	"Target folder: inbox, promotions, updates, sent, draft, archive, spam, trash";
+	"Target folder: inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash";
 
 /**
  * Look up a display name for a folder ID, falling back to the raw ID

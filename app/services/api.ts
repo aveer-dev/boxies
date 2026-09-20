@@ -187,6 +187,33 @@ const api = {
 	deleteFolder: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/folders/${id}`),
 
+	// Sender triage (Screener-lite)
+	approveSender: (
+		mailboxId: string,
+		body: {
+			sender: string;
+			destinationFolderId: string;
+			emailId?: string;
+			displayName?: string;
+		},
+	) =>
+		post<{ triage: unknown; moved: { moved: number; ids: string[] } }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-triage/approve`,
+			body,
+		),
+	rejectSender: (
+		mailboxId: string,
+		body: { sender: string; emailId?: string; displayName?: string },
+	) =>
+		post<{ triage: unknown; moved: { moved: number; ids: string[] } }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-triage/reject`,
+			body,
+		),
+	deleteSenderTriage: (mailboxId: string, sender: string) =>
+		del<void>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-triage/${encodeURIComponent(sender)}`,
+		),
+
 	// Inbox digest (For You)
 	getInboxDigest: (mailboxId: string, opts?: { signal?: AbortSignal }) =>
 		get<InboxDigest>(`/api/v1/mailboxes/${mailboxId}/inbox-digest`, {

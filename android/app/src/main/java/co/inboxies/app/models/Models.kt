@@ -717,12 +717,14 @@ sealed class HomeTab {
         get() = when (this) {
             is Folder -> when (id) {
                 FolderIds.INBOX -> "Inbox"
+                FolderIds.SCREENER -> "Screener"
                 FolderIds.PROMOTIONS -> "Promotions"
                 FolderIds.UPDATES -> "Updates"
                 FolderIds.SENT -> "Sent"
                 FolderIds.DRAFT -> "Drafts"
                 FolderIds.ARCHIVE -> "Archive"
                 FolderIds.SPAM -> "Spam"
+                FolderIds.SCREENED_OUT -> "Screened out"
                 FolderIds.TRASH -> "Trash"
                 else -> id.replaceFirstChar { it.uppercase() }
             }
@@ -737,17 +739,20 @@ sealed class HomeTab {
 
 object FolderIds {
     const val INBOX = "inbox"
+    const val SCREENER = "screener"
     const val PROMOTIONS = "promotions"
     const val UPDATES = "updates"
     const val SENT = "sent"
     const val DRAFT = "draft"
     const val ARCHIVE = "archive"
     const val SPAM = "spam"
+    const val SCREENED_OUT = "screened_out"
     const val TRASH = "trash"
 
     /** Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). */
     val swipeFolderIds: List<String> = listOf(
         INBOX,
+        SCREENER,
         PROMOTIONS,
         UPDATES,
         SENT,
