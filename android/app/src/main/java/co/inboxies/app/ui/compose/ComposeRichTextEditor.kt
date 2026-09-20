@@ -2,6 +2,7 @@ package co.inboxies.app.ui.compose
 
 import android.graphics.Typeface
 import android.text.Html
+import android.text.InputType
 import android.text.Layout
 import android.text.Spannable
 import android.text.Spanned
@@ -14,15 +15,25 @@ import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.ViewGroup
 import android.widget.EditText
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.widget.doAfterTextChanged
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.util.ComposeHtml
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 enum class ComposeParagraphStyle { Title, Subtitle, Body, Caption }
@@ -265,23 +276,42 @@ fun ComposeRichTextEditor(
     html: String,
     controller: ComposeRichTextController,
     onHtmlChange: (String) -> Unit,
+    minHeight: Dp = 160.dp,
     modifier: Modifier = Modifier,
 ) {
     val ink = inboxiesColors().ink.toArgb()
+    val density = LocalDensity.current
+    val minHeightPx = with(density) { minHeight.roundToPx() }
+    // Content-measured height; composable applies max(minHeight, content) so the
+    // page verticalScroll grows — EditText itself does not scroll.
+    var contentHeightPx by remember { mutableIntStateOf(0) }
+    val targetHeightPx = max(minHeightPx, contentHeightPx)
+
     AndroidView(
-        // Parent must pass a bounded height (e.g. weight/fillMaxHeight). Nesting this
-        // inside verticalScroll with only heightIn(min) collapses sibling form fields.
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(with(density) { targetHeightPx.toDp() }),
         factory = { context ->
             EditText(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setTextColor(ink)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 setPadding(32, 24, 32, 24)
                 gravity = Gravity.TOP or Gravity.START
                 hint = ""
-                isVerticalScrollBarEnabled = true
-                overScrollMode = android.view.View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                // Page scroll owns scrolling — grow with typed content.
+                isVerticalScrollBarEnabled = false
+                overScrollMode = android.view.View.OVER_SCROLL_NEVER
+                setHorizontallyScrolling(false)
+                setSingleLine(false)
+                maxLines = Integer.MAX_VALUE
+                inputType = InputType.TYPE_CLASS_TEXT or
+                    InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                    InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
                 val spanned = Html.fromHtml(
                     if (html.contains('<')) html else ComposeHtml.textToHtml(html),
                     Html.FROM_HTML_MODE_COMPACT,
@@ -290,10 +320,26 @@ fun ComposeRichTextEditor(
                 controller.defaultInk = ink
                 controller.editText = this
                 controller.onHtmlChange = onHtmlChange
+                fun remasure() {
+                    val contentWidth = (width - paddingLeft - paddingRight).coerceAtLeast(0)
+                    if (contentWidth <= 0) return
+                    val widthSpec = android.view.View.MeasureSpec.makeMeasureSpec(
+                        contentWidth,
+                        android.view.View.MeasureSpec.EXACTLY,
+                    )
+                    val heightSpec = android.view.View.MeasureSpec.makeMeasureSpec(
+                        0,
+                        android.view.View.MeasureSpec.UNSPECIFIED,
+                    )
+                    measure(widthSpec, heightSpec)
+                    if (measuredHeight != contentHeightPx) contentHeightPx = measuredHeight
+                }
                 doAfterTextChanged {
                     controller.emit()
                     controller.refresh()
+                    remasure()
                 }
+                post { remasure() }
             }
         },
         update = { view ->
