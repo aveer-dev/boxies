@@ -12,59 +12,56 @@ struct AutoReplySettingsView: View {
     @State private var saveMessage: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("When this is on, people who email this mailbox get one automatic reply. You still receive their message.")
-                    .font(.inter(size: 13))
-                    .foregroundStyle(AppTheme.muted)
-
-                Text("Each sender gets at most one auto-reply every 24 hours. Mail from lists, bulk senders, no-reply addresses, and other automated systems is skipped so this cannot loop.")
-                    .font(.inter(size: 12))
-                    .foregroundStyle(AppTheme.muted)
-
-                Toggle("Send automatic replies", isOn: $enabled)
-                    .font(.inter(size: 16))
-                    .tint(AppTheme.accent)
-                    .padding(.vertical, 4)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Subject")
-                        .font(.inter(size: 13, weight: .medium))
-                        .foregroundStyle(AppTheme.ink)
-                    TextField("Leave blank to use Re: original subject", text: $subject)
-                        .font(.inter(size: 16))
-                        .padding(12)
-                        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(AppTheme.line, lineWidth: 1)
-                        )
-                        .disabled(!enabled)
-                        .opacity(enabled ? 1 : 0.5)
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Message")
-                        .font(.inter(size: 13, weight: .medium))
-                        .foregroundStyle(AppTheme.ink)
-                    TextEditor(text: $message)
-                        .font(.inter(size: 16))
-                        .frame(minHeight: 160)
-                        .padding(10)
-                        .scrollContentBackground(.hidden)
-                        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(AppTheme.line, lineWidth: 1)
-                        )
-                        .disabled(!enabled)
-                        .opacity(enabled ? 1 : 0.5)
-                }
+        List {
+            Section {
+                SettingsToggleRow(title: "Send Automatic Replies", isOn: $enabled)
+            } footer: {
+                SettingsFormFooter(
+                    text: "When on, people who email this mailbox get one automatic reply. You still receive their message."
+                )
             }
-            .padding(16)
+
+            Section {
+                SettingsTextFieldRow(
+                    title: "Subject",
+                    text: $subject,
+                    placeholder: "Re: original subject",
+                    disabled: !enabled
+                )
+            } header: {
+                Text("Subject")
+            } footer: {
+                SettingsFormFooter(text: "Leave blank to use Re: followed by the original subject.")
+            }
+
+            Section {
+                ZStack(alignment: .topLeading) {
+                    if message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Write your auto-reply…")
+                            .font(.inter(size: SettingsFormChrome.rowFontSize))
+                            .foregroundStyle(AppTheme.muted.opacity(0.7))
+                            .padding(.top, 8)
+                            .allowsHitTesting(false)
+                    }
+                    TextEditor(text: $message)
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(minHeight: 140)
+                        .scrollContentBackground(.hidden)
+                        .disabled(!enabled)
+                        .opacity(enabled ? 1 : 0.45)
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            } header: {
+                Text("Message")
+            } footer: {
+                SettingsFormFooter(
+                    text: "Each sender gets at most one auto-reply every 24 hours. Lists, bulk senders, no-reply addresses, and other automated mail are skipped."
+                )
+            }
         }
-        .background(AppTheme.background)
-        .navigationTitle("Auto-reply")
+        .settingsFormListStyle()
+        .navigationTitle("Auto-Reply")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {

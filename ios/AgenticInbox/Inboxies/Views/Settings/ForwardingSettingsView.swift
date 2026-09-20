@@ -15,43 +15,33 @@ struct ForwardingSettingsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("When this is on, a copy of each incoming message is sent to another address. This mailbox still keeps the original.")
-                    .font(.inter(size: 13))
-                    .foregroundStyle(AppTheme.muted)
-
-                Text("The destination must be a verified Email Routing destination in your Cloudflare account. Unverified addresses are skipped; the original still arrives here. Spam and messages already in a forwarding loop are not forwarded.")
-                    .font(.inter(size: 12))
-                    .foregroundStyle(AppTheme.muted)
-
-                Toggle("Forward incoming mail", isOn: $enabled)
-                    .font(.inter(size: 16))
-                    .tint(AppTheme.accent)
-                    .padding(.vertical, 4)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Forward to")
-                        .font(.inter(size: 13, weight: .medium))
-                        .foregroundStyle(AppTheme.ink)
-                    TextField("you@example.com", text: $email)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
-                        .autocorrectionDisabled()
-                        .font(.inter(size: 16))
-                        .padding(12)
-                        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(AppTheme.line, lineWidth: 1)
-                        )
-                        .disabled(!enabled)
-                        .opacity(enabled ? 1 : 0.5)
-                }
+        List {
+            Section {
+                SettingsToggleRow(title: "Forward Incoming Mail", isOn: $enabled)
+            } footer: {
+                SettingsFormFooter(
+                    text: "When on, a copy of each incoming message is sent to another address. This mailbox still keeps the original."
+                )
             }
-            .padding(16)
+
+            Section {
+                SettingsTextFieldRow(
+                    title: "Forward To",
+                    text: $email,
+                    placeholder: "you@example.com",
+                    keyboardType: .emailAddress,
+                    textContentType: .emailAddress,
+                    disabled: !enabled
+                )
+            } header: {
+                Text("Destination")
+            } footer: {
+                SettingsFormFooter(
+                    text: "Must be a verified Email Routing destination in your Cloudflare account. Unverified addresses are skipped. Spam and messages already in a forwarding loop are not forwarded."
+                )
+            }
         }
-        .background(AppTheme.background)
+        .settingsFormListStyle()
         .navigationTitle("Forwarding")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
