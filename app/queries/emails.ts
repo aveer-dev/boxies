@@ -218,6 +218,7 @@ export function useDeleteEmail() {
 
 export function useMoveEmail() {
 	const invalidate = useInvalidateEmailData();
+	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: ({
 			mailboxId,
@@ -231,7 +232,12 @@ export function useMoveEmail() {
 			setSenderPreference?: boolean;
 		}) =>
 			api.moveEmail(mailboxId, id, folderId, { setSenderPreference }),
-		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
+		onSuccess: (_data, { mailboxId, setSenderPreference }) => {
+			invalidate(mailboxId);
+			if (setSenderPreference) {
+				qc.invalidateQueries({ queryKey: ["sender-preferences", mailboxId] });
+			}
+		},
 	});
 }
 

@@ -285,9 +285,11 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 					if (!open) setPendingPurposeMove(null);
 				}}
 			>
-				<Dialog size="sm">
-					<Dialog.Title>Put future mail here?</Dialog.Title>
-					<Dialog.Description>
+				<Dialog size="sm" className="p-6">
+					<Dialog.Title className="text-base font-semibold mb-2">
+						Put future mail here?
+					</Dialog.Title>
+					<p className="text-sm text-kumo-subtle mb-4">
 						Also file future messages from{" "}
 						<span className="font-medium text-kumo-default">
 							{displaySenderName(email)}
@@ -297,8 +299,8 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 							? FOLDER_DISPLAY_NAMES[pendingPurposeMove] ?? pendingPurposeMove
 							: "this folder"}
 						, and move their existing Inbox / Promotions / Updates mail.
-					</Dialog.Description>
-					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-4">
+					</p>
+					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
 						<Button
 							variant="ghost"
 							onClick={() => {

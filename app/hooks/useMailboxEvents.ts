@@ -34,6 +34,9 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 
 		source.addEventListener("email_updated", onEmailUpdated);
 		source.addEventListener("new_email", onNewEmail);
+		source.addEventListener("email_moved", onEmailUpdated);
+		source.addEventListener("emails_refiled", onEmailUpdated);
+		source.addEventListener("sender_preference_updated", onEmailUpdated);
 
 		source.onerror = () => {
 			// Browser auto-reconnects EventSource; avoid noisy logs.
@@ -42,6 +45,9 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 		return () => {
 			source.removeEventListener("email_updated", onEmailUpdated);
 			source.removeEventListener("new_email", onNewEmail);
+			source.removeEventListener("email_moved", onEmailUpdated);
+			source.removeEventListener("emails_refiled", onEmailUpdated);
+			source.removeEventListener("sender_preference_updated", onEmailUpdated);
 			source.close();
 		};
 	}, [mailboxId, qc]);

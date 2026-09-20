@@ -91,13 +91,17 @@ export function screenerSettingsError(raw: unknown): string | null {
 
 /**
  * Resolve where to file inbound mail after classification + triage lookup.
- * Filters apply only for allowed (or when screener is disabled).
+ *
+ * Order: spam → rejected → unknown(screener) → allowed:
+ *   filter folder → purpose preference → triage destination → classify.
+ * When screener is disabled: filter → preference → classify.
  */
 export function resolveInboundFolder(
 	input: ResolveInboundFolderInput,
 ): ResolveInboundFolderResult {
 	const { classification, triage, filterHit } = input;
 	const screenerEnabled = input.screenerEnabled !== false;
+	const preferenceFolder = input.preferenceFolderId?.trim() || null;
 
 	if (classification.class === "spam" || classification.folderId === Folders.SPAM) {
 		return {
@@ -112,7 +116,8 @@ export function resolveInboundFolder(
 
 	if (!screenerEnabled) {
 		return {
-			folderId: filterHit?.folderId || classification.folderId,
+			folderId:
+				filterHit?.folderId || preferenceFolder || classification.folderId,
 			skipAutoDraft: Boolean(filterHit?.skipAutoDraft),
 			skipPush: false,
 			skipAutoReply: false,
@@ -138,7 +143,7 @@ export function resolveInboundFolder(
 				? triage.destination_folder_id
 				: Folders.INBOX;
 		return {
-			folderId: filterHit?.folderId || dest,
+			folderId: filterHit?.folderId || preferenceFolder || dest,
 			skipAutoDraft: Boolean(filterHit?.skipAutoDraft),
 			skipPush: false,
 			skipAutoReply: false,
