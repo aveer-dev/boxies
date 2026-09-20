@@ -240,6 +240,8 @@ struct Email: Identifiable, Codable, Hashable {
     var date: String
     var read: Bool
     var starred: Bool
+    var replyLater: Bool = false
+    var replyLaterAt: String? = nil
     var body: String?
     var snippet: String?
     var inReplyTo: String?
@@ -278,6 +280,8 @@ struct Email: Identifiable, Codable, Hashable {
         case deliveryStatus = "delivery_status"
         case deliveryError = "delivery_error"
         case listSection = "list_section"
+        case replyLater = "reply_later"
+        case replyLaterAt = "reply_later_at"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -575,6 +579,7 @@ enum EmailDateFilter: String, CaseIterable, Equatable, Hashable {
 struct EmailFilterState: Equatable {
     var unreadOnly: Bool = false
     var starredOnly: Bool = false
+    var replyLaterOnly: Bool = false
     var toMeOnly: Bool = false
     var ccOrBccMeOnly: Bool = false
     var withAttachmentsOnly: Bool = false
@@ -582,7 +587,7 @@ struct EmailFilterState: Equatable {
     var needsReplyOnly: Bool = false
 
     var isActive: Bool {
-        unreadOnly || starredOnly || toMeOnly || ccOrBccMeOnly ||
+        unreadOnly || starredOnly || replyLaterOnly || toMeOnly || ccOrBccMeOnly ||
         withAttachmentsOnly || dateFilter != .any || needsReplyOnly
     }
 
@@ -590,6 +595,7 @@ struct EmailFilterState: Equatable {
         var count = 0
         if unreadOnly { count += 1 }
         if starredOnly { count += 1 }
+        if replyLaterOnly { count += 1 }
         if toMeOnly { count += 1 }
         if ccOrBccMeOnly { count += 1 }
         if withAttachmentsOnly { count += 1 }
@@ -601,6 +607,7 @@ struct EmailFilterState: Equatable {
     mutating func reset() {
         unreadOnly = false
         starredOnly = false
+        replyLaterOnly = false
         toMeOnly = false
         ccOrBccMeOnly = false
         withAttachmentsOnly = false
@@ -613,6 +620,9 @@ struct EmailFilterState: Equatable {
             return false
         }
         if starredOnly && !email.starred {
+            return false
+        }
+        if replyLaterOnly && !email.replyLater {
             return false
         }
         if withAttachmentsOnly && !email.hasFileAttachment {

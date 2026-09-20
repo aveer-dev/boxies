@@ -119,6 +119,7 @@ interface SearchFilterOptions {
 	date_end?: string;
 	is_read?: boolean;
 	is_starred?: boolean;
+	is_reply_later?: boolean;
 	has_attachment?: boolean;
 }
 
@@ -129,6 +130,10 @@ interface GetEmailsOptions {
 	limit?: number;
 	sortColumn?: SortColumn;
 	sortDirection?: "ASC" | "DESC";
+	/** When true, list Reply Later pile (independent of folder). */
+	reply_later?: boolean;
+	/** Include trash/spam/draft in Reply Later pile (default false). */
+	include_junk?: boolean;
 }
 
 export type DeliveryStatus =
@@ -494,6 +499,8 @@ export class MailboxDO extends DurableObject<Env> {
 			limit: rawLimit = 25,
 			sortColumn: rawSortColumn = "date",
 			sortDirection = "DESC",
+			reply_later,
+			include_junk = false,
 		} = options;
 
 		// Cap pagination limit to prevent unbounded queries
@@ -508,6 +515,14 @@ export class MailboxDO extends DurableObject<Env> {
 		const offset = (page - 1) * limit;
 
 		const conditions: SQL[] = [];
+		if (reply_later) {
+			conditions.push(eq(schema.emails.reply_later, 1));
+			if (!include_junk) {
+				conditions.push(
+					sql`${schema.emails.folder_id} NOT IN (${Folders.TRASH}, ${Folders.SPAM}, ${Folders.DRAFT})`,
+				);
+			}
+		}
 		if (folder) {
 			conditions.push(
 				sql`${schema.emails.folder_id} = (SELECT id FROM folders WHERE name = ${folder} OR id = ${folder} LIMIT 1)`,
@@ -517,8 +532,11 @@ export class MailboxDO extends DurableObject<Env> {
 			conditions.push(eq(schema.emails.thread_id, thread_id));
 		}
 
-		const orderCol = SORT_COLUMN_MAP[sortColumn];
-		const orderDir = sortDirection === "ASC" ? asc(orderCol) : desc(orderCol);
+		const orderCol = reply_later
+			? schema.emails.reply_later_at
+			: SORT_COLUMN_MAP[sortColumn];
+		const orderDir =
+			reply_later || sortDirection === "ASC" ? asc(orderCol) : desc(orderCol);
 
 		const result = this.db
 			.select({
@@ -532,6 +550,8 @@ export class MailboxDO extends DurableObject<Env> {
 				date: schema.emails.date,
 				read: schema.emails.read,
 				starred: schema.emails.starred,
+				reply_later: schema.emails.reply_later,
+				reply_later_at: schema.emails.reply_later_at,
 				in_reply_to: schema.emails.in_reply_to,
 				email_references: schema.emails.email_references,
 				thread_id: schema.emails.thread_id,
@@ -554,6 +574,7 @@ export class MailboxDO extends DurableObject<Env> {
 				...email,
 				read: !!email.read,
 				starred: !!email.starred,
+				reply_later: !!email.reply_later,
 			})),
 		);
 	}
@@ -616,14 +637,31 @@ export class MailboxDO extends DurableObject<Env> {
 	/**
 	 * Count total emails matching the given filters (for pagination).
 	 */
-	async countEmails(options: { folder?: string; thread_id?: string } = {}) {
-		const { folder, thread_id } = options;
+	async countEmails(
+		options: {
+			folder?: string;
+			thread_id?: string;
+			reply_later?: boolean;
+			include_junk?: boolean;
+		} = {},
+	) {
+		const { folder, thread_id, reply_later, include_junk = false } = options;
 		const conditions: string[] = [];
 		const params: (string | number)[] = [];
 
+		if (reply_later) {
+			conditions.push("reply_later = 1");
+			if (!include_junk) {
+				conditions.push(
+					`folder_id NOT IN ('${Folders.TRASH}', '${Folders.SPAM}', '${Folders.DRAFT}')`,
+				);
+			}
+		}
+
 		if (folder) {
+			const idx = params.length + 1;
 			conditions.push(
-				"folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)",
+				`folder_id = (SELECT id FROM folders WHERE name = ?${idx} OR id = ?${idx} LIMIT 1)`,
 			);
 			params.push(folder);
 		}
@@ -643,6 +681,12 @@ export class MailboxDO extends DurableObject<Env> {
 		][0] as { total: number } | undefined;
 
 		return row?.total ?? 0;
+	}
+
+	/** Workflow pile counts for home chrome (Reply Later now; Set Aside later). */
+	async getWorkflowPiles(): Promise<{ id: string; count: number }[]> {
+		const count = await this.countEmails({ reply_later: true });
+		return [{ id: "reply_later", count }];
 	}
 
 	// ── Threaded queries (raw SQL — too complex for Drizzle's builder) ──
@@ -704,7 +748,7 @@ export class MailboxDO extends DurableObject<Env> {
 				)
 				SELECT
 					lp.id, lp.subject, lp.sender, lp.sender_name, lp.recipient, lp.date,
-					lp.read, lp.starred, lp.thread_id, lp.folder_id,
+					lp.read, lp.starred, lp.reply_later, lp.reply_later_at, lp.thread_id, lp.folder_id,
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
@@ -724,6 +768,7 @@ export class MailboxDO extends DurableObject<Env> {
 					...row,
 					read: !!row.read,
 					starred: !!row.starred,
+					reply_later: !!row.reply_later,
 					thread_count: row.thread_count || 1,
 					thread_unread_count: row.thread_unread_count || 0,
 					participants: row.participants || row.sender,
@@ -796,7 +841,7 @@ export class MailboxDO extends DurableObject<Env> {
 			)
 			SELECT
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
-				lif.read, lif.starred, lif.thread_id, lif.folder_id,
+				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.thread_id, lif.folder_id,
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
@@ -826,6 +871,7 @@ export class MailboxDO extends DurableObject<Env> {
 			...row,
 			read: !!row.read,
 			starred: !!row.starred,
+			reply_later: !!row.reply_later,
 			thread_count: row.thread_count || 1,
 			thread_unread_count: row.thread_unread_count || 0,
 			participants: row.participants || row.sender,
@@ -981,6 +1027,7 @@ export class MailboxDO extends DurableObject<Env> {
 			body,
 			read: !!email.read,
 			starred: !!email.starred,
+			reply_later: !!email.reply_later,
 			attachments: emailAttachments,
 			auth: parseStoredEmailAuth(email.auth),
 		};
@@ -1026,6 +1073,7 @@ export class MailboxDO extends DurableObject<Env> {
 				body: await this.#hydrateBody(email.id, email.body, email.snippet),
 				read: !!email.read,
 				starred: !!email.starred,
+				reply_later: !!email.reply_later,
 				attachments: attachmentsByEmail.get(email.id) || [],
 			})),
 		);
@@ -1033,14 +1081,43 @@ export class MailboxDO extends DurableObject<Env> {
 
 	async updateEmail(
 		id: string,
-		{ read, starred }: { read?: boolean; starred?: boolean },
+		{
+			read,
+			starred,
+			reply_later,
+		}: { read?: boolean; starred?: boolean; reply_later?: boolean },
 	) {
-		const data: { read?: number; starred?: number } = {};
+		const existing = this.db
+			.select({
+				reply_later: schema.emails.reply_later,
+			})
+			.from(schema.emails)
+			.where(eq(schema.emails.id, id))
+			.get();
+		if (!existing) return null;
+
+		const data: {
+			read?: number;
+			starred?: number;
+			reply_later?: number;
+			reply_later_at?: string | null;
+		} = {};
 		if (read !== undefined) {
 			data.read = read ? 1 : 0;
 		}
 		if (starred !== undefined) {
 			data.starred = starred ? 1 : 0;
+		}
+		if (reply_later !== undefined) {
+			data.reply_later = reply_later ? 1 : 0;
+			if (reply_later) {
+				// Only stamp when newly joining the pile.
+				if (!existing.reply_later) {
+					data.reply_later_at = new Date().toISOString();
+				}
+			} else {
+				data.reply_later_at = null;
+			}
 		}
 
 		if (Object.keys(data).length === 0) {
@@ -1053,8 +1130,34 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.emails.id, id))
 			.run();
 
-		this.broadcastEvent("email_updated", { id, read, starred });
+		this.broadcastEvent("email_updated", { id, read, starred, reply_later });
 		return this.getEmail(id);
+	}
+
+	/**
+	 * Clear Reply Later for every message in a thread (after a successful reply).
+	 */
+	async clearReplyLaterForThread(threadId: string | null | undefined) {
+		if (!threadId) return;
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id FROM emails WHERE thread_id = ?1 AND reply_later = 1`,
+				threadId,
+			),
+		] as { id: string }[];
+		if (rows.length === 0) return;
+
+		this.ctx.storage.sql.exec(
+			`UPDATE emails SET reply_later = 0, reply_later_at = NULL
+			 WHERE thread_id = ?1 AND reply_later = 1`,
+			threadId,
+		);
+		for (const row of rows) {
+			this.broadcastEvent("email_updated", {
+				id: row.id,
+				reply_later: false,
+			});
+		}
 	}
 
 	async updateDraft(
@@ -1580,13 +1683,29 @@ export class MailboxDO extends DurableObject<Env> {
 
 		if (!folder) return false;
 
-		this.db
-			.update(schema.emails)
-			.set({ folder_id: folderId })
-			.where(eq(schema.emails.id, id))
-			.run();
+		const clearReplyLater =
+			folderId === Folders.TRASH || folderId === Folders.SPAM;
 
-		this.broadcastEvent("email_moved", { id, folder_id: folderId });
+		if (clearReplyLater) {
+			this.db
+				.update(schema.emails)
+				.set({
+					folder_id: folderId,
+					reply_later: 0,
+					reply_later_at: null,
+				})
+				.where(eq(schema.emails.id, id))
+				.run();
+			this.broadcastEvent("email_moved", { id, folder_id: folderId });
+			this.broadcastEvent("email_updated", { id, reply_later: false });
+		} else {
+			this.db
+				.update(schema.emails)
+				.set({ folder_id: folderId })
+				.where(eq(schema.emails.id, id))
+				.run();
+			this.broadcastEvent("email_moved", { id, folder_id: folderId });
+		}
 		return true;
 	}
 
@@ -1804,6 +1923,7 @@ export class MailboxDO extends DurableObject<Env> {
 			date_end,
 			is_read,
 			is_starred,
+			is_reply_later,
 			has_attachment,
 		} = options;
 		const prefix = tableAlias ? `${tableAlias}.` : "";
@@ -1865,6 +1985,10 @@ export class MailboxDO extends DurableObject<Env> {
 			const p = addParam(is_starred ? 1 : 0);
 			conditions.push(`${prefix}starred = ${p}`);
 		}
+		if (is_reply_later !== undefined) {
+			const p = addParam(is_reply_later ? 1 : 0);
+			conditions.push(`${prefix}reply_later = ${p}`);
+		}
 		if (has_attachment) {
 			conditions.push(
 				`${prefix}id IN (SELECT DISTINCT email_id FROM attachments)`,
@@ -1894,7 +2018,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const query = `
 			SELECT e.id, e.subject, e.sender, e.sender_name, e.recipient, e.cc, e.bcc, e.date,
-				e.read, e.starred, e.in_reply_to, e.email_references,
+				e.read, e.starred, e.reply_later, e.reply_later_at, e.in_reply_to, e.email_references,
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,
@@ -1914,6 +2038,7 @@ export class MailboxDO extends DurableObject<Env> {
 				...row,
 				read: !!row.read,
 				starred: !!row.starred,
+				reply_later: !!row.reply_later,
 			})),
 		);
 	}

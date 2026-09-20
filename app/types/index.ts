@@ -86,6 +86,8 @@ export interface Email {
 	date: string;
 	read: boolean;
 	starred: boolean;
+	reply_later?: boolean;
+	reply_later_at?: string | null;
 	body?: string | null;
 	in_reply_to?: string | null;
 	email_references?: string | null;

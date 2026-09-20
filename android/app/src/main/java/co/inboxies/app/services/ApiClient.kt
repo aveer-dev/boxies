@@ -7,6 +7,7 @@ import co.inboxies.app.models.DigestStatusResponse
 import co.inboxies.app.models.DraftSaveResponse
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.EmailListResponse
+import co.inboxies.app.models.WorkflowPilesResponse
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.Mailbox
@@ -249,14 +250,31 @@ class ApiClient private constructor() {
         id: String,
         read: Boolean? = null,
         starred: Boolean? = null,
+        replyLater: Boolean? = null,
     ): Email = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
         method = "PUT",
         body = buildJsonObject {
             if (read != null) put("read", read)
             if (starred != null) put("starred", starred)
+            if (replyLater != null) put("reply_later", replyLater)
         },
     )
+
+    suspend fun listReplyLaterEmails(
+        mailboxId: String,
+        page: Int = 1,
+    ): EmailListResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
+        query = mapOf(
+            "reply_later" to "true",
+            "page" to page.toString(),
+            "limit" to "25",
+        ),
+    )
+
+    suspend fun listWorkflowPiles(mailboxId: String): WorkflowPilesResponse =
+        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/workflow-piles")
 
     suspend fun markRead(mailboxId: String, id: String): Email =
         updateEmail(mailboxId, id, read = true)

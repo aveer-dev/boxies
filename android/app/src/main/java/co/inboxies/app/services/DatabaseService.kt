@@ -64,11 +64,23 @@ class DatabaseService private constructor() {
         }
     }
 
-    fun updateEmailFlags(id: String, read: Boolean? = null, starred: Boolean? = null) {
+    fun updateEmailFlags(
+        id: String,
+        read: Boolean? = null,
+        starred: Boolean? = null,
+        replyLater: Boolean? = null,
+    ) {
         val existing = emails[id] ?: return
         emails[id] = existing.copy(
             read = read ?: existing.read,
             starred = starred ?: existing.starred,
+            replyLater = replyLater ?: existing.replyLater,
+            replyLaterAt = when {
+                replyLater == true && existing.replyLaterAt == null ->
+                    java.time.Instant.now().toString()
+                replyLater == false -> null
+                else -> existing.replyLaterAt
+            },
         )
     }
 

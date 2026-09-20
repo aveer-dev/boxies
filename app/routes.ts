@@ -13,6 +13,7 @@ export default [
 	route("mailbox/:mailboxId", "routes/mailbox.tsx", [
 		index("routes/mailbox-index.tsx"),
 		route("emails/:folder", "routes/email-list.tsx"),
+		route("reply-later", "routes/reply-later.tsx"),
 		route("settings", "routes/settings.tsx"),
 		route("settings/forwarding", "routes/settings-forwarding.tsx"),
 		route("settings/auto-reply", "routes/settings-auto-reply.tsx"),

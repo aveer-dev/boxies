@@ -22,6 +22,7 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 		const invalidateEmailData = () => {
 			qc.invalidateQueries({ queryKey: ["emails", mailboxId] });
 			qc.invalidateQueries({ queryKey: queryKeys.folders.list(mailboxId) });
+			qc.invalidateQueries({ queryKey: queryKeys.workflowPiles.list(mailboxId) });
 		};
 
 		const onEmailUpdated = () => {

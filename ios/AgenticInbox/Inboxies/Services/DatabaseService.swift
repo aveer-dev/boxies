@@ -188,6 +188,12 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN provider_message_id TEXT;")
             setVersion(3)
         }
+
+        if (getVersion() < 4) {
+            exec("ALTER TABLE emails ADD COLUMN reply_later INTEGER NOT NULL DEFAULT 0;")
+            exec("ALTER TABLE emails ADD COLUMN reply_later_at TEXT;")
+            setVersion(4)
+        }
     }
 
     private func getVersion() -> Int {
@@ -576,11 +582,15 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
-    func updateEmailFlags(id: String, read: Bool? = nil, starred: Bool? = nil) {
+    func updateEmailFlags(id: String, read: Bool? = nil, starred: Bool? = nil, replyLater: Bool? = nil) {
         queue.sync {
             var clauses: [String] = []
             if read != nil { clauses.append("read = ?") }
             if starred != nil { clauses.append("starred = ?") }
+            if replyLater != nil {
+                clauses.append("reply_later = ?")
+                clauses.append("reply_later_at = ?")
+            }
             guard !clauses.isEmpty else { return }
 
             let sql = "UPDATE emails SET \(clauses.joined(separator: ", ")) WHERE id = ?;"
@@ -593,6 +603,17 @@ final class DatabaseService: @unchecked Sendable {
                 }
                 if let starred {
                     sqlite3_bind_int(stmt, idx, starred ? 1 : 0)
+                    idx += 1
+                }
+                if let replyLater {
+                    sqlite3_bind_int(stmt, idx, replyLater ? 1 : 0)
+                    idx += 1
+                    if replyLater {
+                        let now = ISO8601DateFormatter().string(from: Date())
+                        sqlite3_bind_text(stmt, idx, (now as NSString).utf8String, -1, nil)
+                    } else {
+                        sqlite3_bind_null(stmt, idx)
+                    }
                     idx += 1
                 }
                 sqlite3_bind_text(stmt, idx, (id as NSString).utf8String, -1, nil)

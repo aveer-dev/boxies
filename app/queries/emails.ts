@@ -25,9 +25,11 @@ export function useEmails(
 	params: Record<string, string>,
 	options?: { enabled?: boolean; refetchInterval?: number },
 ) {
-	const queryParams = params.folder
-		? { ...params, threaded: "true" }
-		: params;
+	// Threaded conversation collapse applies to folder lists only — not Reply Later pile.
+	const queryParams =
+		params.folder && params.reply_later !== "true"
+			? { ...params, threaded: "true" }
+			: params;
 
 	return useQuery<EmailListResponse>({
 		queryKey: mailboxId
@@ -107,6 +109,9 @@ function useInvalidateEmailData() {
 		qc.invalidateQueries({ queryKey: ["emails", mailboxId] });
 		qc.invalidateQueries({
 			queryKey: queryKeys.folders.list(mailboxId),
+		});
+		qc.invalidateQueries({
+			queryKey: queryKeys.workflowPiles.list(mailboxId),
 		});
 	};
 }
