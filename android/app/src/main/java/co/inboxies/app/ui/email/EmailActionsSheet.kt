@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Icon
@@ -313,6 +314,12 @@ fun EmailActionsSheet(
                     if (email.starred) Icons.Outlined.Star else Icons.Outlined.StarBorder,
                 ) {
                     scope.launch { app.toggleStar(email); onDismiss() }
+                }
+                ActionRow(
+                    if (email.replyLater) "Remove from Reply Later" else "Reply later",
+                    Icons.Outlined.Schedule,
+                ) {
+                    scope.launch { app.toggleReplyLater(email); onDismiss() }
                 }
                 ActionRow(
                     if (email.read) "Mark as Unread" else "Mark as Read",

@@ -512,6 +512,13 @@ struct EmailRowView: View {
                         .foregroundStyle(AppTheme.muted)
                         .accessibilityLabel("Has attachment")
                 }
+
+                if email.replyLater {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                        .accessibilityLabel("Reply later")
+                }
                 
                 if email.starred {
                     Image(systemName: "star.fill")

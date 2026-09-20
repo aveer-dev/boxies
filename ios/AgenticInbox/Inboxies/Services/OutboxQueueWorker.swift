@@ -51,6 +51,10 @@ actor OutboxQueueWorker {
             let starred = (payload["starred"] as? Bool) ?? true
             _ = try await APIClient.shared.updateEmail(mailboxId: mailboxId, id: emailId, starred: starred)
 
+        case "reply_later":
+            let replyLater = (payload["reply_later"] as? Bool) ?? true
+            _ = try await APIClient.shared.updateEmail(mailboxId: mailboxId, id: emailId, replyLater: replyLater)
+
         case "move":
             guard let folderId = payload["folderId"] as? String else { return }
             let setPref = (payload["setSenderPreference"] as? Bool) ?? false

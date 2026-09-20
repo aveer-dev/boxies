@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
@@ -936,6 +937,14 @@ fun EmailRowView(
                             Icons.Outlined.AttachFile,
                             contentDescription = "Has attachment",
                             tint = colors.muted,
+                            modifier = Modifier.size(list.badge.value.dp),
+                        )
+                    }
+                    if (email.replyLater) {
+                        Icon(
+                            Icons.Outlined.Schedule,
+                            contentDescription = "Reply later",
+                            tint = colors.accent,
                             modifier = Modifier.size(list.badge.value.dp),
                         )
                     }

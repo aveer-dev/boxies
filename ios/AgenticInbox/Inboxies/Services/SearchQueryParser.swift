@@ -9,6 +9,7 @@ struct ParsedSearch: Equatable {
     var folder: String?
     var isRead: Bool?
     var isStarred: Bool?
+    var isReplyLater: Bool?
     var hasAttachment: Bool?
     var dateStart: String?
     var dateEnd: String?
@@ -21,6 +22,7 @@ struct ParsedSearch: Equatable {
             || folder != nil
             || isRead != nil
             || isStarred != nil
+            || isReplyLater != nil
             || hasAttachment == true
             || dateStart != nil
             || dateEnd != nil
@@ -38,6 +40,7 @@ struct ParsedSearch: Equatable {
         if let dateEnd { params["date_end"] = dateEnd }
         if let isRead { params["is_read"] = isRead ? "true" : "false" }
         if let isStarred { params["is_starred"] = isStarred ? "true" : "false" }
+        if let isReplyLater { params["is_reply_later"] = isReplyLater ? "true" : "false" }
         if hasAttachment == true { params["has_attachment"] = "true" }
         return params
     }
@@ -106,6 +109,7 @@ enum SearchQueryParser {
                 case "read": result.isRead = true
                 case "starred": result.isStarred = true
                 case "unstarred": result.isStarred = false
+                case "reply-later", "reply_later": result.isReplyLater = true
                 default: break
                 }
             case "has":

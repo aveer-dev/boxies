@@ -230,16 +230,33 @@ final class APIClient: @unchecked Sendable {
         mailboxId: String,
         id: String,
         read: Bool? = nil,
-        starred: Bool? = nil
+        starred: Bool? = nil,
+        replyLater: Bool? = nil
     ) async throws -> Email {
         var body: [String: Any] = [:]
         if let read { body["read"] = read }
         if let starred { body["starred"] = starred }
+        if let replyLater { body["reply_later"] = replyLater }
         return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)",
             method: "PUT",
             body: body
         )
+    }
+
+    func listReplyLaterEmails(mailboxId: String, page: Int = 1) async throws -> EmailListResponse {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
+            query: [
+                "reply_later": "true",
+                "page": String(page),
+                "limit": "25",
+            ]
+        )
+    }
+
+    func listWorkflowPiles(mailboxId: String) async throws -> WorkflowPilesResponse {
+        try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/workflow-piles")
     }
 
     func moveEmail(
@@ -466,6 +483,15 @@ final class APIClient: @unchecked Sendable {
 }
 
 struct EmptyResponse: Decodable {}
+
+struct WorkflowPile: Decodable {
+    let id: String
+    let count: Int
+}
+
+struct WorkflowPilesResponse: Decodable {
+    let piles: [WorkflowPile]
+}
 
 /// Do not follow Cloudflare Access's 302 to the login HTML page — that body is
 /// not JSON and surfaces as a confusing decode error.

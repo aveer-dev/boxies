@@ -440,6 +440,12 @@ struct HomeShellView: View {
             }
             return app.isDigestLoading ? "Loading…" : ""
         }
+        if case .replyLater = app.selectedTab {
+            let count = app.replyLaterCount
+            if count == 0 { return "Nothing queued" }
+            if count == 1 { return "1 to reply" }
+            return "\(count) to reply"
+        }
         guard case .folder = app.selectedTab else { return "" }
         if isSelectMode {
             return selectedEmailIDs.isEmpty ? "Select emails" : "\(selectedEmailIDs.count) selected"
@@ -510,6 +516,21 @@ struct HomeShellView: View {
                     bottomInset: listBottomInset,
                     onRefresh: { await app.refreshCurrentTab() }
                 )
+            case .replyLater:
+                EmailListView(
+                    emails: filteredEmails,
+                    isLoading: app.isLoading,
+                    fallbackFolderId: nil,
+                    bottomInset: listBottomInset,
+                    onRefresh: { await app.refreshCurrentTab() },
+                    isSelectMode: isSelectMode,
+                    selectedEmailIDs: $selectedEmailIDs,
+                    isFiltered: false,
+                    onClearFilters: nil,
+                    filterChipsBar: nil
+                ) { email in
+                    Task { await app.openEmail(email) }
+                }
             case .chats:
                 ContentUnavailableView(
                     "AI chats",
@@ -569,10 +590,42 @@ struct HomeShellView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
+            if app.replyLaterCount > 0 || app.selectedTab == .replyLater {
+                replyLaterPileButton
+            }
             askAIButton
-
             composeButton
         }
+    }
+
+    private var replyLaterPileButton: some View {
+        Button {
+            if app.selectedTab == .replyLater, let first = app.emails.first {
+                Task {
+                    await app.openEmail(first)
+                    await app.startCompose(mode: .reply, original: first)
+                }
+            } else {
+                selectTab(.replyLater)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.inter(size: 15, weight: .medium))
+                if app.replyLaterCount > 0 {
+                    Text("\(app.replyLaterCount)")
+                        .font(.inter(size: 13, weight: .semibold))
+                }
+            }
+            .foregroundStyle(app.selectedTab == .replyLater ? AppTheme.accent : AppTheme.ink)
+            .padding(.horizontal, 14)
+            .frame(height: HomeChromeMetrics.actionBarHeight)
+            .liquidGlass(in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Reply Later")
+        .accessibilityValue("\(app.replyLaterCount) queued")
+        .accessibilityHint(app.selectedTab == .replyLater ? "Opens Focus and Reply" : "Opens Reply Later pile")
     }
 
     private var composeButton: some View {
@@ -816,6 +869,10 @@ struct HomeShellView: View {
             Toggle(isOn: $filterState.starredOnly) {
                 Label("Starred", systemImage: "star")
             }
+
+            Toggle(isOn: $filterState.replyLaterOnly) {
+                Label("Reply later", systemImage: "clock.arrow.circlepath")
+            }
         }
 
         Section("Recipients") {
@@ -892,6 +949,9 @@ struct HomeShellView: View {
                 }
                 if filterState.starredOnly {
                     filterChip(title: "Starred") { filterState.starredOnly = false }
+                }
+                if filterState.replyLaterOnly {
+                    filterChip(title: "Reply later") { filterState.replyLaterOnly = false }
                 }
                 if filterState.toMeOnly {
                     filterChip(title: "To me") { filterState.toMeOnly = false }

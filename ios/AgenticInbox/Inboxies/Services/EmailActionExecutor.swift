@@ -114,6 +114,12 @@ extension AppModel {
         if email.isUnread {
             adjustFolderUnread(for: email, wasUnread: true, isUnread: false)
         }
+        if folderId == "trash" || folderId == "spam" {
+            await refreshReplyLaterCount()
+            if selectedTab == .replyLater {
+                await loadEmailsForCurrentTab(showLoading: false)
+            }
+        }
     }
 
     func deleteCurrentEmail() async {

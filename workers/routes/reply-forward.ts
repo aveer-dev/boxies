@@ -106,6 +106,7 @@ export async function handleReplyEmail(c: AppContext) {
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
 	await stub.markThreadRead(thread_id);
 	await stub.deleteDraftsForThread(thread_id);
+	await (stub as any).clearReplyLaterForThread(thread_id);
 
 	c.executionCtx.waitUntil(
 		deliverOutboundInBackground(c.env, mailboxId, messageId, {

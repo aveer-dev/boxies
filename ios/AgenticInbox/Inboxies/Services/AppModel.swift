@@ -33,6 +33,8 @@ final class AppModel {
     var threadEmails: [Email] = []
     var composeSession: ComposeSession?
     var toast: AppToast?
+    /// Count for bottom Reply Later chrome (workflow pile).
+    var replyLaterCount: Int = 0
     private var toastDismissTask: Task<Void, Never>?
     
     struct UndoableAction: Identifiable {
@@ -245,6 +247,7 @@ final class AppModel {
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: inboxDigest == nil)
             }
+            await refreshReplyLaterCount()
         } catch let error as APIError {
             if case .http(let code, _) = error, code == 403 || code == 404 {
                 await dropInaccessibleMailbox(id)
@@ -328,6 +331,29 @@ final class AppModel {
             isLoading = false
             return
         }
+
+        if selectedTab == .replyLater {
+            if showLoading && emails.isEmpty {
+                isLoading = true
+            }
+            isSyncing = true
+            defer {
+                isLoading = false
+                isSyncing = false
+            }
+            do {
+                let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId)
+                emails = response.emails
+                replyLaterCount = response.totalCount
+                lastSyncedAt = Date()
+            } catch {
+                if emails.isEmpty {
+                    errorMessage = error.localizedDescription
+                }
+            }
+            return
+        }
+
         guard let folderId = selectedTab.syncFolderId else {
             emails = []
             isLoading = false
@@ -352,6 +378,7 @@ final class AppModel {
             let synced = try await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId)
             emails = folderId == "inbox" ? Self.orderNewThenSeen(synced) : synced
             lastSyncedAt = Date()
+            await refreshReplyLaterCount()
         } catch {
             if emails.isEmpty {
                 errorMessage = error.localizedDescription
@@ -359,10 +386,20 @@ final class AppModel {
         }
     }
 
+    func refreshReplyLaterCount() async {
+        guard let mailboxId = selectedMailboxId else {
+            replyLaterCount = 0
+            return
+        }
+        if let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId) {
+            replyLaterCount = piles.piles.first(where: { $0.id == "reply_later" })?.count ?? 0
+        }
+    }
+
     /// Reloads the visible tab without swapping in the list skeleton.
     func refreshCurrentTab() async {
         switch selectedTab {
-        case .folder, .aiInbox:
+        case .folder, .aiInbox, .replyLater:
             await loadEmailsForCurrentTab(showLoading: false)
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: false)
@@ -1011,6 +1048,52 @@ final class AppModel {
         applyEmailUpdate(updated)
     }
 
+    func toggleReplyLater(on email: Email? = nil) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let target = email ?? selectedEmail ?? threadEmails.last
+        guard let target else { return }
+        let next = !target.replyLater
+
+        db.updateEmailFlags(id: target.id, replyLater: next)
+        db.enqueueMutation(
+            mailboxId: mailboxId,
+            emailId: target.id,
+            actionType: "reply_later",
+            payload: ["reply_later": next]
+        )
+        outbox.trigger()
+
+        var updated = target
+        updated.replyLater = next
+        if next {
+            updated.replyLaterAt = ISO8601DateFormatter().string(from: Date())
+        } else {
+            updated.replyLaterAt = nil
+        }
+        applyEmailUpdate(updated)
+        await refreshReplyLaterCount()
+        if selectedTab == .replyLater {
+            await loadEmailsForCurrentTab(showLoading: false)
+        }
+    }
+
+    func setReplyLater(_ emailIDs: Set<String>, replyLater: Bool) async {
+        guard let mailboxId = selectedMailboxId, !emailIDs.isEmpty else { return }
+        for id in emailIDs {
+            if let updated = try? await APIClient.shared.updateEmail(
+                mailboxId: mailboxId,
+                id: id,
+                replyLater: replyLater
+            ) {
+                applyEmailUpdate(updated)
+            }
+        }
+        await refreshReplyLaterCount()
+        if selectedTab == .replyLater {
+            await loadEmailsForCurrentTab(showLoading: false)
+        }
+    }
+
     func toggleRead(on email: Email? = nil) async {
         guard let mailboxId = selectedMailboxId else { return }
         let target = email ?? selectedEmail ?? threadEmails.last
@@ -1347,6 +1430,7 @@ enum HomeTab: Hashable {
     case folder(String)
     case chats
     case aiInbox
+    case replyLater
 
     static var inbox: HomeTab { .folder("inbox") }
 
@@ -1355,7 +1439,7 @@ enum HomeTab: Hashable {
         switch self {
         case .folder(let id): return id
         case .aiInbox: return "inbox"
-        case .chats: return nil
+        case .chats, .replyLater: return nil
         }
     }
 
@@ -1379,6 +1463,8 @@ enum HomeTab: Hashable {
             return "AI"
         case .aiInbox:
             return "For you"
+        case .replyLater:
+            return "Reply Later"
         }
     }
 
@@ -1402,6 +1488,8 @@ enum HomeTab: Hashable {
             return "bubble.left.and.bubble.right"
         case .aiInbox:
             return "sparkles"
+        case .replyLater:
+            return "clock.arrow.circlepath"
         }
     }
 }

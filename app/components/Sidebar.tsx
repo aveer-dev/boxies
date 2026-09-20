@@ -15,6 +15,7 @@ import {
 	PlusIcon,
 	ProhibitIcon,
 	ShieldCheckIcon,
+	ClockCounterClockwiseIcon,
 	TrashIcon,
 	TrayIcon,
 	WarningIcon,
@@ -26,7 +27,7 @@ import {
 	FOLDER_DISPLAY_NAMES,
 	SYSTEM_FOLDER_IDS,
 } from "shared/folders";
-import { useCreateFolder, useFolders } from "~/queries/folders";
+import { useCreateFolder, useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
 
@@ -88,6 +89,7 @@ export default function Sidebar() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const navigate = useNavigate();
 	const { data: folders = [] } = useFolders(mailboxId);
+	const { data: workflowPiles = [] } = useWorkflowPiles(mailboxId);
 	const createFolderMutation = useCreateFolder();
 	const { startCompose, closeSidebar } = useUIStore();
 	const { data: currentMailbox } = useMailbox(mailboxId);
@@ -99,6 +101,9 @@ export default function Sidebar() {
 			folders.filter((f) => !(SYSTEM_FOLDER_IDS as readonly string[]).includes(f.id)),
 		[folders],
 	);
+
+	const replyLaterCount =
+		workflowPiles.find((p) => p.id === "reply_later")?.count ?? 0;
 
 	const getUnreadCount = (folderId: string) => {
 		const found = folders.find((f) => f.id === folderId);
@@ -180,6 +185,22 @@ export default function Sidebar() {
 						onClick={handleNavClick}
 					/>
 				))}
+
+				{/* Workflow piles — Reply Later (Set Aside hooks in later) */}
+				<div className="pt-5">
+					<div className="flex items-center justify-between px-3 mb-1.5">
+						<span className="text-xs uppercase tracking-wider font-semibold text-kumo-subtle">
+							Workflow
+						</span>
+					</div>
+					<FolderLink
+						to={`/mailbox/${mailboxId}/reply-later`}
+						icon={<ClockCounterClockwiseIcon size={18} />}
+						label="Reply Later"
+						unreadCount={replyLaterCount}
+						onClick={handleNavClick}
+					/>
+				</div>
 
 				{/* Custom folders */}
 				{customFolders.length > 0 && (

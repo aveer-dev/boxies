@@ -54,6 +54,9 @@ class AppModel {
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails.asStateFlow()
 
+    private val _replyLaterCount = MutableStateFlow(0)
+    val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
+
     private val _inboxDigest = MutableStateFlow<InboxDigest?>(null)
     val inboxDigest: StateFlow<InboxDigest?> = _inboxDigest.asStateFlow()
 
@@ -371,9 +374,30 @@ class AppModel {
 
     suspend fun loadEmailsForCurrentTab(showLoading: Boolean = true) {
         val mailboxId = _selectedMailboxId.value
+        if (mailboxId == null) {
+            _isLoading.value = false
+            return
+        }
+
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            if (showLoading && _emails.value.isEmpty()) _isLoading.value = true
+            _isSyncing.value = true
+            try {
+                val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
+                _emails.value = response.emails
+                _replyLaterCount.value = response.totalCount
+            } catch (e: Exception) {
+                if (_emails.value.isEmpty()) _errorMessage.value = e.message
+            } finally {
+                _isLoading.value = false
+                _isSyncing.value = false
+            }
+            return
+        }
+
         val folderId = _selectedTab.value.syncFolderId
-        if (mailboxId == null || folderId == null) {
-            if (folderId == null) _emails.value = emptyList()
+        if (folderId == null) {
+            _emails.value = emptyList()
             _isLoading.value = false
             return
         }
@@ -388,6 +412,7 @@ class AppModel {
         try {
             val synced = MailboxSyncService.syncFolder(mailboxId, folderId)
             _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(synced) else synced
+            refreshReplyLaterCount()
         } catch (e: Exception) {
             if (_emails.value.isEmpty()) _errorMessage.value = e.message
         } finally {
@@ -396,9 +421,21 @@ class AppModel {
         }
     }
 
+    suspend fun refreshReplyLaterCount() {
+        val mailboxId = _selectedMailboxId.value ?: run {
+            _replyLaterCount.value = 0
+            return
+        }
+        try {
+            val piles = ApiClient.shared.listWorkflowPiles(mailboxId)
+            _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
+        } catch (_: Exception) {
+        }
+    }
+
     suspend fun refreshCurrentTab() {
         when (val tab = _selectedTab.value) {
-            is HomeTab.Folder, is HomeTab.AiInbox -> {
+            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater -> {
                 loadEmailsForCurrentTab(showLoading = false)
                 if (tab is HomeTab.AiInbox) loadInboxDigest(showLoading = false)
             }
@@ -1028,6 +1065,44 @@ class AppModel {
         }
     }
 
+    suspend fun toggleReplyLater(on: Email? = null) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
+        val next = !target.replyLater
+        db.updateEmailFlags(target.id, replyLater = next)
+        applyEmailUpdate(
+            target.copy(
+                replyLater = next,
+                replyLaterAt = if (next) java.time.Instant.now().toString() else null,
+            ),
+        )
+        runCatching {
+            ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
+        }.onFailure {
+            // Roll back optimistic update on failure
+            db.updateEmailFlags(target.id, replyLater = !next)
+            applyEmailUpdate(target)
+        }
+        refreshReplyLaterCount()
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            loadEmailsForCurrentTab(showLoading = false)
+        }
+    }
+
+    suspend fun setReplyLater(ids: Set<String>, replyLater: Boolean) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        if (ids.isEmpty()) return
+        for (id in ids) {
+            runCatching {
+                ApiClient.shared.updateEmail(mailboxId, id, replyLater = replyLater)
+            }.onSuccess { applyEmailUpdate(it) }
+        }
+        refreshReplyLaterCount()
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            loadEmailsForCurrentTab(showLoading = false)
+        }
+    }
+
     suspend fun toggleRead(on: Email? = null) {
         val mailboxId = _selectedMailboxId.value ?: return
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
@@ -1129,6 +1204,12 @@ class AppModel {
             )
         }.onFailure {
             showToast("Couldn't sync move", isError = true)
+        }
+        if (folderId == "trash" || folderId == "spam") {
+            refreshReplyLaterCount()
+            if (_selectedTab.value is HomeTab.ReplyLater) {
+                loadEmailsForCurrentTab(showLoading = false)
+            }
         }
     }
 

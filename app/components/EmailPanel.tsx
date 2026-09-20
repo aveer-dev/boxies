@@ -92,6 +92,15 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	if (!email) return <EmailPanelSkeleton />;
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
+	const toggleReplyLater = () => {
+		if (mailboxId) {
+			updateEmail.mutate({
+				mailboxId,
+				id: email.id,
+				data: { reply_later: !email.reply_later },
+			});
+		}
+	};
 	const runMove = (folderId: string, setSenderPreference: boolean) => {
 		if (!mailboxId) return;
 		moveEmailMut.mutate(
@@ -206,6 +215,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				}
 				onForward={() => startCompose({ mode: "forward", originalEmail: email })}
 				onToggleStar={toggleStar}
+				onToggleReplyLater={toggleReplyLater}
 				onToggleRead={() => {
 					if (mailboxId) {
 						updateEmail.mutate({

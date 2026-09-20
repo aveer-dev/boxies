@@ -256,6 +256,8 @@ data class Email(
     val date: String = "",
     val read: Boolean = false,
     val starred: Boolean = false,
+    @SerialName("reply_later") val replyLater: Boolean = false,
+    @SerialName("reply_later_at") val replyLaterAt: String? = null,
     val body: String? = null,
     val snippet: String? = null,
     @SerialName("in_reply_to") val inReplyTo: String? = null,
@@ -481,6 +483,7 @@ enum class EmailDateFilter(val label: String) {
 data class EmailFilterState(
     val unreadOnly: Boolean = false,
     val starredOnly: Boolean = false,
+    val replyLaterOnly: Boolean = false,
     val toMeOnly: Boolean = false,
     val ccOrBccMeOnly: Boolean = false,
     val withAttachmentsOnly: Boolean = false,
@@ -488,7 +491,7 @@ data class EmailFilterState(
     val needsReplyOnly: Boolean = false,
 ) {
     val isActive: Boolean
-        get() = unreadOnly || starredOnly || toMeOnly || ccOrBccMeOnly ||
+        get() = unreadOnly || starredOnly || replyLaterOnly || toMeOnly || ccOrBccMeOnly ||
             withAttachmentsOnly || dateFilter != EmailDateFilter.ANY || needsReplyOnly
 
     val activeCount: Int
@@ -496,6 +499,7 @@ data class EmailFilterState(
             var count = 0
             if (unreadOnly) count++
             if (starredOnly) count++
+            if (replyLaterOnly) count++
             if (toMeOnly) count++
             if (ccOrBccMeOnly) count++
             if (withAttachmentsOnly) count++
@@ -509,6 +513,7 @@ data class EmailFilterState(
     fun matches(email: Email, userEmail: String, now: Date = Date()): Boolean {
         if (unreadOnly && !email.isUnread) return false
         if (starredOnly && !email.starred) return false
+        if (replyLaterOnly && !email.replyLater) return false
         if (withAttachmentsOnly && !email.hasFileAttachment) return false
         if (needsReplyOnly && email.needsReply != true) return false
 
@@ -567,6 +572,17 @@ data class EmailListResponse(
     val totalCount: Int = 0,
     val newCount: Int? = null,
     val seenCount: Int? = null,
+)
+
+@Serializable
+data class WorkflowPile(
+    val id: String,
+    val count: Int = 0,
+)
+
+@Serializable
+data class WorkflowPilesResponse(
+    val piles: List<WorkflowPile> = emptyList(),
 )
 
 @Serializable
@@ -736,12 +752,13 @@ sealed class HomeTab {
     data class Folder(val id: String) : HomeTab()
     data object Chats : HomeTab()
     data object AiInbox : HomeTab()
+    data object ReplyLater : HomeTab()
 
     val syncFolderId: String?
         get() = when (this) {
             is Folder -> id
             AiInbox -> "inbox"
-            Chats -> null
+            Chats, ReplyLater -> null
         }
 
     val title: String
@@ -761,6 +778,7 @@ sealed class HomeTab {
             }
             Chats -> "AI"
             AiInbox -> "For you"
+            ReplyLater -> "Reply Later"
         }
 
     companion object {

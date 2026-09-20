@@ -57,6 +57,17 @@ class SearchQueryParserTest {
         assertNull(parsed.hasAttachment)
         assertFalse(parsed.hasStructuredFilters)
     }
+
+    @Test
+    fun parsesReplyLaterOperator() {
+        val parsed = SearchQueryParser.parse("is:reply-later meeting")
+        assertEquals("meeting", parsed.query)
+        assertEquals(true, parsed.isReplyLater)
+        assertEquals("true", parsed.toApiQuery()["is_reply_later"])
+        val alias = SearchQueryParser.parse("is:reply_later is:starred")
+        assertEquals(true, alias.isReplyLater)
+        assertEquals(true, alias.isStarred)
+    }
 }
 
 class DeliveryStatusTest {
