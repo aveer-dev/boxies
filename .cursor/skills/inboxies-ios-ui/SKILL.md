@@ -181,6 +181,20 @@ Gate iOS 18/26 APIs with `#available` the same way (glass, zoom, `ToolbarSpacer`
 | Search | `Views/Search/SearchView.swift` |
 | Settings | `Views/Settings/*` |
 | Markdown / toast / flow | `Views/Components/*` |
+| DEBUG Simulator previews | `Views/PreviewSupport.swift` + launch args in `InboxiesApp.swift` |
+
+## DEBUG Simulator launch args
+
+Peers of the Android intent harness. Use for E2E / visual review — when the change also ships on Android, require the matching `android/scripts/run-debug-preview.sh` mode too.
+
+| Arg | Surface |
+| --- | --- |
+| `-previewDomainAdmin` | Domain Admin console |
+| `-previewPasswordSignIn` | Password sign-in |
+| `-previewInviteAccept` | Invite accept form |
+| `-previewMailbox` | Inbox New/Seen |
+| `-previewScreener` | Screener + detail |
+| `-previewReplyLater` | Reply Later pile |
 
 ## Hard don'ts
 
@@ -192,3 +206,4 @@ Gate iOS 18/26 APIs with `#available` the same way (glass, zoom, `ToolbarSpacer`
 - Spinner-only first load on lists (use skeletons).
 - Dismissing compose instead of minimizing to the dock.
 - Shipping iOS-only visual changes without the Android twin unless the task is explicitly iOS-only.
+- Treating Simulator-only evidence as enough for a dual-platform change — run Android DEBUG previews (`inboxies-android-ui`) for the same surfaces.

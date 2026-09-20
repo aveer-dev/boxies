@@ -946,7 +946,50 @@ class AppModel {
         _pendingInviteToken.value = null
         _errorMessage.value = null
         _toast.value = null
+        isDebugPreview = false
     }
+
+    /**
+     * Seed in-memory mailbox state for DEBUG emulator previews.
+     * Skips network/bootstrap; [isDebugPreview] stays true so RootView must not call [bootstrap].
+     */
+    fun applyDebugPreview(
+        mailboxes: List<Mailbox>,
+        selectedMailboxId: String?,
+        folders: List<Folder>,
+        emails: List<Email>,
+        selectedTab: HomeTab,
+        selectedEmail: Email?,
+        threadEmails: List<Email>,
+        replyLaterCount: Int,
+        isAdmin: Boolean,
+    ) {
+        streamClient.stop()
+        isDebugPreview = true
+        _mailboxes.value = mailboxes
+        _selectedMailboxId.value = selectedMailboxId
+        _folders.value = folders
+        _emails.value = emails
+        _selectedTab.value = selectedTab
+        _selectedEmail.value = selectedEmail
+        _threadEmails.value = threadEmails
+        _replyLaterCount.value = replyLaterCount
+        _isAdmin.value = isAdmin
+        _inboxDigest.value = null
+        _composeSession.value = null
+        _chatSession.value = ChatSession.Dismissed
+        _conversations.value = emptyList()
+        _pendingInviteToken.value = null
+        _errorMessage.value = null
+        _toast.value = null
+        _isMailboxLoading.value = false
+        _isLoading.value = false
+    }
+
+    /** When true, UI must not call [bootstrap] / real-time sync (DEBUG preview fixtures). */
+    @Volatile
+    var isDebugPreview: Boolean = false
+        private set
 
     fun updateComposeFromMailbox(mailboxId: String) {
         val session = _composeSession.value ?: return

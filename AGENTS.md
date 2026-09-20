@@ -26,7 +26,8 @@ Adapted Emil skills keep MIT copyright; see `.cursor/skills/NOTICE`.
 - No `TabView` IA on iOS. No `NavHost` IA on Android (the Navigation Compose dependency is unused).
 - Visual changes land on **both** clients unless the task is explicitly one platform.
 - Web `app/` is a separate Tailwind/React surface — these mobile skills do not apply there.
+- **DEBUG previews:** iOS Simulator launch args (`-previewDomainAdmin`, `-previewMailbox`, …) and Android intent extras / `android/scripts/run-debug-preview.sh` are peers. For cross-platform UI review, exercise **both** — see `inboxies-android-ui` “DEBUG preview harness” and iOS `PreviewSupport.swift`.
 
 ## Tooling
 
-Use **pnpm** for JS/Worker work. iOS: Xcode + `ios/AgenticInbox`. Android: Gradle from `android/`.
+Use **pnpm** for JS/Worker work. iOS: Xcode + `ios/AgenticInbox`. Android: Gradle from `android/`. Android DEBUG previews: `cd android && INSTALL=1 ./scripts/run-debug-preview.sh <mode>`.

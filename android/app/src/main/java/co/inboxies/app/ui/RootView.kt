@@ -42,6 +42,7 @@ fun RootView(
     val pendingInvite by appModel.pendingInviteToken.collectAsState()
 
     LaunchedEffect(token) {
+        if (appModel.isDebugPreview) return@LaunchedEffect
         if (!token.isNullOrBlank()) {
             appModel.bootstrap(token)
         } else {

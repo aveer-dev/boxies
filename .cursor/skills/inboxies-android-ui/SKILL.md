@@ -162,6 +162,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Search | `ui/search/SearchView.kt` |
 | Settings | `ui/settings/*` |
 | Menu / toast / markdown | `ui/components/*` |
+| DEBUG previews | `ui/preview/*` (emulator intent harness) |
 
 ## Hard don'ts
 
@@ -174,3 +175,43 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 - Dismissing compose instead of minimizing to the dock.
 - Opaque system bars or ignoring window insets.
 - Shipping Android-only visual changes without the iOS twin unless the task is explicitly Android-only.
+- Reviewing or shipping UI that was only verified on iOS Simulator — use the Android DEBUG preview harness below for the same surfaces.
+
+## DEBUG preview harness (emulator / adb)
+
+**Required for E2E / visual review.** Matches iOS Simulator launch args (`-previewDomainAdmin`, `-previewMailbox`, …). Agents must exercise Android with these previews the same way they use iOS args — do not treat “compile OK” as an Android UI pass.
+
+| Mode | Intent (boolean extra) | `-e preview` value | Surface |
+| --- | --- | --- | --- |
+| Domain Admin | `previewDomainAdmin` | `domainAdmin` | Admin mailbox console (fixture rows, no network) |
+| Password sign-in | `previewPasswordSignIn` | `passwordSignIn` | `SignInView` with password form expanded |
+| Invite accept | `previewInviteAccept` | `inviteAccept` | Static accept-invite form |
+| Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
+| Screener | `previewScreener` | `screener` | Screener folder + detail open |
+| Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
+
+Code: `ui/preview/PreviewMode.kt`, `PreviewSupport.kt`, `PreviewRoots.kt`. Wired from `MainActivity` when `BuildConfig.DEBUG` and an extra is present. Fixtures never persist session (`AuthStore.applyEphemeralSession`); normal launches call `resyncFromStorage()`.
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+# or: INSTALL=1 ./scripts/run-debug-preview.sh domainAdmin
+./scripts/run-debug-preview.sh domainAdmin
+./scripts/run-debug-preview.sh mailbox
+./scripts/run-debug-preview.sh screener
+./scripts/run-debug-preview.sh replyLater
+./scripts/run-debug-preview.sh passwordSignIn
+./scripts/run-debug-preview.sh inviteAccept
+```
+
+Equivalent raw adb:
+
+```bash
+adb shell am start -n co.inboxies.app/.MainActivity --ez previewDomainAdmin true
+adb shell am start -n co.inboxies.app/.MainActivity -e preview mailbox
+```
+
+Emulator tip: wait for `sys.boot_completed=1` before install/start (`adb wait-for-device` then poll `getprop`). Prefer a cold `emulator -avd <name> -no-snapshot-load` if the AVD flakes offline mid-boot.
+
+For Compose `@Preview` / prototype variants, still use `ui/prototypes/` + `PreviewSupport` fixtures — the adb harness is for full-activity emulator certainty, not Studio pane-only.

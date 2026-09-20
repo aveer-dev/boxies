@@ -46,14 +46,16 @@ import kotlinx.coroutines.launch
 fun DomainAdminSettingsView(
     onBack: (() -> Unit)? = null,
     onAssigned: (() -> Unit)? = null,
+    /** DEBUG preview fixtures — skips network reload when non-null. */
+    previewRows: List<AdminMailboxRow>? = null,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
 
-    var rows by remember { mutableStateOf<List<AdminMailboxRow>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    var rows by remember { mutableStateOf(previewRows.orEmpty()) }
+    var loading by remember { mutableStateOf(previewRows == null) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var lastInviteUrl by remember { mutableStateOf<String?>(null) }
@@ -63,6 +65,11 @@ fun DomainAdminSettingsView(
     var deleteTarget by remember { mutableStateOf<AdminMailboxRow?>(null) }
 
     fun reload() {
+        if (previewRows != null) {
+            rows = previewRows
+            loading = false
+            return
+        }
         scope.launch {
             loading = rows.isEmpty()
             error = null
@@ -73,7 +80,7 @@ fun DomainAdminSettingsView(
         }
     }
 
-    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(previewRows) { reload() }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(

@@ -57,7 +57,10 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 
 @Composable
-fun SignInView() {
+fun SignInView(
+    /** DEBUG preview: open the password form without tapping the toggle. */
+    expandPasswordForm: Boolean = false,
+) {
     val auth = LocalAuthStore.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -153,7 +156,7 @@ fun SignInView() {
                 Text("Continue with Google", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium)
             }
 
-            var showPassword by remember { mutableStateOf(false) }
+            var showPassword by remember { mutableStateOf(expandPasswordForm) }
             var passwordEmail by remember { mutableStateOf("") }
             var password by remember { mutableStateOf("") }
             Spacer(Modifier.height(12.dp))
