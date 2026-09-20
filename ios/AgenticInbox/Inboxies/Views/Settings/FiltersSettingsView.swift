@@ -40,8 +40,8 @@ struct FiltersSettingsView: View {
                         .padding(.vertical, 8)
                 }
 
-                ForEach($rules) { $rule in
-                    filterRow(rule: $rule)
+                ForEach(rules) { rule in
+                    filterRow(for: rule)
                 }
 
                 if !isSelectMode {
@@ -138,10 +138,11 @@ struct FiltersSettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                if let id = actionRuleId {
+                let id = actionRuleId
+                actionRuleId = nil
+                if let id {
                     rules.removeAll { $0.id == id }
                 }
-                actionRuleId = nil
             }
             Button("Cancel", role: .cancel) {
                 actionRuleId = nil
@@ -162,8 +163,8 @@ struct FiltersSettingsView: View {
     }
 
     @ViewBuilder
-    private func filterRow(rule: Binding<InboxFilterRule>) -> some View {
-        let id = rule.wrappedValue.id
+    private func filterRow(for rule: InboxFilterRule) -> some View {
+        let id = rule.id
         let isSelected = selectedIds.contains(id)
 
         HStack(alignment: .center, spacing: 12) {
@@ -176,11 +177,11 @@ struct FiltersSettingsView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(rule.wrappedValue.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                    Text(rule.name?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
                         ?? "Untitled filter")
                         .font(.inter(size: 15, weight: .medium))
                         .foregroundStyle(AppTheme.ink)
-                    Text(summary(for: rule.wrappedValue))
+                    Text(summary(for: rule))
                         .font(.inter(size: 12))
                         .foregroundStyle(AppTheme.muted)
                         .multilineTextAlignment(.leading)
@@ -204,10 +205,7 @@ struct FiltersSettingsView: View {
                 }
             }
 
-            Toggle("", isOn: Binding(
-                get: { rule.wrappedValue.enabled ?? true },
-                set: { rule.wrappedValue.enabled = $0 }
-            ))
+            Toggle("", isOn: enabledBinding(for: id))
             .labelsHidden()
             .tint(AppTheme.accent)
         }
@@ -216,6 +214,17 @@ struct FiltersSettingsView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(AppTheme.line, lineWidth: 1)
+        )
+    }
+
+    /// ID-based binding so Toggle does not crash when a rule is removed mid-update.
+    private func enabledBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { rules.first(where: { $0.id == id })?.enabled ?? true },
+            set: { newValue in
+                guard let index = rules.firstIndex(where: { $0.id == id }) else { return }
+                rules[index].enabled = newValue
+            }
         )
     }
 
