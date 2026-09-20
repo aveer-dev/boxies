@@ -37,6 +37,9 @@ struct ComposeSheetView: View {
 
     var body: some View {
         NavigationStack {
+            // Single page scroll: header + growing body. The rich UITextView must
+            // not scroll itself (isScrollEnabled = false) or the form collapses to
+            // title-only; sizeThatFits reports content height into this ScrollView.
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -234,7 +237,7 @@ struct ComposeSheetView: View {
     }
 
     private var editorMinHeight: CGFloat {
-        max(0, viewportHeight - headerHeight)
+        max(160, viewportHeight - headerHeight)
     }
 
     private var composeHeader: some View {

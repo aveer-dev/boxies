@@ -563,6 +563,8 @@ fun ComposeSheetView(
             )
             }
 
+            // Single page scroll: header + growing body. EditText must wrap content
+            // (no inner scroll) or nested scrolling collapses the form to title-only.
             BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 val viewportHeight = maxHeight
                 val headerHeight = with(density) { headerHeightPx.toDp() }
@@ -702,9 +704,8 @@ fun ComposeSheetView(
                             body = it
                             form.body = it
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = editorMin),
+                        minHeight = editorMin,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }

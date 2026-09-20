@@ -245,7 +245,12 @@ struct ComposeRichTextEditor: UIViewRepresentable {
         ]
         view.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
         view.adjustsFontForContentSizeCategory = false
-        view.isScrollEnabled = true
+        // Grow with content so the parent ScrollView is the only scroller.
+        // A nested scrolling UITextView collapses the compose form to title-only.
+        view.isScrollEnabled = false
+        view.textContainer.lineFragmentPadding = 0
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
         session.textView = view
         session.onHTMLChange = { html = $0 }
         view.attributedText = ComposeHTML.attributed(from: html)
@@ -264,6 +269,18 @@ struct ComposeRichTextEditor: UIViewRepresentable {
             context.coordinator.lastHTML = html
         }
         context.coordinator.html = $html
+        context.coordinator.minHeight = minHeight
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? uiView.bounds.width
+        guard width.isFinite, width > 0 else {
+            return CGSize(width: UIView.noIntrinsicMetric, height: minHeight)
+        }
+        let fitting = uiView.sizeThatFits(
+            CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        )
+        return CGSize(width: width, height: max(minHeight, ceil(fitting.height)))
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -271,6 +288,7 @@ struct ComposeRichTextEditor: UIViewRepresentable {
         let session: ComposeRichTextSession
         var isEditing = false
         var lastHTML = ""
+        var minHeight: CGFloat = 160
 
         init(html: Binding<String>, session: ComposeRichTextSession) {
             self.html = html
@@ -288,6 +306,8 @@ struct ComposeRichTextEditor: UIViewRepresentable {
         func textViewDidChange(_ textView: UITextView) {
             session.emitHTML()
             session.refreshState()
+            // Relayout so the page ScrollView grows with typed content.
+            textView.invalidateIntrinsicContentSize()
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
