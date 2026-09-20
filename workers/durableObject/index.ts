@@ -12,7 +12,7 @@ import { isPurposeFolderId, type PurposeFolderId } from "../../shared/folders";
 import {
 	annotateListSections,
 	folderUsesNewSeen,
-} from "../../shared/list-sections.ts";
+} from "../../shared/list-sections";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";

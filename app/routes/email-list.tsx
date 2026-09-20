@@ -27,6 +27,7 @@ import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
 import { formatParticipants } from "shared/sender";
 import MailboxSplitView from "~/components/MailboxSplitView";
+import { buildInboxListItems } from "~/lib/list-sections";
 import { getSnippetText, hasFileAttachment } from "~/lib/utils";
 import { isAuthSpoofed } from "~/lib/email-auth";
 import {
@@ -212,65 +213,7 @@ export default function EmailListRoute() {
 		if (!showNewSeen || emails.length === 0) {
 			return emails.map((email) => ({ type: "email" as const, email }));
 		}
-
-		const items: Array<
-			| { type: "section"; id: "new" | "seen"; label: string; count?: number }
-			| { type: "empty-new" }
-			| { type: "email"; email: Email }
-		> = [];
-
-		let lastSection: "new" | "seen" | null = null;
-		let sawNew = false;
-		let sawSeen = false;
-
-		for (const email of emails) {
-			const section: "new" | "seen" =
-				email.list_section ??
-				((email.folder_id !== Folders.DRAFT &&
-					((email.thread_unread_count ?? 0) > 0 || !email.read))
-					? "new"
-					: "seen");
-			if (section === "new") sawNew = true;
-			if (section === "seen") sawSeen = true;
-			if (section !== lastSection) {
-				if (
-					section === "seen" &&
-					!sawNew &&
-					page === 1 &&
-					(newCount === 0 || newCount === undefined)
-				) {
-					items.push({
-						type: "section",
-						id: "new",
-						label: "New",
-						count: newCount ?? 0,
-					});
-					items.push({ type: "empty-new" });
-				}
-				items.push({
-					type: "section",
-					id: section,
-					label: section === "new" ? "New" : "Seen",
-					count: section === "new" ? newCount : seenCount,
-				});
-				lastSection = section;
-			}
-			items.push({ type: "email", email });
-		}
-
-		if (
-			page === 1 &&
-			!sawNew &&
-			sawSeen &&
-			!items.some((i) => i.type === "empty-new")
-		) {
-			items.unshift(
-				{ type: "section", id: "new", label: "New", count: newCount ?? 0 },
-				{ type: "empty-new" },
-			);
-		}
-
-		return items;
+		return buildInboxListItems(emails, { page, newCount, seenCount });
 	}, [emails, showNewSeen, newCount, seenCount, page]);
 
 	const { data: folders = [] } = useFolders(mailboxId);

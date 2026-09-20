@@ -1020,9 +1020,12 @@ class AppModel {
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
         val next = !target.starred
         db.updateEmailFlags(target.id, starred = next)
-        db.enqueueMutation(mailboxId, target.id, "star", mapOf("starred" to next))
-        OutboxQueueWorker.trigger()
         applyEmailUpdate(target.copy(starred = next))
+        try {
+            ApiClient.shared.updateEmail(mailboxId, target.id, starred = next)
+        } catch (_: Exception) {
+            showToast("Couldn't update star", isError = true)
+        }
     }
 
     suspend fun toggleRead(on: Email? = null) {
@@ -1030,9 +1033,18 @@ class AppModel {
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
         val next = !target.read
         db.updateEmailFlags(target.id, read = next)
-        db.enqueueMutation(mailboxId, target.id, "mark_read", mapOf("read" to next))
-        OutboxQueueWorker.trigger()
-        applyEmailUpdate(target.copy(read = next))
+        applyEmailUpdate(
+            target.copy(
+                read = next,
+                threadUnreadCount = if (next) 0 else maxOf(1, target.threadUnreadCount ?: 1),
+                listSection = if (next) "seen" else "new",
+            ),
+        )
+        try {
+            ApiClient.shared.updateEmail(mailboxId, target.id, read = next)
+        } catch (_: Exception) {
+            showToast("Couldn't update read state", isError = true)
+        }
     }
 
     fun applyEmailUpdate(updated: Email) {
@@ -1187,20 +1199,36 @@ class AppModel {
         val mailboxId = _selectedMailboxId.value ?: return
         ids.forEach { id ->
             db.updateEmailFlags(id, read = read)
-            db.enqueueMutation(mailboxId, id, "mark_read", mapOf("read" to read))
-            _emails.value.firstOrNull { it.id == id }?.let { applyEmailUpdate(it.copy(read = read)) }
+            _emails.value.firstOrNull { it.id == id }?.let {
+                applyEmailUpdate(
+                    it.copy(
+                        read = read,
+                        threadUnreadCount = if (read) 0 else maxOf(1, it.threadUnreadCount ?: 1),
+                        listSection = if (read) "seen" else "new",
+                    ),
+                )
+            }
         }
-        OutboxQueueWorker.trigger()
+        ids.forEach { id ->
+            try {
+                ApiClient.shared.updateEmail(mailboxId, id, read = read)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     suspend fun starEmails(ids: Set<String>, starred: Boolean) {
         val mailboxId = _selectedMailboxId.value ?: return
         ids.forEach { id ->
             db.updateEmailFlags(id, starred = starred)
-            db.enqueueMutation(mailboxId, id, "star", mapOf("starred" to starred))
             _emails.value.firstOrNull { it.id == id }?.let { applyEmailUpdate(it.copy(starred = starred)) }
         }
-        OutboxQueueWorker.trigger()
+        ids.forEach { id ->
+            try {
+                ApiClient.shared.updateEmail(mailboxId, id, starred = starred)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     suspend fun archiveEmails(ids: Set<String>) {
