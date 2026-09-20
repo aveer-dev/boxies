@@ -21,10 +21,15 @@ enum PreviewSupport {
         app.selectedMailboxId = "mb-preview"
         app.folders = [
             Folder(id: "inbox", name: "Inbox", unreadCount: 3),
+            Folder(id: "screener", name: "Screener", unreadCount: 1),
+            Folder(id: "promotions", name: "Promotions", unreadCount: 0),
+            Folder(id: "updates", name: "Updates", unreadCount: 0),
             Folder(id: "sent", name: "Sent", unreadCount: 0),
             Folder(id: "archive", name: "Archive", unreadCount: 0),
+            Folder(id: "screened_out", name: "Screened out", unreadCount: 0),
         ]
         app.emails = emails
+        app.replyLaterCount = emails.filter(\.replyLater).count
         app.isLoading = false
         app.isMailboxLoading = false
         return app
@@ -64,7 +69,10 @@ enum PreviewSupport {
             date: "2026-09-02T09:12:00.000Z",
             read: true,
             starred: true,
+            replyLater: true,
+            replyLaterAt: "2026-09-02T10:00:00.000Z",
             snippet: "Attached is the updated PDF for last month's work.",
+            needsReply: true,
             hasAttachment: true
         ),
         Email(
@@ -92,6 +100,35 @@ enum PreviewSupport {
             starred: false,
             snippet: "Your itinerary for next week's trip is ready to view."
         ),
+        Email(
+            id: "preview-screener-1",
+            folderId: "screener",
+            subject: "Quick intro from Acme",
+            sender: "hello@acme.example",
+            senderName: "Acme Outreach",
+            recipient: "you@inboxies.email",
+            date: "2026-09-19T12:00:00.000Z",
+            read: false,
+            starred: false,
+            body: "<p>Hi — we'd love to show you Acme. No pressure.</p>",
+            snippet: "Hi — we'd love to show you Acme. No pressure.",
+            folderName: "Screener"
+        ),
+        Email(
+            id: "preview-rl-2",
+            folderId: "inbox",
+            subject: "Can you review the contract?",
+            sender: "legal@example.com",
+            senderName: "Pat Legal",
+            recipient: "you@inboxies.email",
+            date: "2026-09-10T08:00:00.000Z",
+            read: true,
+            starred: false,
+            replyLater: true,
+            replyLaterAt: "2026-09-11T09:00:00.000Z",
+            snippet: "Draft is in the shared drive — need a sign-off by Friday.",
+            needsReply: true
+        ),
     ]
 
     /// Sent message with bounce — for delivery-badge canvas / Simulator fixtures.
@@ -117,9 +154,23 @@ enum PreviewSupport {
         let app = appModel()
         app.selectedTab = .folder("inbox")
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("-previewDetail"), let first = app.emails.first {
+        if args.contains("-previewScreener"),
+           let screener = app.emails.first(where: { $0.folderId == "screener" }) {
+            app.selectedTab = .folder("screener")
+            app.emails = app.emails.filter { $0.folderId == "screener" }
+            app.selectedEmail = screener
+            app.threadEmails = [screener]
+        } else if args.contains("-previewReplyLater") {
+            app.selectedTab = .replyLater
+            app.emails = app.emails.filter(\.replyLater)
+            app.replyLaterCount = app.emails.count
+        } else if args.contains("-previewDetail"), let first = app.emails.first(where: { $0.folderId == "inbox" }) ?? app.emails.first {
             app.selectedEmail = first
             app.threadEmails = [first]
+        } else {
+            // Inbox list must not include Screener / other folders (matches production sync).
+            app.emails = app.emails.filter { $0.folderId == "inbox" }
+            app.replyLaterCount = emails.filter(\.replyLater).count
         }
         return app
     }
