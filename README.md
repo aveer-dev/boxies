@@ -90,6 +90,12 @@ Any authenticated user is authorized **per mailbox**. Each mailbox stores an exp
 
 **Domain Admin:** set Worker secret/var `DOMAIN_ADMINS` to a comma-separated list of Access emails and optional `sub:…` keys (matched against `GET /api/v1/me` → `keys`). Admins get `isAdmin: true`, can list/create/assign/delete via `/api/v1/admin/*`, and are not subject to silent mailbox-content omniscience (ACL still gates mail). When `DOMAIN_ADMINS` is non-empty, mailbox create defaults to **admin-only** unless you set `MAILBOX_CREATE_POLICY=open`. Invitees set a password via `/invite/<token>` (public Worker paths; also add Cloudflare Access **bypass** for `/invite/*`, `/login`, and `/api/v1/invites/*` + `/api/v1/auth/password*`). Optional: `INVITE_FROM_EMAIL`, `APP_BASE_URL`, `MAIL_DOMAIN` (primary create-address suffix; else first `DOMAINS` entry; else `inboxies.email`). Password sessions reuse `MOBILE_JWT_SECRET` (cookie `inboxies_session` or Bearer).
 
+**Mobile Apple / Google vs Access:** Assign-to-me and Sharing store the **web Access** principal (`email:you@gmail.com`). Sign in with Apple often uses a different key (`email:…@privaterelay.appleid.com` and/or `sub:…`), so mobile can show Welcome even when web works. Fixes:
+
+1. If Apple/Google returns an email that is already in `DOMAIN_ADMINS`, the Worker **auto-links** that IdP `sub` to the email (durable in R2). Later mobile sessions expand to the same ACL/admin keys.
+2. If Apple **hides** the email: on web as Domain Admin, `POST /api/v1/me/identity-link-codes` → copy the code → on the phone after Apple sign-in, `POST /api/v1/auth/redeem-identity-link` with `{ "code": "…" }`. Then reload; `/me` should show `isAdmin: true` and linked emails.
+3. Interim ops: add the mobile `sub:…` (from `/api/v1/me` on the device) to `DOMAIN_ADMINS`, and/or add `email:…@privaterelay.appleid.com` / `sub:…` under Settings → Sharing on each mailbox.
+
 ## Architecture
 
 ```
