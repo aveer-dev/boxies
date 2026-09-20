@@ -54,6 +54,9 @@ class AppModel {
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails.asStateFlow()
 
+    private val _replyLaterCount = MutableStateFlow(0)
+    val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
+
     private val _inboxDigest = MutableStateFlow<InboxDigest?>(null)
     val inboxDigest: StateFlow<InboxDigest?> = _inboxDigest.asStateFlow()
 
@@ -371,22 +374,45 @@ class AppModel {
 
     suspend fun loadEmailsForCurrentTab(showLoading: Boolean = true) {
         val mailboxId = _selectedMailboxId.value
+        if (mailboxId == null) {
+            _isLoading.value = false
+            return
+        }
+
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            if (showLoading && _emails.value.isEmpty()) _isLoading.value = true
+            _isSyncing.value = true
+            try {
+                val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
+                _emails.value = response.emails
+                _replyLaterCount.value = response.totalCount
+            } catch (e: Exception) {
+                if (_emails.value.isEmpty()) _errorMessage.value = e.message
+            } finally {
+                _isLoading.value = false
+                _isSyncing.value = false
+            }
+            return
+        }
+
         val folderId = _selectedTab.value.syncFolderId
-        if (mailboxId == null || folderId == null) {
-            if (folderId == null) _emails.value = emptyList()
+        if (folderId == null) {
+            _emails.value = emptyList()
             _isLoading.value = false
             return
         }
         val cached = db.getEmails(mailboxId, folderId, 50)
         if (cached.isNotEmpty()) {
-            _emails.value = cached
+            _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(cached) else cached
             _isLoading.value = false
         } else if (showLoading) {
             _isLoading.value = true
         }
         _isSyncing.value = true
         try {
-            _emails.value = MailboxSyncService.syncFolder(mailboxId, folderId)
+            val synced = MailboxSyncService.syncFolder(mailboxId, folderId)
+            _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(synced) else synced
+            refreshReplyLaterCount()
         } catch (e: Exception) {
             if (_emails.value.isEmpty()) _errorMessage.value = e.message
         } finally {
@@ -395,9 +421,21 @@ class AppModel {
         }
     }
 
+    suspend fun refreshReplyLaterCount() {
+        val mailboxId = _selectedMailboxId.value ?: run {
+            _replyLaterCount.value = 0
+            return
+        }
+        try {
+            val piles = ApiClient.shared.listWorkflowPiles(mailboxId)
+            _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
+        } catch (_: Exception) {
+        }
+    }
+
     suspend fun refreshCurrentTab() {
         when (val tab = _selectedTab.value) {
-            is HomeTab.Folder, is HomeTab.AiInbox -> {
+            is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater -> {
                 loadEmailsForCurrentTab(showLoading = false)
                 if (tab is HomeTab.AiInbox) loadInboxDigest(showLoading = false)
             }
@@ -517,16 +555,38 @@ class AppModel {
         _isEmailDetailLoading.value = !hasBody
 
         if (email.isUnread) {
-            db.updateEmailFlags(email.id, read = true)
-            db.enqueueMutation(mailboxId, email.id, "mark_read", mapOf("read" to true))
-            OutboxQueueWorker.trigger()
+            val threadId = email.threadId
+            val isMulti = (email.threadCount ?: 1) > 1 || localThread.size > 1
+            if (threadId != null && isMulti) {
+                localThread.filter { it.isUnread }.forEach { db.updateEmailFlags(it.id, read = true) }
+                db.updateEmailFlags(email.id, read = true)
+            } else {
+                db.updateEmailFlags(email.id, read = true)
+            }
             _emails.update { list ->
-                list.map {
-                    if (it.id == email.id) it.copy(read = true, threadUnreadCount = 0) else it
+                val updated = list.map {
+                    if (it.id == email.id || (threadId != null && isMulti && it.threadId == threadId)) {
+                        it.copy(read = true, threadUnreadCount = 0, listSection = "seen")
+                    } else it
+                }
+                if (_selectedTab.value.syncFolderId == FolderIds.INBOX) {
+                    orderNewThenSeen(updated)
+                } else {
+                    updated
                 }
             }
-            _selectedEmail.update { it?.copy(read = true, threadUnreadCount = 0) }
+            _selectedEmail.update { it?.copy(read = true, threadUnreadCount = 0, listSection = "seen") }
             adjustFolderUnread(email, wasUnread = true, isUnread = false)
+            scope.launch {
+                try {
+                    if (threadId != null && isMulti) {
+                        ApiClient.shared.markThreadRead(mailboxId, threadId)
+                    } else {
+                        ApiClient.shared.markRead(mailboxId, email.id)
+                    }
+                } catch (_: Exception) {
+                }
+            }
         }
 
         val shouldLoadThread = email.hasDraft == true || (email.threadCount ?: 1) > 1 ||
@@ -997,9 +1057,50 @@ class AppModel {
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
         val next = !target.starred
         db.updateEmailFlags(target.id, starred = next)
-        db.enqueueMutation(mailboxId, target.id, "star", mapOf("starred" to next))
-        OutboxQueueWorker.trigger()
         applyEmailUpdate(target.copy(starred = next))
+        try {
+            ApiClient.shared.updateEmail(mailboxId, target.id, starred = next)
+        } catch (_: Exception) {
+            showToast("Couldn't update star", isError = true)
+        }
+    }
+
+    suspend fun toggleReplyLater(on: Email? = null) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
+        val next = !target.replyLater
+        db.updateEmailFlags(target.id, replyLater = next)
+        applyEmailUpdate(
+            target.copy(
+                replyLater = next,
+                replyLaterAt = if (next) java.time.Instant.now().toString() else null,
+            ),
+        )
+        runCatching {
+            ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
+        }.onFailure {
+            // Roll back optimistic update on failure
+            db.updateEmailFlags(target.id, replyLater = !next)
+            applyEmailUpdate(target)
+        }
+        refreshReplyLaterCount()
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            loadEmailsForCurrentTab(showLoading = false)
+        }
+    }
+
+    suspend fun setReplyLater(ids: Set<String>, replyLater: Boolean) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        if (ids.isEmpty()) return
+        for (id in ids) {
+            runCatching {
+                ApiClient.shared.updateEmail(mailboxId, id, replyLater = replyLater)
+            }.onSuccess { applyEmailUpdate(it) }
+        }
+        refreshReplyLaterCount()
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            loadEmailsForCurrentTab(showLoading = false)
+        }
     }
 
     suspend fun toggleRead(on: Email? = null) {
@@ -1007,9 +1108,18 @@ class AppModel {
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
         val next = !target.read
         db.updateEmailFlags(target.id, read = next)
-        db.enqueueMutation(mailboxId, target.id, "mark_read", mapOf("read" to next))
-        OutboxQueueWorker.trigger()
-        applyEmailUpdate(target.copy(read = next))
+        applyEmailUpdate(
+            target.copy(
+                read = next,
+                threadUnreadCount = if (next) 0 else maxOf(1, target.threadUnreadCount ?: 1),
+                listSection = if (next) "seen" else "new",
+            ),
+        )
+        try {
+            ApiClient.shared.updateEmail(mailboxId, target.id, read = next)
+        } catch (_: Exception) {
+            showToast("Couldn't update read state", isError = true)
+        }
     }
 
     fun applyEmailUpdate(updated: Email) {
@@ -1017,14 +1127,16 @@ class AppModel {
         if (_selectedEmail.value?.id == updated.id) _selectedEmail.value = updated
         _threadEmails.update { list -> list.map { if (it.id == updated.id) updated else it } }
         _emails.update { list ->
-            list.map {
+            val mapped = list.map {
                 if (it.id != updated.id) it
                 else it.copy(
                     read = updated.read,
                     starred = updated.starred,
                     threadUnreadCount = if (updated.read) 0 else it.threadUnreadCount,
+                    listSection = if (updated.read) "seen" else "new",
                 )
             }
+            if (_selectedTab.value.syncFolderId == FolderIds.INBOX) orderNewThenSeen(mapped) else mapped
         }
         if (previous != null) {
             adjustFolderUnread(previous, wasUnread = !previous.read, isUnread = !updated.read)
@@ -1092,6 +1204,12 @@ class AppModel {
             )
         }.onFailure {
             showToast("Couldn't sync move", isError = true)
+        }
+        if (folderId == "trash" || folderId == "spam") {
+            refreshReplyLaterCount()
+            if (_selectedTab.value is HomeTab.ReplyLater) {
+                loadEmailsForCurrentTab(showLoading = false)
+            }
         }
     }
 
@@ -1162,20 +1280,36 @@ class AppModel {
         val mailboxId = _selectedMailboxId.value ?: return
         ids.forEach { id ->
             db.updateEmailFlags(id, read = read)
-            db.enqueueMutation(mailboxId, id, "mark_read", mapOf("read" to read))
-            _emails.value.firstOrNull { it.id == id }?.let { applyEmailUpdate(it.copy(read = read)) }
+            _emails.value.firstOrNull { it.id == id }?.let {
+                applyEmailUpdate(
+                    it.copy(
+                        read = read,
+                        threadUnreadCount = if (read) 0 else maxOf(1, it.threadUnreadCount ?: 1),
+                        listSection = if (read) "seen" else "new",
+                    ),
+                )
+            }
         }
-        OutboxQueueWorker.trigger()
+        ids.forEach { id ->
+            try {
+                ApiClient.shared.updateEmail(mailboxId, id, read = read)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     suspend fun starEmails(ids: Set<String>, starred: Boolean) {
         val mailboxId = _selectedMailboxId.value ?: return
         ids.forEach { id ->
             db.updateEmailFlags(id, starred = starred)
-            db.enqueueMutation(mailboxId, id, "star", mapOf("starred" to starred))
             _emails.value.firstOrNull { it.id == id }?.let { applyEmailUpdate(it.copy(starred = starred)) }
         }
-        OutboxQueueWorker.trigger()
+        ids.forEach { id ->
+            try {
+                ApiClient.shared.updateEmail(mailboxId, id, starred = starred)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     suspend fun archiveEmails(ids: Set<String>) {
@@ -1438,5 +1572,12 @@ class AppModel {
 
         private fun visibleConversations(conversations: List<AgentConversation>) =
             conversations.filter { it.id != AUTO_CONVERSATION_ID }
+
+        /** Inbox New (unread) then Seen, each by date DESC. */
+        fun orderNewThenSeen(emails: List<Email>): List<Email> {
+            val (newEmails, seenEmails) = emails.partition { it.isUnread }
+            fun byDateDesc(a: Email, b: Email) = b.date.compareTo(a.date)
+            return newEmails.sortedWith(::byDateDesc) + seenEmails.sortedWith(::byDateDesc)
+        }
     }
 }

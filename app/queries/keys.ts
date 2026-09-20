@@ -19,6 +19,9 @@ export const queryKeys = {
 	folders: {
 		list: (mailboxId: string) => ["folders", mailboxId] as const,
 	},
+	workflowPiles: {
+		list: (mailboxId: string) => ["workflow-piles", mailboxId] as const,
+	},
 	inboxDigest: {
 		detail: (mailboxId: string) => ["inbox-digest", mailboxId] as const,
 	},

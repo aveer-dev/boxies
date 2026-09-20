@@ -41,6 +41,8 @@ export function useSearchEmails(
 				params.is_read = String(parsed.is_read);
 			if (parsed.is_starred !== undefined)
 				params.is_starred = String(parsed.is_starred);
+			if (parsed.is_reply_later !== undefined)
+				params.is_reply_later = String(parsed.is_reply_later);
 			if (parsed.has_attachment) params.has_attachment = "true";
 
 			const data = await api.searchEmails(mailboxId!, params) as

@@ -50,6 +50,13 @@ struct EmailActionsSheet: View {
                     }
 
                     actionRow(
+                        source.replyLater ? "Remove from Reply Later" : "Reply later",
+                        systemImage: source.replyLater ? "clock.arrow.circlepath" : "clock"
+                    ) {
+                        Task { await app.toggleReplyLater(on: source) }
+                    }
+
+                    actionRow(
                         source.read ? "Mark as Unread" : "Mark as Read",
                         systemImage: source.read ? "envelope.badge" : "envelope.open"
                     ) {
@@ -144,7 +151,7 @@ struct EmailActionsSheet: View {
         if availability.showsReplyActions {
             h += 130 // quick actions row + section spacing
         }
-        var rows = 2 // Star, Read
+        var rows = 3 // Star, Reply Later, Read
         if !moveTargets.isEmpty { rows += 1 }
         rows += 1 // View Source
         if availability.showsDelete { rows += 1 }

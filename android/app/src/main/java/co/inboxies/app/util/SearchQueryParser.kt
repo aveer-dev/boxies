@@ -16,6 +16,7 @@ data class ParsedSearch(
     val folder: String? = null,
     val isRead: Boolean? = null,
     val isStarred: Boolean? = null,
+    val isReplyLater: Boolean? = null,
     val hasAttachment: Boolean? = null,
     val dateStart: String? = null,
     val dateEnd: String? = null,
@@ -27,6 +28,7 @@ data class ParsedSearch(
             folder != null ||
             isRead != null ||
             isStarred != null ||
+            isReplyLater != null ||
             hasAttachment == true ||
             dateStart != null ||
             dateEnd != null
@@ -42,6 +44,7 @@ data class ParsedSearch(
         dateEnd?.let { put("date_end", it) }
         isRead?.let { put("is_read", if (it) "true" else "false") }
         isStarred?.let { put("is_starred", if (it) "true" else "false") }
+        isReplyLater?.let { put("is_reply_later", if (it) "true" else "false") }
         if (hasAttachment == true) put("has_attachment", "true")
     }
 }
@@ -64,6 +67,7 @@ object SearchQueryParser {
         var folder: String? = null
         var isRead: Boolean? = null
         var isStarred: Boolean? = null
+        var isReplyLater: Boolean? = null
         var hasAttachment: Boolean? = null
         var dateStart: String? = null
         var dateEnd: String? = null
@@ -81,6 +85,7 @@ object SearchQueryParser {
                     "read" -> isRead = true
                     "starred" -> isStarred = true
                     "unstarred" -> isStarred = false
+                    "reply-later", "reply_later" -> isReplyLater = true
                 }
                 "has" -> if (value.lowercase() == "attachment") hasAttachment = true
                 "before" -> dateEnd = normalizeDate(value)
@@ -96,6 +101,7 @@ object SearchQueryParser {
             folder = folder,
             isRead = isRead,
             isStarred = isStarred,
+            isReplyLater = isReplyLater,
             hasAttachment = hasAttachment,
             dateStart = dateStart,
             dateEnd = dateEnd,

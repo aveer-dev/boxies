@@ -496,6 +496,7 @@ export async function toolSendReply(
 	);
 	await allowOutboundRecipients(stub as any, to);
 	await stub.deleteDraftsForThread(threadId);
+	await (stub as any).clearReplyLaterForThread(threadId);
 
 	return { status: "sent", messageId, message: `Reply sent to ${to}` };
 }

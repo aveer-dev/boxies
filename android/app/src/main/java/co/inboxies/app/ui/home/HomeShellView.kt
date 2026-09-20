@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -143,6 +144,7 @@ fun HomeShellView(
     val toast by appModel.toast.collectAsState()
     val digest by appModel.inboxDigest.collectAsState()
     val emails by appModel.emails.collectAsState()
+    val replyLaterCount by appModel.replyLaterCount.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
     val isDigestLoading by appModel.isDigestLoading.collectAsState()
     val mailboxes by appModel.mailboxes.collectAsState()
@@ -219,6 +221,13 @@ fun HomeShellView(
                     count == 1 -> "1 unread"
                     else -> "$count unread"
                 }
+            }
+        }
+        HomeTab.ReplyLater -> {
+            when {
+                replyLaterCount == 0 -> "Nothing queued"
+                replyLaterCount == 1 -> "1 to reply"
+                else -> "$replyLaterCount to reply"
             }
         }
         else -> ""
@@ -449,6 +458,7 @@ fun HomeShellView(
                                         onDismiss = { showFilterMenu = false },
                                         filterState = filterState,
                                         onChange = { filterState = it },
+                                        isInbox = (selectedTab as? HomeTab.Folder)?.id == FolderIds.INBOX,
                                     )
                                 }
                             }
@@ -553,6 +563,7 @@ fun HomeShellView(
                                         ActiveFilterChipsBar(
                                             filterState = filterState,
                                             onChange = { filterState = it },
+                                            isInbox = tab.id == FolderIds.INBOX,
                                         )
                                     }
                                 } else {
@@ -563,6 +574,28 @@ fun HomeShellView(
                                     scope.launch {
                                         if (email.isDraft) appModel.openDraft(email) else appModel.openEmail(email)
                                     }
+                                },
+                            )
+                            HomeTab.ReplyLater -> EmailListView(
+                                emails = filteredEmails,
+                                isLoading = isLoading,
+                                bottomInset = listBottomInset,
+                                fallbackFolderId = null,
+                                isSelectMode = isSelectMode,
+                                selectedEmailIds = selectedEmailIds,
+                                onToggleSelect = { id ->
+                                    selectedEmailIds = if (selectedEmailIds.contains(id)) {
+                                        selectedEmailIds - id
+                                    } else {
+                                        selectedEmailIds + id
+                                    }
+                                },
+                                isFiltered = false,
+                                onClearFilters = null,
+                                filterChipsBar = null,
+                                onRefresh = { appModel.refreshCurrentTab() },
+                                onOpen = { email ->
+                                    scope.launch { appModel.openEmail(email) }
                                 },
                             )
                             HomeTab.Chats -> Unit
@@ -683,6 +716,21 @@ fun HomeShellView(
                     } else {
                         BottomBar(
                             showComposeActions = showComposeActions,
+                            replyLaterCount = replyLaterCount,
+                            isReplyLaterTab = selectedTab is HomeTab.ReplyLater,
+                            onReplyLater = {
+                                if (selectedTab is HomeTab.ReplyLater) {
+                                    val first = emails.firstOrNull()
+                                    if (first != null) {
+                                        scope.launch {
+                                            appModel.openEmail(first)
+                                            appModel.startCompose(ComposeMode.Reply, original = first)
+                                        }
+                                    }
+                                } else {
+                                    selectTab(HomeTab.ReplyLater)
+                                }
+                            },
                             onAskAi = {
                                 appModel.openChatSession(resumeActive = true)
                                 showChat = true
@@ -899,13 +947,20 @@ private fun FilterDropdown(
     onDismiss: () -> Unit,
     filterState: EmailFilterState,
     onChange: (EmailFilterState) -> Unit,
+    isInbox: Boolean = false,
 ) {
     InboxiesDropdownMenu(expanded = expanded, onDismiss = onDismiss) {
-        FilterToggle("Unread", filterState.unreadOnly) {
+        FilterToggle(
+            if (isInbox) "New only" else "Unread",
+            filterState.unreadOnly,
+        ) {
             onChange(filterState.copy(unreadOnly = it))
         }
         FilterToggle("Starred", filterState.starredOnly) {
             onChange(filterState.copy(starredOnly = it))
+        }
+        FilterToggle("Reply later", filterState.replyLaterOnly) {
+            onChange(filterState.copy(replyLaterOnly = it))
         }
         FilterToggle("To me", filterState.toMeOnly) {
             onChange(filterState.copy(toMeOnly = it))
@@ -955,6 +1010,7 @@ private fun FilterToggle(label: String, checked: Boolean, onCheckedChange: (Bool
 private fun ActiveFilterChipsBar(
     filterState: EmailFilterState,
     onChange: (EmailFilterState) -> Unit,
+    isInbox: Boolean = false,
 ) {
     val colors = inboxiesColors()
     Row(
@@ -966,10 +1022,15 @@ private fun ActiveFilterChipsBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (filterState.unreadOnly) {
-            FilterChip("Unread") { onChange(filterState.copy(unreadOnly = false)) }
+            FilterChip(if (isInbox) "New only" else "Unread") {
+                onChange(filterState.copy(unreadOnly = false))
+            }
         }
         if (filterState.starredOnly) {
             FilterChip("Starred") { onChange(filterState.copy(starredOnly = false)) }
+        }
+        if (filterState.replyLaterOnly) {
+            FilterChip("Reply later") { onChange(filterState.copy(replyLaterOnly = false)) }
         }
         if (filterState.toMeOnly) {
             FilterChip("To me") { onChange(filterState.copy(toMeOnly = false)) }
@@ -1021,6 +1082,9 @@ private fun FilterChip(title: String, onRemove: () -> Unit) {
 @Composable
 private fun BottomBar(
     showComposeActions: Boolean,
+    replyLaterCount: Int,
+    isReplyLaterTab: Boolean,
+    onReplyLater: () -> Unit,
     onAskAi: () -> Unit,
     onComposeTap: () -> Unit,
     onComposeLongPress: () -> Unit,
@@ -1038,6 +1102,34 @@ private fun BottomBar(
         horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (replyLaterCount > 0 || isReplyLaterTab) {
+            Row(
+                modifier = Modifier
+                    .height(HomeChromeMetrics.actionBarHeight)
+                    .homeChromeToolbarSurface(RoundedCornerShape(50))
+                    .clickable(onClick = onReplyLater)
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    Icons.Outlined.Schedule,
+                    contentDescription = "Reply Later",
+                    tint = if (isReplyLaterTab) colors.accent else colors.ink,
+                    modifier = Modifier.size(18.dp),
+                )
+                if (replyLaterCount > 0) {
+                    Text(
+                        "$replyLaterCount",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        color = if (isReplyLaterTab) colors.accent else colors.ink,
+                    )
+                }
+            }
+        }
+
         Row(
             modifier = Modifier
                 .weight(1f)

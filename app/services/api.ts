@@ -106,6 +106,8 @@ function del<T>(url: string) {
 interface EmailListResponse {
 	emails: Email[];
 	totalCount: number;
+	newCount?: number;
+	seenCount?: number;
 }
 
 // ---------- API client ----------
@@ -225,6 +227,10 @@ const api = {
 	// Folders
 	listFolders: (mailboxId: string) =>
 		get<Folder[]>(`/api/v1/mailboxes/${mailboxId}/folders`),
+	listWorkflowPiles: (mailboxId: string) =>
+		get<{ piles: { id: string; count: number }[] }>(
+			`/api/v1/mailboxes/${mailboxId}/workflow-piles`,
+		),
 	createFolder: (mailboxId: string, name: string) =>
 		post<Folder>(`/api/v1/mailboxes/${mailboxId}/folders`, { name }),
 	updateFolder: (mailboxId: string, id: string, name: string) =>

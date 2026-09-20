@@ -86,6 +86,8 @@ export interface Email {
 	date: string;
 	read: boolean;
 	starred: boolean;
+	reply_later?: boolean;
+	reply_later_at?: string | null;
 	body?: string | null;
 	in_reply_to?: string | null;
 	email_references?: string | null;
@@ -104,6 +106,8 @@ export interface Email {
 	needs_reply?: boolean;
 	has_draft?: boolean;
 	has_attachment?: boolean;
+	/** Inbox New vs Seen section (threaded inbox list only). */
+	list_section?: "new" | "seen";
 }
 
 export interface Attachment {

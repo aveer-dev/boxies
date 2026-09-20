@@ -240,6 +240,8 @@ struct Email: Identifiable, Codable, Hashable {
     var date: String
     var read: Bool
     var starred: Bool
+    var replyLater: Bool = false
+    var replyLaterAt: String? = nil
     var body: String?
     var snippet: String?
     var inReplyTo: String?
@@ -257,6 +259,8 @@ struct Email: Identifiable, Codable, Hashable {
     var providerMessageId: String? = nil
     var deliveryStatus: String? = nil
     var deliveryError: String? = nil
+    /// Inbox New vs Seen (`new` | `seen`); derived from read state when absent.
+    var listSection: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -275,6 +279,9 @@ struct Email: Identifiable, Codable, Hashable {
         case providerMessageId = "provider_message_id"
         case deliveryStatus = "delivery_status"
         case deliveryError = "delivery_error"
+        case listSection = "list_section"
+        case replyLater = "reply_later"
+        case replyLaterAt = "reply_later_at"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -461,6 +468,14 @@ struct Email: Identifiable, Codable, Hashable {
         return !read
     }
 
+    /// Resolved New vs Seen membership for inbox list IA.
+    var resolvedListSection: String {
+        if let listSection, listSection == "new" || listSection == "seen" {
+            return listSection
+        }
+        return isUnread ? "new" : "seen"
+    }
+
     var isDraft: Bool {
         folderId == "draft" || folderName?.lowercased() == "drafts" || folderName?.lowercased() == "draft"
     }
@@ -564,6 +579,7 @@ enum EmailDateFilter: String, CaseIterable, Equatable, Hashable {
 struct EmailFilterState: Equatable {
     var unreadOnly: Bool = false
     var starredOnly: Bool = false
+    var replyLaterOnly: Bool = false
     var toMeOnly: Bool = false
     var ccOrBccMeOnly: Bool = false
     var withAttachmentsOnly: Bool = false
@@ -571,7 +587,7 @@ struct EmailFilterState: Equatable {
     var needsReplyOnly: Bool = false
 
     var isActive: Bool {
-        unreadOnly || starredOnly || toMeOnly || ccOrBccMeOnly ||
+        unreadOnly || starredOnly || replyLaterOnly || toMeOnly || ccOrBccMeOnly ||
         withAttachmentsOnly || dateFilter != .any || needsReplyOnly
     }
 
@@ -579,6 +595,7 @@ struct EmailFilterState: Equatable {
         var count = 0
         if unreadOnly { count += 1 }
         if starredOnly { count += 1 }
+        if replyLaterOnly { count += 1 }
         if toMeOnly { count += 1 }
         if ccOrBccMeOnly { count += 1 }
         if withAttachmentsOnly { count += 1 }
@@ -590,6 +607,7 @@ struct EmailFilterState: Equatable {
     mutating func reset() {
         unreadOnly = false
         starredOnly = false
+        replyLaterOnly = false
         toMeOnly = false
         ccOrBccMeOnly = false
         withAttachmentsOnly = false
@@ -602,6 +620,9 @@ struct EmailFilterState: Equatable {
             return false
         }
         if starredOnly && !email.starred {
+            return false
+        }
+        if replyLaterOnly && !email.replyLater {
             return false
         }
         if withAttachmentsOnly && !email.hasFileAttachment {
@@ -661,6 +682,8 @@ struct EmailFilterState: Equatable {
 struct EmailListResponse: Codable {
     let emails: [Email]
     let totalCount: Int
+    let newCount: Int?
+    let seenCount: Int?
 }
 
 struct RecentRecipient: Codable, Hashable, Identifiable {

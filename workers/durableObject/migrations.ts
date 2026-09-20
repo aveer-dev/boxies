@@ -383,5 +383,14 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_emails_sender ON emails(sender);
         `),
 	},
+	{
+		name: "23_reply_later",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN reply_later INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE emails ADD COLUMN reply_later_at TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_reply_later
+                ON emails(reply_later, reply_later_at);
+        `),
+	},
 ];
 

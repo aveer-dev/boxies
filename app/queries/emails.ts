@@ -3,6 +3,8 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { folderUsesNewSeen } from "shared/list-sections";
+import { patchEmailListCache } from "~/lib/list-sections";
 import api from "~/services/api";
 import type { Email } from "~/types";
 import { queryKeys } from "./keys";
@@ -12,6 +14,8 @@ import { queryKeys } from "./keys";
 interface EmailListResponse {
 	emails: Email[];
 	totalCount: number;
+	newCount?: number;
+	seenCount?: number;
 }
 
 // ---------- Queries ----------
@@ -21,9 +25,11 @@ export function useEmails(
 	params: Record<string, string>,
 	options?: { enabled?: boolean; refetchInterval?: number },
 ) {
-	const queryParams = params.folder
-		? { ...params, threaded: "true" }
-		: params;
+	// Threaded conversation collapse applies to folder lists only — not Reply Later pile.
+	const queryParams =
+		params.folder && params.reply_later !== "true"
+			? { ...params, threaded: "true" }
+			: params;
 
 	return useQuery<EmailListResponse>({
 		queryKey: mailboxId
@@ -34,9 +40,12 @@ export function useEmails(
 				| EmailListResponse
 				| Email[];
 			if (data && typeof data === "object" && "emails" in data) {
+				const typed = data as EmailListResponse;
 				return {
-					emails: (data as EmailListResponse).emails ?? [],
-					totalCount: (data as EmailListResponse).totalCount ?? 0,
+					emails: typed.emails ?? [],
+					totalCount: typed.totalCount ?? 0,
+					newCount: typed.newCount,
+					seenCount: typed.seenCount,
 				};
 			}
 			const arr = Array.isArray(data) ? data : [];
@@ -101,6 +110,9 @@ function useInvalidateEmailData() {
 		qc.invalidateQueries({
 			queryKey: queryKeys.folders.list(mailboxId),
 		});
+		qc.invalidateQueries({
+			queryKey: queryKeys.workflowPiles.list(mailboxId),
+		});
 	};
 }
 
@@ -141,27 +153,64 @@ export function useUpdateEmail() {
 			});
 
 			// Snapshot current email list caches for rollback
-			const listQueries = qc.getQueriesData<{ emails: Email[]; totalCount: number }>({
+			const listQueries = qc.getQueriesData<EmailListResponse>({
 				queryKey: ["emails", mailboxId],
 				predicate: isListQuery,
 			});
 
+			const patch = data as Partial<Email>;
+			const readPatch = typeof patch.read === "boolean" ? patch.read : undefined;
+
 			// Optimistically patch every cached email list that contains this email
 			for (const [key, cached] of listQueries) {
 				if (!cached?.emails) continue;
-				qc.setQueryData(key, {
-					...cached,
-					emails: cached.emails.map((e) =>
-						e.id === id ? { ...e, ...(data as Partial<Email>) } : e,
-					),
-				});
+				const params = key[2] as Record<string, string> | undefined;
+				const folder = params?.folder;
+				if (readPatch !== undefined && folderUsesNewSeen(folder)) {
+					qc.setQueryData(
+						key,
+						patchEmailListCache(cached, folder, { id, read: readPatch }),
+					);
+				} else if (readPatch !== undefined) {
+					qc.setQueryData(key, {
+						...cached,
+						emails: cached.emails.map((e) =>
+							e.id === id
+								? {
+										...e,
+										...patch,
+										thread_unread_count: readPatch
+											? 0
+											: Math.max(1, e.thread_unread_count ?? 1),
+									}
+								: e,
+						),
+					});
+				} else {
+					qc.setQueryData(key, {
+						...cached,
+						emails: cached.emails.map((e) =>
+							e.id === id ? { ...e, ...patch } : e,
+						),
+					});
+				}
 			}
 
 			// Also patch the detail cache
 			const detailKey = queryKeys.emails.detail(mailboxId, id);
 			const prevDetail = qc.getQueryData<Email>(detailKey);
 			if (prevDetail) {
-				qc.setQueryData(detailKey, { ...prevDetail, ...(data as Partial<Email>) });
+				qc.setQueryData(detailKey, {
+					...prevDetail,
+					...patch,
+					...(readPatch !== undefined
+						? {
+								thread_unread_count: readPatch
+									? 0
+									: Math.max(1, prevDetail.thread_unread_count ?? 1),
+							}
+						: {}),
+				});
 			}
 
 			return { listQueries, prevDetail, detailKey };
@@ -195,7 +244,43 @@ export function useMarkThreadRead() {
 			threadId,
 		}: { mailboxId: string; threadId: string }) =>
 			api.markThreadRead(mailboxId, threadId),
-		onSuccess: (_data, { mailboxId }) => {
+		onMutate: async ({ mailboxId, threadId }) => {
+			const isListQuery = (query: { queryKey: readonly unknown[] }) =>
+				query.queryKey[0] === "emails" &&
+				query.queryKey[1] === mailboxId &&
+				typeof query.queryKey[2] === "object" &&
+				query.queryKey[2] !== null;
+
+			await qc.cancelQueries({
+				queryKey: ["emails", mailboxId],
+				predicate: isListQuery,
+			});
+
+			const listQueries = qc.getQueriesData<EmailListResponse>({
+				queryKey: ["emails", mailboxId],
+				predicate: isListQuery,
+			});
+
+			for (const [key, cached] of listQueries) {
+				if (!cached?.emails) continue;
+				const params = key[2] as Record<string, string> | undefined;
+				const folder = params?.folder;
+				qc.setQueryData(
+					key,
+					patchEmailListCache(cached, folder, { threadId, read: true }),
+				);
+			}
+
+			return { listQueries };
+		},
+		onError: (_err, _vars, context) => {
+			if (context?.listQueries) {
+				for (const [key, cached] of context.listQueries) {
+					qc.setQueryData(key, cached);
+				}
+			}
+		},
+		onSettled: (_data, _err, { mailboxId }) => {
 			qc.invalidateQueries({ queryKey: ["emails", mailboxId] });
 			qc.invalidateQueries({
 				queryKey: queryKeys.folders.list(mailboxId),

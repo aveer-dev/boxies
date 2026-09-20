@@ -104,7 +104,75 @@ struct EmailListView: View {
                 }
             }
 
-            ForEach(visibleEmails) { email in
+            if showNewSeenSections {
+                newSeenSections
+            } else {
+                ForEach(visibleEmails) { email in
+                    emailRow(for: email)
+                }
+            }
+        }
+    }
+
+    private var showNewSeenSections: Bool {
+        fallbackFolderId == "inbox"
+    }
+
+    /// Prefer sectioned New / Seen when viewing Inbox (even with filters — empty sections hide).
+    @ViewBuilder
+    private var newSeenSections: some View {
+        let newEmails = visibleEmails.filter { $0.resolvedListSection == "new" }
+        let seenEmails = visibleEmails.filter { $0.resolvedListSection == "seen" }
+
+        Section {
+            sectionHeader(title: "New", count: newEmails.count)
+                .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 4, trailing: 20))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+
+            if newEmails.isEmpty {
+                Text("You’re caught up")
+                    .font(.inter(size: AppTheme.List.preview, weight: .regular))
+                    .foregroundStyle(AppTheme.muted)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 12, trailing: 20))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            } else {
+                ForEach(newEmails) { email in
+                    emailRow(for: email)
+                }
+            }
+        }
+
+        if !seenEmails.isEmpty {
+            Section {
+                sectionHeader(title: "Seen", count: seenEmails.count)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 4, trailing: 20))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+
+                ForEach(seenEmails) { email in
+                    emailRow(for: email)
+                }
+            }
+        }
+    }
+
+    private func sectionHeader(title: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(title.uppercased())
+                .font(.inter(size: AppTheme.List.sectionHeader, weight: .medium))
+                .tracking(AppTheme.List.tracking)
+                .foregroundStyle(AppTheme.muted)
+            Text("· \(count)")
+                .font(.inter(size: AppTheme.List.sectionHeader, weight: .regular))
+                .foregroundStyle(AppTheme.muted)
+            Spacer(minLength: 0)
+        }
+    }
+
+    @ViewBuilder
+    private func emailRow(for email: Email) -> some View {
                 let isSelected = selectedEmailIDs.wrappedValue.contains(email.id)
                 Button {
                     if isSelectMode {
@@ -158,8 +226,6 @@ struct EmailListView: View {
                         }
                     }
                 }
-            }
-        }
     }
 
     @ViewBuilder
@@ -445,6 +511,13 @@ struct EmailRowView: View {
                         .font(.inter(size: AppTheme.List.badge, weight: .medium))
                         .foregroundStyle(AppTheme.muted)
                         .accessibilityLabel("Has attachment")
+                }
+
+                if email.replyLater {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                        .accessibilityLabel("Reply later")
                 }
                 
                 if email.starred {
