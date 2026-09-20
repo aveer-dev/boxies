@@ -379,9 +379,8 @@ struct SupportSettingsView: View {
         List {
             Section {
                 Button {
-                    if let url = URL(string: "https://inboxies.email/help") {
-                        openURL(url)
-                    }
+                    let help = AppConfig.apiBaseURL.appendingPathComponent("help")
+                    openURL(help)
                 } label: {
                     settingsActionLabel("Help Center", systemImage: "book.pages")
                 }
@@ -390,7 +389,7 @@ struct SupportSettingsView: View {
                     Task {
                         await app.startCompose(
                             mode: .new,
-                            initialTo: [MailAddress(name: "Inboxies Support", email: "support@inboxies.email")]
+                            initialTo: [MailAddress(name: "Inboxies Support", email: "support@\(app.mailDomain)")]
                         )
                     }
                 } label: {
@@ -401,7 +400,7 @@ struct SupportSettingsView: View {
                     Task {
                         await app.startCompose(
                             mode: .new,
-                            initialTo: [MailAddress(name: "Inboxies Feedback", email: "support@inboxies.email")]
+                            initialTo: [MailAddress(name: "Inboxies Feedback", email: "support@\(app.mailDomain)")]
                         )
                     }
                 } label: {

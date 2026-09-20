@@ -52,7 +52,7 @@ sealed class ApiException(message: String) : Exception(message) {
     class Decoding(cause: Throwable) : ApiException("Decode error: ${cause.message}")
     class NotJson(preview: String) : ApiException("API returned HTML instead of JSON. $preview")
     class CloudflareAccess : ApiException(
-        "Cloudflare Access is blocking the API. Add a Bypass policy for inboxies.email/api/* " +
+        "Cloudflare Access is blocking the API. Add a Bypass policy for <your-api-host>/api/* " +
             "(and /agents/* for chat) in Zero Trust.",
     )
     class Transport(cause: Throwable) : ApiException(cause.message ?: "Network error")
@@ -178,6 +178,9 @@ class ApiClient private constructor() {
     }
 
     suspend fun listMailboxes(): List<Mailbox> = request("/api/v1/mailboxes")
+
+    suspend fun getConfig(): AppConfigResponse =
+        request("/api/v1/config", method = "GET", authed = false)
 
     suspend fun getMe(): MeResponse = request("/api/v1/me")
 

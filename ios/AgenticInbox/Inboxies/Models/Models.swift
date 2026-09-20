@@ -28,6 +28,14 @@ struct MeResponse: Codable {
     var sub: String?
     var keys: [String]
     var isAdmin: Bool?
+    var mailDomain: String?
+    var domains: [String]?
+}
+
+struct AppConfigResponse: Codable {
+    var mailDomain: String
+    var domains: [String]
+    var emailAddresses: [String]?
 }
 
 struct InboxFilterRule: Codable, Hashable, Identifiable {

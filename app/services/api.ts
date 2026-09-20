@@ -126,7 +126,9 @@ interface InviteCreateResponse {
 const api = {
 	// Config
 	getConfig: () =>
-		get<{ domains: string[]; emailAddresses: string[] }>("/api/v1/config"),
+		get<{ mailDomain: string; domains: string[]; emailAddresses: string[] }>(
+			"/api/v1/config",
+		),
 
     // Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
@@ -136,6 +138,8 @@ const api = {
 			sub: string | null;
 			keys: string[];
 			isAdmin?: boolean;
+			mailDomain?: string;
+			domains?: string[];
 		}>("/api/v1/me"),
 	createMailbox: (email: string, name: string, settings?: unknown) =>
 		post<Mailbox>("/api/v1/mailboxes", { email, name, settings }),

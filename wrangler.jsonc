@@ -19,6 +19,10 @@
         // Production deploys must also define POLICY_AUD and TEAM_DOMAIN.
         // TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
         // The worker now fails closed outside local development if Access is not configured.
+        // Mailbox domain(s) for create-address UI and Email Routing.
+        // Optional MAIL_DOMAIN overrides the primary suffix; DOMAINS is comma-separated.
+        // When both unset, API falls back to inboxies.email (hosted SaaS default only).
+        // "MAIL_DOMAIN": "mail.example.com",
         "DOMAINS": "inboxies.email",
         "EMAIL_ADDRESSES": [],
         // Domain Admin allowlist (comma-separated Access emails and optional sub:…).

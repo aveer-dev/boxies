@@ -162,6 +162,7 @@ fun MailboxOnboardingView() {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val isAdmin by app.isAdmin.collectAsState()
+    val mailDomain by app.mailDomain.collectAsState()
     var name by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
@@ -226,7 +227,7 @@ fun MailboxOnboardingView() {
                 singleLine = true,
             )
             Text(
-                "@inboxies.email",
+                "@$mailDomain",
                 color = colors.muted,
                 modifier = Modifier.padding(start = 8.dp, top = 20.dp),
             )
@@ -237,12 +238,12 @@ fun MailboxOnboardingView() {
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 8.dp),
         )
-        Spacer(Modifier.height(24.dp))
+        Spacer(modifier.height(24.dp))
         Button(
             onClick = {
                 scope.launch {
                     creating = true
-                    app.createMailbox(name, "$username@inboxies.email")
+                    app.createMailbox(name, "$username@$mailDomain")
                     creating = false
                 }
             },

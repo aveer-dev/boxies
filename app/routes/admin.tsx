@@ -46,6 +46,7 @@ export default function AdminRoute() {
 	});
 
 	const domains = config?.domains ?? [];
+	const mailDomain = config?.mailDomain ?? domains[0] ?? "";
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [prefix, setPrefix] = useState("");
 	const [domain, setDomain] = useState("");
@@ -64,8 +65,11 @@ export default function AdminRoute() {
 	const [assignTarget, setAssignTarget] = useState<string | null>(null);
 
 	useEffect(() => {
-		if (domains.length > 0 && !domain) setDomain(domains[0]);
-	}, [domains, domain]);
+		if (!domain) {
+			const preferred = mailDomain || domains[0];
+			if (preferred) setDomain(preferred);
+		}
+	}, [domains, mailDomain, domain]);
 
 	if (meLoading) {
 		return (

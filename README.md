@@ -19,7 +19,7 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 
 ### To set up
 
-1. Deploy to Cloudflare. The deploy flow will automatically provision R2, Durable Objects, and Workers AI. You'll be prompted for **DOMAINS**, which is the domain (yourdomain.com) you want to receive emails for (email@yourdomain.com).
+1. Deploy to Cloudflare. The deploy flow will automatically provision R2, Durable Objects, and Workers AI. You'll be prompted for **DOMAINS** (comma-separated hosts you receive mail for). Optionally set **MAIL_DOMAIN** to pin the primary create-address suffix; when both are unset the API falls back to `inboxies.email` for hosted SaaS compatibility only.
 
      [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/agentic-inbox)
 
@@ -69,7 +69,7 @@ A SwiftUI app lives in [`ios/`](./ios/README.md) (open `ios/AgenticInbox/Inboxie
 A Jetpack Compose app lives in [`android/`](./android/README.md). It reuses the same Worker API with Google Sign-In (mobile JWT), Notion-inspired shell, inbox digest, multi-conversation AI chat, and minimizable compose. Emulator default API base is `http://10.0.2.2:5173`.
 ### Configuration
 
-1. Set your domain in `wrangler.jsonc`
+1. Set your mailbox domain(s) in `wrangler.jsonc` (`DOMAINS`, optional `MAIL_DOMAIN`) or via Worker vars. `GET /api/v1/config` returns `{ mailDomain, domains, emailAddresses }` for web and native clients.
 2. Create an R2 bucket named `agentic-inbox`: `wrangler r2 bucket create agentic-inbox`
 
 ### Deploy
@@ -86,9 +86,9 @@ npm run deploy
 - [Workers AI](https://developers.cloudflare.com/workers-ai/) enabled (for the agent)
 - [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) configured for deployed/shared environments (required in production)
 
-Any authenticated user is authorized **per mailbox**. Each mailbox stores an explicit ACL (`acl.owners` + `acl.members`) in its R2 settings blob. Owners can share access by adding another person's Access or mobile email (`email:you@example.com`). A principal may own many mailboxes. Unclaimed mailboxes (missing `acl` or empty `owners`) are claimed on first access when the caller's email matches the canonical mailbox address. If your Access email is not the mailbox address (for example personal Gmail Access into `you@inboxies.email`), you cannot auto-claim it — create the mailbox, or have an owner add your Access email. `EMAIL_ADDRESSES` remains a create allowlist only, not authorization. MCP `/mcp` and Agents `/agents/*` use the same helper.
+Any authenticated user is authorized **per mailbox**. Each mailbox stores an explicit ACL (`acl.owners` + `acl.members`) in its R2 settings blob. Owners can share access by adding another person's Access or mobile email (`email:you@example.com`). A principal may own many mailboxes. Unclaimed mailboxes (missing `acl` or empty `owners`) are claimed on first access when the caller's email matches the canonical mailbox address. If your Access email is not the mailbox address (for example personal Gmail Access into a domain mailbox), you cannot auto-claim it — create the mailbox, or have an owner add your Access email. `EMAIL_ADDRESSES` remains a create allowlist only, not authorization. MCP `/mcp` and Agents `/agents/*` use the same helper.
 
-**Domain Admin:** set Worker secret/var `DOMAIN_ADMINS` to a comma-separated list of Access emails and optional `sub:…` keys (matched against `GET /api/v1/me` → `keys`). Admins get `isAdmin: true`, can list/create/assign/delete via `/api/v1/admin/*`, and are not subject to silent mailbox-content omniscience (ACL still gates mail). When `DOMAIN_ADMINS` is non-empty, mailbox create defaults to **admin-only** unless you set `MAILBOX_CREATE_POLICY=open`. Invitees set a password via `/invite/<token>` (public Worker paths; also add Cloudflare Access **bypass** for `/invite/*`, `/login`, and `/api/v1/invites/*` + `/api/v1/auth/password*`). Optional: `INVITE_FROM_EMAIL`, `APP_BASE_URL`. Password sessions reuse `MOBILE_JWT_SECRET` (cookie `inboxies_session` or Bearer).
+**Domain Admin:** set Worker secret/var `DOMAIN_ADMINS` to a comma-separated list of Access emails and optional `sub:…` keys (matched against `GET /api/v1/me` → `keys`). Admins get `isAdmin: true`, can list/create/assign/delete via `/api/v1/admin/*`, and are not subject to silent mailbox-content omniscience (ACL still gates mail). When `DOMAIN_ADMINS` is non-empty, mailbox create defaults to **admin-only** unless you set `MAILBOX_CREATE_POLICY=open`. Invitees set a password via `/invite/<token>` (public Worker paths; also add Cloudflare Access **bypass** for `/invite/*`, `/login`, and `/api/v1/invites/*` + `/api/v1/auth/password*`). Optional: `INVITE_FROM_EMAIL`, `APP_BASE_URL`, `MAIL_DOMAIN` (primary create-address suffix; else first `DOMAINS` entry; else `inboxies.email`). Password sessions reuse `MOBILE_JWT_SECRET` (cookie `inboxies_session` or Bearer).
 
 ## Architecture
 

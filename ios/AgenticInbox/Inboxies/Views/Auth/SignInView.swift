@@ -141,7 +141,7 @@ struct SignInView: View {
                     Text("API base URL")
                         .font(.inter(.caption))
                         .foregroundStyle(AppTheme.muted)
-                    TextField("inboxies.email", text: $apiBase)
+                    TextField("api.example.com", text: $apiBase)
                         .keyboardType(.URL)
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
@@ -157,7 +157,7 @@ struct SignInView: View {
                         .onSubmit {
                             commitAPIBaseURL()
                         }
-                    Text("Bare domains (inboxies.email) automatically use https://")
+                    Text("Bare domains (api.example.com) automatically use https://")
                         .font(.inter(.caption2))
                         .foregroundStyle(AppTheme.muted)
                 }

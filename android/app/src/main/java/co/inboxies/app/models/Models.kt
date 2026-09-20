@@ -53,6 +53,15 @@ data class MeResponse(
     val sub: String? = null,
     val keys: List<String> = emptyList(),
     val isAdmin: Boolean? = null,
+    val mailDomain: String? = null,
+    val domains: List<String> = emptyList(),
+)
+
+@Serializable
+data class AppConfigResponse(
+    val mailDomain: String,
+    val domains: List<String> = emptyList(),
+    val emailAddresses: List<String> = emptyList(),
 )
 
 @Serializable

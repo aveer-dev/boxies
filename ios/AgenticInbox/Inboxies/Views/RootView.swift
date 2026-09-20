@@ -246,7 +246,7 @@ struct MailboxOnboardingView: View {
                                             newMailboxEmail = String(newValue[..<atIndex])
                                         }
                                     }
-                                Text("@inboxies.email")
+                                Text("@\(app.mailDomain)")
                                     .foregroundStyle(AppTheme.muted)
                             }
                         } footer: {
@@ -257,7 +257,7 @@ struct MailboxOnboardingView: View {
                             Button(action: {
                                 Task {
                                     isCreating = true
-                                    let fullEmail = "\(newMailboxEmail)@inboxies.email"
+                                    let fullEmail = "\(newMailboxEmail)@\(app.mailDomain)"
                                     await app.createMailbox(name: newMailboxName, email: fullEmail)
                                     isCreating = false
                                 }

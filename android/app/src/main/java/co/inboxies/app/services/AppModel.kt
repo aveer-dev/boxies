@@ -80,6 +80,12 @@ class AppModel {
     private val _isAdmin = MutableStateFlow(false)
     val isAdmin: StateFlow<Boolean> = _isAdmin.asStateFlow()
 
+    private val _mailDomain = MutableStateFlow("inboxies.email")
+    val mailDomain: StateFlow<String> = _mailDomain.asStateFlow()
+
+    private val _domains = MutableStateFlow(listOf("inboxies.email"))
+    val domains: StateFlow<List<String>> = _domains.asStateFlow()
+
     private val _pendingInviteToken = MutableStateFlow<String?>(null)
     val pendingInviteToken: StateFlow<String?> = _pendingInviteToken.asStateFlow()
 
@@ -222,8 +228,14 @@ class AppModel {
         }
         _errorMessage.value = null
         try {
+            runCatching { ApiClient.shared.getConfig() }.getOrNull()?.let { config ->
+                _mailDomain.value = config.mailDomain
+                _domains.value = config.domains.ifEmpty { listOf(config.mailDomain) }
+            }
             runCatching { ApiClient.shared.getMe() }.getOrNull()?.let { me ->
                 _isAdmin.value = me.isAdmin == true
+                me.mailDomain?.takeIf { it.isNotBlank() }?.let { _mailDomain.value = it }
+                if (me.domains.isNotEmpty()) _domains.value = me.domains
             }
             val list = ApiClient.shared.listMailboxes()
             val previous = _mailboxes.value.associateBy { it.id }

@@ -19,7 +19,7 @@ enum APIError: LocalizedError {
         case .notJSON(let preview):
             return "API returned HTML instead of JSON. \(preview)"
         case .cloudflareAccess:
-            return "Cloudflare Access is blocking the API. Add a Bypass policy for inboxies.email/api/* (and /agents/* for chat) in Zero Trust, or the Worker never sees Sign in with Apple."
+            return "Cloudflare Access is blocking the API. Add a Bypass policy for <your-api-host>/api/* (and /agents/* for chat) in Zero Trust, or the Worker never sees Sign in with Apple."
         case .transport(let err): return err.localizedDescription
         }
     }
@@ -137,6 +137,10 @@ final class APIClient: @unchecked Sendable {
 
     func listMailboxes() async throws -> [Mailbox] {
         try await request(path: "/api/v1/mailboxes")
+    }
+
+    func getConfig() async throws -> AppConfigResponse {
+        try await request(path: "/api/v1/config", authed: false)
     }
 
     func getMe() async throws -> MeResponse {

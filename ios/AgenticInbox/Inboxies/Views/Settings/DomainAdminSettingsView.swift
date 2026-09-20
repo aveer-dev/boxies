@@ -161,6 +161,7 @@ struct DomainAdminSettingsView: View {
                     Task { await reload() }
                 }
             }
+            .environment(app)
         }
         .sheet(item: Binding(
             get: { inviteForId.map { InviteTarget(id: $0) } },
@@ -237,7 +238,9 @@ private struct DomainAdminCreateView: View {
     @State private var isSaving = false
     @State private var errorMessage: String?
 
-    private let domain = "inboxies.email"
+    @Environment(AppModel.self) private var app
+
+    private var domain: String { app.mailDomain }
 
     var body: some View {
         Form {

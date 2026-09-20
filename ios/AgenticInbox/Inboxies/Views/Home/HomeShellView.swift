@@ -370,7 +370,7 @@ struct HomeShellView: View {
                                         newMailboxEmail = String(newValue[..<atIndex])
                                     }
                                 }
-                            Text("@inboxies.email")
+                            Text("@\(app.mailDomain)")
                                 .foregroundStyle(AppTheme.muted)
                         }
                     } footer: {
@@ -392,7 +392,7 @@ struct HomeShellView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("Create") {
                             Task {
-                                let fullEmail = "\(newMailboxEmail)@inboxies.email"
+                                let fullEmail = "\(newMailboxEmail)@\(app.mailDomain)"
                                 await app.createMailbox(name: newMailboxName, email: fullEmail)
                                 showAddMailboxSheet = false
                                 newMailboxName = ""
