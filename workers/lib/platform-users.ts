@@ -89,10 +89,22 @@ export async function findUserIdByLoginEmail(
 	bucket: R2Bucket,
 	loginEmail: string,
 ): Promise<string | null> {
-	const obj = await bucket.get(userByLoginKey(loginEmail));
-	if (!obj) return null;
+	const byLogin = await bucket.get(userByLoginKey(loginEmail));
+	if (byLogin) {
+		try {
+			const parsed = await byLogin.json();
+			if (isRecord(parsed) && typeof parsed.userId === "string") {
+				return parsed.userId;
+			}
+		} catch {
+			/* ignore */
+		}
+	}
+	// Members (no mailbox login claim) authenticate with invite contact email.
+	const byEmail = await bucket.get(userByEmailKey(loginEmail));
+	if (!byEmail) return null;
 	try {
-		const parsed = await obj.json();
+		const parsed = await byEmail.json();
 		if (isRecord(parsed) && typeof parsed.userId === "string") {
 			return parsed.userId;
 		}

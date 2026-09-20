@@ -13,9 +13,10 @@ import {
 	appendAdminAudit,
 	canCreateMailbox,
 	isDomainAdmin,
-	parseDomainAdminsEnv,
 	parseMailboxCreatePolicy,
+	principalIsDomainAdmin,
 	requireDomainAdmin,
+	resolveAdminAllowlist,
 } from "../lib/domain-admin";
 import {
 	createInviteRecord,
@@ -282,10 +283,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 		}
 		const name = body.name || email.split("@")[0] || email;
 		const assignTo = body.assignTo ?? "self";
-		let acl =
-			assignTo === "self"
-				? creatorAcl(principal)
-				: { owners: [] as string[], members: [] as string[] };
+		// Always provisional-own as admin until invitee accepts — empty ACL
+		// would be auto-claimable via claimIfUnclaimed.
+		const acl = creatorAcl(principal);
 		const settings = { ...defaultSettings(name), acl };
 		await c.env.BUCKET.put(key, JSON.stringify(settings));
 		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
@@ -598,7 +598,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 	});
 
 	app.post("/api/v1/invites/:token/accept", async (c) => {
-		const invite = await loadInvite(c.env.BUCKET, c.req.param("token"));
+		const token = c.req.param("token");
+		const invite = await loadInvite(c.env.BUCKET, token);
 		if (!invite) return c.json({ error: "Invite not found" }, 404);
 		if (!inviteIsActive(invite)) {
 			return c.json({ error: "Invite is not active" }, 410);
@@ -620,13 +621,47 @@ export function registerAdminAndInviteRoutes(app: App) {
 			);
 		}
 
+		// Only the first owner may claim mailbox-address password login.
+		// Members (and later owners) sign in with contact email to avoid
+		// overwriting platform/users-by-login/{mailbox}.
+		const claimMailboxLogin = invite.role === "owner";
+		if (claimMailboxLogin) {
+			const existingLogin = await findUserIdByLoginEmail(
+				c.env.BUCKET,
+				invite.mailboxId,
+			);
+			if (existingLogin) {
+				return c.json(
+					{
+						error:
+							"This mailbox already has a password login. Sign in with that account, or ask an admin to reset access.",
+					},
+					409,
+				);
+			}
+		}
+
 		const userId = crypto.randomUUID();
 		const passwordHash = await hashPassword(body.password);
 		const now = new Date().toISOString();
+
+		// Claim the invite before writing user/ACL so concurrent accepts lose.
+		const stillPending = await loadInvite(c.env.BUCKET, token);
+		if (!stillPending || !inviteIsActive(stillPending)) {
+			return c.json({ error: "Invite is not active" }, 410);
+		}
+		const accepted = {
+			...stillPending,
+			status: "accepted" as const,
+			acceptedAt: now,
+			acceptedUserId: userId,
+		};
+		await saveInvite(c.env.BUCKET, accepted);
+
 		const user: PlatformUser = {
 			id: userId,
 			contactEmail: invite.inviteeEmail,
-			mailboxEmail: invite.mailboxId,
+			mailboxEmail: claimMailboxLogin ? invite.mailboxId : undefined,
 			passwordHash,
 			linkedSubs: [],
 			createdAt: now,
@@ -654,17 +689,12 @@ export function registerAdminAndInviteRoutes(app: App) {
 			JSON.stringify(next),
 		);
 
-		const accepted = {
-			...invite,
-			status: "accepted" as const,
-			acceptedAt: now,
-			acceptedUserId: userId,
-		};
-		await saveInvite(c.env.BUCKET, accepted);
-
+		const sessionEmail = claimMailboxLogin
+			? invite.mailboxId
+			: invite.inviteeEmail;
 		const session = await issuePasswordSessionToken(mobileSecret, {
 			userId,
-			email: invite.mailboxId,
+			email: sessionEmail,
 		});
 		const principal = principalFromPlatformUser(user);
 		c.header(
@@ -767,9 +797,10 @@ export async function resolveCreateGate(
 	env: Env,
 	principal: RequestPrincipal | undefined,
 ) {
-	const hasAdmins = parseDomainAdminsEnv(env.DOMAIN_ADMINS).length > 0;
+	const allowlist = await resolveAdminAllowlist(env);
+	const hasAdmins = allowlist.size > 0;
 	const policy = parseMailboxCreatePolicy(env.MAILBOX_CREATE_POLICY, hasAdmins);
-	const admin = await isDomainAdmin(env, principal);
+	const admin = principalIsDomainAdmin(principal, allowlist);
 	return {
 		policy,
 		isAdmin: admin,

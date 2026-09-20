@@ -147,7 +147,7 @@ fun SignInView() {
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = Color.White),
+                colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                 shape = RoundedCornerShape(12.dp),
             ) {
                 Text("Continue with Google", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium)
@@ -198,7 +198,7 @@ fun SignInView() {
                     },
                     enabled = passwordEmail.isNotBlank() && password.isNotBlank() && !isBusy,
                     modifier = Modifier.fillMaxWidth().height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = Color.White),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                     shape = RoundedCornerShape(12.dp),
                 ) {
                     Text("Continue", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold)
@@ -238,7 +238,7 @@ fun SignInView() {
                 CircularProgressIndicator(color = colors.ink)
             }
             error?.let {
-                Text(it, color = Color.Red, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
+                Text(it, color = colors.deepDarkRed, fontSize = 13.sp, modifier = Modifier.padding(top = 12.dp))
             }
 
             Spacer(Modifier.weight(1f))

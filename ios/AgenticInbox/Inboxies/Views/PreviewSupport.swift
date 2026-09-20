@@ -174,6 +174,44 @@ enum PreviewSupport {
         }
         return app
     }
+
+    static let adminRows: [AdminMailboxRow] = [
+        AdminMailboxRow(
+            id: "you@inboxies.email",
+            email: "you@inboxies.email",
+            name: "Alex Rivera",
+            acl: MailboxAcl(owners: ["email:admin@example.com"], members: []),
+            claimed: true,
+            fromName: "Alex Rivera"
+        ),
+        AdminMailboxRow(
+            id: "ops@inboxies.email",
+            email: "ops@inboxies.email",
+            name: "Ops",
+            acl: MailboxAcl(owners: ["email:admin@example.com"], members: []),
+            claimed: true,
+            fromName: "Ops"
+        ),
+        AdminMailboxRow(
+            id: "pending@inboxies.email",
+            email: "pending@inboxies.email",
+            name: "Pending",
+            acl: MailboxAcl(owners: ["email:admin@example.com"], members: []),
+            claimed: true,
+            fromName: "Pending"
+        ),
+    ]
+
+    @MainActor
+    static func previewAdminModel() -> AppModel {
+        let app = appModel()
+        app.isAdmin = true
+        app.mailboxes = []
+        app.selectedMailboxId = nil
+        app.isLoading = false
+        app.isMailboxLoading = false
+        return app
+    }
 }
 
 #if DEBUG
@@ -191,6 +229,65 @@ struct PreviewMailboxRoot: View {
                     await app.startCompose(mode: .new)
                 }
             }
+    }
+}
+
+struct PreviewAdminAuthRoot: View {
+    @State private var auth = PreviewSupport.authStore()
+    @State private var app = PreviewSupport.previewAdminModel()
+
+    var body: some View {
+        let args = ProcessInfo.processInfo.arguments
+        Group {
+            if args.contains("-previewPasswordSignIn") {
+                SignInView()
+            } else if args.contains("-previewInviteAccept") {
+                NavigationStack {
+                    InviteAcceptPreview()
+                }
+            } else {
+                NavigationStack {
+                    DomainAdminSettingsView(showsDismiss: false, previewRows: PreviewSupport.adminRows)
+                }
+            }
+        }
+        .environment(auth)
+        .environment(app)
+    }
+}
+
+private struct InviteAcceptPreview: View {
+    @State private var password = ""
+    @State private var confirm = ""
+    @State private var displayName = "Alex"
+
+    var body: some View {
+        Form {
+            Section {
+                Text("You've been invited to you@inboxies.email.")
+                    .font(.inter(size: 14))
+                    .foregroundStyle(AppTheme.muted)
+            }
+            Section("Set password") {
+                SecureField("Password (10+ characters)", text: $password)
+                SecureField("Confirm password", text: $confirm)
+                TextField("Display name (optional)", text: $displayName)
+            }
+            Section {
+                Button("Create account") {}
+                    .font(.inter(size: 16, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
+        .navigationTitle("Accept invite")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Cancel") {}
+            }
+        }
     }
 }
 #endif

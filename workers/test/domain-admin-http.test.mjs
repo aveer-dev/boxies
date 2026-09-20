@@ -277,6 +277,128 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	assert.equal(badLogin.status, 401);
 }
 
+// ── Invite-create keeps provisional admin owner (not claimable) ───
+
+{
+	const bucket = mockBucket();
+	const env = mockEnv(bucket);
+	const created = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/mailboxes",
+		principal: admin,
+		body: {
+			email: "pending@inboxies.email",
+			assignTo: { inviteEmail: "person@gmail.com" },
+		},
+	});
+	assert.equal(created.status, 201);
+	assert.ok(
+		created.json.settings.acl.owners.includes("email:admin@example.com"),
+		"invite-assigned mailbox must keep provisional admin owner",
+	);
+	assert.equal(created.json.settings.acl.owners.length > 0, true);
+
+	// Matching Access identity must NOT auto-claim over the provisional owner.
+	const claimer = principalFromClaims({
+		email: "pending@inboxies.email",
+		sub: "pending-sub",
+	});
+	const list = await jsonRequest(apiApp, env, {
+		path: "/api/v1/mailboxes",
+		principal: claimer,
+	});
+	assert.equal(list.status, 200);
+	assert.equal(
+		list.json.some((m) => m.id === "pending@inboxies.email"),
+		false,
+	);
+}
+
+// ── Member invite must not steal mailbox password login ───────────
+
+{
+	const bucket = mockBucket();
+	const env = mockEnv(bucket);
+	const created = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/mailboxes",
+		principal: admin,
+		body: {
+			email: "shared@inboxies.email",
+			assignTo: {
+				inviteEmail: "owner@gmail.com",
+				role: "owner",
+			},
+		},
+	});
+	assert.equal(created.status, 201);
+	const ownerToken = created.json.invite.token;
+	const ownerAccept = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: `/api/v1/invites/${ownerToken}/accept`,
+		body: { password: "owner-password-1" },
+	});
+	assert.equal(ownerAccept.status, 200);
+
+	const memberInvite = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/invites",
+		principal: admin,
+		body: {
+			mailboxId: "shared@inboxies.email",
+			inviteEmail: "member@gmail.com",
+			role: "member",
+		},
+	});
+	assert.equal(memberInvite.status, 201);
+	const memberAccept = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: `/api/v1/invites/${memberInvite.json.token}/accept`,
+		body: { password: "member-password-1" },
+	});
+	assert.equal(memberAccept.status, 200);
+
+	const ownerLogin = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "shared@inboxies.email", password: "owner-password-1" },
+	});
+	assert.equal(ownerLogin.status, 200);
+	assert.equal(ownerLogin.json.sub, ownerAccept.json.principal.sub);
+
+	const memberViaMailbox = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "shared@inboxies.email", password: "member-password-1" },
+	});
+	assert.equal(memberViaMailbox.status, 401);
+
+	const memberViaContact = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "member@gmail.com", password: "member-password-1" },
+	});
+	assert.equal(memberViaContact.status, 200);
+
+	const secondOwnerInvite = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/invites",
+		principal: admin,
+		body: {
+			mailboxId: "shared@inboxies.email",
+			inviteEmail: "other-owner@gmail.com",
+			role: "owner",
+		},
+	});
+	assert.equal(secondOwnerInvite.status, 201);
+	const secondAccept = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: `/api/v1/invites/${secondOwnerInvite.json.token}/accept`,
+		body: { password: "other-owner-pw1" },
+	});
+	assert.equal(secondAccept.status, 409);
+}
+
 // ── Admin transfer ACL ────────────────────────────────────────────
 
 {

@@ -27,6 +27,11 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
                 PreviewMailboxRoot()
                     .applyThemeController()
+            } else if ProcessInfo.processInfo.arguments.contains("-previewDomainAdmin")
+                || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn")
+                || ProcessInfo.processInfo.arguments.contains("-previewInviteAccept") {
+                PreviewAdminAuthRoot()
+                    .applyThemeController()
             } else {
                 RootView()
                     .environment(authStore)

@@ -8,6 +8,8 @@ struct DomainAdminSettingsView: View {
 
     var showsDismiss: Bool = true
     var onAssigned: (() -> Void)? = nil
+    /// DEBUG / Simulator fixture rows — skips the network reload when non-nil.
+    var previewRows: [AdminMailboxRow]? = nil
 
     @State private var rows: [AdminMailboxRow] = []
     @State private var isLoading = true
@@ -18,6 +20,7 @@ struct DomainAdminSettingsView: View {
     @State private var inviteForId: String?
     @State private var lastInviteUrl: String?
     @State private var statusMessage: String?
+    @State private var pendingDeleteId: String?
 
     var body: some View {
         Group {
@@ -87,10 +90,10 @@ struct DomainAdminSettingsView: View {
                                     Button("Invite") {
                                         inviteForId = row.id
                                     }
-                                    Button("Delete", role: .destructive) {
-                                        Task { await deleteMailbox(row.id) }
-                                    }
-                                    .disabled(deletingId != nil)
+									Button("Delete", role: .destructive) {
+										pendingDeleteId = row.id
+									}
+									.disabled(deletingId != nil)
                                 }
                                 .font(.inter(size: 14, weight: .medium))
                             }
@@ -128,6 +131,28 @@ struct DomainAdminSettingsView: View {
             }
         }
         .task { await reload() }
+        .confirmationDialog(
+            "Delete mailbox?",
+            isPresented: Binding(
+                get: { pendingDeleteId != nil },
+                set: { if !$0 { pendingDeleteId = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let id = pendingDeleteId {
+                    pendingDeleteId = nil
+                    Task { await deleteMailbox(id) }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteId = nil
+            }
+        } message: {
+            if let id = pendingDeleteId {
+                Text("Delete \(id)? This cannot be undone.")
+            }
+        }
         .sheet(isPresented: $showCreate) {
             NavigationStack {
                 DomainAdminCreateView { url in
@@ -151,6 +176,11 @@ struct DomainAdminSettingsView: View {
     }
 
     private func reload() async {
+        if let previewRows {
+            rows = previewRows
+            isLoading = false
+            return
+        }
         isLoading = rows.isEmpty
         errorMessage = nil
         do {
