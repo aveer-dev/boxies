@@ -90,6 +90,14 @@ struct SettingsSheetView: View {
                         settingsLabel("Sharing", systemImage: "person.2")
                     }
 
+                    if app.isAdmin {
+                        NavigationLink {
+                            DomainAdminSettingsView(showsDismiss: false)
+                        } label: {
+                            settingsLabel("Domain Admin", systemImage: "shield.lefthalf.filled")
+                        }
+                    }
+
                     notificationsToggle
                     signatureToggle
                 } header: {

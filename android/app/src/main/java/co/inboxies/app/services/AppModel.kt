@@ -942,6 +942,8 @@ class AppModel {
         _conversations.value = emptyList()
         _isMailboxLoading.value = true
         _isLoading.value = true
+        _isAdmin.value = false
+        _pendingInviteToken.value = null
         _errorMessage.value = null
         _toast.value = null
     }

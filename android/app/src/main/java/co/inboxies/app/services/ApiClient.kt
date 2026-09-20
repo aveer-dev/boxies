@@ -1,6 +1,7 @@
 package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
+import co.inboxies.app.models.AdminCreateMailboxResponse
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AuthResponse
@@ -239,6 +240,56 @@ class ApiClient private constructor() {
         "/api/v1/admin/mailboxes/${pathEncode(mailboxId)}/assign",
         method = "POST",
         body = buildJsonObject { put("assignTo", "self") },
+    )
+
+    suspend fun createAdminMailbox(
+        email: String,
+        name: String? = null,
+        assignToSelf: Boolean = true,
+        inviteEmail: String? = null,
+        inviteeName: String? = null,
+    ): AdminCreateMailboxResponse = request(
+        "/api/v1/admin/mailboxes",
+        method = "POST",
+        body = buildJsonObject {
+            put("email", email)
+            if (!name.isNullOrBlank()) put("name", name)
+            if (assignToSelf) {
+                put("assignTo", "self")
+            } else {
+                put(
+                    "assignTo",
+                    buildJsonObject {
+                        put("inviteEmail", inviteEmail ?: "")
+                        put("role", "owner")
+                        if (!inviteeName.isNullOrBlank()) put("inviteeName", inviteeName)
+                    },
+                )
+            }
+        },
+    )
+
+    suspend fun deleteAdminMailbox(mailboxId: String) {
+        request<EmptyResponse>(
+            "/api/v1/admin/mailboxes/${pathEncode(mailboxId)}",
+            method = "DELETE",
+        )
+    }
+
+    suspend fun createAdminInvite(
+        mailboxId: String,
+        inviteEmail: String,
+        inviteeName: String? = null,
+        role: String = "owner",
+    ): InviteCreateResponse = request(
+        "/api/v1/admin/invites",
+        method = "POST",
+        body = buildJsonObject {
+            put("mailboxId", mailboxId)
+            put("inviteEmail", inviteEmail)
+            put("role", role)
+            if (!inviteeName.isNullOrBlank()) put("inviteeName", inviteeName)
+        },
     )
 
     suspend fun createMailboxInvite(

@@ -105,6 +105,24 @@ data class AdminMailboxRow(
 )
 
 @Serializable
+data class AdminCreateMailboxInvite(
+    val token: String? = null,
+    val inviteUrl: String? = null,
+    val emailSent: Boolean? = null,
+    val emailError: String? = null,
+    val inviteeEmail: String? = null,
+    val role: String? = null,
+)
+
+@Serializable
+data class AdminCreateMailboxResponse(
+    val id: String? = null,
+    val email: String? = null,
+    val name: String? = null,
+    val invite: AdminCreateMailboxInvite? = null,
+)
+
+@Serializable
 data class InboxFilterRule(
     val id: String,
     val enabled: Boolean? = true,

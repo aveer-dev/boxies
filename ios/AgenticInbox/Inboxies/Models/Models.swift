@@ -1021,3 +1021,19 @@ struct AdminMailboxRow: Codable, Identifiable {
     var claimed: Bool?
     var fromName: String?
 }
+
+struct AdminCreateMailboxInvite: Codable {
+    var token: String?
+    var inviteUrl: String?
+    var emailSent: Bool?
+    var emailError: String?
+    var inviteeEmail: String?
+    var role: String?
+}
+
+struct AdminCreateMailboxResponse: Codable {
+    var id: String?
+    var email: String?
+    var name: String?
+    var invite: AdminCreateMailboxInvite?
+}

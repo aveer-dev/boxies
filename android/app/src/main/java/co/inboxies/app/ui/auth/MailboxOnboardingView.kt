@@ -17,7 +17,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,11 +29,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.LocalAuthStore
-import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.InvitePublic
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.settings.DomainAdminSettingsView
 import kotlinx.coroutines.launch
 
 @Composable
@@ -54,7 +53,7 @@ fun InviteAcceptView(
     var submitting by remember { mutableStateOf(false) }
     var formError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(token) {
+    androidx.compose.runtime.LaunchedEffect(token) {
         runCatching { ApiClient.shared.getInvite(token) }
             .onSuccess { invite = it }
             .onFailure { loadError = it.message }
@@ -166,15 +165,22 @@ fun MailboxOnboardingView() {
     var name by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
-    var adminRows by remember { mutableStateOf<List<AdminMailboxRow>>(emptyList()) }
-    var loadingAdmin by remember { mutableStateOf(false) }
-    var assigningId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(isAdmin) {
-        if (!isAdmin) return@LaunchedEffect
-        loadingAdmin = true
-        adminRows = runCatching { ApiClient.shared.listAdminMailboxes() }.getOrDefault(emptyList())
-        loadingAdmin = false
+    if (isAdmin) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+        ) {
+            TextButton(
+                onClick = { auth.signOut() },
+                modifier = Modifier.padding(horizontal = 8.dp),
+            ) {
+                Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
+            }
+            DomainAdminSettingsView()
+        }
+        return
     }
 
     Column(
@@ -189,118 +195,62 @@ fun MailboxOnboardingView() {
             Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
         }
         Spacer(Modifier.height(24.dp))
-        if (isAdmin) {
-            Text(
-                "Domain Admin",
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 24.sp,
-                color = colors.ink,
-            )
-            Text(
-                if (adminRows.isEmpty()) {
-                    "No mailboxes assigned to you yet. Assign an existing domain mailbox, or create one on the web Admin console."
-                } else {
-                    "Assign a domain mailbox to yourself to start using Inboxies."
-                },
-                fontFamily = InterFontFamily,
-                fontSize = 15.sp,
-                color = colors.muted,
-                modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
-            )
-            if (loadingAdmin) {
-                CircularProgressIndicator()
-            } else {
-                adminRows.forEach { row ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                    ) {
-                        Column(Modifier = Modifier.weight(1f)) {
-                            Text(row.email, fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, color = colors.ink)
-                            Text(
-                                if (row.claimed) "Claimed" else "Unclaimed",
-                                color = colors.muted,
-                                fontSize = 12.sp,
-                            )
-                        }
-                        TextButton(
-                            onClick = {
-                                scope.launch {
-                                    assigningId = row.id
-                                    runCatching {
-                                        ApiClient.shared.assignAdminMailboxToSelf(row.id)
-                                        app.refreshMailboxes(showLoading = true)
-                                    }
-                                    assigningId = null
-                                }
-                            },
-                            enabled = assigningId == null,
-                        ) {
-                            Text("Assign to me", color = colors.accent, fontFamily = InterFontFamily)
-                        }
-                    }
-                }
-            }
-        } else {
-            Text(
-                "Welcome to Inboxies",
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 24.sp,
-                color = colors.ink,
-            )
-            Text(
-                "Create your first email address to start using the platform.",
-                fontFamily = InterFontFamily,
-                fontSize = 15.sp,
-                color = colors.muted,
-                modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
-            )
+        Text(
+            "Welcome to Inboxies",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 24.sp,
+            color = colors.ink,
+        )
+        Text(
+            "Create your first email address to start using the platform.",
+            fontFamily = InterFontFamily,
+            fontSize = 15.sp,
+            color = colors.muted,
+            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
+        )
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Full Name") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Full Name") },
-                modifier = Modifier.fillMaxWidth(),
+                value = username,
+                onValueChange = { username = it.substringBefore('@') },
+                label = { Text("Username") },
+                modifier = Modifier.weight(1f),
                 singleLine = true,
             )
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it.substringBefore('@') },
-                    label = { Text("Username") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                )
-                Text(
-                    "@inboxies.email",
-                    color = colors.muted,
-                    modifier = Modifier.padding(start = 8.dp, top = 20.dp),
-                )
-            }
             Text(
-                "This will be your primary email address.",
+                "@inboxies.email",
                 color = colors.muted,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 8.dp),
+                modifier = Modifier.padding(start = 8.dp, top = 20.dp),
             )
-            Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = {
-                    scope.launch {
-                        creating = true
-                        app.createMailbox(name, "$username@inboxies.email")
-                        creating = false
-                    }
-                },
-                enabled = name.isNotBlank() && username.isNotBlank() && !creating,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (creating) CircularProgressIndicator()
-                else Text("Create Email", fontFamily = InterFontFamily)
-            }
+        }
+        Text(
+            "This will be your primary email address.",
+            color = colors.muted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+        Spacer(Modifier.height(24.dp))
+        Button(
+            onClick = {
+                scope.launch {
+                    creating = true
+                    app.createMailbox(name, "$username@inboxies.email")
+                    creating = false
+                }
+            },
+            enabled = name.isNotBlank() && username.isNotBlank() && !creating,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (creating) CircularProgressIndicator()
+            else Text("Create Email", fontFamily = InterFontFamily)
         }
     }
 }

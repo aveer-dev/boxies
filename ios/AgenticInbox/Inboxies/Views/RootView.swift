@@ -210,115 +210,71 @@ struct MailboxOnboardingView: View {
     @State private var newMailboxName = ""
     @State private var newMailboxEmail = ""
     @State private var isCreating = false
-    @State private var adminRows: [AdminMailboxRow] = []
-    @State private var isLoadingAdmin = false
-    @State private var assigningId: String?
     @FocusState private var isNameFocused: Bool
 
     var body: some View {
         NavigationStack {
-            Form {
+            Group {
                 if app.isAdmin {
-                    Section {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Domain Admin")
-                                .font(.inter(size: 24, weight: .bold))
-                                .foregroundStyle(AppTheme.ink)
-                            Text(
-                                adminRows.isEmpty
-                                    ? "No mailboxes assigned to you yet. Assign an existing domain mailbox to yourself, or create one on the web Admin console."
-                                    : "Assign a domain mailbox to yourself to start using Inboxies."
-                            )
-                            .font(.inter(size: 15))
-                            .foregroundStyle(AppTheme.muted)
-                        }
-                        .padding(.vertical, 16)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    }
-
-                    if isLoadingAdmin {
-                        Section { ProgressView() }
-                    } else {
-                        Section("Domain mailboxes") {
-                            if adminRows.isEmpty {
-                                Text("None found. Use web Admin to create one.")
+                    DomainAdminSettingsView(showsDismiss: false)
+                } else {
+                    Form {
+                        Section {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Welcome to Inboxies")
+                                    .font(.inter(size: 24, weight: .bold))
+                                    .foregroundStyle(AppTheme.ink)
+                                Text("Create your first email address to start using the platform.")
+                                    .font(.inter(size: 15))
                                     .foregroundStyle(AppTheme.muted)
                             }
-                            ForEach(adminRows) { row in
+                            .padding(.vertical, 16)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        }
+
+                        Section {
+                            TextField("Full Name", text: $newMailboxName)
+                                .focused($isNameFocused)
+                            HStack {
+                                TextField("Username", text: $newMailboxEmail)
+                                    .keyboardType(.emailAddress)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .onChange(of: newMailboxEmail) { _, newValue in
+                                        if let atIndex = newValue.firstIndex(of: "@") {
+                                            newMailboxEmail = String(newValue[..<atIndex])
+                                        }
+                                    }
+                                Text("@inboxies.email")
+                                    .foregroundStyle(AppTheme.muted)
+                            }
+                        } footer: {
+                            Text("This will be your primary email address.")
+                        }
+
+                        Section {
+                            Button(action: {
+                                Task {
+                                    isCreating = true
+                                    let fullEmail = "\(newMailboxEmail)@inboxies.email"
+                                    await app.createMailbox(name: newMailboxName, email: fullEmail)
+                                    isCreating = false
+                                }
+                            }) {
                                 HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(row.email)
-                                            .font(.inter(size: 15, weight: .medium))
-                                        Text(row.claimed == true ? "Claimed" : "Unclaimed")
-                                            .font(.inter(size: 12))
-                                            .foregroundStyle(AppTheme.muted)
+                                    Spacer()
+                                    if isCreating {
+                                        ProgressView()
+                                    } else {
+                                        Text("Create Email")
+                                            .font(.inter(size: 16, weight: .medium))
                                     }
                                     Spacer()
-                                    Button("Assign to me") {
-                                        Task { await assignSelf(row.id) }
-                                    }
-                                    .disabled(assigningId != nil)
                                 }
                             }
+                            .disabled(newMailboxEmail.isEmpty || newMailboxName.isEmpty || isCreating)
                         }
-                    }
-                } else {
-                    Section {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Welcome to Inboxies")
-                                .font(.inter(size: 24, weight: .bold))
-                                .foregroundStyle(AppTheme.ink)
-                            Text("Create your first email address to start using the platform.")
-                                .font(.inter(size: 15))
-                                .foregroundStyle(AppTheme.muted)
-                        }
-                        .padding(.vertical, 16)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    }
-
-                    Section {
-                        TextField("Full Name", text: $newMailboxName)
-                            .focused($isNameFocused)
-                        HStack {
-                            TextField("Username", text: $newMailboxEmail)
-                                .keyboardType(.emailAddress)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .onChange(of: newMailboxEmail) { _, newValue in
-                                    if let atIndex = newValue.firstIndex(of: "@") {
-                                        newMailboxEmail = String(newValue[..<atIndex])
-                                    }
-                                }
-                            Text("@inboxies.email")
-                                .foregroundStyle(AppTheme.muted)
-                        }
-                    } footer: {
-                        Text("This will be your primary email address.")
-                    }
-
-                    Section {
-                        Button(action: {
-                            Task {
-                                isCreating = true
-                                let fullEmail = "\(newMailboxEmail)@inboxies.email"
-                                await app.createMailbox(name: newMailboxName, email: fullEmail)
-                                isCreating = false
-                            }
-                        }) {
-                            HStack {
-                                Spacer()
-                                if isCreating {
-                                    ProgressView()
-                                } else {
-                                    Text("Create Email")
-                                        .font(.inter(size: 16, weight: .medium))
-                                }
-                                Spacer()
-                            }
-                        }
-                        .disabled(newMailboxEmail.isEmpty || newMailboxName.isEmpty || isCreating)
                     }
                 }
             }
@@ -336,23 +292,6 @@ struct MailboxOnboardingView: View {
                     isNameFocused = true
                 }
             }
-            .task {
-                guard app.isAdmin else { return }
-                isLoadingAdmin = true
-                defer { isLoadingAdmin = false }
-                adminRows = (try? await APIClient.shared.listAdminMailboxes()) ?? []
-            }
-        }
-    }
-
-    private func assignSelf(_ mailboxId: String) async {
-        assigningId = mailboxId
-        defer { assigningId = nil }
-        do {
-            _ = try await APIClient.shared.assignAdminMailboxToSelf(mailboxId: mailboxId)
-            await app.refreshMailboxes(showLoading: true)
-        } catch {
-            app.errorMessage = error.localizedDescription
         }
     }
 }

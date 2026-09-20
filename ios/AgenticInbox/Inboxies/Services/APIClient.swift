@@ -208,6 +208,55 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func createAdminMailbox(
+        email: String,
+        name: String?,
+        assignToSelf: Bool,
+        inviteEmail: String? = nil,
+        inviteeName: String? = nil
+    ) async throws -> AdminCreateMailboxResponse {
+        var body: [String: Any] = ["email": email]
+        if let name, !name.isEmpty { body["name"] = name }
+        if assignToSelf {
+            body["assignTo"] = "self"
+        } else if let inviteEmail {
+            var invite: [String: Any] = ["inviteEmail": inviteEmail, "role": "owner"]
+            if let inviteeName, !inviteeName.isEmpty { invite["inviteeName"] = inviteeName }
+            body["assignTo"] = invite
+        }
+        return try await request(
+            path: "/api/v1/admin/mailboxes",
+            method: "POST",
+            body: body
+        )
+    }
+
+    func deleteAdminMailbox(mailboxId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/admin/mailboxes/\(mailboxId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
+    func createAdminInvite(
+        mailboxId: String,
+        inviteEmail: String,
+        inviteeName: String? = nil,
+        role: String = "owner"
+    ) async throws -> InviteCreateResponse {
+        var body: [String: Any] = [
+            "mailboxId": mailboxId,
+            "inviteEmail": inviteEmail,
+            "role": role,
+        ]
+        if let inviteeName, !inviteeName.isEmpty { body["inviteeName"] = inviteeName }
+        return try await request(
+            path: "/api/v1/admin/invites",
+            method: "POST",
+            body: body
+        )
+    }
+
     func createMailboxInvite(
         mailboxId: String,
         inviteEmail: String,
