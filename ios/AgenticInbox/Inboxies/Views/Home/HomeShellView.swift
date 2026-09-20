@@ -440,6 +440,12 @@ struct HomeShellView: View {
             }
             return app.isDigestLoading ? "Loading…" : ""
         }
+        if case .replyLater = app.selectedTab {
+            let count = app.replyLaterCount
+            if count == 0 { return "Nothing queued" }
+            if count == 1 { return "1 to reply" }
+            return "\(count) to reply"
+        }
         guard case .folder = app.selectedTab else { return "" }
         if isSelectMode {
             return selectedEmailIDs.isEmpty ? "Select emails" : "\(selectedEmailIDs.count) selected"

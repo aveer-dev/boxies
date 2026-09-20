@@ -223,6 +223,13 @@ fun HomeShellView(
                 }
             }
         }
+        HomeTab.ReplyLater -> {
+            when {
+                replyLaterCount == 0 -> "Nothing queued"
+                replyLaterCount == 1 -> "1 to reply"
+                else -> "$replyLaterCount to reply"
+            }
+        }
         else -> ""
     }
 

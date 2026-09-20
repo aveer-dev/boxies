@@ -90,7 +90,12 @@ class DatabaseService private constructor() {
 
     fun moveEmail(id: String, folderId: String) {
         val existing = emails[id] ?: return
-        emails[id] = existing.copy(folderId = folderId)
+        val clearReplyLater = folderId == "trash" || folderId == "spam"
+        emails[id] = existing.copy(
+            folderId = folderId,
+            replyLater = if (clearReplyLater) false else existing.replyLater,
+            replyLaterAt = if (clearReplyLater) null else existing.replyLaterAt,
+        )
     }
 
     /** Remove local rows for this folder that are not on the server page. */

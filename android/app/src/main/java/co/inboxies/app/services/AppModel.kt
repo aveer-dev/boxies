@@ -1205,6 +1205,12 @@ class AppModel {
         }.onFailure {
             showToast("Couldn't sync move", isError = true)
         }
+        if (folderId == "trash" || folderId == "spam") {
+            refreshReplyLaterCount()
+            if (_selectedTab.value is HomeTab.ReplyLater) {
+                loadEmailsForCurrentTab(showLoading = false)
+            }
+        }
     }
 
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {
