@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Domain Admin console — list/create/assign/invite/delete mailboxes.
 struct DomainAdminSettingsView: View {
