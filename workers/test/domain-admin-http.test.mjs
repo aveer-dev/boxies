@@ -494,7 +494,31 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 		path: "/api/v1/me/identity-link-codes",
 		principal: eve,
 	});
-	assert.equal(eveMint.status, 403);
+	assert.equal(eveMint.status, 200);
+	assert.ok(eveMint.json.code);
+	assert.ok(eveMint.json.emails.includes("eve@example.com"));
+
+	const apple = principalFromClaims({ sub: "apple.eve.nonadmin" });
+	const redeem = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/redeem-identity-link",
+		principal: apple,
+		body: { code: eveMint.json.code },
+	});
+	assert.equal(redeem.status, 200);
+	assert.ok(redeem.json.keys.includes("email:eve@example.com"));
+
+	const identities = await jsonRequest(apiApp, env, {
+		path: "/api/v1/me/identities",
+		principal: apple,
+	});
+	assert.equal(identities.status, 200);
+	assert.ok(Array.isArray(identities.json.identities));
+	assert.ok(
+		identities.json.identities.some(
+			(i) => i.key === "email:eve@example.com" || i.label === "eve@example.com",
+		),
+	);
 }
 
 console.log("domain-admin-http: ok");

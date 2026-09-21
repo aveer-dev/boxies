@@ -92,9 +92,10 @@ Any authenticated user is authorized **per mailbox**. Each mailbox stores an exp
 
 **Mobile Apple / Google vs Access:** Assign-to-me and Sharing store the **web Access** principal (`email:you@gmail.com`). Sign in with Apple often uses a different key (`email:…@privaterelay.appleid.com` and/or `sub:…`), so mobile can show Welcome even when web works. Fixes:
 
-1. If Apple/Google returns an email that is already in `DOMAIN_ADMINS`, the Worker **auto-links** that IdP `sub` to the email (durable in R2). Later mobile sessions expand to the same ACL/admin keys.
-2. If Apple **hides** the email: on web as Domain Admin, `POST /api/v1/me/identity-link-codes` → copy the code → on the phone after Apple sign-in, `POST /api/v1/auth/redeem-identity-link` with `{ "code": "…" }`. Then reload; `/me` should show `isAdmin: true` and linked emails.
-3. Interim ops: add the mobile `sub:…` (from `/api/v1/me` on the device) to `DOMAIN_ADMINS`, and/or add `email:…@privaterelay.appleid.com` / `sub:…` under Settings → Sharing on each mailbox.
+1. If Apple/Google returns an email that is already in `DOMAIN_ADMINS`, the Worker **auto-links** that IdP `sub` to the email (durable identity account in R2). Later mobile sessions expand to the same ACL/admin keys.
+2. **Product flow (preferred):** Settings → **Sign-in methods** on web (while signed in with Access/email) → **Generate link code** → on the phone after Apple/Google sign-in, Settings → **Sign-in methods** → paste/redeem the code. Works for Domain Admins and invitees (password ↔ IdP). Codes expire in 15 minutes; both sides must already be authenticated (no open takeover).
+3. API equivalents: `GET /api/v1/me/identities`, `POST /api/v1/me/identity-link-codes`, `POST /api/v1/auth/redeem-identity-link`. Password users can also `POST /api/v1/auth/link-provider` with a verified IdP `sub`.
+4. Interim ops: add the mobile `sub:…` (from `/api/v1/me` on the device) to `DOMAIN_ADMINS`, and/or add `email:…@privaterelay.appleid.com` / `sub:…` under Settings → Sharing on each mailbox.
 
 ## Architecture
 

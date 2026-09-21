@@ -147,6 +147,22 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/me")
     }
 
+    func listIdentities() async throws -> IdentitiesResponse {
+        try await request(path: "/api/v1/me/identities")
+    }
+
+    func createIdentityLinkCode() async throws -> IdentityLinkCodeResponse {
+        try await request(path: "/api/v1/me/identity-link-codes", method: "POST", body: [:] as [String: Any])
+    }
+
+    func redeemIdentityLink(code: String) async throws -> RedeemIdentityLinkResponse {
+        try await request(
+            path: "/api/v1/auth/redeem-identity-link",
+            method: "POST",
+            body: ["code": code]
+        )
+    }
+
     func createMailbox(name: String, email: String) async throws -> Mailbox {
         try await request(
             path: "/api/v1/mailboxes",

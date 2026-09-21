@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Contrast
 import androidx.compose.material.icons.outlined.Edit
@@ -88,6 +89,7 @@ private sealed class SettingsPage {
     data object Filters : SettingsPage()
     data object Senders : SettingsPage()
     data object Sharing : SettingsPage()
+    data object SignInMethods : SettingsPage()
     data object DomainAdmin : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
@@ -218,6 +220,7 @@ fun SettingsSheetView(
                     onOpenFilters = { page = SettingsPage.Filters },
                     onOpenSenders = { page = SettingsPage.Senders },
                     onOpenSharing = { page = SettingsPage.Sharing },
+                    onOpenSignInMethods = { page = SettingsPage.SignInMethods },
                     onOpenDomainAdmin = { page = SettingsPage.DomainAdmin },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
@@ -255,6 +258,9 @@ fun SettingsSheetView(
                 SettingsPage.Sharing -> SharingSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.SignInMethods -> SignInMethodsSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.DomainAdmin -> DomainAdminSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
@@ -285,6 +291,7 @@ private fun SettingsRootPage(
     onOpenFilters: () -> Unit,
     onOpenSenders: () -> Unit,
     onOpenSharing: () -> Unit,
+    onOpenSignInMethods: () -> Unit,
     onOpenDomainAdmin: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
@@ -431,6 +438,11 @@ private fun SettingsRootPage(
                 title = "Sharing",
                 icon = Icons.Outlined.Group,
                 onClick = onOpenSharing,
+            )
+            SettingsNavRow(
+                title = "Sign-in methods",
+                icon = Icons.Outlined.Key,
+                onClick = onOpenSignInMethods,
             )
             if (isAdmin) {
                 SettingsNavRow(

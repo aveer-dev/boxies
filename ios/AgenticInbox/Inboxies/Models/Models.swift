@@ -26,10 +26,44 @@ struct MailboxAcl: Codable, Hashable {
 struct MeResponse: Codable {
     var email: String?
     var sub: String?
+    var linkedEmails: [String]?
     var keys: [String]
     var isAdmin: Bool?
     var mailDomain: String?
     var domains: [String]?
+}
+
+struct LinkedIdentity: Codable, Identifiable, Hashable {
+    var type: String
+    var key: String
+    var label: String
+    var current: Bool
+
+    var id: String { key }
+}
+
+struct IdentitiesResponse: Codable {
+    var accountId: String
+    var identities: [LinkedIdentity]
+    var keys: [String]?
+    var linkedEmails: [String]?
+}
+
+struct IdentityLinkCodeResponse: Codable {
+    var code: String
+    var emails: [String]?
+    var principals: [String]?
+    var accountId: String?
+    var expiresAt: String
+}
+
+struct RedeemIdentityLinkResponse: Codable {
+    var ok: Bool
+    var accountId: String?
+    var linkedEmails: [String]?
+    var keys: [String]?
+    var isAdmin: Bool
+    var identities: [LinkedIdentity]?
 }
 
 struct AppConfigResponse: Codable {

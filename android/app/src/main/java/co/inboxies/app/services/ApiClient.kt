@@ -12,6 +12,8 @@ import co.inboxies.app.models.EmailListResponse
 import co.inboxies.app.models.WorkflowPilesResponse
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxDigest
+import co.inboxies.app.models.IdentitiesResponse
+import co.inboxies.app.models.IdentityLinkCodeResponse
 import co.inboxies.app.models.InviteAcceptResponse
 import co.inboxies.app.models.InviteCreateResponse
 import co.inboxies.app.models.InvitePublic
@@ -19,6 +21,7 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.PasswordLoginResponse
+import co.inboxies.app.models.RedeemIdentityLinkResponse
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -183,6 +186,20 @@ class ApiClient private constructor() {
         request("/api/v1/config", method = "GET", authed = false)
 
     suspend fun getMe(): MeResponse = request("/api/v1/me")
+
+    suspend fun listIdentities(): IdentitiesResponse = request("/api/v1/me/identities")
+
+    suspend fun createIdentityLinkCode(): IdentityLinkCodeResponse = request(
+        "/api/v1/me/identity-link-codes",
+        method = "POST",
+        body = buildJsonObject {},
+    )
+
+    suspend fun redeemIdentityLink(code: String): RedeemIdentityLinkResponse = request(
+        "/api/v1/auth/redeem-identity-link",
+        method = "POST",
+        body = buildJsonObject { put("code", code) },
+    )
 
     suspend fun createMailbox(name: String, email: String): Mailbox = request(
         "/api/v1/mailboxes",

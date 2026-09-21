@@ -1,5 +1,5 @@
 /**
- * Identity links: Apple/Google sub ↔ Domain Admin / ACL emails.
+ * Identity links: account ↔ principals (email / sub / user).
  * Run: node --experimental-strip-types --import ./workers/test/register-ts-ext.mjs workers/test/identity-links.test.mjs
  */
 
@@ -7,10 +7,13 @@ import assert from "node:assert/strict";
 import {
 	autoLinkSubIfAdminEmail,
 	createIdentityLinkCode,
+	ensureIdentityAccount,
 	expandPrincipalWithLinks,
 	identityLinkCodeIsActive,
+	mintIdentityLinkCode,
 	ownerKeysForAssign,
 	parseIdentityLink,
+	redeemIdentityLinkCode,
 	resolveAdminLinkEmails,
 	upsertIdentityLink,
 } from "../lib/identity-links.ts";
@@ -23,6 +26,9 @@ import {
 } from "../lib/mailbox-acl.ts";
 import { principalIsDomainAdmin, parseDomainAdminsEnv } from "../lib/domain-admin.ts";
 import { mailboxMetadataKey } from "../lib/mailbox-routing.ts";
+import {
+	savePlatformUser,
+} from "../lib/platform-users.ts";
 
 function mockBucket(initial = {}) {
 	const store = new Map(
@@ -57,7 +63,7 @@ function mockBucket(initial = {}) {
 	};
 }
 
-// ── principalKeys includes linkedEmails ───────────────────────────
+// ── principalKeys includes linkedEmails + linkedUserIds ───────────
 
 {
 	const p = principalFromClaims({
@@ -65,10 +71,12 @@ function mockBucket(initial = {}) {
 		sub: "apple.sub.1",
 	});
 	p.linkedEmails = ["admin@example.com"];
+	p.linkedUserIds = ["abc-123"];
 	const keys = principalKeys(p);
 	assert.ok(keys.includes("email:relay@privaterelay.appleid.com"));
 	assert.ok(keys.includes("email:admin@example.com"));
 	assert.ok(keys.includes("sub:apple.sub.1"));
+	assert.ok(keys.includes("user:abc-123"));
 }
 
 // ── expand + Domain Admin match via link ──────────────────────────
@@ -223,6 +231,81 @@ function mockBucket(initial = {}) {
 	});
 	assert.ok(parsed);
 	assert.equal(parsed.emails[0], "a@b.com");
+}
+
+// ── Any user mints; Apple redeems → same account / ACL union ──────
+
+{
+	const bucket = mockBucket({
+		[mailboxMetadataKey("team@inboxies.email")]: {
+			fromName: "Team",
+			acl: { owners: ["email:eve@example.com"], members: [] },
+		},
+	});
+	const eve = principalFromClaims({
+		email: "eve@example.com",
+		sub: "eve-access",
+	});
+	const mint = await mintIdentityLinkCode(
+		{ DOMAIN_ADMINS: "admin@example.com", BUCKET: bucket },
+		eve,
+	);
+	assert.ok(mint.code);
+	assert.ok(mint.accountId);
+	assert.ok(mint.emails.includes("eve@example.com"));
+
+	const apple = principalFromClaims({ sub: "apple.eve.hide" });
+	const redeemed = await redeemIdentityLinkCode(bucket, apple, mint.code);
+	assert.ok(redeemed.linkedEmails.includes("eve@example.com"));
+
+	const expanded = await expandPrincipalWithLinks(bucket, apple);
+	assert.ok(principalKeys(expanded).includes("email:eve@example.com"));
+	assert.equal(
+		canAccessMailbox(
+			{ acl: { owners: ["email:eve@example.com"], members: [] } },
+			expanded,
+			"team@inboxies.email",
+		),
+		true,
+	);
+}
+
+// ── Password account ↔ Apple via link code ────────────────────────
+
+{
+	const bucket = mockBucket();
+	const userId = "pwd-user-1";
+	const user = {
+		id: userId,
+		contactEmail: "invitee@gmail.com",
+		mailboxEmail: "alex@inboxies.email",
+		passwordHash: "x",
+		linkedSubs: [],
+		createdAt: new Date().toISOString(),
+		updatedAt: new Date().toISOString(),
+	};
+	await savePlatformUser(bucket, user);
+
+	const passwordPrincipal = {
+		email: "alex@inboxies.email",
+		sub: `user:${userId}`,
+	};
+	await ensureIdentityAccount(bucket, passwordPrincipal);
+
+	const mint = await mintIdentityLinkCode(
+		{ DOMAIN_ADMINS: "", BUCKET: bucket },
+		passwordPrincipal,
+	);
+	const apple = principalFromClaims({ sub: "apple.invitee.1" });
+	const redeemed = await redeemIdentityLinkCode(bucket, apple, mint.code);
+	assert.ok(redeemed.expanded.linkedUserIds?.includes(userId));
+	assert.ok(principalKeys(redeemed.expanded).includes(`user:${userId}`));
+	assert.ok(
+		principalKeys(redeemed.expanded).includes("email:alex@inboxies.email"),
+	);
+
+	const reloaded = await expandPrincipalWithLinks(bucket, apple);
+	assert.ok(principalKeys(reloaded).includes(`user:${userId}`));
 }
 
 console.log("identity-links: ok");

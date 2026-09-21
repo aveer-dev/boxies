@@ -136,11 +136,46 @@ const api = {
 		get<{
 			email: string | null;
 			sub: string | null;
+			linkedEmails?: string[];
 			keys: string[];
 			isAdmin?: boolean;
 			mailDomain?: string;
 			domains?: string[];
 		}>("/api/v1/me"),
+	listIdentities: () =>
+		get<{
+			accountId: string;
+			identities: {
+				type: string;
+				key: string;
+				label: string;
+				current: boolean;
+			}[];
+			keys: string[];
+			linkedEmails: string[];
+		}>("/api/v1/me/identities"),
+	createIdentityLinkCode: () =>
+		post<{
+			code: string;
+			emails: string[];
+			principals: string[];
+			accountId?: string;
+			expiresAt: string;
+		}>("/api/v1/me/identity-link-codes"),
+	redeemIdentityLink: (code: string) =>
+		post<{
+			ok: boolean;
+			accountId: string;
+			linkedEmails: string[];
+			keys: string[];
+			isAdmin: boolean;
+			identities?: {
+				type: string;
+				key: string;
+				label: string;
+				current: boolean;
+			}[];
+		}>("/api/v1/auth/redeem-identity-link", { code }),
 	createMailbox: (email: string, name: string, settings?: unknown) =>
 		post<Mailbox>("/api/v1/mailboxes", { email, name, settings }),
 	getMailbox: (mailboxId: string) =>
