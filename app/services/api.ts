@@ -126,9 +126,13 @@ interface InviteCreateResponse {
 const api = {
 	// Config
 	getConfig: () =>
-		get<{ mailDomain: string; domains: string[]; emailAddresses: string[] }>(
-			"/api/v1/config",
-		),
+		get<{
+			mailDomain: string;
+			domains: string[];
+			emailAddresses?: string[];
+			googleClientId?: string | null;
+			appleSignInConfigured?: boolean;
+		}>("/api/v1/config"),
 
     // Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
@@ -154,6 +158,25 @@ const api = {
 			keys: string[];
 			linkedEmails: string[];
 		}>("/api/v1/me/identities"),
+	attachIdentity: (body:
+		| { provider: "apple"; identityToken: string }
+		| { provider: "google"; idToken: string }
+		| { provider: "password"; password: string; loginEmail?: string }) =>
+		post<{
+			ok: boolean;
+			provider: string;
+			accountId: string;
+			userId?: string;
+			linkedEmails: string[];
+			keys: string[];
+			isAdmin: boolean;
+			identities: {
+				type: string;
+				key: string;
+				label: string;
+				current: boolean;
+			}[];
+		}>("/api/v1/me/identities/attach", body),
 	createIdentityLinkCode: () =>
 		post<{
 			code: string;

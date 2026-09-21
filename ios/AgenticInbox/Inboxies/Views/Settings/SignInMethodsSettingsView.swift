@@ -1,25 +1,40 @@
+import AuthenticationServices
 import SwiftUI
 
-/// Account → Sign-in methods: list linked identities, mint / redeem link codes.
+/// Account → Sign-in methods: Connect IdP on this device; link codes as advanced fallback.
 struct SignInMethodsSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     @State private var identities: [LinkedIdentity] = []
     @State private var isLoading = true
+    @State private var isConnectingApple = false
+    @State private var isAddingPassword = false
     @State private var isMinting = false
     @State private var isRedeeming = false
+    @State private var showPasswordForm = false
+    @State private var showAdvanced = false
+    @State private var password = ""
+    @State private var passwordConfirm = ""
     @State private var linkCode: String?
     @State private var expiresAt: String?
     @State private var redeemDraft = ""
     @State private var statusMessage: String?
     @State private var errorMessage: String?
 
+    private var hasApple: Bool {
+        identities.contains { $0.type == "apple" }
+    }
+
+    private var hasPassword: Bool {
+        identities.contains { $0.type == "password" }
+    }
+
     var body: some View {
         List {
             Section {
                 Text(
-                    "Link Access email, Apple, Google, or password so every sign-in uses the same account and mailbox access."
+                    "Connect Apple or add a password on this iPhone while signed in. Every method uses the same account and mailbox access."
                 )
                 .font(.inter(size: SettingsFormChrome.footerFontSize))
                 .foregroundStyle(AppTheme.muted)
@@ -57,60 +72,124 @@ struct SignInMethodsSettingsView: View {
             }
 
             Section {
-                Button {
-                    Task { await createCode() }
-                } label: {
-                    Text(isMinting ? "Creating…" : "Generate link code")
-                        .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                        .foregroundStyle(AppTheme.accent)
+                if !hasApple {
+                    SignInWithAppleButton(.continue) { request in
+                        request.requestedScopes = [.fullName, .email]
+                    } onCompletion: { result in
+                        Task { await handleConnectApple(result) }
+                    }
+                    .signInWithAppleButtonStyle(.black)
+                    .frame(height: 44)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .disabled(isConnectingApple)
                 }
-                .disabled(isMinting)
 
-                if let linkCode {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(linkCode)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(AppTheme.ink)
-                            .textSelection(.enabled)
-                        if let expiresAt {
-                            Text("Expires \(formatExpiry(expiresAt))")
-                                .font(.inter(size: SettingsFormChrome.footerFontSize))
-                                .foregroundStyle(AppTheme.muted)
+                if !hasPassword {
+                    if !showPasswordForm {
+                        Button {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                showPasswordForm = true
+                            }
+                        } label: {
+                            Text("Add password")
+                                .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                                .foregroundStyle(AppTheme.accent)
                         }
-                        Button("Copy code") {
-                            UIPasteboard.general.string = linkCode
-                            statusMessage = "Code copied"
+                    } else {
+                        SecureField("New password (10+ characters)", text: $password)
+                            .font(.inter(size: SettingsFormChrome.rowFontSize))
+                            .textContentType(.newPassword)
+                        SecureField("Confirm password", text: $passwordConfirm)
+                            .font(.inter(size: SettingsFormChrome.rowFontSize))
+                            .textContentType(.newPassword)
+                        Button {
+                            Task { await addPassword() }
+                        } label: {
+                            Text(isAddingPassword ? "Saving…" : "Save password")
+                                .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                                .foregroundStyle(AppTheme.accent)
                         }
-                        .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                        .foregroundStyle(AppTheme.accent)
+                        .disabled(isAddingPassword || password.isEmpty || passwordConfirm.isEmpty)
+                        Button("Cancel") {
+                            showPasswordForm = false
+                            password = ""
+                            passwordConfirm = ""
+                        }
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.muted)
                     }
                 }
             } header: {
-                Text("Connect another method")
+                Text("Connect on this device")
             } footer: {
                 Text(
-                    "On web (email / Access), generate a code, then redeem it here after Sign in with Apple. Codes expire in 15 minutes."
+                    "Completes Apple’s normal sign-in and attaches it to this account — you stay signed in."
                 )
             }
 
             Section {
-                TextField("Paste code", text: $redeemDraft)
-                    .font(.inter(size: SettingsFormChrome.rowFontSize))
-                    .foregroundStyle(AppTheme.ink)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
                 Button {
-                    Task { await redeem() }
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        showAdvanced.toggle()
+                    }
                 } label: {
-                    Text(isRedeeming ? "Linking…" : "Link to this account")
+                    Text(showAdvanced ? "Hide · Link another device" : "Link another device")
                         .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                        .foregroundStyle(AppTheme.accent)
+                        .foregroundStyle(AppTheme.muted)
                 }
-                .disabled(isRedeeming || redeemDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                if showAdvanced {
+                    Text(
+                        "Cross-device fallback when Connect can’t run on the other surface. Codes expire in 15 minutes."
+                    )
+                    .font(.inter(size: SettingsFormChrome.footerFontSize))
+                    .foregroundStyle(AppTheme.muted)
+
+                    Button {
+                        Task { await createCode() }
+                    } label: {
+                        Text(isMinting ? "Creating…" : "Generate link code")
+                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .disabled(isMinting)
+
+                    if let linkCode {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(linkCode)
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(AppTheme.ink)
+                                .textSelection(.enabled)
+                            if let expiresAt {
+                                Text("Expires \(formatExpiry(expiresAt))")
+                                    .font(.inter(size: SettingsFormChrome.footerFontSize))
+                                    .foregroundStyle(AppTheme.muted)
+                            }
+                            Button("Copy code") {
+                                UIPasteboard.general.string = linkCode
+                                statusMessage = "Code copied"
+                            }
+                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
+                        }
+                    }
+
+                    TextField("Paste code", text: $redeemDraft)
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.ink)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button {
+                        Task { await redeem() }
+                    } label: {
+                        Text(isRedeeming ? "Linking…" : "Link to this account")
+                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .disabled(isRedeeming || redeemDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
             } header: {
-                Text("Redeem a code")
-            } footer: {
-                Text("Paste a code from web or another sign-in method while signed in here.")
+                Text("Advanced")
             }
 
             if let statusMessage {
@@ -163,6 +242,65 @@ struct SignInMethodsSettingsView: View {
         }
     }
 
+    private func handleConnectApple(_ result: Result<ASAuthorization, Error>) async {
+        switch result {
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let token = String(data: tokenData, encoding: .utf8) else {
+                errorMessage = "Apple Sign In failed"
+                return
+            }
+            isConnectingApple = true
+            errorMessage = nil
+            defer { isConnectingApple = false }
+            do {
+                let res = try await APIClient.shared.attachAppleIdentity(identityToken: token)
+                statusMessage = res.isAdmin
+                    ? "Apple connected — Domain Admin access restored"
+                    : "Apple connected"
+                if let next = res.identities {
+                    identities = next
+                } else {
+                    await reload()
+                }
+                await app.refreshMailboxes()
+            } catch {
+                errorMessage = friendlyAttachError(error)
+            }
+        }
+    }
+
+    private func addPassword() async {
+        guard password.count >= 10 else {
+            errorMessage = "Password must be at least 10 characters"
+            return
+        }
+        guard password == passwordConfirm else {
+            errorMessage = "Passwords do not match"
+            return
+        }
+        isAddingPassword = true
+        errorMessage = nil
+        defer { isAddingPassword = false }
+        do {
+            let res = try await APIClient.shared.attachPasswordIdentity(password: password)
+            password = ""
+            passwordConfirm = ""
+            showPasswordForm = false
+            statusMessage = "Password added"
+            if let next = res.identities {
+                identities = next
+            } else {
+                await reload()
+            }
+        } catch {
+            errorMessage = friendlyAttachError(error)
+        }
+    }
+
     private func createCode() async {
         isMinting = true
         errorMessage = nil
@@ -198,6 +336,17 @@ struct SignInMethodsSettingsView: View {
         } catch {
             errorMessage = "Invalid or expired code"
         }
+    }
+
+    private func friendlyAttachError(_ error: Error) -> String {
+        let text = error.localizedDescription
+        if text.localizedCaseInsensitiveContains("already linked") {
+            return "That identity is already linked to another Inboxies account"
+        }
+        if text.localizedCaseInsensitiveContains("already has a password") {
+            return "This account already has a password"
+        }
+        return "Could not connect sign-in method"
     }
 }
 

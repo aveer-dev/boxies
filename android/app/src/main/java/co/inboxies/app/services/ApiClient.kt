@@ -4,6 +4,8 @@ import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AdminCreateMailboxResponse
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
+import co.inboxies.app.models.AppConfigResponse
+import co.inboxies.app.models.AttachIdentityResponse
 import co.inboxies.app.models.AuthResponse
 import co.inboxies.app.models.DigestStatusResponse
 import co.inboxies.app.models.DraftSaveResponse
@@ -188,6 +190,37 @@ class ApiClient private constructor() {
     suspend fun getMe(): MeResponse = request("/api/v1/me")
 
     suspend fun listIdentities(): IdentitiesResponse = request("/api/v1/me/identities")
+
+    suspend fun attachAppleIdentity(identityToken: String): AttachIdentityResponse = request(
+        "/api/v1/me/identities/attach",
+        method = "POST",
+        body = buildJsonObject {
+            put("provider", "apple")
+            put("identityToken", identityToken)
+        },
+    )
+
+    suspend fun attachGoogleIdentity(idToken: String): AttachIdentityResponse = request(
+        "/api/v1/me/identities/attach",
+        method = "POST",
+        body = buildJsonObject {
+            put("provider", "google")
+            put("idToken", idToken)
+        },
+    )
+
+    suspend fun attachPasswordIdentity(
+        password: String,
+        loginEmail: String? = null,
+    ): AttachIdentityResponse = request(
+        "/api/v1/me/identities/attach",
+        method = "POST",
+        body = buildJsonObject {
+            put("provider", "password")
+            put("password", password)
+            if (!loginEmail.isNullOrBlank()) put("loginEmail", loginEmail)
+        },
+    )
 
     suspend fun createIdentityLinkCode(): IdentityLinkCodeResponse = request(
         "/api/v1/me/identity-link-codes",

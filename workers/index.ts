@@ -221,7 +221,15 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 app.get("/api/v1/config", (c) => {
 	const { mailDomain, domains } = mailDomainConfig(c.env);
 	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
-	return c.json({ mailDomain, domains, emailAddresses });
+	return c.json({
+		mailDomain,
+		domains,
+		emailAddresses,
+		/** OAuth Web client id for GIS / Connect Google (same aud as mobile). */
+		googleClientId: c.env.GOOGLE_CLIENT_ID ?? null,
+		/** True when Sign in with Apple can be verified (iOS bundle aud). Web Apple needs a Services ID — use mobile Connect or link code. */
+		appleSignInConfigured: Boolean(c.env.APPLE_CLIENT_ID),
+	});
 });
 
 app.get("/api/v1/me", async (c) => {

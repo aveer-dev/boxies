@@ -4,7 +4,7 @@
 
 import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import SettingsSubpage from "~/components/SettingsSubpage";
 import api from "~/services/api";
@@ -28,10 +28,69 @@ function identityTypeLabel(type: string): string {
 	}
 }
 
+declare global {
+	interface Window {
+		google?: {
+			accounts: {
+				id: {
+					initialize: (config: {
+						client_id: string;
+						callback: (response: { credential: string }) => void;
+						auto_select?: boolean;
+						cancel_on_tap_outside?: boolean;
+					}) => void;
+					prompt: (
+						momentListener?: (notification: {
+							isNotDisplayed: () => boolean;
+							isSkippedMoment: () => boolean;
+							getNotDisplayedReason: () => string;
+						}) => void,
+					) => void;
+					renderButton: (
+						parent: HTMLElement,
+						options: {
+							theme?: string;
+							size?: string;
+							text?: string;
+							width?: number;
+						},
+					) => void;
+				};
+			};
+		};
+	}
+}
+
+function loadGoogleIdentityScript(): Promise<void> {
+	if (window.google?.accounts?.id) return Promise.resolve();
+	const existing = document.querySelector<HTMLScriptElement>(
+		'script[data-google-gis="1"]',
+	);
+	if (existing) {
+		return new Promise((resolve, reject) => {
+			existing.addEventListener("load", () => resolve());
+			existing.addEventListener("error", () =>
+				reject(new Error("Failed to load Google Sign-In")),
+			);
+		});
+	}
+	return new Promise((resolve, reject) => {
+		const script = document.createElement("script");
+		script.src = "https://accounts.google.com/gsi/client";
+		script.async = true;
+		script.defer = true;
+		script.dataset.googleGis = "1";
+		script.onload = () => resolve();
+		script.onerror = () => reject(new Error("Failed to load Google Sign-In"));
+		document.head.appendChild(script);
+	});
+}
+
 export default function SignInMethodsSettingsRoute() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
+	const googleBtnRef = useRef<HTMLDivElement>(null);
 
 	const { data, isLoading, refetch } = useQuery({
 		queryKey: ["identities"],
@@ -39,11 +98,99 @@ export default function SignInMethodsSettingsRoute() {
 		staleTime: 30_000,
 	});
 
+	const { data: config } = useQuery({
+		queryKey: ["config"],
+		queryFn: () => api.getConfig(),
+		staleTime: 60_000,
+	});
+
 	const [isMinting, setIsMinting] = useState(false);
 	const [linkCode, setLinkCode] = useState<string | null>(null);
 	const [expiresAt, setExpiresAt] = useState<string | null>(null);
 	const [redeemDraft, setRedeemDraft] = useState("");
 	const [isRedeeming, setIsRedeeming] = useState(false);
+	const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
+	const [showPasswordForm, setShowPasswordForm] = useState(false);
+	const [password, setPassword] = useState("");
+	const [passwordConfirm, setPasswordConfirm] = useState("");
+	const [isAddingPassword, setIsAddingPassword] = useState(false);
+	const [showAdvanced, setShowAdvanced] = useState(false);
+
+	const hasPassword = data?.identities.some((i) => i.type === "password");
+	const hasGoogle = data?.identities.some((i) => i.type === "google");
+	const hasApple = data?.identities.some((i) => i.type === "apple");
+	const googleClientId = config?.googleClientId ?? null;
+
+	const refreshAfterAttach = useCallback(
+		async (title: string) => {
+			toastManager.add({ title });
+			await refetch();
+			await queryClient.invalidateQueries({ queryKey: ["me"] });
+			await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+		},
+		[queryClient, refetch, toastManager],
+	);
+
+	const handleGoogleCredential = useCallback(
+		async (credential: string) => {
+			setIsConnectingGoogle(true);
+			try {
+				const res = await api.attachIdentity({
+					provider: "google",
+					idToken: credential,
+				});
+				await refreshAfterAttach(
+					res.isAdmin
+						? "Google connected — Domain Admin access restored"
+						: "Google connected",
+				);
+			} catch (err) {
+				const message =
+					err instanceof Error ? err.message : "Could not connect Google";
+				toastManager.add({
+					title: message.includes("already linked")
+						? "That Google account is already linked to another Inboxies account"
+						: "Could not connect Google",
+					variant: "error",
+				});
+			} finally {
+				setIsConnectingGoogle(false);
+			}
+		},
+		[refreshAfterAttach, toastManager],
+	);
+
+	useEffect(() => {
+		if (!googleClientId || hasGoogle || !googleBtnRef.current) return;
+		let cancelled = false;
+		(async () => {
+			try {
+				await loadGoogleIdentityScript();
+				if (cancelled || !window.google?.accounts?.id || !googleBtnRef.current)
+					return;
+				window.google.accounts.id.initialize({
+					client_id: googleClientId,
+					callback: (response) => {
+						void handleGoogleCredential(response.credential);
+					},
+					auto_select: false,
+					cancel_on_tap_outside: true,
+				});
+				googleBtnRef.current.innerHTML = "";
+				window.google.accounts.id.renderButton(googleBtnRef.current, {
+					theme: "outline",
+					size: "large",
+					text: "continue_with",
+					width: 280,
+				});
+			} catch {
+				/* GIS unavailable — advanced link-code fallback remains */
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [googleClientId, hasGoogle, handleGoogleCredential, data?.identities]);
 
 	const handleCreateCode = async () => {
 		setIsMinting(true);
@@ -78,15 +225,12 @@ export default function SignInMethodsSettingsRoute() {
 		setIsRedeeming(true);
 		try {
 			const res = await api.redeemIdentityLink(code);
-			toastManager.add({
-				title: res.isAdmin
+			await refreshAfterAttach(
+				res.isAdmin
 					? "Linked — Domain Admin access restored"
 					: "Sign-in method linked",
-			});
+			);
 			setRedeemDraft("");
-			await refetch();
-			await queryClient.invalidateQueries({ queryKey: ["me"] });
-			await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
 		} catch {
 			toastManager.add({
 				title: "Invalid or expired code",
@@ -97,13 +241,45 @@ export default function SignInMethodsSettingsRoute() {
 		}
 	};
 
+	const handleAddPassword = async () => {
+		if (password.length < 10) {
+			toastManager.add({
+				title: "Password must be at least 10 characters",
+				variant: "error",
+			});
+			return;
+		}
+		if (password !== passwordConfirm) {
+			toastManager.add({
+				title: "Passwords do not match",
+				variant: "error",
+			});
+			return;
+		}
+		setIsAddingPassword(true);
+		try {
+			await api.attachIdentity({ provider: "password", password });
+			setPassword("");
+			setPasswordConfirm("");
+			setShowPasswordForm(false);
+			await refreshAfterAttach("Password added");
+		} catch (err) {
+			const message =
+				err instanceof Error ? err.message : "Could not add password";
+			toastManager.add({ title: message, variant: "error" });
+		} finally {
+			setIsAddingPassword(false);
+		}
+	};
+
 	if (!mailboxId) return null;
 
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Sign-in methods">
 			<p className="text-sm text-kumo-subtle mb-6">
-				Link Access email, Apple, Google, or password so every sign-in resolves
-				to the same Inboxies account, Domain Admin role, and mailbox access.
+				Connect Apple, Google, or a password on this device while signed in.
+				Every method resolves to the same Inboxies account, Domain Admin role,
+				and mailbox access.
 			</p>
 
 			{isLoading || !data ? (
@@ -118,8 +294,7 @@ export default function SignInMethodsSettingsRoute() {
 						</div>
 						{data.identities.length === 0 ? (
 							<p className="text-sm text-kumo-subtle">
-								No linked identities yet. Generate a code below, then redeem it
-								from your other device or sign-in method.
+								No linked identities yet. Connect a method below.
 							</p>
 						) : (
 							<ul className="divide-y divide-kumo-line">
@@ -146,68 +321,161 @@ export default function SignInMethodsSettingsRoute() {
 					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
 						<div>
 							<div className="text-sm font-medium text-kumo-default mb-1">
-								Connect another sign-in method
+								Connect on this device
 							</div>
 							<p className="text-xs text-kumo-subtle">
-								On this browser (email / Access / password), create a code. On
-								your phone after Sign in with Apple or Google, open Settings →
-								Sign-in methods and enter the code. Codes expire in 15 minutes
-								and only work while you are signed in on both sides.
+								Complete the provider’s normal sign-in while staying logged in
+								as this account. The new method is attached — you are not
+								switched to a different account.
 							</p>
 						</div>
-						<div className="flex flex-wrap items-center gap-2">
-							<Button
-								variant="primary"
-								size="sm"
-								disabled={isMinting}
-								onClick={handleCreateCode}
-							>
-								{isMinting ? "Creating…" : "Generate link code"}
-							</Button>
-							{linkCode && (
-								<Button variant="secondary" size="sm" onClick={handleCopy}>
-									Copy code
-								</Button>
-							)}
-						</div>
-						{linkCode && (
-							<div className="rounded-md bg-kumo-tint px-3 py-3">
-								<div className="font-mono text-lg tracking-widest text-kumo-default">
-									{linkCode}
-								</div>
-								{expiresAt && (
-									<p className="text-xs text-kumo-subtle mt-1">
-										Expires {new Date(expiresAt).toLocaleString()}
+
+						{!hasGoogle && (
+							<div className="space-y-2">
+								{googleClientId ? (
+									<>
+										<div ref={googleBtnRef} />
+										{isConnectingGoogle && (
+											<p className="text-xs text-kumo-subtle">Connecting…</p>
+										)}
+									</>
+								) : (
+									<p className="text-xs text-kumo-subtle">
+										Connect Google isn’t available on this deployment (no{" "}
+										<code className="font-mono">GOOGLE_CLIENT_ID</code>). Use
+										an Android device or Link another device below.
 									</p>
+								)}
+							</div>
+						)}
+
+						{!hasApple && (
+							<p className="text-xs text-kumo-subtle rounded-md bg-kumo-tint px-3 py-2">
+								Connect Apple isn’t available in the browser (Cloudflare Access
+								doesn’t mint Apple ID tokens here). On iPhone: Settings →
+								Sign-in methods → <strong>Connect Apple</strong>. Or use Link
+								another device below.
+							</p>
+						)}
+
+						{!hasPassword && (
+							<div className="space-y-3">
+								{!showPasswordForm ? (
+									<Button
+										variant="secondary"
+										size="sm"
+										onClick={() => setShowPasswordForm(true)}
+									>
+										Add password
+									</Button>
+								) : (
+									<>
+										<Input
+											label="New password"
+											type="password"
+											value={password}
+											onChange={(e) => setPassword(e.target.value)}
+											placeholder="At least 10 characters"
+										/>
+										<Input
+											label="Confirm password"
+											type="password"
+											value={passwordConfirm}
+											onChange={(e) => setPasswordConfirm(e.target.value)}
+										/>
+										<div className="flex flex-wrap gap-2">
+											<Button
+												variant="primary"
+												size="sm"
+												disabled={isAddingPassword}
+												onClick={handleAddPassword}
+											>
+												{isAddingPassword ? "Saving…" : "Save password"}
+											</Button>
+											<Button
+												variant="secondary"
+												size="sm"
+												onClick={() => {
+													setShowPasswordForm(false);
+													setPassword("");
+													setPasswordConfirm("");
+												}}
+											>
+												Cancel
+											</Button>
+										</div>
+									</>
 								)}
 							</div>
 						)}
 					</div>
 
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
-						<div>
-							<div className="text-sm font-medium text-kumo-default mb-1">
-								Redeem a code on this session
-							</div>
-							<p className="text-xs text-kumo-subtle">
-								If you generated a code on another device or sign-in method,
-								paste it here while signed in.
-							</p>
-						</div>
-						<Input
-							label="Link code"
-							value={redeemDraft}
-							onChange={(e) => setRedeemDraft(e.target.value)}
-							placeholder="Paste code"
-						/>
-						<Button
-							variant="secondary"
-							size="sm"
-							disabled={isRedeeming || !redeemDraft.trim()}
-							onClick={handleRedeem}
+					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+						<button
+							type="button"
+							className="text-sm font-medium text-kumo-default flex items-center gap-2"
+							onClick={() => setShowAdvanced((v) => !v)}
 						>
-							{isRedeeming ? "Linking…" : "Link to this account"}
-						</Button>
+							{showAdvanced ? "Hide" : "Show"} · Link another device
+							<span className="text-xs font-normal text-kumo-subtle">
+								(advanced)
+							</span>
+						</button>
+						{showAdvanced && (
+							<>
+								<p className="text-xs text-kumo-subtle">
+									For cross-device linking when Connect IdP can’t run on this
+									surface. Generate a code here, then redeem it on the other
+									signed-in session. Codes expire in 15 minutes.
+								</p>
+								<div className="flex flex-wrap items-center gap-2">
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={isMinting}
+										onClick={handleCreateCode}
+									>
+										{isMinting ? "Creating…" : "Generate link code"}
+									</Button>
+									{linkCode && (
+										<Button variant="secondary" size="sm" onClick={handleCopy}>
+											Copy code
+										</Button>
+									)}
+								</div>
+								{linkCode && (
+									<div className="rounded-md bg-kumo-tint px-3 py-3">
+										<div className="font-mono text-lg tracking-widest text-kumo-default">
+											{linkCode}
+										</div>
+										{expiresAt && (
+											<p className="text-xs text-kumo-subtle mt-1">
+												Expires {new Date(expiresAt).toLocaleString()}
+											</p>
+										)}
+									</div>
+								)}
+								<div className="space-y-3 pt-2 border-t border-kumo-line">
+									<p className="text-xs text-kumo-subtle">
+										Redeem a code minted on another device or sign-in method.
+									</p>
+									<Input
+										label="Link code"
+										value={redeemDraft}
+										onChange={(e) => setRedeemDraft(e.target.value)}
+										placeholder="Paste code"
+									/>
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={isRedeeming || !redeemDraft.trim()}
+										onClick={handleRedeem}
+									>
+										{isRedeeming ? "Linking…" : "Link to this account"}
+									</Button>
+								</div>
+							</>
+						)}
 					</div>
 				</div>
 			)}

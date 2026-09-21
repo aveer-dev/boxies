@@ -38,12 +38,17 @@ import {
 	type RequestPrincipal,
 } from "../lib/mailbox-acl";
 import {
+	attachIdpToSessionAccount,
+	attachPasswordToSessionAccount,
+	IdentityAlreadyLinkedError,
 	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
 	ownerKeysForAssign,
 	redeemIdentityLinkCode,
 	upsertIdentityLink,
 } from "../lib/identity-links";
+import { verifyAppleIdentityToken } from "../lib/apple-auth";
+import { verifyGoogleIdentityToken } from "../lib/google-auth";
 import type { MailboxContext } from "../lib/mailbox";
 import {
 	allowedMailboxSet,
@@ -828,9 +833,183 @@ export function registerAdminAndInviteRoutes(app: App) {
 	});
 
 	/**
+	 * In-session Connect IdP / Add password: attach a freshly verified
+	 * Apple/Google identity token (or a new password) to the durable account
+	 * for this authenticated session. Primary linking UX; link codes remain
+	 * for cross-device / when IdP cannot run on this surface.
+	 */
+	app.post("/api/v1/me/identities/attach", async (c) => {
+		const principal = c.get("principal");
+		if (!principal || principalKeys(principal).length === 0) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+		const body = z
+			.discriminatedUnion("provider", [
+				z.object({
+					provider: z.literal("apple"),
+					identityToken: z.string().min(1),
+				}),
+				z.object({
+					provider: z.literal("google"),
+					idToken: z.string().min(1),
+				}),
+				z.object({
+					provider: z.literal("password"),
+					password: z.string().min(1),
+					loginEmail: z.string().email().optional(),
+				}),
+			])
+			.safeParse(await c.req.json());
+		if (!body.success) {
+			return c.json(
+				{
+					error:
+						"Invalid body. Use provider apple|google|password with the matching token/password fields.",
+				},
+				400,
+			);
+		}
+
+		try {
+			if (body.data.provider === "apple") {
+				const appleClientId = c.env.APPLE_CLIENT_ID;
+				if (!appleClientId) {
+					return c.json(
+						{
+							error:
+								"Apple Sign In is not configured. Set APPLE_CLIENT_ID.",
+						},
+						503,
+					);
+				}
+				const claims = await verifyAppleIdentityToken(
+					body.data.identityToken,
+					appleClientId,
+				);
+				const result = await attachIdpToSessionAccount(
+					c.env.BUCKET,
+					principal,
+					{
+						sub: claims.sub,
+						provider: "apple",
+						emails: claims.email ? [claims.email] : [],
+					},
+				);
+				c.set("principal", result.expanded);
+				const admin = await isDomainAdmin(c.env, result.expanded);
+				return c.json({
+					ok: true,
+					provider: "apple",
+					accountId: result.account.id,
+					linkedEmails: result.linkedEmails,
+					keys: principalKeys(result.expanded),
+					isAdmin: admin,
+					identities: (
+						await listIdentitiesForPrincipal(c.env.BUCKET, result.expanded)
+					).identities,
+				});
+			}
+
+			if (body.data.provider === "google") {
+				const googleClientId = c.env.GOOGLE_CLIENT_ID;
+				if (!googleClientId) {
+					return c.json(
+						{
+							error:
+								"Google Sign In is not configured. Set GOOGLE_CLIENT_ID.",
+						},
+						503,
+					);
+				}
+				const claims = await verifyGoogleIdentityToken(
+					body.data.idToken,
+					googleClientId,
+				);
+				const result = await attachIdpToSessionAccount(
+					c.env.BUCKET,
+					principal,
+					{
+						sub: claims.sub,
+						provider: "google",
+						emails: claims.email ? [claims.email] : [],
+					},
+				);
+				c.set("principal", result.expanded);
+				const admin = await isDomainAdmin(c.env, result.expanded);
+				return c.json({
+					ok: true,
+					provider: "google",
+					accountId: result.account.id,
+					linkedEmails: result.linkedEmails,
+					keys: principalKeys(result.expanded),
+					isAdmin: admin,
+					identities: (
+						await listIdentitiesForPrincipal(c.env.BUCKET, result.expanded)
+					).identities,
+				});
+			}
+
+			const strength = validatePasswordStrength(body.data.password);
+			if (strength) return c.json({ error: strength }, 400);
+			const passwordHash = await hashPassword(body.data.password);
+			const result = await attachPasswordToSessionAccount(
+				c.env.BUCKET,
+				principal,
+				{
+					passwordHash,
+					loginEmail: body.data.loginEmail,
+				},
+			);
+			c.set("principal", result.expanded);
+			const admin = await isDomainAdmin(c.env, result.expanded);
+			return c.json({
+				ok: true,
+				provider: "password",
+				accountId: result.account.id,
+				userId: result.userId,
+				linkedEmails: result.linkedEmails,
+				keys: principalKeys(result.expanded),
+				isAdmin: admin,
+				identities: (
+					await listIdentitiesForPrincipal(c.env.BUCKET, result.expanded)
+				).identities,
+			});
+		} catch (err) {
+			if (err instanceof IdentityAlreadyLinkedError) {
+				return c.json({ error: err.message }, 409);
+			}
+			const message =
+				err instanceof Error ? err.message : "Could not attach identity";
+			if (message === "Unauthorized") {
+				return c.json({ error: message }, 401);
+			}
+			if (
+				message.includes("already has a password") ||
+				message.includes("loginEmail is required") ||
+				message.includes("already has a password login")
+			) {
+				return c.json({ error: message }, 409);
+			}
+			// Token verify failures from jose / our helpers
+			if (
+				message.includes("identity token") ||
+				message.includes("JWT") ||
+				message.includes("claim") ||
+				message.includes("audience") ||
+				message.toLowerCase().includes("invalid")
+			) {
+				return c.json({ error: "Invalid identity token" }, 401);
+			}
+			console.error("attach identity failed:", message);
+			return c.json({ error: message }, 400);
+		}
+	});
+
+	/**
 	 * Any authenticated session: mint a short-lived code so another sign-in
 	 * method (Apple / Google / Access / password) can join this account.
 	 * Domain Admins also stamp DOMAIN_ADMINS emails onto the code.
+	 * Secondary / cross-device fallback — prefer POST /me/identities/attach.
 	 */
 	app.post("/api/v1/me/identity-link-codes", async (c) => {
 		const principal = c.get("principal");
