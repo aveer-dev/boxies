@@ -104,7 +104,9 @@ fun SignInMethodsSettingsView(
         } else {
             reload()
         }
-        app.refreshMailboxes(showLoading = false)
+        scope.launch {
+            app.refreshMailboxes(showLoading = false)
+        }
     }
 
     fun friendlyAttachError(message: String?): String {

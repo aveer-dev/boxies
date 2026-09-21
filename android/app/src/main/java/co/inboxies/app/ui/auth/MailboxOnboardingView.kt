@@ -238,7 +238,7 @@ fun MailboxOnboardingView() {
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 8.dp),
         )
-        Spacer(modifier.height(24.dp))
+        Spacer(Modifier.height(24.dp))
         Button(
             onClick = {
                 scope.launch {

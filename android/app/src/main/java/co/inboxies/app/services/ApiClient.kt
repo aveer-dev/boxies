@@ -4,6 +4,8 @@ import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AdminCreateMailboxResponse
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
+import co.inboxies.app.models.AppConfigResponse
+import co.inboxies.app.models.AttachIdentityResponse
 import co.inboxies.app.models.AuthResponse
 import co.inboxies.app.models.DigestStatusResponse
 import co.inboxies.app.models.DraftSaveResponse
