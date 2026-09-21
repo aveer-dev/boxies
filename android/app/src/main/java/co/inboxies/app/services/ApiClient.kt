@@ -189,6 +189,37 @@ class ApiClient private constructor() {
 
     suspend fun listIdentities(): IdentitiesResponse = request("/api/v1/me/identities")
 
+    suspend fun attachAppleIdentity(identityToken: String): AttachIdentityResponse = request(
+        "/api/v1/me/identities/attach",
+        method = "POST",
+        body = buildJsonObject {
+            put("provider", "apple")
+            put("identityToken", identityToken)
+        },
+    )
+
+    suspend fun attachGoogleIdentity(idToken: String): AttachIdentityResponse = request(
+        "/api/v1/me/identities/attach",
+        method = "POST",
+        body = buildJsonObject {
+            put("provider", "google")
+            put("idToken", idToken)
+        },
+    )
+
+    suspend fun attachPasswordIdentity(
+        password: String,
+        loginEmail: String? = null,
+    ): AttachIdentityResponse = request(
+        "/api/v1/me/identities/attach",
+        method = "POST",
+        body = buildJsonObject {
+            put("provider", "password")
+            put("password", password)
+            if (!loginEmail.isNullOrBlank()) put("loginEmail", loginEmail)
+        },
+    )
+
     suspend fun createIdentityLinkCode(): IdentityLinkCodeResponse = request(
         "/api/v1/me/identity-link-codes",
         method = "POST",

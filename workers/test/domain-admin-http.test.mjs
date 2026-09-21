@@ -521,4 +521,70 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	);
 }
 
+// ── In-session attach password + conflict ─────────────────────────
+
+{
+	const bucket = mockBucket();
+	const env = mockEnv(bucket);
+	const attach = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/attach",
+		principal: eve,
+		body: { provider: "password", password: "correct-horse-battery" },
+	});
+	assert.equal(attach.status, 200);
+	assert.equal(attach.json.provider, "password");
+	assert.ok(attach.json.userId);
+	assert.ok(
+		attach.json.identities.some((i) => i.type === "password"),
+	);
+
+	const again = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/attach",
+		principal: eve,
+		body: { provider: "password", password: "another-long-password" },
+	});
+	assert.equal(again.status, 409);
+
+	const login = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "eve@example.com", password: "correct-horse-battery" },
+	});
+	assert.equal(login.status, 200);
+	assert.ok(login.json.token);
+}
+
+{
+	const bucket = mockBucket();
+	const env = mockEnv(bucket, {
+		APPLE_CLIENT_ID: "co.inboxies.app",
+		GOOGLE_CLIENT_ID: "test-google-client.apps.googleusercontent.com",
+	});
+	const badApple = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/attach",
+		principal: admin,
+		body: { provider: "apple", identityToken: "not-a-real-jwt" },
+	});
+	assert.equal(badApple.status, 401);
+
+	const badGoogle = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/attach",
+		principal: admin,
+		body: { provider: "google", idToken: "not-a-real-jwt" },
+	});
+	assert.equal(badGoogle.status, 401);
+
+	const cfg = await jsonRequest(apiApp, env, { path: "/api/v1/config" });
+	assert.equal(cfg.status, 200);
+	assert.equal(
+		cfg.json.googleClientId,
+		"test-google-client.apps.googleusercontent.com",
+	);
+	assert.equal(cfg.json.appleSignInConfigured, true);
+}
+
 console.log("domain-admin-http: ok");

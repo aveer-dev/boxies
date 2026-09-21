@@ -94,10 +94,24 @@ data class RedeemIdentityLinkResponse(
 )
 
 @Serializable
+data class AttachIdentityResponse(
+    val ok: Boolean = false,
+    val provider: String? = null,
+    val accountId: String? = null,
+    val userId: String? = null,
+    val linkedEmails: List<String> = emptyList(),
+    val keys: List<String> = emptyList(),
+    val isAdmin: Boolean = false,
+    val identities: List<LinkedIdentity> = emptyList(),
+)
+
+@Serializable
 data class AppConfigResponse(
     val mailDomain: String,
     val domains: List<String> = emptyList(),
     val emailAddresses: List<String> = emptyList(),
+    val googleClientId: String? = null,
+    val appleSignInConfigured: Boolean = false,
 )
 
 @Serializable

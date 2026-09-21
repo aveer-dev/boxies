@@ -66,10 +66,23 @@ struct RedeemIdentityLinkResponse: Codable {
     var identities: [LinkedIdentity]?
 }
 
+struct AttachIdentityResponse: Codable {
+    var ok: Bool
+    var provider: String?
+    var accountId: String?
+    var userId: String?
+    var linkedEmails: [String]?
+    var keys: [String]?
+    var isAdmin: Bool
+    var identities: [LinkedIdentity]?
+}
+
 struct AppConfigResponse: Codable {
     var mailDomain: String
     var domains: [String]
     var emailAddresses: [String]?
+    var googleClientId: String?
+    var appleSignInConfigured: Bool?
 }
 
 struct InboxFilterRule: Codable, Hashable, Identifiable {

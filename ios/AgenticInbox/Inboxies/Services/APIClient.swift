@@ -151,6 +151,34 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/me/identities")
     }
 
+    func attachAppleIdentity(identityToken: String) async throws -> AttachIdentityResponse {
+        try await request(
+            path: "/api/v1/me/identities/attach",
+            method: "POST",
+            body: ["provider": "apple", "identityToken": identityToken]
+        )
+    }
+
+    func attachGoogleIdentity(idToken: String) async throws -> AttachIdentityResponse {
+        try await request(
+            path: "/api/v1/me/identities/attach",
+            method: "POST",
+            body: ["provider": "google", "idToken": idToken]
+        )
+    }
+
+    func attachPasswordIdentity(password: String, loginEmail: String? = nil) async throws -> AttachIdentityResponse {
+        var body: [String: Any] = ["provider": "password", "password": password]
+        if let loginEmail, !loginEmail.isEmpty {
+            body["loginEmail"] = loginEmail
+        }
+        return try await request(
+            path: "/api/v1/me/identities/attach",
+            method: "POST",
+            body: body
+        )
+    }
+
     func createIdentityLinkCode() async throws -> IdentityLinkCodeResponse {
         try await request(path: "/api/v1/me/identity-link-codes", method: "POST", body: [:] as [String: Any])
     }

@@ -25,9 +25,12 @@ import {
 	principalIsDomainAdmin,
 	resolveAdminAllowlist,
 } from "./domain-admin.ts";
+import { canonicalMailboxId } from "./mailbox-routing.ts";
 import {
+	findUserIdByLoginEmail,
 	loadPlatformUser,
 	savePlatformUser,
+	type PlatformUser,
 } from "./platform-users.ts";
 
 export const IDENTITY_ACCOUNT_PREFIX = "platform/identity-accounts/";
@@ -883,6 +886,7 @@ export async function redeemIdentityLinkCode(
 export function identitiesForAccount(
 	account: IdentityAccount,
 	principal: RequestPrincipal,
+	providerBySub?: Map<string, IdentityLinkRecord["provider"]>,
 ): LinkedIdentityView[] {
 	const current = new Set(principalKeys(principal));
 	const views: LinkedIdentityView[] = [];
@@ -909,12 +913,29 @@ export function identitiesForAccount(
 		} else if (key.startsWith("sub:")) {
 			const sub = key.slice("sub:".length);
 			if (sub.startsWith("user:")) continue;
-			views.push({
-				type: "sub",
-				key,
-				label: `Sign-in provider (${sub.slice(0, 8)}…)`,
-				current: current.has(key),
-			});
+			const provider = providerBySub?.get(sub);
+			if (provider === "apple") {
+				views.push({
+					type: "apple",
+					key,
+					label: "Apple",
+					current: current.has(key),
+				});
+			} else if (provider === "google") {
+				views.push({
+					type: "google",
+					key,
+					label: "Google",
+					current: current.has(key),
+				});
+			} else {
+				views.push({
+					type: "sub",
+					key,
+					label: `Sign-in provider (${sub.slice(0, 8)}…)`,
+					current: current.has(key),
+				});
+			}
 		}
 	}
 	return views;
@@ -926,8 +947,234 @@ export async function listIdentitiesForPrincipal(
 	principal: RequestPrincipal,
 ): Promise<{ accountId: string; identities: LinkedIdentityView[] }> {
 	const account = await ensureIdentityAccount(bucket, principal);
+	const providerBySub = new Map<string, IdentityLinkRecord["provider"]>();
+	for (const key of account.principals) {
+		if (!key.startsWith("sub:")) continue;
+		const sub = key.slice("sub:".length);
+		if (!sub || sub.startsWith("user:")) continue;
+		const link = await loadIdentityLinkBySub(bucket, sub);
+		if (link) providerBySub.set(sub, link.provider);
+	}
 	return {
 		accountId: account.id,
-		identities: identitiesForAccount(account, principal),
+		identities: identitiesForAccount(account, principal, providerBySub),
+	};
+}
+
+/** Thrown when attaching an IdP/password principal already owned by another account. */
+export class IdentityAlreadyLinkedError extends Error {
+	constructor(
+		message = "This identity is already linked to another Inboxies account",
+	) {
+		super(message);
+		this.name = "IdentityAlreadyLinkedError";
+	}
+}
+
+/**
+ * Assert that candidate principal keys are free or already on `accountId`.
+ * Rejects cross-account takeover.
+ */
+export async function assertPrincipalsAttachable(
+	bucket: R2Bucket,
+	accountId: string,
+	candidateKeys: string[],
+): Promise<void> {
+	for (const raw of uniquePrincipalKeys(candidateKeys)) {
+		const existingId = await findAccountIdByPrincipalKey(bucket, raw);
+		if (existingId && existingId !== accountId) {
+			throw new IdentityAlreadyLinkedError(
+				"This identity is already linked to another Inboxies account",
+			);
+		}
+	}
+}
+
+/**
+ * In-session Connect IdP: attach a verified Apple/Google sub (+ optional emails)
+ * to the current session's durable identity account. Does not change the
+ * session token — next request expands via R2.
+ */
+export async function attachIdpToSessionAccount(
+	bucket: R2Bucket,
+	session: RequestPrincipal,
+	opts: {
+		sub: string;
+		provider: "apple" | "google";
+		emails?: string[];
+	},
+): Promise<{
+	account: IdentityAccount;
+	expanded: RequestPrincipal;
+	linkedEmails: string[];
+}> {
+	if (!session.sub && !session.email) {
+		throw new Error("Unauthorized");
+	}
+	const sub = opts.sub.trim();
+	if (!sub) throw new Error("Identity subject is required");
+
+	const emails = [
+		...new Set(
+			(opts.emails ?? [])
+				.map((e) => normalizeEmailAddress(e))
+				.filter((e): e is string => Boolean(e)),
+		),
+	];
+
+	const sessionAccount = await ensureIdentityAccount(bucket, session);
+	const candidateKeys = [
+		`sub:${sub}`,
+		...emails.map((e) => `email:${e}`),
+	];
+	await assertPrincipalsAttachable(bucket, sessionAccount.id, candidateKeys);
+
+	const record = await upsertIdentityLink(bucket, {
+		sub,
+		provider: opts.provider,
+		emails,
+		linkedByKeys: [
+			...principalKeys(session),
+			`account:${sessionAccount.id}`,
+			"attach:in-session",
+		],
+		extraPrincipals: sessionAccount.principals,
+	});
+
+	// upsertIdentityLink may have resolved a different account if indexes raced;
+	// re-check and merge into the session account when needed.
+	let account =
+		(record.accountId
+			? await loadIdentityAccount(bucket, record.accountId)
+			: null) ?? sessionAccount;
+	if (account.id !== sessionAccount.id) {
+		await assertPrincipalsAttachable(bucket, sessionAccount.id, account.principals);
+		account = await mergeIdentityAccounts(bucket, sessionAccount.id, account.id);
+	} else {
+		// Ensure session principals stayed on the account (upsert seeds from IdP).
+		const merged = uniquePrincipalKeys([
+			...account.principals,
+			...sessionAccount.principals,
+		]);
+		if (merged.length !== account.principals.length) {
+			account = {
+				...account,
+				principals: merged,
+				updatedAt: new Date().toISOString(),
+			};
+			await saveIdentityAccount(bucket, account);
+			await syncLegacyIndexesFromAccount(bucket, account);
+			await syncPlatformUsersFromAccount(bucket, account);
+		}
+	}
+
+	const expanded = applyAccountToPrincipal(session, account);
+	return {
+		account,
+		expanded,
+		linkedEmails: emailsForPrincipal(expanded),
+	};
+}
+
+/**
+ * In-session Add password: create (or reject if present) a password principal
+ * on the current identity account. Login email defaults to the session email.
+ */
+export async function attachPasswordToSessionAccount(
+	bucket: R2Bucket,
+	session: RequestPrincipal,
+	opts: {
+		passwordHash: string;
+		loginEmail?: string;
+		contactEmail?: string;
+	},
+): Promise<{
+	account: IdentityAccount;
+	expanded: RequestPrincipal;
+	userId: string;
+	linkedEmails: string[];
+}> {
+	if (!session.sub && !session.email) {
+		throw new Error("Unauthorized");
+	}
+
+	const sessionAccount = await ensureIdentityAccount(bucket, session);
+	const existingUserIds = sessionAccount.principals
+		.filter((k) => k.startsWith("user:"))
+		.map((k) => k.slice("user:".length));
+	if (existingUserIds.length > 0) {
+		throw new Error("This account already has a password sign-in method");
+	}
+
+	const loginRaw =
+		opts.loginEmail?.trim() ||
+		session.email ||
+		sessionAccount.primaryEmail ||
+		emailsForPrincipal(session)[0];
+	if (!loginRaw) {
+		throw new Error("loginEmail is required when this session has no email");
+	}
+	const login =
+		canonicalMailboxId(loginRaw) ??
+		normalizeEmailAddress(loginRaw) ??
+		loginRaw.toLowerCase();
+	const contact =
+		normalizeEmailAddress(opts.contactEmail ?? loginRaw) ?? login;
+
+	const existingLogin = await findUserIdByLoginEmail(bucket, login);
+	if (existingLogin) {
+		const existingUserAccount = await findAccountIdByPrincipalKey(
+			bucket,
+			`user:${existingLogin}`,
+		);
+		if (existingUserAccount && existingUserAccount !== sessionAccount.id) {
+			throw new IdentityAlreadyLinkedError(
+				"That email already has a password on another Inboxies account",
+			);
+		}
+		throw new Error("That email already has a password login");
+	}
+
+	const userId = crypto.randomUUID();
+	const now = new Date().toISOString();
+	const user: PlatformUser = {
+		id: userId,
+		contactEmail: contact,
+		mailboxEmail: login.includes("@") ? login : undefined,
+		passwordHash: opts.passwordHash,
+		linkedSubs: sessionAccount.principals
+			.filter((k) => k.startsWith("sub:") && !k.slice(4).startsWith("user:"))
+			.map((k) => k.slice("sub:".length)),
+		createdAt: now,
+		updatedAt: now,
+	};
+	await savePlatformUser(bucket, user);
+
+	const userKey = `user:${userId}`;
+	await assertPrincipalsAttachable(bucket, sessionAccount.id, [
+		userKey,
+		`email:${login}`,
+	]);
+
+	const account: IdentityAccount = {
+		...sessionAccount,
+		principals: uniquePrincipalKeys([
+			...sessionAccount.principals,
+			userKey,
+			`email:${login}`,
+		]),
+		primaryEmail: sessionAccount.primaryEmail ?? login,
+		updatedAt: now,
+	};
+	await saveIdentityAccount(bucket, account);
+	await syncLegacyIndexesFromAccount(bucket, account);
+	await syncPlatformUsersFromAccount(bucket, account);
+
+	const expanded = applyAccountToPrincipal(session, account);
+	return {
+		account,
+		expanded,
+		userId,
+		linkedEmails: emailsForPrincipal(expanded),
 	};
 }

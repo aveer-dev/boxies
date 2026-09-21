@@ -6,9 +6,12 @@
 import assert from "node:assert/strict";
 import {
 	autoLinkSubIfAdminEmail,
+	attachIdpToSessionAccount,
+	attachPasswordToSessionAccount,
 	createIdentityLinkCode,
 	ensureIdentityAccount,
 	expandPrincipalWithLinks,
+	IdentityAlreadyLinkedError,
 	identityLinkCodeIsActive,
 	mintIdentityLinkCode,
 	ownerKeysForAssign,
@@ -306,6 +309,82 @@ function mockBucket(initial = {}) {
 
 	const reloaded = await expandPrincipalWithLinks(bucket, apple);
 	assert.ok(principalKeys(reloaded).includes(`user:${userId}`));
+}
+
+// ── In-session Connect IdP (attach) ───────────────────────────────
+
+{
+	const bucket = mockBucket();
+	const access = principalFromClaims({
+		email: "admin@example.com",
+		sub: "access-admin",
+	});
+	await ensureIdentityAccount(bucket, access);
+
+	const attached = await attachIdpToSessionAccount(bucket, access, {
+		sub: "apple.connect.1",
+		provider: "apple",
+		emails: ["relay@privaterelay.appleid.com"],
+	});
+	assert.ok(principalKeys(attached.expanded).includes("sub:apple.connect.1"));
+	assert.ok(
+		principalKeys(attached.expanded).includes("email:admin@example.com"),
+	);
+
+	const expanded = await expandPrincipalWithLinks(
+		bucket,
+		principalFromClaims({ sub: "apple.connect.1" }),
+	);
+	assert.ok(principalKeys(expanded).includes("email:admin@example.com"));
+	assert.equal(
+		principalIsDomainAdmin(
+			expanded,
+			new Set(parseDomainAdminsEnv("admin@example.com")),
+		),
+		true,
+	);
+}
+
+{
+	const bucket = mockBucket();
+	const a = principalFromClaims({ email: "a@example.com", sub: "a-sub" });
+	const b = principalFromClaims({ email: "b@example.com", sub: "b-sub" });
+	await ensureIdentityAccount(bucket, a);
+	await attachIdpToSessionAccount(bucket, b, {
+		sub: "google.taken",
+		provider: "google",
+		emails: ["b@example.com"],
+	});
+	await assert.rejects(
+		() =>
+			attachIdpToSessionAccount(bucket, a, {
+				sub: "google.taken",
+				provider: "google",
+			}),
+		(err) => err instanceof IdentityAlreadyLinkedError,
+	);
+}
+
+{
+	const bucket = mockBucket();
+	const access = principalFromClaims({
+		email: "eve@example.com",
+		sub: "eve-access-2",
+	});
+	const pwd = await attachPasswordToSessionAccount(bucket, access, {
+		passwordHash: "hash-placeholder",
+	});
+	assert.ok(pwd.userId);
+	assert.ok(principalKeys(pwd.expanded).includes(`user:${pwd.userId}`));
+	await assert.rejects(
+		() =>
+			attachPasswordToSessionAccount(bucket, access, {
+				passwordHash: "hash-2",
+			}),
+		(err) =>
+			err instanceof Error &&
+			err.message.includes("already has a password"),
+	);
 }
 
 console.log("identity-links: ok");
