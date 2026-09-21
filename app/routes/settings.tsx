@@ -12,6 +12,7 @@ import {
 	FunnelSimpleIcon,
 	UsersThreeIcon,
 	AddressBookIcon,
+	KeyIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
@@ -90,7 +91,18 @@ export default function SettingsRoute() {
 							onChange={(e) => setDisplayName(e.target.value)}
 						/>
 						<Input label="Email" type="email" value={mailbox.email} disabled />
-						<div className="pt-2">
+						<div className="pt-2 flex flex-wrap gap-2">
+							<Link
+								to={`/mailbox/${mailboxId}/settings/sign-in`}
+								className="inline-flex"
+							>
+								<Button variant="secondary" size="sm">
+									<span className="inline-flex items-center gap-1.5">
+										<KeyIcon size={14} />
+										Sign-in methods
+									</span>
+								</Button>
+							</Link>
 							<Button
 								variant="secondary"
 								size="sm"

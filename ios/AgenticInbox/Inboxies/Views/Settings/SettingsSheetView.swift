@@ -90,6 +90,12 @@ struct SettingsSheetView: View {
                         settingsLabel("Sharing", systemImage: "person.2")
                     }
 
+                    NavigationLink {
+                        SignInMethodsSettingsView()
+                    } label: {
+                        settingsLabel("Sign-in methods", systemImage: "key")
+                    }
+
                     if app.isAdmin {
                         NavigationLink {
                             DomainAdminSettingsView(showsDismiss: false)

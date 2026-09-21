@@ -51,10 +51,46 @@ data class MailboxAcl(
 data class MeResponse(
     val email: String? = null,
     val sub: String? = null,
+    val linkedEmails: List<String> = emptyList(),
     val keys: List<String> = emptyList(),
     val isAdmin: Boolean? = null,
     val mailDomain: String? = null,
     val domains: List<String> = emptyList(),
+)
+
+@Serializable
+data class LinkedIdentity(
+    val type: String,
+    val key: String,
+    val label: String,
+    val current: Boolean = false,
+)
+
+@Serializable
+data class IdentitiesResponse(
+    val accountId: String,
+    val identities: List<LinkedIdentity> = emptyList(),
+    val keys: List<String> = emptyList(),
+    val linkedEmails: List<String> = emptyList(),
+)
+
+@Serializable
+data class IdentityLinkCodeResponse(
+    val code: String,
+    val emails: List<String> = emptyList(),
+    val principals: List<String> = emptyList(),
+    val accountId: String? = null,
+    val expiresAt: String,
+)
+
+@Serializable
+data class RedeemIdentityLinkResponse(
+    val ok: Boolean = false,
+    val accountId: String? = null,
+    val linkedEmails: List<String> = emptyList(),
+    val keys: List<String> = emptyList(),
+    val isAdmin: Boolean = false,
+    val identities: List<LinkedIdentity> = emptyList(),
 )
 
 @Serializable

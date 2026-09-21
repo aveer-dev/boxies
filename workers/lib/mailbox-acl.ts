@@ -24,6 +24,15 @@ export type RequestPrincipal = {
 	 * ↔ Access / Domain Admin email). Populated by expandPrincipalWithLinks.
 	 */
 	linkedEmails?: string[];
+	/**
+	 * Password-account ids (without `user:` prefix) from the linked identity
+	 * account. Populated by expandPrincipalWithLinks.
+	 */
+	linkedUserIds?: string[];
+	/**
+	 * Other IdP `sub` values on the same identity account (not the session sub).
+	 */
+	linkedSubs?: string[];
 };
 
 export type MailboxAcl = {
@@ -93,6 +102,19 @@ export function principalKeys(
 		if (principal.sub.startsWith("user:")) {
 			keys.add(principal.sub);
 		}
+	}
+	for (const userId of principal.linkedUserIds ?? []) {
+		const id = userId.trim();
+		if (!id) continue;
+		const userKey = id.startsWith("user:") ? id : `user:${id}`;
+		keys.add(userKey);
+		keys.add(`sub:${userKey}`);
+	}
+	for (const linkedSub of principal.linkedSubs ?? []) {
+		const sub = linkedSub.trim();
+		if (!sub || sub === principal.sub) continue;
+		keys.add(`sub:${sub}`);
+		if (sub.startsWith("user:")) keys.add(sub);
 	}
 	return [...keys];
 }

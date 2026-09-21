@@ -38,12 +38,10 @@ import {
 	type RequestPrincipal,
 } from "../lib/mailbox-acl";
 import {
-	createIdentityLinkCode,
-	identityLinkCodeIsActive,
-	loadIdentityLinkCode,
+	listIdentitiesForPrincipal,
+	mintIdentityLinkCode,
 	ownerKeysForAssign,
-	resolveAdminLinkEmails,
-	saveIdentityLinkCode,
+	redeemIdentityLinkCode,
 	upsertIdentityLink,
 } from "../lib/identity-links";
 import type { MailboxContext } from "../lib/mailbox";
@@ -791,6 +789,17 @@ export function registerAdminAndInviteRoutes(app: App) {
 			user.updatedAt = new Date().toISOString();
 			await savePlatformUser(c.env.BUCKET, user);
 		}
+		const emails = [
+			user.mailboxEmail,
+			user.contactEmail,
+		].filter((e): e is string => Boolean(e));
+		await upsertIdentityLink(c.env.BUCKET, {
+			sub: body.sub,
+			provider: body.provider,
+			emails,
+			linkedByKeys: [`user:${userId}`],
+			extraPrincipals: [`user:${userId}`, ...emails.map((e) => `email:${e}`)],
+		});
 		return c.json({
 			userId: user.id,
 			linkedSubs: user.linkedSubs,
@@ -799,90 +808,100 @@ export function registerAdminAndInviteRoutes(app: App) {
 	});
 
 	/**
-	 * Domain Admin (web Access): mint a short-lived code that a mobile Apple/Google
-	 * session can redeem to link its IdP `sub` to the admin's DOMAIN_ADMINS emails.
-	 * Use when Sign in with Apple hides the email claim.
+	 * List linked sign-in methods for the current identity account.
 	 */
-	app.post("/api/v1/me/identity-link-codes", async (c) => {
+	app.get("/api/v1/me/identities", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
+		if (!principal || principalKeys(principal).length === 0) {
+			return c.json({ error: "Unauthorized" }, 401);
 		}
-		const emails = await resolveAdminLinkEmails(c.env, principal);
-		if (emails.length === 0) {
-			return c.json(
-				{
-					error:
-						"No admin emails to link. Set DOMAIN_ADMINS to your Access email (and optional sub:…).",
-				},
-				400,
-			);
-		}
-		const record = createIdentityLinkCode({
-			emails,
-			createdByKeys: principalKeys(principal),
-		});
-		await saveIdentityLinkCode(c.env.BUCKET, record);
-		await appendAdminAudit(c.env.BUCKET, {
-			actorKeys: principalKeys(principal),
-			action: "identity_link_code.create",
-			detail: { emails },
-		});
+		const { accountId, identities } = await listIdentitiesForPrincipal(
+			c.env.BUCKET,
+			principal,
+		);
 		return c.json({
-			code: record.code,
-			emails: record.emails,
-			expiresAt: record.expiresAt,
+			accountId,
+			identities,
+			keys: principalKeys(principal),
+			linkedEmails: principal.linkedEmails ?? [],
 		});
 	});
 
 	/**
-	 * Mobile session (Apple/Google): redeem an admin link code → durable sub↔email.
-	 * After redeem, /me reports isAdmin and list sees mailboxes owned by those emails.
+	 * Any authenticated session: mint a short-lived code so another sign-in
+	 * method (Apple / Google / Access / password) can join this account.
+	 * Domain Admins also stamp DOMAIN_ADMINS emails onto the code.
+	 */
+	app.post("/api/v1/me/identity-link-codes", async (c) => {
+		const principal = c.get("principal");
+		if (!principal || principalKeys(principal).length === 0) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+		try {
+			const record = await mintIdentityLinkCode(c.env, principal);
+			await appendAdminAudit(c.env.BUCKET, {
+				actorKeys: principalKeys(principal),
+				action: "identity_link_code.create",
+				detail: {
+					emails: record.emails,
+					accountId: record.accountId,
+					principals: record.principals,
+				},
+			});
+			return c.json({
+				code: record.code,
+				emails: record.emails,
+				principals: record.principals ?? [],
+				accountId: record.accountId,
+				expiresAt: record.expiresAt,
+			});
+		} catch (err) {
+			const message = err instanceof Error ? err.message : "Could not create link code";
+			return c.json({ error: message }, 400);
+		}
+	});
+
+	/**
+	 * Authenticated session (Apple/Google/Access/password): redeem a link code
+	 * minted by another method on the same person → durable account union.
+	 * After redeem, /me and GET /mailboxes use the union of linked principals.
 	 */
 	app.post("/api/v1/auth/redeem-identity-link", async (c) => {
 		const principal = c.get("principal");
-		if (!principal?.sub) {
+		if (!principal || principalKeys(principal).length === 0) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
-		if (principal.sub.startsWith("user:")) {
-			return c.json(
-				{
-					error:
-						"Password accounts use POST /api/v1/auth/link-provider instead",
-				},
-				400,
-			);
-		}
 		const body = z.object({ code: z.string().min(4).max(64) }).parse(await c.req.json());
-		const record = await loadIdentityLinkCode(c.env.BUCKET, body.code.trim());
-		if (!record || !identityLinkCodeIsActive(record)) {
-			return c.json({ error: "Invalid or expired link code" }, 400);
+		try {
+			const result = await redeemIdentityLinkCode(
+				c.env.BUCKET,
+				principal,
+				body.code,
+			);
+			const admin = await isDomainAdmin(c.env, result.expanded);
+			c.set("principal", result.expanded);
+			return c.json({
+				ok: true,
+				accountId: result.account.id,
+				linkedEmails: result.linkedEmails,
+				sub: principal.sub ?? null,
+				keys: principalKeys(result.expanded),
+				isAdmin: admin,
+				identities: (
+					await listIdentitiesForPrincipal(c.env.BUCKET, result.expanded)
+				).identities,
+			});
+		} catch (err) {
+			const message =
+				err instanceof Error ? err.message : "Could not redeem link code";
+			const status =
+				message === "Unauthorized"
+					? 401
+					: message.includes("Invalid or expired")
+						? 400
+						: 400;
+			return c.json({ error: message }, status);
 		}
-		const link = await upsertIdentityLink(c.env.BUCKET, {
-			sub: principal.sub,
-			provider: "unknown",
-			emails: record.emails,
-			linkedByKeys: record.createdByKeys,
-		});
-		record.usedAt = new Date().toISOString();
-		record.usedBySub = principal.sub;
-		await saveIdentityLinkCode(c.env.BUCKET, record);
-
-		const expanded = {
-			...principal,
-			email: principal.email ?? link.emails[0],
-			linkedEmails: [
-				...new Set([...(principal.linkedEmails ?? []), ...link.emails]),
-			],
-		};
-		const admin = await isDomainAdmin(c.env, expanded);
-		return c.json({
-			ok: true,
-			linkedEmails: link.emails,
-			sub: link.sub,
-			keys: principalKeys(expanded),
-			isAdmin: admin,
-		});
 	});
 }
 
