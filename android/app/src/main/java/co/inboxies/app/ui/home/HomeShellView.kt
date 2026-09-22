@@ -1089,7 +1089,7 @@ private fun BottomBar(
             .fillMaxWidth()
             .padding(horizontal = HomeChromeMetrics.bottomBarHorizontalPadding),
         horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
     ) {
         if (replyLaterCount > 0 || isReplyLaterTab) {
             Row(

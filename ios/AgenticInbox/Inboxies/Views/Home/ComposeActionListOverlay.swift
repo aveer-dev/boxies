@@ -60,28 +60,38 @@ struct ComposeStackButton: View {
     private var peek: CGFloat { HomeChromeMetrics.composeStackPeekOffset }
 
     var body: some View {
-        ZStack {
-            ForEach(0..<layerCount, id: \.self) { index in
-                let depth = layerCount - 1 - index
+        ZStack(alignment: .bottom) {
+            ForEach((0..<layerCount).reversed(), id: \.self) { depth in
                 Circle()
-                    .fill(.clear)
+                    .fill(layerFill(depth: depth))
+                    .overlay {
+                        Circle().stroke(AppTheme.line.opacity(0.85), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(depth == 0 ? 0.10 : 0.08), radius: depth == 0 ? 10 : 6, y: 3)
                     .frame(width: size, height: size)
-                    .liquidGlass(in: Circle())
                     .scaleEffect(depth == 0 ? 1 : HomeChromeMetrics.composeStackBackScale)
                     .offset(y: isExpanded ? 0 : -CGFloat(depth) * peek)
-                    .opacity(depth == 0 ? 1 : (isExpanded ? 0 : 0.55 - CGFloat(depth - 1) * 0.12))
-                    .zIndex(Double(index))
+                    .opacity(depth == 0 ? 1 : (isExpanded ? 0 : 1))
+                    .zIndex(Double(layerCount - depth))
             }
 
             Image(systemName: "square.and.pencil")
                 .font(.inter(size: 18, weight: .medium))
                 .foregroundStyle(AppTheme.ink)
                 .opacity(isExpanded ? 0 : 1)
-                .zIndex(Double(layerCount))
+                .frame(width: size, height: size)
+                .zIndex(Double(layerCount + 1))
         }
-        .frame(width: size, height: size + CGFloat(layerCount - 1) * peek)
-        .offset(y: CGFloat(layerCount - 1) * peek / 2)
+        .frame(width: size, height: size + CGFloat(layerCount - 1) * peek, alignment: .bottom)
         .accessibilityHidden(true)
+    }
+
+    private func layerFill(depth: Int) -> Color {
+        switch depth {
+        case 0: return AppTheme.surface.opacity(0.96)
+        case 1: return AppTheme.pillFill.opacity(0.95)
+        default: return AppTheme.pillActive.opacity(0.9)
+        }
     }
 }
 

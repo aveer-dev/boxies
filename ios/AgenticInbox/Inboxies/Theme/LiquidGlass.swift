@@ -12,8 +12,8 @@ enum HomeChromeMetrics {
 
     /// Visible back-layer peeks on the compose stack control (design twin of Android).
     static let composeStackLayerCount = 3
-    static let composeStackPeekOffset: CGFloat = 5
-    static let composeStackBackScale: CGFloat = 0.92
+    static let composeStackPeekOffset: CGFloat = 8
+    static let composeStackBackScale: CGFloat = 0.90
 
     /// Short long-press opens compose (menu opens on tap).
     static let composeLongPressDuration: TimeInterval = 0.18
