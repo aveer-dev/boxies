@@ -28,8 +28,10 @@ struct HomeShellView: View {
     @State private var highlightedComposeAction: ComposeActionItem.ID?
     @State private var composeActionRowFrames: [ComposeActionItem.ID: CGRect] = [:]
     @State private var composeTouchBeganAt: Date?
-    @State private var composeDidLongPress = false
+    @State private var composeDidTriggerCompose = false
     @State private var composePressToken = UUID()
+    @State private var composeLastTapAt: Date?
+    @State private var composeMenuToken = UUID()
 
     static let askAITransitionID = "ai-chat-button"
     static let composeTransitionID = "compose-button"
@@ -142,7 +144,7 @@ struct HomeShellView: View {
                 .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.2), value: showComposeActions)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showComposeActions)
     }
 
     private var homeNavigation: some View {
@@ -629,86 +631,87 @@ struct HomeShellView: View {
     }
 
     private var composeButton: some View {
-        Image(systemName: "square.and.pencil")
-            .font(.inter(size: 18, weight: .medium))
-            .foregroundStyle(AppTheme.ink)
-            .frame(width: HomeChromeMetrics.actionBarHeight, height: HomeChromeMetrics.actionBarHeight)
-            .overlay(alignment: .topTrailing) {
-                Image(systemName: "chevron.up")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(AppTheme.muted)
-                    .offset(x: -8, y: 24)
-                    .accessibilityHidden(true)
-            }
-            .liquidGlass(in: Capsule())
-            .contentShape(Capsule())
+        ComposeStackButton(isExpanded: showComposeActions)
+            .contentShape(Rectangle())
             .gesture(composePressGesture)
-            .accessibilityLabel("Compose")
-            .accessibilityHint("Long press for more actions")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Compose menu")
+            .accessibilityHint("Tap for folders and actions. Double tap or press briefly to compose.")
+            .accessibilityAddTraits(.isButton)
             .modifier(BarZoomSource(id: Self.composeTransitionID, namespace: barNamespace))
             .modifier(BarZoomSourceHidden(hidden: showComposeSheet && composeMorphsFromBar))
             .opacity(showComposeActions ? 0 : 1)
+            .allowsHitTesting(!showComposeActions)
     }
 
     private var composePressGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
-            .onChanged { value in
-                if composeTouchBeganAt == nil {
-                    let token = UUID()
-                    composePressToken = token
-                    composeTouchBeganAt = Date()
-                    composeDidLongPress = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        guard composePressToken == token,
-                              composeTouchBeganAt != nil,
-                              !composeDidLongPress else { return }
-                        composeDidLongPress = true
-                        openComposeActions()
-                    }
+            .onChanged { _ in
+                guard composeTouchBeganAt == nil else { return }
+                let now = Date()
+
+                // Double-tap → compose (invalidate a pending single-tap menu open).
+                if let last = composeLastTapAt,
+                   now.timeIntervalSince(last) < HomeChromeMetrics.composeDoubleTapWindow {
+                    composeMenuToken = UUID()
+                    composeLastTapAt = nil
+                    composeTouchBeganAt = now
+                    composeDidTriggerCompose = true
+                    startComposeFromBar()
+                    return
                 }
-                if showComposeActions {
-                    updateHighlightedComposeAction(at: value.location)
+
+                let token = UUID()
+                composePressToken = token
+                composeTouchBeganAt = now
+                composeDidTriggerCompose = false
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + HomeChromeMetrics.composeLongPressDuration
+                ) {
+                    guard composePressToken == token,
+                          composeTouchBeganAt != nil,
+                          !composeDidTriggerCompose else { return }
+                    composeDidTriggerCompose = true
+                    composeMenuToken = UUID()
+                    composeLastTapAt = nil
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    startComposeFromBar()
                 }
             }
             .onEnded { _ in
-                let wasLongPress = composeDidLongPress
+                let triggeredCompose = composeDidTriggerCompose
                 composeTouchBeganAt = nil
-                composeDidLongPress = false
+                composeDidTriggerCompose = false
 
-                if wasLongPress {
-                    if let highlightedComposeAction,
-                       let item = ComposeActionItem(rawValue: highlightedComposeAction) {
-                        performComposeAction(item)
-                    } else {
-                        highlightedComposeAction = nil
-                    }
-                } else {
-                    startComposeFromBar()
+                guard !triggeredCompose else { return }
+
+                // Single tap → open menu after a short double-tap window (keeps tap snappy
+                // vs the old long-press, without stealing double-tap → compose).
+                let menuToken = UUID()
+                composeMenuToken = menuToken
+                composeLastTapAt = Date()
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + HomeChromeMetrics.composeDoubleTapWindow
+                ) {
+                    guard composeMenuToken == menuToken else { return }
+                    openComposeActions()
+                    composeLastTapAt = nil
                 }
             }
     }
 
     private func openComposeActions() {
         guard !showComposeActions else { return }
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        withAnimation(.easeOut(duration: 0.2)) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
             showComposeActions = true
         }
     }
 
     private func dismissComposeActions() {
-        withAnimation(.easeOut(duration: 0.18)) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
             showComposeActions = false
             highlightedComposeAction = nil
-        }
-    }
-
-    private func updateHighlightedComposeAction(at point: CGPoint) {
-        let hit = composeActionRowFrames.first { _, frame in
-            frame.insetBy(dx: -8, dy: -6).contains(point)
-        }?.key
-        if highlightedComposeAction != hit {
-            highlightedComposeAction = hit
         }
     }
 

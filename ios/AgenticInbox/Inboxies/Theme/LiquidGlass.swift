@@ -10,6 +10,15 @@ enum HomeChromeMetrics {
     static let tabLabelPointSize: CGFloat = 10
     static let minimizedComposeHeight: CGFloat = 66
 
+    /// Visible back-layer peeks on the compose stack control (design twin of Android).
+    static let composeStackLayerCount = 3
+    static let composeStackPeekOffset: CGFloat = 5
+    static let composeStackBackScale: CGFloat = 0.92
+
+    /// Short long-press opens compose (menu opens on tap).
+    static let composeLongPressDuration: TimeInterval = 0.18
+    static let composeDoubleTapWindow: TimeInterval = 0.28
+
     static func listBottomInset(hasMinimizedCompose: Bool) -> CGFloat {
         var height = actionBarHeight + chromeBottomPadding
         if hasMinimizedCompose {

@@ -51,19 +51,63 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     }
 }
 
+/// Layered compose control — reads as a stack of buttons that expands into the action list.
+struct ComposeStackButton: View {
+    var size: CGFloat = HomeChromeMetrics.actionBarHeight
+    var isExpanded: Bool = false
+
+    private var layerCount: Int { HomeChromeMetrics.composeStackLayerCount }
+    private var peek: CGFloat { HomeChromeMetrics.composeStackPeekOffset }
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<layerCount, id: \.self) { index in
+                let depth = layerCount - 1 - index
+                Circle()
+                    .fill(.clear)
+                    .frame(width: size, height: size)
+                    .liquidGlass(in: Circle())
+                    .scaleEffect(depth == 0 ? 1 : HomeChromeMetrics.composeStackBackScale)
+                    .offset(y: isExpanded ? 0 : -CGFloat(depth) * peek)
+                    .opacity(depth == 0 ? 1 : (isExpanded ? 0 : 0.55 - CGFloat(depth - 1) * 0.12))
+                    .zIndex(Double(index))
+            }
+
+            Image(systemName: "square.and.pencil")
+                .font(.inter(size: 18, weight: .medium))
+                .foregroundStyle(AppTheme.ink)
+                .opacity(isExpanded ? 0 : 1)
+                .zIndex(Double(layerCount))
+        }
+        .frame(width: size, height: size + CGFloat(layerCount - 1) * peek)
+        .offset(y: CGFloat(layerCount - 1) * peek / 2)
+        .accessibilityHidden(true)
+    }
+}
+
 /// World App–style right-aligned action list over a blurred backdrop.
+/// Rows spring out from the stacked compose control (bottom-trailing).
 struct ComposeActionListOverlay: View {
     var highlightedID: ComposeActionItem.ID?
     var onSelect: (ComposeActionItem) -> Void
     var onDismiss: () -> Void
     var onRowFramesChange: ([ComposeActionItem.ID: CGRect]) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
     @Namespace private var highlightNamespace
 
     private let actions = ComposeActionItem.allCases
     private let iconSize: CGFloat = 48
     private let rowSpacing: CGFloat = 18
+
+    private var expandSpring: Animation {
+        .spring(response: 0.32, dampingFraction: 0.86)
+    }
+
+    private var rowSpring: Animation {
+        .spring(response: 0.32, dampingFraction: 0.86)
+    }
 
     var body: some View {
         ZStack {
@@ -76,12 +120,16 @@ struct ComposeActionListOverlay: View {
 
             VStack(alignment: .trailing, spacing: rowSpacing) {
                 ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
+                    let distanceFromBottom = CGFloat(actions.count - 1 - index)
+                    let stackedOffset = distanceFromBottom * (iconSize + rowSpacing)
                     actionRow(action)
-                        .opacity(appeared ? 1 : 0)
-                        .offset(y: appeared ? 0 : 12)
+                        .opacity(appeared ? 1 : (reduceMotion ? 0 : 1))
+                        .offset(y: appeared || reduceMotion ? 0 : stackedOffset)
+                        .scaleEffect(appeared || reduceMotion ? 1 : 0.94)
                         .animation(
-                            .spring(response: 0.28, dampingFraction: 0.84)
-                                .delay(Double(actions.count - 1 - index) * 0.015),
+                            reduceMotion
+                                ? .easeOut(duration: 0.15)
+                                : rowSpring.delay(Double(actions.count - 1 - index) * 0.018),
                             value: appeared
                         )
                 }
@@ -94,7 +142,7 @@ struct ComposeActionListOverlay: View {
         }
         .onPreferenceChange(ComposeActionRowFramesKey.self, perform: onRowFramesChange)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : expandSpring) {
                 appeared = true
             }
         }

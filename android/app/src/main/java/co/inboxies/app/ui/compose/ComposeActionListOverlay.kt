@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.compose
 
+import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -49,6 +50,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -116,6 +118,25 @@ private val HighlightSpring = spring<Rect>(
     stiffness = 480f,
 )
 
+private val ExpandSpring = spring<Float>(
+    dampingRatio = 0.86f,
+    stiffness = Spring.StiffnessMediumLow,
+)
+
+@Composable
+private fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            ) == 0f
+        }.getOrDefault(false)
+    }
+}
+
 @Composable
 fun ComposeActionListOverlay(
     highlightedId: ComposeActionItem?,
@@ -127,6 +148,7 @@ fun ComposeActionListOverlay(
 ) {
     val colors = inboxiesColors()
     val density = LocalDensity.current
+    val reduceMotion = rememberReduceMotion()
     val actions = ComposeActionItem.entries
     val rowFrames = remember { mutableMapOf<ComposeActionItem, Rect>() }
     var publishedFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
@@ -134,9 +156,16 @@ fun ComposeActionListOverlay(
     var listContainer by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var lastHighlightRect by remember { mutableStateOf(Rect.Zero) }
     val hoverFill = lerp(colors.pillActive, colors.surface, 0.45f)
+    val rowStridePx = with(density) {
+        (HomeChromeMetrics.composeActionIconSize + HomeChromeMetrics.composeActionRowSpacing).toPx()
+    }
 
-    LaunchedEffect(Unit) {
-        backdropAlpha.animateTo(1f, spring(stiffness = Spring.StiffnessMedium))
+    LaunchedEffect(reduceMotion) {
+        if (reduceMotion) {
+            backdropAlpha.snapTo(1f)
+        } else {
+            backdropAlpha.animateTo(1f, ExpandSpring)
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -203,18 +232,28 @@ fun ComposeActionListOverlay(
             ) {
                 actions.forEachIndexed { index, action ->
                     val appeared = remember { Animatable(0f) }
-                    LaunchedEffect(Unit) {
-                        delay((actions.size - 1 - index) * 15L)
-                        appeared.animateTo(
-                            1f,
-                            spring(dampingRatio = 0.84f, stiffness = Spring.StiffnessMediumLow),
-                        )
+                    val distanceFromBottom = actions.size - 1 - index
+                    LaunchedEffect(reduceMotion) {
+                        if (reduceMotion) {
+                            delay((actions.size - 1 - index) * 10L)
+                            appeared.snapTo(1f)
+                        } else {
+                            delay((actions.size - 1 - index) * 18L)
+                            appeared.animateTo(1f, ExpandSpring)
+                        }
                     }
                     Row(
                         modifier = Modifier
                             .graphicsLayer {
                                 alpha = appeared.value
-                                translationY = (1f - appeared.value) * 12f
+                                translationY = if (reduceMotion) {
+                                    0f
+                                } else {
+                                    (1f - appeared.value) * distanceFromBottom * rowStridePx
+                                }
+                                val scale = if (reduceMotion) 1f else 0.94f + 0.06f * appeared.value
+                                scaleX = scale
+                                scaleY = scale
                             }
                             .onGloballyPositioned { coords ->
                                 rowFrames[action] = coords.boundsInRoot()
