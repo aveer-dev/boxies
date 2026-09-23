@@ -44,7 +44,9 @@ import {
 	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
 	ownerKeysForAssign,
+	passwordUserForSessionAccount,
 	redeemIdentityLinkCode,
+	updatePasswordHashForSessionAccount,
 	upsertIdentityLink,
 } from "../lib/identity-links";
 import { verifyAppleIdentityToken } from "../lib/apple-auth";
@@ -1001,6 +1003,93 @@ export function registerAdminAndInviteRoutes(app: App) {
 				return c.json({ error: "Invalid identity token" }, 401);
 			}
 			console.error("attach identity failed:", message);
+			return c.json({ error: message }, 400);
+		}
+	});
+
+	/**
+	 * Change password for the password sign-in method on this account.
+	 * Works from any authenticated session (Access / Apple / Google / password)
+	 * as long as the account already has a password. Requires the current
+	 * password — not a password-session-only path.
+	 */
+	app.post("/api/v1/me/identities/password", async (c) => {
+		const principal = c.get("principal");
+		if (!principal || principalKeys(principal).length === 0) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+		const body = z
+			.object({
+				currentPassword: z.string().min(1).max(200),
+				newPassword: z.string().min(1).max(200),
+			})
+			.safeParse(await c.req.json());
+		if (!body.success) {
+			return c.json(
+				{
+					error:
+						"Invalid body. Provide currentPassword and newPassword.",
+				},
+				400,
+			);
+		}
+
+		const strength = validatePasswordStrength(body.data.newPassword);
+		if (strength) return c.json({ error: strength }, 400);
+		if (body.data.currentPassword === body.data.newPassword) {
+			return c.json(
+				{ error: "New password must be different from the current password" },
+				400,
+			);
+		}
+
+		try {
+			const user = await passwordUserForSessionAccount(
+				c.env.BUCKET,
+				principal,
+			);
+			if (!user) {
+				return c.json(
+					{ error: "This account has no password sign-in method" },
+					404,
+				);
+			}
+			const currentOk = await verifyPassword(
+				body.data.currentPassword,
+				user.passwordHash,
+			);
+			if (!currentOk) {
+				return c.json({ error: "Current password is incorrect" }, 401);
+			}
+			const passwordHash = await hashPassword(body.data.newPassword);
+			const result = await updatePasswordHashForSessionAccount(
+				c.env.BUCKET,
+				principal,
+				passwordHash,
+			);
+			await appendAdminAudit(c.env.BUCKET, {
+				actorKeys: principalKeys(principal),
+				action: "identity.password.change",
+				detail: { userId: result.userId, accountId: result.account.id },
+			});
+			return c.json({
+				ok: true,
+				userId: result.userId,
+				accountId: result.account.id,
+				identities: (
+					await listIdentitiesForPrincipal(c.env.BUCKET, principal)
+				).identities,
+			});
+		} catch (err) {
+			const message =
+				err instanceof Error ? err.message : "Could not change password";
+			if (message === "Unauthorized") {
+				return c.json({ error: message }, 401);
+			}
+			if (message.includes("no password sign-in method")) {
+				return c.json({ error: message }, 404);
+			}
+			console.error("change password failed:", message);
 			return c.json({ error: message }, 400);
 		}
 	});
