@@ -13,7 +13,7 @@ enum HomeChromeMetrics {
     /// Visible back-layer peeks on the compose stack control (design twin of Android).
     /// Depth 0 = front; higher depth = smaller + darker.
     static let composeStackLayerCount = 3
-    static let composeStackPeekOffset: CGFloat = 5
+    static let composeStackPeekOffset: CGFloat = 10
     /// Progressive scales: front 1.0, mid, back (clearly stepped).
     static let composeStackScales: [CGFloat] = [1.0, 0.72, 0.50]
 

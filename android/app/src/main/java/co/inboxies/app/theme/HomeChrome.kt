@@ -49,7 +49,7 @@ object HomeChromeMetrics {
     /** Visible back-layer peeks on the compose stack control (design twin of iOS).
      * Depth 0 = front; higher depth = smaller + darker. */
     const val composeStackLayerCount: Int = 3
-    val composeStackPeekOffset: Dp = 5.dp
+    val composeStackPeekOffset: Dp = 10.dp
     /** Progressive scales: front 1.0, mid, back (clearly stepped). */
     val composeStackScales: FloatArray = floatArrayOf(1.0f, 0.72f, 0.50f)
 
