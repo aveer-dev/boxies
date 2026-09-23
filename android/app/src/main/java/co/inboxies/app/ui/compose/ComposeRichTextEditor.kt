@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -290,7 +291,28 @@ fun ComposeRichTextEditor(
     AndroidView(
         modifier = modifier
             .fillMaxWidth()
-            .height(with(density) { targetHeightPx.toDp() }),
+            .height(with(density) { targetHeightPx.toDp() })
+            .onSizeChanged { size ->
+                // First overlay insert often lays out with width 0; remasure once
+                // the view has a real width so the form does not stay title-only.
+                if (size.width <= 0) return@onSizeChanged
+                val edit = controller.editText ?: return@onSizeChanged
+                val contentWidth = (edit.width - edit.paddingLeft - edit.paddingRight)
+                    .coerceAtLeast(0)
+                if (contentWidth <= 0) return@onSizeChanged
+                val widthSpec = android.view.View.MeasureSpec.makeMeasureSpec(
+                    contentWidth,
+                    android.view.View.MeasureSpec.EXACTLY,
+                )
+                val heightSpec = android.view.View.MeasureSpec.makeMeasureSpec(
+                    0,
+                    android.view.View.MeasureSpec.UNSPECIFIED,
+                )
+                edit.measure(widthSpec, heightSpec)
+                if (edit.measuredHeight != contentHeightPx) {
+                    contentHeightPx = edit.measuredHeight
+                }
+            },
         factory = { context ->
             EditText(context).apply {
                 layoutParams = ViewGroup.LayoutParams(
