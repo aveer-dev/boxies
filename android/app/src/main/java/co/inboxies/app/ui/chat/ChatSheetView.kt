@@ -107,9 +107,6 @@ fun ChatSheetView(
     TransparentSystemBars()
 
     val dragY = rememberSheetDragY()
-    val dragToDismiss = Modifier
-        .semantics { contentDescription = "Drag to close" }
-        .sheetDragToDismiss(dragY = dragY, onDismiss = onClose)
 
     Box(
         modifier = Modifier
@@ -125,10 +122,12 @@ fun ChatSheetView(
                 .imePadding(),
         ) {
             // Top drag chrome: status bar + handle + generous hit area (ComposeSheet / iOS).
+            // Fresh sheetDragToDismiss() per hit target — never reuse one Modifier instance.
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(dragToDismiss)
+                    .semantics { contentDescription = "Drag to close" }
+                    .sheetDragToDismiss(dragY = dragY, onDismiss = onClose)
                     .statusBarsPadding(),
             ) {
                 Box(
@@ -183,7 +182,9 @@ fun ChatSheetView(
                             onBack = { app.showChatList() },
                             onNewChat = { app.startNewChat() },
                             onClose = onClose,
-                            topDragModifier = dragToDismiss,
+                            topDragModifier = Modifier
+                                .semantics { contentDescription = "Drag to close" }
+                                .sheetDragToDismiss(dragY = dragY, onDismiss = onClose),
                         )
                     }
                     ChatNavDestination.List -> {
@@ -191,7 +192,8 @@ fun ChatSheetView(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(dragToDismiss)
+                                    .semantics { contentDescription = "Drag to close" }
+                                    .sheetDragToDismiss(dragY = dragY, onDismiss = onClose)
                                     .padding(horizontal = 8.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(
