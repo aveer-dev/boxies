@@ -204,7 +204,9 @@ struct HomeShellView: View {
             seedPrompt: chatSeedPrompt,
             initialConversationId: app.chatSession.conversationId
         )
-        .modifier(CoverDragIndicator())
+        .modifier(CoverDragDismiss(onDismiss: {
+            showChat = false
+        }))
         .modifier(BarSheetZoom(enabled: true, id: Self.askAITransitionID, namespace: barNamespace))
         .presentationBackground(AppTheme.background)
     }
@@ -213,7 +215,11 @@ struct HomeShellView: View {
     private var expandedComposeSheet: some View {
         if let session = app.composeSession {
             ComposeSheetView(session: session)
-                .modifier(CoverDragIndicator())
+                // Drag-to-dismiss docks (minimizes) via fullScreenCover onDismiss —
+                // same as the system sheet swipe before the zoom cover migration.
+                .modifier(CoverDragDismiss(onDismiss: {
+                    showComposeSheet = false
+                }))
                 .modifier(BarSheetZoom(
                     enabled: composeMorphsFromBar,
                     id: Self.composeTransitionID,
@@ -1210,101 +1216,6 @@ private struct AskAIButtonLabel: View {
                 .foregroundStyle(AppTheme.muted)
             Spacer(minLength: 0)
         }
-    }
-}
-
-private struct CoverDragIndicator: ViewModifier {
-    private let handleTop: CGFloat = 12
-    private let handleHeight: CGFloat = 5
-    private let handleBottom: CGFloat = 16
-    private var extraTop: CGFloat { handleTop + handleHeight + handleBottom }
-
-    func body(content: Content) -> some View {
-        content
-            .background {
-                ExtraTopSafeAreaInset(extra: extraTop)
-            }
-            .overlay(alignment: .top) {
-                Capsule()
-                    .fill(AppTheme.muted.opacity(0.45))
-                    .frame(width: 36, height: handleHeight)
-                    .padding(.top, handleTop)
-                    .frame(maxWidth: .infinity)
-                    .offset(y: -extraTop)
-                    .accessibilityLabel("Drag to close")
-            }
-    }
-}
-
-/// Pushes UINavigationBar down. SwiftUI safeAreaInset is ignored by the toolbar.
-private struct ExtraTopSafeAreaInset: UIViewRepresentable {
-    var extra: CGFloat
-
-    func makeUIView(context: Context) -> ExtraTopSafeAreaView {
-        let view = ExtraTopSafeAreaView()
-        view.extra = extra
-        view.isUserInteractionEnabled = false
-        view.backgroundColor = .clear
-        return view
-    }
-
-    func updateUIView(_ view: ExtraTopSafeAreaView, context: Context) {
-        view.extra = extra
-        view.apply()
-    }
-
-    static func dismantleUIView(_ view: ExtraTopSafeAreaView, coordinator: ()) {
-        view.clear()
-    }
-}
-
-private final class ExtraTopSafeAreaView: UIView {
-    var extra: CGFloat = 0
-    private weak var appliedTo: UIViewController?
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        apply()
-    }
-
-    override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        apply()
-    }
-
-    func apply() {
-        guard window != nil else {
-            clear()
-            return
-        }
-        guard let target = nearestHost() else { return }
-        if appliedTo !== target {
-            appliedTo?.additionalSafeAreaInsets.top = 0
-            appliedTo = target
-        }
-        if target.additionalSafeAreaInsets.top != extra {
-            target.additionalSafeAreaInsets.top = extra
-        }
-    }
-
-    func clear() {
-        appliedTo?.additionalSafeAreaInsets.top = 0
-        appliedTo = nil
-    }
-
-    private func nearestHost() -> UIViewController? {
-        var responder: UIResponder? = self
-        var lastViewController: UIViewController?
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                lastViewController = viewController
-                if viewController.presentingViewController != nil {
-                    return viewController
-                }
-            }
-            responder = current.next
-        }
-        return lastViewController?.navigationController ?? lastViewController
     }
 }
 

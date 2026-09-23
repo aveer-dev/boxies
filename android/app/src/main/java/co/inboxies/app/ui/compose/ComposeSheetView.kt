@@ -14,7 +14,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,7 +56,6 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,7 +72,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -109,6 +106,8 @@ import co.inboxies.app.theme.TransparentSystemBars
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.components.rememberSheetDragY
+import co.inboxies.app.ui.components.sheetDragToDismiss
 import co.inboxies.app.util.ComposeHtml
 import co.inboxies.app.util.OutboundImageCompressor
 import co.inboxies.app.util.QuotedOriginal
@@ -170,8 +169,7 @@ fun ComposeSheetView(
     var sending by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<ComposeToast?>(null) }
     var headerHeightPx by remember { mutableStateOf(0) }
-    val dragY = remember { mutableFloatStateOf(0f) }
-    val dismissThresholdPx = with(density) { 96.dp.toPx() }
+    val dragY = rememberSheetDragY()
     val minimizeAction = rememberUpdatedState(onMinimize)
 
     val fromDisplayName = fromName?.takeIf { it.isNotEmpty() } ?: fromEmail
@@ -390,14 +388,9 @@ fun ComposeSheetView(
         suggestions = emptyList()
     }
 
-    fun settleDrag() {
-        if (dragY.floatValue > dismissThresholdPx) {
-            persist()
-            minimizeAction.value()
-            dragY.floatValue = 0f
-        } else {
-            dragY.floatValue = 0f
-        }
+    fun persistAndMinimize() {
+        persist()
+        minimizeAction.value()
     }
 
     BackHandler {
@@ -434,22 +427,17 @@ fun ComposeSheetView(
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics { contentDescription = "Drag to close" }
-                    .pointerInput(showQuotedOriginal) {
-                        if (showQuotedOriginal) return@pointerInput
-                        detectVerticalDragGestures(
-                            onVerticalDrag = { change, amount ->
-                                change.consume()
-                                dragY.floatValue = (dragY.floatValue + amount).coerceAtLeast(0f)
-                            },
-                            onDragEnd = { settleDrag() },
-                            onDragCancel = { settleDrag() },
-                        )
-                    }
+                    .sheetDragToDismiss(
+                        dragY = dragY,
+                        enabled = !showQuotedOriginal,
+                        onDismiss = { persistAndMinimize() },
+                    )
                     .statusBarsPadding(),
             ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 44.dp)
                     .padding(top = 12.dp, bottom = 16.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -568,7 +556,13 @@ fun ComposeSheetView(
             BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 val viewportHeight = maxHeight
                 val headerHeight = with(density) { headerHeightPx.toDp() }
-                val editorMin = (viewportHeight - headerHeight).coerceAtLeast(160.dp)
+                // First frame can report 0 height while the overlay inserts; keep a
+                // provisional body min so From/To/Subject never collapse to title-only.
+                val editorMin = if (viewportHeight < 8.dp) {
+                    280.dp
+                } else {
+                    (viewportHeight - headerHeight).coerceAtLeast(200.dp)
+                }
 
                 Column(
                     modifier = Modifier
@@ -1427,18 +1421,7 @@ private fun QuotedOriginalSheet(
     onDismiss: () -> Unit,
 ) {
     val colors = inboxiesColors()
-    val density = LocalDensity.current
-    val dragY = remember { mutableFloatStateOf(0f) }
-    val dismissThresholdPx = with(density) { 96.dp.toPx() }
-
-    fun settleDrag() {
-        if (dragY.floatValue > dismissThresholdPx) {
-            onDismiss()
-            dragY.floatValue = 0f
-        } else {
-            dragY.floatValue = 0f
-        }
-    }
+    val dragY = rememberSheetDragY()
 
     Box(modifier = Modifier.fillMaxSize().background(HomeChromeMetrics.modalScrim)) {
         Column(
@@ -1456,16 +1439,8 @@ private fun QuotedOriginalSheet(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
-                        detectVerticalDragGestures(
-                            onVerticalDrag = { change, amount ->
-                                change.consume()
-                                dragY.floatValue = (dragY.floatValue + amount).coerceAtLeast(0f)
-                            },
-                            onDragEnd = { settleDrag() },
-                            onDragCancel = { settleDrag() },
-                        )
-                    }
+                    .heightIn(min = 44.dp)
+                    .sheetDragToDismiss(dragY = dragY, onDismiss = onDismiss)
                     .padding(top = 12.dp, bottom = 8.dp),
                 contentAlignment = Alignment.Center,
             ) {
