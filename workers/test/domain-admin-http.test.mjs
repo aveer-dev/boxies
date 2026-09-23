@@ -554,6 +554,71 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	});
 	assert.equal(login.status, 200);
 	assert.ok(login.json.token);
+
+	const wrongCurrent = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/password",
+		principal: eve,
+		body: {
+			currentPassword: "wrong-current-password",
+			newPassword: "brand-new-password-1",
+		},
+	});
+	assert.equal(wrongCurrent.status, 401);
+
+	const tooShort = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/password",
+		principal: eve,
+		body: {
+			currentPassword: "correct-horse-battery",
+			newPassword: "short",
+		},
+	});
+	assert.equal(tooShort.status, 400);
+
+	const changed = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/password",
+		principal: eve,
+		body: {
+			currentPassword: "correct-horse-battery",
+			newPassword: "brand-new-password-1",
+		},
+	});
+	assert.equal(changed.status, 200);
+	assert.equal(changed.json.ok, true);
+	assert.ok(changed.json.userId);
+
+	const oldLogin = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "eve@example.com", password: "correct-horse-battery" },
+	});
+	assert.equal(oldLogin.status, 401);
+
+	const newLogin = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "eve@example.com", password: "brand-new-password-1" },
+	});
+	assert.equal(newLogin.status, 200);
+	assert.ok(newLogin.json.token);
+}
+
+{
+	const bucket = mockBucket();
+	const env = mockEnv(bucket);
+	const noPassword = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/identities/password",
+		principal: admin,
+		body: {
+			currentPassword: "whatever-long-enough",
+			newPassword: "brand-new-password-2",
+		},
+	});
+	assert.equal(noPassword.status, 404);
 }
 
 {
