@@ -31,7 +31,7 @@ struct HomeShellView: View {
     @State private var composeDidTriggerCompose = false
     @State private var composePressToken = UUID()
     @State private var composeLastTapAt: Date?
-    @State private var composeMenuToken = UUID()
+    @State private var composeDoubleTapArmed = false
 
     static let askAITransitionID = "ai-chat-button"
     static let composeTransitionID = "compose-button"
@@ -141,10 +141,28 @@ struct HomeShellView: View {
                         composeActionRowFrames = frames
                     }
                 )
-                .transition(.opacity)
             }
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showComposeActions)
+        // Instant present — spring lives inside overlay rows, not a delayed container fade.
+        .animation(nil, value: showComposeActions)
+        .overlay(alignment: .bottomTrailing) {
+            if showComposeActions && composeDoubleTapArmed {
+                Color.clear
+                    .frame(
+                        width: HomeChromeMetrics.actionBarHeight,
+                        height: HomeChromeMetrics.composeStackHeight()
+                    )
+                    .contentShape(Rectangle())
+                    .padding(.trailing, 24)
+                    .padding(.bottom, HomeChromeMetrics.chromeBottomPadding)
+                    .onTapGesture {
+                        composeDoubleTapArmed = false
+                        composeLastTapAt = nil
+                        dismissComposeActions()
+                        startComposeFromBar()
+                    }
+            }
+        }
     }
 
     private var homeNavigation: some View {
@@ -650,13 +668,16 @@ struct HomeShellView: View {
                 guard composeTouchBeganAt == nil else { return }
                 let now = Date()
 
-                // Double-tap → compose (invalidate a pending single-tap menu open).
+                // Double-tap → compose (menu may already be open from the first tap).
                 if let last = composeLastTapAt,
                    now.timeIntervalSince(last) < HomeChromeMetrics.composeDoubleTapWindow {
-                    composeMenuToken = UUID()
+                    composeDoubleTapArmed = false
                     composeLastTapAt = nil
                     composeTouchBeganAt = now
                     composeDidTriggerCompose = true
+                    if showComposeActions {
+                        dismissComposeActions()
+                    }
                     startComposeFromBar()
                     return
                 }
@@ -672,7 +693,7 @@ struct HomeShellView: View {
                           composeTouchBeganAt != nil,
                           !composeDidTriggerCompose else { return }
                     composeDidTriggerCompose = true
-                    composeMenuToken = UUID()
+                    composeDoubleTapArmed = false
                     composeLastTapAt = nil
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     startComposeFromBar()
@@ -685,17 +706,14 @@ struct HomeShellView: View {
 
                 guard !triggeredCompose else { return }
 
-                // Single tap → open menu after a short double-tap window (keeps tap snappy
-                // vs the old long-press, without stealing double-tap → compose).
-                let menuToken = UUID()
-                composeMenuToken = menuToken
+                // Single tap → open the stack immediately (no debounce / double-tap wait).
                 composeLastTapAt = Date()
+                composeDoubleTapArmed = true
+                openComposeActions()
                 DispatchQueue.main.asyncAfter(
                     deadline: .now() + HomeChromeMetrics.composeDoubleTapWindow
                 ) {
-                    guard composeMenuToken == menuToken else { return }
-                    openComposeActions()
-                    composeLastTapAt = nil
+                    composeDoubleTapArmed = false
                 }
             }
     }
@@ -709,6 +727,7 @@ struct HomeShellView: View {
     }
 
     private func dismissComposeActions() {
+        composeDoubleTapArmed = false
         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
             showComposeActions = false
             highlightedComposeAction = nil
@@ -1216,98 +1235,94 @@ private struct AskAIButtonLabel: View {
     }
 }
 
+/// Grabber + drag-to-dismiss for compose / Ask AI fullScreenCovers.
+///
+/// The grabber sits *above* the navigation content (not via UIKit
+/// `additionalSafeAreaInsets`). Mutating safe-area after the first
+/// fullScreenCover layout pass collapsed ScrollView content to
+/// title-only until remount; keeping chrome in the SwiftUI hierarchy
+/// avoids that race. Interactive dismiss was never wired — only a
+/// visual handle with an accessibility label — so drag is implemented here.
 private struct CoverDragIndicator: ViewModifier {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var dragOffset: CGFloat = 0
+
     private let handleTop: CGFloat = 12
     private let handleHeight: CGFloat = 5
-    private let handleBottom: CGFloat = 16
-    private var extraTop: CGFloat { handleTop + handleHeight + handleBottom }
+    private let handleBottom: CGFloat = 10
+    private let hitExtension: CGFloat = 36
+    private let dismissThreshold: CGFloat = 96
+    private let dismissVelocity: CGFloat = 900
+
+    private var chromeHeight: CGFloat { handleTop + handleHeight + handleBottom }
+
+    private var coverSpring: Animation {
+        .spring(response: 0.32, dampingFraction: 0.86)
+    }
 
     func body(content: Content) -> some View {
-        content
-            .background {
-                ExtraTopSafeAreaInset(extra: extraTop)
-            }
+        VStack(spacing: 0) {
+            dragChrome
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .offset(y: max(0, dragOffset))
+        // Keep the cover background glued to the dragged chrome.
+        .background(AppTheme.background.ignoresSafeArea())
+    }
+
+    private var dragChrome: some View {
+        Color.clear
+            .frame(height: chromeHeight + hitExtension)
             .overlay(alignment: .top) {
                 Capsule()
                     .fill(AppTheme.muted.opacity(0.45))
                     .frame(width: 36, height: handleHeight)
                     .padding(.top, handleTop)
                     .frame(maxWidth: .infinity)
-                    .offset(y: -extraTop)
-                    .accessibilityLabel("Drag to close")
             }
-    }
-}
-
-/// Pushes UINavigationBar down. SwiftUI safeAreaInset is ignored by the toolbar.
-private struct ExtraTopSafeAreaInset: UIViewRepresentable {
-    var extra: CGFloat
-
-    func makeUIView(context: Context) -> ExtraTopSafeAreaView {
-        let view = ExtraTopSafeAreaView()
-        view.extra = extra
-        view.isUserInteractionEnabled = false
-        view.backgroundColor = .clear
-        return view
+            .contentShape(Rectangle())
+            .highPriorityGesture(dragGesture)
+            .accessibilityLabel("Drag to close")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: "Close") { dismiss() }
     }
 
-    func updateUIView(_ view: ExtraTopSafeAreaView, context: Context) {
-        view.extra = extra
-        view.apply()
-    }
-
-    static func dismantleUIView(_ view: ExtraTopSafeAreaView, coordinator: ()) {
-        view.clear()
-    }
-}
-
-private final class ExtraTopSafeAreaView: UIView {
-    var extra: CGFloat = 0
-    private weak var appliedTo: UIViewController?
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        apply()
-    }
-
-    override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        apply()
-    }
-
-    func apply() {
-        guard window != nil else {
-            clear()
-            return
-        }
-        guard let target = nearestHost() else { return }
-        if appliedTo !== target {
-            appliedTo?.additionalSafeAreaInsets.top = 0
-            appliedTo = target
-        }
-        if target.additionalSafeAreaInsets.top != extra {
-            target.additionalSafeAreaInsets.top = extra
-        }
-    }
-
-    func clear() {
-        appliedTo?.additionalSafeAreaInsets.top = 0
-        appliedTo = nil
-    }
-
-    private func nearestHost() -> UIViewController? {
-        var responder: UIResponder? = self
-        var lastViewController: UIViewController?
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                lastViewController = viewController
-                if viewController.presentingViewController != nil {
-                    return viewController
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
+            .onChanged { value in
+                let dy = value.translation.height
+                dragOffset = dy > 0 ? dy : dy * 0.12
+            }
+            .onEnded { value in
+                let dy = value.translation.height
+                let projected = value.predictedEndTranslation.height
+                let shouldDismiss = dy > dismissThreshold
+                    || projected > dismissThreshold * 1.35
+                    || value.velocity.height > dismissVelocity
+                if shouldDismiss {
+                    if reduceMotion {
+                        dismiss()
+                        dragOffset = 0
+                    } else {
+                        withAnimation(coverSpring) {
+                            dragOffset = UIScreen.main.bounds.height
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                            dismiss()
+                            dragOffset = 0
+                        }
+                    }
+                } else if reduceMotion {
+                    dragOffset = 0
+                } else {
+                    withAnimation(coverSpring) {
+                        dragOffset = 0
+                    }
                 }
             }
-            responder = current.next
-        }
-        return lastViewController?.navigationController ?? lastViewController
     }
 }
 

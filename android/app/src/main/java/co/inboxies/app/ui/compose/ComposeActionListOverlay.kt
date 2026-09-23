@@ -164,6 +164,8 @@ fun ComposeActionListOverlay(
         if (reduceMotion) {
             backdropAlpha.snapTo(1f)
         } else {
+            // Immediate presence, then spring the rest — no wait before first paint.
+            backdropAlpha.snapTo(0.2f)
             backdropAlpha.animateTo(1f, ExpandSpring)
         }
     }
@@ -245,7 +247,9 @@ fun ComposeActionListOverlay(
                     Row(
                         modifier = Modifier
                             .graphicsLayer {
-                                alpha = appeared.value
+                                // Keep fully visible from frame 0 — only offset/scale spring
+                                // so expand starts immediately (no fade-in lag).
+                                alpha = 1f
                                 translationY = if (reduceMotion) {
                                     0f
                                 } else {

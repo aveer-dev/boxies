@@ -46,14 +46,28 @@ object HomeChromeMetrics {
     val composeActionIconSize: Dp = 48.dp
     val composeActionRowSpacing: Dp = 18.dp
 
-    /** Visible back-layer peeks on the compose stack control (design twin of iOS). */
+    /** Visible back-layer peeks on the compose stack control (design twin of iOS).
+     * Depth 0 = front; higher depth = smaller + darker. */
     const val composeStackLayerCount: Int = 3
-    val composeStackPeekOffset: Dp = 8.dp
-    const val composeStackBackScale: Float = 0.90f
+    val composeStackPeekOffset: Dp = 5.dp
+    /** Progressive scales: front 1.0, mid, back (clearly stepped). */
+    val composeStackScales: FloatArray = floatArrayOf(1.0f, 0.72f, 0.50f)
 
-    /** Short long-press opens compose (menu opens on tap). */
+    /** Short long-press opens compose (menu opens on tap, instantly). */
     const val composeLongPressMs: Long = 180L
     const val composeDoubleTapWindowMs: Long = 280L
+
+    fun composeStackScale(depth: Int): Float {
+        val index = depth.coerceIn(0, composeStackScales.lastIndex)
+        return composeStackScales[index]
+    }
+
+    /** Total height of the compose stack control (front + visible peeks). */
+    fun composeStackHeight(frontSize: Dp = actionBarHeight): Dp {
+        val smallest = composeStackScale(composeStackLayerCount - 1)
+        return frontSize + composeStackPeekOffset * (composeStackLayerCount - 1) +
+            frontSize * (1f - smallest)
+    }
 
     /** iOS `Menu` chrome — 14pt continuous corners, 20pt glyphs, 16pt insets. */
     val menuCornerRadius: Dp = 22.dp

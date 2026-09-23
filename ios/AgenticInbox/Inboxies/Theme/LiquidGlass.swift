@@ -11,13 +11,28 @@ enum HomeChromeMetrics {
     static let minimizedComposeHeight: CGFloat = 66
 
     /// Visible back-layer peeks on the compose stack control (design twin of Android).
+    /// Depth 0 = front; higher depth = smaller + darker.
     static let composeStackLayerCount = 3
-    static let composeStackPeekOffset: CGFloat = 8
-    static let composeStackBackScale: CGFloat = 0.90
+    static let composeStackPeekOffset: CGFloat = 5
+    /// Progressive scales: front 1.0, mid, back (clearly stepped).
+    static let composeStackScales: [CGFloat] = [1.0, 0.72, 0.50]
 
-    /// Short long-press opens compose (menu opens on tap).
+    /// Short long-press opens compose (menu opens on tap, instantly).
     static let composeLongPressDuration: TimeInterval = 0.18
     static let composeDoubleTapWindow: TimeInterval = 0.28
+
+    static func composeStackScale(depth: Int) -> CGFloat {
+        let scales = composeStackScales
+        let index = min(max(depth, 0), scales.count - 1)
+        return scales[index]
+    }
+
+    /// Total height of the compose stack control (front + visible peeks).
+    static func composeStackHeight(frontSize: CGFloat = actionBarHeight) -> CGFloat {
+        let smallest = composeStackScale(depth: composeStackLayerCount - 1)
+        return frontSize + composeStackPeekOffset * CGFloat(composeStackLayerCount - 1) +
+            frontSize * (1 - smallest)
+    }
 
     static func listBottomInset(hasMinimizedCompose: Bool) -> CGFloat {
         var height = actionBarHeight + chromeBottomPadding

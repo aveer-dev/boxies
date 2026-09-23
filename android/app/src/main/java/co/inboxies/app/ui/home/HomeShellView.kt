@@ -23,6 +23,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -120,7 +122,6 @@ import co.inboxies.app.ui.email.EmailDetailView
 import co.inboxies.app.ui.email.EmailListView
 import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.ui.settings.SettingsSheetView
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -162,6 +163,7 @@ fun HomeShellView(
     var showFilterMenu by remember { mutableStateOf(false) }
     var showComposeActions by remember { mutableStateOf(false) }
     var composeActionsDismissible by remember { mutableStateOf(false) }
+    var composeDoubleTapArmed by remember { mutableStateOf(false) }
     var highlightedComposeAction by remember { mutableStateOf<ComposeActionItem?>(null) }
     var composeActionFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
     var tabNavigatingForward by remember { mutableStateOf(true) }
@@ -736,12 +738,19 @@ fun HomeShellView(
                             },
                             onOpenComposeMenu = {
                                 composeActionsDismissible = true
+                                composeDoubleTapArmed = true
                                 view.performHapticFeedback(
                                     android.view.HapticFeedbackConstants.KEYBOARD_TAP,
                                 )
                                 showComposeActions = true
+                                scope.launch {
+                                    delay(HomeChromeMetrics.composeDoubleTapWindowMs)
+                                    composeDoubleTapArmed = false
+                                }
                             },
                             onOpenCompose = {
+                                composeDoubleTapArmed = false
+                                showComposeActions = false
                                 scope.launch { appModel.startCompose(ComposeMode.New) }
                             },
                         )
@@ -773,12 +782,43 @@ fun HomeShellView(
                 onDismiss = {
                     showComposeActions = false
                     composeActionsDismissible = false
+                    composeDoubleTapArmed = false
                     highlightedComposeAction = null
                 },
                 onHighlightChange = { updateComposeHighlight(it) },
                 onRowFramesChange = { composeActionFrames = it },
                 dismissEnabled = composeActionsDismissible,
             )
+            if (composeDoubleTapArmed) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .zIndex(2f),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = HomeChromeMetrics.bottomBarHorizontalPadding,
+                                bottom = HomeChromeMetrics.chromeBottomPadding,
+                            )
+                            .size(
+                                width = HomeChromeMetrics.actionBarHeight,
+                                height = HomeChromeMetrics.composeStackHeight(),
+                            )
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() },
+                            ) {
+                                composeDoubleTapArmed = false
+                                showComposeActions = false
+                                composeActionsDismissible = false
+                                highlightedComposeAction = null
+                                scope.launch { appModel.startCompose(ComposeMode.New) }
+                            },
+                    )
+                }
+            }
         }
 
         if (composeSession?.isExpanded == true) {
@@ -1077,12 +1117,6 @@ private fun BottomBar(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val view = LocalView.current
-    val tapState = remember {
-        object {
-            var lastTapUptime: Long = 0L
-            var menuJob: Job? = null
-        }
-    }
 
     Row(
         modifier = Modifier
@@ -1143,47 +1177,22 @@ private fun BottomBar(
             modifier = Modifier
                 .size(
                     width = HomeChromeMetrics.actionBarHeight,
-                    height = HomeChromeMetrics.actionBarHeight +
-                        HomeChromeMetrics.composeStackPeekOffset *
-                        (HomeChromeMetrics.composeStackLayerCount - 1),
+                    height = HomeChromeMetrics.composeStackHeight(),
                 )
                 .semantics {
                     contentDescription =
                         "Compose menu. Tap for folders and actions. Double tap or press briefly to compose."
                 }
                 .pointerInput(showComposeActions, onOpenComposeMenu, onOpenCompose) {
+                    // When menu is open, double-tap is handled by the shell catcher above the overlay.
                     if (showComposeActions) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var triggeredCompose = false
 
-                        // Double-tap detected on touch-down of the second tap.
-                        val now = android.os.SystemClock.uptimeMillis()
-                        if (tapState.lastTapUptime > 0L &&
-                            now - tapState.lastTapUptime < HomeChromeMetrics.composeDoubleTapWindowMs
-                        ) {
-                            tapState.lastTapUptime = 0L
-                            tapState.menuJob?.cancel()
-                            tapState.menuJob = null
-                            triggeredCompose = true
-                            onOpenCompose()
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id }
-                                    ?: event.changes.firstOrNull()
-                                    ?: break
-                                change.consume()
-                                if (!change.pressed) break
-                            }
-                            return@awaitEachGesture
-                        }
-
                         val pressJob = scope.launch {
                             delay(HomeChromeMetrics.composeLongPressMs)
                             triggeredCompose = true
-                            tapState.lastTapUptime = 0L
-                            tapState.menuJob?.cancel()
-                            tapState.menuJob = null
                             view.impactHaptic()
                             onOpenCompose()
                         }
@@ -1196,12 +1205,8 @@ private fun BottomBar(
                                 if (!change.pressed) {
                                     pressJob.cancel()
                                     if (!triggeredCompose) {
-                                        tapState.lastTapUptime = android.os.SystemClock.uptimeMillis()
-                                        tapState.menuJob?.cancel()
-                                        tapState.menuJob = scope.launch {
-                                            delay(HomeChromeMetrics.composeDoubleTapWindowMs)
-                                            onOpenComposeMenu()
-                                        }
+                                        // Instant menu open — no double-tap debounce wait.
+                                        onOpenComposeMenu()
                                     }
                                     change.consume()
                                     break
@@ -1213,7 +1218,7 @@ private fun BottomBar(
                         }
                     }
                 },
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.BottomCenter,
         ) {
             ComposeStackButton(isExpanded = showComposeActions)
         }

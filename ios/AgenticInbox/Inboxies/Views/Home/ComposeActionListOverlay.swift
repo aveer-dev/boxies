@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum ComposeActionItem: String, Identifiable, CaseIterable {
     case settings
@@ -51,7 +52,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     }
 }
 
-/// Layered compose control — reads as a stack of buttons that expands into the action list.
+/// Layered compose control — back layers are progressively smaller and darker.
 struct ComposeStackButton: View {
     var size: CGFloat = HomeChromeMetrics.actionBarHeight
     var isExpanded: Bool = false
@@ -62,16 +63,19 @@ struct ComposeStackButton: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             ForEach((0..<layerCount).reversed(), id: \.self) { depth in
+                let scale = HomeChromeMetrics.composeStackScale(depth: depth)
+                let layerSize = size * scale
+                // Bottom-aligned smaller discs need enough lift to clear the front disc's top.
+                let lift: CGFloat = isExpanded ? 0 : peek * CGFloat(depth) + (size - layerSize)
                 Circle()
                     .fill(layerFill(depth: depth))
                     .overlay {
-                        Circle().stroke(AppTheme.line.opacity(0.85), lineWidth: 1)
+                        Circle().strokeBorder(AppTheme.line.opacity(depth == 0 ? 0.9 : 0.55), lineWidth: 1)
                     }
-                    .shadow(color: .black.opacity(depth == 0 ? 0.10 : 0.08), radius: depth == 0 ? 10 : 6, y: 3)
-                    .frame(width: size, height: size)
-                    .scaleEffect(depth == 0 ? 1 : HomeChromeMetrics.composeStackBackScale)
-                    .offset(y: isExpanded ? 0 : -CGFloat(depth) * peek)
-                    .opacity(depth == 0 ? 1 : (isExpanded ? 0 : 1))
+                    .shadow(color: .black.opacity(depth == 0 ? 0.10 : 0.06), radius: depth == 0 ? 10 : 5, y: 2)
+                    .frame(width: layerSize, height: layerSize)
+                    .offset(y: -lift)
+                    .opacity(isExpanded && depth > 0 ? 0 : 1)
                     .zIndex(Double(layerCount - depth))
             }
 
@@ -82,16 +86,32 @@ struct ComposeStackButton: View {
                 .frame(width: size, height: size)
                 .zIndex(Double(layerCount + 1))
         }
-        .frame(width: size, height: size + CGFloat(layerCount - 1) * peek, alignment: .bottom)
+        .frame(width: size, height: HomeChromeMetrics.composeStackHeight(frontSize: size), alignment: .bottom)
         .accessibilityHidden(true)
     }
 
     private func layerFill(depth: Int) -> Color {
         switch depth {
-        case 0: return AppTheme.surface.opacity(0.96)
-        case 1: return AppTheme.pillFill.opacity(0.95)
-        default: return AppTheme.pillActive.opacity(0.9)
+        case 0: return AppTheme.surface
+        case 1: return AppTheme.pillFill
+        default: return mix(AppTheme.pillActive, AppTheme.ink, by: 0.18)
         }
+    }
+
+    private func mix(_ a: Color, _ b: Color, by amount: CGFloat) -> Color {
+        let t = max(0, min(1, amount))
+        let ua = UIColor(a)
+        let ub = UIColor(b)
+        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+        ua.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+        ub.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+        return Color(
+            red: r1 + (r2 - r1) * t,
+            green: g1 + (g2 - g1) * t,
+            blue: b1 + (b2 - b1) * t,
+            opacity: a1 + (a2 - a1) * t
+        )
     }
 }
 
