@@ -110,6 +110,10 @@ struct SearchView: View {
                 initialConversationId: app.chatSession.conversationId,
                 forceNewChat: true
             )
+            .modifier(CoverDragDismiss(onDismiss: {
+                showChat = false
+            }))
+            .presentationBackground(AppTheme.background)
         }
     }
 
