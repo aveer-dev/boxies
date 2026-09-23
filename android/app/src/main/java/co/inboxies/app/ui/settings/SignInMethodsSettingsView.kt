@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
@@ -67,12 +68,17 @@ fun SignInMethodsSettingsView(
     var isLoading by remember { mutableStateOf(true) }
     var isConnectingGoogle by remember { mutableStateOf(false) }
     var isAddingPassword by remember { mutableStateOf(false) }
+    var isChangingPassword by remember { mutableStateOf(false) }
     var isMinting by remember { mutableStateOf(false) }
     var isRedeeming by remember { mutableStateOf(false) }
     var showPasswordForm by remember { mutableStateOf(false) }
+    var showChangePassword by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordConfirm by remember { mutableStateOf("") }
+    var currentPassword by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var newPasswordConfirm by remember { mutableStateOf("") }
     var linkCode by remember { mutableStateOf<String?>(null) }
     var expiresAt by remember { mutableStateOf<String?>(null) }
     var redeemDraft by remember { mutableStateOf("") }
@@ -81,6 +87,7 @@ fun SignInMethodsSettingsView(
 
     val hasGoogle = identities.any { it.type == "google" }
     val hasPassword = identities.any { it.type == "password" }
+    val canAddMethod = !hasGoogle || !hasPassword
 
     fun reload() {
         scope.launch {
@@ -120,6 +127,19 @@ fun SignInMethodsSettingsView(
         }
     }
 
+    fun friendlyChangePasswordError(message: String?): String {
+        val text = message.orEmpty()
+        return when {
+            text.contains("incorrect", ignoreCase = true) ->
+                "Current password is incorrect"
+            text.contains("no password", ignoreCase = true) ->
+                "This account has no password yet — add one first"
+            text.contains("at least 10", ignoreCase = true) ->
+                "New password must be at least 10 characters"
+            else -> "Could not change password"
+        }
+    }
+
     LaunchedEffect(Unit) { reload() }
 
     Column(
@@ -150,7 +170,7 @@ fun SignInMethodsSettingsView(
         }
 
         Text(
-            "Connect Google or add a password on this device while signed in. Every method uses the same account and mailbox access.",
+            "Ways you can sign in to this account. Add Google or a password here; every method reaches the same mailboxes.",
             modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 8.dp),
             fontFamily = InterFontFamily,
             fontSize = 12.sp,
@@ -171,7 +191,7 @@ fun SignInMethodsSettingsView(
             }
             identities.isEmpty() -> {
                 Text(
-                    "No linked identities yet.",
+                    "Nothing linked yet.",
                     modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
                     fontFamily = InterFontFamily,
                     fontSize = 14.sp,
@@ -202,101 +222,54 @@ fun SignInMethodsSettingsView(
             }
         }
 
-        SettingsSectionHeader("Connect on this device")
-        Text(
-            "Completes Google’s normal sign-in and attaches it to this account — you stay signed in.",
-            modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 4.dp),
-            fontFamily = InterFontFamily,
-            fontSize = 12.sp,
-            color = colors.muted,
-        )
-
-        if (!hasGoogle) {
-            Button(
-                onClick = {
-                    scope.launch {
-                        isConnectingGoogle = true
-                        errorMessage = null
-                        try {
-                            val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID
-                            if (webClientId.isBlank()) {
-                                errorMessage =
-                                    "Google Sign-In isn’t configured. Set GOOGLE_WEB_CLIENT_ID, or use Link another device."
-                                return@launch
-                            }
-                            val googleIdOption = GetGoogleIdOption.Builder()
-                                .setFilterByAuthorizedAccounts(false)
-                                .setServerClientId(webClientId)
-                                .build()
-                            val request = GetCredentialRequest.Builder()
-                                .addCredentialOption(googleIdOption)
-                                .build()
-                            val activity = context as Activity
-                            val result = CredentialManager.create(context)
-                                .getCredential(activity, request)
-                            val credential = result.credential
-                            if (credential is CustomCredential &&
-                                credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
-                            ) {
-                                val google = GoogleIdTokenCredential.createFrom(credential.data)
-                                val res = ApiClient.shared.attachGoogleIdentity(google.idToken)
-                                applyAttach(res, "Google connected")
-                            } else {
-                                errorMessage = "Google Sign-In failed"
-                            }
-                        } catch (e: Exception) {
-                            errorMessage = friendlyAttachError(e.message)
-                        } finally {
-                            isConnectingGoogle = false
-                        }
-                    }
-                },
-                enabled = !isConnectingGoogle,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding)
-                    .height(48.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = colors.ink,
-                    contentColor = colors.surface,
-                ),
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Text(
-                    if (isConnectingGoogle) "Connecting…" else "Connect Google",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-        }
-
-        if (!hasPassword) {
-            if (!showPasswordForm) {
+        if (hasPassword) {
+            SettingsSectionHeader("Password")
+            Text(
+                "Change the password used to sign in with email.",
+                modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 4.dp),
+                fontFamily = InterFontFamily,
+                fontSize = 12.sp,
+                color = colors.muted,
+            )
+            if (!showChangePassword) {
                 TextButton(
-                    onClick = { showPasswordForm = true },
+                    onClick = { showChangePassword = true },
                     modifier = Modifier.padding(horizontal = 4.dp),
                 ) {
-                    Text("Add password", fontFamily = InterFontFamily, color = colors.accent)
+                    Text("Change password", fontFamily = InterFontFamily, color = colors.accent)
                 }
             } else {
                 OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
+                    value = currentPassword,
+                    onValueChange = { currentPassword = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
+                    label = { Text("Current password", fontFamily = InterFontFamily) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = newPassword,
+                    onValueChange = { newPassword = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
                     label = { Text("New password (10+ characters)", fontFamily = InterFontFamily) },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = passwordConfirm,
-                    onValueChange = { passwordConfirm = it },
+                    value = newPasswordConfirm,
+                    onValueChange = { newPasswordConfirm = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
-                    label = { Text("Confirm password", fontFamily = InterFontFamily) },
+                    label = { Text("Confirm new password", fontFamily = InterFontFamily) },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
                 )
                 Row(
                     modifier = Modifier.padding(horizontal = 4.dp),
@@ -306,43 +279,63 @@ fun SignInMethodsSettingsView(
                         onClick = {
                             scope.launch {
                                 when {
-                                    password.length < 10 -> {
-                                        errorMessage = "Password must be at least 10 characters"
+                                    currentPassword.isBlank() -> {
+                                        errorMessage = "Enter your current password"
                                     }
-                                    password != passwordConfirm -> {
-                                        errorMessage = "Passwords do not match"
+                                    newPassword.length < 10 -> {
+                                        errorMessage = "New password must be at least 10 characters"
+                                    }
+                                    newPassword != newPasswordConfirm -> {
+                                        errorMessage = "New passwords do not match"
+                                    }
+                                    currentPassword == newPassword -> {
+                                        errorMessage =
+                                            "New password must be different from the current password"
                                     }
                                     else -> {
-                                        isAddingPassword = true
+                                        isChangingPassword = true
                                         errorMessage = null
                                         runCatching {
-                                            ApiClient.shared.attachPasswordIdentity(password)
+                                            ApiClient.shared.changePassword(
+                                                currentPassword = currentPassword,
+                                                newPassword = newPassword,
+                                            )
                                         }.onSuccess { res ->
-                                            password = ""
-                                            passwordConfirm = ""
-                                            showPasswordForm = false
-                                            applyAttach(res, "Password added")
+                                            currentPassword = ""
+                                            newPassword = ""
+                                            newPasswordConfirm = ""
+                                            showChangePassword = false
+                                            statusMessage = "Password updated"
+                                            if (res.identities.isNotEmpty()) {
+                                                identities = res.identities
+                                            } else {
+                                                reload()
+                                            }
                                         }.onFailure {
-                                            errorMessage = friendlyAttachError(it.message)
+                                            errorMessage = friendlyChangePasswordError(it.message)
                                         }
-                                        isAddingPassword = false
+                                        isChangingPassword = false
                                     }
                                 }
                             }
                         },
-                        enabled = !isAddingPassword && password.isNotBlank() && passwordConfirm.isNotBlank(),
+                        enabled = !isChangingPassword &&
+                            currentPassword.isNotBlank() &&
+                            newPassword.isNotBlank() &&
+                            newPasswordConfirm.isNotBlank(),
                     ) {
                         Text(
-                            if (isAddingPassword) "Saving…" else "Save password",
+                            if (isChangingPassword) "Updating…" else "Update password",
                             fontFamily = InterFontFamily,
                             color = colors.accent,
                         )
                     }
                     TextButton(
                         onClick = {
-                            showPasswordForm = false
-                            password = ""
-                            passwordConfirm = ""
+                            showChangePassword = false
+                            currentPassword = ""
+                            newPassword = ""
+                            newPasswordConfirm = ""
                         },
                     ) {
                         Text("Cancel", fontFamily = InterFontFamily, color = colors.muted)
@@ -351,7 +344,160 @@ fun SignInMethodsSettingsView(
             }
         }
 
-        SettingsSectionHeader("Advanced")
+        if (canAddMethod) {
+            SettingsSectionHeader("Add a method")
+            Text(
+                "Stay signed in — we attach the new method to this account.",
+                modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 4.dp),
+                fontFamily = InterFontFamily,
+                fontSize = 12.sp,
+                color = colors.muted,
+            )
+
+            if (!hasGoogle) {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            isConnectingGoogle = true
+                            errorMessage = null
+                            try {
+                                val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID
+                                if (webClientId.isBlank()) {
+                                    errorMessage =
+                                        "Google Sign-In isn’t configured. Set GOOGLE_WEB_CLIENT_ID, or use Link another device."
+                                    return@launch
+                                }
+                                val googleIdOption = GetGoogleIdOption.Builder()
+                                    .setFilterByAuthorizedAccounts(false)
+                                    .setServerClientId(webClientId)
+                                    .build()
+                                val request = GetCredentialRequest.Builder()
+                                    .addCredentialOption(googleIdOption)
+                                    .build()
+                                val activity = context as Activity
+                                val result = CredentialManager.create(context)
+                                    .getCredential(activity, request)
+                                val credential = result.credential
+                                if (credential is CustomCredential &&
+                                    credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                                ) {
+                                    val google = GoogleIdTokenCredential.createFrom(credential.data)
+                                    val res = ApiClient.shared.attachGoogleIdentity(google.idToken)
+                                    applyAttach(res, "Google connected")
+                                } else {
+                                    errorMessage = "Google Sign-In failed"
+                                }
+                            } catch (e: Exception) {
+                                errorMessage = friendlyAttachError(e.message)
+                            } finally {
+                                isConnectingGoogle = false
+                            }
+                        }
+                    },
+                    enabled = !isConnectingGoogle,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding)
+                        .height(48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.ink,
+                        contentColor = colors.surface,
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(
+                        if (isConnectingGoogle) "Connecting…" else "Connect Google",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+
+            if (!hasPassword) {
+                if (!showPasswordForm) {
+                    TextButton(
+                        onClick = { showPasswordForm = true },
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    ) {
+                        Text("Add password", fontFamily = InterFontFamily, color = colors.accent)
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
+                        label = { Text("New password (10+ characters)", fontFamily = InterFontFamily) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = passwordConfirm,
+                        onValueChange = { passwordConfirm = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
+                        label = { Text("Confirm password", fontFamily = InterFontFamily) },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    when {
+                                        password.length < 10 -> {
+                                            errorMessage = "Password must be at least 10 characters"
+                                        }
+                                        password != passwordConfirm -> {
+                                            errorMessage = "Passwords do not match"
+                                        }
+                                        else -> {
+                                            isAddingPassword = true
+                                            errorMessage = null
+                                            runCatching {
+                                                ApiClient.shared.attachPasswordIdentity(password)
+                                            }.onSuccess { res ->
+                                                password = ""
+                                                passwordConfirm = ""
+                                                showPasswordForm = false
+                                                applyAttach(res, "Password added")
+                                            }.onFailure {
+                                                errorMessage = friendlyAttachError(it.message)
+                                            }
+                                            isAddingPassword = false
+                                        }
+                                    }
+                                }
+                            },
+                            enabled = !isAddingPassword && password.isNotBlank() && passwordConfirm.isNotBlank(),
+                        ) {
+                            Text(
+                                if (isAddingPassword) "Saving…" else "Save password",
+                                fontFamily = InterFontFamily,
+                                color = colors.accent,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                showPasswordForm = false
+                                password = ""
+                                passwordConfirm = ""
+                            },
+                        ) {
+                            Text("Cancel", fontFamily = InterFontFamily, color = colors.muted)
+                        }
+                    }
+                }
+            }
+        }
+
+        SettingsSectionHeader("Link another device")
         TextButton(
             onClick = { showAdvanced = !showAdvanced },
             modifier = Modifier.padding(horizontal = 4.dp),
@@ -365,7 +511,7 @@ fun SignInMethodsSettingsView(
 
         if (showAdvanced) {
             Text(
-                "Cross-device fallback when Connect can’t run on the other surface. Codes expire in 15 minutes.",
+                "Secondary: link across devices when Connect isn’t available. Codes expire in 15 minutes.",
                 modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 4.dp),
                 fontFamily = InterFontFamily,
                 fontSize = 12.sp,
