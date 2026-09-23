@@ -40,6 +40,7 @@ import {
 import {
 	attachIdpToSessionAccount,
 	attachPasswordToSessionAccount,
+	changePasswordForSessionAccount,
 	IdentityAlreadyLinkedError,
 	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
@@ -1001,6 +1002,74 @@ export function registerAdminAndInviteRoutes(app: App) {
 				return c.json({ error: "Invalid identity token" }, 401);
 			}
 			console.error("attach identity failed:", message);
+			return c.json({ error: message }, 400);
+		}
+	});
+
+	/**
+	 * Change password for an account that already has one. Requires the
+	 * current password. Available from any session on that account
+	 * (Access / Apple / Google / password) — Settings → Sign-in methods.
+	 */
+	app.post("/api/v1/me/password", async (c) => {
+		const principal = c.get("principal");
+		if (!principal || principalKeys(principal).length === 0) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+		const body = z
+			.object({
+				currentPassword: z.string().min(1).max(200),
+				newPassword: z.string().min(1).max(200),
+			})
+			.safeParse(await c.req.json());
+		if (!body.success) {
+			return c.json(
+				{
+					error:
+						"Invalid body. Provide currentPassword and newPassword.",
+				},
+				400,
+			);
+		}
+
+		const strength = validatePasswordStrength(body.data.newPassword);
+		if (strength) return c.json({ error: strength }, 400);
+
+		try {
+			const passwordHash = await hashPassword(body.data.newPassword);
+			const result = await changePasswordForSessionAccount(
+				c.env.BUCKET,
+				principal,
+				{
+					currentPassword: body.data.currentPassword,
+					newPasswordHash: passwordHash,
+				},
+			);
+			c.set("principal", result.expanded);
+			return c.json({
+				ok: true,
+				userId: result.userId,
+				accountId: result.account.id,
+				identities: (
+					await listIdentitiesForPrincipal(c.env.BUCKET, result.expanded)
+				).identities,
+			});
+		} catch (err) {
+			const message =
+				err instanceof Error ? err.message : "Could not change password";
+			if (message === "Unauthorized") {
+				return c.json({ error: message }, 401);
+			}
+			if (message === "Current password is incorrect") {
+				return c.json({ error: message }, 401);
+			}
+			if (
+				message.includes("no password") ||
+				message.includes("Add password")
+			) {
+				return c.json({ error: message }, 409);
+			}
+			console.error("change password failed:", message);
 			return c.json({ error: message }, 400);
 		}
 	});

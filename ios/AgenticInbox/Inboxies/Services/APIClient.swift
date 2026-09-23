@@ -179,6 +179,17 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func changePassword(currentPassword: String, newPassword: String) async throws -> ChangePasswordResponse {
+        try await request(
+            path: "/api/v1/me/password",
+            method: "POST",
+            body: [
+                "currentPassword": currentPassword,
+                "newPassword": newPassword,
+            ]
+        )
+    }
+
     func createIdentityLinkCode() async throws -> IdentityLinkCodeResponse {
         try await request(path: "/api/v1/me/identity-link-codes", method: "POST", body: [:] as [String: Any])
     }

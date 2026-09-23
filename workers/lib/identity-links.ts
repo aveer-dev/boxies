@@ -26,6 +26,7 @@ import {
 	resolveAdminAllowlist,
 } from "./domain-admin.ts";
 import { canonicalMailboxId } from "./mailbox-routing.ts";
+import { verifyPassword } from "./password-auth.ts";
 import {
 	findUserIdByLoginEmail,
 	loadPlatformUser,
@@ -1173,6 +1174,63 @@ export async function attachPasswordToSessionAccount(
 	const expanded = applyAccountToPrincipal(session, account);
 	return {
 		account,
+		expanded,
+		userId,
+		linkedEmails: emailsForPrincipal(expanded),
+	};
+}
+
+/**
+ * Change password for an account that already has a password principal.
+ * Requires the current password (works from any authenticated session on
+ * that account — Access / Apple / Google / password).
+ */
+export async function changePasswordForSessionAccount(
+	bucket: R2Bucket,
+	session: RequestPrincipal,
+	opts: {
+		currentPassword: string;
+		newPasswordHash: string;
+	},
+): Promise<{
+	account: IdentityAccount;
+	expanded: RequestPrincipal;
+	userId: string;
+	linkedEmails: string[];
+}> {
+	if (!session.sub && !session.email) {
+		throw new Error("Unauthorized");
+	}
+
+	const sessionAccount = await ensureIdentityAccount(bucket, session);
+	const existingUserIds = sessionAccount.principals
+		.filter((k) => k.startsWith("user:"))
+		.map((k) => k.slice("user:".length));
+	if (existingUserIds.length === 0) {
+		throw new Error("This account has no password. Use Add password first.");
+	}
+
+	const userId = existingUserIds[0];
+	const user = await loadPlatformUser(bucket, userId);
+	if (!user) {
+		throw new Error("This account has no password. Use Add password first.");
+	}
+
+	const ok = await verifyPassword(opts.currentPassword, user.passwordHash);
+	if (!ok) {
+		throw new Error("Current password is incorrect");
+	}
+
+	const now = new Date().toISOString();
+	await savePlatformUser(bucket, {
+		...user,
+		passwordHash: opts.newPasswordHash,
+		updatedAt: now,
+	});
+
+	const expanded = applyAccountToPrincipal(session, sessionAccount);
+	return {
+		account: sessionAccount,
 		expanded,
 		userId,
 		linkedEmails: emailsForPrincipal(expanded),

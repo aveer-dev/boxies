@@ -29,7 +29,8 @@ struct InboxiesApp: App {
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewDomainAdmin")
                 || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn")
-                || ProcessInfo.processInfo.arguments.contains("-previewInviteAccept") {
+                || ProcessInfo.processInfo.arguments.contains("-previewInviteAccept")
+                || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods") {
                 PreviewAdminAuthRoot()
                     .applyThemeController()
             } else {
