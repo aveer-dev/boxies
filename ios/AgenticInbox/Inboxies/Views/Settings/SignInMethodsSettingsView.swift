@@ -1,7 +1,7 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Account → Sign-in methods: Connect IdP on this device; link codes as advanced fallback.
+/// Account → Sign-in methods: Connected, Connect Apple/Google, Add/Change password, Link another device.
 struct SignInMethodsSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -9,11 +9,12 @@ struct SignInMethodsSettingsView: View {
     @State private var identities: [LinkedIdentity] = []
     @State private var isLoading = true
     @State private var isConnectingApple = false
-    @State private var isAddingPassword = false
+    @State private var isSavingPassword = false
     @State private var isMinting = false
     @State private var isRedeeming = false
     @State private var showPasswordForm = false
     @State private var showAdvanced = false
+    @State private var currentPassword = ""
     @State private var password = ""
     @State private var passwordConfirm = ""
     @State private var linkCode: String?
@@ -26,6 +27,10 @@ struct SignInMethodsSettingsView: View {
         identities.contains { $0.type == "apple" }
     }
 
+    private var hasGoogle: Bool {
+        identities.contains { $0.type == "google" }
+    }
+
     private var hasPassword: Bool {
         identities.contains { $0.type == "password" }
     }
@@ -34,7 +39,7 @@ struct SignInMethodsSettingsView: View {
         List {
             Section {
                 Text(
-                    "Connect Apple or add a password on this iPhone while signed in. Every method uses the same account and mailbox access."
+                    "Connected methods share this account. Connect Apple or Google on this device, add or change your password, or link another device."
                 )
                 .font(.inter(size: SettingsFormChrome.footerFontSize))
                 .foregroundStyle(AppTheme.muted)
@@ -82,48 +87,65 @@ struct SignInMethodsSettingsView: View {
                     .frame(height: 44)
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     .disabled(isConnectingApple)
+                    .accessibilityLabel("Connect Apple")
                 }
 
-                if !hasPassword {
-                    if !showPasswordForm {
-                        Button {
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                                showPasswordForm = true
-                            }
-                        } label: {
-                            Text("Add password")
-                                .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                                .foregroundStyle(AppTheme.accent)
+                if !hasGoogle {
+                    Text(
+                        "Connect Google isn’t available on iPhone. Use Android, web, or Link another device."
+                    )
+                    .font(.inter(size: SettingsFormChrome.footerFontSize))
+                    .foregroundStyle(AppTheme.muted)
+                }
+
+                if !showPasswordForm {
+                    Button {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                            showPasswordForm = true
                         }
-                    } else {
-                        SecureField("New password (10+ characters)", text: $password)
-                            .font(.inter(size: SettingsFormChrome.rowFontSize))
-                            .textContentType(.newPassword)
-                        SecureField("Confirm password", text: $passwordConfirm)
-                            .font(.inter(size: SettingsFormChrome.rowFontSize))
-                            .textContentType(.newPassword)
-                        Button {
-                            Task { await addPassword() }
-                        } label: {
-                            Text(isAddingPassword ? "Saving…" : "Save password")
-                                .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                                .foregroundStyle(AppTheme.accent)
-                        }
-                        .disabled(isAddingPassword || password.isEmpty || passwordConfirm.isEmpty)
-                        Button("Cancel") {
-                            showPasswordForm = false
-                            password = ""
-                            passwordConfirm = ""
-                        }
-                        .font(.inter(size: SettingsFormChrome.rowFontSize))
-                        .foregroundStyle(AppTheme.muted)
+                    } label: {
+                        Text(hasPassword ? "Change password" : "Add password")
+                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
                     }
+                } else {
+                    Text(hasPassword ? "Change password" : "Add password")
+                        .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                        .foregroundStyle(AppTheme.ink)
+                    if hasPassword {
+                        SecureField("Current password", text: $currentPassword)
+                            .font(.inter(size: SettingsFormChrome.rowFontSize))
+                            .textContentType(.password)
+                    }
+                    SecureField("New password (10+ characters)", text: $password)
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .textContentType(.newPassword)
+                    SecureField("Confirm new password", text: $passwordConfirm)
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .textContentType(.newPassword)
+                    Button {
+                        Task { await savePassword() }
+                    } label: {
+                        Text(
+                            isSavingPassword
+                                ? "Saving…"
+                                : hasPassword ? "Update password" : "Save password"
+                        )
+                        .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                    }
+                    .disabled(isSavingPassword || password.isEmpty || passwordConfirm.isEmpty)
+                    Button("Cancel") {
+                        resetPasswordForm()
+                    }
+                    .font(.inter(size: SettingsFormChrome.rowFontSize))
+                    .foregroundStyle(AppTheme.muted)
                 }
             } header: {
                 Text("Connect on this device")
             } footer: {
                 Text(
-                    "Completes Apple’s normal sign-in and attaches it to this account — you stay signed in."
+                    "Completes the provider’s normal sign-in and attaches it to this account — you stay signed in."
                 )
             }
 
@@ -189,7 +211,9 @@ struct SignInMethodsSettingsView: View {
                     .disabled(isRedeeming || redeemDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             } header: {
-                Text("Advanced")
+                Text("Link another device")
+            } footer: {
+                Text("Secondary — prefer Connect on this device when available.")
             }
 
             if let statusMessage {
@@ -228,6 +252,13 @@ struct SignInMethodsSettingsView: View {
     private func formatExpiry(_ iso: String) -> String {
         guard let date = ISO8601DateFormatter().date(from: iso) else { return iso }
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func resetPasswordForm() {
+        showPasswordForm = false
+        currentPassword = ""
+        password = ""
+        passwordConfirm = ""
     }
 
     private func reload() async {
@@ -273,7 +304,7 @@ struct SignInMethodsSettingsView: View {
         }
     }
 
-    private func addPassword() async {
+    private func savePassword() async {
         guard password.count >= 10 else {
             errorMessage = "Password must be at least 10 characters"
             return
@@ -282,19 +313,35 @@ struct SignInMethodsSettingsView: View {
             errorMessage = "Passwords do not match"
             return
         }
-        isAddingPassword = true
+        if hasPassword, currentPassword.isEmpty {
+            errorMessage = "Enter your current password"
+            return
+        }
+        isSavingPassword = true
         errorMessage = nil
-        defer { isAddingPassword = false }
+        defer { isSavingPassword = false }
         do {
-            let res = try await APIClient.shared.attachPasswordIdentity(password: password)
-            password = ""
-            passwordConfirm = ""
-            showPasswordForm = false
-            statusMessage = "Password added"
-            if let next = res.identities {
-                identities = next
+            if hasPassword {
+                let res = try await APIClient.shared.changePassword(
+                    currentPassword: currentPassword,
+                    newPassword: password
+                )
+                resetPasswordForm()
+                statusMessage = "Password updated"
+                if let next = res.identities {
+                    identities = next
+                } else {
+                    await reload()
+                }
             } else {
-                await reload()
+                let res = try await APIClient.shared.attachPasswordIdentity(password: password)
+                resetPasswordForm()
+                statusMessage = "Password added"
+                if let next = res.identities {
+                    identities = next
+                } else {
+                    await reload()
+                }
             }
         } catch {
             errorMessage = friendlyAttachError(error)
@@ -340,6 +387,9 @@ struct SignInMethodsSettingsView: View {
 
     private func friendlyAttachError(_ error: Error) -> String {
         let text = error.localizedDescription
+        if text.localizedCaseInsensitiveContains("incorrect") {
+            return "Current password is incorrect"
+        }
         if text.localizedCaseInsensitiveContains("already linked") {
             return "That identity is already linked to another Inboxies account"
         }

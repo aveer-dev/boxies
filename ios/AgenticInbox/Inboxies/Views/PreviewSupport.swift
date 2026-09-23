@@ -245,6 +245,10 @@ struct PreviewAdminAuthRoot: View {
                 NavigationStack {
                     InviteAcceptPreview()
                 }
+            } else if args.contains("-previewSignInMethods") {
+                NavigationStack {
+                    SignInMethodsPreview()
+                }
             } else {
                 NavigationStack {
                     DomainAdminSettingsView(showsDismiss: false, previewRows: PreviewSupport.adminRows)
@@ -288,6 +292,77 @@ private struct InviteAcceptPreview: View {
                 Button("Cancel") {}
             }
         }
+    }
+}
+
+/// Static Sign-in methods (Connected + Change password) for Simulator review.
+private struct SignInMethodsPreview: View {
+    @State private var currentPassword = ""
+    @State private var password = ""
+    @State private var passwordConfirm = ""
+
+    var body: some View {
+        List {
+            Section {
+                Text(
+                    "Connected methods share this account. Connect Apple or Google on this device, add or change your password, or link another device."
+                )
+                .font(.inter(size: SettingsFormChrome.footerFontSize))
+                .foregroundStyle(AppTheme.muted)
+                .listRowBackground(Color.clear)
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("emmanuel@example.com")
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.ink)
+                    Text("Email · this session")
+                        .font(.inter(size: SettingsFormChrome.footerFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Password")
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.ink)
+                    Text("Password")
+                        .font(.inter(size: SettingsFormChrome.footerFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                }
+            } header: {
+                Text("Connected")
+            }
+
+            Section {
+                Text("Connect Google isn’t available on iPhone. Use Android, web, or Link another device.")
+                    .font(.inter(size: SettingsFormChrome.footerFontSize))
+                    .foregroundStyle(AppTheme.muted)
+                Text("Change password")
+                    .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+                SecureField("Current password", text: $currentPassword)
+                SecureField("New password (10+ characters)", text: $password)
+                SecureField("Confirm new password", text: $passwordConfirm)
+                Button("Update password") {}
+                    .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
+            } header: {
+                Text("Connect on this device")
+            }
+
+            Section {
+                Button("Link another device") {}
+                    .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                    .foregroundStyle(AppTheme.muted)
+            } header: {
+                Text("Link another device")
+            }
+        }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
+        .navigationTitle("Sign-in methods")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 #endif

@@ -554,6 +554,44 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	});
 	assert.equal(login.status, 200);
 	assert.ok(login.json.token);
+
+	const badChange = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/password",
+		principal: eve,
+		body: {
+			currentPassword: "wrong-password-xx",
+			newPassword: "brand-new-password",
+		},
+	});
+	assert.equal(badChange.status, 401);
+
+	const change = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/me/password",
+		principal: eve,
+		body: {
+			currentPassword: "correct-horse-battery",
+			newPassword: "brand-new-password",
+		},
+	});
+	assert.equal(change.status, 200);
+	assert.equal(change.json.ok, true);
+
+	const oldLogin = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "eve@example.com", password: "correct-horse-battery" },
+	});
+	assert.equal(oldLogin.status, 401);
+
+	const newLogin = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password",
+		body: { email: "eve@example.com", password: "brand-new-password" },
+	});
+	assert.equal(newLogin.status, 200);
+	assert.ok(newLogin.json.token);
 }
 
 {

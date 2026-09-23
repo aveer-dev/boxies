@@ -111,15 +111,23 @@ export default function SignInMethodsSettingsRoute() {
 	const [isRedeeming, setIsRedeeming] = useState(false);
 	const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
 	const [showPasswordForm, setShowPasswordForm] = useState(false);
+	const [currentPassword, setCurrentPassword] = useState("");
 	const [password, setPassword] = useState("");
 	const [passwordConfirm, setPasswordConfirm] = useState("");
-	const [isAddingPassword, setIsAddingPassword] = useState(false);
+	const [isSavingPassword, setIsSavingPassword] = useState(false);
 	const [showAdvanced, setShowAdvanced] = useState(false);
 
 	const hasPassword = data?.identities.some((i) => i.type === "password");
 	const hasGoogle = data?.identities.some((i) => i.type === "google");
 	const hasApple = data?.identities.some((i) => i.type === "apple");
 	const googleClientId = config?.googleClientId ?? null;
+
+	const resetPasswordForm = () => {
+		setShowPasswordForm(false);
+		setCurrentPassword("");
+		setPassword("");
+		setPasswordConfirm("");
+	};
 
 	const refreshAfterAttach = useCallback(
 		async (title: string) => {
@@ -241,7 +249,7 @@ export default function SignInMethodsSettingsRoute() {
 		}
 	};
 
-	const handleAddPassword = async () => {
+	const handleSavePassword = async () => {
 		if (password.length < 10) {
 			toastManager.add({
 				title: "Password must be at least 10 characters",
@@ -256,19 +264,38 @@ export default function SignInMethodsSettingsRoute() {
 			});
 			return;
 		}
-		setIsAddingPassword(true);
+		if (hasPassword && !currentPassword) {
+			toastManager.add({
+				title: "Enter your current password",
+				variant: "error",
+			});
+			return;
+		}
+		setIsSavingPassword(true);
 		try {
-			await api.attachIdentity({ provider: "password", password });
-			setPassword("");
-			setPasswordConfirm("");
-			setShowPasswordForm(false);
-			await refreshAfterAttach("Password added");
+			if (hasPassword) {
+				await api.changePassword({
+					currentPassword,
+					newPassword: password,
+				});
+				resetPasswordForm();
+				await refreshAfterAttach("Password updated");
+			} else {
+				await api.attachIdentity({ provider: "password", password });
+				resetPasswordForm();
+				await refreshAfterAttach("Password added");
+			}
 		} catch (err) {
 			const message =
-				err instanceof Error ? err.message : "Could not add password";
-			toastManager.add({ title: message, variant: "error" });
+				err instanceof Error ? err.message : "Could not save password";
+			toastManager.add({
+				title: message.includes("incorrect")
+					? "Current password is incorrect"
+					: message,
+				variant: "error",
+			});
 		} finally {
-			setIsAddingPassword(false);
+			setIsSavingPassword(false);
 		}
 	};
 
@@ -277,9 +304,8 @@ export default function SignInMethodsSettingsRoute() {
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Sign-in methods">
 			<p className="text-sm text-kumo-subtle mb-6">
-				Connect Apple, Google, or a password on this device while signed in.
-				Every method resolves to the same Inboxies account, Domain Admin role,
-				and mailbox access.
+				Connected methods share this account. Connect Apple or Google on this
+				device, add or change your password, or link another device.
 			</p>
 
 			{isLoading || !data ? (
@@ -330,10 +356,21 @@ export default function SignInMethodsSettingsRoute() {
 							</p>
 						</div>
 
+						{!hasApple && (
+							<p className="text-xs text-kumo-subtle rounded-md bg-kumo-tint px-3 py-2">
+								<strong>Connect Apple</strong> isn’t available in the browser.
+								On iPhone: Settings → Sign-in methods → Connect Apple. Or use
+								Link another device below.
+							</p>
+						)}
+
 						{!hasGoogle && (
 							<div className="space-y-2">
 								{googleClientId ? (
 									<>
+										<div className="text-sm font-medium text-kumo-default">
+											Connect Google
+										</div>
 										<div ref={googleBtnRef} />
 										{isConnectingGoogle && (
 											<p className="text-xs text-kumo-subtle">Connecting…</p>
@@ -341,7 +378,8 @@ export default function SignInMethodsSettingsRoute() {
 									</>
 								) : (
 									<p className="text-xs text-kumo-subtle">
-										Connect Google isn’t available on this deployment (no{" "}
+										<strong>Connect Google</strong> isn’t available on this
+										deployment (no{" "}
 										<code className="font-mono">GOOGLE_CLIENT_ID</code>). Use
 										an Android device or Link another device below.
 									</p>
@@ -349,65 +387,68 @@ export default function SignInMethodsSettingsRoute() {
 							</div>
 						)}
 
-						{!hasApple && (
-							<p className="text-xs text-kumo-subtle rounded-md bg-kumo-tint px-3 py-2">
-								Connect Apple isn’t available in the browser (Cloudflare Access
-								doesn’t mint Apple ID tokens here). On iPhone: Settings →
-								Sign-in methods → <strong>Connect Apple</strong>. Or use Link
-								another device below.
-							</p>
-						)}
-
-						{!hasPassword && (
-							<div className="space-y-3">
-								{!showPasswordForm ? (
-									<Button
-										variant="secondary"
-										size="sm"
-										onClick={() => setShowPasswordForm(true)}
-									>
-										Add password
-									</Button>
-								) : (
-									<>
+						<div className="space-y-3 border-t border-kumo-line pt-4">
+							{!showPasswordForm ? (
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={() => setShowPasswordForm(true)}
+								>
+									{hasPassword ? "Change password" : "Add password"}
+								</Button>
+							) : (
+								<>
+									<div className="text-sm font-medium text-kumo-default">
+										{hasPassword ? "Change password" : "Add password"}
+									</div>
+									{hasPassword && (
 										<Input
-											label="New password"
+											label="Current password"
 											type="password"
-											value={password}
-											onChange={(e) => setPassword(e.target.value)}
-											placeholder="At least 10 characters"
+											value={currentPassword}
+											onChange={(e) => setCurrentPassword(e.target.value)}
+											autoComplete="current-password"
 										/>
-										<Input
-											label="Confirm password"
-											type="password"
-											value={passwordConfirm}
-											onChange={(e) => setPasswordConfirm(e.target.value)}
-										/>
-										<div className="flex flex-wrap gap-2">
-											<Button
-												variant="primary"
-												size="sm"
-												disabled={isAddingPassword}
-												onClick={handleAddPassword}
-											>
-												{isAddingPassword ? "Saving…" : "Save password"}
-											</Button>
-											<Button
-												variant="secondary"
-												size="sm"
-												onClick={() => {
-													setShowPasswordForm(false);
-													setPassword("");
-													setPasswordConfirm("");
-												}}
-											>
-												Cancel
-											</Button>
-										</div>
-									</>
-								)}
-							</div>
-						)}
+									)}
+									<Input
+										label="New password"
+										type="password"
+										value={password}
+										onChange={(e) => setPassword(e.target.value)}
+										placeholder="At least 10 characters"
+										autoComplete="new-password"
+									/>
+									<Input
+										label="Confirm new password"
+										type="password"
+										value={passwordConfirm}
+										onChange={(e) => setPasswordConfirm(e.target.value)}
+										autoComplete="new-password"
+									/>
+									<div className="flex flex-wrap gap-2">
+										<Button
+											variant="primary"
+											size="sm"
+											disabled={isSavingPassword}
+											onClick={handleSavePassword}
+										>
+											{isSavingPassword
+												? "Saving…"
+												: hasPassword
+													? "Update password"
+													: "Save password"}
+										</Button>
+										<Button
+											variant="secondary"
+											size="sm"
+											onClick={resetPasswordForm}
+										>
+											Cancel
+										</Button>
+									</div>
+								</>
+							)}
+						</div>
 					</div>
 
 					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
@@ -418,13 +459,13 @@ export default function SignInMethodsSettingsRoute() {
 						>
 							{showAdvanced ? "Hide" : "Show"} · Link another device
 							<span className="text-xs font-normal text-kumo-subtle">
-								(advanced)
+								(secondary)
 							</span>
 						</button>
 						{showAdvanced && (
 							<>
 								<p className="text-xs text-kumo-subtle">
-									For cross-device linking when Connect IdP can’t run on this
+									For cross-device linking when Connect can’t run on this
 									surface. Generate a code here, then redeem it on the other
 									signed-in session. Codes expire in 15 minutes.
 								</p>

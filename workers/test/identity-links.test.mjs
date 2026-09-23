@@ -387,4 +387,68 @@ function mockBucket(initial = {}) {
 	);
 }
 
+{
+	const { hashPassword, verifyPassword } = await import(
+		"../lib/password-auth.ts"
+	);
+	const { changePasswordForSessionAccount } = await import(
+		"../lib/identity-links.ts"
+	);
+	const { loadPlatformUser } = await import("../lib/platform-users.ts");
+
+	const bucket = mockBucket();
+	const access = principalFromClaims({
+		email: "frank@example.com",
+		sub: "frank-access",
+	});
+	const hash1 = await hashPassword("old-password-xx");
+	const attached = await attachPasswordToSessionAccount(bucket, access, {
+		passwordHash: hash1,
+	});
+
+	const wrongHash = await hashPassword("new-password-yy");
+	await assert.rejects(
+		() =>
+			changePasswordForSessionAccount(bucket, access, {
+				currentPassword: "wrong-password",
+				newPasswordHash: wrongHash,
+			}),
+		(err) =>
+			err instanceof Error &&
+			err.message.includes("Current password is incorrect"),
+	);
+
+	const hash2 = await hashPassword("new-password-yy");
+	const changed = await changePasswordForSessionAccount(bucket, access, {
+		currentPassword: "old-password-xx",
+		newPasswordHash: hash2,
+	});
+	assert.equal(changed.userId, attached.userId);
+
+	const user = await loadPlatformUser(bucket, changed.userId);
+	assert.ok(user);
+	assert.equal(await verifyPassword("new-password-yy", user.passwordHash), true);
+	assert.equal(await verifyPassword("old-password-xx", user.passwordHash), false);
+}
+
+{
+	const { changePasswordForSessionAccount } = await import(
+		"../lib/identity-links.ts"
+	);
+	const bucket = mockBucket();
+	const access = principalFromClaims({
+		email: "nopwd@example.com",
+		sub: "nopwd-access",
+	});
+	await assert.rejects(
+		() =>
+			changePasswordForSessionAccount(bucket, access, {
+				currentPassword: "anything-long",
+				newPasswordHash: "hash",
+			}),
+		(err) =>
+			err instanceof Error && err.message.includes("no password"),
+	);
+}
+
 console.log("identity-links: ok");
