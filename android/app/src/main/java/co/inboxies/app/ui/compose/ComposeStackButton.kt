@@ -2,6 +2,7 @@ package co.inboxies.app.ui.compose
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -18,9 +19,9 @@ import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.inboxiesColors
 
 /**
- * Concentric compose control — nested discs share one center (Figma stack).
- * Front face is the largest light disc; behind layers are slightly larger + darker
- * so only thin annuli show — not offset peeks or lifted cards.
+ * Compose stack — same-size discs with top peeks (Figma).
+ * Back layers share the horizontal center, lift upward, and get darker so only
+ * crescent arcs show above the white front. Flat fills, no heavy shadows.
  */
 @Composable
 fun ComposeStackButton(
@@ -30,23 +31,26 @@ fun ComposeStackButton(
 ) {
     val colors = inboxiesColors()
     val layerCount = HomeChromeMetrics.composeStackLayerCount
+    val peek = HomeChromeMetrics.composeStackPeekOffset
     val stackHeight = HomeChromeMetrics.composeStackHeight(size)
 
     Box(
         modifier = modifier.size(width = size, height = stackHeight),
-        contentAlignment = Alignment.Center,
+        contentAlignment = Alignment.BottomCenter,
     ) {
         for (depth in (layerCount - 1) downTo 0) {
             val scale = HomeChromeMetrics.composeStackScale(depth)
             val layerSize = size * scale
+            val lift = if (isExpanded) 0.dp else peek * depth
             val fill = when (depth) {
                 0 -> colors.surface
                 1 -> colors.pillFill
-                else -> lerp(colors.pillActive, colors.ink, 0.14f)
+                else -> lerp(colors.pillActive, colors.ink, 0.22f)
             }
             Box(
                 modifier = Modifier
                     .size(layerSize)
+                    .offset(y = -lift)
                     .graphicsLayer { alpha = if (isExpanded && depth > 0) 0f else 1f }
                     .background(fill, CircleShape),
                 contentAlignment = Alignment.Center,

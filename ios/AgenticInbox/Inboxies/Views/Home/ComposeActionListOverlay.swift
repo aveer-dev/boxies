@@ -52,23 +52,26 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     }
 }
 
-/// Concentric compose control — nested discs share one center (Figma stack).
-/// Front face is the largest light disc; behind layers are slightly larger + darker
-/// so only thin annuli show — not offset peeks or lifted cards.
+/// Compose stack — same-size discs with top peeks (Figma).
+/// Back layers share the horizontal center, lift upward, and get darker so only
+/// crescent arcs show above the white front. Flat fills, no heavy shadows.
 struct ComposeStackButton: View {
     var size: CGFloat = HomeChromeMetrics.actionBarHeight
     var isExpanded: Bool = false
 
     private var layerCount: Int { HomeChromeMetrics.composeStackLayerCount }
+    private var peek: CGFloat { HomeChromeMetrics.composeStackPeekOffset }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             ForEach((0..<layerCount).reversed(), id: \.self) { depth in
                 let scale = HomeChromeMetrics.composeStackScale(depth: depth)
                 let layerSize = size * scale
+                let lift: CGFloat = isExpanded ? 0 : peek * CGFloat(depth)
                 Circle()
                     .fill(layerFill(depth: depth))
                     .frame(width: layerSize, height: layerSize)
+                    .offset(y: -lift)
                     .opacity(isExpanded && depth > 0 ? 0 : 1)
                     .zIndex(Double(layerCount - depth))
             }
@@ -80,7 +83,7 @@ struct ComposeStackButton: View {
                 .frame(width: size, height: size)
                 .zIndex(Double(layerCount + 1))
         }
-        .frame(width: size, height: HomeChromeMetrics.composeStackHeight(frontSize: size))
+        .frame(width: size, height: HomeChromeMetrics.composeStackHeight(frontSize: size), alignment: .bottom)
         .accessibilityHidden(true)
     }
 
@@ -88,7 +91,7 @@ struct ComposeStackButton: View {
         switch depth {
         case 0: return AppTheme.surface
         case 1: return AppTheme.pillFill
-        default: return mix(AppTheme.pillActive, AppTheme.ink, by: 0.14)
+        default: return mix(AppTheme.pillActive, AppTheme.ink, by: 0.22)
         }
     }
 

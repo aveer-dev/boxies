@@ -47,15 +47,14 @@ object HomeChromeMetrics {
     val composeActionRowSpacing: Dp = 18.dp
 
     /**
-     * Concentric compose stack (design twin of iOS). Depth 0 = front face.
-     * Scales are fractions of the outer envelope: front is the largest *face*
-     * (innermost disc); each layer behind is a slightly larger disc so only a
-     * thin darker annulus shows — nested rings, shared center, no Y-offset peeks.
-     * White face ~88% of outer diameter; equal ~3% steps read as thin nested rings
-     * on light chrome while staying Figma-close (illustration ~90–95%, export was near-solid).
+     * Compose stack: same-size discs, bottom-aligned, back layers lift upward so
+     * only top crescents peek (Figma). Depth 0 = front. Peek ≈ 6% of diameter
+     * from the spaced reference (10px / 164px); 6.dp on a 52.dp control (readable on light chrome; Figma teaching spacing).
      */
     const val composeStackLayerCount: Int = 3
-    val composeStackScales: FloatArray = floatArrayOf(0.88f, 0.94f, 1.0f)
+    val composeStackPeekOffset: Dp = 6.dp
+    /** Same radius per layer — depth comes from Y offset + darker fill, not scale. */
+    val composeStackScales: FloatArray = floatArrayOf(1.0f, 1.0f, 1.0f)
 
     /** Short long-press opens compose (menu opens on tap, instantly). */
     const val composeLongPressMs: Long = 180L
@@ -66,8 +65,9 @@ object HomeChromeMetrics {
         return composeStackScales[index]
     }
 
-    /** Outer envelope of the concentric stack (matches [actionBarHeight] by default). */
-    fun composeStackHeight(frontSize: Dp = actionBarHeight): Dp = frontSize
+    /** Front disc + visible top peeks. */
+    fun composeStackHeight(frontSize: Dp = actionBarHeight): Dp =
+        frontSize + composeStackPeekOffset * (composeStackLayerCount - 1)
 
     /** iOS `Menu` chrome — 14pt continuous corners, 20pt glyphs, 16pt insets. */
     val menuCornerRadius: Dp = 22.dp
