@@ -52,29 +52,23 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     }
 }
 
-/// Layered compose control — back layers are progressively smaller and darker.
+/// Concentric compose control — nested discs share one center (Figma stack).
+/// Front face is the largest light disc; behind layers are slightly larger + darker
+/// so only thin annuli show — not offset peeks or lifted cards.
 struct ComposeStackButton: View {
     var size: CGFloat = HomeChromeMetrics.actionBarHeight
     var isExpanded: Bool = false
 
     private var layerCount: Int { HomeChromeMetrics.composeStackLayerCount }
-    private var peek: CGFloat { HomeChromeMetrics.composeStackPeekOffset }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             ForEach((0..<layerCount).reversed(), id: \.self) { depth in
                 let scale = HomeChromeMetrics.composeStackScale(depth: depth)
                 let layerSize = size * scale
-                // Bottom-aligned smaller discs need enough lift to clear the front disc's top.
-                let lift: CGFloat = isExpanded ? 0 : peek * CGFloat(depth) + (size - layerSize)
                 Circle()
                     .fill(layerFill(depth: depth))
-                    .overlay {
-                        Circle().strokeBorder(AppTheme.line.opacity(depth == 0 ? 0.9 : 0.55), lineWidth: 1)
-                    }
-                    .shadow(color: .black.opacity(depth == 0 ? 0.10 : 0.06), radius: depth == 0 ? 10 : 5, y: 2)
                     .frame(width: layerSize, height: layerSize)
-                    .offset(y: -lift)
                     .opacity(isExpanded && depth > 0 ? 0 : 1)
                     .zIndex(Double(layerCount - depth))
             }
@@ -86,7 +80,7 @@ struct ComposeStackButton: View {
                 .frame(width: size, height: size)
                 .zIndex(Double(layerCount + 1))
         }
-        .frame(width: size, height: HomeChromeMetrics.composeStackHeight(frontSize: size), alignment: .bottom)
+        .frame(width: size, height: HomeChromeMetrics.composeStackHeight(frontSize: size))
         .accessibilityHidden(true)
     }
 
@@ -94,7 +88,7 @@ struct ComposeStackButton: View {
         switch depth {
         case 0: return AppTheme.surface
         case 1: return AppTheme.pillFill
-        default: return mix(AppTheme.pillActive, AppTheme.ink, by: 0.18)
+        default: return mix(AppTheme.pillActive, AppTheme.ink, by: 0.14)
         }
     }
 

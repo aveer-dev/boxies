@@ -10,12 +10,14 @@ enum HomeChromeMetrics {
     static let tabLabelPointSize: CGFloat = 10
     static let minimizedComposeHeight: CGFloat = 66
 
-    /// Visible back-layer peeks on the compose stack control (design twin of Android).
-    /// Depth 0 = front; higher depth = smaller + darker.
+    /// Concentric compose stack (design twin of Android). Depth 0 = front face.
+    /// Scales are fractions of the outer envelope: front is the largest *face*
+    /// (innermost disc); each layer behind is a slightly larger disc so only a
+    /// thin darker annulus shows — nested rings, shared center, no Y-offset peeks.
+    /// White face ~88% of outer diameter; equal ~3% steps read as thin nested rings
+    /// on light chrome while staying Figma-close (illustration ~90–95%, export was near-solid).
     static let composeStackLayerCount = 3
-    static let composeStackPeekOffset: CGFloat = 10
-    /// Progressive scales: front 1.0, mid, back (clearly stepped).
-    static let composeStackScales: [CGFloat] = [1.0, 0.72, 0.50]
+    static let composeStackScales: [CGFloat] = [0.88, 0.94, 1.0]
 
     /// Short long-press opens compose (menu opens on tap, instantly).
     static let composeLongPressDuration: TimeInterval = 0.18
@@ -27,11 +29,9 @@ enum HomeChromeMetrics {
         return scales[index]
     }
 
-    /// Total height of the compose stack control (front + visible peeks).
+    /// Outer envelope of the concentric stack (matches `actionBarHeight` by default).
     static func composeStackHeight(frontSize: CGFloat = actionBarHeight) -> CGFloat {
-        let smallest = composeStackScale(depth: composeStackLayerCount - 1)
-        return frontSize + composeStackPeekOffset * CGFloat(composeStackLayerCount - 1) +
-            frontSize * (1 - smallest)
+        frontSize
     }
 
     static func listBottomInset(hasMinimizedCompose: Bool) -> CGFloat {
