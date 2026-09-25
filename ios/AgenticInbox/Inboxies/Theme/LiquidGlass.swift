@@ -10,6 +10,29 @@ enum HomeChromeMetrics {
     static let tabLabelPointSize: CGFloat = 10
     static let minimizedComposeHeight: CGFloat = 66
 
+    /// Compose stack: same-size discs, bottom-aligned, back layers lift upward so
+    /// only top crescents peek (Figma). Depth 0 = front. Peek ≈ 6% of diameter
+    /// from the spaced reference (10px / 164px); 6pt on a 52pt control (readable on light chrome; Figma teaching spacing).
+    static let composeStackLayerCount = 3
+    static let composeStackPeekOffset: CGFloat = 6
+    /// Same radius per layer — depth comes from Y offset + darker fill, not scale.
+    static let composeStackScales: [CGFloat] = [1.0, 1.0, 1.0]
+
+    /// Short long-press opens compose (menu opens on tap, instantly).
+    static let composeLongPressDuration: TimeInterval = 0.18
+    static let composeDoubleTapWindow: TimeInterval = 0.28
+
+    static func composeStackScale(depth: Int) -> CGFloat {
+        let scales = composeStackScales
+        let index = min(max(depth, 0), scales.count - 1)
+        return scales[index]
+    }
+
+    /// Front disc + visible top peeks.
+    static func composeStackHeight(frontSize: CGFloat = actionBarHeight) -> CGFloat {
+        frontSize + composeStackPeekOffset * CGFloat(composeStackLayerCount - 1)
+    }
+
     static func listBottomInset(hasMinimizedCompose: Bool) -> CGFloat {
         var height = actionBarHeight + chromeBottomPadding
         if hasMinimizedCompose {

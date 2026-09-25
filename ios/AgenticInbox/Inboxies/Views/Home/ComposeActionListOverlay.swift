@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum ComposeActionItem: String, Identifiable, CaseIterable {
     case settings
@@ -51,19 +52,89 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     }
 }
 
+/// Compose stack — same-size discs with top peeks (Figma).
+/// Back layers share the horizontal center, lift upward, and get darker so only
+/// crescent arcs show above the white front. Flat fills, no heavy shadows.
+struct ComposeStackButton: View {
+    var size: CGFloat = HomeChromeMetrics.actionBarHeight
+    var isExpanded: Bool = false
+
+    private var layerCount: Int { HomeChromeMetrics.composeStackLayerCount }
+    private var peek: CGFloat { HomeChromeMetrics.composeStackPeekOffset }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ForEach((0..<layerCount).reversed(), id: \.self) { depth in
+                let scale = HomeChromeMetrics.composeStackScale(depth: depth)
+                let layerSize = size * scale
+                let lift: CGFloat = isExpanded ? 0 : peek * CGFloat(depth)
+                Circle()
+                    .fill(layerFill(depth: depth))
+                    .frame(width: layerSize, height: layerSize)
+                    .offset(y: -lift)
+                    .opacity(isExpanded && depth > 0 ? 0 : 1)
+                    .zIndex(Double(layerCount - depth))
+            }
+
+            Image(systemName: "square.and.pencil")
+                .font(.inter(size: 18, weight: .medium))
+                .foregroundStyle(AppTheme.ink)
+                .opacity(isExpanded ? 0 : 1)
+                .frame(width: size, height: size)
+                .zIndex(Double(layerCount + 1))
+        }
+        .frame(width: size, height: HomeChromeMetrics.composeStackHeight(frontSize: size), alignment: .bottom)
+        .accessibilityHidden(true)
+    }
+
+    private func layerFill(depth: Int) -> Color {
+        switch depth {
+        case 0: return AppTheme.surface
+        case 1: return AppTheme.pillFill
+        default: return mix(AppTheme.pillActive, AppTheme.ink, by: 0.22)
+        }
+    }
+
+    private func mix(_ a: Color, _ b: Color, by amount: CGFloat) -> Color {
+        let t = max(0, min(1, amount))
+        let ua = UIColor(a)
+        let ub = UIColor(b)
+        var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
+        var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
+        ua.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
+        ub.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
+        return Color(
+            red: r1 + (r2 - r1) * t,
+            green: g1 + (g2 - g1) * t,
+            blue: b1 + (b2 - b1) * t,
+            opacity: a1 + (a2 - a1) * t
+        )
+    }
+}
+
 /// World App–style right-aligned action list over a blurred backdrop.
+/// Rows spring out from the stacked compose control (bottom-trailing).
 struct ComposeActionListOverlay: View {
     var highlightedID: ComposeActionItem.ID?
     var onSelect: (ComposeActionItem) -> Void
     var onDismiss: () -> Void
     var onRowFramesChange: ([ComposeActionItem.ID: CGRect]) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
     @Namespace private var highlightNamespace
 
     private let actions = ComposeActionItem.allCases
     private let iconSize: CGFloat = 48
     private let rowSpacing: CGFloat = 18
+
+    private var expandSpring: Animation {
+        .spring(response: 0.32, dampingFraction: 0.86)
+    }
+
+    private var rowSpring: Animation {
+        .spring(response: 0.32, dampingFraction: 0.86)
+    }
 
     var body: some View {
         ZStack {
@@ -76,12 +147,16 @@ struct ComposeActionListOverlay: View {
 
             VStack(alignment: .trailing, spacing: rowSpacing) {
                 ForEach(Array(actions.enumerated()), id: \.element.id) { index, action in
+                    let distanceFromBottom = CGFloat(actions.count - 1 - index)
+                    let stackedOffset = distanceFromBottom * (iconSize + rowSpacing)
                     actionRow(action)
-                        .opacity(appeared ? 1 : 0)
-                        .offset(y: appeared ? 0 : 12)
+                        .opacity(appeared ? 1 : (reduceMotion ? 0 : 1))
+                        .offset(y: appeared || reduceMotion ? 0 : stackedOffset)
+                        .scaleEffect(appeared || reduceMotion ? 1 : 0.94)
                         .animation(
-                            .spring(response: 0.28, dampingFraction: 0.84)
-                                .delay(Double(actions.count - 1 - index) * 0.015),
+                            reduceMotion
+                                ? .easeOut(duration: 0.15)
+                                : rowSpring.delay(Double(actions.count - 1 - index) * 0.018),
                             value: appeared
                         )
                 }
@@ -94,7 +169,7 @@ struct ComposeActionListOverlay: View {
         }
         .onPreferenceChange(ComposeActionRowFramesKey.self, perform: onRowFramesChange)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : expandSpring) {
                 appeared = true
             }
         }

@@ -46,6 +46,29 @@ object HomeChromeMetrics {
     val composeActionIconSize: Dp = 48.dp
     val composeActionRowSpacing: Dp = 18.dp
 
+    /**
+     * Compose stack: same-size discs, bottom-aligned, back layers lift upward so
+     * only top crescents peek (Figma). Depth 0 = front. Peek ≈ 6% of diameter
+     * from the spaced reference (10px / 164px); 6.dp on a 52.dp control (readable on light chrome; Figma teaching spacing).
+     */
+    const val composeStackLayerCount: Int = 3
+    val composeStackPeekOffset: Dp = 6.dp
+    /** Same radius per layer — depth comes from Y offset + darker fill, not scale. */
+    val composeStackScales: FloatArray = floatArrayOf(1.0f, 1.0f, 1.0f)
+
+    /** Short long-press opens compose (menu opens on tap, instantly). */
+    const val composeLongPressMs: Long = 180L
+    const val composeDoubleTapWindowMs: Long = 280L
+
+    fun composeStackScale(depth: Int): Float {
+        val index = depth.coerceIn(0, composeStackScales.lastIndex)
+        return composeStackScales[index]
+    }
+
+    /** Front disc + visible top peeks. */
+    fun composeStackHeight(frontSize: Dp = actionBarHeight): Dp =
+        frontSize + composeStackPeekOffset * (composeStackLayerCount - 1)
+
     /** iOS `Menu` chrome — 14pt continuous corners, 20pt glyphs, 16pt insets. */
     val menuCornerRadius: Dp = 22.dp
     val menuIconSize: Dp = 16.dp
