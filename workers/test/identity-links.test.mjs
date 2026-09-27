@@ -13,11 +13,14 @@ import {
 	expandPrincipalWithLinks,
 	IdentityAlreadyLinkedError,
 	identityLinkCodeIsActive,
+	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
 	ownerKeysForAssign,
 	parseIdentityLink,
+	passwordUserForSessionAccount,
 	redeemIdentityLinkCode,
 	resolveAdminLinkEmails,
+	updatePasswordHashForSessionAccount,
 	upsertIdentityLink,
 } from "../lib/identity-links.ts";
 import {
@@ -384,6 +387,42 @@ function mockBucket(initial = {}) {
 		(err) =>
 			err instanceof Error &&
 			err.message.includes("already has a password"),
+	);
+
+	const listed = await listIdentitiesForPrincipal(bucket, access);
+	const passwordRow = listed.identities.find((i) => i.type === "password");
+	assert.ok(passwordRow);
+	assert.ok(
+		passwordRow.label.includes("eve@example.com") ||
+			passwordRow.label === "Password",
+	);
+
+	const userBefore = await passwordUserForSessionAccount(bucket, access);
+	assert.ok(userBefore);
+	assert.equal(userBefore.passwordHash, "hash-placeholder");
+
+	const changed = await updatePasswordHashForSessionAccount(
+		bucket,
+		access,
+		"hash-changed",
+	);
+	assert.equal(changed.userId, pwd.userId);
+	const userAfter = await passwordUserForSessionAccount(bucket, access);
+	assert.ok(userAfter);
+	assert.equal(userAfter.passwordHash, "hash-changed");
+
+	const noPassword = principalFromClaims({
+		email: "nopw@example.com",
+		sub: "nopw-access",
+	});
+	await ensureIdentityAccount(bucket, noPassword);
+	assert.equal(await passwordUserForSessionAccount(bucket, noPassword), null);
+	await assert.rejects(
+		() =>
+			updatePasswordHashForSessionAccount(bucket, noPassword, "hash-x"),
+		(err) =>
+			err instanceof Error &&
+			err.message.includes("no password sign-in method"),
 	);
 }
 
