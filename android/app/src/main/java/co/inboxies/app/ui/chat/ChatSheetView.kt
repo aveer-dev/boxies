@@ -10,7 +10,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -31,7 +31,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,8 +38,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +50,8 @@ import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.TransparentSystemBars
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.rememberSheetDragY
+import co.inboxies.app.ui.components.sheetDragToDismiss
 
 private sealed class ChatNavDestination {
     data object List : ChatNavDestination()
@@ -107,31 +106,10 @@ fun ChatSheetView(
 
     TransparentSystemBars()
 
-    val density = LocalDensity.current
-    val dragY = remember { mutableFloatStateOf(0f) }
-    val dismissThresholdPx = with(density) { 96.dp.toPx() }
-
-    fun settleDrag() {
-        if (dragY.floatValue > dismissThresholdPx) {
-            onClose()
-            dragY.floatValue = 0f
-        } else {
-            dragY.floatValue = 0f
-        }
-    }
-
+    val dragY = rememberSheetDragY()
     val dragToDismiss = Modifier
         .semantics { contentDescription = "Drag to close" }
-        .pointerInput(Unit) {
-            detectVerticalDragGestures(
-                onVerticalDrag = { change, amount ->
-                    change.consume()
-                    dragY.floatValue = (dragY.floatValue + amount).coerceAtLeast(0f)
-                },
-                onDragEnd = { settleDrag() },
-                onDragCancel = { settleDrag() },
-            )
-        }
+        .sheetDragToDismiss(dragY = dragY, onDismiss = onClose)
 
     Box(
         modifier = Modifier
@@ -156,6 +134,7 @@ fun ChatSheetView(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .heightIn(min = 44.dp)
                         .padding(top = 8.dp, bottom = 6.dp),
                     contentAlignment = Alignment.Center,
                 ) {

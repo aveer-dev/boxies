@@ -234,7 +234,9 @@ struct HomeShellView: View {
             seedPrompt: chatSeedPrompt,
             initialConversationId: app.chatSession.conversationId
         )
-        .modifier(CoverDragIndicator())
+        .modifier(CoverDragDismiss(onDismiss: {
+            showChat = false
+        }))
         .modifier(BarSheetZoom(enabled: true, id: Self.askAITransitionID, namespace: barNamespace))
         .presentationBackground(AppTheme.background)
     }
@@ -243,7 +245,11 @@ struct HomeShellView: View {
     private var expandedComposeSheet: some View {
         if let session = app.composeSession {
             ComposeSheetView(session: session)
-                .modifier(CoverDragIndicator())
+                // Drag-to-dismiss docks (minimizes) via fullScreenCover onDismiss —
+                // same as the system sheet swipe before the zoom cover migration.
+                .modifier(CoverDragDismiss(onDismiss: {
+                    showComposeSheet = false
+                }))
                 .modifier(BarSheetZoom(
                     enabled: composeMorphsFromBar,
                     id: Self.composeTransitionID,
@@ -1273,97 +1279,6 @@ private struct AskAIButtonLabel: View {
                 .foregroundStyle(AppTheme.muted)
             Spacer(minLength: 0)
         }
-    }
-}
-
-/// Grabber + drag-to-dismiss for compose / Ask AI fullScreenCovers.
-///
-/// The grabber sits *above* the navigation content (not via UIKit
-/// `additionalSafeAreaInsets`). Mutating safe-area after the first
-/// fullScreenCover layout pass collapsed ScrollView content to
-/// title-only until remount; keeping chrome in the SwiftUI hierarchy
-/// avoids that race. Interactive dismiss was never wired — only a
-/// visual handle with an accessibility label — so drag is implemented here.
-private struct CoverDragIndicator: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @State private var dragOffset: CGFloat = 0
-
-    private let handleTop: CGFloat = 12
-    private let handleHeight: CGFloat = 5
-    private let handleBottom: CGFloat = 10
-    private let hitExtension: CGFloat = 36
-    private let dismissThreshold: CGFloat = 96
-    private let dismissVelocity: CGFloat = 900
-
-    private var chromeHeight: CGFloat { handleTop + handleHeight + handleBottom }
-
-    private var coverSpring: Animation {
-        .spring(response: 0.32, dampingFraction: 0.86)
-    }
-
-    func body(content: Content) -> some View {
-        VStack(spacing: 0) {
-            dragChrome
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .offset(y: max(0, dragOffset))
-        // Keep the cover background glued to the dragged chrome.
-        .background(AppTheme.background.ignoresSafeArea())
-    }
-
-    private var dragChrome: some View {
-        Color.clear
-            .frame(height: chromeHeight + hitExtension)
-            .overlay(alignment: .top) {
-                Capsule()
-                    .fill(AppTheme.muted.opacity(0.45))
-                    .frame(width: 36, height: handleHeight)
-                    .padding(.top, handleTop)
-                    .frame(maxWidth: .infinity)
-            }
-            .contentShape(Rectangle())
-            .highPriorityGesture(dragGesture)
-            .accessibilityLabel("Drag to close")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction(named: "Close") { dismiss() }
-    }
-
-    private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 8, coordinateSpace: .global)
-            .onChanged { value in
-                let dy = value.translation.height
-                dragOffset = dy > 0 ? dy : dy * 0.12
-            }
-            .onEnded { value in
-                let dy = value.translation.height
-                let projected = value.predictedEndTranslation.height
-                let shouldDismiss = dy > dismissThreshold
-                    || projected > dismissThreshold * 1.35
-                    || value.velocity.height > dismissVelocity
-                if shouldDismiss {
-                    if reduceMotion {
-                        dismiss()
-                        dragOffset = 0
-                    } else {
-                        withAnimation(coverSpring) {
-                            dragOffset = UIScreen.main.bounds.height
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                            dismiss()
-                            dragOffset = 0
-                        }
-                    }
-                } else if reduceMotion {
-                    dragOffset = 0
-                } else {
-                    withAnimation(coverSpring) {
-                        dragOffset = 0
-                    }
-                }
-            }
     }
 }
 
