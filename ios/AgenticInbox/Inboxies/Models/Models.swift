@@ -77,6 +77,13 @@ struct AttachIdentityResponse: Codable {
     var identities: [LinkedIdentity]?
 }
 
+struct ChangePasswordResponse: Codable {
+    var ok: Bool
+    var userId: String?
+    var accountId: String?
+    var identities: [LinkedIdentity]?
+}
+
 struct AppConfigResponse: Codable {
     var mailDomain: String
     var domains: [String]

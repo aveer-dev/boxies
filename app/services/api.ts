@@ -177,6 +177,18 @@ const api = {
 				current: boolean;
 			}[];
 		}>("/api/v1/me/identities/attach", body),
+	changePassword: (body: { currentPassword: string; newPassword: string }) =>
+		post<{
+			ok: boolean;
+			userId: string;
+			accountId: string;
+			identities: {
+				type: string;
+				key: string;
+				label: string;
+				current: boolean;
+			}[];
+		}>("/api/v1/me/identities/password", body),
 	createIdentityLinkCode: () =>
 		post<{
 			code: string;

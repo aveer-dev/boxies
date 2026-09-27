@@ -106,6 +106,14 @@ data class AttachIdentityResponse(
 )
 
 @Serializable
+data class ChangePasswordResponse(
+    val ok: Boolean = false,
+    val userId: String? = null,
+    val accountId: String? = null,
+    val identities: List<LinkedIdentity> = emptyList(),
+)
+
+@Serializable
 data class AppConfigResponse(
     val mailDomain: String,
     val domains: List<String> = emptyList(),

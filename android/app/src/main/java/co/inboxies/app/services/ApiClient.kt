@@ -6,6 +6,7 @@ import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AppConfigResponse
 import co.inboxies.app.models.AttachIdentityResponse
+import co.inboxies.app.models.ChangePasswordResponse
 import co.inboxies.app.models.AuthResponse
 import co.inboxies.app.models.DigestStatusResponse
 import co.inboxies.app.models.DraftSaveResponse
@@ -219,6 +220,18 @@ class ApiClient private constructor() {
             put("provider", "password")
             put("password", password)
             if (!loginEmail.isNullOrBlank()) put("loginEmail", loginEmail)
+        },
+    )
+
+    suspend fun changePassword(
+        currentPassword: String,
+        newPassword: String,
+    ): ChangePasswordResponse = request(
+        "/api/v1/me/identities/password",
+        method = "POST",
+        body = buildJsonObject {
+            put("currentPassword", currentPassword)
+            put("newPassword", newPassword)
         },
     )
 
