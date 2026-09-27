@@ -11,6 +11,7 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +24,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -37,7 +40,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -52,9 +54,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.MarkEmailRead
@@ -80,13 +80,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -118,7 +119,7 @@ import co.inboxies.app.ui.compose.ComposeActionItem
 import co.inboxies.app.ui.compose.ComposeActionListOverlay
 import co.inboxies.app.ui.compose.ComposeDockBar
 import co.inboxies.app.ui.compose.ComposeSheetView
-import co.inboxies.app.ui.compose.hitTestComposeAction
+import co.inboxies.app.ui.compose.ComposeStackButton
 import co.inboxies.app.ui.email.EmailDetailView
 import co.inboxies.app.ui.email.EmailListView
 import co.inboxies.app.ui.search.SearchView
@@ -163,10 +164,13 @@ fun HomeShellView(
     var filterState by remember { mutableStateOf(EmailFilterState()) }
     var showFilterMenu by remember { mutableStateOf(false) }
     var showComposeActions by remember { mutableStateOf(false) }
+    var composeActionsClosing by remember { mutableStateOf(false) }
     var composeActionsDismissible by remember { mutableStateOf(false) }
+    var composeDoubleTapArmed by remember { mutableStateOf(false) }
     var highlightedComposeAction by remember { mutableStateOf<ComposeActionItem?>(null) }
     var composeActionFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
     var tabNavigatingForward by remember { mutableStateOf(true) }
+    var previousTabBeforeReplyLater by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
     var newMailboxName by remember { mutableStateOf("") }
     var newMailboxEmail by remember { mutableStateOf("") }
 
@@ -240,9 +244,18 @@ fun HomeShellView(
             isSelectMode = false
             selectedEmailIds = emptySet()
         }
-        val current = folderTabs.indexOf(selectedTab).coerceAtLeast(0)
-        val next = folderTabs.indexOf(tab).coerceAtLeast(0)
-        tabNavigatingForward = next > current
+        if (tab is HomeTab.ReplyLater) {
+            if (selectedTab !is HomeTab.ReplyLater) {
+                previousTabBeforeReplyLater = selectedTab
+            }
+            tabNavigatingForward = true
+        } else if (selectedTab is HomeTab.ReplyLater) {
+            tabNavigatingForward = false
+        } else {
+            val current = folderTabs.indexOf(selectedTab).coerceAtLeast(0)
+            val next = folderTabs.indexOf(tab).coerceAtLeast(0)
+            tabNavigatingForward = next > current
+        }
         scope.launch { appModel.selectTab(tab) }
     }
 
@@ -253,10 +266,17 @@ fun HomeShellView(
         if (next in folderTabs.indices) selectTab(folderTabs[next])
     }
 
+    fun dismissComposeMenu() {
+        if (!showComposeActions || composeActionsClosing) return
+        composeActionsClosing = true
+        composeDoubleTapArmed = false
+    }
+
     fun performComposeAction(item: ComposeActionItem) {
-        if (!showComposeActions) return
         showComposeActions = false
+        composeActionsClosing = false
         composeActionsDismissible = false
+        composeDoubleTapArmed = false
         highlightedComposeAction = null
         when (item) {
             ComposeActionItem.Compose -> scope.launch { appModel.startCompose(ComposeMode.New) }
@@ -273,17 +293,23 @@ fun HomeShellView(
         highlightedComposeAction = hit
     }
 
-    BackHandler(enabled = showSearch || showComposeActions || isSelectMode) {
+    BackHandler(enabled = showSearch || showComposeActions || isSelectMode || selectedTab is HomeTab.ReplyLater) {
         when {
             showComposeActions -> {
-                showComposeActions = false
-                composeActionsDismissible = false
-                highlightedComposeAction = null
+                dismissComposeMenu()
             }
             showSearch -> showSearch = false
             isSelectMode -> {
                 isSelectMode = false
                 selectedEmailIds = emptySet()
+            }
+            selectedTab is HomeTab.ReplyLater -> {
+                val target = if (previousTabBeforeReplyLater is HomeTab.ReplyLater) {
+                    HomeTab.Folder(FolderIds.INBOX)
+                } else {
+                    previousTabBeforeReplyLater
+                }
+                selectTab(target)
             }
         }
     }
@@ -609,7 +635,8 @@ fun HomeShellView(
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .fillMaxWidth(),
+                    .fillMaxWidth()
+                    .zIndex(1f),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Column(
@@ -716,19 +743,19 @@ fun HomeShellView(
                         )
                     } else {
                         BottomBar(
-                            showComposeActions = showComposeActions,
+                            showComposeActions = showComposeActions && !composeActionsClosing,
                             replyLaterCount = replyLaterCount,
                             isReplyLaterTab = selectedTab is HomeTab.ReplyLater,
                             onReplyLater = {
                                 if (selectedTab is HomeTab.ReplyLater) {
-                                    val first = emails.firstOrNull()
-                                    if (first != null) {
-                                        scope.launch {
-                                            appModel.openEmail(first)
-                                            appModel.startCompose(ComposeMode.Reply, original = first)
-                                        }
+                                    val target = if (previousTabBeforeReplyLater is HomeTab.ReplyLater) {
+                                        HomeTab.Folder(FolderIds.INBOX)
+                                    } else {
+                                        previousTabBeforeReplyLater
                                     }
+                                    selectTab(target)
                                 } else {
+                                    previousTabBeforeReplyLater = selectedTab
                                     selectTab(HomeTab.ReplyLater)
                                 }
                             },
@@ -736,31 +763,26 @@ fun HomeShellView(
                                 appModel.openChatSession(resumeActive = true)
                                 showChat = true
                             },
-                            onComposeTap = {
+                            onOpenComposeMenu = {
+                                composeActionsDismissible = true
+                                composeDoubleTapArmed = true
+                                composeActionsClosing = false
+                                view.performHapticFeedback(
+                                    android.view.HapticFeedbackConstants.KEYBOARD_TAP,
+                                )
+                                showComposeActions = true
+                                scope.launch {
+                                    delay(HomeChromeMetrics.composeDoubleTapWindowMs)
+                                    composeDoubleTapArmed = false
+                                }
+                            },
+                            onOpenCompose = {
+                                composeDoubleTapArmed = false
+                                showComposeActions = false
+                                composeActionsClosing = false
                                 scope.launch { appModel.startCompose(ComposeMode.New) }
                             },
-                            onComposeLongPress = {
-                                composeActionsDismissible = false
-                                view.impactHaptic()
-                                showComposeActions = true
-                            },
-                            onComposeDrag = { point ->
-                                if (showComposeActions) {
-                                    val hit = hitTestComposeAction(point, composeActionFrames)
-                                    if (hit != null) updateComposeHighlight(hit)
-                                }
-                            },
-                            onComposeRelease = { wasLongPress, point ->
-                                if (wasLongPress) {
-                                    val hit = hitTestComposeAction(point, composeActionFrames)
-                                    if (hit != null) {
-                                        performComposeAction(hit)
-                                    } else {
-                                        highlightedComposeAction = null
-                                        composeActionsDismissible = true
-                                    }
-                                }
-                            },
+                            onCloseComposeMenu = { dismissComposeMenu() },
                         )
                     }
                 }
@@ -784,18 +806,57 @@ fun HomeShellView(
         }
 
         if (showComposeActions) {
-            ComposeActionListOverlay(
-                highlightedId = highlightedComposeAction,
-                onSelect = { performComposeAction(it) },
-                onDismiss = {
-                    showComposeActions = false
-                    composeActionsDismissible = false
-                    highlightedComposeAction = null
-                },
-                onHighlightChange = { updateComposeHighlight(it) },
-                onRowFramesChange = { composeActionFrames = it },
-                dismissEnabled = composeActionsDismissible,
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(2f),
+            ) {
+                ComposeActionListOverlay(
+                    highlightedId = highlightedComposeAction,
+                    onSelect = { performComposeAction(it) },
+                    onDismiss = {
+                        showComposeActions = false
+                        composeActionsClosing = false
+                        composeActionsDismissible = false
+                        composeDoubleTapArmed = false
+                        highlightedComposeAction = null
+                    },
+                    onHighlightChange = { updateComposeHighlight(it) },
+                    onRowFramesChange = { composeActionFrames = it },
+                    dismissEnabled = composeActionsDismissible && !composeActionsClosing,
+                    isClosingExternal = composeActionsClosing,
+                    onDismissStarted = {
+                        composeActionsClosing = true
+                        composeDoubleTapArmed = false
+                        highlightedComposeAction = null
+                    },
+                )
+                if (composeDoubleTapArmed) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = HomeChromeMetrics.bottomBarHorizontalPadding,
+                                bottom = HomeChromeMetrics.chromeBottomPadding,
+                            )
+                            .size(
+                                width = HomeChromeMetrics.actionBarHeight,
+                                height = HomeChromeMetrics.composeStackHeight(),
+                            )
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() },
+                            ) {
+                                composeDoubleTapArmed = false
+                                showComposeActions = false
+                                composeActionsClosing = false
+                                composeActionsDismissible = false
+                                highlightedComposeAction = null
+                                scope.launch { appModel.startCompose(ComposeMode.New) }
+                            },
+                    )
+                }
+            }
         }
 
         if (composeSession?.isExpanded == true) {
@@ -1088,28 +1149,33 @@ private fun BottomBar(
     isReplyLaterTab: Boolean,
     onReplyLater: () -> Unit,
     onAskAi: () -> Unit,
-    onComposeTap: () -> Unit,
-    onComposeLongPress: () -> Unit,
-    onComposeDrag: (Offset) -> Unit,
-    onComposeRelease: (wasLongPress: Boolean, point: Offset) -> Unit,
+    onOpenComposeMenu: () -> Unit,
+    onOpenCompose: () -> Unit,
+    onCloseComposeMenu: () -> Unit,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
-    var composeCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val view = LocalView.current
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = HomeChromeMetrics.bottomBarHorizontalPadding),
         horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
     ) {
         if (replyLaterCount > 0 || isReplyLaterTab) {
             Row(
                 modifier = Modifier
                     .height(HomeChromeMetrics.actionBarHeight)
                     .homeChromeToolbarSurface(RoundedCornerShape(50))
-                    .clickable(onClick = onReplyLater)
+                    .clickable {
+                        if (showComposeActions) {
+                            onCloseComposeMenu()
+                        } else {
+                            onReplyLater()
+                        }
+                    }
                     .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1137,7 +1203,13 @@ private fun BottomBar(
                 .weight(1f)
                 .height(HomeChromeMetrics.actionBarHeight)
                 .homeChromeToolbarSurface(RoundedCornerShape(50))
-                .clickable(onClick = onAskAi)
+                .clickable {
+                    if (showComposeActions) {
+                        onCloseComposeMenu()
+                    } else {
+                        onAskAi()
+                    }
+                }
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1152,19 +1224,41 @@ private fun BottomBar(
             )
         }
 
+        val composeButtonAlpha by animateFloatAsState(
+            targetValue = if (showComposeActions) 0f else 1f,
+            animationSpec = spring(
+                dampingRatio = 0.86f,
+                stiffness = Spring.StiffnessMediumLow,
+            ),
+            label = "composeButtonAlpha",
+        )
+
         Box(
             modifier = Modifier
-                .size(HomeChromeMetrics.actionBarHeight)
-                .homeChromeToolbarSurface(CircleShape)
-                .onGloballyPositioned { composeCoords = it }
-                .pointerInput(Unit) {
+                .size(
+                    width = HomeChromeMetrics.actionBarHeight,
+                    height = HomeChromeMetrics.composeStackHeight(),
+                )
+                .graphicsLayer {
+                    alpha = composeButtonAlpha
+                }
+                .semantics {
+                    contentDescription =
+                        "Compose menu. Tap for folders and actions. Double tap or press briefly to compose."
+                }
+                .pointerInput(showComposeActions, onOpenComposeMenu, onOpenCompose, onCloseComposeMenu) {
+                    if (showComposeActions) {
+                        return@pointerInput
+                    }
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        var longPressTriggered = false
+                        var triggeredCompose = false
+
                         val pressJob = scope.launch {
-                            delay(100)
-                            longPressTriggered = true
-                            onComposeLongPress()
+                            delay(HomeChromeMetrics.composeLongPressMs)
+                            triggeredCompose = true
+                            view.impactHaptic()
+                            onOpenCompose()
                         }
                         try {
                             while (true) {
@@ -1172,50 +1266,25 @@ private fun BottomBar(
                                 val change = event.changes.firstOrNull { it.id == down.id }
                                     ?: event.changes.firstOrNull()
                                     ?: break
-                                val rootPos = composeCoords?.localToRoot(change.position)
-                                    ?: change.position
-                                if (change.pressed) {
-                                    if (longPressTriggered) {
-                                        onComposeDrag(rootPos)
+                                if (!change.pressed) {
+                                    pressJob.cancel()
+                                    if (!triggeredCompose) {
+                                        // Instant menu open — no double-tap debounce wait.
+                                        onOpenComposeMenu()
                                     }
                                     change.consume()
-                                } else {
-                                    pressJob.cancel()
-                                    if (longPressTriggered) {
-                                        onComposeDrag(rootPos)
-                                        onComposeRelease(true, rootPos)
-                                    } else {
-                                        onComposeTap()
-                                    }
                                     break
                                 }
+                                change.consume()
                             }
                         } finally {
                             pressJob.cancel()
                         }
                     }
                 },
-            contentAlignment = Alignment.Center,
+            contentAlignment = Alignment.BottomCenter,
         ) {
-            if (!showComposeActions) {
-                Icon(
-                    Icons.Filled.Edit,
-                    contentDescription = "Compose",
-                    tint = colors.ink,
-                    modifier = Modifier
-                        .size(18.dp)
-                        .offset(x = (-3).dp),
-                )
-                Icon(
-                    Icons.Filled.KeyboardArrowUp,
-                    contentDescription = null,
-                    tint = colors.muted,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 7.dp)
-                        .size(10.dp),
-                )
-            }
+            ComposeStackButton(isExpanded = showComposeActions)
         }
     }
 }
