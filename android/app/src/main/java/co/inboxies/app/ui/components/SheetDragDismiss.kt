@@ -20,6 +20,10 @@ import kotlinx.coroutines.launch
 /**
  * Drag-from-top dismiss for full-screen overlays (compose / AI chat).
  * Uses distance + flick velocity — mirrors iOS `CoverDragDismiss`.
+ *
+ * Call this separately on every hit target. Do not store one returned Modifier
+ * and `.then()` it onto multiple nodes — Compose gesture modifiers are not
+ * safely shareable that way (Ask AI drag regressed when one instance was reused).
  */
 @Composable
 fun rememberSheetDragY(): MutableFloatState = remember { mutableFloatStateOf(0f) }

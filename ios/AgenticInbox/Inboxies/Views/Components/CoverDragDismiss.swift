@@ -3,20 +3,29 @@ import UIKit
 
 /// Visual grabber + interactive drag-to-dismiss for `fullScreenCover` surfaces.
 /// System interactive dismiss only exists on `.sheet`; covers need this gesture.
+///
+/// Grabber chrome sits *above* the navigation content in the SwiftUI hierarchy.
+/// The previous `additionalSafeAreaInsets` approach raced the first cover layout
+/// (especially with zoom) and collapsed compose ScrollView content to title-only
+/// until remount. The old overlay also stole touches without dismissing.
 struct CoverDragDismiss: ViewModifier {
     var onDismiss: () -> Void
     /// When false, grabber still shows but drag will not dismiss (intentional lock-in).
     var enabled: Bool = true
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var dragOffset: CGFloat = 0
+    @State private var coverHeight: CGFloat = 800
     @GestureState private var gestureTranslation: CGFloat = 0
 
     private let handleTop: CGFloat = 12
     private let handleHeight: CGFloat = 5
-    private let handleBottom: CGFloat = 16
+    private let handleBottom: CGFloat = 10
+    private let hitExtension: CGFloat = 28
     private let dismissDistance: CGFloat = 96
     private let dismissVelocity: CGFloat = 900
-    private var extraTop: CGFloat { handleTop + handleHeight + handleBottom }
+
+    private var chromeHeight: CGFloat { handleTop + handleHeight + handleBottom }
 
     private var currentOffset: CGFloat {
         max(0, dragOffset + gestureTranslation)
@@ -27,37 +36,37 @@ struct CoverDragDismiss: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        content
-            .offset(y: currentOffset)
-            .animation(chromeSpring, value: dragOffset)
-            .background {
-                ExtraTopSafeAreaInset(extra: extraTop)
-            }
-            .overlay(alignment: .top) {
-                dragHandle
-            }
+        VStack(spacing: 0) {
+            dragHandle
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(AppTheme.background.ignoresSafeArea())
+        .offset(y: currentOffset)
+        .animation(chromeSpring, value: dragOffset)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { coverHeight = max($0, 1) }
     }
 
     private var dragHandle: some View {
-        VStack(spacing: 0) {
-            Capsule()
-                .fill(AppTheme.muted.opacity(0.45))
-                .frame(width: 36, height: handleHeight)
-                .padding(.top, handleTop)
-                .padding(.bottom, handleBottom)
-        }
-        .frame(maxWidth: .infinity)
-        // Full-width hit target above the nav chrome — was previously a dead overlay
-        // that stole touches without dismissing.
-        .contentShape(Rectangle())
-        .offset(y: -extraTop)
-        .gesture(dragGesture)
-        .accessibilityLabel("Drag to close")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction {
-            guard enabled else { return }
-            onDismiss()
-        }
+        Color.clear
+            .frame(height: chromeHeight + hitExtension)
+            .overlay(alignment: .top) {
+                Capsule()
+                    .fill(AppTheme.muted.opacity(0.45))
+                    .frame(width: 36, height: handleHeight)
+                    .padding(.top, handleTop)
+                    .frame(maxWidth: .infinity)
+            }
+            .contentShape(Rectangle())
+            .highPriorityGesture(dragGesture)
+            .accessibilityLabel("Drag to close")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                guard enabled else { return }
+                onDismiss()
+            }
     }
 
     private var dragGesture: some Gesture {
@@ -76,17 +85,28 @@ struct CoverDragDismiss: ViewModifier {
                 }
                 let distance = value.translation.height
                 let predicted = value.predictedEndTranslation.height
-                let flicked = value.velocity.height > dismissVelocity || predicted > dismissDistance * 1.6
+                let flicked: Bool
+                if #available(iOS 18.0, *) {
+                    flicked = value.velocity.height > dismissVelocity || predicted > dismissDistance * 1.6
+                } else {
+                    flicked = predicted > dismissDistance * 1.6
+                }
                 let draggedFar = distance > dismissDistance
                 if draggedFar || flicked {
-                    let dismissY = max(UIScreen.main.bounds.height, distance + 120)
-                    withAnimation(chromeSpring) {
-                        dragOffset = dismissY
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                    if reduceMotion {
                         onDismiss()
                         dragOffset = 0
+                    } else {
+                        withAnimation(chromeSpring) {
+                            dragOffset = max(coverHeight, distance + 120)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                            onDismiss()
+                            dragOffset = 0
+                        }
                     }
+                } else if reduceMotion {
+                    dragOffset = 0
                 } else {
                     withAnimation(chromeSpring) {
                         dragOffset = 0
@@ -99,84 +119,5 @@ struct CoverDragDismiss: ViewModifier {
 extension View {
     func coverDragDismiss(enabled: Bool = true, onDismiss: @escaping () -> Void) -> some View {
         modifier(CoverDragDismiss(onDismiss: onDismiss, enabled: enabled))
-    }
-}
-
-/// Pushes UINavigationBar down. SwiftUI safeAreaInset is ignored by the toolbar.
-private struct ExtraTopSafeAreaInset: UIViewRepresentable {
-    var extra: CGFloat
-
-    func makeUIView(context: Context) -> ExtraTopSafeAreaView {
-        let view = ExtraTopSafeAreaView()
-        view.extra = extra
-        view.isUserInteractionEnabled = false
-        view.backgroundColor = .clear
-        return view
-    }
-
-    func updateUIView(_ view: ExtraTopSafeAreaView, context: Context) {
-        view.extra = extra
-        view.apply()
-    }
-
-    static func dismantleUIView(_ view: ExtraTopSafeAreaView, coordinator: ()) {
-        view.clear()
-    }
-}
-
-private final class ExtraTopSafeAreaView: UIView {
-    var extra: CGFloat = 0
-    private weak var appliedTo: UIViewController?
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        apply()
-    }
-
-    override func didMoveToSuperview() {
-        super.didMoveToSuperview()
-        apply()
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        // Apply on every layout pass so the first cover presentation (esp. zoom)
-        // does not size the compose ScrollView before the grabber inset exists.
-        apply()
-    }
-
-    func apply() {
-        guard window != nil else {
-            clear()
-            return
-        }
-        guard let target = nearestHost() else { return }
-        if appliedTo !== target {
-            appliedTo?.additionalSafeAreaInsets.top = 0
-            appliedTo = target
-        }
-        if target.additionalSafeAreaInsets.top != extra {
-            target.additionalSafeAreaInsets.top = extra
-        }
-    }
-
-    func clear() {
-        appliedTo?.additionalSafeAreaInsets.top = 0
-        appliedTo = nil
-    }
-
-    private func nearestHost() -> UIViewController? {
-        var responder: UIResponder? = self
-        var lastViewController: UIViewController?
-        while let current = responder {
-            if let viewController = current as? UIViewController {
-                lastViewController = viewController
-                if viewController.presentingViewController != nil {
-                    return viewController
-                }
-            }
-            responder = current.next
-        }
-        return lastViewController?.navigationController ?? lastViewController
     }
 }
