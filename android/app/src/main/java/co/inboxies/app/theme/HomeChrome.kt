@@ -52,7 +52,7 @@ object HomeChromeMetrics {
      * from the spaced reference (10px / 164px); 6.dp on a 52.dp control (readable on light chrome; Figma teaching spacing).
      */
     const val composeStackLayerCount: Int = 3
-    val composeStackPeekOffset: Dp = 6.dp
+    val composeStackPeekOffset: Dp = 3.dp
     /** Same radius per layer — depth comes from Y offset + darker fill, not scale. */
     val composeStackScales: FloatArray = floatArrayOf(1.0f, 1.0f, 1.0f)
 

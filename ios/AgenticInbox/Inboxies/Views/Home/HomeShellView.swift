@@ -11,6 +11,7 @@ struct HomeShellView: View {
     @State private var showChat = false
     @State private var chatSeedPrompt: String?
     @State private var tabNavigatingForward = true
+    @State private var previousTabBeforeReplyLater: HomeTab = .folder("inbox")
     @State private var registeredUndoID: UUID?
     @State private var showSettings = false
     @State private var isSelectMode = false
@@ -25,6 +26,7 @@ struct HomeShellView: View {
     @State private var composeMorphsFromBar = false
     @State private var showComposeSheet = false
     @State private var showComposeActions = false
+    @State private var isClosingComposeActions = false
     @State private var highlightedComposeAction: ComposeActionItem.ID?
     @State private var composeActionRowFrames: [ComposeActionItem.ID: CGRect] = [:]
     @State private var composeTouchBeganAt: Date?
@@ -131,14 +133,22 @@ struct HomeShellView: View {
             if showComposeActions {
                 ComposeActionListOverlay(
                     highlightedID: highlightedComposeAction,
+                    isClosing: isClosingComposeActions,
                     onSelect: { item in
                         performComposeAction(item)
                     },
                     onDismiss: {
-                        dismissComposeActions()
+                        showComposeActions = false
+                        isClosingComposeActions = false
+                        highlightedComposeAction = nil
                     },
                     onRowFramesChange: { frames in
                         composeActionRowFrames = frames
+                    },
+                    onDismissStarted: {
+                        isClosingComposeActions = true
+                        composeDoubleTapArmed = false
+                        highlightedComposeAction = nil
                     }
                 )
             }
@@ -583,9 +593,18 @@ struct HomeShellView: View {
             isSelectMode = false
             selectedEmailIDs.removeAll()
         }
-        let current = folderTabs.firstIndex(of: app.selectedTab) ?? 0
-        let next = folderTabs.firstIndex(of: tab) ?? 0
-        tabNavigatingForward = next > current
+        if tab == .replyLater {
+            if app.selectedTab != .replyLater {
+                previousTabBeforeReplyLater = app.selectedTab
+            }
+            tabNavigatingForward = true
+        } else if app.selectedTab == .replyLater {
+            tabNavigatingForward = false
+        } else {
+            let current = folderTabs.firstIndex(of: app.selectedTab) ?? 0
+            let next = folderTabs.firstIndex(of: tab) ?? 0
+            tabNavigatingForward = next > current
+        }
         Task { await app.selectTab(tab) }
     }
 
@@ -620,12 +639,15 @@ struct HomeShellView: View {
 
     private var replyLaterPileButton: some View {
         Button {
-            if app.selectedTab == .replyLater, let first = app.emails.first {
-                Task {
-                    await app.openEmail(first)
-                    await app.startCompose(mode: .reply, original: first)
-                }
+            if showComposeActions {
+                dismissComposeActions()
+                return
+            }
+            if app.selectedTab == .replyLater {
+                let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
+                selectTab(target)
             } else {
+                previousTabBeforeReplyLater = app.selectedTab
                 selectTab(.replyLater)
             }
         } label: {
@@ -645,11 +667,11 @@ struct HomeShellView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Reply Later")
         .accessibilityValue("\(app.replyLaterCount) queued")
-        .accessibilityHint(app.selectedTab == .replyLater ? "Opens Focus and Reply" : "Opens Reply Later pile")
+        .accessibilityHint(app.selectedTab == .replyLater ? "Returns to previous folder" : "Opens Reply Later pile")
     }
 
     private var composeButton: some View {
-        ComposeStackButton(isExpanded: showComposeActions)
+        ComposeStackButton(isExpanded: showComposeActions && !isClosingComposeActions)
             .contentShape(Rectangle())
             .gesture(composePressGesture)
             .accessibilityElement(children: .ignore)
@@ -658,13 +680,18 @@ struct HomeShellView: View {
             .accessibilityAddTraits(.isButton)
             .modifier(BarZoomSource(id: Self.composeTransitionID, namespace: barNamespace))
             .modifier(BarZoomSourceHidden(hidden: showComposeSheet && composeMorphsFromBar))
-            .opacity(showComposeActions ? 0 : 1)
+            .opacity(showComposeActions && !isClosingComposeActions ? 0 : 1)
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showComposeActions && !isClosingComposeActions)
             .allowsHitTesting(!showComposeActions)
     }
 
     private var composePressGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { _ in
+                if showComposeActions {
+                    dismissComposeActions()
+                    return
+                }
                 guard composeTouchBeganAt == nil else { return }
                 let now = Date()
 
@@ -720,6 +747,7 @@ struct HomeShellView: View {
 
     private func openComposeActions() {
         guard !showComposeActions else { return }
+        isClosingComposeActions = false
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
             showComposeActions = true
@@ -727,10 +755,16 @@ struct HomeShellView: View {
     }
 
     private func dismissComposeActions() {
+        guard showComposeActions, !isClosingComposeActions else { return }
         composeDoubleTapArmed = false
+        isClosingComposeActions = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-            showComposeActions = false
             highlightedComposeAction = nil
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+            showComposeActions = false
+            isClosingComposeActions = false
         }
     }
 
@@ -740,7 +774,10 @@ struct HomeShellView: View {
     }
 
     private func performComposeAction(_ item: ComposeActionItem) {
-        dismissComposeActions()
+        showComposeActions = false
+        isClosingComposeActions = false
+        composeDoubleTapArmed = false
+        highlightedComposeAction = nil
         switch item {
         case .compose:
             startComposeFromBar()
@@ -1163,6 +1200,10 @@ struct HomeShellView: View {
 
     private var askAIButton: some View {
         Button {
+            if showComposeActions {
+                dismissComposeActions()
+                return
+            }
             openChat()
         } label: {
             AskAIButtonLabel()

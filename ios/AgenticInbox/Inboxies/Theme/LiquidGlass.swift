@@ -14,7 +14,7 @@ enum HomeChromeMetrics {
     /// only top crescents peek (Figma). Depth 0 = front. Peek ≈ 6% of diameter
     /// from the spaced reference (10px / 164px); 6pt on a 52pt control (readable on light chrome; Figma teaching spacing).
     static let composeStackLayerCount = 3
-    static let composeStackPeekOffset: CGFloat = 6
+    static let composeStackPeekOffset: CGFloat = 3
     /// Same radius per layer — depth comes from Y offset + darker fill, not scale.
     static let composeStackScales: [CGFloat] = [1.0, 1.0, 1.0]
 
