@@ -111,15 +111,21 @@ export default function SignInMethodsSettingsRoute() {
 	const [isRedeeming, setIsRedeeming] = useState(false);
 	const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
 	const [showPasswordForm, setShowPasswordForm] = useState(false);
+	const [showChangePassword, setShowChangePassword] = useState(false);
 	const [password, setPassword] = useState("");
 	const [passwordConfirm, setPasswordConfirm] = useState("");
+	const [currentPassword, setCurrentPassword] = useState("");
+	const [newPassword, setNewPassword] = useState("");
+	const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
 	const [isAddingPassword, setIsAddingPassword] = useState(false);
+	const [isChangingPassword, setIsChangingPassword] = useState(false);
 	const [showAdvanced, setShowAdvanced] = useState(false);
 
 	const hasPassword = data?.identities.some((i) => i.type === "password");
 	const hasGoogle = data?.identities.some((i) => i.type === "google");
 	const hasApple = data?.identities.some((i) => i.type === "apple");
 	const googleClientId = config?.googleClientId ?? null;
+	const canAddMethod = !hasGoogle || !hasApple || !hasPassword;
 
 	const refreshAfterAttach = useCallback(
 		async (title: string) => {
@@ -241,6 +247,19 @@ export default function SignInMethodsSettingsRoute() {
 		}
 	};
 
+	const resetAddPasswordForm = () => {
+		setShowPasswordForm(false);
+		setPassword("");
+		setPasswordConfirm("");
+	};
+
+	const resetChangePasswordForm = () => {
+		setShowChangePassword(false);
+		setCurrentPassword("");
+		setNewPassword("");
+		setNewPasswordConfirm("");
+	};
+
 	const handleAddPassword = async () => {
 		if (password.length < 10) {
 			toastManager.add({
@@ -259,9 +278,7 @@ export default function SignInMethodsSettingsRoute() {
 		setIsAddingPassword(true);
 		try {
 			await api.attachIdentity({ provider: "password", password });
-			setPassword("");
-			setPasswordConfirm("");
-			setShowPasswordForm(false);
+			resetAddPasswordForm();
 			await refreshAfterAttach("Password added");
 		} catch (err) {
 			const message =
@@ -272,14 +289,62 @@ export default function SignInMethodsSettingsRoute() {
 		}
 	};
 
+	const handleChangePassword = async () => {
+		if (!currentPassword) {
+			toastManager.add({
+				title: "Enter your current password",
+				variant: "error",
+			});
+			return;
+		}
+		if (newPassword.length < 10) {
+			toastManager.add({
+				title: "New password must be at least 10 characters",
+				variant: "error",
+			});
+			return;
+		}
+		if (newPassword !== newPasswordConfirm) {
+			toastManager.add({
+				title: "New passwords do not match",
+				variant: "error",
+			});
+			return;
+		}
+		if (currentPassword === newPassword) {
+			toastManager.add({
+				title: "New password must be different from the current password",
+				variant: "error",
+			});
+			return;
+		}
+		setIsChangingPassword(true);
+		try {
+			await api.changePassword({ currentPassword, newPassword });
+			resetChangePasswordForm();
+			toastManager.add({ title: "Password updated" });
+			await refetch();
+		} catch (err) {
+			const message =
+				err instanceof Error ? err.message : "Could not change password";
+			toastManager.add({
+				title: message.includes("incorrect")
+					? "Current password is incorrect"
+					: message,
+				variant: "error",
+			});
+		} finally {
+			setIsChangingPassword(false);
+		}
+	};
+
 	if (!mailboxId) return null;
 
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Sign-in methods">
 			<p className="text-sm text-kumo-subtle mb-6">
-				Connect Apple, Google, or a password on this device while signed in.
-				Every method resolves to the same Inboxies account, Domain Admin role,
-				and mailbox access.
+				Ways you can sign in to this Inboxies account. Add Apple, Google, or a
+				password on this device; every method reaches the same mailboxes.
 			</p>
 
 			{isLoading || !data ? (
@@ -294,7 +359,7 @@ export default function SignInMethodsSettingsRoute() {
 						</div>
 						{data.identities.length === 0 ? (
 							<p className="text-sm text-kumo-subtle">
-								No linked identities yet. Connect a method below.
+								Nothing linked yet. Add a method below.
 							</p>
 						) : (
 							<ul className="divide-y divide-kumo-line">
@@ -318,97 +383,156 @@ export default function SignInMethodsSettingsRoute() {
 						)}
 					</div>
 
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
-						<div>
-							<div className="text-sm font-medium text-kumo-default mb-1">
-								Connect on this device
+					{hasPassword && (
+						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+							<div>
+								<div className="text-sm font-medium text-kumo-default mb-1">
+									Password
+								</div>
+								<p className="text-xs text-kumo-subtle">
+									Change the password used to sign in with email.
+								</p>
 							</div>
-							<p className="text-xs text-kumo-subtle">
-								Complete the provider’s normal sign-in while staying logged in
-								as this account. The new method is attached — you are not
-								switched to a different account.
-							</p>
+							{!showChangePassword ? (
+								<Button
+									variant="secondary"
+									size="sm"
+									onClick={() => setShowChangePassword(true)}
+								>
+									Change password
+								</Button>
+							) : (
+								<>
+									<Input
+										label="Current password"
+										type="password"
+										value={currentPassword}
+										onChange={(e) => setCurrentPassword(e.target.value)}
+										autoComplete="current-password"
+									/>
+									<Input
+										label="New password"
+										type="password"
+										value={newPassword}
+										onChange={(e) => setNewPassword(e.target.value)}
+										placeholder="At least 10 characters"
+										autoComplete="new-password"
+									/>
+									<Input
+										label="Confirm new password"
+										type="password"
+										value={newPasswordConfirm}
+										onChange={(e) => setNewPasswordConfirm(e.target.value)}
+										autoComplete="new-password"
+									/>
+									<div className="flex flex-wrap gap-2">
+										<Button
+											variant="primary"
+											size="sm"
+											disabled={isChangingPassword}
+											onClick={handleChangePassword}
+										>
+											{isChangingPassword ? "Updating…" : "Update password"}
+										</Button>
+										<Button
+											variant="secondary"
+											size="sm"
+											onClick={resetChangePasswordForm}
+										>
+											Cancel
+										</Button>
+									</div>
+								</>
+							)}
 						</div>
+					)}
 
-						{!hasGoogle && (
-							<div className="space-y-2">
-								{googleClientId ? (
-									<>
-										<div ref={googleBtnRef} />
-										{isConnectingGoogle && (
-											<p className="text-xs text-kumo-subtle">Connecting…</p>
-										)}
-									</>
-								) : (
-									<p className="text-xs text-kumo-subtle">
-										Connect Google isn’t available on this deployment (no{" "}
-										<code className="font-mono">GOOGLE_CLIENT_ID</code>). Use
-										an Android device or Link another device below.
-									</p>
-								)}
+					{canAddMethod && (
+						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+							<div>
+								<div className="text-sm font-medium text-kumo-default mb-1">
+									Add a method
+								</div>
+								<p className="text-xs text-kumo-subtle">
+									Stay signed in — we attach the new method to this account.
+								</p>
 							</div>
-						)}
 
-						{!hasApple && (
-							<p className="text-xs text-kumo-subtle rounded-md bg-kumo-tint px-3 py-2">
-								Connect Apple isn’t available in the browser (Cloudflare Access
-								doesn’t mint Apple ID tokens here). On iPhone: Settings →
-								Sign-in methods → <strong>Connect Apple</strong>. Or use Link
-								another device below.
-							</p>
-						)}
+							{!hasGoogle && (
+								<div className="space-y-2">
+									{googleClientId ? (
+										<>
+											<div ref={googleBtnRef} />
+											{isConnectingGoogle && (
+												<p className="text-xs text-kumo-subtle">Connecting…</p>
+											)}
+										</>
+									) : (
+										<p className="text-xs text-kumo-subtle">
+											Connect Google isn’t available here. Use Android, or Link
+											another device below.
+										</p>
+									)}
+								</div>
+							)}
 
-						{!hasPassword && (
-							<div className="space-y-3">
-								{!showPasswordForm ? (
-									<Button
-										variant="secondary"
-										size="sm"
-										onClick={() => setShowPasswordForm(true)}
-									>
-										Add password
-									</Button>
-								) : (
-									<>
-										<Input
-											label="New password"
-											type="password"
-											value={password}
-											onChange={(e) => setPassword(e.target.value)}
-											placeholder="At least 10 characters"
-										/>
-										<Input
-											label="Confirm password"
-											type="password"
-											value={passwordConfirm}
-											onChange={(e) => setPasswordConfirm(e.target.value)}
-										/>
-										<div className="flex flex-wrap gap-2">
-											<Button
-												variant="primary"
-												size="sm"
-												disabled={isAddingPassword}
-												onClick={handleAddPassword}
-											>
-												{isAddingPassword ? "Saving…" : "Save password"}
-											</Button>
-											<Button
-												variant="secondary"
-												size="sm"
-												onClick={() => {
-													setShowPasswordForm(false);
-													setPassword("");
-													setPasswordConfirm("");
-												}}
-											>
-												Cancel
-											</Button>
-										</div>
-									</>
-								)}
-							</div>
-						)}
-					</div>
+							{!hasApple && (
+								<p className="text-xs text-kumo-subtle rounded-md bg-kumo-tint px-3 py-2">
+									Connect Apple on iPhone: Settings → Sign-in methods → Connect
+									Apple. Or use Link another device below.
+								</p>
+							)}
+
+							{!hasPassword && (
+								<div className="space-y-3">
+									{!showPasswordForm ? (
+										<Button
+											variant="secondary"
+											size="sm"
+											onClick={() => setShowPasswordForm(true)}
+										>
+											Add password
+										</Button>
+									) : (
+										<>
+											<Input
+												label="New password"
+												type="password"
+												value={password}
+												onChange={(e) => setPassword(e.target.value)}
+												placeholder="At least 10 characters"
+												autoComplete="new-password"
+											/>
+											<Input
+												label="Confirm password"
+												type="password"
+												value={passwordConfirm}
+												onChange={(e) => setPasswordConfirm(e.target.value)}
+												autoComplete="new-password"
+											/>
+											<div className="flex flex-wrap gap-2">
+												<Button
+													variant="primary"
+													size="sm"
+													disabled={isAddingPassword}
+													onClick={handleAddPassword}
+												>
+													{isAddingPassword ? "Saving…" : "Save password"}
+												</Button>
+												<Button
+													variant="secondary"
+													size="sm"
+													onClick={resetAddPasswordForm}
+												>
+													Cancel
+												</Button>
+											</div>
+										</>
+									)}
+								</div>
+							)}
+						</div>
+					)}
 
 					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
 						<button
@@ -418,15 +542,15 @@ export default function SignInMethodsSettingsRoute() {
 						>
 							{showAdvanced ? "Hide" : "Show"} · Link another device
 							<span className="text-xs font-normal text-kumo-subtle">
-								(advanced)
+								(secondary)
 							</span>
 						</button>
 						{showAdvanced && (
 							<>
 								<p className="text-xs text-kumo-subtle">
-									For cross-device linking when Connect IdP can’t run on this
-									surface. Generate a code here, then redeem it on the other
-									signed-in session. Codes expire in 15 minutes.
+									For linking across devices when Connect isn’t available here.
+									Generate a code, then redeem it on the other signed-in
+									session. Codes expire in 15 minutes.
 								</p>
 								<div className="flex flex-wrap items-center gap-2">
 									<Button
@@ -457,7 +581,7 @@ export default function SignInMethodsSettingsRoute() {
 								)}
 								<div className="space-y-3 pt-2 border-t border-kumo-line">
 									<p className="text-xs text-kumo-subtle">
-										Redeem a code minted on another device or sign-in method.
+										Redeem a code from another device or sign-in method.
 									</p>
 									<Input
 										label="Link code"
