@@ -40,12 +40,13 @@ import {
 import {
 	attachIdpToSessionAccount,
 	attachPasswordToSessionAccount,
+	ensurePrincipalAccount,
 	IdentityAlreadyLinkedError,
 	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
-	ownerKeysForAssign,
 	passwordUserForSessionAccount,
 	redeemIdentityLinkCode,
+	resolveAclPrincipalsToAccounts,
 	updatePasswordHashForSessionAccount,
 	upsertIdentityLink,
 } from "../lib/identity-links";
@@ -57,6 +58,7 @@ import {
 	canonicalMailboxId,
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
+import { normalizeEmailAddress } from "../lib/mail-automations";
 import { resolveMailDomain } from "../lib/mail-domain";
 import { listMailboxes, getMailboxStub } from "../lib/email-helpers";
 import {
@@ -293,10 +295,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		}
 		const name = body.name || email.split("@")[0] || email;
 		const assignTo = body.assignTo ?? "self";
-		// Always provisional-own as admin until invitee accepts — empty ACL
-		// would be auto-claimable via claimIfUnclaimed.
-		const ownerKeys = await ownerKeysForAssign(c.env.BUCKET, principal);
-		const acl = aclFromOwnerKeys(ownerKeys);
+		const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
+		const acl = aclFromOwnerKeys(ensured.ownerKeys);
 		const settings = { ...defaultSettings(name), acl };
 		await c.env.BUCKET.put(key, JSON.stringify(settings));
 		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
@@ -326,7 +326,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		return c.json(
 			{
-				...mailboxAccessPayload(email, settings, principal),
+				...mailboxAccessPayload(email, settings, ensured.principal),
 				name,
 				invite:
 					inviteResult && inviteResult.ok
@@ -356,8 +356,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const body = AssignBody.parse(await c.req.json());
 
 		if (body.assignTo === "self") {
-			const ownerKeys = await ownerKeysForAssign(c.env.BUCKET, principal);
-			const acl = aclFromOwnerKeys(ownerKeys);
+			const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
+			const acl = aclFromOwnerKeys(ensured.ownerKeys);
 			const next = { ...settings, acl };
 			await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
 			await appendAdminAudit(c.env.BUCKET, {
@@ -365,7 +365,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 				action: "mailbox.assign_self",
 				mailboxId,
 			});
-			return c.json(mailboxAccessPayload(mailboxId, next, principal));
+			return c.json(mailboxAccessPayload(mailboxId, next, ensured.principal));
 		}
 
 		const inviteResult = await createPendingInvite(c, principal, {
@@ -404,13 +404,17 @@ export function registerAdminAndInviteRoutes(app: App) {
 			members: body.members ?? [],
 		});
 		if (!validated.ok) return c.json({ error: validated.error }, 400);
-		const next = { ...settings, acl: validated.acl };
+		const resolved = await resolveAclPrincipalsToAccounts(
+			c.env.BUCKET,
+			validated.acl,
+		);
+		const next = { ...settings, acl: resolved };
 		await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
 		await appendAdminAudit(c.env.BUCKET, {
 			actorKeys: principalKeys(principal),
 			action: "mailbox.transfer_acl",
 			mailboxId,
-			detail: { owners: validated.acl.owners, members: validated.acl.members },
+			detail: { owners: resolved.owners, members: resolved.members },
 		});
 		return c.json(mailboxAccessPayload(mailboxId, next, principal));
 	});
@@ -681,7 +685,17 @@ export function registerAdminAndInviteRoutes(app: App) {
 		};
 		await savePlatformUser(c.env.BUCKET, user);
 
-		const userKeys = aclKeysForPlatformUser(user);
+		const sessionPrincipal = principalFromPlatformUser(user);
+		const ensured = await ensurePrincipalAccount(c.env.BUCKET, sessionPrincipal, {
+			extraPrincipals: [
+				`user:${user.id}`,
+				`email:${normalizeEmailAddress(invite.inviteeEmail) ?? invite.inviteeEmail}`,
+				...(user.mailboxEmail
+					? [`email:${canonicalMailboxId(user.mailboxEmail) ?? user.mailboxEmail}`]
+					: []),
+			],
+		});
+		const userKeys = [`account:${ensured.account.id}`];
 		const acl = parseAcl(settings);
 		if (invite.role === "owner") {
 			acl.owners = [...new Set([...acl.owners, ...userKeys])];
@@ -708,7 +722,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			userId,
 			email: sessionEmail,
 		});
-		const principal = principalFromPlatformUser(user);
+		const principal = ensured.principal;
 		c.header(
 			"Set-Cookie",
 			passwordSessionCookieHeader(session.token, {
@@ -718,6 +732,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		return c.json({
 			mailboxId: invite.mailboxId,
 			userId,
+			accountId: ensured.account.id,
 			token: session.token,
 			expiresAt: session.expiresAt,
 			principal: {

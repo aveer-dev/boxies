@@ -196,7 +196,10 @@ export function principalFromPlatformUser(
 	};
 }
 
-/** ACL owner keys written when an invitee accepts. */
+/**
+ * Legacy ACL keys for a password user (method-scoped). Prefer writing
+ * `account:{identityAccountId}` via ensurePrincipalAccount for new ACL rows.
+ */
 export function aclKeysForPlatformUser(user: PlatformUser): string[] {
 	const keys = new Set<string>();
 	keys.add(`user:${user.id}`);
@@ -208,4 +211,10 @@ export function aclKeysForPlatformUser(user: PlatformUser): string[] {
 		if (sub.trim()) keys.add(`sub:${sub.trim()}`);
 	}
 	return [...keys];
+}
+
+/** Account-scoped ACL key for mailbox ownership / membership. */
+export function accountAclKey(accountId: string): string {
+	const id = accountId.trim();
+	return id.startsWith("account:") ? id : `account:${id}`;
 }

@@ -187,7 +187,8 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	});
 	assert.equal(created.status, 201);
 	assert.equal(created.json.email, "adminbox@inboxies.email");
-	assert.ok(created.json.settings.acl.owners.includes("email:admin@example.com"));
+	assert.equal(created.json.settings.acl.owners.length, 1);
+	assert.ok(created.json.settings.acl.owners[0].startsWith("account:"));
 
 	const userList = await jsonRequest(apiApp, env, {
 		path: "/api/v1/mailboxes",
@@ -238,7 +239,24 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	assert.equal(accept.status, 200);
 	assert.equal(accept.json.mailboxId, "alex@inboxies.email");
 	assert.ok(accept.json.token);
+	assert.ok(accept.json.accountId);
 	assert.ok(accept.json.principal.keys.some((k) => k.startsWith("user:")));
+	assert.ok(
+		accept.json.principal.keys.includes(`account:${accept.json.accountId}`),
+	);
+
+	const settingsObj = JSON.parse(
+		bucket.store.get(mailboxMetadataKey("alex@inboxies.email")),
+	);
+	assert.ok(
+		settingsObj.acl.owners.includes(`account:${accept.json.accountId}`),
+		"invite accept stamps account-scoped owner",
+	);
+	assert.equal(
+		settingsObj.acl.owners.some((k) => k.startsWith("user:")),
+		false,
+		"invite accept does not dual-stamp user: on ACL",
+	);
 
 	const sessionClaims = await verifyMobileSessionToken(
 		accept.json.token,
@@ -292,11 +310,11 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 		},
 	});
 	assert.equal(created.status, 201);
+	assert.equal(created.json.settings.acl.owners.length, 1);
 	assert.ok(
-		created.json.settings.acl.owners.includes("email:admin@example.com"),
-		"invite-assigned mailbox must keep provisional admin owner",
+		created.json.settings.acl.owners[0].startsWith("account:"),
+		"invite-assigned mailbox must keep provisional admin account owner",
 	);
-	assert.equal(created.json.settings.acl.owners.length > 0, true);
 
 	// Matching Access identity must NOT auto-claim over the provisional owner.
 	const claimer = principalFromClaims({
@@ -474,7 +492,7 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 		["ops@inboxies.email"],
 	);
 
-	// Assign-to-me from Access also stamps linked Apple sub.
+	// Assign-to-me stamps account-scoped owner (not Access email / Apple sub rows).
 	const assign = await jsonRequest(apiApp, env, {
 		method: "POST",
 		path: "/api/v1/admin/mailboxes/ops@inboxies.email/assign",
@@ -482,8 +500,23 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 		body: { assignTo: "self" },
 	});
 	assert.equal(assign.status, 200);
-	assert.ok(assign.json.settings.acl.owners.includes("email:admin@example.com"));
-	assert.ok(assign.json.settings.acl.owners.includes("sub:apple.hide.email.sub"));
+	assert.equal(assign.json.settings.acl.owners.length, 1);
+	assert.ok(assign.json.settings.acl.owners[0].startsWith("account:"));
+	assert.equal(
+		assign.json.settings.acl.owners.includes("email:admin@example.com"),
+		false,
+	);
+	assert.equal(
+		assign.json.settings.acl.owners.includes("sub:apple.hide.email.sub"),
+		false,
+	);
+
+	const appleGet = await jsonRequest(apiApp, env, {
+		path: "/api/v1/mailboxes/ops@inboxies.email",
+		principal: apple,
+	});
+	assert.equal(appleGet.status, 200);
+	assert.equal(appleGet.json.canManage, true);
 }
 
 {

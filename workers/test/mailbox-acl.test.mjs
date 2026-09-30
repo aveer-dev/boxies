@@ -33,7 +33,18 @@ assert.deepEqual(principalKeys(ada).sort(), [
 assert.equal(normalizeAclKey("Ada@Example.com"), "email:ada@example.com");
 assert.equal(normalizeAclKey("email: Hello+Tag@Inboxies.Email "), "email:hello+tag@inboxies.email");
 assert.equal(normalizeAclKey("sub:abc"), "sub:abc");
+assert.equal(normalizeAclKey("account:acct-1"), "account:acct-1");
+assert.equal(normalizeAclKey("account: account:acct-2 "), "account:acct-2");
 assert.equal(normalizeAclKey("not-an-email"), null);
+
+{
+	const withAccount = principalFromClaims({
+		email: "Ada@Inboxies.Email",
+		sub: "ada-sub",
+	});
+	withAccount.linkedAccountIds = ["acct-ada"];
+	assert.ok(principalKeys(withAccount).includes("account:acct-ada"));
+}
 
 assert.equal(isUnclaimed({}), true);
 assert.equal(isUnclaimed({ acl: { owners: [], members: [] } }), true);
@@ -50,6 +61,16 @@ assert.equal(isUnclaimed({ acl: { owners: ["email:ada@inboxies.email"] } }), fal
 		members: [],
 	});
 	assert.equal(claimIfUnclaimed(unclaimed, bob, "ada@inboxies.email"), null);
+	const accountClaimed = claimIfUnclaimed(
+		unclaimed,
+		ada,
+		"ada@inboxies.email",
+		["account:acct-ada"],
+	);
+	assert.deepEqual(accountClaimed?.acl, {
+		owners: ["account:acct-ada"],
+		members: [],
+	});
 }
 
 {
@@ -173,7 +194,17 @@ function mockBucket(initial = {}) {
 	const claimed = await authorizeMailbox(bucket, ada, "Ada@Inboxies.Email");
 	assert.equal(claimed.ok, true);
 	if (claimed.ok) {
-		assert.deepEqual(claimed.settings.acl.owners, ["email:ada@inboxies.email"]);
+		assert.equal(claimed.settings.acl.owners.length, 1);
+		assert.ok(
+			claimed.settings.acl.owners[0].startsWith("account:"),
+			"claim writes account-scoped owner",
+		);
+		assert.ok(claimed.principal.linkedAccountIds?.length);
+		assert.ok(
+			claimed.principal.linkedAccountIds.includes(
+				claimed.settings.acl.owners[0].slice("account:".length),
+			),
+		);
 	}
 
 	const denied = await authorizeMailbox(bucket, bob, "secret@inboxies.email");
