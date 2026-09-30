@@ -44,6 +44,7 @@ struct ComposeSheetView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         composeHeader
+                            .fixedSize(horizontal: false, vertical: true)
                             .onGeometryChange(for: CGFloat.self) { proxy in
                                 proxy.size.height
                             } action: { headerHeight = $0 }
@@ -51,10 +52,17 @@ struct ComposeSheetView: View {
                         bodyEditor
                             .frame(minHeight: editorMinHeight, alignment: .top)
                     }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
                 .onGeometryChange(for: CGFloat.self) { proxy in
                     proxy.size.height
-                } action: { viewportHeight = $0 }
+                } action: { height in
+                    // Ignore zero during zoom / cover insertion — keep last good
+                    // or provisional height so the form does not collapse to title-only.
+                    if height > 1 {
+                        viewportHeight = height
+                    }
+                }
 
                 if let error = form.errorMessage ?? (form.exceedsOutboundLimit ? OutboundLimits.sizeError : nil) {
                     Text(error)
@@ -101,6 +109,16 @@ struct ComposeSheetView: View {
             .background(DetailNavigationTitleFont())
             .navigationTitle(form.displayTitle)
             .navigationBarTitleDisplayMode(.large)
+            .onAppear {
+                // Cover zoom + ExtraTopSafeAreaInset can lay out once with a zero
+                // viewport; force a second pass so fields+body appear immediately.
+                DispatchQueue.main.async {
+                    richText.textView?.invalidateIntrinsicContentSize()
+                    if viewportHeight <= 1 {
+                        viewportHeight = provisionalViewportHeight
+                    }
+                }
+            }
             .onChange(of: focusedField) { _, new in
                 if new == .subject || new == .body {
                     recipientFocus = nil
@@ -236,8 +254,15 @@ struct ComposeSheetView: View {
         }
     }
 
+    private var provisionalViewportHeight: CGFloat {
+        // ~55% of screen roughly matches the scroll viewport under large title + chrome.
+        max(280, UIScreen.main.bounds.height * 0.55)
+    }
+
     private var editorMinHeight: CGFloat {
-        max(160, viewportHeight - headerHeight)
+        let viewport = viewportHeight > 1 ? viewportHeight : provisionalViewportHeight
+        let header = headerHeight > 0 ? headerHeight : 160
+        return max(200, viewport - header)
     }
 
     private var composeHeader: some View {

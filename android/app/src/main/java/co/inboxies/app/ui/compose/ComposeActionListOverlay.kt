@@ -1,10 +1,15 @@
 package co.inboxies.app.ui.compose
 
+import android.os.Build
+import android.provider.Settings
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateRectAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -14,6 +19,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.absoluteOffset
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +41,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,7 +56,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -62,6 +71,8 @@ import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.theme.liquidGlass
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
 
 /** World App–style right-aligned action list over a blurred backdrop. */
 enum class ComposeActionItem {
@@ -116,6 +127,39 @@ private val HighlightSpring = spring<Rect>(
     stiffness = 480f,
 )
 
+private val ExpandSpring = spring<Float>(
+    dampingRatio = 0.86f,
+    stiffness = Spring.StiffnessMediumLow,
+)
+
+private val CloseSpring = spring<Float>(
+    dampingRatio = 0.86f,
+    stiffness = Spring.StiffnessMedium,
+)
+
+private fun View.impactHaptic() {
+    val feedback = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        HapticFeedbackConstants.CONFIRM
+    } else {
+        HapticFeedbackConstants.KEYBOARD_TAP
+    }
+    performHapticFeedback(feedback)
+}
+
+@Composable
+private fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            ) == 0f
+        }.getOrDefault(false)
+    }
+}
+
 @Composable
 fun ComposeActionListOverlay(
     highlightedId: ComposeActionItem?,
@@ -124,9 +168,14 @@ fun ComposeActionListOverlay(
     onHighlightChange: (ComposeActionItem?) -> Unit,
     onRowFramesChange: (Map<ComposeActionItem, Rect>) -> Unit,
     dismissEnabled: Boolean,
+    isClosingExternal: Boolean = false,
+    onDismissStarted: () -> Unit = {},
 ) {
     val colors = inboxiesColors()
     val density = LocalDensity.current
+    val view = LocalView.current
+    val scope = rememberCoroutineScope()
+    val reduceMotion = rememberReduceMotion()
     val actions = ComposeActionItem.entries
     val rowFrames = remember { mutableMapOf<ComposeActionItem, Rect>() }
     var publishedFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
@@ -134,21 +183,83 @@ fun ComposeActionListOverlay(
     var listContainer by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var lastHighlightRect by remember { mutableStateOf(Rect.Zero) }
     val hoverFill = lerp(colors.pillActive, colors.surface, 0.45f)
+    var isClosing by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        backdropAlpha.animateTo(1f, spring(stiffness = Spring.StiffnessMedium))
+    val appearedAnimatables = remember {
+        List(actions.size) { Animatable(0f) }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    val baseOffsetToStackPx = with(density) { 64.dp.toPx() }
+    val rowStridePx = with(density) {
+        (HomeChromeMetrics.composeActionIconSize + HomeChromeMetrics.composeActionRowSpacing).toPx()
+    }
+
+    LaunchedEffect(reduceMotion) {
+        if (reduceMotion) {
+            backdropAlpha.snapTo(1f)
+            appearedAnimatables.forEach { it.snapTo(1f) }
+        } else {
+            backdropAlpha.snapTo(0.2f)
+            launch { backdropAlpha.animateTo(1f, ExpandSpring) }
+            actions.forEachIndexed { index, _ ->
+                val distanceFromBottom = actions.size - 1 - index
+                launch {
+                    delay(distanceFromBottom * 16L)
+                    appearedAnimatables[index].animateTo(1f, ExpandSpring)
+                }
+            }
+        }
+    }
+
+    fun triggerDismiss(action: ComposeActionItem? = null) {
+        if (isClosing) return
+        isClosing = true
+        view.impactHaptic()
+        onDismissStarted()
+        scope.launch {
+            if (reduceMotion) {
+                backdropAlpha.animateTo(0f, tween(100))
+                if (action != null) onSelect(action) else onDismiss()
+                return@launch
+            }
+            val jobs = actions.mapIndexed { index, _ ->
+                launch {
+                    delay(index * 12L)
+                    appearedAnimatables[index].animateTo(0f, CloseSpring)
+                }
+            }
+            launch {
+                backdropAlpha.animateTo(0f, CloseSpring)
+            }
+            jobs.joinAll()
+            if (action != null) {
+                onSelect(action)
+            } else {
+                onDismiss()
+            }
+        }
+    }
+
+    LaunchedEffect(isClosingExternal) {
+        if (isClosingExternal && !isClosing) {
+            triggerDismiss()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .navigationBarsPadding(),
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(colors.background.copy(alpha = 0.82f * backdropAlpha.value))
                 .clickable(
-                    enabled = dismissEnabled,
+                    enabled = dismissEnabled && !isClosing,
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
-                    onClick = onDismiss,
+                    onClick = { triggerDismiss() },
                 ),
         )
 
@@ -158,10 +269,11 @@ fun ComposeActionListOverlay(
                 .padding(
                     end = 24.dp,
                     bottom = HomeChromeMetrics.actionBarHeight +
-                        HomeChromeMetrics.chromeBottomPadding + 20.dp,
+                        (HomeChromeMetrics.chromeBottomPadding - 12.dp) + 10.dp,
                 )
                 .onGloballyPositioned { listContainer = it }
-                .pointerInput(dismissEnabled) {
+                .pointerInput(dismissEnabled, isClosing) {
+                    if (!dismissEnabled || isClosing) return@pointerInput
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -170,8 +282,8 @@ fun ComposeActionListOverlay(
                             val hit = hitTestComposeAction(root, rowFrames)
                             if (change.pressed) {
                                 if (hit != null) onHighlightChange(hit)
-                            } else if (!dismissEnabled && hit != null) {
-                                onSelect(hit)
+                            } else if (hit != null) {
+                                triggerDismiss(hit)
                             }
                         }
                     }
@@ -202,19 +314,19 @@ fun ComposeActionListOverlay(
                 verticalArrangement = Arrangement.spacedBy(HomeChromeMetrics.composeActionRowSpacing),
             ) {
                 actions.forEachIndexed { index, action ->
-                    val appeared = remember { Animatable(0f) }
-                    LaunchedEffect(Unit) {
-                        delay((actions.size - 1 - index) * 15L)
-                        appeared.animateTo(
-                            1f,
-                            spring(dampingRatio = 0.84f, stiffness = Spring.StiffnessMediumLow),
-                        )
-                    }
+                    val appeared = appearedAnimatables[index]
+                    val distanceFromBottom = actions.size - 1 - index
+                    val stackedOffsetPx = distanceFromBottom * rowStridePx + baseOffsetToStackPx
+
                     Row(
                         modifier = Modifier
                             .graphicsLayer {
-                                alpha = appeared.value
-                                translationY = (1f - appeared.value) * 12f
+                                val progress = appeared.value
+                                alpha = if (reduceMotion) progress else progress.coerceIn(0f, 1f)
+                                translationY = if (reduceMotion) 0f else (1f - progress) * stackedOffsetPx
+                                val scale = if (reduceMotion) 1f else 0.76f + 0.24f * progress
+                                scaleX = scale
+                                scaleY = scale
                             }
                             .onGloballyPositioned { coords ->
                                 rowFrames[action] = coords.boundsInRoot()
@@ -223,10 +335,11 @@ fun ComposeActionListOverlay(
                                 onRowFramesChange(next)
                             }
                             .clickable(
+                                enabled = !isClosing,
                                 indication = null,
                                 interactionSource = remember { MutableInteractionSource() },
-                            ) { onSelect(action) }
-                            .padding(start = 14.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                            ) { triggerDismiss(action) }
+                            .padding(start = 14.dp, end = 2.dp, top = 4.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
@@ -236,6 +349,11 @@ fun ComposeActionListOverlay(
                             fontWeight = FontWeight.Medium,
                             fontSize = 17.sp,
                             color = colors.ink,
+                            modifier = Modifier.graphicsLayer {
+                                val progress = appeared.value
+                                alpha = progress
+                                translationX = (1f - progress) * with(density) { 10.dp.toPx() }
+                            },
                         )
                         Box(
                             modifier = Modifier

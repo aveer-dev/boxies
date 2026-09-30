@@ -59,6 +59,7 @@
 		D4E5F6A7B8C0478990ABCD22 /* ComposeFormatChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D5E6F7A8B9478990ABCD22 /* ComposeFormatChrome.swift */; };
 		D4E5F6A7B8C0478990ABCD23 /* ComposeRichTextEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D5E6F7A8B9478990ABCD23 /* ComposeRichTextEditor.swift */; };
 		D9F52B3A0C8E5F7B9D1E2345 /* UndoToastBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8E41A2F9B7D4E6A8C0F1234 /* UndoToastBanner.swift */; };
+		B2C3D4E5F60718293A4B5C6D /* CoverDragDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* CoverDragDismiss.swift */; };
 		E69F3F4A5B0665C9A28E96FD /* ThemeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8180B51F699E3B10460AFB5 /* ThemeMode.swift */; };
 		F017B0014567890123456781 /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F017F0014567890123456781 /* Inter-Regular.ttf */; };
 		F017B0024567890123456782 /* Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F017F0024567890123456782 /* Inter-Medium.ttf */; };
@@ -133,6 +134,7 @@
 		C4D5E6F7A8B9478990ABCD22 /* ComposeFormatChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Compose/ComposeFormatChrome.swift; sourceTree = "<group>"; };
 		C4D5E6F7A8B9478990ABCD23 /* ComposeRichTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Compose/ComposeRichTextEditor.swift; sourceTree = "<group>"; };
 		C8E41A2F9B7D4E6A8C0F1234 /* UndoToastBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Components/UndoToastBanner.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60718293A4B5C /* CoverDragDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Components/CoverDragDismiss.swift; sourceTree = "<group>"; };
 		D339D5F9D3E646D58813D854 /* ChatSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Chat/ChatSheetView.swift; sourceTree = "<group>"; };
 		D339D5F9D3E646D58813D855 /* ContactPillParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Chat/ContactPillParser.swift; sourceTree = "<group>"; };
 		D339D5F9D3E646D58813D856 /* ContactPillMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Chat/ContactPillMenu.swift; sourceTree = "<group>"; };
@@ -264,6 +266,7 @@
 				B572B6236F2243868CCEFD07 /* EmailBodyView.swift */,
 				A6B6D0BA36EC4EE7BEC367D7 /* EmailActionsSheet.swift */,
 				C8E41A2F9B7D4E6A8C0F1234 /* UndoToastBanner.swift */,
+				A1B2C3D4E5F60718293A4B5C /* CoverDragDismiss.swift */,
 				3F9A1C2E8B6D4A11B0E5C7D4 /* FlowLayout.swift */,
 				3F9A1C2E8B6D4A11B0E5C7D5 /* TextFlowLayout.swift */,
 				3F9A1C2E8B6D4A11B0E5C7D6 /* MarkdownContentView.swift */,
@@ -455,6 +458,7 @@
 				5C6166AA480E4D3C8C0FE11B /* EmailBodyView.swift in Sources */,
 				6AE0059EAD914AD79D02011F /* EmailActionsSheet.swift in Sources */,
 				D9F52B3A0C8E5F7B9D1E2345 /* UndoToastBanner.swift in Sources */,
+				B2C3D4E5F60718293A4B5C6D /* CoverDragDismiss.swift in Sources */,
 				4A0B2D3F9C7E5B22C1F6D8E5 /* FlowLayout.swift in Sources */,
 				4A0B2D3F9C7E5B22C1F6D8E6 /* TextFlowLayout.swift in Sources */,
 				4A0B2D3F9C7E5B22C1F6D8E7 /* MarkdownContentView.swift in Sources */,

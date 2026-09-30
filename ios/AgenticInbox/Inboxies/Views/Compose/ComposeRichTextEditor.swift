@@ -269,7 +269,12 @@ struct ComposeRichTextEditor: UIViewRepresentable {
             context.coordinator.lastHTML = html
         }
         context.coordinator.html = $html
-        context.coordinator.minHeight = minHeight
+        if context.coordinator.minHeight != minHeight {
+            context.coordinator.minHeight = minHeight
+            // First cover presentation often lands with a provisional minHeight;
+            // invalidate so sizeThatFits re-runs with the real viewport.
+            uiView.invalidateIntrinsicContentSize()
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {

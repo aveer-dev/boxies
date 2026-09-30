@@ -188,7 +188,7 @@ const api = {
 				label: string;
 				current: boolean;
 			}[];
-		}>("/api/v1/me/password", body),
+		}>("/api/v1/me/identities/password", body),
 	createIdentityLinkCode: () =>
 		post<{
 			code: string;

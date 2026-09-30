@@ -26,7 +26,6 @@ import {
 	resolveAdminAllowlist,
 } from "./domain-admin.ts";
 import { canonicalMailboxId } from "./mailbox-routing.ts";
-import { verifyPassword } from "./password-auth.ts";
 import {
 	findUserIdByLoginEmail,
 	loadPlatformUser,
@@ -888,6 +887,7 @@ export function identitiesForAccount(
 	account: IdentityAccount,
 	principal: RequestPrincipal,
 	providerBySub?: Map<string, IdentityLinkRecord["provider"]>,
+	passwordLabelByUserKey?: Map<string, string>,
 ): LinkedIdentityView[] {
 	const current = new Set(principalKeys(principal));
 	const views: LinkedIdentityView[] = [];
@@ -905,10 +905,11 @@ export function identitiesForAccount(
 				current: current.has(key),
 			});
 		} else if (key.startsWith("user:")) {
+			const loginLabel = passwordLabelByUserKey?.get(key);
 			views.push({
 				type: "password",
 				key,
-				label: "Password",
+				label: loginLabel ? `Password · ${loginLabel}` : "Password",
 				current: current.has(key) || current.has(`sub:${key}`),
 			});
 		} else if (key.startsWith("sub:")) {
@@ -949,17 +950,86 @@ export async function listIdentitiesForPrincipal(
 ): Promise<{ accountId: string; identities: LinkedIdentityView[] }> {
 	const account = await ensureIdentityAccount(bucket, principal);
 	const providerBySub = new Map<string, IdentityLinkRecord["provider"]>();
+	const passwordLabelByUserKey = new Map<string, string>();
 	for (const key of account.principals) {
-		if (!key.startsWith("sub:")) continue;
-		const sub = key.slice("sub:".length);
-		if (!sub || sub.startsWith("user:")) continue;
-		const link = await loadIdentityLinkBySub(bucket, sub);
-		if (link) providerBySub.set(sub, link.provider);
+		if (key.startsWith("sub:")) {
+			const sub = key.slice("sub:".length);
+			if (!sub || sub.startsWith("user:")) continue;
+			const link = await loadIdentityLinkBySub(bucket, sub);
+			if (link) providerBySub.set(sub, link.provider);
+		} else if (key.startsWith("user:")) {
+			const userId = key.slice("user:".length);
+			const user = await loadPlatformUser(bucket, userId);
+			if (user) {
+				const login =
+					user.mailboxEmail ??
+					normalizeEmailAddress(user.contactEmail) ??
+					user.contactEmail;
+				if (login) passwordLabelByUserKey.set(key, login);
+			}
+		}
 	}
 	return {
 		accountId: account.id,
-		identities: identitiesForAccount(account, principal, providerBySub),
+		identities: identitiesForAccount(
+			account,
+			principal,
+			providerBySub,
+			passwordLabelByUserKey,
+		),
 	};
+}
+
+/**
+ * Resolve the platform password user linked to this session's durable account.
+ * Returns null when the account has no password sign-in method.
+ */
+export async function passwordUserForSessionAccount(
+	bucket: R2Bucket,
+	session: RequestPrincipal,
+): Promise<PlatformUser | null> {
+	if (!session.sub && !session.email) return null;
+	const account = await ensureIdentityAccount(bucket, session);
+	const userIds = account.principals
+		.filter((k) => k.startsWith("user:"))
+		.map((k) => k.slice("user:".length));
+	for (const userId of userIds) {
+		const user = await loadPlatformUser(bucket, userId);
+		if (user) return user;
+	}
+	return null;
+}
+
+/**
+ * Update the password hash for the password principal on this session's account.
+ * Caller must verify the current password and validate the new password first.
+ */
+export async function updatePasswordHashForSessionAccount(
+	bucket: R2Bucket,
+	session: RequestPrincipal,
+	newPasswordHash: string,
+): Promise<{ userId: string; account: IdentityAccount }> {
+	if (!session.sub && !session.email) {
+		throw new Error("Unauthorized");
+	}
+	const account = await ensureIdentityAccount(bucket, session);
+	const userIds = account.principals
+		.filter((k) => k.startsWith("user:"))
+		.map((k) => k.slice("user:".length));
+	if (userIds.length === 0) {
+		throw new Error("This account has no password sign-in method");
+	}
+	const user = await loadPlatformUser(bucket, userIds[0]);
+	if (!user) {
+		throw new Error("This account has no password sign-in method");
+	}
+	const updated: PlatformUser = {
+		...user,
+		passwordHash: newPasswordHash,
+		updatedAt: new Date().toISOString(),
+	};
+	await savePlatformUser(bucket, updated);
+	return { userId: user.id, account };
 }
 
 /** Thrown when attaching an IdP/password principal already owned by another account. */
@@ -1174,63 +1244,6 @@ export async function attachPasswordToSessionAccount(
 	const expanded = applyAccountToPrincipal(session, account);
 	return {
 		account,
-		expanded,
-		userId,
-		linkedEmails: emailsForPrincipal(expanded),
-	};
-}
-
-/**
- * Change password for an account that already has a password principal.
- * Requires the current password (works from any authenticated session on
- * that account — Access / Apple / Google / password).
- */
-export async function changePasswordForSessionAccount(
-	bucket: R2Bucket,
-	session: RequestPrincipal,
-	opts: {
-		currentPassword: string;
-		newPasswordHash: string;
-	},
-): Promise<{
-	account: IdentityAccount;
-	expanded: RequestPrincipal;
-	userId: string;
-	linkedEmails: string[];
-}> {
-	if (!session.sub && !session.email) {
-		throw new Error("Unauthorized");
-	}
-
-	const sessionAccount = await ensureIdentityAccount(bucket, session);
-	const existingUserIds = sessionAccount.principals
-		.filter((k) => k.startsWith("user:"))
-		.map((k) => k.slice("user:".length));
-	if (existingUserIds.length === 0) {
-		throw new Error("This account has no password. Use Add password first.");
-	}
-
-	const userId = existingUserIds[0];
-	const user = await loadPlatformUser(bucket, userId);
-	if (!user) {
-		throw new Error("This account has no password. Use Add password first.");
-	}
-
-	const ok = await verifyPassword(opts.currentPassword, user.passwordHash);
-	if (!ok) {
-		throw new Error("Current password is incorrect");
-	}
-
-	const now = new Date().toISOString();
-	await savePlatformUser(bucket, {
-		...user,
-		passwordHash: opts.newPasswordHash,
-		updatedAt: now,
-	});
-
-	const expanded = applyAccountToPrincipal(session, sessionAccount);
-	return {
-		account: sessionAccount,
 		expanded,
 		userId,
 		linkedEmails: emailsForPrincipal(expanded),

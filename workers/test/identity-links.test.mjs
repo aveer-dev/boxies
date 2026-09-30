@@ -13,11 +13,14 @@ import {
 	expandPrincipalWithLinks,
 	IdentityAlreadyLinkedError,
 	identityLinkCodeIsActive,
+	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
 	ownerKeysForAssign,
 	parseIdentityLink,
+	passwordUserForSessionAccount,
 	redeemIdentityLinkCode,
 	resolveAdminLinkEmails,
+	updatePasswordHashForSessionAccount,
 	upsertIdentityLink,
 } from "../lib/identity-links.ts";
 import {
@@ -385,69 +388,41 @@ function mockBucket(initial = {}) {
 			err instanceof Error &&
 			err.message.includes("already has a password"),
 	);
-}
 
-{
-	const { hashPassword, verifyPassword } = await import(
-		"../lib/password-auth.ts"
+	const listed = await listIdentitiesForPrincipal(bucket, access);
+	const passwordRow = listed.identities.find((i) => i.type === "password");
+	assert.ok(passwordRow);
+	assert.ok(
+		passwordRow.label.includes("eve@example.com") ||
+			passwordRow.label === "Password",
 	);
-	const { changePasswordForSessionAccount } = await import(
-		"../lib/identity-links.ts"
+
+	const userBefore = await passwordUserForSessionAccount(bucket, access);
+	assert.ok(userBefore);
+	assert.equal(userBefore.passwordHash, "hash-placeholder");
+
+	const changed = await updatePasswordHashForSessionAccount(
+		bucket,
+		access,
+		"hash-changed",
 	);
-	const { loadPlatformUser } = await import("../lib/platform-users.ts");
+	assert.equal(changed.userId, pwd.userId);
+	const userAfter = await passwordUserForSessionAccount(bucket, access);
+	assert.ok(userAfter);
+	assert.equal(userAfter.passwordHash, "hash-changed");
 
-	const bucket = mockBucket();
-	const access = principalFromClaims({
-		email: "frank@example.com",
-		sub: "frank-access",
+	const noPassword = principalFromClaims({
+		email: "nopw@example.com",
+		sub: "nopw-access",
 	});
-	const hash1 = await hashPassword("old-password-xx");
-	const attached = await attachPasswordToSessionAccount(bucket, access, {
-		passwordHash: hash1,
-	});
-
-	const wrongHash = await hashPassword("new-password-yy");
+	await ensureIdentityAccount(bucket, noPassword);
+	assert.equal(await passwordUserForSessionAccount(bucket, noPassword), null);
 	await assert.rejects(
 		() =>
-			changePasswordForSessionAccount(bucket, access, {
-				currentPassword: "wrong-password",
-				newPasswordHash: wrongHash,
-			}),
+			updatePasswordHashForSessionAccount(bucket, noPassword, "hash-x"),
 		(err) =>
 			err instanceof Error &&
-			err.message.includes("Current password is incorrect"),
-	);
-
-	const hash2 = await hashPassword("new-password-yy");
-	const changed = await changePasswordForSessionAccount(bucket, access, {
-		currentPassword: "old-password-xx",
-		newPasswordHash: hash2,
-	});
-	assert.equal(changed.userId, attached.userId);
-
-	const user = await loadPlatformUser(bucket, changed.userId);
-	assert.ok(user);
-	assert.equal(await verifyPassword("new-password-yy", user.passwordHash), true);
-	assert.equal(await verifyPassword("old-password-xx", user.passwordHash), false);
-}
-
-{
-	const { changePasswordForSessionAccount } = await import(
-		"../lib/identity-links.ts"
-	);
-	const bucket = mockBucket();
-	const access = principalFromClaims({
-		email: "nopwd@example.com",
-		sub: "nopwd-access",
-	});
-	await assert.rejects(
-		() =>
-			changePasswordForSessionAccount(bucket, access, {
-				currentPassword: "anything-long",
-				newPasswordHash: "hash",
-			}),
-		(err) =>
-			err instanceof Error && err.message.includes("no password"),
+			err.message.includes("no password sign-in method"),
 	);
 }
 

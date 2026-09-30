@@ -40,12 +40,13 @@ import {
 import {
 	attachIdpToSessionAccount,
 	attachPasswordToSessionAccount,
-	changePasswordForSessionAccount,
 	IdentityAlreadyLinkedError,
 	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
 	ownerKeysForAssign,
+	passwordUserForSessionAccount,
 	redeemIdentityLinkCode,
+	updatePasswordHashForSessionAccount,
 	upsertIdentityLink,
 } from "../lib/identity-links";
 import { verifyAppleIdentityToken } from "../lib/apple-auth";
@@ -1007,11 +1008,12 @@ export function registerAdminAndInviteRoutes(app: App) {
 	});
 
 	/**
-	 * Change password for an account that already has one. Requires the
-	 * current password. Available from any session on that account
-	 * (Access / Apple / Google / password) — Settings → Sign-in methods.
+	 * Change password for the password sign-in method on this account.
+	 * Works from any authenticated session (Access / Apple / Google / password)
+	 * as long as the account already has a password. Requires the current
+	 * password — not a password-session-only path.
 	 */
-	app.post("/api/v1/me/password", async (c) => {
+	app.post("/api/v1/me/identities/password", async (c) => {
 		const principal = c.get("principal");
 		if (!principal || principalKeys(principal).length === 0) {
 			return c.json({ error: "Unauthorized" }, 401);
@@ -1034,24 +1036,48 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		const strength = validatePasswordStrength(body.data.newPassword);
 		if (strength) return c.json({ error: strength }, 400);
+		if (body.data.currentPassword === body.data.newPassword) {
+			return c.json(
+				{ error: "New password must be different from the current password" },
+				400,
+			);
+		}
 
 		try {
-			const passwordHash = await hashPassword(body.data.newPassword);
-			const result = await changePasswordForSessionAccount(
+			const user = await passwordUserForSessionAccount(
 				c.env.BUCKET,
 				principal,
-				{
-					currentPassword: body.data.currentPassword,
-					newPasswordHash: passwordHash,
-				},
 			);
-			c.set("principal", result.expanded);
+			if (!user) {
+				return c.json(
+					{ error: "This account has no password sign-in method" },
+					404,
+				);
+			}
+			const currentOk = await verifyPassword(
+				body.data.currentPassword,
+				user.passwordHash,
+			);
+			if (!currentOk) {
+				return c.json({ error: "Current password is incorrect" }, 401);
+			}
+			const passwordHash = await hashPassword(body.data.newPassword);
+			const result = await updatePasswordHashForSessionAccount(
+				c.env.BUCKET,
+				principal,
+				passwordHash,
+			);
+			await appendAdminAudit(c.env.BUCKET, {
+				actorKeys: principalKeys(principal),
+				action: "identity.password.change",
+				detail: { userId: result.userId, accountId: result.account.id },
+			});
 			return c.json({
 				ok: true,
 				userId: result.userId,
 				accountId: result.account.id,
 				identities: (
-					await listIdentitiesForPrincipal(c.env.BUCKET, result.expanded)
+					await listIdentitiesForPrincipal(c.env.BUCKET, principal)
 				).identities,
 			});
 		} catch (err) {
@@ -1060,14 +1086,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 			if (message === "Unauthorized") {
 				return c.json({ error: message }, 401);
 			}
-			if (message === "Current password is incorrect") {
-				return c.json({ error: message }, 401);
-			}
-			if (
-				message.includes("no password") ||
-				message.includes("Add password")
-			) {
-				return c.json({ error: message }, 409);
+			if (message.includes("no password sign-in method")) {
+				return c.json({ error: message }, 404);
 			}
 			console.error("change password failed:", message);
 			return c.json({ error: message }, 400);
