@@ -23,11 +23,14 @@ struct InboxiesApp: App {
             } else if ProcessInfo.processInfo.arguments.contains("-previewMailbox")
                 || ProcessInfo.processInfo.arguments.contains("-previewDetail")
                 || ProcessInfo.processInfo.arguments.contains("-previewCompose")
+                || ProcessInfo.processInfo.arguments.contains("-previewComposeMinimized")
                 || ProcessInfo.processInfo.arguments.contains("-previewScreener")
                 || ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
                 PreviewMailboxRoot()
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewDomainAdmin")
+                || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetail")
+                || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetailUnassigned")
                 || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn")
                 || ProcessInfo.processInfo.arguments.contains("-previewInviteAccept")
                 || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods") {

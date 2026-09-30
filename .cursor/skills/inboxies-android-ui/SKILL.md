@@ -79,6 +79,7 @@ Material overrides in `InboxiesTheme` (all Inter): displayLarge 34 Bold, headlin
 | `chromeBottomPadding` | 20.dp |
 | `chromeCornerRadius` | **50.dp** |
 | `minimizedComposeHeight` | 88.dp (taller than iOS 66 because of system bars / dock chrome) |
+| `minimizedComposeGap` | 10.dp |
 | `mailboxAvatarSize` | 48.dp |
 | `bottomBarHorizontalPadding` | 24.dp |
 | `selectionBarHeight` | 58.dp |

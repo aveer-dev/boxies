@@ -126,13 +126,12 @@ object PreviewSupport {
         val you = addr("you")
         val ops = addr("ops")
         val pending = addr("pending")
-        val owners = listOf("email:admin@example.com")
         return listOf(
             AdminMailboxRow(
                 id = you,
                 email = you,
                 name = "Alex Rivera",
-                acl = MailboxAcl(owners = owners, members = emptyList()),
+                acl = MailboxAcl(owners = listOf("email:admin@example.com", "sub:google-oauth2|1029384756"), members = emptyList()),
                 claimed = true,
                 fromName = "Alex Rivera",
             ),
@@ -140,7 +139,14 @@ object PreviewSupport {
                 id = ops,
                 email = ops,
                 name = "Ops",
-                acl = MailboxAcl(owners = owners, members = emptyList()),
+                acl = MailboxAcl(
+                    owners = listOf(
+                        "email:ops-lead@inboxies.email",
+                        "email:dev-operations-infrastructure@inboxies.email",
+                        "sub:github|998877",
+                    ),
+                    members = emptyList(),
+                ),
                 claimed = true,
                 fromName = "Ops",
             ),
@@ -148,7 +154,7 @@ object PreviewSupport {
                 id = pending,
                 email = pending,
                 name = "Pending",
-                acl = MailboxAcl(owners = owners, members = emptyList()),
+                acl = MailboxAcl(owners = listOf("email:admin@example.com"), members = emptyList()),
                 claimed = true,
                 fromName = "Pending",
             ),

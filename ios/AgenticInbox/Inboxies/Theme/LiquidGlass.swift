@@ -4,11 +4,12 @@ import SwiftUI
 enum HomeChromeMetrics {
     static let actionBarHeight: CGFloat = 52
     static let chromeHorizontalPadding: CGFloat = 12
-    static let chromeSpacing: CGFloat = 10
-    static let chromeBottomPadding: CGFloat = 20
+    static let chromeSpacing: CGFloat = 0
+    static let chromeBottomPadding: CGFloat = 0
     static let chromeCornerRadius: CGFloat = 50
     static let tabLabelPointSize: CGFloat = 10
     static let minimizedComposeHeight: CGFloat = 66
+    static let minimizedComposeGap: CGFloat = 0
 
     /// Compose stack: same-size discs, bottom-aligned, back layers lift upward so
     /// only top crescents peek (Figma). Depth 0 = front. Peek ≈ 6% of diameter

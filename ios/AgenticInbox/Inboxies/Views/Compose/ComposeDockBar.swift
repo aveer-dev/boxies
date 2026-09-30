@@ -31,8 +31,8 @@ struct ComposeDockBar: View {
                 .background(AppTheme.surface)
                 .clipShape(
                     UnevenRoundedRectangle(
-                        topLeadingRadius: 18,
-                        topTrailingRadius: 18,
+                        topLeadingRadius: 36,
+                        topTrailingRadius: 36,
                         style: .continuous
                     )
                 )

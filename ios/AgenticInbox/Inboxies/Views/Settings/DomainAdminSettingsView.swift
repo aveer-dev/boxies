@@ -14,13 +14,9 @@ struct DomainAdminSettingsView: View {
     @State private var rows: [AdminMailboxRow] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
-    @State private var assigningId: String?
-    @State private var deletingId: String?
     @State private var showCreate = false
-    @State private var inviteForId: String?
     @State private var lastInviteUrl: String?
     @State private var statusMessage: String?
-    @State private var pendingDeleteId: String?
 
     var body: some View {
         Group {
@@ -75,29 +71,37 @@ struct DomainAdminSettingsView: View {
                                 .foregroundStyle(AppTheme.muted)
                         }
                         ForEach(rows) { row in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(row.email)
-                                    .font(.inter(size: 15, weight: .medium))
-                                    .foregroundStyle(AppTheme.ink)
-                                Text(row.claimed == true ? "Claimed · \(row.name)" : "Unclaimed · \(row.name)")
-                                    .font(.inter(size: 12))
-                                    .foregroundStyle(AppTheme.muted)
-                                HStack(spacing: 16) {
-                                    Button("Assign to me") {
-                                        Task { await assignSelf(row.id) }
+                            NavigationLink {
+                                DomainAdminMailboxDetailView(
+                                    mailbox: row,
+                                    previewRows: previewRows,
+                                    onAssigned: {
+                                        Task { await reload() }
+                                        onAssigned?()
+                                    },
+                                    onMailboxUpdated: { updated in
+                                        if let idx = rows.firstIndex(where: { $0.id == updated.id }) {
+                                            rows[idx] = updated
+                                        }
+                                    },
+                                    onMailboxDeleted: { deletedId in
+                                        rows.removeAll { $0.id == deletedId }
+                                        if app.selectedMailboxId == deletedId {
+                                            Task { await app.refreshMailboxes(showLoading: true) }
+                                        }
                                     }
-                                    .disabled(assigningId != nil)
-                                    Button("Invite") {
-                                        inviteForId = row.id
-                                    }
-									Button("Delete", role: .destructive) {
-										pendingDeleteId = row.id
-									}
-									.disabled(deletingId != nil)
+                                )
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(row.email)
+                                        .font(.inter(size: 15, weight: .medium))
+                                        .foregroundStyle(AppTheme.ink)
+                                    Text(row.claimed == true ? "Claimed · \(row.name)" : "Unclaimed · \(row.name)")
+                                        .font(.inter(size: 12))
+                                        .foregroundStyle(AppTheme.muted)
                                 }
-                                .font(.inter(size: 14, weight: .medium))
+                                .padding(.vertical, 4)
                             }
-                            .padding(.vertical, 4)
                         }
                     }
                 }
@@ -108,17 +112,17 @@ struct DomainAdminSettingsView: View {
         .background(AppTheme.background)
         .navigationTitle("Admin")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarRole(.editor)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
-            if showsDismiss {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.inter(size: 14, weight: .semibold))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(width: 32, height: 32)
-                    }
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.inter(size: 14, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 32, height: 32)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -131,28 +135,6 @@ struct DomainAdminSettingsView: View {
             }
         }
         .task { await reload() }
-        .confirmationDialog(
-            "Delete mailbox?",
-            isPresented: Binding(
-                get: { pendingDeleteId != nil },
-                set: { if !$0 { pendingDeleteId = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                if let id = pendingDeleteId {
-                    pendingDeleteId = nil
-                    Task { await deleteMailbox(id) }
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                pendingDeleteId = nil
-            }
-        } message: {
-            if let id = pendingDeleteId {
-                Text("Delete \(id)? This cannot be undone.")
-            }
-        }
         .sheet(isPresented: $showCreate) {
             NavigationStack {
                 DomainAdminCreateView { url in
@@ -162,17 +144,6 @@ struct DomainAdminSettingsView: View {
                 }
             }
             .environment(app)
-        }
-        .sheet(item: Binding(
-            get: { inviteForId.map { InviteTarget(id: $0) } },
-            set: { inviteForId = $0?.id }
-        )) { target in
-            NavigationStack {
-                DomainAdminInviteView(mailboxId: target.id) { url in
-                    lastInviteUrl = url
-                    statusMessage = "Invite ready"
-                }
-            }
         }
     }
 
@@ -191,40 +162,281 @@ struct DomainAdminSettingsView: View {
         }
         isLoading = false
     }
+}
 
-    private func assignSelf(_ mailboxId: String) async {
-        assigningId = mailboxId
-        defer { assigningId = nil }
-        do {
-            _ = try await APIClient.shared.assignAdminMailboxToSelf(mailboxId: mailboxId)
-            await app.refreshMailboxes(showLoading: true)
-            statusMessage = "Assigned to you"
-            onAssigned?()
-            await reload()
-        } catch {
-            errorMessage = error.localizedDescription
+/// Extracts valid user email addresses from ACL keys, filtering out OAuth/auth methods, sub:, user:, account: identifiers.
+func userEmailsFromAcl(_ keys: [String]?) -> [String] {
+    guard let keys else { return [] }
+    var emails: [String] = []
+    for key in keys {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = trimmed.lowercased()
+        if lower.hasPrefix("email:") {
+            let email = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+            if email.contains("@") && !emails.contains(where: { $0.caseInsensitiveCompare(email) == .orderedSame }) {
+                emails.append(email)
+            }
+        } else if !lower.hasPrefix("sub:")
+            && !lower.hasPrefix("user:")
+            && !lower.hasPrefix("account:")
+            && trimmed.contains("@") {
+            if !emails.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) {
+                emails.append(trimmed)
+            }
+        }
+    }
+    return emails
+}
+
+/// Subpage for an individual domain mailbox displaying details and actions.
+struct DomainAdminMailboxDetailView: View {
+    @Environment(AppModel.self) private var app
+    @Environment(AuthStore.self) private var auth
+    @Environment(\.dismiss) private var dismiss
+
+    @State var mailbox: AdminMailboxRow
+    var previewRows: [AdminMailboxRow]? = nil
+    var onAssigned: (() -> Void)? = nil
+    var onMailboxUpdated: ((AdminMailboxRow) -> Void)? = nil
+    var onMailboxDeleted: ((String) -> Void)? = nil
+
+    @State private var isAssigning = false
+    @State private var isDeleting = false
+    @State private var errorMessage: String?
+    @State private var statusMessage: String?
+    @State private var lastInviteUrl: String?
+    @State private var showInviteSheet = false
+    @State private var showDeleteConfirm = false
+
+    private var isAssignedToCurrentUser: Bool {
+        if app.mailboxes.contains(where: {
+            $0.id == mailbox.id || $0.email.caseInsensitiveCompare(mailbox.email) == .orderedSame
+        }) {
+            return true
+        }
+
+        if let userEmail = auth.userEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+           !userEmail.isEmpty {
+            if mailbox.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == userEmail {
+                return true
+            }
+            let owners = userEmailsFromAcl(mailbox.acl?.owners).map { $0.lowercased() }
+            if owners.contains(userEmail) {
+                return true
+            }
+            let members = userEmailsFromAcl(mailbox.acl?.members).map { $0.lowercased() }
+            if members.contains(userEmail) {
+                return true
+            }
+        }
+        return false
+    }
+
+    var body: some View {
+        List {
+            // Status / feedback messages
+            if let errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .font(.inter(size: SettingsFormChrome.footerFontSize))
+                        .foregroundStyle(AppTheme.deepDarkRed)
+                        .listRowBackground(Color.clear)
+                }
+            }
+            if let statusMessage {
+                Section {
+                    Text(statusMessage)
+                        .font(.inter(size: SettingsFormChrome.footerFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                        .listRowBackground(Color.clear)
+                }
+            }
+
+            // Invite link (shown after inviting)
+            if let lastInviteUrl {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(lastInviteUrl)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(AppTheme.muted)
+                            .textSelection(.enabled)
+                        Button("Copy link") {
+                            UIPasteboard.general.string = lastInviteUrl
+                            statusMessage = "Invite link copied"
+                        }
+                        .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Text("Invite link")
+                }
+            }
+
+            // Mailbox details
+            Section {
+                infoRow(title: "Address", value: mailbox.email)
+                infoRow(title: "Display name", value: mailbox.name)
+                infoRow(title: "Status", value: mailbox.claimed == true ? "Claimed" : "Unclaimed")
+                let owners = userEmailsFromAcl(mailbox.acl?.owners)
+                infoRow(title: "Owners", value: owners.isEmpty ? "None" : owners.joined(separator: ", "), singleLine: true)
+                let members = userEmailsFromAcl(mailbox.acl?.members)
+                if !members.isEmpty {
+                    infoRow(title: "Members", value: members.joined(separator: ", "), singleLine: true)
+                }
+            } header: {
+                Text("Details")
+            }
+
+        }
+        .settingsFormListStyle()
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 10) {
+                if !isAssignedToCurrentUser {
+                    Button {
+                        Task { await assignSelf() }
+                    } label: {
+                        Group {
+                            if isAssigning {
+                                ProgressView()
+                            } else {
+                                Label("Assign to me", systemImage: "person.badge.plus")
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(AppTheme.accent)
+                    .disabled(isAssigning || isDeleting)
+                }
+
+                Button {
+                    showInviteSheet = true
+                } label: {
+                    Label("Invite someone", systemImage: "envelope.badge")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .tint(AppTheme.accent)
+                .disabled(isAssigning || isDeleting)
+
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    Group {
+                        if isDeleting {
+                            ProgressView()
+                        } else {
+                            Label("Delete mailbox", systemImage: "trash")
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .tint(.red)
+                .disabled(isAssigning || isDeleting)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
+            .background(AppTheme.background)
+        }
+
+        .navigationTitle(mailbox.email)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarRole(.editor)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.inter(size: 14, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 32, height: 32)
+                }
+            }
+        }
+        .confirmationDialog(
+            "Delete mailbox?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                Task { await deleteMailbox() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Delete \(mailbox.email)? This cannot be undone.")
+        }
+        .sheet(isPresented: $showInviteSheet) {
+            NavigationStack {
+                DomainAdminInviteView(mailboxId: mailbox.id) { url in
+                    lastInviteUrl = url
+                    statusMessage = "Invite ready"
+                }
+            }
         }
     }
 
-    private func deleteMailbox(_ mailboxId: String) async {
-        deletingId = mailboxId
-        defer { deletingId = nil }
+    private func infoRow(title: String, value: String, singleLine: Bool = false) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.inter(size: SettingsFormChrome.rowFontSize))
+                .foregroundStyle(AppTheme.ink)
+                .layoutPriority(1)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.inter(size: SettingsFormChrome.rowFontSize))
+                .foregroundStyle(AppTheme.muted)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(singleLine ? 1 : nil)
+                .truncationMode(.tail)
+        }
+    }
+
+    private func assignSelf() async {
+        isAssigning = true
+        defer { isAssigning = false }
+        errorMessage = nil
         do {
-            try await APIClient.shared.deleteAdminMailbox(mailboxId: mailboxId)
-            if app.selectedMailboxId == mailboxId {
+            if previewRows == nil {
+                _ = try await APIClient.shared.assignAdminMailboxToSelf(mailboxId: mailbox.id)
                 await app.refreshMailboxes(showLoading: true)
             }
-            statusMessage = "Mailbox deleted"
-            await reload()
+            statusMessage = "Assigned to you"
+            mailbox.claimed = true
+            onMailboxUpdated?(mailbox)
+            onAssigned?()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteMailbox() async {
+        isDeleting = true
+        defer { isDeleting = false }
+        errorMessage = nil
+        do {
+            if previewRows == nil {
+                try await APIClient.shared.deleteAdminMailbox(mailboxId: mailbox.id)
+                if app.selectedMailboxId == mailbox.id {
+                    await app.refreshMailboxes(showLoading: true)
+                }
+            }
+            onMailboxDeleted?(mailbox.id)
+            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 }
 
-private struct InviteTarget: Identifiable {
-    let id: String
-}
+
 
 private struct DomainAdminCreateView: View {
     @Environment(\.dismiss) private var dismiss

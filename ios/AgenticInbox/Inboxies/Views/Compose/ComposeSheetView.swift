@@ -10,8 +10,6 @@ struct ComposeSheetView: View {
     var session: ComposeSession
 
     @State private var recipientFocus: Field?
-    @State private var viewportHeight: CGFloat = 0
-    @State private var headerHeight: CGFloat = 0
     @State private var showQuotedOriginal = false
     @State private var showFormatSheet = false
     @State private var showAttachMenu = false
@@ -35,33 +33,21 @@ struct ComposeSheetView: View {
         return form.fromEmail
     }
 
+    private var editorMinHeight: CGFloat {
+        max(280, UIScreen.main.bounds.height * 0.45)
+    }
+
     var body: some View {
         NavigationStack {
-            // Single page scroll: header + growing body. The rich UITextView must
-            // not scroll itself (isScrollEnabled = false) or the form collapses to
-            // title-only; sizeThatFits reports content height into this ScrollView.
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         composeHeader
                             .fixedSize(horizontal: false, vertical: true)
-                            .onGeometryChange(for: CGFloat.self) { proxy in
-                                proxy.size.height
-                            } action: { headerHeight = $0 }
 
-                        bodyEditor
-                            .frame(minHeight: editorMinHeight, alignment: .top)
+                        bodyEditor(minHeight: editorMinHeight)
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-                .onGeometryChange(for: CGFloat.self) { proxy in
-                    proxy.size.height
-                } action: { height in
-                    // Ignore zero during zoom / cover insertion — keep last good
-                    // or provisional height so the form does not collapse to title-only.
-                    if height > 1 {
-                        viewportHeight = height
-                    }
                 }
 
                 if let error = form.errorMessage ?? (form.exceedsOutboundLimit ? OutboundLimits.sizeError : nil) {
@@ -110,14 +96,7 @@ struct ComposeSheetView: View {
             .navigationTitle(form.displayTitle)
             .navigationBarTitleDisplayMode(.large)
             .onAppear {
-                // Cover zoom + ExtraTopSafeAreaInset can lay out once with a zero
-                // viewport; force a second pass so fields+body appear immediately.
-                DispatchQueue.main.async {
-                    richText.textView?.invalidateIntrinsicContentSize()
-                    if viewportHeight <= 1 {
-                        viewportHeight = provisionalViewportHeight
-                    }
-                }
+                richText.textView?.invalidateIntrinsicContentSize()
             }
             .onChange(of: focusedField) { _, new in
                 if new == .subject || new == .body {
@@ -254,16 +233,6 @@ struct ComposeSheetView: View {
         }
     }
 
-    private var provisionalViewportHeight: CGFloat {
-        // ~55% of screen roughly matches the scroll viewport under large title + chrome.
-        max(280, UIScreen.main.bounds.height * 0.55)
-    }
-
-    private var editorMinHeight: CGFloat {
-        let viewport = viewportHeight > 1 ? viewportHeight : provisionalViewportHeight
-        let header = headerHeight > 0 ? headerHeight : 160
-        return max(200, viewport - header)
-    }
 
     private var composeHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -403,16 +372,16 @@ struct ComposeSheetView: View {
         .padding(.vertical, 12)
     }
 
-    private var bodyEditor: some View {
+    private func bodyEditor(minHeight: CGFloat) -> some View {
         ComposeRichTextEditor(
             html: Binding(
                 get: { form.body },
                 set: { form.body = $0 }
             ),
             session: richText,
-            minHeight: editorMinHeight
+            minHeight: minHeight
         )
-        .frame(minHeight: editorMinHeight, alignment: .top)
+        .frame(minHeight: minHeight, alignment: .top)
         .padding(.horizontal, 4)
     }
 

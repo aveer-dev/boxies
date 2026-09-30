@@ -180,7 +180,7 @@ enum PreviewSupport {
             id: "you@inboxies.email",
             email: "you@inboxies.email",
             name: "Alex Rivera",
-            acl: MailboxAcl(owners: ["email:admin@example.com"], members: []),
+            acl: MailboxAcl(owners: ["email:admin@example.com", "sub:google-oauth2|1029384756"], members: []),
             claimed: true,
             fromName: "Alex Rivera"
         ),
@@ -188,7 +188,14 @@ enum PreviewSupport {
             id: "ops@inboxies.email",
             email: "ops@inboxies.email",
             name: "Ops",
-            acl: MailboxAcl(owners: ["email:admin@example.com"], members: []),
+            acl: MailboxAcl(
+                owners: [
+                    "email:ops-lead@inboxies.email",
+                    "email:dev-operations-infrastructure@inboxies.email",
+                    "sub:github|998877"
+                ],
+                members: []
+            ),
             claimed: true,
             fromName: "Ops"
         ),
@@ -227,6 +234,10 @@ struct PreviewMailboxRoot: View {
                 if ProcessInfo.processInfo.arguments.contains("-previewCompose") {
                     try? await Task.sleep(nanoseconds: 400_000_000)
                     await app.startCompose(mode: .new)
+                } else if ProcessInfo.processInfo.arguments.contains("-previewComposeMinimized") {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    await app.startCompose(mode: .new)
+                    app.minimizeCompose()
                 }
             }
     }
@@ -248,6 +259,20 @@ struct PreviewAdminAuthRoot: View {
             } else if args.contains("-previewSignInMethods") {
                 NavigationStack {
                     SignInMethodsPreview()
+                }
+            } else if args.contains("-previewDomainAdminDetail") {
+                NavigationStack {
+                    DomainAdminMailboxDetailView(
+                        mailbox: PreviewSupport.adminRows[0],
+                        previewRows: PreviewSupport.adminRows
+                    )
+                }
+            } else if args.contains("-previewDomainAdminDetailUnassigned") {
+                NavigationStack {
+                    DomainAdminMailboxDetailView(
+                        mailbox: PreviewSupport.adminRows[1],
+                        previewRows: PreviewSupport.adminRows
+                    )
                 }
             } else {
                 NavigationStack {

@@ -39,7 +39,7 @@ object HomeChromeMetrics {
     val chromeBottomPadding: Dp = 20.dp
     val chromeCornerRadius: Dp = 50.dp
     val minimizedComposeHeight: Dp = 88.dp
-    val minimizedComposeGap: Dp = 18.dp
+    val minimizedComposeGap: Dp = 10.dp
     val mailboxAvatarSize: Dp = 48.dp
     val bottomBarHorizontalPadding: Dp = 24.dp
     val selectionBarHeight: Dp = 58.dp

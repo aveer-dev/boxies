@@ -77,3 +77,28 @@ final class DeliveryStatusTests: XCTestCase {
         XCTAssertEqual(DeliveryStatusHelpers.label(for: "accepted"), "Sent")
     }
 }
+
+final class UserEmailsFromAclTests: XCTestCase {
+    func testFiltersOutSubAndAccountAndUserKeys() {
+        let keys = [
+            "email:admin@example.com",
+            "sub:google-oauth2|1029384756",
+            "user:uuid-1234",
+            "account:acc-5678",
+            "direct@inboxies.email",
+            "invalid_no_at_sign",
+        ]
+        let extracted = userEmailsFromAcl(keys)
+        XCTAssertEqual(extracted, ["admin@example.com", "direct@inboxies.email"])
+    }
+
+    func testHandlesNilAndEmpty() {
+        XCTAssertEqual(userEmailsFromAcl(nil), [])
+        XCTAssertEqual(userEmailsFromAcl([]), [])
+    }
+
+    func testDeduplicatesCaseInsensitively() {
+        let keys = ["email:Admin@example.com", "email:admin@example.com"]
+        XCTAssertEqual(userEmailsFromAcl(keys), ["Admin@example.com"])
+    }
+}

@@ -23,7 +23,6 @@ struct HomeShellView: View {
     @FocusState private var isNameFocused: Bool
     @AppStorage("app_theme") private var appTheme: ThemeMode = .system
     @Namespace private var barNamespace
-    @State private var composeMorphsFromBar = false
     @State private var showComposeSheet = false
     @State private var showComposeActions = false
     @State private var isClosingComposeActions = false
@@ -36,7 +35,6 @@ struct HomeShellView: View {
     @State private var composeDoubleTapArmed = false
 
     static let askAITransitionID = "ai-chat-button"
-    static let composeTransitionID = "compose-button"
 
     private let folderTabs: [HomeTab] = [
         .aiInbox,
@@ -71,8 +69,7 @@ struct HomeShellView: View {
             .sheet(item: selectedEmailItem) { _ in
                 EmailDetailView()
             }
-            .fullScreenCover(isPresented: $showComposeSheet, onDismiss: {
-                composeMorphsFromBar = false
+            .sheet(isPresented: $showComposeSheet, onDismiss: {
                 if app.composeSession?.isExpanded == true {
                     app.minimizeCompose()
                 }
@@ -245,16 +242,8 @@ struct HomeShellView: View {
     private var expandedComposeSheet: some View {
         if let session = app.composeSession {
             ComposeSheetView(session: session)
-                // Drag-to-dismiss docks (minimizes) via fullScreenCover onDismiss —
-                // same as the system sheet swipe before the zoom cover migration.
-                .modifier(CoverDragDismiss(onDismiss: {
-                    showComposeSheet = false
-                }))
-                .modifier(BarSheetZoom(
-                    enabled: composeMorphsFromBar,
-                    id: Self.composeTransitionID,
-                    namespace: barNamespace
-                ))
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
                 .presentationBackground(AppTheme.background)
         }
     }
@@ -308,7 +297,10 @@ struct HomeShellView: View {
                 } else {
                     bottomBar
                         .padding(.horizontal, 24)
-                        .padding(.bottom, HomeChromeMetrics.chromeBottomPadding)
+                        .padding(
+                            .bottom,
+                            hasMinimizedCompose ? HomeChromeMetrics.minimizedComposeGap : HomeChromeMetrics.chromeBottomPadding
+                        )
                 }
             }
 
@@ -684,8 +676,6 @@ struct HomeShellView: View {
             .accessibilityLabel("Compose menu")
             .accessibilityHint("Tap for folders and actions. Double tap or press briefly to compose.")
             .accessibilityAddTraits(.isButton)
-            .modifier(BarZoomSource(id: Self.composeTransitionID, namespace: barNamespace))
-            .modifier(BarZoomSourceHidden(hidden: showComposeSheet && composeMorphsFromBar))
             .opacity(showComposeActions && !isClosingComposeActions ? 0 : 1)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showComposeActions && !isClosingComposeActions)
             .allowsHitTesting(!showComposeActions)
@@ -775,7 +765,6 @@ struct HomeShellView: View {
     }
 
     private func startComposeFromBar() {
-        composeMorphsFromBar = true
         Task { await app.startCompose(mode: .new) }
     }
 

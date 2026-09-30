@@ -81,7 +81,7 @@ fun SignInView(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.linearGradient(listOf(Color(0xFFF5F7FC), Color(0xFFEBEFF6))))
+            .background(colors.background)
             .statusBarsPadding()
             .imePadding(),
     ) {

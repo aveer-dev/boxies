@@ -94,6 +94,7 @@ Monospace only for code blocks and the API URL field.
 | `chromeCornerRadius` | **50** (pill glass bars) |
 | `tabLabelPointSize` | 10 |
 | `minimizedComposeHeight` | 66 |
+| `minimizedComposeGap` | 10 |
 
 Corner radii in the wild: digest cards **18**, compose dock top **18**, chat bubbles/action sheets/toast **14–16**, settings rows/fields **10–12**, tags **6**, skeleton bars **4**.
 
@@ -125,12 +126,12 @@ Home large-title fade: `ProgressiveBlurBackground` (ultraThinMaterial masked to 
 | Home | `NavigationStack`, large title, hidden toolbar background + progressive blur |
 | Folder tabs | Custom chrome on `AppModel.selectedTab` (`HomeTab`). Horizontal swipe between folders. **Not** `TabView`. |
 | Email detail | `.sheet(item:)` with stable id `"email-detail"` so prev/next does not remount |
-| Compose | `.fullScreenCover` when expanded; minimize to `ComposeDockBar` (do not dismiss) |
+| Compose | `.sheet` when expanded; minimize to `ComposeDockBar` on dismiss |
 | Ask AI | `.fullScreenCover` + inner `NavigationStack(path:)` |
 | Search | ZStack opacity swap over home (not a push) |
 | Settings | `.sheet` large detent + `NavigationLink` subpages |
 | Email actions | height-estimated sheet; iOS 18+ `navigationTransition(.zoom)` from detail |
-| Detents | Settings large; add-mailbox medium/large; swipe picker medium; quoted original medium/large; reasoning `.fraction(0.4)` + large |
+| Detents | Settings / compose large; add-mailbox medium/large; swipe picker medium; quoted original medium/large; reasoning `.fraction(0.4)` + large |
 
 Folder order: For you → Inbox → Promotions → Updates → Sent → Drafts → Archive → Spam → Trash.
 

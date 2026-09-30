@@ -52,8 +52,8 @@ struct ComposeFormatState: Equatable {
 @MainActor
 final class ComposeRichTextSession {
     var state = ComposeFormatState()
-    weak var textView: UITextView?
-    var onHTMLChange: ((String) -> Void)?
+    @ObservationIgnored weak var textView: UITextView?
+    @ObservationIgnored var onHTMLChange: ((String) -> Void)?
 
     func applyParagraph(_ style: ComposeParagraphStyle) {
         guard let textView else { return }
@@ -269,18 +269,14 @@ struct ComposeRichTextEditor: UIViewRepresentable {
             context.coordinator.lastHTML = html
         }
         context.coordinator.html = $html
-        if context.coordinator.minHeight != minHeight {
-            context.coordinator.minHeight = minHeight
-            // First cover presentation often lands with a provisional minHeight;
-            // invalidate so sizeThatFits re-runs with the real viewport.
-            uiView.invalidateIntrinsicContentSize()
-        }
+        context.coordinator.minHeight = minHeight
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
-        let width = proposal.width ?? uiView.bounds.width
+        let fallbackWidth = uiView.bounds.width > 0 ? uiView.bounds.width : UIScreen.main.bounds.width
+        let width = proposal.width ?? fallbackWidth
         guard width.isFinite, width > 0 else {
-            return CGSize(width: UIView.noIntrinsicMetric, height: minHeight)
+            return CGSize(width: fallbackWidth, height: minHeight)
         }
         let fitting = uiView.sizeThatFits(
             CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
@@ -322,43 +318,170 @@ struct ComposeRichTextEditor: UIViewRepresentable {
 }
 
 extension ComposeHTML {
+    private struct FormatSpan {
+        var isBold: Bool = false
+        var isItalic: Bool = false
+        var isUnderline: Bool = false
+        var isStrikethrough: Bool = false
+        var fontSize: CGFloat = AppTheme.FontSize.body
+        var color: UIColor = AppTheme.uiInk
+    }
+
     static func attributed(from html: String) -> NSAttributedString {
-        let wrapped: String
-        if html.contains("<") {
-            wrapped = html
-        } else {
-            wrapped = textToHTML(html)
-        }
-        guard let data = wrapped.data(using: .utf8),
-              let parsed = try? NSAttributedString(
-                data: data,
-                options: [
-                    .documentType: NSAttributedString.DocumentType.html,
-                    .characterEncoding: String.Encoding.utf8.rawValue,
-                ],
-                documentAttributes: nil
-              ) else {
+        guard html.contains("<") else {
             return NSAttributedString(
-                string: stripHTML(html),
+                string: html,
                 attributes: [
                     .font: UIFont.inter(size: AppTheme.FontSize.body),
                     .foregroundColor: AppTheme.uiInk,
                 ]
             )
         }
-        let mutable = NSMutableAttributedString(attributedString: parsed)
-        let full = NSRange(location: 0, length: mutable.length)
-        mutable.enumerateAttribute(.font, in: full) { value, range, _ in
-            guard let font = value as? UIFont else { return }
-            let traits = font.fontDescriptor.symbolicTraits
-            let weight: UIFont.Weight = traits.contains(.traitBold) ? .bold : .regular
-            mutable.addAttribute(
-                .font,
-                value: UIFont.inter(size: font.pointSize, weight: weight, italic: traits.contains(.traitItalic)),
-                range: range
-            )
+
+        let result = NSMutableAttributedString()
+        var stack: [FormatSpan] = [FormatSpan()]
+
+        let pattern = "<(/?[a-zA-Z0-9]+)([^>]*)>|([^<]+)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return NSAttributedString(string: stripHTML(html), attributes: [
+                .font: UIFont.inter(size: AppTheme.FontSize.body),
+                .foregroundColor: AppTheme.uiInk,
+            ])
         }
-        return mutable
+
+        let nsHtml = html as NSString
+        let matches = regex.matches(in: html, range: NSRange(location: 0, length: nsHtml.length))
+
+        for match in matches {
+            let tagRange = match.range(at: 1)
+            let attrsRange = match.range(at: 2)
+            let textRange = match.range(at: 3)
+
+            if tagRange.location != NSNotFound {
+                let tag = nsHtml.substring(with: tagRange).lowercased()
+                let rawAttrs = attrsRange.location != NSNotFound ? nsHtml.substring(with: attrsRange) : ""
+
+                if tag == "p" || tag == "div" {
+                    if result.length > 0 && !result.string.hasSuffix("\n") {
+                        result.append(NSAttributedString(string: "\n"))
+                    }
+                } else if tag == "br" || tag == "br/" {
+                    result.append(NSAttributedString(string: "\n"))
+                } else if tag == "li" {
+                    if result.length > 0 && !result.string.hasSuffix("\n") {
+                        result.append(NSAttributedString(string: "\n"))
+                    }
+                    result.append(NSAttributedString(string: "• ", attributes: [
+                        .font: UIFont.inter(size: stack.last?.fontSize ?? AppTheme.FontSize.body),
+                        .foregroundColor: stack.last?.color ?? AppTheme.uiInk,
+                    ]))
+                } else if tag == "b" || tag == "strong" {
+                    var current = stack.last ?? FormatSpan()
+                    current.isBold = true
+                    stack.append(current)
+                } else if tag == "/b" || tag == "/strong" {
+                    if stack.count > 1 { stack.removeLast() }
+                } else if tag == "i" || tag == "em" {
+                    var current = stack.last ?? FormatSpan()
+                    current.isItalic = true
+                    stack.append(current)
+                } else if tag == "/i" || tag == "/em" {
+                    if stack.count > 1 { stack.removeLast() }
+                } else if tag == "u" {
+                    var current = stack.last ?? FormatSpan()
+                    current.isUnderline = true
+                    stack.append(current)
+                } else if tag == "/u" {
+                    if stack.count > 1 { stack.removeLast() }
+                } else if tag == "s" || tag == "strike" || tag == "del" {
+                    var current = stack.last ?? FormatSpan()
+                    current.isStrikethrough = true
+                    stack.append(current)
+                } else if tag == "/s" || tag == "/strike" || tag == "/del" {
+                    if stack.count > 1 { stack.removeLast() }
+                } else if tag == "span" {
+                    var current = stack.last ?? FormatSpan()
+                    parseCSS(rawAttrs, into: &current)
+                    stack.append(current)
+                } else if tag == "/span" {
+                    if stack.count > 1 { stack.removeLast() }
+                }
+            } else if textRange.location != NSNotFound {
+                let rawText = nsHtml.substring(with: textRange)
+                let decoded = decodeHTMLEntities(rawText)
+                if !decoded.isEmpty {
+                    let current = stack.last ?? FormatSpan()
+                    var attrs: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.inter(
+                            size: current.fontSize,
+                            weight: current.isBold ? .bold : .regular,
+                            italic: current.isItalic
+                        ),
+                        .foregroundColor: current.color,
+                    ]
+                    if current.isUnderline {
+                        attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
+                    }
+                    if current.isStrikethrough {
+                        attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+                    }
+                    result.append(NSAttributedString(string: decoded, attributes: attrs))
+                }
+            }
+        }
+
+        return result
+    }
+
+    private static func parseCSS(_ rawAttrs: String, into current: inout FormatSpan) {
+        guard let styleStart = rawAttrs.range(of: "style=\"", options: .caseInsensitive)?.upperBound,
+              let styleEnd = rawAttrs[styleStart...].range(of: "\"")?.lowerBound else {
+            return
+        }
+        let styleContent = String(rawAttrs[styleStart..<styleEnd])
+        let rules = styleContent.split(separator: ";")
+        for rule in rules {
+            let parts = rule.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count == 2 else { continue }
+            let key = parts[0].lowercased()
+            let val = parts[1].lowercased()
+            if key == "font-weight" {
+                current.isBold = val == "bold" || val == "700" || val == "800" || val == "900"
+            } else if key == "font-style" {
+                current.isItalic = val == "italic" || val == "oblique"
+            } else if key == "text-decoration" {
+                if val.contains("underline") { current.isUnderline = true }
+                if val.contains("line-through") { current.isStrikethrough = true }
+            } else if key == "font-size" {
+                if let num = Double(val.replacingOccurrences(of: "px", with: "").trimmingCharacters(in: .whitespaces)) {
+                    current.fontSize = CGFloat(num)
+                }
+            } else if key == "color" {
+                if let uiColor = parseHexColor(val) {
+                    current.color = uiColor
+                }
+            }
+        }
+    }
+
+    private static func parseHexColor(_ hex: String) -> UIColor? {
+        var clean = hex.trimmingCharacters(in: .whitespaces)
+        if clean.hasPrefix("#") { clean.removeFirst() }
+        guard clean.count == 6, let num = UInt64(clean, radix: 16) else { return nil }
+        let r = CGFloat((num >> 16) & 0xFF) / 255.0
+        let g = CGFloat((num >> 8) & 0xFF) / 255.0
+        let b = CGFloat(num & 0xFF) / 255.0
+        return UIColor(red: r, green: g, blue: b, alpha: 1.0)
+    }
+
+    private static func decodeHTMLEntities(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
     }
 
     /// Email-safe HTML with inline styles. Apple's HTML exporter uses <style>
