@@ -177,9 +177,13 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	});
 	assert.equal(claimed.status, 200);
 	assert.equal(claimed.payload.canManage, true);
-	assert.deepEqual(claimed.payload.settings.acl.owners, ["email:ada@inboxies.email"]);
+	assert.equal(claimed.payload.settings.acl.owners.length, 1);
+	assert.ok(
+		claimed.payload.settings.acl.owners[0].startsWith("account:"),
+		"claim persists account-scoped owner",
+	);
 	const persisted = JSON.parse(bucket.store.get(mailboxMetadataKey("ada@inboxies.email")));
-	assert.deepEqual(persisted.acl.owners, ["email:ada@inboxies.email"]);
+	assert.deepEqual(persisted.acl.owners, claimed.payload.settings.acl.owners);
 
 	const secret = await jsonRequest(apiApp, env, {
 		path: "/api/v1/mailboxes/secret@inboxies.email",
@@ -219,12 +223,25 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	assert.equal(created.status, 201);
 	assert.equal(created.payload.id, "team@inboxies.email");
 	assert.equal(created.payload.canManage, true);
-	assert.ok(created.payload.settings.acl.owners.includes("email:ada@inboxies.email"));
-	assert.ok(created.payload.settings.acl.owners.includes("sub:ada-sub"));
+	assert.equal(created.payload.settings.acl.owners.length, 1);
+	assert.ok(
+		created.payload.settings.acl.owners[0].startsWith("account:"),
+		"create stamps account-scoped owner only",
+	);
 	assert.equal(
 		created.payload.settings.acl.owners.includes("email:eve@inboxies.email"),
 		false,
 		"create ignores caller-supplied owners",
+	);
+	assert.equal(
+		created.payload.settings.acl.owners.includes("email:ada@inboxies.email"),
+		false,
+		"create does not stamp method email: rows",
+	);
+	assert.equal(
+		created.payload.settings.acl.owners.includes("sub:ada-sub"),
+		false,
+		"create does not stamp method sub: rows",
 	);
 
 	const second = await jsonRequest(apiApp, env, {

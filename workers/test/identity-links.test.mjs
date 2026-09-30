@@ -150,7 +150,7 @@ function mockBucket(initial = {}) {
 	);
 }
 
-// ── assign-to-me identity: reverse-linked Apple sub stamped on owners ─
+// ── assign / create: account-scoped owner keys (not method swarm) ─
 
 {
 	const bucket = mockBucket();
@@ -164,11 +164,35 @@ function mockBucket(initial = {}) {
 		sub: "access-sub",
 	});
 	const keys = await ownerKeysForAssign(bucket, access);
-	assert.ok(keys.includes("email:admin@example.com"));
-	assert.ok(keys.includes("sub:access-sub"));
-	assert.ok(keys.includes("sub:apple.sub.4"));
+	assert.equal(keys.length, 1);
+	assert.ok(keys[0].startsWith("account:"));
+	assert.equal(keys.includes("email:admin@example.com"), false);
+	assert.equal(keys.includes("sub:access-sub"), false);
+	assert.equal(keys.includes("sub:apple.sub.4"), false);
 	const acl = aclFromOwnerKeys(keys);
-	assert.ok(acl.owners.includes("sub:apple.sub.4"));
+	assert.deepEqual(acl.owners, keys);
+
+	// Access session expanded with account can manage; Apple on same account too.
+	const expandedAccess = await expandPrincipalWithLinks(bucket, access);
+	assert.ok(expandedAccess.linkedAccountIds?.includes(keys[0].slice("account:".length)));
+	assert.equal(
+		canAccessMailbox({ acl }, expandedAccess, "ops@inboxies.email"),
+		true,
+	);
+	const apple = principalFromClaims({ sub: "apple.sub.4" });
+	const expandedApple = await expandPrincipalWithLinks(bucket, apple);
+	assert.equal(
+		canAccessMailbox({ acl }, expandedApple, "ops@inboxies.email"),
+		true,
+		"linked Apple session sees account-owned mailbox",
+	);
+	const stranger = principalFromClaims({ sub: "apple.unrelated" });
+	const expandedStranger = await expandPrincipalWithLinks(bucket, stranger);
+	assert.equal(
+		canAccessMailbox({ acl }, expandedStranger, "ops@inboxies.email"),
+		false,
+		"raw Apple sub without account link does not get access",
+	);
 }
 
 // ── auto-link only when email is Domain Admin ─────────────────────
@@ -561,6 +585,78 @@ function mockBucket(initial = {}) {
 	assert.ok(user);
 	assert.equal(user.passwordHash, "legacy-hash");
 	assert.ok(bucket.store.has(`platform/identity/passwords/${userId}.json`));
+}
+
+// ── Access-owned mailbox → link Apple → Apple session sees same ACL ─
+
+{
+	const bucket = mockBucket();
+	const access = principalFromClaims({
+		email: "owner@example.com",
+		sub: "access.owner.1",
+	});
+	const ownerKeys = await ownerKeysForAssign(bucket, access);
+	assert.equal(ownerKeys.length, 1);
+	assert.ok(ownerKeys[0].startsWith("account:"));
+	const accountId = ownerKeys[0].slice("account:".length);
+
+	await bucket.put(
+		mailboxMetadataKey("box@inboxies.email"),
+		JSON.stringify({
+			fromName: "Box",
+			acl: aclFromOwnerKeys(ownerKeys),
+		}),
+	);
+
+	// Unlinked Apple cannot see the mailbox.
+	const strangerApple = principalFromClaims({ sub: "apple.stranger" });
+	const strangerList = await filterMailboxesForPrincipal(
+		bucket,
+		[{ id: "box@inboxies.email", email: "box@inboxies.email" }],
+		strangerApple,
+	);
+	assert.deepEqual(strangerList, []);
+
+	// Link Apple into the Access account.
+	await attachIdpToSessionAccount(bucket, access, {
+		sub: "apple.owner.1",
+		provider: "apple",
+		emails: ["relay@privaterelay.appleid.com"],
+	});
+
+	const apple = principalFromClaims({ sub: "apple.owner.1" });
+	const expandedApple = await expandPrincipalWithLinks(bucket, apple);
+	assert.ok(expandedApple.linkedAccountIds?.includes(accountId));
+	assert.ok(principalKeys(expandedApple).includes(`account:${accountId}`));
+	assert.equal(
+		canAccessMailbox(
+			{ acl: aclFromOwnerKeys(ownerKeys) },
+			expandedApple,
+			"box@inboxies.email",
+		),
+		true,
+	);
+
+	const appleList = await filterMailboxesForPrincipal(
+		bucket,
+		[{ id: "box@inboxies.email", email: "box@inboxies.email" }],
+		apple,
+	);
+	assert.deepEqual(
+		appleList.map((m) => m.id),
+		["box@inboxies.email"],
+	);
+
+	// ACL blob stayed account-only (no Apple sub / relay email rows).
+	const persisted = JSON.parse(
+		bucket.store.get(mailboxMetadataKey("box@inboxies.email")),
+	);
+	assert.deepEqual(persisted.acl.owners, [`account:${accountId}`]);
+	assert.equal(persisted.acl.owners.includes("sub:apple.owner.1"), false);
+	assert.equal(
+		persisted.acl.owners.includes("email:relay@privaterelay.appleid.com"),
+		false,
+	);
 }
 
 console.log("identity-links: ok");

@@ -550,7 +550,7 @@ export async function mergeIdentityAccounts(
 
 /**
  * Keep by-sub / by-email indexes in sync so expandPrincipalWithLinks and
- * ownerKeysForAssign stay fast without a full account scan. Dual-writes the
+ * account resolution stay fast without a full account scan. Dual-writes the
  * legacy identity-links paths during the migration window.
  */
 async function syncLegacyIndexesFromAccount(
@@ -701,6 +701,8 @@ function applyAccountToPrincipal(
 	const linkedEmails = new Set(principal.linkedEmails ?? []);
 	const linkedUserIds = new Set(principal.linkedUserIds ?? []);
 	const linkedSubs = new Set(principal.linkedSubs ?? []);
+	const linkedAccountIds = new Set(principal.linkedAccountIds ?? []);
+	linkedAccountIds.add(account.id);
 
 	for (const key of account.principals) {
 		if (key.startsWith("email:")) {
@@ -724,6 +726,7 @@ function applyAccountToPrincipal(
 		linkedEmails: [...linkedEmails],
 		linkedUserIds: [...linkedUserIds],
 		linkedSubs: [...linkedSubs],
+		linkedAccountIds: [...linkedAccountIds],
 	};
 }
 
@@ -771,22 +774,70 @@ export function emailsForPrincipal(principal: RequestPrincipal): string[] {
 }
 
 /**
- * Owner keys for assign-to-me / create: session keys plus reverse-linked
- * IdP subs for each email (so web Access assign also stamps Apple `sub:`).
+ * Ensure a durable identity account for the session and expand the principal
+ * with `linkedAccountIds` so account-scoped ACL keys match.
+ */
+export async function ensurePrincipalAccount(
+	bucket: R2Bucket,
+	principal: RequestPrincipal,
+	opts?: { extraPrincipals?: string[] },
+): Promise<{
+	account: IdentityAccount;
+	principal: RequestPrincipal;
+	ownerKeys: string[];
+}> {
+	const account = await ensureIdentityAccount(bucket, principal, opts);
+	const expanded = applyAccountToPrincipal(principal, account);
+	return {
+		account,
+		principal: expanded,
+		ownerKeys: [`account:${account.id}`],
+	};
+}
+
+/**
+ * Owner keys for assign-to-me / create / claim: the durable identity account
+ * id only. Sign-in methods live on the account document — not as parallel
+ * mailbox ACL rows.
  */
 export async function ownerKeysForAssign(
 	bucket: R2Bucket,
 	principal: RequestPrincipal,
 ): Promise<string[]> {
-	const expanded = await expandPrincipalWithLinks(bucket, principal);
-	const keys = new Set(principalKeys(expanded));
-	for (const email of emailsForPrincipal(expanded)) {
-		const subs = await loadSubsForEmail(bucket, email);
-		for (const sub of subs) {
-			if (sub.trim()) keys.add(`sub:${sub.trim()}`);
+	const { ownerKeys } = await ensurePrincipalAccount(bucket, principal);
+	return ownerKeys;
+}
+
+/**
+ * When writing sharing ACL, resolve known method principals (`email:` / `sub:` /
+ * `user:`) to their identity `account:` key. Unknown keys are left as-is so
+ * provisional shares still work until the person links / accepts an invite.
+ */
+export async function resolveAclPrincipalsToAccounts(
+	bucket: R2Bucket,
+	acl: { owners: string[]; members: string[] },
+): Promise<{ owners: string[]; members: string[] }> {
+	const resolveList = async (keys: string[]): Promise<string[]> => {
+		const out: string[] = [];
+		const seen = new Set<string>();
+		for (const raw of keys) {
+			const normalized = normalizeAclKey(raw);
+			if (!normalized) continue;
+			let next = normalized;
+			if (!normalized.startsWith("account:")) {
+				const accountId = await findAccountIdByPrincipalKey(bucket, normalized);
+				if (accountId) next = `account:${accountId}`;
+			}
+			if (seen.has(next)) continue;
+			seen.add(next);
+			out.push(next);
 		}
-	}
-	return [...keys];
+		return out;
+	};
+	const owners = await resolveList(acl.owners);
+	const ownerSet = new Set(owners);
+	const members = (await resolveList(acl.members)).filter((k) => !ownerSet.has(k));
+	return { owners, members };
 }
 
 export function createIdentityLinkCode(opts: {

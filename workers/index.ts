@@ -58,7 +58,8 @@ import { isDomainAdmin } from "./lib/domain-admin";
 import {
 	expandPrincipalWithLinks,
 	autoLinkSubIfAdminEmail,
-	ownerKeysForAssign,
+	ensurePrincipalAccount,
+	resolveAclPrincipalsToAccounts,
 } from "./lib/identity-links";
 import {
 	registerAdminAndInviteRoutes,
@@ -294,16 +295,20 @@ app.post("/api/v1/mailboxes", async (c) => {
 		screener: { enabled: true },
 	};
 
+	const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
 	const finalSettings = {
 		...defaultSettings,
 		...settings,
-		acl: aclFromOwnerKeys(await ownerKeysForAssign(c.env.BUCKET, principal)),
+		acl: aclFromOwnerKeys(ensured.ownerKeys),
 	};
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 	await stub.reviveMailbox();
 	await stub.getFolders();
-	return c.json({ ...mailboxAccessPayload(email, finalSettings, principal), name }, 201);
+	return c.json(
+		{ ...mailboxAccessPayload(email, finalSettings, ensured.principal), name },
+		201,
+	);
 });
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
@@ -314,11 +319,7 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 	);
 	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
 	return c.json(
-		mailboxAccessPayload(
-			authz.mailboxId,
-			authz.settings,
-			c.get("principal") as RequestPrincipal | undefined,
-		),
+		mailboxAccessPayload(authz.mailboxId, authz.settings, authz.principal),
 	);
 });
 
@@ -326,13 +327,35 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
 	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
 	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	if (!principal) return c.json({ error: "Forbidden" }, 403);
+	const session = authz.principal;
+	if (!session) return c.json({ error: "Forbidden" }, 403);
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const existing = authz.settings;
 	const merged = mergeMailboxSettingsBlob(existing, settings);
-	const aclResult = applyIncomingAcl(existing, merged, settings, principal);
+	const aclResult = applyIncomingAcl(existing, merged, settings, session);
 	if (!aclResult.ok) return c.json({ error: aclResult.error }, 400);
-	const next = aclResult.settings;
+	let next = aclResult.settings;
+	if (
+		settings &&
+		typeof settings === "object" &&
+		!Array.isArray(settings) &&
+		"acl" in settings &&
+		canManageAcl(existing, session) &&
+		next.acl &&
+		typeof next.acl === "object" &&
+		!Array.isArray(next.acl)
+	) {
+		const aclBlob = next.acl as Record<string, unknown>;
+		const resolved = await resolveAclPrincipalsToAccounts(c.env.BUCKET, {
+			owners: Array.isArray(aclBlob.owners)
+				? aclBlob.owners.filter((k): k is string => typeof k === "string")
+				: [],
+			members: Array.isArray(aclBlob.members)
+				? aclBlob.members.filter((k): k is string => typeof k === "string")
+				: [],
+		});
+		next = { ...next, acl: resolved };
+	}
 	const automationError = automationSettingsError(
 		parseAutomationSettings(next),
 		authz.mailboxId,
@@ -343,14 +366,14 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const screenerError = screenerSettingsError(next);
 	if (screenerError) return c.json({ error: screenerError }, 400);
 	await c.env.BUCKET.put(mailboxMetadataKey(authz.mailboxId), JSON.stringify(next));
-	return c.json(mailboxAccessPayload(authz.mailboxId, next, principal));
+	return c.json(mailboxAccessPayload(authz.mailboxId, next, session));
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
 	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
 	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	if (!canManageAcl(authz.settings, principal)) {
+	if (!canManageAcl(authz.settings, authz.principal)) {
 		return c.json({ error: "Forbidden" }, 403);
 	}
 	const mailboxId = authz.mailboxId;

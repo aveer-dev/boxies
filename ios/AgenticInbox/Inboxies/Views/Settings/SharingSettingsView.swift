@@ -30,11 +30,11 @@ struct SharingSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("People with access. Owners can manage this list. Members can use the mailbox but cannot change who has access.")
+                Text("People with access through their Inboxies account. Owners can manage this list. Members can use the mailbox but cannot change who has access. Sign-in methods do not own the mailbox.")
                     .font(.inter(size: 13))
                     .foregroundStyle(AppTheme.muted)
 
-                Text("Invite by email sends a password setup link. Add person is for someone who already signs in with Access or Apple/Google.")
+                Text("Invite by email sends a password setup link. Add person is for someone who already has an Inboxies account.")
                     .font(.inter(size: 12))
                     .foregroundStyle(AppTheme.muted)
 
@@ -89,7 +89,7 @@ struct SharingSettingsView: View {
 
                 if canManage {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Add person (already has Access)")
+                        Text("Add person (existing account)")
                             .font(.inter(size: 14, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)
 
@@ -314,6 +314,19 @@ struct SharingSettingsView: View {
     static func displayKey(_ key: String) -> String {
         if key.hasPrefix("email:") {
             return String(key.dropFirst("email:".count))
+        }
+        if key.hasPrefix("account:") {
+            let id = String(key.dropFirst("account:".count))
+            let prefix = String(id.prefix(8))
+            return "Account \(prefix)…"
+        }
+        if key.hasPrefix("user:") {
+            let id = String(key.dropFirst("user:".count))
+            return "Password \(String(id.prefix(8)))…"
+        }
+        if key.hasPrefix("sub:") {
+            let id = String(key.dropFirst("sub:".count))
+            return "Sign-in \(String(id.prefix(8)))…"
         }
         return key
     }

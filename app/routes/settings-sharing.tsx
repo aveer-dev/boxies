@@ -14,6 +14,9 @@ import type { MailboxAcl } from "~/types";
 
 function displayAclKey(key: string): string {
 	if (key.startsWith("email:")) return key.slice("email:".length);
+	if (key.startsWith("account:")) return `Account ${key.slice("account:".length).slice(0, 8)}…`;
+	if (key.startsWith("user:")) return `Password ${key.slice("user:".length).slice(0, 8)}…`;
+	if (key.startsWith("sub:")) return `Sign-in ${key.slice("sub:".length).slice(0, 8)}…`;
 	return key;
 }
 
@@ -190,13 +193,15 @@ export default function SharingSettingsRoute() {
 			<div className="space-y-4">
 				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
 					<p className="text-sm text-kumo-default leading-relaxed">
-						People with access. Owners can manage this list. Members can use the
-						mailbox but cannot change who has access.
+						People with access to this mailbox through their Inboxies account.
+						Owners can manage this list. Members can use the mailbox but cannot
+						change who has access. Sign-in methods (Access, Apple, Google,
+						Password) are paths into an account — they do not own the mailbox.
 					</p>
 					<p className="text-xs text-kumo-subtle leading-relaxed">
-						Add someone who already signs in with Access or Apple/Google by
-						email key below. To onboard a new person with a password, use Invite
-						by email.
+						Add someone who already has an Inboxies account by email below (we
+						resolve to their account when known). To onboard a new person with a
+						password, use Invite by email.
 					</p>
 				</div>
 
@@ -312,7 +317,7 @@ export default function SharingSettingsRoute() {
 				{canManage && (
 					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
 						<div className="text-sm font-medium text-kumo-default">
-							Add person (already has Access)
+							Add person (existing account)
 						</div>
 						<Input
 							label="Email"

@@ -33,6 +33,12 @@ export type RequestPrincipal = {
 	 * Other IdP `sub` values on the same identity account (not the session sub).
 	 */
 	linkedSubs?: string[];
+	/**
+	 * Durable identity account ids (without `account:` prefix). Mailbox ACL
+	 * ownership is account-scoped; populated by expandPrincipalWithLinks /
+	 * ensurePrincipalAccount.
+	 */
+	linkedAccountIds?: string[];
 };
 
 export type MailboxAcl = {
@@ -41,7 +47,13 @@ export type MailboxAcl = {
 };
 
 export type AuthorizeMailboxResult =
-	| { ok: true; mailboxId: string; settings: Record<string, unknown> }
+	| {
+			ok: true;
+			mailboxId: string;
+			settings: Record<string, unknown>;
+			/** Session principal after identity expand (and claim ensure). */
+			principal: RequestPrincipal;
+	  }
 	| { ok: false; status: 400 | 403 | 404; error: string };
 
 export type AclWriteResult =
@@ -116,6 +128,11 @@ export function principalKeys(
 		keys.add(`sub:${sub}`);
 		if (sub.startsWith("user:")) keys.add(sub);
 	}
+	for (const accountId of principal.linkedAccountIds ?? []) {
+		const id = accountId.trim();
+		if (!id) continue;
+		keys.add(id.startsWith("account:") ? id : `account:${id}`);
+	}
 	return [...keys];
 }
 
@@ -139,6 +156,12 @@ export function normalizeAclKey(raw: string): string | null {
 		// Opaque password-account id (uuid). Also accept nested `user:user:<uuid>`.
 		if (!id || id.includes(" ")) return null;
 		return id.startsWith("user:") ? id : `user:${id}`;
+	}
+	if (prefix === "account") {
+		const id = rest.trim();
+		// Durable identity account id. Also accept nested `account:account:<uuid>`.
+		if (!id || id.includes(" ")) return null;
+		return id.startsWith("account:") ? id : `account:${id}`;
 	}
 	const email = normalizeEmailAddress(trimmed);
 	return email ? `email:${email}` : null;
@@ -225,22 +248,30 @@ export function canManageAcl(
 
 /**
  * If the mailbox is unclaimed and the principal's email matches the
- * canonical mailbox id, return settings with that principal as sole owner.
- * Otherwise return null (caller should not write).
+ * canonical mailbox id, return settings with `ownerKeys` as sole owners.
+ * Prefer account-scoped keys (`account:{id}`) from ensurePrincipalAccount /
+ * ownerKeysForAssign. Legacy callers that omit ownerKeys fall back to
+ * `email:{mailbox}` (migration / unit tests only).
  */
 export function claimIfUnclaimed(
 	settings: Record<string, unknown>,
 	principal: RequestPrincipal,
 	mailboxId: string,
+	ownerKeys?: string[],
 ): Record<string, unknown> | null {
 	if (!isUnclaimed(settings)) return null;
 	if (!emailMatchesMailbox(principal, mailboxId)) return null;
 	const mailbox = canonicalMailboxId(mailboxId);
 	if (!mailbox) return null;
+	const owners =
+		ownerKeys && ownerKeys.length > 0
+			? uniqueKeys(ownerKeys)
+			: [`email:${mailbox}`];
+	if (owners.length === 0) return null;
 	return {
 		...settings,
 		acl: {
-			owners: [`email:${mailbox}`],
+			owners,
 			members: [] as string[],
 		},
 	};
@@ -330,19 +361,35 @@ export async function authorizeMailbox(
 	if (!principal || principalKeys(principal).length === 0) {
 		return { ok: false, status: 403, error: "Forbidden" };
 	}
+
+	// Expand through durable identity account so account: ACL keys match.
+	const { expandPrincipalWithLinks, ensurePrincipalAccount } = await import(
+		"./identity-links.ts"
+	);
+	let session = await expandPrincipalWithLinks(bucket, principal);
+
 	const settings = await loadMailboxSettingsRaw(bucket, mailboxId);
 	if (settings === null) {
 		return { ok: false, status: 404, error: "Not found" };
 	}
-	if (!canAccessMailbox(settings, principal, mailboxId)) {
+	if (!canAccessMailbox(settings, session, mailboxId)) {
 		return { ok: false, status: 403, error: "Forbidden" };
 	}
-	const claimed = claimIfUnclaimed(settings, principal, mailboxId);
-	if (claimed) {
-		await persistMailboxSettings(bucket, mailboxId, claimed);
-		return { ok: true, mailboxId, settings: claimed };
+	if (isUnclaimed(settings) && emailMatchesMailbox(session, mailboxId)) {
+		const ensured = await ensurePrincipalAccount(bucket, session);
+		session = ensured.principal;
+		const claimed = claimIfUnclaimed(
+			settings,
+			session,
+			mailboxId,
+			ensured.ownerKeys,
+		);
+		if (claimed) {
+			await persistMailboxSettings(bucket, mailboxId, claimed);
+			return { ok: true, mailboxId, settings: claimed, principal: session };
+		}
 	}
-	return { ok: true, mailboxId, settings };
+	return { ok: true, mailboxId, settings, principal: session };
 }
 
 export async function filterMailboxesForPrincipal(
@@ -350,16 +397,28 @@ export async function filterMailboxesForPrincipal(
 	listed: { id: string; email: string }[],
 	principal: RequestPrincipal,
 ): Promise<{ id: string; email: string }[]> {
+	const { expandPrincipalWithLinks, ensurePrincipalAccount } = await import(
+		"./identity-links.ts"
+	);
+	const session = await expandPrincipalWithLinks(bucket, principal);
 	const allowed: { id: string; email: string }[] = [];
 	await Promise.all(
 		listed.map(async (entry) => {
 			const mailboxId = canonicalMailboxId(entry.id) ?? entry.id;
 			const settings = await loadMailboxSettingsRaw(bucket, mailboxId);
 			if (settings === null) return;
-			if (!canAccessMailbox(settings, principal, mailboxId)) return;
-			const claimed = claimIfUnclaimed(settings, principal, mailboxId);
-			if (claimed) {
-				await persistMailboxSettings(bucket, mailboxId, claimed);
+			if (!canAccessMailbox(settings, session, mailboxId)) return;
+			if (isUnclaimed(settings) && emailMatchesMailbox(session, mailboxId)) {
+				const ensured = await ensurePrincipalAccount(bucket, session);
+				const claimed = claimIfUnclaimed(
+					settings,
+					ensured.principal,
+					mailboxId,
+					ensured.ownerKeys,
+				);
+				if (claimed) {
+					await persistMailboxSettings(bucket, mailboxId, claimed);
+				}
 			}
 			allowed.push({ id: mailboxId, email: mailboxId });
 		}),
@@ -368,7 +427,18 @@ export async function filterMailboxesForPrincipal(
 	return allowed;
 }
 
+/**
+ * Legacy helper: stamps method keys. Prefer `aclFromOwnerKeys` with
+ * `ownerKeysForAssign` / `ensurePrincipalAccount` (account-scoped).
+ */
 export function creatorAcl(principal: RequestPrincipal): MailboxAcl {
+	if ((principal.linkedAccountIds ?? []).length > 0) {
+		return aclFromOwnerKeys(
+			(principal.linkedAccountIds ?? []).map((id) =>
+				id.startsWith("account:") ? id : `account:${id}`,
+			),
+		);
+	}
 	const owners: string[] = [];
 	const addEmail = (raw: string) => {
 		const canonical = canonicalMailboxId(raw) ?? raw;

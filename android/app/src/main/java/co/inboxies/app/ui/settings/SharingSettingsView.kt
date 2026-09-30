@@ -135,7 +135,22 @@ fun SharingSettingsView(
     }
 
     fun displayKey(key: String): String =
-        if (key.startsWith("email:")) key.removePrefix("email:") else key
+        when {
+            key.startsWith("email:") -> key.removePrefix("email:")
+            key.startsWith("account:") -> {
+                val id = key.removePrefix("account:")
+                "Account ${id.take(8)}…"
+            }
+            key.startsWith("user:") -> {
+                val id = key.removePrefix("user:")
+                "Password ${id.take(8)}…"
+            }
+            key.startsWith("sub:") -> {
+                val id = key.removePrefix("sub:")
+                "Sign-in ${id.take(8)}…"
+            }
+            else -> key
+        }
 
     fun addPerson() {
         val key = normalizeKey(draft)
@@ -212,13 +227,13 @@ fun SharingSettingsView(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Text(
-                    "People with access. Owners can manage this list. Members can use the mailbox but cannot change who has access.",
+                    "People with access through their Inboxies account. Owners can manage this list. Members can use the mailbox but cannot change who has access. Sign-in methods do not own the mailbox.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
                     color = colors.muted,
                 )
                 Text(
-                    "Invite by email sends a password setup link. Add person is for someone who already signs in with Access or Google.",
+                    "Invite by email sends a password setup link. Add person is for someone who already has an Inboxies account.",
                     fontFamily = InterFontFamily,
                     fontSize = 12.sp,
                     color = colors.muted,
@@ -348,7 +363,7 @@ fun SharingSettingsView(
                     )
 
                     Text(
-                        "Add person (already has Access)",
+                        "Add person (existing account)",
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp,
