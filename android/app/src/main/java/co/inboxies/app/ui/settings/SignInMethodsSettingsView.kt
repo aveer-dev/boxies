@@ -170,7 +170,7 @@ fun SignInMethodsSettingsView(
         }
 
         Text(
-            "Ways you can sign in to this account. Add Google or a password here; every method reaches the same mailboxes.",
+            "Ways you can sign in to this account. Connected shows Access, Apple, Google, or Password — not raw keys. Add Google or a password here; every method reaches the same mailboxes.",
             modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 8.dp),
             fontFamily = InterFontFamily,
             fontSize = 12.sp,

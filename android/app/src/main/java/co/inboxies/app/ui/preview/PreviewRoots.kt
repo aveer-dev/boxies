@@ -221,10 +221,10 @@ fun SignInMethodsPreview() {
             )
             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
                 Text("emmanuel@example.com", fontFamily = InterFontFamily, fontSize = 15.sp, color = colors.ink)
-                Text("Email · this session", fontFamily = InterFontFamily, fontSize = 12.sp, color = colors.muted)
+                Text("Access · this session", fontFamily = InterFontFamily, fontSize = 12.sp, color = colors.muted)
             }
             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
-                Text("Password", fontFamily = InterFontFamily, fontSize = 15.sp, color = colors.ink)
+                Text("Password · emmanuel@example.com", fontFamily = InterFontFamily, fontSize = 15.sp, color = colors.ink)
                 Text("Password", fontFamily = InterFontFamily, fontSize = 12.sp, color = colors.muted)
             }
 

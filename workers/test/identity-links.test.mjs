@@ -426,4 +426,141 @@ function mockBucket(initial = {}) {
 	);
 }
 
+// ── Connected UI: Access email+sub → one Access method (never raw sub) ─
+
+{
+	const bucket = mockBucket();
+	const access = principalFromClaims({
+		email: "emmanuel@example.com",
+		sub: "access-uuid-abc",
+	});
+	const listed = await listIdentitiesForPrincipal(bucket, access);
+	assert.equal(listed.identities.length, 1);
+	assert.equal(listed.identities[0].type, "access");
+	assert.equal(listed.identities[0].label, "emmanuel@example.com");
+	assert.equal(listed.identities[0].current, true);
+	assert.ok(
+		!listed.identities.some((i) => i.type === "sub" || i.type === "email"),
+	);
+
+	// New layout keys written
+	assert.ok(
+		[...bucket.store.keys()].some((k) =>
+			k.startsWith("platform/identity/accounts/"),
+		),
+	);
+	assert.ok(
+		[...bucket.store.keys()].some((k) =>
+			k.startsWith("platform/identity/by-key/"),
+		),
+	);
+	// Legacy dual-write still present during migration window
+	assert.ok(
+		[...bucket.store.keys()].some((k) =>
+			k.startsWith("platform/identity-accounts/"),
+		),
+	);
+}
+
+// ── Access + Apple + Password → three real methods ────────────────
+
+{
+	const bucket = mockBucket();
+	const access = principalFromClaims({
+		email: "eve@example.com",
+		sub: "eve-access-3",
+	});
+	await attachIdpToSessionAccount(bucket, access, {
+		sub: "apple.eve",
+		provider: "apple",
+		emails: ["eve@example.com"],
+	});
+	await attachPasswordToSessionAccount(bucket, access, {
+		passwordHash: "hash-p",
+	});
+	const listed = await listIdentitiesForPrincipal(bucket, access);
+	const types = listed.identities.map((i) => i.type).sort();
+	assert.deepEqual(types, ["access", "apple", "password"]);
+	assert.ok(!listed.identities.some((i) => i.type === "sub"));
+}
+
+// ── Dual-read: legacy account + by-key still expands / lists ──────
+
+{
+	const bucket = mockBucket();
+	const accountId = "legacy-account-1";
+	const emailKey = "email:legacy@example.com";
+	const subKey = "sub:legacy-access";
+	await bucket.put(
+		`platform/identity-accounts/${accountId}.json`,
+		JSON.stringify({
+			id: accountId,
+			principals: [emailKey, subKey],
+			primaryEmail: "legacy@example.com",
+			createdAt: "t0",
+			updatedAt: "t0",
+		}),
+	);
+	await bucket.put(
+		`platform/identity-accounts-by-key/${encodeURIComponent(emailKey)}.json`,
+		JSON.stringify({ accountId }),
+	);
+	await bucket.put(
+		`platform/identity-accounts-by-key/${encodeURIComponent(subKey)}.json`,
+		JSON.stringify({ accountId }),
+	);
+
+	const expanded = await expandPrincipalWithLinks(
+		bucket,
+		principalFromClaims({ sub: "legacy-access" }),
+	);
+	assert.equal(expanded.email, "legacy@example.com");
+
+	const listed = await listIdentitiesForPrincipal(
+		bucket,
+		principalFromClaims({
+			email: "legacy@example.com",
+			sub: "legacy-access",
+		}),
+	);
+	assert.equal(listed.accountId, accountId);
+	assert.equal(listed.identities.length, 1);
+	assert.equal(listed.identities[0].type, "access");
+	// Migrated to new path
+	assert.ok(bucket.store.has(`platform/identity/accounts/${accountId}.json`));
+}
+
+// ── Password credentials dual-read from legacy platform/users ─────
+
+{
+	const bucket = mockBucket();
+	const userId = "legacy-user-1";
+	await bucket.put(
+		`platform/users/${userId}.json`,
+		JSON.stringify({
+			id: userId,
+			contactEmail: "pwd@example.com",
+			mailboxEmail: "pwd@inboxies.email",
+			passwordHash: "legacy-hash",
+			linkedSubs: [],
+			createdAt: "t0",
+			updatedAt: "t0",
+		}),
+	);
+	await bucket.put(
+		`platform/users-by-login/pwd@inboxies.email.json`,
+		JSON.stringify({ userId }),
+	);
+
+	const { findUserIdByLoginEmail, loadPlatformUser } = await import(
+		"../lib/platform-users.ts"
+	);
+	const found = await findUserIdByLoginEmail(bucket, "pwd@inboxies.email");
+	assert.equal(found, userId);
+	const user = await loadPlatformUser(bucket, userId);
+	assert.ok(user);
+	assert.equal(user.passwordHash, "legacy-hash");
+	assert.ok(bucket.store.has(`platform/identity/passwords/${userId}.json`));
+}
+
 console.log("identity-links: ok");

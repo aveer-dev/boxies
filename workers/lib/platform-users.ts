@@ -3,17 +3,33 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Password / linked IdP user records in R2 under platform/users/.
+ * Password credentials in R2 under platform/identity/passwords/.
  * Principal keys: `user:<uuid>` plus optional contact `email:` and IdP `sub:`.
+ *
+ * Layout (current):
+ * - platform/identity/passwords/{userId}.json
+ * - platform/identity/logins/by-email/{email}.json → { userId }
+ * - platform/identity/logins/by-mailbox/{canonical}.json → { userId }
+ *
+ * Legacy (dual-read / dual-write during migration):
+ * - platform/users/{userId}.json
+ * - platform/users-by-email/{email}.json
+ * - platform/users-by-login/{canonical}.json
  */
 
 import { normalizeEmailAddress } from "./mail-automations.ts";
 import { canonicalMailboxId } from "./mailbox-routing.ts";
 import type { RequestPrincipal } from "./mailbox-acl.ts";
 
-export const PLATFORM_USERS_PREFIX = "platform/users/";
-export const PLATFORM_USERS_BY_EMAIL_PREFIX = "platform/users-by-email/";
-export const PLATFORM_USERS_BY_LOGIN_PREFIX = "platform/users-by-login/";
+export const PLATFORM_USERS_PREFIX = "platform/identity/passwords/";
+export const PLATFORM_USERS_BY_EMAIL_PREFIX =
+	"platform/identity/logins/by-email/";
+export const PLATFORM_USERS_BY_LOGIN_PREFIX =
+	"platform/identity/logins/by-mailbox/";
+
+export const LEGACY_PLATFORM_USERS_PREFIX = "platform/users/";
+export const LEGACY_PLATFORM_USERS_BY_EMAIL_PREFIX = "platform/users-by-email/";
+export const LEGACY_PLATFORM_USERS_BY_LOGIN_PREFIX = "platform/users-by-login/";
 
 export type PlatformUser = {
 	id: string;
@@ -36,14 +52,28 @@ export function userR2Key(userId: string): string {
 	return `${PLATFORM_USERS_PREFIX}${userId}.json`;
 }
 
+export function legacyUserR2Key(userId: string): string {
+	return `${LEGACY_PLATFORM_USERS_PREFIX}${userId}.json`;
+}
+
 export function userByEmailKey(email: string): string {
 	const normalized = normalizeEmailAddress(email) ?? email.toLowerCase();
 	return `${PLATFORM_USERS_BY_EMAIL_PREFIX}${normalized}.json`;
 }
 
+export function legacyUserByEmailKey(email: string): string {
+	const normalized = normalizeEmailAddress(email) ?? email.toLowerCase();
+	return `${LEGACY_PLATFORM_USERS_BY_EMAIL_PREFIX}${normalized}.json`;
+}
+
 export function userByLoginKey(loginEmail: string): string {
 	const canonical = canonicalMailboxId(loginEmail) ?? loginEmail.toLowerCase();
 	return `${PLATFORM_USERS_BY_LOGIN_PREFIX}${canonical}.json`;
+}
+
+export function legacyUserByLoginKey(loginEmail: string): string {
+	const canonical = canonicalMailboxId(loginEmail) ?? loginEmail.toLowerCase();
+	return `${LEGACY_PLATFORM_USERS_BY_LOGIN_PREFIX}${canonical}.json`;
 }
 
 export function parsePlatformUser(raw: unknown): PlatformUser | null {
@@ -72,11 +102,11 @@ export function parsePlatformUser(raw: unknown): PlatformUser | null {
 	};
 }
 
-export async function loadPlatformUser(
+async function readUserJson(
 	bucket: R2Bucket,
-	userId: string,
+	key: string,
 ): Promise<PlatformUser | null> {
-	const obj = await bucket.get(userR2Key(userId));
+	const obj = await bucket.get(key);
 	if (!obj) return null;
 	try {
 		return parsePlatformUser(await obj.json());
@@ -85,26 +115,29 @@ export async function loadPlatformUser(
 	}
 }
 
-export async function findUserIdByLoginEmail(
+export async function loadPlatformUser(
 	bucket: R2Bucket,
-	loginEmail: string,
+	userId: string,
+): Promise<PlatformUser | null> {
+	const current = await readUserJson(bucket, userR2Key(userId));
+	if (current) return current;
+
+	const legacy = await readUserJson(bucket, legacyUserR2Key(userId));
+	if (!legacy) return null;
+
+	// Migrate on read: rewrite under the new layout (keeps legacy keys too).
+	await savePlatformUser(bucket, legacy);
+	return legacy;
+}
+
+async function readUserIdPointer(
+	bucket: R2Bucket,
+	key: string,
 ): Promise<string | null> {
-	const byLogin = await bucket.get(userByLoginKey(loginEmail));
-	if (byLogin) {
-		try {
-			const parsed = await byLogin.json();
-			if (isRecord(parsed) && typeof parsed.userId === "string") {
-				return parsed.userId;
-			}
-		} catch {
-			/* ignore */
-		}
-	}
-	// Members (no mailbox login claim) authenticate with invite contact email.
-	const byEmail = await bucket.get(userByEmailKey(loginEmail));
-	if (!byEmail) return null;
+	const obj = await bucket.get(key);
+	if (!obj) return null;
 	try {
-		const parsed = await byEmail.json();
+		const parsed = await obj.json();
 		if (isRecord(parsed) && typeof parsed.userId === "string") {
 			return parsed.userId;
 		}
@@ -114,23 +147,41 @@ export async function findUserIdByLoginEmail(
 	return null;
 }
 
+export async function findUserIdByLoginEmail(
+	bucket: R2Bucket,
+	loginEmail: string,
+): Promise<string | null> {
+	const byLogin =
+		(await readUserIdPointer(bucket, userByLoginKey(loginEmail))) ??
+		(await readUserIdPointer(bucket, legacyUserByLoginKey(loginEmail)));
+	if (byLogin) return byLogin;
+
+	// Members (no mailbox login claim) authenticate with invite contact email.
+	return (
+		(await readUserIdPointer(bucket, userByEmailKey(loginEmail))) ??
+		(await readUserIdPointer(bucket, legacyUserByEmailKey(loginEmail)))
+	);
+}
+
 export async function savePlatformUser(
 	bucket: R2Bucket,
 	user: PlatformUser,
 ): Promise<void> {
-	await bucket.put(userR2Key(user.id), JSON.stringify(user));
+	const body = JSON.stringify(user);
+	await bucket.put(userR2Key(user.id), body);
+	// Dual-write legacy during migration window.
+	await bucket.put(legacyUserR2Key(user.id), body);
+
 	const contact = normalizeEmailAddress(user.contactEmail);
 	if (contact) {
-		await bucket.put(
-			userByEmailKey(contact),
-			JSON.stringify({ userId: user.id }),
-		);
+		const ptr = JSON.stringify({ userId: user.id });
+		await bucket.put(userByEmailKey(contact), ptr);
+		await bucket.put(legacyUserByEmailKey(contact), ptr);
 	}
 	if (user.mailboxEmail) {
-		await bucket.put(
-			userByLoginKey(user.mailboxEmail),
-			JSON.stringify({ userId: user.id }),
-		);
+		const ptr = JSON.stringify({ userId: user.id });
+		await bucket.put(userByLoginKey(user.mailboxEmail), ptr);
+		await bucket.put(legacyUserByLoginKey(user.mailboxEmail), ptr);
 	}
 }
 
