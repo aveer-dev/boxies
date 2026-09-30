@@ -7,11 +7,17 @@
  * (`email:`, `sub:`, `user:`). Powers Domain Admin + mailbox ACL union across
  * Access, Apple, Google, and password sessions.
  *
- * R2:
+ * R2 (current — one account document is source of truth):
+ * - platform/identity/accounts/{accountId}.json
+ * - platform/identity/by-key/{encodedPrincipal}.json → { accountId }
+ * - platform/identity/link-codes/{code}.json
+ * - platform/identity/passwords/… + logins/… (see platform-users.ts)
+ *
+ * Legacy (dual-read / dual-write during migration):
  * - platform/identity-accounts/{accountId}.json
- * - platform/identity-accounts-by-key/{encodedPrincipal}.json → { accountId }
- * - platform/identity-links/by-sub/{sub}.json          (legacy + expand index)
- * - platform/identity-links/by-email/{email}.json      → { subs: string[] }
+ * - platform/identity-accounts-by-key/{encodedPrincipal}.json
+ * - platform/identity-links/by-sub/{sub}.json
+ * - platform/identity-links/by-email/{email}.json
  * - platform/identity-link-codes/{code}.json
  */
 
@@ -33,18 +39,30 @@ import {
 	type PlatformUser,
 } from "./platform-users.ts";
 
-export const IDENTITY_ACCOUNT_PREFIX = "platform/identity-accounts/";
-export const IDENTITY_ACCOUNT_BY_KEY_PREFIX =
+export const IDENTITY_ACCOUNT_PREFIX = "platform/identity/accounts/";
+export const IDENTITY_ACCOUNT_BY_KEY_PREFIX = "platform/identity/by-key/";
+export const IDENTITY_LINK_CODES_PREFIX = "platform/identity/link-codes/";
+
+/** Legacy prefixes — dual-read / dual-write until migration window closes. */
+export const LEGACY_IDENTITY_ACCOUNT_PREFIX = "platform/identity-accounts/";
+export const LEGACY_IDENTITY_ACCOUNT_BY_KEY_PREFIX =
 	"platform/identity-accounts-by-key/";
 export const IDENTITY_LINK_BY_SUB_PREFIX = "platform/identity-links/by-sub/";
 export const IDENTITY_LINK_BY_EMAIL_PREFIX = "platform/identity-links/by-email/";
-export const IDENTITY_LINK_CODES_PREFIX = "platform/identity-link-codes/";
+export const LEGACY_IDENTITY_LINK_CODES_PREFIX = "platform/identity-link-codes/";
 
 export const IDENTITY_LINK_CODE_TTL_MS = 15 * 60 * 1000;
 
+export type IdentityProvider =
+	| "apple"
+	| "google"
+	| "access"
+	| "dev"
+	| "unknown";
+
 export type IdentityLinkRecord = {
 	sub: string;
-	provider: "apple" | "google" | "dev" | "unknown";
+	provider: IdentityProvider;
 	emails: string[];
 	linkedAt: string;
 	updatedAt: string;
@@ -56,6 +74,11 @@ export type IdentityAccount = {
 	id: string;
 	/** Normalized ACL principals: email:…, sub:…, user:… */
 	principals: string[];
+	/**
+	 * IdP / session provider for each `sub` value (no `sub:` prefix).
+	 * Source of truth for Connected UI — never expose raw subs as methods.
+	 */
+	providers?: Record<string, IdentityProvider>;
 	primaryEmail?: string;
 	createdAt: string;
 	updatedAt: string;
@@ -100,12 +123,36 @@ export function identityLinkCodeKey(code: string): string {
 	return `${IDENTITY_LINK_CODES_PREFIX}${code}.json`;
 }
 
+export function legacyIdentityLinkCodeKey(code: string): string {
+	return `${LEGACY_IDENTITY_LINK_CODES_PREFIX}${code}.json`;
+}
+
 export function identityAccountKey(accountId: string): string {
 	return `${IDENTITY_ACCOUNT_PREFIX}${accountId}.json`;
 }
 
+export function legacyIdentityAccountKey(accountId: string): string {
+	return `${LEGACY_IDENTITY_ACCOUNT_PREFIX}${accountId}.json`;
+}
+
 export function identityAccountByKeyKey(principalKey: string): string {
 	return `${IDENTITY_ACCOUNT_BY_KEY_PREFIX}${encodeURIComponent(principalKey)}.json`;
+}
+
+export function legacyIdentityAccountByKeyKey(principalKey: string): string {
+	return `${LEGACY_IDENTITY_ACCOUNT_BY_KEY_PREFIX}${encodeURIComponent(principalKey)}.json`;
+}
+
+function parseIdentityProvider(raw: unknown): IdentityProvider {
+	if (
+		raw === "apple" ||
+		raw === "google" ||
+		raw === "access" ||
+		raw === "dev"
+	) {
+		return raw;
+	}
+	return "unknown";
 }
 
 export function parseIdentityLink(raw: unknown): IdentityLinkRecord | null {
@@ -117,12 +164,7 @@ export function parseIdentityLink(raw: unknown): IdentityLinkRecord | null {
 				.map((e) => normalizeEmailAddress(e))
 				.filter((e): e is string => Boolean(e))
 		: [];
-	const provider =
-		raw.provider === "apple" ||
-		raw.provider === "google" ||
-		raw.provider === "dev"
-			? raw.provider
-			: "unknown";
+	const provider = parseIdentityProvider(raw.provider);
 	const linkedByKeys = Array.isArray(raw.linkedByKeys)
 		? raw.linkedByKeys.filter((k): k is string => typeof k === "string")
 		: [];
@@ -154,9 +196,19 @@ export function parseIdentityAccount(raw: unknown): IdentityAccount | null {
 		typeof raw.primaryEmail === "string"
 			? (normalizeEmailAddress(raw.primaryEmail) ?? undefined)
 			: undefined;
+	let providers: Record<string, IdentityProvider> | undefined;
+	if (isRecord(raw.providers)) {
+		providers = {};
+		for (const [sub, value] of Object.entries(raw.providers)) {
+			if (!sub.trim()) continue;
+			providers[sub] = parseIdentityProvider(value);
+		}
+		if (Object.keys(providers).length === 0) providers = undefined;
+	}
 	return {
 		id: raw.id.trim(),
 		principals,
+		providers,
 		primaryEmail,
 		createdAt:
 			typeof raw.createdAt === "string"
@@ -275,13 +327,26 @@ export async function loadIdentityAccount(
 	bucket: R2Bucket,
 	accountId: string,
 ): Promise<IdentityAccount | null> {
-	const obj = await bucket.get(identityAccountKey(accountId));
-	if (!obj) return null;
-	try {
-		return parseIdentityAccount(await obj.json());
-	} catch {
-		return null;
+	const tryKeys = [
+		identityAccountKey(accountId),
+		legacyIdentityAccountKey(accountId),
+	];
+	for (const key of tryKeys) {
+		const obj = await bucket.get(key);
+		if (!obj) continue;
+		try {
+			const account = parseIdentityAccount(await obj.json());
+			if (!account) continue;
+			// Migrate on read when only legacy existed.
+			if (key === legacyIdentityAccountKey(accountId)) {
+				await saveIdentityAccount(bucket, account);
+			}
+			return account;
+		} catch {
+			/* try next */
+		}
 	}
+	return null;
 }
 
 export async function findAccountIdByPrincipalKey(
@@ -290,15 +355,27 @@ export async function findAccountIdByPrincipalKey(
 ): Promise<string | null> {
 	const normalized = normalizeAclKey(principalKey);
 	if (!normalized) return null;
-	const obj = await bucket.get(identityAccountByKeyKey(normalized));
-	if (!obj) return null;
-	try {
-		const parsed = await obj.json();
-		if (isRecord(parsed) && typeof parsed.accountId === "string") {
-			return parsed.accountId;
+	for (const key of [
+		identityAccountByKeyKey(normalized),
+		legacyIdentityAccountByKeyKey(normalized),
+	]) {
+		const obj = await bucket.get(key);
+		if (!obj) continue;
+		try {
+			const parsed = await obj.json();
+			if (isRecord(parsed) && typeof parsed.accountId === "string") {
+				// Migrate thin pointer when only legacy existed.
+				if (key === legacyIdentityAccountByKeyKey(normalized)) {
+					await bucket.put(
+						identityAccountByKeyKey(normalized),
+						JSON.stringify({ accountId: parsed.accountId }),
+					);
+				}
+				return parsed.accountId;
+			}
+		} catch {
+			/* try next */
 		}
-	} catch {
-		/* ignore */
 	}
 	return null;
 }
@@ -307,11 +384,10 @@ async function indexAccountKeys(
 	bucket: R2Bucket,
 	account: IdentityAccount,
 ): Promise<void> {
+	const ptr = JSON.stringify({ accountId: account.id });
 	for (const key of account.principals) {
-		await bucket.put(
-			identityAccountByKeyKey(key),
-			JSON.stringify({ accountId: account.id }),
-		);
+		await bucket.put(identityAccountByKeyKey(key), ptr);
+		await bucket.put(legacyIdentityAccountByKeyKey(key), ptr);
 	}
 }
 
@@ -319,8 +395,52 @@ export async function saveIdentityAccount(
 	bucket: R2Bucket,
 	account: IdentityAccount,
 ): Promise<void> {
-	await bucket.put(identityAccountKey(account.id), JSON.stringify(account));
+	const body = JSON.stringify(account);
+	await bucket.put(identityAccountKey(account.id), body);
+	await bucket.put(legacyIdentityAccountKey(account.id), body);
 	await indexAccountKeys(bucket, account);
+}
+
+function mergeProviders(
+	base: Record<string, IdentityProvider> | undefined,
+	extra: Record<string, IdentityProvider> | undefined,
+): Record<string, IdentityProvider> | undefined {
+	const rank = (p: IdentityProvider): number => {
+		switch (p) {
+			case "apple":
+			case "google":
+				return 3;
+			case "access":
+			case "dev":
+				return 2;
+			default:
+				return 1;
+		}
+	};
+	const out: Record<string, IdentityProvider> = { ...(base ?? {}) };
+	for (const [sub, provider] of Object.entries(extra ?? {})) {
+		if (!sub.trim()) continue;
+		const prev = out[sub];
+		if (!prev || rank(provider) >= rank(prev)) {
+			out[sub] = provider;
+		}
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Infer Access provider for session subs that are not password users. */
+function providersFromPrincipal(
+	principal: RequestPrincipal,
+	existing?: Record<string, IdentityProvider>,
+): Record<string, IdentityProvider> | undefined {
+	const out: Record<string, IdentityProvider> = { ...(existing ?? {}) };
+	if (principal.sub && !principal.sub.startsWith("user:")) {
+		const prev = out[principal.sub];
+		if (!prev || prev === "unknown") {
+			out[principal.sub] = "access";
+		}
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**
@@ -357,9 +477,14 @@ export async function ensureIdentityAccount(
 				existing.primaryEmail ??
 				seed.find((k) => k.startsWith("email:"))?.slice("email:".length) ??
 				emailsForPrincipal(principal)[0];
+			const providers = providersFromPrincipal(
+				principal,
+				existing.providers,
+			);
 			const updated: IdentityAccount = {
 				...existing,
 				principals: merged,
+				providers,
 				primaryEmail,
 				updatedAt: now,
 			};
@@ -376,6 +501,7 @@ export async function ensureIdentityAccount(
 	const account: IdentityAccount = {
 		id,
 		principals: seed,
+		providers: providersFromPrincipal(principal),
 		primaryEmail,
 		createdAt: now,
 		updatedAt: now,
@@ -404,18 +530,19 @@ export async function mergeIdentityAccounts(
 	const merged: IdentityAccount = {
 		...into,
 		principals: uniquePrincipalKeys([...into.principals, ...from.principals]),
+		providers: mergeProviders(into.providers, from.providers),
 		primaryEmail: into.primaryEmail ?? from.primaryEmail,
 		updatedAt: now,
 	};
 	await saveIdentityAccount(bucket, merged);
 	// Re-point from's keys to into, then drop the old account object.
+	const ptr = JSON.stringify({ accountId: merged.id });
 	for (const key of from.principals) {
-		await bucket.put(
-			identityAccountByKeyKey(key),
-			JSON.stringify({ accountId: merged.id }),
-		);
+		await bucket.put(identityAccountByKeyKey(key), ptr);
+		await bucket.put(legacyIdentityAccountByKeyKey(key), ptr);
 	}
 	await bucket.delete(identityAccountKey(from.id));
+	await bucket.delete(legacyIdentityAccountKey(from.id));
 	await syncLegacyIndexesFromAccount(bucket, merged);
 	await syncPlatformUsersFromAccount(bucket, merged);
 	return merged;
@@ -423,7 +550,8 @@ export async function mergeIdentityAccounts(
 
 /**
  * Keep by-sub / by-email indexes in sync so expandPrincipalWithLinks and
- * ownerKeysForAssign stay fast without a full account scan.
+ * ownerKeysForAssign stay fast without a full account scan. Dual-writes the
+ * legacy identity-links paths during the migration window.
  */
 async function syncLegacyIndexesFromAccount(
 	bucket: R2Bucket,
@@ -439,9 +567,13 @@ async function syncLegacyIndexesFromAccount(
 	const now = new Date().toISOString();
 	for (const sub of subs) {
 		const existing = await loadIdentityLinkBySub(bucket, sub);
+		const provider =
+			account.providers?.[sub] ??
+			existing?.provider ??
+			"access";
 		const record: IdentityLinkRecord = {
 			sub,
-			provider: existing?.provider ?? "unknown",
+			provider,
 			emails: [...new Set([...(existing?.emails ?? []), ...emails])],
 			linkedAt: existing?.linkedAt ?? now,
 			updatedAt: now,
@@ -516,7 +648,21 @@ export async function upsertIdentityLink(
 	const account = await ensureIdentityAccount(bucket, principal, {
 		extraPrincipals: extra,
 	});
-	await syncPlatformUsersFromAccount(bucket, account);
+	// Stamp concrete IdP provider on the account document (source of truth).
+	const stamped: IdentityAccount = {
+		...account,
+		providers: mergeProviders(account.providers, {
+			[sub]: opts.provider,
+		}),
+		updatedAt: new Date().toISOString(),
+	};
+	if (
+		JSON.stringify(stamped.providers ?? {}) !==
+		JSON.stringify(account.providers ?? {})
+	) {
+		await saveIdentityAccount(bucket, stamped);
+	}
+	await syncPlatformUsersFromAccount(bucket, stamped);
 
 	const existing = await loadIdentityLinkBySub(bucket, sub);
 	const now = new Date().toISOString();
@@ -535,7 +681,7 @@ export async function upsertIdentityLink(
 				`account:${account.id}`,
 			]),
 		],
-		accountId: account.id,
+		accountId: stamped.id,
 	};
 	await bucket.put(identityLinkBySubKey(sub), JSON.stringify(record));
 
@@ -686,20 +832,33 @@ export async function saveIdentityLinkCode(
 	bucket: R2Bucket,
 	record: IdentityLinkCode,
 ): Promise<void> {
-	await bucket.put(identityLinkCodeKey(record.code), JSON.stringify(record));
+	const body = JSON.stringify(record);
+	await bucket.put(identityLinkCodeKey(record.code), body);
+	await bucket.put(legacyIdentityLinkCodeKey(record.code), body);
 }
 
 export async function loadIdentityLinkCode(
 	bucket: R2Bucket,
 	code: string,
 ): Promise<IdentityLinkCode | null> {
-	const obj = await bucket.get(identityLinkCodeKey(code));
-	if (!obj) return null;
-	try {
-		return parseIdentityLinkCode(await obj.json());
-	} catch {
-		return null;
+	for (const key of [
+		identityLinkCodeKey(code),
+		legacyIdentityLinkCodeKey(code),
+	]) {
+		const obj = await bucket.get(key);
+		if (!obj) continue;
+		try {
+			const parsed = parseIdentityLinkCode(await obj.json());
+			if (!parsed) continue;
+			if (key === legacyIdentityLinkCodeKey(code)) {
+				await bucket.put(identityLinkCodeKey(code), JSON.stringify(parsed));
+			}
+			return parsed;
+		} catch {
+			/* try next */
+		}
 	}
+	return null;
 }
 
 /**
@@ -886,60 +1045,96 @@ export async function redeemIdentityLinkCode(
 export function identitiesForAccount(
 	account: IdentityAccount,
 	principal: RequestPrincipal,
-	providerBySub?: Map<string, IdentityLinkRecord["provider"]>,
+	providerBySub?: Map<string, IdentityProvider>,
 	passwordLabelByUserKey?: Map<string, string>,
 ): LinkedIdentityView[] {
 	const current = new Set(principalKeys(principal));
 	const views: LinkedIdentityView[] = [];
-	const seen = new Set<string>();
+
+	const resolveProvider = (sub: string): IdentityProvider => {
+		const fromAccount = account.providers?.[sub];
+		if (fromAccount && fromAccount !== "unknown") return fromAccount;
+		const fromMap = providerBySub?.get(sub);
+		if (fromMap && fromMap !== "unknown") return fromMap;
+		return fromAccount ?? fromMap ?? "unknown";
+	};
+
+	const accessSubKeys: string[] = [];
+	const emailKeys: string[] = [];
+	const passwordKeys: string[] = [];
 
 	for (const key of account.principals) {
-		if (seen.has(key)) continue;
-		seen.add(key);
+		if (key.startsWith("user:")) {
+			passwordKeys.push(key);
+			continue;
+		}
 		if (key.startsWith("email:")) {
-			const email = key.slice("email:".length);
+			emailKeys.push(key);
+			continue;
+		}
+		if (!key.startsWith("sub:")) continue;
+		const sub = key.slice("sub:".length);
+		if (!sub || sub.startsWith("user:")) continue;
+		const provider = resolveProvider(sub);
+		if (provider === "apple") {
 			views.push({
-				type: "email",
+				type: "apple",
 				key,
-				label: email,
+				label: "Apple",
 				current: current.has(key),
 			});
-		} else if (key.startsWith("user:")) {
-			const loginLabel = passwordLabelByUserKey?.get(key);
+		} else if (provider === "google") {
 			views.push({
-				type: "password",
+				type: "google",
 				key,
-				label: loginLabel ? `Password · ${loginLabel}` : "Password",
-				current: current.has(key) || current.has(`sub:${key}`),
+				label: "Google",
+				current: current.has(key),
 			});
-		} else if (key.startsWith("sub:")) {
-			const sub = key.slice("sub:".length);
-			if (sub.startsWith("user:")) continue;
-			const provider = providerBySub?.get(sub);
-			if (provider === "apple") {
-				views.push({
-					type: "apple",
-					key,
-					label: "Apple",
-					current: current.has(key),
-				});
-			} else if (provider === "google") {
-				views.push({
-					type: "google",
-					key,
-					label: "Google",
-					current: current.has(key),
-				});
-			} else {
-				views.push({
-					type: "sub",
-					key,
-					label: `Sign-in provider (${sub.slice(0, 8)}…)`,
-					current: current.has(key),
-				});
-			}
+		} else {
+			// Access / unknown / dev — ACL only; never a separate Connected row.
+			accessSubKeys.push(key);
 		}
 	}
+
+	for (const key of passwordKeys) {
+		const loginLabel = passwordLabelByUserKey?.get(key);
+		views.push({
+			type: "password",
+			key,
+			label: loginLabel ? `Password · ${loginLabel}` : "Password",
+			current: current.has(key) || current.has(`sub:${key}`),
+		});
+	}
+
+	// One Access / email-session row when we have Access-like subs, or the
+	// current session is Access (email + non-user sub) even before providers stamp.
+	const sessionSub = principal.sub?.startsWith("user:")
+		? undefined
+		: principal.sub;
+	const sessionLooksLikeAccess =
+		Boolean(sessionSub) &&
+		resolveProvider(sessionSub!) !== "apple" &&
+		resolveProvider(sessionSub!) !== "google" &&
+		(Boolean(principal.email) || emailKeys.some((k) => current.has(k)));
+
+	if (accessSubKeys.length > 0 || sessionLooksLikeAccess) {
+		const emailLabel =
+			account.primaryEmail ??
+			emailKeys[0]?.slice("email:".length) ??
+			principal.email ??
+			"Access";
+		const accessCurrent =
+			accessSubKeys.some((k) => current.has(k)) ||
+			emailKeys.some((k) => current.has(k)) ||
+			(sessionSub ? current.has(`sub:${sessionSub}`) : false);
+		views.unshift({
+			type: "access",
+			key: emailKeys[0] ?? accessSubKeys[0] ?? `sub:${sessionSub}`,
+			label: emailLabel,
+			current: accessCurrent,
+		});
+	}
+
 	return views;
 }
 
@@ -949,12 +1144,14 @@ export async function listIdentitiesForPrincipal(
 	principal: RequestPrincipal,
 ): Promise<{ accountId: string; identities: LinkedIdentityView[] }> {
 	const account = await ensureIdentityAccount(bucket, principal);
-	const providerBySub = new Map<string, IdentityLinkRecord["provider"]>();
+	const providerBySub = new Map<string, IdentityProvider>(
+		Object.entries(account.providers ?? {}),
+	);
 	const passwordLabelByUserKey = new Map<string, string>();
 	for (const key of account.principals) {
 		if (key.startsWith("sub:")) {
 			const sub = key.slice("sub:".length);
-			if (!sub || sub.startsWith("user:")) continue;
+			if (!sub || sub.startsWith("user:") || providerBySub.has(sub)) continue;
 			const link = await loadIdentityLinkBySub(bucket, sub);
 			if (link) providerBySub.set(sub, link.provider);
 		} else if (key.startsWith("user:")) {

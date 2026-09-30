@@ -317,12 +317,12 @@ private struct SignInMethodsPreview: View {
                     Text("emmanuel@example.com")
                         .font(.inter(size: SettingsFormChrome.rowFontSize))
                         .foregroundStyle(AppTheme.ink)
-                    Text("Email · this session")
+                    Text("Access · this session")
                         .font(.inter(size: SettingsFormChrome.footerFontSize))
                         .foregroundStyle(AppTheme.muted)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Password")
+                    Text("Password · emmanuel@example.com")
                         .font(.inter(size: SettingsFormChrome.rowFontSize))
                         .foregroundStyle(AppTheme.ink)
                     Text("Password")

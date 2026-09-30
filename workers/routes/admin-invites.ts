@@ -635,7 +635,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		// Only the first owner may claim mailbox-address password login.
 		// Members (and later owners) sign in with contact email to avoid
-		// overwriting platform/users-by-login/{mailbox}.
+		// overwriting platform/identity/logins/by-mailbox/{mailbox}.
 		const claimMailboxLogin = invite.role === "owner";
 		if (claimMailboxLogin) {
 			const existingLogin = await findUserIdByLoginEmail(

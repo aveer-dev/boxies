@@ -44,7 +44,7 @@ struct SignInMethodsSettingsView: View {
         List {
             Section {
                 Text(
-                    "Ways you can sign in to this account. Add Apple or a password here; every method reaches the same mailboxes."
+                    "Ways you can sign in to this account. Connected shows Access, Apple, Google, or Password — not raw keys. Add Apple or a password here; every method reaches the same mailboxes."
                 )
                 .font(.inter(size: SettingsFormChrome.footerFontSize))
                 .foregroundStyle(AppTheme.muted)

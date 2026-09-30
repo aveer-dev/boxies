@@ -343,8 +343,10 @@ export default function SignInMethodsSettingsRoute() {
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Sign-in methods">
 			<p className="text-sm text-kumo-subtle mb-6">
-				Ways you can sign in to this Inboxies account. Add Apple, Google, or a
-				password on this device; every method reaches the same mailboxes.
+				Ways you can sign in to this Inboxies account. Connected shows one row
+				per method (Access, Apple, Google, Password) — not raw identity keys.
+				Add Apple, Google, or a password on this device; every method reaches
+				the same mailboxes.
 			</p>
 
 			{isLoading || !data ? (
