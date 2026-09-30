@@ -20,6 +20,7 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     DomainAdmin("domainAdmin", "previewDomainAdmin"),
     PasswordSignIn("passwordSignIn", "previewPasswordSignIn"),
     InviteAccept("inviteAccept", "previewInviteAccept"),
+    SignInMethods("signInMethods", "previewSignInMethods"),
     Mailbox("mailbox", "previewMailbox"),
     Screener("screener", "previewScreener"),
     ReplyLater("replyLater", "previewReplyLater"),
