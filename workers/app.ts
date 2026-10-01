@@ -57,7 +57,13 @@ function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/auth/google" ||
 		pathname === "/api/v1/auth/dev" ||
 		pathname === "/api/v1/auth/password" ||
-		pathname === "/api/v1/auth/password/logout"
+		pathname === "/api/v1/auth/password/logout" ||
+		pathname === "/api/v1/auth/signup-personal" ||
+		pathname === "/api/v1/auth/signup-domain" ||
+		pathname === "/api/v1/auth/domains/check" ||
+		pathname === "/api/v1/billing/create-domain-checkout" ||
+		pathname === "/api/v1/billing/checkout-return" ||
+		pathname === "/api/v1/billing/stripe-webhook"
 	) {
 		return true;
 	}

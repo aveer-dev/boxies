@@ -35,6 +35,7 @@ struct MeResponse: Codable {
     var linkedEmails: [String]?
     var keys: [String]
     var isAdmin: Bool?
+    var administeredDomains: [String]?
     var mailDomain: String?
     var domains: [String]?
 }
@@ -1105,3 +1106,181 @@ struct AdminCreateMailboxResponse: Codable {
     var name: String?
     var invite: AdminCreateMailboxInvite?
 }
+
+struct AdminDomainInfo: Codable, Identifiable, Hashable {
+    var id: String { domain }
+    var domain: String
+    var zoneId: String
+    var status: String
+    var nameservers: [String]
+    var createdAt: String?
+    var updatedAt: String?
+}
+
+struct AdminDomainsResponse: Codable {
+    var domains: [AdminDomainInfo]
+}
+
+struct EmailHealthItem: Codable, Identifiable, Hashable {
+    var id: String { type + name }
+    var name: String
+    var type: String
+    var status: String
+    var expectedValue: String
+    var currentValue: String?
+    var message: String
+}
+
+struct EmailHealthAudit: Codable, Hashable {
+    var overallStatus: String
+    var zoneStatus: String
+    var nameservers: [String]
+    var items: [EmailHealthItem]
+    var issues: [String]
+}
+
+struct DomainHealthResponse: Codable {
+    var domain: String
+    var zoneId: String
+    var zoneStatus: String
+    var nameservers: [String]
+    var audit: EmailHealthAudit
+}
+
+struct FixEmailDnsResponse: Codable {
+    var success: Bool
+    var audit: EmailHealthAudit?
+}
+
+struct CloudflareDnsRecord: Codable, Identifiable, Hashable {
+    var id: String
+    var zone_id: String
+    var zone_name: String
+    var name: String
+    var type: String
+    var content: String
+    var proxiable: Bool
+    var proxied: Bool
+    var ttl: Int
+    var priority: Int?
+    var comment: String?
+}
+
+struct DnsRecordsListResponse: Codable {
+    var records: [CloudflareDnsRecord]
+}
+
+struct DnsRecordMutationResponse: Codable {
+    var record: CloudflareDnsRecord
+}
+
+struct OnboardingPersonalResponse: Codable {
+    var token: String
+    var expiresAt: String
+    var mailbox: OnboardingMailboxInfo
+}
+
+struct OnboardingMailboxInfo: Codable {
+    var id: String
+    var email: String
+    var name: String
+}
+
+struct OnboardingDomainResponse: Codable {
+    var token: String
+    var expiresAt: String
+    var mailbox: OnboardingMailboxInfo
+    var domain: OnboardingDomainInfo
+    var audit: EmailHealthAudit?
+}
+
+struct OnboardingDomainInfo: Codable {
+    var domain: String
+    var zoneId: String
+    var status: String
+    var nameservers: [String]
+}
+
+struct DomainAvailabilityResponse: Codable, Hashable {
+    var domain: String
+    var available: Bool
+    var registered: Bool
+    var wholesalePriceUsd: Double
+    var retailPriceUsd: Double
+    var currency: String
+    var tldSupported: Bool
+    var alreadyInInboxies: Bool?
+    var message: String?
+}
+
+struct DomainCheckoutResponse: Codable {
+    var checkoutUrl: String
+    var sessionId: String
+    var domain: String
+    var priceUsd: Double
+    var mock: Bool?
+}
+
+struct ExportJobProgress: Codable, Hashable {
+    var processedCount: Int
+    var totalCount: Int
+    var percent: Int
+}
+
+struct ExportJob: Codable, Identifiable, Hashable {
+    var id: String
+    var domain: String?
+    var mailboxId: String?
+    var status: String
+    var progress: ExportJobProgress?
+    var totalEmails: Int?
+    var fileSizeBytes: Int64?
+    var downloadUrl: String?
+    var expiresAt: String?
+    var createdAt: String?
+    var error: String?
+}
+
+struct DecommissionLastExport: Codable, Hashable {
+    var id: String
+    var createdAt: String
+    var downloadUrl: String?
+    var totalEmails: Int
+}
+
+struct DecommissionPreflightResponse: Codable {
+    var domain: String
+    var status: String
+    var activeMailboxCount: Int
+    var activeMailboxes: [String]
+    var hasRecentExport: Bool
+    var lastExport: DecommissionLastExport?
+    var isRegistrarDomain: Bool
+    var transferLocked: Bool
+}
+
+struct DecommissionResponse: Codable {
+    var success: Bool
+    var domain: String
+    var status: String
+    var eppCode: String?
+    var message: String
+}
+
+struct DomainEppCodeResponse: Codable {
+    var domain: String
+    var eppCode: String
+}
+
+struct DomainTransferLockResponse: Codable {
+    var success: Bool
+    var domain: String
+    var locked: Bool
+}
+
+struct AdminDomainConnectResponse: Codable {
+    var domain: AdminDomainInfo
+    var audit: EmailHealthAudit?
+}
+
+

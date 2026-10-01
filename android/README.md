@@ -22,10 +22,10 @@ Designed for people coming from **web / Ionic / Capacitor**: Compose screens ≈
 1. Install Android Studio (API 34+ / SDK 35).
 2. Open the `android/` directory as a Gradle project.
 3. Confirm application id `co.inboxies.app`.
-4. On the sign-in screen, set **API base URL**:
-   - **Emulator** → `http://10.0.2.2:5173` when `pnpm dev` is running on the host machine (this is the default in debug builds).
+4. On the sign-in screen, the **API base URL** defaults to `https://inboxies.email`. You can change it to:
+   - **Emulator (local dev)** → `http://10.0.2.2:5173` when `pnpm dev` is running on the host machine.
    - **Physical device** → your machine’s LAN IP, e.g. `http://192.168.1.10:5173`.
-   - **Production** → `https://inboxies.email` (only after Access bypass below).
+   - **Production** → `https://inboxies.email` (default; requires Access bypass below).
 
 ### Cloudflare Access (required for production)
 

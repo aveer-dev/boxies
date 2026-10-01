@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <style>
+    .bg { fill: #FFFFFF; stroke: #E5E5EA; }
+    .stroke-line { stroke: #2C2C30; }
+    .wing-top { fill: #FFFFFF; }
+    .wing-bot { fill: #F4F4F6; }
+    .keel { fill: #1F1F24; stroke: #1F1F24; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #121214; stroke: #242428; }
+      .stroke-line { stroke: #EDEDF2; }
+      .wing-top { fill: #1D1D21; }
+      .wing-bot { fill: #17171A; }
+      .keel { fill: #F4F4F6; stroke: #F4F4F6; }
+    }
+  </style>
+  <rect class="bg" width="512" height="512" rx="115" stroke-width="2"/>
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <polygon class="keel" points="205,330 172,405 238,360" stroke-width="3"/>
+    <polygon class="wing-bot stroke-line" points="394,110 205,330 276,408" stroke-width="8"/>
+    <polygon class="wing-top stroke-line" points="394,110 103,222 205,330" stroke-width="8"/>
+    <line class="stroke-line" x1="394" y1="110" x2="205" y2="330" stroke-width="8"/>
+  </g>
+</svg>

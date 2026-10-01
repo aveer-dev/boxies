@@ -32,7 +32,7 @@ Designed for people coming from **web / Ionic / Capacitor**: SwiftUI views ≈ R
 3. Set your **Team** under Signing & Capabilities.
 4. Confirm bundle ID `co.inboxies.app` (or change it — then update Worker secret `APPLE_CLIENT_ID` to match).
 5. Capability **Sign in with Apple** is declared in `Inboxies.entitlements`.
-6. On the sign-in screen, set **API base URL** to your Worker (simulator → `http://127.0.0.1:5173` when `pnpm dev` is running on the Mac). Production: `https://inboxies.email` works only after Access bypass (below).
+6. On the sign-in screen, the **API base URL** defaults to `https://inboxies.email` (or `http://127.0.0.1:5173` on simulator when `pnpm dev` is running on the Mac). Production: `https://inboxies.email` works only after Access bypass (below).
 
 ### Cloudflare Access (required for production)
 

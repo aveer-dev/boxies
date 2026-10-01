@@ -19,6 +19,11 @@ import {
 	resolveAdminAllowlist,
 } from "../lib/domain-admin";
 import {
+	getDomainMetadata,
+	isPrincipalAdminForDomain,
+	listDomainsForPrincipal,
+} from "../lib/domain-registry";
+import {
 	createInviteRecord,
 	inviteAcceptUrl,
 	inviteIsActive,
@@ -255,17 +260,52 @@ function adminMailboxRow(
 	};
 }
 
+async function canAdministerMailboxDomain(
+	env: Env,
+	principal: RequestPrincipal | null | undefined,
+	domainOrMailboxId: string,
+): Promise<boolean> {
+	if (!principal) return false;
+	if (await requireDomainAdmin(env, principal)) return true;
+	const domain = domainOrMailboxId.includes("@")
+		? domainOrMailboxId.split("@")[1]?.toLowerCase()
+		: domainOrMailboxId.toLowerCase();
+	if (!domain) return false;
+	const meta = await getDomainMetadata(env.BUCKET, domain);
+	if (!meta) return false;
+	return isPrincipalAdminForDomain(meta, principal, false);
+}
+
 export function registerAdminAndInviteRoutes(app: App) {
 	// ── Admin mailboxes ───────────────────────────────────────────
 
 	app.get("/api/v1/admin/mailboxes", async (c) => {
 		const principal = c.get("principal");
-		if (!(await requireDomainAdmin(c.env, principal))) {
+		if (!principal) return c.json({ error: "Forbidden" }, 403);
+		const isSuper = await requireDomainAdmin(c.env, principal);
+		const administeredDomains = await listDomainsForPrincipal(
+			c.env.BUCKET,
+			principal,
+			isSuper,
+		);
+		if (!isSuper && administeredDomains.length === 0) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		const all = await listMailboxes(c.env.BUCKET);
+		const allowedDomainSet = isSuper
+			? null
+			: new Set(administeredDomains.map((d) => d.domain.toLowerCase()));
+
+		const filtered = allowedDomainSet
+			? all.filter((m) => {
+					const parts = m.id.split("@");
+					const dom = parts[1]?.toLowerCase();
+					return dom && allowedDomainSet.has(dom);
+				})
+			: all;
+
 		const rows = await Promise.all(
-			all.map(async (m) => {
+			filtered.map(async (m) => {
 				const settings =
 					(await loadMailboxSettingsRaw(c.env.BUCKET, m.id)) ?? {};
 				return adminMailboxRow(m.id, settings);
@@ -277,18 +317,28 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.post("/api/v1/admin/mailboxes", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
+		if (!principal) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		const body = CreateAdminMailboxBody.parse(await c.req.json());
 		const email = canonicalMailboxId(body.email);
 		if (!email) return c.json({ error: "Invalid mailbox email address" }, 400);
-		const allowed = allowedMailboxSet((c.env.EMAIL_ADDRESSES ?? []) as string[]);
-		if (allowed.size > 0 && !allowed.has(email)) {
-			return c.json(
-				{ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" },
-				403,
-			);
+
+		const isAuthorized = await canAdministerMailboxDomain(c.env, principal, email);
+		if (!isAuthorized) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
+
+		const domain = email.split("@")[1]?.toLowerCase();
+		const meta = domain ? await getDomainMetadata(c.env.BUCKET, domain) : null;
+		if (!meta) {
+			const allowed = allowedMailboxSet((c.env.EMAIL_ADDRESSES ?? []) as string[]);
+			if (allowed.size > 0 && !allowed.has(email)) {
+				return c.json(
+					{ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" },
+					403,
+				);
+			}
 		}
 		const key = mailboxMetadataKey(email);
 		if (await c.env.BUCKET.head(key)) {
@@ -347,11 +397,11 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.post("/api/v1/admin/mailboxes/:mailboxId/assign", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
 		const mailboxId = canonicalMailboxId(c.req.param("mailboxId"));
 		if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+		if (!principal || !(await canAdministerMailboxDomain(c.env, principal, mailboxId))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
 		const settings = await loadMailboxSettingsRaw(c.env.BUCKET, mailboxId);
 		if (settings === null) return c.json({ error: "Not found" }, 404);
 		const body = AssignBody.parse(await c.req.json());
@@ -392,11 +442,11 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.put("/api/v1/admin/mailboxes/:mailboxId/acl", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
 		const mailboxId = canonicalMailboxId(c.req.param("mailboxId"));
 		if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+		if (!principal || !(await canAdministerMailboxDomain(c.env, principal, mailboxId))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
 		const settings = await loadMailboxSettingsRaw(c.env.BUCKET, mailboxId);
 		if (settings === null) return c.json({ error: "Not found" }, 404);
 		const body = TransferAclBody.parse(await c.req.json());
@@ -422,11 +472,11 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.delete("/api/v1/admin/mailboxes/:mailboxId", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
 		const mailboxId = canonicalMailboxId(c.req.param("mailboxId"));
 		if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+		if (!principal || !(await canAdministerMailboxDomain(c.env, principal, mailboxId))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
 		const settings = await loadMailboxSettingsRaw(c.env.BUCKET, mailboxId);
 		if (settings === null) return c.json({ error: "Not found" }, 404);
 
@@ -469,12 +519,12 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.post("/api/v1/admin/invites", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
 		const body = InviteBody.parse(await c.req.json());
 		const mailboxId = canonicalMailboxId(body.mailboxId);
 		if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+		if (!principal || !(await canAdministerMailboxDomain(c.env, principal, mailboxId))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
 		const settings = await loadMailboxSettingsRaw(c.env.BUCKET, mailboxId);
 		if (settings === null) return c.json({ error: "Not found" }, 404);
 		const inviteResult = await createPendingInvite(c, principal, {
@@ -501,11 +551,11 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.get("/api/v1/admin/mailboxes/:mailboxId/invites", async (c) => {
 		const principal = c.get("principal");
-		if (!(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
 		const mailboxId = canonicalMailboxId(c.req.param("mailboxId"));
 		if (!mailboxId) return c.json({ error: "Invalid mailbox email address" }, 400);
+		if (!principal || !(await canAdministerMailboxDomain(c.env, principal, mailboxId))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
 		const tokens = await listInviteTokensForMailbox(c.env.BUCKET, mailboxId);
 		const invites = [];
 		for (const token of tokens) {
@@ -522,11 +572,12 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.post("/api/v1/admin/invites/:token/revoke", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
+		if (!principal) return c.json({ error: "Forbidden" }, 403);
 		const invite = await loadInvite(c.env.BUCKET, c.req.param("token"));
 		if (!invite) return c.json({ error: "Not found" }, 404);
+		if (!(await canAdministerMailboxDomain(c.env, principal, invite.mailboxId))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
 		if (invite.status !== "pending") {
 			return c.json({ error: `Invite is ${invite.status}` }, 400);
 		}
@@ -543,11 +594,12 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 	app.post("/api/v1/admin/invites/:token/resend", async (c) => {
 		const principal = c.get("principal");
-		if (!principal || !(await requireDomainAdmin(c.env, principal))) {
-			return c.json({ error: "Forbidden" }, 403);
-		}
+		if (!principal) return c.json({ error: "Forbidden" }, 403);
 		const invite = await loadInvite(c.env.BUCKET, c.req.param("token"));
 		if (!invite) return c.json({ error: "Not found" }, 404);
+		if (!(await canAdministerMailboxDomain(c.env, principal, invite.mailboxId))) {
+			return c.json({ error: "Forbidden" }, 403);
+		}
 		if (!inviteIsActive(invite)) {
 			return c.json({ error: "Invite is not active" }, 400);
 		}

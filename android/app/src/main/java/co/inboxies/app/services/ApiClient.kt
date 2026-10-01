@@ -3,11 +3,28 @@ package co.inboxies.app.services
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AccountSummary
 import co.inboxies.app.models.AdminCreateMailboxResponse
+import co.inboxies.app.models.AdminDomainConnectResponse
+import co.inboxies.app.models.AdminDomainInfo
+import co.inboxies.app.models.AdminDomainsResponse
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AppConfigResponse
 import co.inboxies.app.models.AttachIdentityResponse
 import co.inboxies.app.models.ChangePasswordResponse
+import co.inboxies.app.models.CloudflareDnsRecord
+import co.inboxies.app.models.DnsRecordMutationResponse
+import co.inboxies.app.models.DnsRecordsListResponse
+import co.inboxies.app.models.DomainAvailabilityResponse
+import co.inboxies.app.models.DomainCheckoutResponse
+import co.inboxies.app.models.DomainEppCodeResponse
+import co.inboxies.app.models.DomainHealthResponse
+import co.inboxies.app.models.DomainTransferLockResponse
+import co.inboxies.app.models.ExportJob
+import co.inboxies.app.models.DecommissionPreflightResponse
+import co.inboxies.app.models.DecommissionResponse
+import co.inboxies.app.models.FixEmailDnsResponse
+import co.inboxies.app.models.OnboardingDomainResponse
+import co.inboxies.app.models.OnboardingPersonalResponse
 import co.inboxies.app.models.AuthResponse
 import co.inboxies.app.models.DigestStatusResponse
 import co.inboxies.app.models.DraftSaveResponse
@@ -340,6 +357,141 @@ class ApiClient private constructor() {
     suspend fun deleteAdminMailbox(mailboxId: String) {
         request<EmptyResponse>(
             "/api/v1/admin/mailboxes/${pathEncode(mailboxId)}",
+            method = "DELETE",
+        )
+    }
+
+    // MARK: - Onboarding & Custom Domains
+
+    suspend fun signupPersonal(
+        username: String,
+        password: String,
+        displayName: String? = null,
+    ): OnboardingPersonalResponse = request(
+        "/api/v1/auth/signup-personal",
+        method = "POST",
+        body = buildJsonObject {
+            put("username", username)
+            put("password", password)
+            if (!displayName.isNullOrBlank()) put("displayName", displayName)
+        },
+        authed = false,
+    )
+
+    suspend fun signupDomain(
+        domain: String,
+        username: String,
+        password: String,
+        displayName: String? = null,
+    ): OnboardingDomainResponse = request(
+        "/api/v1/auth/signup-domain",
+        method = "POST",
+        body = buildJsonObject {
+            put("domain", domain)
+            put("username", username)
+            put("password", password)
+            if (!displayName.isNullOrBlank()) put("displayName", displayName)
+        },
+        authed = false,
+    )
+
+    // MARK: - Admin DNS Suite
+
+    suspend fun listAdminDomains(): List<AdminDomainInfo> {
+        val res = request<AdminDomainsResponse>("/api/v1/admin/domains")
+        return res.domains
+    }
+
+    suspend fun connectAdminDomain(domain: String): AdminDomainConnectResponse = request(
+        "/api/v1/admin/domains",
+        method = "POST",
+        body = buildJsonObject {
+            put("domain", domain)
+        },
+    )
+
+    suspend fun getDomainDnsHealth(domain: String): DomainHealthResponse =
+        request("/api/v1/admin/domains/${pathEncode(domain)}/dns/health")
+
+    suspend fun fixDomainEmailDns(domain: String): FixEmailDnsResponse = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/dns/fix-email",
+        method = "POST",
+        body = buildJsonObject {},
+    )
+
+    suspend fun listDomainDnsRecords(
+        domain: String,
+        type: String? = null,
+        name: String? = null,
+    ): List<CloudflareDnsRecord> {
+        val query = mutableMapOf<String, String>()
+        if (!type.isNullOrBlank()) query["type"] = type
+        if (!name.isNullOrBlank()) query["name"] = name
+        val res = request<DnsRecordsListResponse>(
+            "/api/v1/admin/domains/${pathEncode(domain)}/dns/records",
+            query = query,
+        )
+        return res.records
+    }
+
+    suspend fun createDomainDnsRecord(
+        domain: String,
+        type: String,
+        name: String,
+        content: String,
+        ttl: Int = 1,
+        proxied: Boolean = false,
+        priority: Int? = null,
+        comment: String? = null,
+    ): CloudflareDnsRecord {
+        val body = buildJsonObject {
+            put("type", type)
+            put("name", name)
+            put("content", content)
+            put("ttl", ttl)
+            put("proxied", proxied)
+            priority?.let { put("priority", it) }
+            if (!comment.isNullOrBlank()) put("comment", comment)
+        }
+        val res = request<DnsRecordMutationResponse>(
+            "/api/v1/admin/domains/${pathEncode(domain)}/dns/records",
+            method = "POST",
+            body = body,
+        )
+        return res.record
+    }
+
+    suspend fun updateDomainDnsRecord(
+        domain: String,
+        recordId: String,
+        type: String,
+        name: String,
+        content: String,
+        ttl: Int = 1,
+        proxied: Boolean = false,
+        priority: Int? = null,
+        comment: String? = null,
+    ): CloudflareDnsRecord {
+        val body = buildJsonObject {
+            put("type", type)
+            put("name", name)
+            put("content", content)
+            put("ttl", ttl)
+            put("proxied", proxied)
+            priority?.let { put("priority", it) }
+            if (!comment.isNullOrBlank()) put("comment", comment)
+        }
+        val res = request<DnsRecordMutationResponse>(
+            "/api/v1/admin/domains/${pathEncode(domain)}/dns/records/${pathEncode(recordId)}",
+            method = "PUT",
+            body = body,
+        )
+        return res.record
+    }
+
+    suspend fun deleteDomainDnsRecord(domain: String, recordId: String) {
+        request<EmptyResponse>(
+            "/api/v1/admin/domains/${pathEncode(domain)}/dns/records/${pathEncode(recordId)}",
             method = "DELETE",
         )
     }
@@ -756,6 +908,76 @@ class ApiClient private constructor() {
         method = "POST",
         body = buildJsonObject { put("email", email) },
         authed = false,
+    )
+
+    // MARK: - Registrar & Billing
+
+    suspend fun checkDomainAvailability(domain: String): DomainAvailabilityResponse =
+        request("/api/v1/auth/domains/check", query = mapOf("domain" to domain), authed = false)
+
+    suspend fun createDomainCheckout(
+        domain: String,
+        username: String? = null,
+        password: String? = null,
+        displayName: String? = null,
+        returnUrl: String? = null,
+    ): DomainCheckoutResponse = request(
+        "/api/v1/billing/create-domain-checkout",
+        method = "POST",
+        body = buildJsonObject {
+            put("domain", domain)
+            if (username != null) put("username", username)
+            if (password != null) put("password", password)
+            if (displayName != null) put("displayName", displayName)
+            if (returnUrl != null) put("returnUrl", returnUrl)
+        },
+        authed = false,
+    )
+
+    // MARK: - Email Export Engine
+
+    suspend fun exportDomain(domain: String): ExportJob = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/export",
+        method = "POST",
+    )
+
+    suspend fun getExportJob(exportId: String): ExportJob = request(
+        "/api/v1/exports/${pathEncode(exportId)}",
+    )
+
+    fun exportDownloadUrl(exportId: String): String =
+        "${co.inboxies.app.config.AppConfig.apiBaseURL}/api/v1/exports/${pathEncode(exportId)}/download"
+
+    // MARK: - DNS Offboarding & Decommission
+
+    suspend fun getDecommissionPreflight(domain: String): DecommissionPreflightResponse = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/decommission-preflight",
+        method = "POST",
+    )
+
+    suspend fun decommissionDomain(
+        domain: String,
+        confirmDomain: String,
+        skipExportAcknowledged: Boolean = false,
+    ): DecommissionResponse = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/decommission",
+        method = "POST",
+        body = buildJsonObject {
+            put("confirmDomain", confirmDomain)
+            put("skipExportAcknowledged", skipExportAcknowledged)
+        },
+    )
+
+    suspend fun getDomainEppCode(domain: String): DomainEppCodeResponse = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/epp-code",
+    )
+
+    suspend fun setDomainTransferLock(domain: String, locked: Boolean): DomainTransferLockResponse = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/transfer-lock",
+        method = "POST",
+        body = buildJsonObject {
+            put("locked", locked)
+        },
     )
 
     private fun pathEncode(value: String): String =

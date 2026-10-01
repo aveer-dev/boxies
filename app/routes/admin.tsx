@@ -11,12 +11,13 @@ import {
 	Text,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
-import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { EnvelopeIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
-import { Link as RouterLink, Navigate } from "react-router";
+import { Link as RouterLink, Navigate, useSearchParams } from "react-router";
 import api from "~/services/api";
 import { queryKeys } from "~/queries/keys";
+import { AdminDnsSuite } from "~/components/AdminDnsSuite";
 
 export function meta() {
 	return [{ title: "Admin — Inboxies" }];
@@ -63,6 +64,27 @@ export default function AdminRoute() {
 	} | null>(null);
 	const [deleting, setDeleting] = useState(false);
 	const [assignTarget, setAssignTarget] = useState<string | null>(null);
+
+	const [searchParams, setSearchParams] = useSearchParams();
+	const initialTab = searchParams.get("tab") === "dns" ? "dns" : "mailboxes";
+	const [activeTab, setActiveTab] = useState<"mailboxes" | "dns">(initialTab);
+
+	useEffect(() => {
+		const tab = searchParams.get("tab");
+		if (tab === "dns" || tab === "mailboxes") {
+			setActiveTab(tab);
+		}
+	}, [searchParams]);
+
+	const handleTabChange = (tab: "mailboxes" | "dns") => {
+		setActiveTab(tab);
+		setSearchParams((prev) => {
+			const next = new URLSearchParams(prev);
+			if (tab === "dns") next.set("tab", "dns");
+			else next.delete("tab");
+			return next;
+		});
+	};
 
 	useEffect(() => {
 		if (!domain) {
@@ -171,11 +193,11 @@ export default function AdminRoute() {
 	return (
 		<div className="min-h-screen bg-kumo-recessed">
 			<div className="mx-auto max-w-3xl px-4 py-8 md:px-6 md:py-12">
-				<div className="mb-8 flex items-start justify-between gap-4">
+				<div className="mb-6 flex items-start justify-between gap-4">
 					<div>
 						<h1 className="text-2xl font-bold text-kumo-default">Admin</h1>
 						<p className="text-sm text-kumo-subtle mt-1">
-							Domain mailboxes for {domains.join(", ") || "this deployment"}
+							Domain mailboxes and Cloudflare DNS management
 						</p>
 					</div>
 					<div className="flex items-center gap-2">
@@ -185,17 +207,54 @@ export default function AdminRoute() {
 						>
 							My mailboxes
 						</RouterLink>
-						<Button
-							variant="primary"
-							icon={<PlusIcon size={16} />}
-							onClick={() => setIsCreateOpen(true)}
-						>
-							Create email
-						</Button>
+						{activeTab === "mailboxes" && (
+							<Button
+								variant="primary"
+								icon={<PlusIcon size={16} />}
+								onClick={() => setIsCreateOpen(true)}
+							>
+								Create email
+							</Button>
+						)}
 					</div>
 				</div>
 
-				{isLoading ? (
+				{/* Tabs Navigation */}
+				<div className="mb-6 flex items-center gap-4 border-b border-kumo-line">
+					<button
+						type="button"
+						onClick={() => handleTabChange("mailboxes")}
+						className={`flex items-center gap-2 pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+							activeTab === "mailboxes"
+								? "border-kumo-default text-kumo-default font-semibold"
+								: "border-transparent text-kumo-subtle hover:text-kumo-default"
+						}`}
+					>
+						<EnvelopeIcon size={16} />
+						Mailboxes
+					</button>
+					<button
+						type="button"
+						onClick={() => handleTabChange("dns")}
+						className={`flex items-center gap-2 pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+							activeTab === "dns"
+								? "border-kumo-default text-kumo-default font-semibold"
+								: "border-transparent text-kumo-subtle hover:text-kumo-default"
+						}`}
+					>
+						<GlobeIcon size={16} />
+						DNS & Domain
+					</button>
+				</div>
+
+				{activeTab === "dns" ? (
+					<AdminDnsSuite
+						configuredDomains={domains}
+						mailDomain={mailDomain}
+						initialDomain={searchParams.get("domain") || undefined}
+						justPurchased={searchParams.get("purchased") === "true"}
+					/>
+				) : isLoading ? (
 					<div className="flex justify-center py-20">
 						<Loader size="lg" />
 					</div>

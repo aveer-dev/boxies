@@ -51,6 +51,129 @@ export interface MeResponse {
 	sub: string | null;
 	keys: string[];
 	isAdmin?: boolean;
+	administeredDomains?: string[];
+}
+
+export interface CloudflareDnsRecord {
+	id: string;
+	zone_id: string;
+	zone_name: string;
+	name: string;
+	type: string;
+	content: string;
+	proxiable: boolean;
+	proxied: boolean;
+	ttl: number;
+	priority?: number;
+	comment?: string | null;
+}
+
+export interface NewDnsRecord {
+	type: string;
+	name: string;
+	content: string;
+	ttl?: number;
+	proxied?: boolean;
+	priority?: number;
+	comment?: string;
+}
+
+export interface EmailHealthItem {
+	name: string;
+	type: "MX" | "SPF" | "DKIM" | "DMARC";
+	status: "connected" | "pending" | "missing" | "conflict";
+	expectedValue: string;
+	currentValue?: string;
+	message: string;
+}
+
+export interface EmailHealthAudit {
+	overallStatus: "healthy" | "action_needed" | "pending";
+	zoneStatus: string;
+	nameservers: string[];
+	items: EmailHealthItem[];
+	issues: string[];
+}
+
+export interface AdminDomainInfo {
+	domain: string;
+	zoneId: string;
+	status: string;
+	nameservers: string[];
+	createdAt?: string;
+	updatedAt?: string;
+}
+
+export interface DomainAvailabilityResponse {
+	domain: string;
+	available: boolean;
+	registered: boolean;
+	tldSupported: boolean;
+	wholesalePriceUsd: number;
+	retailPriceUsd: number;
+	currency: string;
+	periodYears?: number;
+	supportedTld?: string;
+	alreadyInInboxies?: boolean;
+	message?: string;
+}
+
+export interface DomainCheckoutResponse {
+	checkoutUrl: string;
+	sessionId: string;
+	domain: string;
+	priceUsd: number;
+	mock?: boolean;
+}
+
+export interface ExportJob {
+	id: string;
+	domain?: string;
+	mailboxId?: string;
+	status: "pending" | "processing" | "completed" | "failed";
+	progress: {
+		processedCount: number;
+		totalCount: number;
+		percent: number;
+	};
+	totalEmails: number;
+	fileSizeBytes?: number;
+	downloadUrl?: string;
+	expiresAt: string;
+	createdAt: string;
+	error?: string;
+}
+
+export interface DecommissionPreflightResponse {
+	domain: string;
+	status: string;
+	activeMailboxCount: number;
+	activeMailboxes: string[];
+	hasRecentExport: boolean;
+	lastExport?: {
+		id: string;
+		createdAt: string;
+		downloadUrl?: string;
+		totalEmails: number;
+	} | null;
+	isRegistrarDomain: boolean;
+	transferLocked: boolean;
+}
+
+export interface DecommissionResponse {
+	success: boolean;
+	domain: string;
+	status: string;
+	eppCode?: string;
+	message: string;
+}
+
+export interface DomainHealthResponse {
+	domain: string;
+	zoneId: string;
+	zoneStatus: string;
+	nameservers: string[];
+	audit: EmailHealthAudit;
 }
 
 export interface AdminMailboxRow {

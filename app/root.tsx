@@ -114,8 +114,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
 export function HydrateFallback() {
 	return (
-		<div className="flex items-center justify-center h-screen">
-			<Loader size="lg" />
+		<div className="flex flex-col items-center justify-center min-h-screen bg-[#FAFAFB] dark:bg-[#0D0D0D] text-[#1F1F24] dark:text-[#FAFAFC]">
+			<img
+				src="/favicon.svg"
+				alt="Inboxies Logo"
+				className="w-18 h-18 mb-4 select-none pointer-events-none"
+			/>
+			<h1 className="text-3xl font-bold tracking-tight">Inboxies</h1>
 		</div>
 	);
 }

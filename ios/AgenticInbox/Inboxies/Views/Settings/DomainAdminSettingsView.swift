@@ -55,11 +55,19 @@ struct DomainAdminSettingsView: View {
                     }
 
                     Section {
+                        NavigationLink {
+                            DomainAdminDNSView()
+                        } label: {
+                            Label("DNS & Domain Configuration", systemImage: "globe")
+                                .font(.inter(size: 15, weight: .medium))
+                                .foregroundStyle(AppTheme.ink)
+                        }
+
                         Button {
                             showCreate = true
                         } label: {
                             Label("Create email", systemImage: "plus")
-                                .font(.inter(size: 16, weight: .medium))
+                                .font(.inter(size: 15, weight: .medium))
                                 .foregroundStyle(AppTheme.accent)
                         }
                     }

@@ -67,6 +67,9 @@ class AppModel {
     private val _adminMailboxes = MutableStateFlow<List<AdminMailboxRow>?>(null)
     val adminMailboxes: StateFlow<List<AdminMailboxRow>?> = _adminMailboxes.asStateFlow()
 
+    private val _administeredDomains = MutableStateFlow<List<String>>(emptyList())
+    val administeredDomains: StateFlow<List<String>> = _administeredDomains.asStateFlow()
+
     private val _inboxDigest = MutableStateFlow<InboxDigest?>(null)
     val inboxDigest: StateFlow<InboxDigest?> = _inboxDigest.asStateFlow()
 
@@ -268,6 +271,7 @@ class AppModel {
             }
             runCatching { ApiClient.shared.getMe() }.getOrNull()?.let { me ->
                 _isAdmin.value = me.isAdmin == true
+                _administeredDomains.value = me.administeredDomains
                 me.mailDomain?.takeIf { it.isNotBlank() }?.let { _mailDomain.value = it }
                 if (me.domains.isNotEmpty()) _domains.value = me.domains
             }
@@ -1088,6 +1092,7 @@ class AppModel {
         _isMailboxLoading.value = true
         _isLoading.value = true
         _isAdmin.value = false
+        _administeredDomains.value = emptyList()
         _pendingInviteToken.value = null
         _errorMessage.value = null
         _toast.value = null

@@ -66,7 +66,7 @@ A SwiftUI app lives in [`ios/`](./ios/README.md) (open `ios/AgenticInbox/Inboxie
 
 ### Native Android client
 
-A Jetpack Compose app lives in [`android/`](./android/README.md). It reuses the same Worker API with Google Sign-In (mobile JWT), Notion-inspired shell, inbox digest, multi-conversation AI chat, and minimizable compose. Emulator default API base is `http://10.0.2.2:5173`.
+A Jetpack Compose app lives in [`android/`](./android/README.md). It reuses the same Worker API with Google Sign-In (mobile JWT), Notion-inspired shell, inbox digest, multi-conversation AI chat, and minimizable compose. Default API base is `https://inboxies.email` (or `http://10.0.2.2:5173` for emulator against local dev).
 ### Configuration
 
 1. Set your mailbox domain(s) in `wrangler.jsonc` (`DOMAINS`, optional `MAIL_DOMAIN`) or via Worker vars. `GET /api/v1/config` returns `{ mailDomain, domains, emailAddresses }` for web and native clients.

@@ -8,6 +8,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Mail
 import androidx.compose.material.icons.outlined.PersonAdd
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -89,6 +92,7 @@ fun DomainAdminSettingsView(
     var lastInviteUrl by remember { mutableStateOf<String?>(null) }
     var showCreate by remember { mutableStateOf(false) }
     var selectedMailboxId by remember { mutableStateOf<String?>(null) }
+    var showingDns by remember { mutableStateOf(false) }
 
     LaunchedEffect(cachedRows) {
         if (previewRows == null && cachedRows != null) {
@@ -126,12 +130,22 @@ fun DomainAdminSettingsView(
         }
     }
 
-    BackHandler(enabled = selectedMailboxId != null) {
-        selectedMailboxId = null
+    BackHandler(enabled = showingDns || selectedMailboxId != null) {
+        if (showingDns) {
+            showingDns = false
+        } else {
+            selectedMailboxId = null
+        }
+    }
+
+    val currentScreen = when {
+        showingDns -> "dns"
+        selectedMailboxId != null -> selectedMailboxId
+        else -> null
     }
 
     AnimatedContent(
-        targetState = selectedMailboxId,
+        targetState = currentScreen,
         transitionSpec = {
             val forward = targetState != null
             (
@@ -143,9 +157,15 @@ fun DomainAdminSettingsView(
             )
         },
         label = "DomainAdminAnimatedContent",
-    ) { currentMailboxId ->
-        if (currentMailboxId == null) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+    ) { screen ->
+        when (screen) {
+            "dns" -> {
+                DomainAdminDNSView(
+                    onBack = { showingDns = false },
+                )
+            }
+            null -> {
+                Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -197,6 +217,46 @@ fun DomainAdminSettingsView(
                         }) {
                             Text("Copy link", color = colors.accent, fontFamily = InterFontFamily)
                         }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.surface)
+                            .border(BorderStroke(0.5.dp, colors.line.copy(alpha = 0.65f)), RoundedCornerShape(12.dp))
+                            .clickable { showingDns = true }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Public,
+                            contentDescription = null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "DNS & Domain Configuration",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 15.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                "Cloudflare zones, nameservers & email health",
+                                fontFamily = InterFontFamily,
+                                fontSize = 12.sp,
+                                color = colors.muted,
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = colors.muted.copy(alpha = 0.55f),
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
 
                     Button(
@@ -285,27 +345,29 @@ fun DomainAdminSettingsView(
                     }
                 }
             }
-        } else {
-            val targetMailbox = rows.find { it.id == currentMailboxId }
-            if (targetMailbox != null) {
-                DomainAdminMailboxDetailView(
-                    mailbox = targetMailbox,
-                    onBack = { selectedMailboxId = null },
-                    onAssigned = onAssigned,
-                    onMailboxUpdated = { updated ->
-                        rows = rows.map { if (it.id == updated.id) updated else it }
-                        app.setAdminMailboxes(rows)
-                    },
-                    onMailboxDeleted = { deletedId ->
-                        rows = rows.filter { it.id != deletedId }
-                        app.setAdminMailboxes(rows)
-                        selectedMailboxId = null
-                        status = "Mailbox deleted"
-                    },
-                    previewRows = previewRows,
-                )
-            } else {
-                selectedMailboxId = null
+        }
+        else -> {
+                val targetMailbox = rows.find { it.id == screen }
+                if (targetMailbox != null) {
+                    DomainAdminMailboxDetailView(
+                        mailbox = targetMailbox,
+                        onBack = { selectedMailboxId = null },
+                        onAssigned = onAssigned,
+                        onMailboxUpdated = { updated ->
+                            rows = rows.map { if (it.id == updated.id) updated else it }
+                            app.setAdminMailboxes(rows)
+                        },
+                        onMailboxDeleted = { deletedId ->
+                            rows = rows.filter { it.id != deletedId }
+                            app.setAdminMailboxes(rows)
+                            selectedMailboxId = null
+                            status = "Mailbox deleted"
+                        },
+                        previewRows = previewRows,
+                    )
+                } else {
+                    selectedMailboxId = null
+                }
             }
         }
     }

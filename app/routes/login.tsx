@@ -35,10 +35,15 @@ export default function PasswordLoginRoute() {
 	return (
 		<div className="min-h-screen bg-kumo-recessed flex items-center justify-center px-4">
 			<div className="w-full max-w-md rounded-xl border border-kumo-line bg-kumo-base p-6 md:p-8">
-				<h1 className="text-xl font-bold text-kumo-default mb-1">Sign in</h1>
-				<p className="text-sm text-kumo-subtle mb-6">
-					Use your Inboxies mailbox address and password.
-				</p>
+				<div className="flex items-center gap-3 mb-6">
+					<img src="/favicon.svg" alt="Inboxies" className="w-9 h-9" />
+					<div>
+						<h1 className="text-xl font-bold text-kumo-default leading-tight">Inboxies</h1>
+						<p className="text-xs text-kumo-subtle">
+							Sign in to your mailbox
+						</p>
+					</div>
+				</div>
 				<form onSubmit={handleSubmit} className="space-y-4">
 					{formError && (
 						<Text variant="error" size="sm">

@@ -260,7 +260,13 @@ struct PreviewAdminAuthRoot: View {
         let args = ProcessInfo.processInfo.arguments
         Group {
             if args.contains("-previewPasswordSignIn") {
-                SignInView()
+                SignInView(expandPasswordForm: true)
+                    .environment(auth)
+                    .environment(app)
+            } else if args.contains("-previewAuthOptions") {
+                SignInView(expandPasswordForm: false)
+                    .environment(auth)
+                    .environment(app)
             } else if args.contains("-previewInviteAccept") {
                 NavigationStack {
                     InviteAcceptPreview()

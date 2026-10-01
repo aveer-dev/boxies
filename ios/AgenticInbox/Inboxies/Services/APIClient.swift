@@ -301,6 +301,121 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    // MARK: - Onboarding & Custom Domains
+
+    func signupPersonal(username: String, password: String, displayName: String? = nil) async throws -> OnboardingPersonalResponse {
+        var body: [String: Any] = [
+            "username": username,
+            "password": password,
+        ]
+        if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
+        return try await request(
+            path: "/api/v1/auth/signup-personal",
+            method: "POST",
+            body: body,
+            authed: false
+        )
+    }
+
+    func signupDomain(domain: String, username: String, password: String, displayName: String? = nil) async throws -> OnboardingDomainResponse {
+        var body: [String: Any] = [
+            "domain": domain,
+            "username": username,
+            "password": password,
+        ]
+        if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
+        return try await request(
+            path: "/api/v1/auth/signup-domain",
+            method: "POST",
+            body: body,
+            authed: false
+        )
+    }
+
+    // MARK: - Admin DNS Suite
+
+    func listAdminDomains() async throws -> [AdminDomainInfo] {
+        let res: AdminDomainsResponse = try await request(path: "/api/v1/admin/domains")
+        return res.domains
+    }
+
+    func connectAdminDomain(domain: String) async throws -> AdminDomainConnectResponse {
+        try await request(
+            path: "/api/v1/admin/domains",
+            method: "POST",
+            body: ["domain": domain]
+        )
+    }
+
+    func getDomainDnsHealth(domain: String) async throws -> DomainHealthResponse {
+        try await request(path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/dns/health")
+    }
+
+    func fixDomainEmailDns(domain: String) async throws -> FixEmailDnsResponse {
+        try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/dns/fix-email",
+            method: "POST",
+            body: [:] as [String: Any]
+        )
+    }
+
+    func listDomainDnsRecords(domain: String, type: String? = nil, name: String? = nil) async throws -> [CloudflareDnsRecord] {
+        var path = "/api/v1/admin/domains/\(domain.urlPathEncoded)/dns/records"
+        var queryItems: [URLQueryItem] = []
+        if let type, !type.isEmpty { queryItems.append(URLQueryItem(name: "type", value: type)) }
+        if let name, !name.isEmpty { queryItems.append(URLQueryItem(name: "name", value: name)) }
+        if !queryItems.isEmpty {
+            var comps = URLComponents(string: path)
+            comps?.queryItems = queryItems
+            path = comps?.string ?? path
+        }
+        let res: DnsRecordsListResponse = try await request(path: path)
+        return res.records
+    }
+
+    func createDomainDnsRecord(domain: String, type: String, name: String, content: String, ttl: Int = 1, proxied: Bool = false, priority: Int? = nil, comment: String? = nil) async throws -> CloudflareDnsRecord {
+        var body: [String: Any] = [
+            "type": type,
+            "name": name,
+            "content": content,
+            "ttl": ttl,
+            "proxied": proxied,
+        ]
+        if let priority { body["priority"] = priority }
+        if let comment, !comment.isEmpty { body["comment"] = comment }
+        let res: DnsRecordMutationResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/dns/records",
+            method: "POST",
+            body: body
+        )
+        return res.record
+    }
+
+    func updateDomainDnsRecord(domain: String, recordId: String, type: String, name: String, content: String, ttl: Int = 1, proxied: Bool = false, priority: Int? = nil, comment: String? = nil) async throws -> CloudflareDnsRecord {
+        var body: [String: Any] = [
+            "type": type,
+            "name": name,
+            "content": content,
+            "ttl": ttl,
+            "proxied": proxied,
+        ]
+        if let priority { body["priority"] = priority }
+        if let comment, !comment.isEmpty { body["comment"] = comment }
+        let res: DnsRecordMutationResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/dns/records/\(recordId.urlPathEncoded)",
+            method: "PUT",
+            body: body
+        )
+        return res.record
+    }
+
+    func deleteDomainDnsRecord(domain: String, recordId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/dns/records/\(recordId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
     func createAdminInvite(
         mailboxId: String,
         inviteEmail: String,
@@ -638,6 +753,87 @@ final class APIClient: @unchecked Sendable {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/device-token/\(token.urlPathEncoded)",
             method: "DELETE"
+        )
+    }
+
+    // MARK: - Registrar & Billing
+
+    func checkDomainAvailability(domain: String) async throws -> DomainAvailabilityResponse {
+        try await request(
+            path: "/api/v1/auth/domains/check",
+            query: ["domain": domain]
+        )
+    }
+
+    func createDomainCheckout(
+        domain: String,
+        username: String? = nil,
+        password: String? = nil,
+        displayName: String? = nil,
+        returnUrl: String? = nil
+    ) async throws -> DomainCheckoutResponse {
+        var body: [String: Any] = ["domain": domain]
+        if let username { body["username"] = username }
+        if let password { body["password"] = password }
+        if let displayName { body["displayName"] = displayName }
+        if let returnUrl { body["returnUrl"] = returnUrl }
+        return try await request(
+            path: "/api/v1/billing/create-domain-checkout",
+            method: "POST",
+            body: body
+        )
+    }
+
+    // MARK: - Email Export Engine
+
+    func exportDomain(domain: String) async throws -> ExportJob {
+        try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/export",
+            method: "POST"
+        )
+    }
+
+    func getExportJob(exportId: String) async throws -> ExportJob {
+        try await request(path: "/api/v1/exports/\(exportId.urlPathEncoded)")
+    }
+
+    func exportDownloadURL(jobId: String) -> String? {
+        AppConfig.apiBaseURL.appendingPathComponent("api/v1/exports/\(jobId.urlPathEncoded)/download").absoluteString
+    }
+
+    // MARK: - DNS Offboarding & Decommission
+
+    func getDecommissionPreflight(domain: String) async throws -> DecommissionPreflightResponse {
+        try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/decommission-preflight",
+            method: "POST"
+        )
+    }
+
+    func decommissionDomain(
+        domain: String,
+        confirmDomain: String,
+        skipExportAcknowledged: Bool = false
+    ) async throws -> DecommissionResponse {
+        try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/decommission",
+            method: "POST",
+            body: [
+                "confirmDomain": confirmDomain,
+                "skipExportAcknowledged": skipExportAcknowledged
+            ]
+        )
+    }
+
+    func getDomainEppCode(domain: String) async throws -> DomainEppCodeResponse {
+        try await request(path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/epp-code")
+    }
+
+    func setDomainTransferLock(domain: String, locked: Bool) async throws -> DomainTransferLockResponse {
+        try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/transfer-lock",
+            method: "POST",
+            body: ["locked": locked]
         )
     }
 }

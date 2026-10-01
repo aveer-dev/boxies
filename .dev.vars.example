@@ -11,3 +11,19 @@ APPLE_CLIENT_ID=com.example.AgenticInbox
 MOBILE_JWT_SECRET=dev-mobile-jwt-secret-change-me
 # Firebase service-account JSON (single line) for FCM HTTP v1 Android push.
 # FCM_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+
+# --- Cloudflare API & Registrar (Optional in dev; required in prod for live zone & registrar provisioning) ---
+# CF_ACCOUNT_ID: Cloudflare Account ID where custom zones and routes are provisioned.
+# CF_ACCOUNT_ID=your-cloudflare-account-id
+# CF_API_TOKEN: Cloudflare API Token with Zone (Edit), DNS (Edit), Email Routing (Edit), and Registrar permissions.
+# CF_API_TOKEN=your-cloudflare-api-token
+# WORKER_NAME: Target Worker script name for Email Routing catch-all trigger (defaults to agentic-inbox).
+# WORKER_NAME=agentic-inbox
+
+# --- Stripe Billing & Checkout (Optional in dev; required in prod for live $14/yr domain purchases) ---
+# STRIPE_SECRET_KEY: Secret key (sk_test_... or sk_live_...) for domain checkout sessions.
+# STRIPE_SECRET_KEY=sk_test_...
+# STRIPE_WEBHOOK_SECRET: Webhook secret (whsec_...) for verifying checkout.session.completed webhooks.
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# APP_BASE_URL: Public site origin for checkout return redirects (defaults to https://inboxies.email).
+# APP_BASE_URL=https://inboxies.email

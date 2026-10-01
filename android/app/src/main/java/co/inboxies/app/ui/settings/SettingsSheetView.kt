@@ -100,13 +100,16 @@ fun SettingsSheetView(
     onClose: () -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit = {},
     themeMode: ThemeMode = ThemeMode.SYSTEM,
+    initialDomainAdmin: Boolean = false,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val mailboxId by app.selectedMailboxId.collectAsState()
     val mailboxes by app.mailboxes.collectAsState()
     val current = mailboxes.firstOrNull { it.id == mailboxId }
-    var page by remember { mutableStateOf<SettingsPage>(SettingsPage.Root) }
+    var page by remember {
+        mutableStateOf<SettingsPage>(if (initialDomainAdmin) SettingsPage.DomainAdmin else SettingsPage.Root)
+    }
     val scope = rememberCoroutineScope()
 
     val push = PushNotificationManager.shared

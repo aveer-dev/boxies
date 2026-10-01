@@ -5,15 +5,18 @@ enum AppConfig {
     /// Production Worker URL, e.g. https://inboxies.email
     /// Simulator tip: use http://127.0.0.1:5173 when running `pnpm dev` on the same Mac.
     static var apiBaseURL: URL {
+        #if DEBUG
+        if let idx = ProcessInfo.processInfo.arguments.firstIndex(of: "-apiBase"),
+           idx + 1 < ProcessInfo.processInfo.arguments.count,
+           let url = parseAPIBaseURL(ProcessInfo.processInfo.arguments[idx + 1]) {
+            return url
+        }
+        #endif
         if let override = UserDefaults.standard.string(forKey: "apiBaseURL"),
            let url = parseAPIBaseURL(override) {
             return url
         }
-        #if DEBUG
-        return URL(string: "http://localhost:5173")!
-        #else
         return URL(string: "https://inboxies.email")!
-        #endif
     }
 
     /// Must match APPLE_CLIENT_ID / Xcode bundle identifier.

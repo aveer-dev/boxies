@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="115" fill="#FFFFFF" stroke="#E5E5EA" stroke-width="4"/>
+  <g transform="translate(8, 0)">
+    <!-- Keel (underbelly fold) -->
+    <path d="M 195 285 L 172 390 L 228 335 Z" fill="#222225" stroke="#222225" stroke-width="10" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- Right wing facet -->
+    <path d="M 388 115 L 195 285 L 285 390 Z" fill="#FFFFFF" stroke="#38383C" stroke-width="16" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- Left wing facet -->
+    <path d="M 388 115 L 98 225 L 195 285 Z" fill="#FFFFFF" stroke="#38383C" stroke-width="16" stroke-linejoin="round" stroke-linecap="round"/>
+    <!-- Center spine crease line -->
+    <line x1="388" y1="115" x2="195" y2="285" stroke="#38383C" stroke-width="16" stroke-linecap="round"/>
+  </g>
+</svg>

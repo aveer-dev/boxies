@@ -20,6 +20,9 @@ worker-configuration.d.ts
 .cursor/*
 !.cursor/skills/
 !.cursor/skills/**
+!.cursor/rules/
+!.cursor/rules/**
+!.cursor/mcp.json
 # Android
 android/.gradle/
 android/local.properties

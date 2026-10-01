@@ -8,6 +8,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,8 +52,15 @@ class MainActivity : ComponentActivity() {
             PreviewHarness.seed(previewMode, auth, model)
         } else {
             auth.resyncFromStorage()
+            val extraApiBase = intent.getStringExtra("apiBase")
+            if (!extraApiBase.isNullOrBlank()) {
+                co.inboxies.app.config.AppConfig.parseAPIBaseURL(extraApiBase)?.let { parsed ->
+                    co.inboxies.app.config.AppConfig.apiBaseURL = parsed
+                }
+            }
             handlePushIntent(intent)
             handleInviteIntent(intent)
+            handleOnboardingIntent(intent)
         }
         setContent {
             var themeMode by remember {
@@ -106,6 +115,22 @@ class MainActivity : ComponentActivity() {
         if (PreviewMode.fromIntent(intent) != null) return
         handlePushIntent(intent)
         handleInviteIntent(intent)
+        handleOnboardingIntent(intent)
+    }
+
+    private fun handleOnboardingIntent(intent: Intent?) {
+        if (intent == null) return
+        val data = intent.data ?: return
+        val isOnboarding = (data.scheme == "inboxies" && (data.host == "onboarding" || data.host == "domain-ready"))
+            || (data.host == "inboxies.email" && data.path?.startsWith("/onboarding") == true)
+        if (isOnboarding) {
+            if (::appModel.isInitialized) {
+                lifecycleScope.launch {
+                    appModel.refreshMailboxes(showLoading = true)
+                }
+            }
+            intent.data = null
+        }
     }
 
     private fun handleInviteIntent(intent: Intent?) {

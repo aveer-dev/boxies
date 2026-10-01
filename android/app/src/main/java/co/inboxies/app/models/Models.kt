@@ -61,6 +61,7 @@ data class MeResponse(
     val linkedEmails: List<String> = emptyList(),
     val keys: List<String> = emptyList(),
     val isAdmin: Boolean? = null,
+    val administeredDomains: List<String> = emptyList(),
     val mailDomain: String? = null,
     val domains: List<String> = emptyList(),
 )
@@ -1011,3 +1012,206 @@ val AppJson = Json {
     encodeDefaults = true
     explicitNulls = false
 }
+
+@Serializable
+data class AdminDomainInfo(
+    val domain: String,
+    val zoneId: String,
+    val status: String,
+    val nameservers: List<String> = emptyList(),
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+) {
+    val id: String get() = domain
+}
+
+@Serializable
+data class AdminDomainsResponse(
+    val domains: List<AdminDomainInfo> = emptyList(),
+)
+
+@Serializable
+data class EmailHealthItem(
+    val name: String,
+    val type: String,
+    val status: String,
+    val expectedValue: String,
+    val currentValue: String? = null,
+    val message: String,
+) {
+    val id: String get() = type + name
+}
+
+@Serializable
+data class EmailHealthAudit(
+    val overallStatus: String,
+    val zoneStatus: String,
+    val nameservers: List<String> = emptyList(),
+    val items: List<EmailHealthItem> = emptyList(),
+    val issues: List<String> = emptyList(),
+)
+
+@Serializable
+data class DomainHealthResponse(
+    val domain: String,
+    val zoneId: String,
+    val zoneStatus: String,
+    val nameservers: List<String> = emptyList(),
+    val audit: EmailHealthAudit,
+)
+
+@Serializable
+data class FixEmailDnsResponse(
+    val success: Boolean,
+    val audit: EmailHealthAudit? = null,
+)
+
+@Serializable
+data class CloudflareDnsRecord(
+    val id: String,
+    @SerialName("zone_id") val zoneId: String = "",
+    @SerialName("zone_name") val zoneName: String = "",
+    val name: String,
+    val type: String,
+    val content: String,
+    val proxiable: Boolean = false,
+    val proxied: Boolean = false,
+    val ttl: Int = 1,
+    val priority: Int? = null,
+    val comment: String? = null,
+)
+
+@Serializable
+data class DnsRecordsListResponse(
+    val records: List<CloudflareDnsRecord> = emptyList(),
+)
+
+@Serializable
+data class DnsRecordMutationResponse(
+    val record: CloudflareDnsRecord,
+)
+
+@Serializable
+data class OnboardingPersonalResponse(
+    val token: String,
+    val expiresAt: String,
+    val mailbox: OnboardingMailboxInfo,
+)
+
+@Serializable
+data class OnboardingMailboxInfo(
+    val id: String,
+    val email: String,
+    val name: String,
+)
+
+@Serializable
+data class OnboardingDomainResponse(
+    val token: String,
+    val expiresAt: String,
+    val mailbox: OnboardingMailboxInfo,
+    val domain: OnboardingDomainInfo,
+    val audit: EmailHealthAudit? = null,
+)
+
+@Serializable
+data class OnboardingDomainInfo(
+    val domain: String,
+    val zoneId: String,
+    val status: String,
+    val nameservers: List<String> = emptyList(),
+)
+
+@Serializable
+data class DomainAvailabilityResponse(
+    val domain: String,
+    val available: Boolean,
+    val registered: Boolean,
+    val wholesalePriceUsd: Double,
+    val retailPriceUsd: Double,
+    val currency: String,
+    val tldSupported: Boolean,
+    val alreadyInInboxies: Boolean? = null,
+    val message: String? = null,
+)
+
+@Serializable
+data class DomainCheckoutResponse(
+    val checkoutUrl: String,
+    val sessionId: String,
+    val domain: String,
+    val priceUsd: Double,
+    val mock: Boolean? = null,
+)
+
+@Serializable
+data class ExportJobProgress(
+    val processedCount: Int = 0,
+    val totalCount: Int = 0,
+    val percent: Int = 0,
+)
+
+@Serializable
+data class ExportJob(
+    val id: String,
+    val domain: String? = null,
+    val mailboxId: String? = null,
+    val status: String = "pending",
+    val progress: ExportJobProgress? = null,
+    val totalEmails: Int? = null,
+    val fileSizeBytes: Long? = null,
+    val downloadUrl: String? = null,
+    val expiresAt: String? = null,
+    val createdAt: String? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class DecommissionLastExport(
+    val id: String,
+    val createdAt: String,
+    val downloadUrl: String? = null,
+    val totalEmails: Int = 0,
+)
+
+@Serializable
+data class DecommissionPreflightResponse(
+    val domain: String,
+    val status: String,
+    val activeMailboxCount: Int,
+    val activeMailboxes: List<String> = emptyList(),
+    val hasRecentExport: Boolean = false,
+    val lastExport: DecommissionLastExport? = null,
+    val isRegistrarDomain: Boolean = false,
+    val transferLocked: Boolean = true,
+)
+
+@Serializable
+data class DecommissionResponse(
+    val success: Boolean,
+    val domain: String,
+    val status: String,
+    val eppCode: String? = null,
+    val message: String = "",
+)
+
+@Serializable
+data class DomainEppCodeResponse(
+    val domain: String,
+    val eppCode: String,
+)
+
+@Serializable
+data class DomainTransferLockResponse(
+    val success: Boolean,
+    val domain: String,
+    val locked: Boolean,
+)
+
+@Serializable
+data class AdminDomainConnectResponse(
+    val domain: AdminDomainInfo,
+    val audit: EmailHealthAudit? = null,
+)
+
+

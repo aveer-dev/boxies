@@ -24,6 +24,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -44,6 +45,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +64,7 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarBorder
@@ -98,12 +101,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import co.inboxies.app.models.AdminDomainInfo
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.EmailDateFilter
 import co.inboxies.app.models.EmailFilterState
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.Mailbox
+import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.AvatarInitials
@@ -179,6 +184,19 @@ fun HomeShellView(
     var previousTabBeforeReplyLater by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
     var newMailboxName by remember { mutableStateOf("") }
     var newMailboxEmail by remember { mutableStateOf("") }
+
+    val isAdmin by appModel.isAdmin.collectAsState()
+    var pendingDomain by remember { mutableStateOf<AdminDomainInfo?>(null) }
+    var settingsInitialDomainAdmin by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isAdmin) {
+        if (isAdmin && !appModel.isDebugPreview) {
+            runCatching { ApiClient.shared.listAdminDomains() }
+                .onSuccess { list ->
+                    pendingDomain = list.firstOrNull { it.status == "pending" || it.status == "pending_nameservers" }
+                }
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (!appModel.isDebugPreview) {
@@ -543,6 +561,61 @@ fun HomeShellView(
                                 modifier = Modifier.padding(top = 2.dp),
                             )
                         }
+                    }
+                }
+
+                // Pending domain propagation banner
+                pendingDomain?.let { domain ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.accent.copy(alpha = 0.08f))
+                            .border(BorderStroke(0.5.dp, colors.accent.copy(alpha = 0.25f)), RoundedCornerShape(12.dp))
+                            .clickable {
+                                settingsInitialDomainAdmin = true
+                                showSettings = true
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(colors.accent.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Outlined.Public,
+                                contentDescription = null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Domain Setup: ${domain.domain}",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                "Cloudflare is awaiting nameservers. Tap to view DNS.",
+                                fontFamily = InterFontFamily,
+                                fontSize = 11.sp,
+                                color = colors.muted,
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = colors.muted.copy(alpha = 0.55f),
+                            modifier = Modifier.size(16.dp),
+                        )
                     }
                 }
 
@@ -933,7 +1006,10 @@ fun HomeShellView(
 
     if (showSettings) {
         ModalBottomSheet(
-            onDismissRequest = { showSettings = false },
+            onDismissRequest = {
+                showSettings = false
+                settingsInitialDomainAdmin = false
+            },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
             containerColor = colors.background,
             scrimColor = HomeChromeMetrics.modalScrim,
@@ -941,9 +1017,13 @@ fun HomeShellView(
             dragHandle = null,
         ) {
             SettingsSheetView(
-                onClose = { showSettings = false },
+                onClose = {
+                    showSettings = false
+                    settingsInitialDomainAdmin = false
+                },
                 onThemeModeChange = onThemeModeChange,
                 themeMode = themeMode,
+                initialDomainAdmin = settingsInitialDomainAdmin,
             )
         }
     }

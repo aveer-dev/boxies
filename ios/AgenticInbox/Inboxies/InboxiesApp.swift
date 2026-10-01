@@ -34,9 +34,18 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetail")
                 || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetailUnassigned")
                 || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn")
+                || ProcessInfo.processInfo.arguments.contains("-previewAuthOptions")
                 || ProcessInfo.processInfo.arguments.contains("-previewInviteAccept")
                 || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods") {
                 PreviewAdminAuthRoot()
+                    .applyThemeController()
+            } else if ProcessInfo.processInfo.arguments.contains("-previewSplash") {
+                SplashScreenView()
+                    .applyThemeController()
+            } else if ProcessInfo.processInfo.arguments.contains("-previewWelcome") {
+                SignInView(isShowingSplash: false)
+                    .environment(authStore)
+                    .environment(appModel)
                     .applyThemeController()
             } else {
                 RootView()

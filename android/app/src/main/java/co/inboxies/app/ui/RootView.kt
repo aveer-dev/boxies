@@ -1,9 +1,12 @@
 package co.inboxies.app.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -11,7 +14,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
@@ -27,6 +32,8 @@ import co.inboxies.app.ui.auth.InviteAcceptView
 import co.inboxies.app.ui.auth.MailboxOnboardingView
 import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
+import co.inboxies.app.ui.splash.SplashScreenView
+import kotlinx.coroutines.delay
 
 @Composable
 fun RootView(
@@ -40,6 +47,14 @@ fun RootView(
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
     val pendingInvite by appModel.pendingInviteToken.collectAsState()
+
+    var isShowingSplash by remember { mutableStateOf(!appModel.isDebugPreview) }
+
+    LaunchedEffect(Unit) {
+        if (!isShowingSplash) return@LaunchedEffect
+        delay(800)
+        isShowingSplash = false
+    }
 
     LaunchedEffect(token) {
         if (appModel.isDebugPreview) return@LaunchedEffect
@@ -58,27 +73,37 @@ fun RootView(
         appModel.openEmailFromNotification(link.mailboxId, link.emailId, link.folderId)
     }
 
-    if (pendingInvite != null) {
-        CompositionLocalProvider(
-            LocalAuthStore provides auth,
-            LocalAppModel provides appModel,
-        ) {
-            InviteAcceptView(token = pendingInvite!!) {
-                appModel.setPendingInviteToken(null)
+    Box(modifier = Modifier.fillMaxSize()) {
+        if (pendingInvite != null) {
+            CompositionLocalProvider(
+                LocalAuthStore provides auth,
+                LocalAppModel provides appModel,
+            ) {
+                InviteAcceptView(token = pendingInvite!!) {
+                    appModel.setPendingInviteToken(null)
+                }
             }
+        } else {
+            RootViewContent(
+                isAuthenticated = isAuthenticated,
+                isMailboxLoading = isMailboxLoading,
+                hasMailboxes = mailboxes.isNotEmpty(),
+                isShowingSplash = isShowingSplash,
+                auth = auth,
+                appModel = appModel,
+                themeMode = themeMode,
+                onThemeModeChange = onThemeModeChange,
+            )
         }
-        return
-    }
 
-    RootViewContent(
-        isAuthenticated = isAuthenticated,
-        isMailboxLoading = isMailboxLoading,
-        hasMailboxes = mailboxes.isNotEmpty(),
-        auth = auth,
-        appModel = appModel,
-        themeMode = themeMode,
-        onThemeModeChange = onThemeModeChange,
-    )
+        AnimatedVisibility(
+            visible = isShowingSplash,
+            enter = fadeIn(animationSpec = tween(150)),
+            exit = fadeOut(animationSpec = tween(300)),
+        ) {
+            SplashScreenView()
+        }
+    }
 }
 
 @Composable
@@ -86,6 +111,7 @@ private fun RootViewContent(
     isAuthenticated: Boolean,
     isMailboxLoading: Boolean,
     hasMailboxes: Boolean,
+    isShowingSplash: Boolean,
     auth: AuthStore,
     appModel: AppModel,
     themeMode: ThemeMode,
@@ -104,7 +130,7 @@ private fun RootViewContent(
             label = "root",
         ) { state ->
             when (state) {
-                "sign_in" -> SignInView()
+                "sign_in" -> SignInView(isShowingSplash = isShowingSplash)
                 "onboarding" -> MailboxOnboardingView()
                 else -> HomeShellView(
                     auth = auth,
@@ -132,6 +158,7 @@ fun RootViewSignInPreview() {
                 isAuthenticated = false,
                 isMailboxLoading = false,
                 hasMailboxes = false,
+                isShowingSplash = false,
                 auth = auth,
                 appModel = model,
                 themeMode = ThemeMode.LIGHT,
@@ -156,6 +183,7 @@ fun RootViewOnboardingPreview() {
                 isAuthenticated = true,
                 isMailboxLoading = false,
                 hasMailboxes = false,
+                isShowingSplash = false,
                 auth = auth,
                 appModel = model,
                 themeMode = ThemeMode.LIGHT,

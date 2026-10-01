@@ -8,8 +8,7 @@ import java.net.URI
 
 /**
  * Runtime configuration. Mirrors iOS `AppConfig`.
- * Debug default: emulator loopback to host Vite (`10.0.2.2:5173`).
- * Release default: https://inboxies.email. Editable on the sign-in screen.
+ * Default: https://inboxies.email. Editable on the sign-in screen.
  */
 object AppConfig {
     const val PREFS_NAME = "inboxies_config"

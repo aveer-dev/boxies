@@ -580,6 +580,40 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
+	 * Retrieve a sequential batch of email records across all folders for MBOX export.
+	 */
+	async getBatchForExport(offset = 0, limit = 200) {
+		return this.db
+			.select({
+				id: schema.emails.id,
+				subject: schema.emails.subject,
+				sender: schema.emails.sender,
+				sender_name: schema.emails.sender_name,
+				recipient: schema.emails.recipient,
+				cc: schema.emails.cc,
+				bcc: schema.emails.bcc,
+				date: schema.emails.date,
+				folder_id: schema.emails.folder_id,
+				raw_headers: schema.emails.raw_headers,
+				in_reply_to: schema.emails.in_reply_to,
+				provider_message_id: schema.emails.provider_message_id,
+			})
+			.from(schema.emails)
+			.orderBy(asc(schema.emails.date))
+			.limit(Math.min(limit, 500))
+			.offset(Math.max(offset, 0))
+			.all();
+	}
+
+	/**
+	 * Total count of emails stored in this mailbox for export progress estimation.
+	 */
+	async getTotalEmailCountForExport(): Promise<number> {
+		const row = this.ctx.storage.sql.exec(`SELECT COUNT(*) as count FROM emails`).one();
+		return Number(row?.count ?? 0);
+	}
+
+	/**
 	 * People I've emailed: unique recipients from recent Sent mail,
 	 * ranked by most recent, optionally filtered by `q`.
 	 */

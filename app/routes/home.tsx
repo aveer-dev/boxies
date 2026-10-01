@@ -12,11 +12,12 @@ import {
 	Text,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
-import { EnvelopeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { EnvelopeIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { Link as RouterLink } from "react-router";
+import { Link as RouterLink, useNavigate } from "react-router";
 import api from "~/services/api";
+import { OnboardingFlow } from "~/components/OnboardingFlow";
 import {
 	useCreateMailbox,
 	useDeleteMailbox,
@@ -46,6 +47,22 @@ export default function HomeRoute() {
 		staleTime: 60_000,
 	});
 	const isAdmin = Boolean(me?.isAdmin);
+	const navigate = useNavigate();
+
+	const { data: adminDomainsData } = useQuery({
+		queryKey: ["admin-domains"],
+		queryFn: () => api.listAdminDomains(),
+		enabled: isAdmin,
+		staleTime: 60_000,
+	});
+	const pendingDomain = adminDomainsData?.domains?.find(
+		(d) => d.status === "pending" || d.status === "pending_nameservers",
+	);
+
+	const handleOnboardingSuccess = async (mailboxId: string) => {
+		await refetchMailboxes();
+		navigate(`/mailbox/${encodeURIComponent(mailboxId)}`);
+	};
 
 	const { data: adminMailboxes = [] } = useQuery({
 		queryKey: ["admin-mailboxes"],
@@ -186,6 +203,32 @@ export default function HomeRoute() {
 					)}
 				</div>
 
+				{pendingDomain && (
+					<div className="mb-6 rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+						<div className="flex items-center gap-3">
+							<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400">
+								<GlobeIcon size={20} />
+							</div>
+							<div>
+								<p className="text-sm font-semibold text-kumo-default">
+									Domain Setup in Progress: {pendingDomain.domain}
+								</p>
+								<p className="text-xs text-kumo-subtle">
+									Cloudflare is awaiting nameserver propagation. Inbound email will begin routing once active.
+								</p>
+							</div>
+						</div>
+						<RouterLink
+							to={`/admin?tab=dns&domain=${encodeURIComponent(pendingDomain.domain)}`}
+							className="no-underline shrink-0"
+						>
+							<Button variant="secondary" size="sm">
+								View DNS Settings →
+							</Button>
+						</RouterLink>
+					</div>
+				)}
+
 				{isLoading ? (
 					<div className="flex justify-center py-20">
 						<Loader size="lg" />
@@ -293,85 +336,13 @@ export default function HomeRoute() {
 				)}
 			</div>
 
-			{/* Create Dialog */}
-			<Dialog.Root open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-5">
-						Create New Mailbox
-					</Dialog.Title>
-					<form onSubmit={handleCreate} className="space-y-4">
-						{createError && (
-							<Text variant="error" size="sm">
-								{createError}
-							</Text>
-						)}
-						<div>
-							<span className="text-sm font-medium text-kumo-default mb-1.5 block">
-								Email Address
-							</span>
-							<div className="flex items-center gap-2">
-								<div className="flex-1">
-									<Input
-										aria-label="Address prefix"
-										placeholder="info"
-										size="sm"
-										value={newPrefix}
-										onChange={(e) => setNewPrefix(e.target.value)}
-										required
-									/>
-								</div>
-								<span className="text-sm text-kumo-subtle">@</span>
-								{domains.length > 1 ? (
-									<div className="flex-1">
-							<Select
-								aria-label="Domain"
-								value={selectedDomain}
-								onValueChange={(value) => {
-									if (value) setSelectedDomain(value);
-								}}
-							>
-											{domains.map((d) => (
-												<Select.Option key={d} value={d}>
-													{d}
-												</Select.Option>
-											))}
-										</Select>
-									</div>
-								) : (
-									<span className="text-sm text-kumo-subtle">
-										{selectedDomain || "no domain"}
-									</span>
-								)}
-							</div>
-						</div>
-						<Input
-							label="Display Name (optional)"
-							placeholder="Info"
-							size="sm"
-							value={newName}
-							onChange={(e) => setNewName(e.target.value)}
-						/>
-						<div className="flex justify-end gap-2 pt-2">
-							<Dialog.Close
-								render={(props) => (
-									<Button {...props} variant="secondary" size="sm">
-										Cancel
-									</Button>
-								)}
-							/>
-							<Button
-								type="submit"
-								variant="primary"
-								size="sm"
-								loading={isCreating}
-								disabled={!selectedDomain}
-							>
-								Create
-							</Button>
-						</div>
-					</form>
-				</Dialog>
-			</Dialog.Root>
+			{/* HEY-Style Onboarding Flow */}
+			<OnboardingFlow
+				isOpen={isCreateOpen}
+				onClose={() => setIsCreateOpen(false)}
+				mailDomain={mailDomain}
+				onSuccess={handleOnboardingSuccess}
+			/>
 
 			{/* Delete Dialog */}
 			<Dialog.Root

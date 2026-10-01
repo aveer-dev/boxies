@@ -10,6 +10,15 @@ import type {
 	Mailbox,
 	RecentRecipient,
 	SenderPreference,
+	AdminDomainInfo,
+	CloudflareDnsRecord,
+	DomainHealthResponse,
+	NewDnsRecord,
+	DomainAvailabilityResponse,
+	DomainCheckoutResponse,
+	ExportJob,
+	DecommissionPreflightResponse,
+	DecommissionResponse,
 } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -522,6 +531,141 @@ const api = {
 			expiresAt: string;
 			user: { id: string; email: string | null; fullName: null };
 		}>("/api/v1/auth/dev", { email }),
+
+	// Onboarding & Custom Domains
+	signupPersonal: (body: { username: string; password: string; displayName?: string }) =>
+		post<{
+			token: string;
+			expiresAt: string;
+			mailbox: { id: string; email: string; name: string };
+			user: { id: string; email: string };
+		}>("/api/v1/auth/signup-personal", body),
+
+	signupDomain: (body: {
+		domain: string;
+		username: string;
+		password: string;
+		displayName?: string;
+	}) =>
+		post<{
+			token: string;
+			expiresAt: string;
+			mailbox: { id: string; email: string; name: string };
+			domain: { domain: string; zoneId: string; status: string; nameservers: string[] };
+			audit: unknown;
+			user: { id: string; email: string };
+		}>("/api/v1/auth/signup-domain", body),
+
+	// Admin Domain & DNS Suite
+	listAdminDomains: () =>
+		get<{ domains: AdminDomainInfo[] }>("/api/v1/admin/domains"),
+
+	connectAdminDomain: (body: { domain: string }) =>
+		post<{
+			domain: AdminDomainInfo;
+			audit: unknown;
+		}>("/api/v1/admin/domains", body),
+
+	getAdminDomain: (domain: string) =>
+		get<AdminDomainInfo>(`/api/v1/admin/domains/${encodeURIComponent(domain)}`),
+
+	getDomainDnsHealth: (domain: string) =>
+		get<DomainHealthResponse>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/dns/health`,
+		),
+
+	fixDomainEmailDns: (domain: string) =>
+		post<{ success: boolean; audit: unknown }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/dns/fix-email`,
+		),
+
+	listDomainDnsRecords: (
+		domain: string,
+		params?: { type?: string; name?: string },
+	) => {
+		const query: Record<string, string> = {};
+		if (params?.type) query.type = params.type;
+		if (params?.name) query.name = params.name;
+		return get<{ records: CloudflareDnsRecord[] }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/dns/records`,
+			{ params: query },
+		);
+	},
+
+	createDomainDnsRecord: (domain: string, record: NewDnsRecord) =>
+		post<{ record: CloudflareDnsRecord }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/dns/records`,
+			record,
+		),
+
+	updateDomainDnsRecord: (
+		domain: string,
+		recordId: string,
+		record: NewDnsRecord,
+	) =>
+		put<{ record: CloudflareDnsRecord }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/dns/records/${encodeURIComponent(recordId)}`,
+			record,
+		),
+
+	deleteDomainDnsRecord: (domain: string, recordId: string) =>
+		del<{ success: boolean; id: string }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/dns/records/${encodeURIComponent(recordId)}`,
+		),
+
+	// Registrar & Billing
+	checkDomainAvailability: (domain: string) =>
+		get<DomainAvailabilityResponse>("/api/v1/auth/domains/check", {
+			params: { domain },
+		}),
+
+	createDomainCheckout: (body: {
+		domain: string;
+		username?: string;
+		password?: string;
+		displayName?: string;
+		returnUrl?: string;
+	}) =>
+		post<DomainCheckoutResponse>("/api/v1/billing/create-domain-checkout", body),
+
+	// Email Data Export Engine
+	exportMailbox: (mailboxId: string) =>
+		post<ExportJob>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/export`),
+
+	exportDomain: (domain: string) =>
+		post<ExportJob>(`/api/v1/admin/domains/${encodeURIComponent(domain)}/export`),
+
+	getExportJob: (exportId: string) =>
+		get<ExportJob>(`/api/v1/exports/${encodeURIComponent(exportId)}`),
+
+	getExportDownloadUrl: (exportId: string) =>
+		`/api/v1/exports/${encodeURIComponent(exportId)}/download`,
+
+	// DNS Migration & Offboarding
+	getDecommissionPreflight: (domain: string) =>
+		post<DecommissionPreflightResponse>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/decommission-preflight`,
+		),
+
+	decommissionDomain: (
+		domain: string,
+		body: { confirmDomain: string; skipExportAcknowledged?: boolean },
+	) =>
+		post<DecommissionResponse>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/decommission`,
+			body,
+		),
+
+	getDomainEppCode: (domain: string) =>
+		get<{ domain: string; eppCode: string }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/epp-code`,
+		),
+
+	setDomainTransferLock: (domain: string, locked: boolean) =>
+		post<{ success: boolean; domain: string; locked: boolean }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/transfer-lock`,
+			{ locked },
+		),
 };
 
 export default api;

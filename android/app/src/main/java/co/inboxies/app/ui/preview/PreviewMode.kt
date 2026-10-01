@@ -18,6 +18,8 @@ import co.inboxies.app.BuildConfig
  */
 enum class PreviewMode(val cliName: String, val intentExtra: String) {
     DomainAdmin("domainAdmin", "previewDomainAdmin"),
+    DomainDns("domainDns", "previewDomainDns"),
+    DomainOnboarding("domainOnboarding", "previewDomainOnboarding"),
     PasswordSignIn("passwordSignIn", "previewPasswordSignIn"),
     InviteAccept("inviteAccept", "previewInviteAccept"),
     SignInMethods("signInMethods", "previewSignInMethods"),
@@ -25,6 +27,9 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Screener("screener", "previewScreener"),
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
+    Splash("splash", "previewSplash"),
+    Welcome("welcome", "previewWelcome"),
+    AuthOptions("authOptions", "previewAuthOptions"),
     ;
 
     companion object {

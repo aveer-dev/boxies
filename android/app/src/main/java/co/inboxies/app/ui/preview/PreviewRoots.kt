@@ -25,14 +25,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import co.inboxies.app.models.AdminDomainInfo
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.ThemeMode
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.auth.MailboxOnboardingView
+import co.inboxies.app.ui.auth.OnboardingTrack
 import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
+import co.inboxies.app.ui.settings.DomainAdminDNSView
 import co.inboxies.app.ui.settings.DomainAdminSettingsView
+import co.inboxies.app.ui.splash.SplashScreenView
 
 /**
  * DEBUG emulator roots — mirror iOS `PreviewMailboxRoot` / `PreviewAdminAuthRoot`.
@@ -41,16 +46,26 @@ import co.inboxies.app.ui.settings.DomainAdminSettingsView
 object PreviewHarness {
     fun seed(mode: PreviewMode, auth: AuthStore, appModel: AppModel) {
         when (mode) {
-            PreviewMode.PasswordSignIn -> {
+            PreviewMode.PasswordSignIn,
+            PreviewMode.Welcome,
+            PreviewMode.AuthOptions,
+            -> {
                 // Show SignInView only — do not clear a real on-disk session.
                 appModel.reset()
             }
+            PreviewMode.DomainOnboarding -> {
+                PreviewSupport.applyAuth(auth)
+            }
             PreviewMode.InviteAccept,
             PreviewMode.DomainAdmin,
+            PreviewMode.DomainDns,
             PreviewMode.SignInMethods,
             -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
+            }
+            PreviewMode.Splash -> {
+                // Splash preview needs no extra session seeding.
             }
             PreviewMode.Mailbox,
             PreviewMode.Screener,
@@ -73,7 +88,15 @@ fun PreviewRoot(
     onThemeModeChange: (ThemeMode) -> Unit,
 ) {
     when (mode) {
+        PreviewMode.Splash -> SplashScreenView()
+        PreviewMode.Welcome -> SignInView(isShowingSplash = false, expandPasswordForm = false)
+        PreviewMode.AuthOptions -> SignInView(isShowingSplash = false, expandPasswordForm = false, showAuthOptionsInitial = true)
         PreviewMode.PasswordSignIn -> SignInView(expandPasswordForm = true)
+        PreviewMode.DomainOnboarding -> {
+            Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
+                MailboxOnboardingView(initialTrack = OnboardingTrack.Domain)
+            }
+        }
         PreviewMode.InviteAccept -> InviteAcceptPreview()
         PreviewMode.SignInMethods -> SignInMethodsPreview()
         PreviewMode.DomainAdmin -> {
@@ -85,6 +108,26 @@ fun PreviewRoot(
                 ) {
                     DomainAdminSettingsView(
                         previewRows = PreviewSupport.adminRows(),
+                    )
+                }
+            }
+        }
+        PreviewMode.DomainDns -> {
+            Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding(),
+                ) {
+                    DomainAdminDNSView(
+                        previewDomains = listOf(
+                            AdminDomainInfo(
+                                domain = "example.com",
+                                zoneId = "preview-zone-123",
+                                status = "active",
+                                nameservers = listOf("ns1.cloudflare.com", "ns2.cloudflare.com"),
+                            ),
+                        ),
                     )
                 }
             }

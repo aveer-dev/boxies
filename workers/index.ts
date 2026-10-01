@@ -65,6 +65,11 @@ import {
 	registerAdminAndInviteRoutes,
 	resolveCreateGate,
 } from "./routes/admin-invites";
+import { registerOnboardingRoutes } from "./routes/onboarding";
+import { registerDomainDnsRoutes } from "./routes/domain-dns";
+import { registerBillingRoutes } from "./routes/billing";
+import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
+import { listDomainsForPrincipal } from "./lib/domain-registry";
 import {
 	issueMobileSessionToken,
 	verifyAppleIdentityToken,
@@ -236,7 +241,9 @@ app.get("/api/v1/config", (c) => {
 app.get("/api/v1/me", async (c) => {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
 	if (!principal) return c.json({ error: "Unauthorized" }, 401);
-	const admin = await isDomainAdmin(c.env, principal);
+	const globalAdmin = await isDomainAdmin(c.env, principal);
+	const userDomains = await listDomainsForPrincipal(c.env.BUCKET, principal, globalAdmin);
+	const admin = globalAdmin || userDomains.length > 0;
 	const { mailDomain, domains } = mailDomainConfig(c.env);
 	return c.json({
 		email: principal.email ?? null,
@@ -244,12 +251,17 @@ app.get("/api/v1/me", async (c) => {
 		linkedEmails: principal.linkedEmails ?? [],
 		keys: principalKeys(principal),
 		isAdmin: admin,
+		administeredDomains: userDomains.map((d) => d.domain),
 		mailDomain,
 		domains,
 	});
 });
 
 registerAdminAndInviteRoutes(app);
+registerOnboardingRoutes(app);
+registerDomainDnsRoutes(app);
+registerBillingRoutes(app);
+registerExportAndOffboardingRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 

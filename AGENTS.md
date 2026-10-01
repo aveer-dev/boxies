@@ -14,10 +14,16 @@ Load the matching skill before changing native UI.
 | Polish / whether to animate | `emil-design-eng`, `animate`, `apple-design` |
 | “What's this motion called?” | `animation-vocabulary` |
 | Explicit review / audit / hunt / prototype variants | `review-animations`, `improve-animations`, `find-animation-opportunities`, `prototype` (`disable-model-invocation` — only when asked) |
+| Cloudflare Email Service & Routing | `cloudflare-email-service` |
+| Cloudflare Workers best practices & runtime patterns | `workers-best-practices` |
+| Cloudflare Agents SDK & stateful AI agents | `agents-sdk` |
+| Cloudflare Durable Objects & SQLite coordination | `durable-objects` |
+| Wrangler CLI, config, & migrations | `wrangler` |
+| Cloudflare products catalog & docs index | `cloudflare` |
 
 **Do not** install `animate-expo`, `ask-sonner`, or `pick-ui-library` from [emilkowalski/skills](https://github.com/emilkowalski/skills). This repo is not React Native, not Sonner, and does not add web UI kits.
 
-Adapted Emil skills keep MIT copyright; see `.cursor/skills/NOTICE`.
+Adapted Emil skills keep MIT copyright; Cloudflare skills keep Apache 2.0 copyright; see `.cursor/skills/NOTICE`.
 
 ## Native UI rules (short)
 

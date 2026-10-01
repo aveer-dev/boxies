@@ -34,7 +34,7 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "DEFAULT_API_BASE", "\"http://10.0.2.2:5173\"")
+            buildConfigField("String", "DEFAULT_API_BASE", "\"https://inboxies.email\"")
             isMinifyEnabled = false
         }
         release {

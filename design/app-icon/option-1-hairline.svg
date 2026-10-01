@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="115" fill="#FFFFFF" stroke="#EBEBF0" stroke-width="2"/>
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <!-- Keel -->
+    <polygon points="203,300 179,378 232,328" fill="#3A3A3E" stroke="#3A3A3E" stroke-width="4"/>
+    <!-- Right Wing -->
+    <polygon points="371,128 203,300 275,378" fill="#FFFFFF" stroke="#48484C" stroke-width="8"/>
+    <!-- Left Wing -->
+    <polygon points="371,128 107,227 203,300" fill="#FFFFFF" stroke="#48484C" stroke-width="8"/>
+    <!-- Spine crease line -->
+    <line x1="371" y1="128" x2="203" y2="300" stroke="#48484C" stroke-width="8"/>
+  </g>
+</svg>

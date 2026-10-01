@@ -33,10 +33,20 @@ export interface Env extends Cloudflare.Env {
 	INVITE_FROM_EMAIL?: string;
 	/** Public site origin for invite links (defaults to request origin). */
 	APP_BASE_URL?: string;
-	/**
-	 * Primary mailbox domain suffix (e.g. `mail.example.com`).
+	/** Primary mailbox domain suffix (e.g. `mail.example.com`).
 	 * Wins over the first `DOMAINS` entry for create-address UI and invite From.
 	 * When unset, falls back to first `DOMAINS` entry, then `inboxies.email`.
 	 */
 	MAIL_DOMAIN?: string;
+	/** Operator Cloudflare API Token for Zone, DNS, and Email Routing provisioning. */
+	CF_API_TOKEN?: string;
+	/** Operator Cloudflare Account ID where custom zones and routes are provisioned. */
+	CF_ACCOUNT_ID?: string;
+	/** Target Cloudflare Worker script name for Email Routing catch-all trigger. */
+	WORKER_NAME?: string;
+	/** Stripe Secret Key for processing domain purchase checkout sessions. */
+	STRIPE_SECRET_KEY?: string;
+	/** Stripe Webhook Secret for validating checkout.session.completed signatures. */
+	STRIPE_WEBHOOK_SECRET?: string;
 }
+

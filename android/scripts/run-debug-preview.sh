@@ -26,19 +26,23 @@ mode="${1:-domainAdmin}"
 # Normalize aliases
 case "$mode" in
   domainAdmin|DomainAdmin|admin|previewDomainAdmin) extra=previewDomainAdmin; label=domainAdmin ;;
+  domainOnboarding|DomainOnboarding|onboarding|previewDomainOnboarding) extra=previewDomainOnboarding; label=domainOnboarding ;;
   passwordSignIn|PasswordSignIn|password|previewPasswordSignIn) extra=previewPasswordSignIn; label=passwordSignIn ;;
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
+  splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
+  welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
+  authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
   -h|--help|help)
     sed -n '2,20p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: domainAdmin | passwordSignIn | inviteAccept | signInMethods | mailbox | screener | replyLater" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | screener | replyLater" >&2
     exit 1
     ;;
 esac
