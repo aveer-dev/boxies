@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,8 +65,9 @@ fun SignInMethodsSettingsView(
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
-    var identities by remember { mutableStateOf<List<LinkedIdentity>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
+    val cachedIdentities by app.identities.collectAsState()
+    var identities by remember { mutableStateOf<List<LinkedIdentity>>(cachedIdentities ?: emptyList()) }
+    var isLoading by remember { mutableStateOf(cachedIdentities == null) }
     var isConnectingGoogle by remember { mutableStateOf(false) }
     var isAddingPassword by remember { mutableStateOf(false) }
     var isChangingPassword by remember { mutableStateOf(false) }
@@ -91,11 +93,20 @@ fun SignInMethodsSettingsView(
 
     fun reload() {
         scope.launch {
-            isLoading = true
+            if (identities.isEmpty()) {
+                isLoading = true
+            }
             errorMessage = null
             runCatching { ApiClient.shared.listIdentities() }
-                .onSuccess { identities = it.identities }
-                .onFailure { errorMessage = "Could not load sign-in methods" }
+                .onSuccess {
+                    identities = it.identities
+                    app.setIdentities(it.identities)
+                }
+                .onFailure {
+                    if (identities.isEmpty()) {
+                        errorMessage = "Could not load sign-in methods"
+                    }
+                }
             isLoading = false
         }
     }
@@ -108,6 +119,7 @@ fun SignInMethodsSettingsView(
         }
         if (res.identities.isNotEmpty()) {
             identities = res.identities
+            app.setIdentities(res.identities)
         } else {
             reload()
         }
@@ -140,7 +152,18 @@ fun SignInMethodsSettingsView(
         }
     }
 
-    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(cachedIdentities) {
+        cachedIdentities?.let {
+            identities = it
+            isLoading = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        if (identities.isEmpty()) {
+            reload()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -308,6 +331,7 @@ fun SignInMethodsSettingsView(
                                             statusMessage = "Password updated"
                                             if (res.identities.isNotEmpty()) {
                                                 identities = res.identities
+                                                app.setIdentities(res.identities)
                                             } else {
                                                 reload()
                                             }

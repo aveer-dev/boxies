@@ -21,6 +21,8 @@ struct EmailListView: View {
     var isFiltered: Bool = false
     var onClearFilters: (() -> Void)? = nil
     var filterChipsBar: AnyView? = nil
+    var folderLabel: String? = nil
+    var showsTags: Bool = true
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
@@ -173,36 +175,60 @@ struct EmailListView: View {
 
     @ViewBuilder
     private func emailRow(for email: Email) -> some View {
-                let isSelected = selectedEmailIDs.wrappedValue.contains(email.id)
-                Button {
-                    if isSelectMode {
-                        if isSelected {
-                            selectedEmailIDs.wrappedValue.remove(email.id)
-                        } else {
-                            selectedEmailIDs.wrappedValue.insert(email.id)
-                        }
+        let isSelected = selectedEmailIDs.wrappedValue.contains(email.id)
+        let isScreener = fallbackFolderId == "screener" || email.folderId == "screener"
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if isSelectMode {
+                    if isSelected {
+                        selectedEmailIDs.wrappedValue.remove(email.id)
                     } else {
-                        onSelect(email)
+                        selectedEmailIDs.wrappedValue.insert(email.id)
                     }
-                } label: {
-                    HStack(spacing: 8) {
-                        if isSelectMode {
-                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 20))
-                                .foregroundStyle(isSelected ? AppTheme.ink : AppTheme.muted.opacity(0.6))
-                                .padding(.leading, 12)
-                                .transition(.scale.combined(with: .opacity))
-                        }
-                        EmailRowView(email: email, highlightQuery: highlightQuery)
-                    }
+                } else {
+                    onSelect(email)
                 }
-                .buttonStyle(MailRowButtonStyle())
-                .mailRowChrome()
-                .contextMenu {
-                    if !isSelectMode {
-                        emailContextMenu(for: email)
+            } label: {
+                HStack(spacing: 8) {
+                    if isSelectMode {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 20))
+                            .foregroundStyle(isSelected ? AppTheme.ink : AppTheme.muted.opacity(0.6))
+                            .padding(.leading, 12)
+                            .transition(.scale.combined(with: .opacity))
                     }
+                    EmailRowView(
+                        email: email,
+                        highlightQuery: highlightQuery,
+                        folderLabel: folderLabel,
+                        showsTags: showsTags,
+                        showsSeparator: !isScreener
+                    )
                 }
+            }
+            .buttonStyle(MailRowButtonStyle())
+
+            if isScreener && !isSelectMode {
+                ScreenerActionButtons(email: email)
+                    .padding(.horizontal, AppTheme.List.rowHorizontalPadding)
+                    .padding(.top, 2)
+                    .padding(.bottom, AppTheme.List.rowVerticalPadding)
+
+                Rectangle()
+                    .fill(AppTheme.List.separatorColor)
+                    .frame(height: AppTheme.List.separatorHeight)
+                    .padding(.leading, AppTheme.List.separatorLeadingInset)
+                    .padding(.trailing, AppTheme.List.rowHorizontalPadding)
+                    .accessibilityHidden(true)
+            }
+        }
+        .background(AppTheme.background)
+        .mailRowChrome()
+        .contextMenu {
+            if !isSelectMode {
+                emailContextMenu(for: email)
+            }
+        }
                 .swipeActions(edge: .trailing, allowsFullSwipe: isSelectMode ? false : trailingFullSwipe(for: email)) {
                     if !isSelectMode {
                         ForEach(swipeLayout(for: email).trailingActions) { action in
@@ -428,6 +454,8 @@ struct EmailRowView: View {
     let email: Email
     var highlightQuery: String = ""
     var folderLabel: String?
+    var showsTags: Bool = true
+    var showsSeparator: Bool = true
 
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
@@ -439,7 +467,7 @@ struct EmailRowView: View {
                 if !previewText.isEmpty {
                     previewRow
                 }
-                if !rowTags.isEmpty {
+                if showsTags && !rowTags.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(rowTags, id: \.self) { tag in
                             tagRow(tag)
@@ -450,19 +478,22 @@ struct EmailRowView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, AppTheme.List.rowVerticalPadding)
+        .padding(.top, AppTheme.List.rowVerticalPadding)
+        .padding(.bottom, showsSeparator ? AppTheme.List.rowVerticalPadding : 6)
         .padding(.leading, AppTheme.List.rowHorizontalPadding)
         .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppTheme.background)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(AppTheme.List.separatorColor)
-                .frame(height: AppTheme.List.separatorHeight)
-                .padding(.leading, AppTheme.List.separatorLeadingInset)
-                .padding(.trailing, AppTheme.List.rowHorizontalPadding)
-                .accessibilityHidden(true)
+            if showsSeparator {
+                Rectangle()
+                    .fill(AppTheme.List.separatorColor)
+                    .frame(height: AppTheme.List.separatorHeight)
+                    .padding(.leading, AppTheme.List.separatorLeadingInset)
+                    .padding(.trailing, AppTheme.List.rowHorizontalPadding)
+                    .accessibilityHidden(true)
+            }
         }
     }
 
@@ -634,6 +665,125 @@ struct EmailRowView: View {
             searchStart = range.upperBound
         }
         return result
+    }
+}
+
+struct ScreenerActionButtons: View {
+    @Environment(AppModel.self) private var app
+    let email: Email
+    var onDone: (() -> Void)? = nil
+
+    @State private var isBusy = false
+
+    private let destinations: [(id: String, title: String, icon: String)] = [
+        ("inbox", "Inbox", "tray"),
+        ("promotions", "Promotions", "tag"),
+        ("updates", "Updates", "bell"),
+    ]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            acceptButton
+                .frame(maxWidth: .infinity)
+
+            declineButton
+                .frame(maxWidth: .infinity)
+        }
+        .disabled(isBusy)
+        .opacity(isBusy ? 0.6 : 1.0)
+    }
+
+    private var acceptButton: some View {
+        HStack(spacing: 0) {
+            Button {
+                approve(destination: "inbox")
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "hand.thumbsup")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("Accept")
+                        .font(.inter(size: 13, weight: .medium))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(ScreenerActionButtonStyle())
+            .accessibilityLabel("Accept to Inbox")
+
+            Rectangle()
+                .fill(AppTheme.surface.opacity(0.3))
+                .frame(width: 0.5, height: 18)
+
+            Menu {
+                ForEach(destinations, id: \.id) { dest in
+                    Button {
+                        approve(destination: dest.id)
+                    } label: {
+                        Label(dest.title, systemImage: dest.icon)
+                    }
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AppTheme.surface)
+                    .frame(width: 32, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .accessibilityLabel("Choose destination for Accept")
+        }
+        .foregroundStyle(AppTheme.surface)
+        .background(AppTheme.ink)
+        .clipShape(Capsule())
+    }
+
+    private var declineButton: some View {
+        Button {
+            reject()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "hand.thumbsdown")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Decline")
+                    .font(.inter(size: 13, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 36)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(ScreenerActionButtonStyle())
+        .foregroundStyle(AppTheme.ink)
+        .background(AppTheme.pillFill)
+        .clipShape(Capsule())
+        .accessibilityLabel("Decline sender")
+    }
+
+    private func approve(destination: String) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task {
+            isBusy = true
+            await app.approveScreenerSender(email, destinationFolderId: destination)
+            isBusy = false
+            onDone?()
+        }
+    }
+
+    private func reject() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task {
+            isBusy = true
+            await app.rejectScreenerSender(email)
+            isBusy = false
+            onDone?()
+        }
+    }
+}
+
+private struct ScreenerActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1.0)
     }
 }
 

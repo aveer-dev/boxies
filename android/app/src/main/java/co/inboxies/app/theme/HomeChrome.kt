@@ -43,8 +43,8 @@ object HomeChromeMetrics {
     val mailboxAvatarSize: Dp = 48.dp
     val bottomBarHorizontalPadding: Dp = 24.dp
     val selectionBarHeight: Dp = 58.dp
-    val composeActionIconSize: Dp = 48.dp
-    val composeActionRowSpacing: Dp = 18.dp
+    val composeActionIconSize: Dp = 44.dp
+    val composeActionRowSpacing: Dp = 10.dp
 
     /**
      * Compose stack: same-size discs, bottom-aligned, back layers lift upward so

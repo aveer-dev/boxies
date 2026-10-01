@@ -48,6 +48,13 @@ data class MailboxAcl(
 )
 
 @Serializable
+data class AccountSummary(
+    val id: String,
+    val email: String,
+    val name: String? = null,
+)
+
+@Serializable
 data class MeResponse(
     val email: String? = null,
     val sub: String? = null,

@@ -55,15 +55,21 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.automirrored.outlined.Forward
 import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.ThumbDown
+import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -133,6 +139,7 @@ fun EmailListView(
     highlightQuery: String = "",
     folderLabel: String? = null,
     fallbackFolderId: String? = null,
+    showsTags: Boolean = true,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -158,6 +165,7 @@ fun EmailListView(
                 highlightQuery = highlightQuery,
                 folderLabel = folderLabel,
                 fallbackFolderId = fallbackFolderId,
+                showsTags = showsTags,
                 onOpen = onOpen,
                 onMore = { actionsEmail = it },
             )
@@ -211,6 +219,7 @@ private fun EmailRows(
     highlightQuery: String,
     folderLabel: String?,
     fallbackFolderId: String?,
+    showsTags: Boolean = true,
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
 ) {
@@ -260,6 +269,7 @@ private fun EmailRows(
                         folderLabel = folderLabel,
                         fallbackFolderId = fallbackFolderId,
                         swipePreferences = swipePreferences,
+                        showsTags = showsTags,
                         onOpen = onOpen,
                         onMore = onMore,
                     )
@@ -279,6 +289,7 @@ private fun EmailRows(
                         folderLabel = folderLabel,
                         fallbackFolderId = fallbackFolderId,
                         swipePreferences = swipePreferences,
+                        showsTags = showsTags,
                         onOpen = onOpen,
                         onMore = onMore,
                     )
@@ -295,6 +306,7 @@ private fun EmailRows(
                     folderLabel = folderLabel,
                     fallbackFolderId = fallbackFolderId,
                     swipePreferences = swipePreferences,
+                    showsTags = showsTags,
                     onOpen = onOpen,
                     onMore = onMore,
                 )
@@ -347,24 +359,28 @@ private fun EmailRowItem(
     folderLabel: String?,
     fallbackFolderId: String?,
     swipePreferences: SwipeActionPreferences,
+    showsTags: Boolean = true,
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
 ) {
-            val isSelected = selectedEmailIds.contains(email.id)
-            val layout = remember(email.id, email.folderId, fallbackFolderId, swipePreferences) {
-                EmailSwipeLayout.resolve(email, fallbackFolderId, swipePreferences)
-            }
-            MailRow(
-                email = email,
-                highlightQuery = highlightQuery,
-                folderLabel = folderLabel,
-                isSelectMode = isSelectMode,
-                isSelected = isSelected,
-                layout = layout,
-                onOpen = { onOpen(email) },
-                onToggleSelect = { onToggleSelect?.invoke(email.id) },
-                onMore = { onMore(email) },
-            )
+    val isSelected = selectedEmailIds.contains(email.id)
+    val isScreener = fallbackFolderId == FolderIds.SCREENER || email.folderId == FolderIds.SCREENER
+    val layout = remember(email.id, email.folderId, fallbackFolderId, swipePreferences) {
+        EmailSwipeLayout.resolve(email, fallbackFolderId, swipePreferences)
+    }
+    MailRow(
+        email = email,
+        highlightQuery = highlightQuery,
+        folderLabel = folderLabel,
+        isSelectMode = isSelectMode,
+        isSelected = isSelected,
+        layout = layout,
+        showsTags = showsTags,
+        isScreener = isScreener,
+        onOpen = { onOpen(email) },
+        onToggleSelect = { onToggleSelect?.invoke(email.id) },
+        onMore = { onMore(email) },
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -376,12 +392,15 @@ private fun MailRow(
     isSelectMode: Boolean,
     isSelected: Boolean,
     layout: EmailSwipeLayout,
+    showsTags: Boolean = true,
+    isScreener: Boolean = false,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onMore: () -> Unit,
 ) {
     val colors = inboxiesColors()
     val app = LocalAppModel.current
+    val list = AppThemeDims.List
     val scope = rememberCoroutineScope()
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -433,23 +452,60 @@ private fun MailRow(
                 },
                 onMore = onMore,
             ) {
-                EmailRowView(
-                    email = email,
-                    highlightQuery = highlightQuery,
-                    folderLabel = folderLabel,
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .combinedClickable(
-                            interactionSource = interaction,
-                            indication = null,
-                            onClick = {
-                                if (isSelectMode) onToggleSelect() else onOpen()
+                        .background(colors.background),
+                ) {
+                    EmailRowView(
+                        email = email,
+                        highlightQuery = highlightQuery,
+                        folderLabel = folderLabel,
+                        showsTags = showsTags,
+                        showDivider = !isScreener,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                interactionSource = interaction,
+                                indication = null,
+                                onClick = {
+                                    if (isSelectMode) onToggleSelect() else onOpen()
+                                },
+                                onLongClick = {
+                                    if (!isSelectMode) showMenu = true
+                                },
+                            ),
+                    )
+
+                    if (isScreener && !isSelectMode) {
+                        ScreenerActionButtons(
+                            email = email,
+                            onAccept = { dest ->
+                                scope.launch { app.approveScreenerSender(email, dest) }
                             },
-                            onLongClick = {
-                                if (!isSelectMode) showMenu = true
+                            onDecline = {
+                                scope.launch { app.rejectScreenerSender(email) }
                             },
-                        ),
-                )
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(
+                                    start = list.rowHorizontalPadding,
+                                    end = list.rowHorizontalPadding,
+                                    top = 2.dp,
+                                    bottom = list.rowVerticalPadding,
+                                ),
+                        )
+                        HorizontalDivider(
+                            color = colors.line.copy(alpha = 0.65f),
+                            thickness = list.separatorHeight,
+                            modifier = Modifier
+                                .padding(
+                                    start = list.separatorLeadingInset,
+                                    end = list.rowHorizontalPadding,
+                                ),
+                        )
+                    }
+                }
             }
 
             InboxiesDropdownMenu(
@@ -837,6 +893,8 @@ fun EmailRowView(
     email: Email,
     highlightQuery: String = "",
     folderLabel: String? = null,
+    showsTags: Boolean = true,
+    showDivider: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val colors = inboxiesColors()
@@ -851,8 +909,10 @@ fun EmailRowView(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = list.rowHorizontalPadding,
-                    vertical = list.rowVerticalPadding,
+                    start = list.rowHorizontalPadding,
+                    end = list.rowHorizontalPadding,
+                    top = list.rowVerticalPadding,
+                    bottom = if (showDivider) list.rowVerticalPadding else 6.dp,
                 ),
             verticalAlignment = Alignment.Top,
         ) {
@@ -983,7 +1043,7 @@ fun EmailRowView(
                 )
             }
 
-            if (tags.isNotEmpty()) {
+            if (showsTags && tags.isNotEmpty()) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.padding(top = 3.dp),
@@ -1008,16 +1068,18 @@ fun EmailRowView(
         }
         }
 
-        HorizontalDivider(
-            color = colors.line.copy(alpha = 0.65f),
-            thickness = list.separatorHeight,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(
-                    start = list.separatorLeadingInset,
-                    end = list.rowHorizontalPadding,
-                ),
-        )
+        if (showDivider) {
+            HorizontalDivider(
+                color = colors.line.copy(alpha = 0.65f),
+                thickness = list.separatorHeight,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(
+                        start = list.separatorLeadingInset,
+                        end = list.rowHorizontalPadding,
+                    ),
+            )
+        }
     }
 }
 
@@ -1102,3 +1164,149 @@ private fun <T> selectModeSpring() = spring<T>(
     dampingRatio = 0.86f,
     stiffness = Spring.StiffnessMediumLow,
 )
+
+@Composable
+fun ScreenerActionButtons(
+    email: Email,
+    onAccept: (String) -> Unit,
+    onDecline: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = inboxiesColors()
+    var showMenu by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+
+    val destinations = remember {
+        listOf(
+            Triple(FolderIds.INBOX, "Inbox", Icons.Outlined.Inbox),
+            Triple(FolderIds.PROMOTIONS, "Promotions", Icons.Outlined.LocalOffer),
+            Triple(FolderIds.UPDATES, "Updates", Icons.Outlined.Notifications),
+        )
+    }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Accept Split Button (spans 50% of container)
+        Surface(
+            modifier = Modifier
+                .weight(1f)
+                .height(36.dp),
+            shape = RoundedCornerShape(50),
+            color = colors.ink,
+            contentColor = colors.surface,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Main Accept Tap Area
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable(enabled = !busy) {
+                            busy = true
+                            onAccept(FolderIds.INBOX)
+                        },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Outlined.ThumbUp,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = colors.surface,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Accept",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp,
+                        color = colors.surface,
+                    )
+                }
+
+                // Vertical Divider
+                Box(
+                    modifier = Modifier
+                        .width(0.5.dp)
+                        .height(18.dp)
+                        .background(colors.surface.copy(alpha = 0.3f)),
+                )
+
+                // Dropdown Chevron Tap Area
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(32.dp)
+                        .clickable(enabled = !busy) { showMenu = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = "Choose destination for Accept",
+                        modifier = Modifier.size(16.dp),
+                        tint = colors.surface,
+                    )
+
+                    InboxiesDropdownMenu(
+                        expanded = showMenu,
+                        onDismiss = { showMenu = false },
+                    ) {
+                        destinations.forEach { (id, title, icon) ->
+                            InboxiesMenuItem(
+                                text = title,
+                                icon = icon,
+                                onClick = {
+                                    showMenu = false
+                                    busy = true
+                                    onAccept(id)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Decline Button (spans 50% of container)
+        Surface(
+            modifier = Modifier
+                .weight(1f)
+                .height(36.dp)
+                .clip(RoundedCornerShape(50))
+                .clickable(enabled = !busy) {
+                    busy = true
+                    onDecline()
+                },
+            shape = RoundedCornerShape(50),
+            color = colors.pillFill,
+            contentColor = colors.ink,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Outlined.ThumbDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = colors.ink,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "Decline",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 13.sp,
+                    color = colors.ink,
+                )
+            }
+        }
+    }
+}

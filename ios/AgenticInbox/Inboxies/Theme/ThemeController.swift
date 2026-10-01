@@ -56,3 +56,17 @@ extension View {
         self.modifier(ThemeControllerModifier())
     }
 }
+
+/// Preserves the system swipe-to-back interactive pop gesture when child screens
+/// use custom back buttons with `.navigationBarBackButtonHidden(true)`.
+extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        interactivePopGestureRecognizer?.delegate = self
+    }
+
+    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        return viewControllers.count > 1
+    }
+}
+

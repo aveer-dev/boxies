@@ -48,6 +48,22 @@ class DatabaseService private constructor() {
             .sortedByDescending { it.date }
             .take(limit)
 
+    fun getReplyLaterEmails(mailboxId: String, limit: Int = 50): List<Email> =
+        emails.values
+            .filter {
+                it.replyLater && it.folderId !in setOf("trash", "spam", "draft", "drafts")
+            }
+            .sortedWith(
+                compareBy<Email> { it.replyLaterAt ?: it.date }
+                    .thenByDescending { it.date }
+            )
+            .take(limit)
+
+    fun getReplyLaterCount(mailboxId: String): Int =
+        emails.values.count {
+            it.replyLater && it.folderId !in setOf("trash", "spam", "draft", "drafts")
+        }
+
     fun getEmail(id: String): Email? = emails[id]
 
     fun getThreadEmails(mailboxId: String, threadId: String): List<Email> =

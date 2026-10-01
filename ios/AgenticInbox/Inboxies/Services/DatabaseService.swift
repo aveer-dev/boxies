@@ -194,6 +194,11 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN reply_later_at TEXT;")
             setVersion(4)
         }
+
+        if (getVersion() < 5) {
+            exec("CREATE INDEX IF NOT EXISTS idx_emails_reply_later ON emails(mailbox_id, reply_later, reply_later_at);")
+            setVersion(5)
+        }
     }
 
     private func getVersion() -> Int {
@@ -527,6 +532,56 @@ final class DatabaseService: @unchecked Sendable {
             }
             sqlite3_finalize(stmt)
             return result
+        }
+    }
+
+    func getReplyLaterEmails(mailboxId: String, limit: Int = 50, offset: Int = 0) -> [Email] {
+        return queue.sync {
+            var result: [Email] = []
+            var stmt: OpaquePointer?
+            let sql = """
+            SELECT
+                id, thread_id, folder_id, subject, sender, sender_name,
+                recipient, cc, bcc, date, read, starred, body, snippet,
+                in_reply_to, message_id, raw_headers, thread_count,
+                thread_unread_count, participants, folder_name, has_draft,
+                needs_reply, has_attachment, attachments_json, auth_json,
+                delivery_status, delivery_error, provider_message_id,
+                reply_later, reply_later_at
+            FROM emails
+            WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
+            ORDER BY CASE WHEN reply_later_at IS NOT NULL THEN reply_later_at ELSE date END ASC, date DESC
+            LIMIT ? OFFSET ?;
+            """
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                sqlite3_bind_int(stmt, 2, Int32(limit))
+                sqlite3_bind_int(stmt, 3, Int32(offset))
+
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    if let email = parseEmailRow(stmt) {
+                        result.append(email)
+                    }
+                }
+            }
+            sqlite3_finalize(stmt)
+            return result
+        }
+    }
+
+    func getReplyLaterCount(mailboxId: String) -> Int {
+        return queue.sync {
+            var count = 0
+            var stmt: OpaquePointer?
+            let sql = "SELECT COUNT(*) FROM emails WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'));"
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+            sqlite3_finalize(stmt)
+            return count
         }
     }
 

@@ -12,6 +12,7 @@ import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.SignatureSettings
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
+import co.inboxies.app.services.DatabaseService
 import java.net.URI
 
 /**
@@ -60,6 +61,9 @@ object PreviewSupport {
             Folder(id = FolderIds.SCREENED_OUT, name = "Screened out", unreadCount = 0),
         )
         val allEmails = emails(you)
+        DatabaseService.shared.upsertMailboxes(listOf(mailbox))
+        DatabaseService.shared.upsertFolders(mailbox.id, folders)
+        DatabaseService.shared.upsertEmails(mailbox.id, allEmails)
 
         when (mode) {
             PreviewMode.Screener -> {
@@ -72,6 +76,20 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.SCREENER),
                     selectedEmail = screener.firstOrNull(),
                     threadEmails = screener.take(1),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.ScreenerList -> {
+                val screener = allEmails.filter { it.folderId == FolderIds.SCREENER }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = screener,
+                    selectedTab = HomeTab.Folder(FolderIds.SCREENER),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )

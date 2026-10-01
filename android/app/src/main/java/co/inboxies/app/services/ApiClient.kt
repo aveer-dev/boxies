@@ -1,6 +1,7 @@
 package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
+import co.inboxies.app.models.AccountSummary
 import co.inboxies.app.models.AdminCreateMailboxResponse
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
@@ -191,6 +192,7 @@ class ApiClient private constructor() {
     suspend fun getMe(): MeResponse = request("/api/v1/me")
 
     suspend fun listIdentities(): IdentitiesResponse = request("/api/v1/me/identities")
+    suspend fun listAccounts(): List<AccountSummary> = request("/api/v1/accounts")
 
     suspend fun attachAppleIdentity(identityToken: String): AttachIdentityResponse = request(
         "/api/v1/me/identities/attach",

@@ -76,17 +76,26 @@ fun DomainAdminSettingsView(
     /** DEBUG preview fixtures — skips network reload when non-null. */
     previewRows: List<AdminMailboxRow>? = null,
 ) {
+    val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
 
-    var rows by remember { mutableStateOf(previewRows.orEmpty()) }
-    var loading by remember { mutableStateOf(previewRows == null) }
+    val cachedRows by app.adminMailboxes.collectAsState()
+    var rows by remember { mutableStateOf(previewRows ?: cachedRows ?: emptyList()) }
+    var loading by remember { mutableStateOf(previewRows == null && cachedRows == null) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var lastInviteUrl by remember { mutableStateOf<String?>(null) }
     var showCreate by remember { mutableStateOf(false) }
     var selectedMailboxId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(cachedRows) {
+        if (previewRows == null && cachedRows != null) {
+            rows = cachedRows!!
+            loading = false
+        }
+    }
 
     fun reload() {
         if (previewRows != null) {
@@ -98,13 +107,24 @@ fun DomainAdminSettingsView(
             loading = rows.isEmpty()
             error = null
             runCatching { ApiClient.shared.listAdminMailboxes() }
-                .onSuccess { rows = it }
-                .onFailure { error = it.message }
+                .onSuccess {
+                    rows = it
+                    app.setAdminMailboxes(it)
+                }
+                .onFailure {
+                    if (rows.isEmpty()) {
+                        error = it.message
+                    }
+                }
             loading = false
         }
     }
 
-    LaunchedEffect(previewRows) { reload() }
+    LaunchedEffect(previewRows) {
+        if (previewRows != null || rows.isEmpty()) {
+            reload()
+        }
+    }
 
     BackHandler(enabled = selectedMailboxId != null) {
         selectedMailboxId = null
@@ -274,9 +294,11 @@ fun DomainAdminSettingsView(
                     onAssigned = onAssigned,
                     onMailboxUpdated = { updated ->
                         rows = rows.map { if (it.id == updated.id) updated else it }
+                        app.setAdminMailboxes(rows)
                     },
                     onMailboxDeleted = { deletedId ->
                         rows = rows.filter { it.id != deletedId }
+                        app.setAdminMailboxes(rows)
                         selectedMailboxId = null
                         status = "Mailbox deleted"
                     },

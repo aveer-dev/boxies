@@ -1,5 +1,20 @@
 import SwiftUI
 
+/// Settings navigation destinations for programmatic stack navigation and pre-fetching.
+enum SettingsDestination: Hashable {
+    case swipe
+    case agentPrompt
+    case forwarding
+    case autoReply
+    case filters
+    case senders
+    case sharing
+    case signInMethods
+    case domainAdmin
+    case theme
+    case support
+}
+
 /// Mailbox settings sheet: profile, preferences, and account actions.
 struct SettingsSheetView: View {
     @Environment(AppModel.self) private var app
@@ -9,6 +24,8 @@ struct SettingsSheetView: View {
     @State private var editNameDraft = ""
     @State private var showEditName = false
     @State private var signatureEnabled = false
+    @State private var navigationPath: [SettingsDestination] = []
+    @State private var loadingDestination: SettingsDestination?
     @AppStorage("push_notifications_enabled") private var notificationsEnabled = true
     @AppStorage("app_theme") private var appTheme: ThemeMode = .system
 
@@ -38,7 +55,7 @@ struct SettingsSheetView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             List {
                 Section {
                     profileHeader
@@ -48,60 +65,17 @@ struct SettingsSheetView: View {
                 }
 
                 Section {
-                    NavigationLink {
-                        SwipeSettingsView()
-                    } label: {
-                        settingsLabel("Swipe settings", systemImage: "arrow.left.arrow.right")
-                    }
-
-                    NavigationLink {
-                        AgentPromptSettingsView()
-                    } label: {
-                        settingsLabel("AI prompt", systemImage: "sparkles")
-                    }
-
-                    NavigationLink {
-                        ForwardingSettingsView()
-                    } label: {
-                        settingsLabel("Forwarding", systemImage: "arrowshape.turn.up.right")
-                    }
-
-                    NavigationLink {
-                        AutoReplySettingsView()
-                    } label: {
-                        settingsLabel("Auto-reply", systemImage: "arrowshape.turn.up.left")
-                    }
-
-                    NavigationLink {
-                        FiltersSettingsView()
-                    } label: {
-                        settingsLabel("Filters", systemImage: "line.3.horizontal.decrease.circle")
-                    }
-
-                    NavigationLink {
-                        SendersSettingsView()
-                    } label: {
-                        settingsLabel("Senders", systemImage: "person.crop.circle")
-                    }
-
-                    NavigationLink {
-                        SharingSettingsView()
-                    } label: {
-                        settingsLabel("Sharing", systemImage: "person.2")
-                    }
-
-                    NavigationLink {
-                        SignInMethodsSettingsView()
-                    } label: {
-                        settingsLabel("Sign-in methods", systemImage: "key")
-                    }
+                    settingsNavRow("Swipe settings", systemImage: "arrow.left.arrow.right", destination: .swipe)
+                    settingsNavRow("AI prompt", systemImage: "sparkles", destination: .agentPrompt)
+                    settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
+                    settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
+                    settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
+                    settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
+                    settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
+                    settingsNavRow("Sign-in methods", systemImage: "key", destination: .signInMethods)
 
                     if app.isAdmin {
-                        NavigationLink {
-                            DomainAdminSettingsView(showsDismiss: false)
-                        } label: {
-                            settingsLabel("Domain Admin", systemImage: "shield.lefthalf.filled")
-                        }
+                        settingsNavRow("Domain Admin", systemImage: "shield.lefthalf.filled", destination: .domainAdmin)
                     }
 
                     notificationsToggle
@@ -112,21 +86,13 @@ struct SettingsSheetView: View {
                 .listRowSeparator(.hidden)
 
                 Section {
-                    NavigationLink {
-                        ThemeSettingsView()
-                    } label: {
-                        settingsLabel("Theme", systemImage: "circle.lefthalf.filled")
-                    }
+                    settingsNavRow("Theme", systemImage: "circle.lefthalf.filled", destination: .theme)
                 } header: {
                     Text("Display")
                 }
 
                 Section {
-                    NavigationLink {
-                        SupportSettingsView()
-                    } label: {
-                        settingsLabel("Support & feedback", systemImage: "questionmark.circle")
-                    }
+                    settingsNavRow("Support & feedback", systemImage: "questionmark.circle", destination: .support)
                 } header: {
                     Text("Support")
                 }
@@ -151,6 +117,32 @@ struct SettingsSheetView: View {
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: SettingsDestination.self) { destination in
+                switch destination {
+                case .swipe:
+                    SwipeSettingsView()
+                case .agentPrompt:
+                    AgentPromptSettingsView()
+                case .forwarding:
+                    ForwardingSettingsView()
+                case .autoReply:
+                    AutoReplySettingsView()
+                case .filters:
+                    FiltersSettingsView()
+                case .senders:
+                    SendersSettingsView()
+                case .sharing:
+                    SharingSettingsView()
+                case .signInMethods:
+                    SignInMethodsSettingsView()
+                case .domainAdmin:
+                    DomainAdminSettingsView(showsDismiss: false)
+                case .theme:
+                    ThemeSettingsView()
+                case .support:
+                    SupportSettingsView()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -286,6 +278,92 @@ struct SettingsSheetView: View {
         } icon: {
             Image(systemName: systemImage)
                 .foregroundStyle(AppTheme.ink)
+        }
+    }
+
+    private func settingsNavRow(
+        _ title: String,
+        systemImage: String,
+        destination: SettingsDestination
+    ) -> some View {
+        Button {
+            handleNavTap(destination)
+        } label: {
+            HStack(spacing: 12) {
+                settingsLabel(title, systemImage: systemImage)
+                Spacer()
+                if loadingDestination == destination {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AppTheme.muted.opacity(0.45))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(loadingDestination == destination)
+    }
+
+    private func handleNavTap(_ destination: SettingsDestination) {
+        guard loadingDestination != destination else { return }
+        switch destination {
+        case .signInMethods:
+            if app.identities != nil {
+                navigationPath.append(.signInMethods)
+            } else {
+                loadingDestination = .signInMethods
+                Task {
+                    do {
+                        _ = try await app.loadIdentities()
+                        await MainActor.run {
+                            if loadingDestination == .signInMethods {
+                                loadingDestination = nil
+                                if navigationPath.isEmpty {
+                                    navigationPath.append(.signInMethods)
+                                }
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            if loadingDestination == .signInMethods {
+                                loadingDestination = nil
+                                app.showToast("Could not load sign-in methods", isError: true)
+                            }
+                        }
+                    }
+                }
+            }
+        case .domainAdmin:
+            if app.adminMailboxes != nil {
+                navigationPath.append(.domainAdmin)
+            } else {
+                loadingDestination = .domainAdmin
+                Task {
+                    do {
+                        _ = try await app.loadAdminMailboxes()
+                        await MainActor.run {
+                            if loadingDestination == .domainAdmin {
+                                loadingDestination = nil
+                                if navigationPath.isEmpty {
+                                    navigationPath.append(.domainAdmin)
+                                }
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            if loadingDestination == .domainAdmin {
+                                loadingDestination = nil
+                                app.showToast("Could not load Domain Admin", isError: true)
+                            }
+                        }
+                    }
+                }
+            }
+        default:
+            navigationPath.append(destination)
         }
     }
 

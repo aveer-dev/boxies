@@ -68,13 +68,13 @@ for (const [id, title] of [
 
 assert.match(
 	overlay,
-	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
-	"long-press overlay stays at the original 8 actions",
+	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*Updates,[\s\S]*Promotions,[\s\S]*Screener,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
+	"long-press overlay contains all 11 action items",
 );
 assert.doesNotMatch(
 	overlay,
-	/Promotions|Updates|Spam/,
-	"classified folders are swipe tabs, not long-press rows",
+	/\bSpam\b/,
+	"spam folder remains a swipe tab, not a long-press row",
 );
 
 assert.match(fcm, /putExtra\("folderId", folderId\)/);

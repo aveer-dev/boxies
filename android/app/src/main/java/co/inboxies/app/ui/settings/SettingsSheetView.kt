@@ -309,6 +309,8 @@ private fun SettingsRootPage(
     var showEditName by remember { mutableStateOf(false) }
     var editNameDraft by remember { mutableStateOf("") }
     var showDeleteMenu by remember { mutableStateOf(false) }
+    var loadingSignInMethods by remember { mutableStateOf(false) }
+    var loadingDomainAdmin by remember { mutableStateOf(false) }
 
     val signature = mailbox?.settings?.signature
     val signatureConfigured = !signature?.text.isNullOrBlank() || !signature?.html.isNullOrBlank()
@@ -442,13 +444,49 @@ private fun SettingsRootPage(
             SettingsNavRow(
                 title = "Sign-in methods",
                 icon = Icons.Outlined.Key,
-                onClick = onOpenSignInMethods,
+                isLoading = loadingSignInMethods,
+                onClick = {
+                    if (app.identities.value != null) {
+                        onOpenSignInMethods()
+                    } else {
+                        if (loadingSignInMethods) return@SettingsNavRow
+                        loadingSignInMethods = true
+                        scope.launch {
+                            try {
+                                app.loadIdentities()
+                                onOpenSignInMethods()
+                            } catch (e: Exception) {
+                                app.showToast("Could not load sign-in methods", isError = true)
+                            } finally {
+                                loadingSignInMethods = false
+                            }
+                        }
+                    }
+                },
             )
             if (isAdmin) {
                 SettingsNavRow(
                     title = "Domain Admin",
                     icon = Icons.Outlined.AdminPanelSettings,
-                    onClick = onOpenDomainAdmin,
+                    isLoading = loadingDomainAdmin,
+                    onClick = {
+                        if (app.adminMailboxes.value != null) {
+                            onOpenDomainAdmin()
+                        } else {
+                            if (loadingDomainAdmin) return@SettingsNavRow
+                            loadingDomainAdmin = true
+                            scope.launch {
+                                try {
+                                    app.loadAdminMailboxes()
+                                    onOpenDomainAdmin()
+                                } catch (e: Exception) {
+                                    app.showToast("Could not load Domain Admin", isError = true)
+                                } finally {
+                                    loadingDomainAdmin = false
+                                }
+                            }
+                        }
+                    },
                 )
             }
             SettingsToggleRow(

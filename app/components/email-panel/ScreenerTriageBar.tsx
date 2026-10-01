@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, useKumoToastManager } from "@cloudflare/kumo";
-import { CheckIcon, ProhibitIcon } from "@phosphor-icons/react";
+import { CaretDownIcon, ThumbsDownIcon, ThumbsUpIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Folders, SCREENER_DESTINATION_IDS, FOLDER_DISPLAY_NAMES } from "shared/folders";
@@ -89,7 +89,8 @@ export default function ScreenerTriageBar({
 				privately.
 			</p>
 			{picking ? (
-				<div className="flex flex-wrap gap-2">
+				<div className="flex flex-wrap gap-2 items-center">
+					<span className="text-xs text-kumo-subtle mr-1">Choose destination:</span>
 					{SCREENER_DESTINATION_IDS.map((id) => (
 						<Button
 							key={id}
@@ -111,25 +112,37 @@ export default function ScreenerTriageBar({
 					</Button>
 				</div>
 			) : (
-				<div className="flex flex-wrap gap-2">
-					<Button
-						variant="primary"
-						size="sm"
-						icon={<CheckIcon size={16} />}
-						disabled={busy}
-						loading={busy}
-						onClick={() => setPicking(true)}
-					>
-						Approve
-					</Button>
+				<div className="flex flex-wrap gap-2 items-center">
+					<div className="inline-flex rounded-lg shadow-sm">
+						<Button
+							variant="primary"
+							size="sm"
+							icon={<ThumbsUpIcon size={16} />}
+							disabled={busy}
+							loading={busy}
+							onClick={() => approve(Folders.INBOX)}
+							className="rounded-r-none"
+						>
+							Accept
+						</Button>
+						<Button
+							variant="primary"
+							size="sm"
+							icon={<CaretDownIcon size={14} />}
+							disabled={busy}
+							onClick={() => setPicking(true)}
+							className="rounded-l-none border-l border-white/20 px-1.5"
+							aria-label="Choose destination"
+						/>
+					</div>
 					<Button
 						variant="secondary"
 						size="sm"
-						icon={<ProhibitIcon size={16} />}
+						icon={<ThumbsDownIcon size={16} />}
 						disabled={busy}
 						onClick={reject}
 					>
-						Reject
+						Decline
 					</Button>
 				</div>
 			)}

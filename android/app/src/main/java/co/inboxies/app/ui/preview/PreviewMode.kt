@@ -23,6 +23,7 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     SignInMethods("signInMethods", "previewSignInMethods"),
     Mailbox("mailbox", "previewMailbox"),
     Screener("screener", "previewScreener"),
+    ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
     ;
 

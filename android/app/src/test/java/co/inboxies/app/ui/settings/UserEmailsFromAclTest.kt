@@ -29,4 +29,21 @@ class UserEmailsFromAclTest {
         val keys = listOf("email:Admin@example.com", "email:admin@example.com")
         assertEquals(listOf("Admin@example.com"), userEmailsFromAcl(keys))
     }
+
+    @Test
+    fun filtersOutAuthMethodsAndSubIds() {
+        val allKeys = listOf(
+            "email:admin@example.com",
+            "account:acc-123",
+            "sub:google-oauth2|1029384756",
+            "sub:apple|12345",
+            "user:usr-999",
+            "jordan@example.com",
+        )
+        val validUserAccounts = allKeys.filter { !it.startsWith("sub:") && !it.startsWith("user:") }
+        assertEquals(
+            listOf("email:admin@example.com", "account:acc-123", "jordan@example.com"),
+            validUserAccounts,
+        )
+    }
 }

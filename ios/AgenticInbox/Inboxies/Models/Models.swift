@@ -23,6 +23,12 @@ struct MailboxAcl: Codable, Hashable {
     var members: [String]?
 }
 
+struct AccountSummary: Codable, Identifiable, Hashable {
+    var id: String
+    var email: String
+    var name: String?
+}
+
 struct MeResponse: Codable {
     var email: String?
     var sub: String?

@@ -82,10 +82,12 @@ struct DomainAdminSettingsView: View {
                                     onMailboxUpdated: { updated in
                                         if let idx = rows.firstIndex(where: { $0.id == updated.id }) {
                                             rows[idx] = updated
+                                            app.setAdminMailboxes(rows)
                                         }
                                     },
                                     onMailboxDeleted: { deletedId in
                                         rows.removeAll { $0.id == deletedId }
+                                        app.setAdminMailboxes(rows)
                                         if app.selectedMailboxId == deletedId {
                                             Task { await app.refreshMailboxes(showLoading: true) }
                                         }
@@ -134,7 +136,20 @@ struct DomainAdminSettingsView: View {
                 }
             }
         }
-        .task { await reload() }
+        .onAppear {
+            if let previewRows {
+                rows = previewRows
+                isLoading = false
+            } else if let cached = app.adminMailboxes {
+                rows = cached
+                isLoading = false
+            }
+        }
+        .task {
+            if rows.isEmpty {
+                await reload()
+            }
+        }
         .sheet(isPresented: $showCreate) {
             NavigationStack {
                 DomainAdminCreateView { url in
@@ -157,8 +172,11 @@ struct DomainAdminSettingsView: View {
         errorMessage = nil
         do {
             rows = try await APIClient.shared.listAdminMailboxes()
+            app.setAdminMailboxes(rows)
         } catch {
-            errorMessage = error.localizedDescription
+            if rows.isEmpty {
+                errorMessage = error.localizedDescription
+            }
         }
         isLoading = false
     }

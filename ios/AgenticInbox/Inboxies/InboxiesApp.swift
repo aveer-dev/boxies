@@ -24,7 +24,9 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewDetail")
                 || ProcessInfo.processInfo.arguments.contains("-previewCompose")
                 || ProcessInfo.processInfo.arguments.contains("-previewComposeMinimized")
+                || ProcessInfo.processInfo.arguments.contains("-previewChat")
                 || ProcessInfo.processInfo.arguments.contains("-previewScreener")
+                || ProcessInfo.processInfo.arguments.contains("-previewScreenerList")
                 || ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
                 PreviewMailboxRoot()
                     .applyThemeController()

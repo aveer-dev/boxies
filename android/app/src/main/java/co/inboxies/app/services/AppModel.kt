@@ -1,8 +1,10 @@
 package co.inboxies.app.services
 
+import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AppToast
 import co.inboxies.app.models.ChatSession
+import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.Email
@@ -22,6 +24,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.util.UUID
@@ -48,7 +52,7 @@ class AppModel {
     private val _folders = MutableStateFlow<List<Folder>>(emptyList())
     val folders: StateFlow<List<Folder>> = _folders.asStateFlow()
 
-    private val _selectedTab = MutableStateFlow<HomeTab>(HomeTab.AiInbox)
+    private val _selectedTab = MutableStateFlow<HomeTab>(HomeTab.Folder(FolderIds.INBOX))
     val selectedTab: StateFlow<HomeTab> = _selectedTab.asStateFlow()
 
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
@@ -56,6 +60,12 @@ class AppModel {
 
     private val _replyLaterCount = MutableStateFlow(0)
     val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
+
+    private val _identities = MutableStateFlow<List<LinkedIdentity>?>(null)
+    val identities: StateFlow<List<LinkedIdentity>?> = _identities.asStateFlow()
+
+    private val _adminMailboxes = MutableStateFlow<List<AdminMailboxRow>?>(null)
+    val adminMailboxes: StateFlow<List<AdminMailboxRow>?> = _adminMailboxes.asStateFlow()
 
     private val _inboxDigest = MutableStateFlow<InboxDigest?>(null)
     val inboxDigest: StateFlow<InboxDigest?> = _inboxDigest.asStateFlow()
@@ -150,6 +160,20 @@ class AppModel {
     fun unreadCount(forFolderId: String): Int =
         _folders.value.firstOrNull { it.id == forFolderId }?.unreadCount ?: 0
 
+    val screenerSenderCount: Int
+        get() {
+            val mailboxId = _selectedMailboxId.value
+            if (mailboxId != null) {
+                val cached = db.getEmails(mailboxId, FolderIds.SCREENER, 50)
+                val distinct = cached.map { it.sender.trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
+                if (distinct > 0) return distinct
+            }
+            val inMemory = _emails.value.filter { it.folderId == FolderIds.SCREENER }
+                .map { it.sender.trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
+            if (inMemory > 0) return inMemory
+            return unreadCount(forFolderId = FolderIds.SCREENER)
+        }
+
     fun adjustFolderUnread(folderId: String, delta: Int) {
         if (delta == 0) return
         _folders.update { list ->
@@ -178,13 +202,23 @@ class AppModel {
             _selectedMailboxId.value?.let { id ->
                 val folders = db.getFolders(id)
                 if (folders.isNotEmpty()) _folders.value = folders
-                _selectedTab.value.syncFolderId?.let { folderId ->
-                    val emails = db.getEmails(id, folderId, 50)
+                _replyLaterCount.value = db.getReplyLaterCount(id)
+                if (_selectedTab.value is HomeTab.ReplyLater) {
+                    val emails = db.getReplyLaterEmails(id, 50)
                     if (emails.isNotEmpty()) {
                         _emails.value = emails
                         _isLoading.value = false
                     }
+                } else {
+                    _selectedTab.value.syncFolderId?.let { folderId ->
+                        val emails = db.getEmails(id, folderId, 50)
+                        if (emails.isNotEmpty()) {
+                            _emails.value = emails
+                            _isLoading.value = false
+                        }
+                    }
                 }
+                scope.launch { refreshReplyLaterCount() }
             }
         }
         setupRealTimeStream()
@@ -275,6 +309,40 @@ class AppModel {
         }
     }
 
+    suspend fun loadIdentities(forceRefresh: Boolean = false): List<LinkedIdentity> {
+        if (!forceRefresh) {
+            _identities.value?.let { return it }
+        }
+        val res = ApiClient.shared.listIdentities()
+        _identities.value = res.identities
+        return res.identities
+    }
+
+    fun setIdentities(list: List<LinkedIdentity>) {
+        _identities.value = list
+    }
+
+    fun invalidateIdentities() {
+        _identities.value = null
+    }
+
+    suspend fun loadAdminMailboxes(forceRefresh: Boolean = false): List<AdminMailboxRow> {
+        if (!forceRefresh) {
+            _adminMailboxes.value?.let { return it }
+        }
+        val rows = ApiClient.shared.listAdminMailboxes()
+        _adminMailboxes.value = rows
+        return rows
+    }
+
+    fun setAdminMailboxes(list: List<AdminMailboxRow>) {
+        _adminMailboxes.value = list
+    }
+
+    fun invalidateAdminMailboxes() {
+        _adminMailboxes.value = null
+    }
+
     suspend fun loadMailbox(id: String) {
         if (_selectedMailboxId.value != id) {
             _activeConversationId.value = null
@@ -293,11 +361,20 @@ class AppModel {
             _folders.value = cachedFolders
             _isMailboxLoading.value = false
         }
-        _selectedTab.value.syncFolderId?.let { folderId ->
-            val cached = db.getEmails(id, folderId, 50)
-            if (cached.isNotEmpty()) {
-                _emails.value = cached
+        _replyLaterCount.value = db.getReplyLaterCount(id)
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            val cachedEmails = db.getReplyLaterEmails(id, 50)
+            if (cachedEmails.isNotEmpty()) {
+                _emails.value = cachedEmails
                 _isLoading.value = false
+            }
+        } else {
+            _selectedTab.value.syncFolderId?.let { folderId ->
+                val cached = db.getEmails(id, folderId, 50)
+                if (cached.isNotEmpty()) {
+                    _emails.value = cached
+                    _isLoading.value = false
+                }
             }
         }
 
@@ -317,14 +394,20 @@ class AppModel {
                 throw e
             }
             _isMailboxLoading.value = false
-            _folders.value = MailboxSyncService.syncMailbox(id)
-            runCatching { ApiClient.shared.listConversations(id) }.getOrNull()?.let { server ->
-                _conversations.value = visibleConversations(server)
-                dropStaleActiveConversation()
-            }
-            loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty())
-            if (_selectedTab.value is HomeTab.AiInbox) {
-                loadInboxDigest(showLoading = _inboxDigest.value == null)
+            coroutineScope {
+                val foldersDeferred = async { MailboxSyncService.syncMailbox(id) }
+                val conversationsDeferred = async { runCatching { ApiClient.shared.listConversations(id) }.getOrNull() }
+                val replyLaterDeferred = async { refreshReplyLaterCount() }
+                _folders.value = foldersDeferred.await()
+                conversationsDeferred.await()?.let { server ->
+                    _conversations.value = visibleConversations(server)
+                    dropStaleActiveConversation()
+                }
+                loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty())
+                if (_selectedTab.value is HomeTab.AiInbox) {
+                    loadInboxDigest(showLoading = _inboxDigest.value == null)
+                }
+                replyLaterDeferred.await()
             }
         } catch (e: Exception) {
             _errorMessage.value = e.message
@@ -377,23 +460,47 @@ class AppModel {
         }
     }
 
-    suspend fun selectTab(tab: HomeTab) {
+    fun selectTab(tab: HomeTab) {
         _selectedTab.value = tab
         _selectedEmail.value = null
-        tab.syncFolderId?.let { folderId ->
+
+        if (tab is HomeTab.ReplyLater) {
             _selectedMailboxId.value?.let { mailboxId ->
-                val cached = db.getEmails(mailboxId, folderId, 50)
+                val cached = db.getReplyLaterEmails(mailboxId, 50)
                 if (cached.isNotEmpty()) {
                     _emails.value = cached
                     _isLoading.value = false
-                } else {
+                } else if (_replyLaterCount.value > 0) {
+                    _emails.value = emptyList()
                     _isLoading.value = true
+                } else {
+                    _emails.value = emptyList()
+                    _isLoading.value = false
+                }
+            } ?: run {
+                _emails.value = emptyList()
+                _isLoading.value = false
+            }
+        } else {
+            tab.syncFolderId?.let { folderId ->
+                _selectedMailboxId.value?.let { mailboxId ->
+                    val cached = db.getEmails(mailboxId, folderId, 50)
+                    if (cached.isNotEmpty()) {
+                        _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(cached) else cached
+                        _isLoading.value = false
+                    } else {
+                        _emails.value = emptyList()
+                        _isLoading.value = true
+                    }
                 }
             }
         }
-        loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty())
-        if (tab is HomeTab.AiInbox) {
-            loadInboxDigest(showLoading = _inboxDigest.value == null)
+
+        scope.launch {
+            loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty())
+            if (tab is HomeTab.AiInbox) {
+                loadInboxDigest(showLoading = _inboxDigest.value == null)
+            }
         }
     }
 
@@ -404,13 +511,22 @@ class AppModel {
             return
         }
 
+        if (isDebugPreview) {
+            _isLoading.value = false
+            _isSyncing.value = false
+            return
+        }
+
         if (_selectedTab.value is HomeTab.ReplyLater) {
             if (showLoading && _emails.value.isEmpty()) _isLoading.value = true
             _isSyncing.value = true
             try {
                 val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
-                _emails.value = response.emails
+                db.upsertEmails(mailboxId, response.emails)
                 _replyLaterCount.value = response.totalCount
+                if (_selectedTab.value is HomeTab.ReplyLater) {
+                    _emails.value = response.emails
+                }
             } catch (e: Exception) {
                 if (_emails.value.isEmpty()) _errorMessage.value = e.message
             } finally {
@@ -436,7 +552,9 @@ class AppModel {
         _isSyncing.value = true
         try {
             val synced = MailboxSyncService.syncFolder(mailboxId, folderId)
-            _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(synced) else synced
+            if (_selectedTab.value.syncFolderId == folderId) {
+                _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(synced) else synced
+            }
             refreshReplyLaterCount()
         } catch (e: Exception) {
             if (_emails.value.isEmpty()) _errorMessage.value = e.message
@@ -451,10 +569,25 @@ class AppModel {
             _replyLaterCount.value = 0
             return
         }
+        val localCount = db.getReplyLaterCount(mailboxId)
+        if (isDebugPreview) {
+            _replyLaterCount.value = localCount
+            return
+        }
+        if (localCount > 0 || _replyLaterCount.value == 0) {
+            _replyLaterCount.value = localCount
+        }
         try {
-            val piles = ApiClient.shared.listWorkflowPiles(mailboxId)
-            _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
+            val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
+            db.upsertEmails(mailboxId, response.emails)
+            _replyLaterCount.value = response.totalCount
+            if (_selectedTab.value is HomeTab.ReplyLater) {
+                _emails.value = response.emails
+            }
         } catch (_: Exception) {
+            runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull()?.let { piles ->
+                _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
+            }
         }
     }
 
@@ -1163,11 +1296,25 @@ class AppModel {
         val mailboxId = _selectedMailboxId.value ?: return
         if (ids.isEmpty()) return
         for (id in ids) {
-            runCatching {
-                ApiClient.shared.updateEmail(mailboxId, id, replyLater = replyLater)
-            }.onSuccess { applyEmailUpdate(it) }
+            db.updateEmailFlags(id, replyLater = replyLater)
+            _emails.value.firstOrNull { it.id == id }?.let { email ->
+                applyEmailUpdate(
+                    email.copy(
+                        replyLater = replyLater,
+                        replyLaterAt = if (replyLater) java.time.Instant.now().toString() else null,
+                    ),
+                )
+            }
         }
         refreshReplyLaterCount()
+        if (!isDebugPreview) {
+            for (id in ids) {
+                runCatching {
+                    ApiClient.shared.updateEmail(mailboxId, id, replyLater = replyLater)
+                }.onSuccess { applyEmailUpdate(it) }
+            }
+            refreshReplyLaterCount()
+        }
         if (_selectedTab.value is HomeTab.ReplyLater) {
             loadEmailsForCurrentTab(showLoading = false)
         }
@@ -1197,16 +1344,22 @@ class AppModel {
         if (_selectedEmail.value?.id == updated.id) _selectedEmail.value = updated
         _threadEmails.update { list -> list.map { if (it.id == updated.id) updated else it } }
         _emails.update { list ->
-            val mapped = list.map {
-                if (it.id != updated.id) it
-                else it.copy(
-                    read = updated.read,
-                    starred = updated.starred,
-                    threadUnreadCount = if (updated.read) 0 else it.threadUnreadCount,
-                    listSection = if (updated.read) "seen" else "new",
-                )
+            if (_selectedTab.value is HomeTab.ReplyLater && !updated.replyLater) {
+                list.filterNot { it.id == updated.id }
+            } else {
+                val mapped = list.map {
+                    if (it.id != updated.id) it
+                    else it.copy(
+                        read = updated.read,
+                        starred = updated.starred,
+                        replyLater = updated.replyLater,
+                        replyLaterAt = updated.replyLaterAt,
+                        threadUnreadCount = if (updated.read) 0 else it.threadUnreadCount,
+                        listSection = if (updated.read) "seen" else "new",
+                    )
+                }
+                if (_selectedTab.value.syncFolderId == FolderIds.INBOX) orderNewThenSeen(mapped) else mapped
             }
-            if (_selectedTab.value.syncFolderId == FolderIds.INBOX) orderNewThenSeen(mapped) else mapped
         }
         if (previous != null) {
             adjustFolderUnread(previous, wasUnread = !previous.read, isUnread = !updated.read)

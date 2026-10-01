@@ -148,6 +148,7 @@ Default chrome spring: `dampingRatio = 0.86f`, `stiffness = Spring.StiffnessMedi
 - **Loading:** Skeleton list (~9 pulsing bars) when empty+loading; `CircularProgressIndicator` for chat/body/auth.
 - **Pull to refresh:** `PullToRefreshBox` on email list / digest.
 - **Sheets:** Custom grabber (36×5 muted pill); often `dragHandle = null`; scrim `HomeChromeMetrics.modalScrim`.
+- **Modals / sheets / dialogs close:** Modal, sheet, and form dialog dismiss/close controls must use an "x" icon (`Icons.Outlined.Close`, `contentDescription = "Close"`, `tint = colors.ink`), never "Cancel" text. Reserve "Cancel" text strictly for confirmation alert dialogs.
 
 Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `ui/<feature>/`.
 
@@ -174,6 +175,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 - Hardcoded colors/fonts/radii when `InboxiesColors` / `AppThemeDims` / `HomeChromeMetrics` already has a token.
 - Spinner-only first load on lists (use skeletons).
 - Dismissing compose instead of minimizing to the dock.
+- "Cancel" text buttons to dismiss modals, sheets, or form dialogs (use `Icons.Outlined.Close` icon button instead; text "Cancel" is only for alert dialogs).
 - Opaque system bars or ignoring window insets.
 - Shipping Android-only visual changes without the iOS twin unless the task is explicitly Android-only.
 - Reviewing or shipping UI that was only verified on iOS Simulator — use the Android DEBUG preview harness below for the same surfaces.

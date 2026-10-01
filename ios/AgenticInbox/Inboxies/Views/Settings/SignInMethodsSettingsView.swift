@@ -271,7 +271,17 @@ struct SignInMethodsSettingsView: View {
         .background(AppTheme.background)
         .navigationTitle("Sign-in methods")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await reload() }
+        .onAppear {
+            if let cached = app.identities {
+                identities = cached
+                isLoading = false
+            }
+        }
+        .task {
+            if identities.isEmpty {
+                await reload()
+            }
+        }
     }
 
     private func identityTypeLabel(_ type: String) -> String {
@@ -292,14 +302,19 @@ struct SignInMethodsSettingsView: View {
     }
 
     private func reload() async {
-        isLoading = true
+        if identities.isEmpty {
+            isLoading = true
+        }
         errorMessage = nil
         defer { isLoading = false }
         do {
             let res = try await APIClient.shared.listIdentities()
             identities = res.identities
+            app.setIdentities(res.identities)
         } catch {
-            errorMessage = "Could not load sign-in methods"
+            if identities.isEmpty {
+                errorMessage = "Could not load sign-in methods"
+            }
         }
     }
 
@@ -324,6 +339,7 @@ struct SignInMethodsSettingsView: View {
                     : "Apple connected"
                 if let next = res.identities {
                     identities = next
+                    app.setIdentities(next)
                 } else {
                     await reload()
                 }
@@ -354,6 +370,7 @@ struct SignInMethodsSettingsView: View {
             statusMessage = "Password added"
             if let next = res.identities {
                 identities = next
+                app.setIdentities(next)
             } else {
                 await reload()
             }
@@ -430,6 +447,7 @@ struct SignInMethodsSettingsView: View {
                 : "Sign-in method linked"
             if let next = res.identities {
                 identities = next
+                app.setIdentities(next)
             } else {
                 await reload()
             }

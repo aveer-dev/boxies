@@ -28,10 +28,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inbox
+import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.Drafts
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -81,8 +84,11 @@ enum class ComposeActionItem {
     Archive,
     Drafts,
     Sent,
+    Updates,
+    Promotions,
+    Screener,
     Inbox,
-    ForYou,
+//    ForYou,
     Compose,
     ;
 
@@ -93,8 +99,11 @@ enum class ComposeActionItem {
             Archive -> "Archive"
             Drafts -> "Drafts"
             Sent -> "Sent"
+            Updates -> "Updates"
+            Promotions -> "Promotions"
+            Screener -> "Screener"
             Inbox -> "Inbox"
-            ForYou -> "For you"
+//            ForYou -> "For you"
             Compose -> "Compose"
         }
 
@@ -105,15 +114,21 @@ enum class ComposeActionItem {
             Archive -> Icons.Filled.Archive
             Drafts -> Icons.Outlined.Drafts
             Sent -> Icons.AutoMirrored.Filled.Send
+            Updates -> Icons.Filled.Newspaper
+            Promotions -> Icons.Filled.Campaign
+            Screener -> Icons.Filled.Shield
             Inbox -> Icons.Filled.Inbox
-            ForYou -> Icons.Filled.AutoAwesome
+//            ForYou -> Icons.Filled.AutoAwesome
             Compose -> Icons.Filled.Edit
         }
 
     val folderTab: HomeTab?
         get() = when (this) {
-            ForYou -> HomeTab.AiInbox
+//            ForYou -> HomeTab.AiInbox
             Inbox -> HomeTab.Folder(FolderIds.INBOX)
+            Screener -> HomeTab.Folder(FolderIds.SCREENER)
+            Promotions -> HomeTab.Folder(FolderIds.PROMOTIONS)
+            Updates -> HomeTab.Folder(FolderIds.UPDATES)
             Sent -> HomeTab.Folder(FolderIds.SENT)
             Drafts -> HomeTab.Folder(FolderIds.DRAFT)
             Archive -> HomeTab.Folder(FolderIds.ARCHIVE)
@@ -189,7 +204,7 @@ fun ComposeActionListOverlay(
         List(actions.size) { Animatable(0f) }
     }
 
-    val baseOffsetToStackPx = with(density) { 64.dp.toPx() }
+    val baseOffsetToStackPx = with(density) { 60.dp.toPx() }
     val rowStridePx = with(density) {
         (HomeChromeMetrics.composeActionIconSize + HomeChromeMetrics.composeActionRowSpacing).toPx()
     }
@@ -268,8 +283,7 @@ fun ComposeActionListOverlay(
                 .align(Alignment.BottomEnd)
                 .padding(
                     end = 24.dp,
-                    bottom = HomeChromeMetrics.actionBarHeight +
-                        (HomeChromeMetrics.chromeBottomPadding - 12.dp) + 10.dp,
+                    bottom = 64.dp,
                 )
                 .onGloballyPositioned { listContainer = it }
                 .pointerInput(dismissEnabled, isClosing) {

@@ -622,13 +622,6 @@ private fun ScreenerTriageBar(
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
-    var picking by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    val destinations = listOf(
-        FolderIds.INBOX to "Inbox",
-        FolderIds.PROMOTIONS to "Promotions",
-        FolderIds.UPDATES to "Updates",
-    )
 
     Column(
         modifier = modifier
@@ -645,75 +638,22 @@ private fun ScreenerTriageBar(
             fontSize = AppThemeDims.FontSize.meta,
             color = colors.muted,
         )
-        if (picking) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                destinations.forEach { (id, title) ->
-                    val primary = id == FolderIds.INBOX
-                    Text(
-                        title,
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = AppThemeDims.FontSize.meta,
-                        color = if (primary) colors.surface else colors.ink,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(if (primary) colors.ink else colors.pillFill)
-                            .clickable(enabled = !busy) {
-                                scope.launch {
-                                    busy = true
-                                    app.approveScreenerSender(email, id)
-                                    busy = false
-                                    onDone()
-                                }
-                            }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                    )
+
+        ScreenerActionButtons(
+            email = email,
+            onAccept = { dest ->
+                scope.launch {
+                    app.approveScreenerSender(email, dest)
+                    onDone()
                 }
-                Text(
-                    "Cancel",
-                    fontFamily = InterFontFamily,
-                    fontSize = AppThemeDims.FontSize.meta,
-                    color = colors.muted,
-                    modifier = Modifier
-                        .clickable(enabled = !busy) { picking = false }
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                )
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Approve",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = AppThemeDims.FontSize.meta,
-                    color = colors.surface,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(colors.ink)
-                        .clickable(enabled = !busy) { picking = true }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                )
-                Text(
-                    "Reject",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = AppThemeDims.FontSize.meta,
-                    color = colors.ink,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(colors.pillFill)
-                        .clickable(enabled = !busy) {
-                            scope.launch {
-                                busy = true
-                                app.rejectScreenerSender(email)
-                                busy = false
-                                onDone()
-                            }
-                        }
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                )
-            }
-        }
+            },
+            onDecline = {
+                scope.launch {
+                    app.rejectScreenerSender(email)
+                    onDone()
+                }
+            },
+        )
     }
 }
 

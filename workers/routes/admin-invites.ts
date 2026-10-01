@@ -42,6 +42,7 @@ import {
 	attachPasswordToSessionAccount,
 	ensurePrincipalAccount,
 	IdentityAlreadyLinkedError,
+	listAllIdentityAccounts,
 	listIdentitiesForPrincipal,
 	mintIdentityLinkCode,
 	passwordUserForSessionAccount,
@@ -847,6 +848,23 @@ export function registerAdminAndInviteRoutes(app: App) {
 			keys: principalKeys(principal),
 			linkedEmails: principal.linkedEmails ?? [],
 		});
+	});
+
+	/**
+	 * List all known user accounts for sharing/member autocompletion (not mailboxes).
+	 */
+	app.get("/api/v1/accounts", async (c) => {
+		const principal = c.get("principal");
+		if (!principal || principalKeys(principal).length === 0) {
+			return c.json({ error: "Unauthorized" }, 401);
+		}
+		const accounts = await listAllIdentityAccounts(c.env.BUCKET);
+		const mbs = await listMailboxes(c.env.BUCKET);
+		const mailboxEmails = new Set(mbs.map((m) => m.email.toLowerCase()));
+		const userAccounts = accounts.filter(
+			(acc) => !mailboxEmails.has(acc.email.toLowerCase()),
+		);
+		return c.json(userAccounts);
 	});
 
 	/**

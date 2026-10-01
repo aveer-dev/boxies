@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
@@ -72,12 +73,13 @@ internal fun SettingsNavRow(
     title: String,
     icon: ImageVector,
     onClick: () -> Unit,
+    isLoading: Boolean = false,
 ) {
     val colors = inboxiesColors()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = !isLoading, onClick = onClick)
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -95,12 +97,20 @@ internal fun SettingsNavRow(
             color = colors.ink,
             modifier = Modifier.weight(1f),
         )
-        Icon(
-            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-            contentDescription = null,
-            tint = colors.muted.copy(alpha = 0.55f),
-            modifier = Modifier.size(18.dp),
-        )
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                color = colors.muted,
+                strokeWidth = 2.dp,
+            )
+        } else {
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = colors.muted.copy(alpha = 0.55f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

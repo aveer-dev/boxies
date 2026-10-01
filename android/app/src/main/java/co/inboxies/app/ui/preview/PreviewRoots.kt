@@ -54,6 +54,7 @@ object PreviewHarness {
             }
             PreviewMode.Mailbox,
             PreviewMode.Screener,
+            PreviewMode.ScreenerList,
             PreviewMode.ReplyLater,
             -> {
                 PreviewSupport.applyAuth(auth)
@@ -90,6 +91,7 @@ fun PreviewRoot(
         }
         PreviewMode.Mailbox,
         PreviewMode.Screener,
+        PreviewMode.ScreenerList,
         PreviewMode.ReplyLater,
         -> HomeShellView(
             auth = auth,

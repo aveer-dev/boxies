@@ -7,8 +7,11 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     case archive
     case drafts
     case sent
+    case updates
+    case promotions
+    case screener
     case inbox
-    case forYou
+//    case forYou
     case compose
 
     var id: String { rawValue }
@@ -20,8 +23,11 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .archive: return "Archive"
         case .drafts: return "Drafts"
         case .sent: return "Sent"
+        case .updates: return "Updates"
+        case .promotions: return "Promotions"
+        case .screener: return "Screener"
         case .inbox: return "Inbox"
-        case .forYou: return "For you"
+//        case .forYou: return "For you"
         case .compose: return "Compose"
         }
     }
@@ -33,16 +39,22 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .archive: return HomeTab.folder("archive").systemImage
         case .drafts: return HomeTab.folder("draft").systemImage
         case .sent: return HomeTab.folder("sent").systemImage
+        case .updates: return HomeTab.folder("updates").systemImage
+        case .promotions: return HomeTab.folder("promotions").systemImage
+        case .screener: return HomeTab.folder("screener").systemImage
         case .inbox: return HomeTab.folder("inbox").systemImage
-        case .forYou: return HomeTab.aiInbox.systemImage
+//        case .forYou: return HomeTab.aiInbox.systemImage
         case .compose: return "square.and.pencil"
         }
     }
 
     var folderTab: HomeTab? {
         switch self {
-        case .forYou: return .aiInbox
+//        case .forYou: return .aiInbox
         case .inbox: return .folder("inbox")
+        case .screener: return .folder("screener")
+        case .promotions: return .folder("promotions")
+        case .updates: return .folder("updates")
         case .sent: return .folder("sent")
         case .drafts: return .folder("draft")
         case .archive: return .folder("archive")
@@ -109,9 +121,9 @@ struct ComposeActionListOverlay: View {
     @Namespace private var highlightNamespace
 
     private let actions = ComposeActionItem.allCases
-    private let iconSize: CGFloat = 48
-    private let rowSpacing: CGFloat = 18
-    private let baseOffsetToStack: CGFloat = 64
+    private let iconSize: CGFloat = 44
+    private let rowSpacing: CGFloat = 10
+    private let baseOffsetToStack: CGFloat = 60
 
     private var expandSpring: Animation {
         .spring(response: 0.32, dampingFraction: 0.86)
@@ -150,7 +162,7 @@ struct ComposeActionListOverlay: View {
                 }
             }
             .padding(.trailing, 24)
-            .padding(.bottom, 70)
+            .padding(.bottom, 64)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             .allowsHitTesting(isExpanded)
             .animation(.spring(response: 0.28, dampingFraction: 0.82), value: highlightedID)

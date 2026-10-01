@@ -102,3 +102,14 @@ final class UserEmailsFromAclTests: XCTestCase {
         XCTAssertEqual(userEmailsFromAcl(keys), ["Admin@example.com"])
     }
 }
+
+final class SharingSettingsViewTests: XCTestCase {
+    func testIsUserAccountKeyFiltersOutSubAndUser() {
+        XCTAssertTrue(SharingSettingsView.isUserAccountKey("email:admin@example.com"))
+        XCTAssertTrue(SharingSettingsView.isUserAccountKey("account:acc-1234"))
+        XCTAssertTrue(SharingSettingsView.isUserAccountKey("ada@example.com"))
+        XCTAssertFalse(SharingSettingsView.isUserAccountKey("sub:google-oauth2|1029384756"))
+        XCTAssertFalse(SharingSettingsView.isUserAccountKey("sub:apple|001122"))
+        XCTAssertFalse(SharingSettingsView.isUserAccountKey("user:usr-5678"))
+    }
+}

@@ -22,7 +22,6 @@ struct HomeShellView: View {
     @State private var newMailboxEmail = ""
     @FocusState private var isNameFocused: Bool
     @AppStorage("app_theme") private var appTheme: ThemeMode = .system
-    @Namespace private var barNamespace
     @State private var showComposeSheet = false
     @State private var showComposeActions = false
     @State private var isClosingComposeActions = false
@@ -34,10 +33,8 @@ struct HomeShellView: View {
     @State private var composeLastTapAt: Date?
     @State private var composeDoubleTapArmed = false
 
-    static let askAITransitionID = "ai-chat-button"
-
     private let folderTabs: [HomeTab] = [
-        .aiInbox,
+//        .aiInbox,
 //        .chats,
         .folder("inbox"),
         .folder("screener"),
@@ -58,14 +55,23 @@ struct HomeShellView: View {
         app.composeSession?.isMinimized == true
     }
 
+    private var isInboxTab: Bool {
+        app.selectedTab == .folder("inbox") || app.selectedTab == .aiInbox
+    }
+
+    private var hasScreenerBanner: Bool {
+        isInboxTab && app.screenerSenderCount > 0 && !isSelectMode && !showComposeActions
+    }
+
     private var listBottomInset: CGFloat {
-        HomeChromeMetrics.listBottomInset(hasMinimizedCompose: hasMinimizedCompose)
+        HomeChromeMetrics.listBottomInset(hasMinimizedCompose: hasMinimizedCompose) + (hasScreenerBanner ? 48 : 0)
     }
 
     var body: some View {
         shell
             .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isComposeExpanded)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasMinimizedCompose)
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
             .sheet(item: selectedEmailItem) { _ in
                 EmailDetailView()
             }
@@ -81,7 +87,7 @@ struct HomeShellView: View {
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
             }
-            .fullScreenCover(isPresented: $showChat, onDismiss: {
+            .sheet(isPresented: $showChat, onDismiss: {
                 dismissChat()
             }) {
                 chatSheet
@@ -93,6 +99,15 @@ struct HomeShellView: View {
                 if isComposeExpanded {
                     showComposeSheet = true
                 }
+                if ProcessInfo.processInfo.arguments.contains("-previewChat") {
+                    openChat()
+                }
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
+                    return
+                }
+                #endif
+                Task { await app.refreshReplyLaterCount() }
             }
             .onChange(of: app.pendingUndoAction?.id) { _, newID in
                 registerUndoIfNeeded(newID)
@@ -231,10 +246,8 @@ struct HomeShellView: View {
             seedPrompt: chatSeedPrompt,
             initialConversationId: app.chatSession.conversationId
         )
-        .modifier(CoverDragDismiss(onDismiss: {
-            showChat = false
-        }))
-        .modifier(BarSheetZoom(enabled: true, id: Self.askAITransitionID, namespace: barNamespace))
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
         .presentationBackground(AppTheme.background)
     }
 
@@ -289,6 +302,10 @@ struct HomeShellView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
+                if hasScreenerBanner {
+                    screenerBanner
+                }
+
                 if isSelectMode {
                     selectionActionBar
                         .padding(.horizontal, 16)
@@ -311,9 +328,49 @@ struct HomeShellView: View {
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.pendingUndoAction?.id)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.toast?.id)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
         .animation(tabSpring, value: app.selectedTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isSelectMode)
         .padding(.bottom, -12)
+    }
+
+    private var screenerBanner: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            selectTab(.folder("screener"))
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.shield")
+                    .font(.inter(size: 13, weight: .semibold))
+                    .foregroundStyle(AppTheme.accent)
+
+                Text(app.screenerSenderCount == 1
+                     ? "1 first-time sender to screen"
+                     : "\(app.screenerSenderCount) first-time senders to screen")
+                    .font(.inter(size: 13, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.inter(size: 11, weight: .semibold))
+                    .foregroundStyle(AppTheme.muted)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 8)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .accessibilityLabel(app.screenerSenderCount == 1 ? "1 first-time sender to screen" : "\(app.screenerSenderCount) first-time senders to screen")
+        .accessibilityHint("Opens Screener")
     }
 
     private func registerUndoIfNeeded(_ newID: UUID?) {
@@ -535,7 +592,8 @@ struct HomeShellView: View {
                             filterState.reset()
                         }
                     },
-                    filterChipsBar: filterState.isActive ? AnyView(activeFilterChipsBar) : nil
+                    filterChipsBar: filterState.isActive ? AnyView(activeFilterChipsBar) : nil,
+                    showsTags: true
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
@@ -555,7 +613,8 @@ struct HomeShellView: View {
                     selectedEmailIDs: $selectedEmailIDs,
                     isFiltered: false,
                     onClearFilters: nil,
-                    filterChipsBar: nil
+                    filterChipsBar: nil,
+                    showsTags: false
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
@@ -603,7 +662,9 @@ struct HomeShellView: View {
             let next = folderTabs.firstIndex(of: tab) ?? 0
             tabNavigatingForward = next > current
         }
-        Task { await app.selectTab(tab) }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            app.selectTab(tab)
+        }
     }
 
     private func selectAdjacentTab(forward: Bool) {
@@ -627,9 +688,7 @@ struct HomeShellView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            if app.replyLaterCount > 0 || app.selectedTab == .replyLater {
-                replyLaterPileButton
-            }
+            replyLaterPileButton
             askAIButton
             composeButton
         }
@@ -644,6 +703,9 @@ struct HomeShellView: View {
             if app.selectedTab == .replyLater {
                 let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
                 selectTab(target)
+            } else if app.replyLaterCount == 0 {
+                app.showToast("There is no reply later mail")
+                Task { await app.refreshReplyLaterCount() }
             } else {
                 previousTabBeforeReplyLater = app.selectedTab
                 selectTab(.replyLater)
@@ -664,8 +726,8 @@ struct HomeShellView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Reply Later")
-        .accessibilityValue("\(app.replyLaterCount) queued")
-        .accessibilityHint(app.selectedTab == .replyLater ? "Returns to previous folder" : "Opens Reply Later pile")
+        .accessibilityValue(app.replyLaterCount == 0 ? "No queued emails" : "\(app.replyLaterCount) queued")
+        .accessibilityHint(app.selectedTab == .replyLater ? "Returns to previous folder" : (app.replyLaterCount == 0 ? "Shows status toast when empty" : "Opens Reply Later pile"))
     }
 
     private var composeButton: some View {
@@ -778,7 +840,7 @@ struct HomeShellView: View {
             startComposeFromBar()
         case .settings:
             showSettings = true
-        case .forYou, .inbox, .sent, .drafts, .archive, .trash:
+        default:
             if let tab = item.folderTab {
                 selectTab(tab)
             }
@@ -1209,8 +1271,6 @@ struct HomeShellView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Ask AI")
-        .modifier(BarZoomSource(id: Self.askAITransitionID, namespace: barNamespace))
-        .modifier(BarZoomSourceHidden(hidden: showChat))
     }
 }
 
@@ -1268,47 +1328,5 @@ private struct AskAIButtonLabel: View {
                 .foregroundStyle(AppTheme.muted)
             Spacer(minLength: 0)
         }
-    }
-}
-
-private struct BarSheetZoom: ViewModifier {
-    var enabled: Bool
-    var id: String
-    var namespace: Namespace.ID
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *), enabled {
-            content.navigationTransition(.zoom(sourceID: id, in: namespace))
-        } else {
-            content
-        }
-    }
-}
-
-private struct BarZoomSource: ViewModifier {
-    var id: String
-    var namespace: Namespace.ID
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.matchedTransitionSource(id: id, in: namespace)
-        } else {
-            content
-        }
-    }
-}
-
-/// Hide the real button while its sheet is up so the zoom replica is the only copy.
-private struct BarZoomSourceHidden: ViewModifier {
-    var hidden: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .opacity(hidden ? 0 : 1)
-            .animation(nil, value: hidden)
-            .accessibilityHidden(hidden)
-            .allowsHitTesting(!hidden)
     }
 }

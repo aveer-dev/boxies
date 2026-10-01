@@ -861,17 +861,7 @@ private extension View {
 
 /// Approve / reject chrome for Screener-lite review queue.
 private struct ScreenerTriageBar: View {
-    @Environment(AppModel.self) private var app
     let email: Email
-
-    @State private var pickingDestination = false
-    @State private var busy = false
-
-    private let destinations: [(id: String, title: String)] = [
-        ("inbox", "Inbox"),
-        ("promotions", "Promotions"),
-        ("updates", "Updates"),
-    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -880,70 +870,7 @@ private struct ScreenerTriageBar: View {
                 .foregroundStyle(AppTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if pickingDestination {
-                HStack(spacing: 8) {
-                    ForEach(destinations, id: \.id) { dest in
-                        Button {
-                            Task {
-                                busy = true
-                                await app.approveScreenerSender(email, destinationFolderId: dest.id)
-                                busy = false
-                            }
-                        } label: {
-                            Text(dest.title)
-                                .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(dest.id == "inbox" ? AppTheme.ink : AppTheme.pillFill)
-                                .foregroundStyle(dest.id == "inbox" ? AppTheme.surface : AppTheme.ink)
-                                .clipShape(Capsule())
-                        }
-                        .disabled(busy)
-                        .buttonStyle(.plain)
-                    }
-                    Button("Cancel") {
-                        pickingDestination = false
-                    }
-                    .font(.inter(size: AppTheme.FontSize.meta))
-                    .foregroundStyle(AppTheme.muted)
-                    .disabled(busy)
-                    .buttonStyle(.plain)
-                }
-            } else {
-                HStack(spacing: 8) {
-                    Button {
-                        pickingDestination = true
-                    } label: {
-                        Text("Approve")
-                            .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(AppTheme.ink)
-                            .foregroundStyle(AppTheme.surface)
-                            .clipShape(Capsule())
-                    }
-                    .disabled(busy)
-                    .buttonStyle(.plain)
-
-                    Button {
-                        Task {
-                            busy = true
-                            await app.rejectScreenerSender(email)
-                            busy = false
-                        }
-                    } label: {
-                        Text("Reject")
-                            .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(AppTheme.pillFill)
-                            .foregroundStyle(AppTheme.ink)
-                            .clipShape(Capsule())
-                    }
-                    .disabled(busy)
-                    .buttonStyle(.plain)
-                }
-            }
+            ScreenerActionButtons(email: email)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

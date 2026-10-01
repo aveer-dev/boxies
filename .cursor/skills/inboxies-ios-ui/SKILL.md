@@ -127,7 +127,7 @@ Home large-title fade: `ProgressiveBlurBackground` (ultraThinMaterial masked to 
 | Folder tabs | Custom chrome on `AppModel.selectedTab` (`HomeTab`). Horizontal swipe between folders. **Not** `TabView`. |
 | Email detail | `.sheet(item:)` with stable id `"email-detail"` so prev/next does not remount |
 | Compose | `.sheet` when expanded; minimize to `ComposeDockBar` on dismiss |
-| Ask AI | `.fullScreenCover` + inner `NavigationStack(path:)` |
+| Ask AI | `.sheet` + inner `NavigationStack(path:)` |
 | Search | ZStack opacity swap over home (not a push) |
 | Settings | `.sheet` large detent + `NavigationLink` subpages |
 | Email actions | height-estimated sheet; iOS 18+ `navigationTransition(.zoom)` from detail |
@@ -167,6 +167,7 @@ Gate iOS 18/26 APIs with `#available` the same way (glass, zoom, `ToolbarSpacer`
 - **Empty:** `ContentUnavailableView`.
 - **Loading:** skeleton rows (`EmailRowSkeleton`, ~9 rows) + `.skeletonPulse`. `ProgressView` for digest/auth/busy, not as the only list placeholder.
 - **Forms:** Settings `insetGrouped`; fields `surface` + continuous rounded 10 + `line` stroke.
+- **Modals / sheets close:** Modal and sheet dismiss/close controls must use an "x" icon (`Image(systemName: "xmark")`, 32×32 frame, `AppTheme.ink`), never "Cancel" text. Use `.accessibilityLabel("Close")`. Reserve "Cancel" text strictly for confirmation alert dialogs.
 
 ## Screen map
 
@@ -206,5 +207,6 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 - Hardcoded colors/fonts/radii when `AppTheme` / `HomeChromeMetrics` already has a token.
 - Spinner-only first load on lists (use skeletons).
 - Dismissing compose instead of minimizing to the dock.
+- "Cancel" text buttons to dismiss modals, sheets, or form overlays (use `Image(systemName: "xmark")` icon button instead; text "Cancel" is only for alert dialogs).
 - Shipping iOS-only visual changes without the Android twin unless the task is explicitly iOS-only.
 - Treating Simulator-only evidence as enough for a dual-platform change — run Android DEBUG previews (`inboxies-android-ui`) for the same surfaces.

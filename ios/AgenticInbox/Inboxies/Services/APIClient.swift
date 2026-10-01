@@ -151,6 +151,10 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/me/identities")
     }
 
+    func listAccounts() async throws -> [AccountSummary] {
+        try await request(path: "/api/v1/accounts")
+    }
+
     func attachAppleIdentity(identityToken: String) async throws -> AttachIdentityResponse {
         try await request(
             path: "/api/v1/me/identities/attach",

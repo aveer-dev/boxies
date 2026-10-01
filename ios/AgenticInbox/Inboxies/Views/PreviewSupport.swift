@@ -6,6 +6,7 @@ enum PreviewSupport {
     static func appModel() -> AppModel {
         let app = AppModel()
         app.persistsPreferences = false
+        app.isDebugPreview = true
         app.mailboxes = [
             Mailbox(
                 id: "mb-preview",
@@ -28,6 +29,9 @@ enum PreviewSupport {
             Folder(id: "archive", name: "Archive", unreadCount: 0),
             Folder(id: "screened_out", name: "Screened out", unreadCount: 0),
         ]
+        DatabaseService.shared.upsertMailboxes(app.mailboxes)
+        DatabaseService.shared.upsertFolders(mailboxId: "mb-preview", folders: app.folders)
+        DatabaseService.shared.upsertEmails(mailboxId: "mb-preview", emails: emails)
         app.emails = emails
         app.replyLaterCount = emails.filter(\.replyLater).count
         app.isLoading = false
@@ -154,12 +158,14 @@ enum PreviewSupport {
         let app = appModel()
         app.selectedTab = .folder("inbox")
         let args = ProcessInfo.processInfo.arguments
-        if args.contains("-previewScreener"),
+        if (args.contains("-previewScreener") || args.contains("-previewScreenerList")),
            let screener = app.emails.first(where: { $0.folderId == "screener" }) {
             app.selectedTab = .folder("screener")
             app.emails = app.emails.filter { $0.folderId == "screener" }
-            app.selectedEmail = screener
-            app.threadEmails = [screener]
+            if !args.contains("-previewScreenerList") {
+                app.selectedEmail = screener
+                app.threadEmails = [screener]
+            }
         } else if args.contains("-previewReplyLater") {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)
@@ -238,6 +244,9 @@ struct PreviewMailboxRoot: View {
                     try? await Task.sleep(nanoseconds: 400_000_000)
                     await app.startCompose(mode: .new)
                     app.minimizeCompose()
+                } else if ProcessInfo.processInfo.arguments.contains("-previewChat") {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    app.openChatSession(resumeActive: true)
                 }
             }
     }

@@ -1497,3 +1497,30 @@ export async function attachPasswordToSessionAccount(
 		linkedEmails: emailsForPrincipal(expanded),
 	};
 }
+
+export async function listAllIdentityAccounts(
+	bucket: R2Bucket,
+): Promise<{ id: string; email: string; name?: string }[]> {
+	const out: { id: string; email: string; name?: string }[] = [];
+	const seenEmails = new Set<string>();
+
+	for (const prefix of [IDENTITY_ACCOUNT_PREFIX, LEGACY_IDENTITY_ACCOUNT_PREFIX]) {
+		const list = await bucket.list({ prefix });
+		for (const obj of list.objects) {
+			const id = obj.key.replace(prefix, "").replace(".json", "");
+			const account = await loadIdentityAccount(bucket, id);
+			if (!account) continue;
+			let email = account.primaryEmail;
+			if (!email) {
+				const emailPrincipal = account.principals.find((p) => p.startsWith("email:"));
+				if (emailPrincipal) email = emailPrincipal.slice("email:".length);
+			}
+			if (email && !seenEmails.has(email.toLowerCase())) {
+				seenEmails.add(email.toLowerCase());
+				out.push({ id: account.id, email });
+			}
+		}
+	}
+
+	return out;
+}

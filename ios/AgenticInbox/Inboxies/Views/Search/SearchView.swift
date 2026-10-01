@@ -102,7 +102,7 @@ struct SearchView: View {
         .task(id: query) {
             await runSearch()
         }
-        .fullScreenCover(isPresented: $showChat, onDismiss: {
+        .sheet(isPresented: $showChat, onDismiss: {
             app.dismissChatSession()
         }) {
             ChatSheetView(
@@ -110,9 +110,8 @@ struct SearchView: View {
                 initialConversationId: app.chatSession.conversationId,
                 forceNewChat: true
             )
-            .modifier(CoverDragDismiss(onDismiss: {
-                showChat = false
-            }))
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
             .presentationBackground(AppTheme.background)
         }
     }

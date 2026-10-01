@@ -22,6 +22,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.zIndex
@@ -47,6 +48,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
@@ -56,6 +58,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
@@ -66,10 +69,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -144,6 +149,7 @@ fun HomeShellView(
     val composeSession by appModel.composeSession.collectAsState()
     val toast by appModel.toast.collectAsState()
     val digest by appModel.inboxDigest.collectAsState()
+    val folders by appModel.folders.collectAsState()
     val emails by appModel.emails.collectAsState()
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
@@ -174,13 +180,24 @@ fun HomeShellView(
     var newMailboxName by remember { mutableStateOf("") }
     var newMailboxEmail by remember { mutableStateOf("") }
 
+    LaunchedEffect(Unit) {
+        if (!appModel.isDebugPreview) {
+            appModel.refreshReplyLaterCount()
+        }
+    }
+
     val folderTabs = remember {
-        listOf(HomeTab.AiInbox) + FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
+        // listOf(HomeTab.AiInbox) + FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
+        FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
     }
 
     val hasMinimizedCompose = composeSession?.isMinimized == true
+    val isInboxTab = (selectedTab as? HomeTab.Folder)?.id == FolderIds.INBOX || selectedTab == HomeTab.AiInbox
+    val screenerSenderCount = remember(folders, emails) { appModel.screenerSenderCount }
+    val showScreenerBanner = isInboxTab && screenerSenderCount > 0 && !isSelectMode && !showComposeActions
     val listBottomInset by animateDpAsState(
-        targetValue = HomeChromeMetrics.listBottomInset(hasMinimizedCompose && !isSelectMode),
+        targetValue = HomeChromeMetrics.listBottomInset(hasMinimizedCompose && !isSelectMode) +
+            (if (showScreenerBanner) 48.dp else 0.dp),
         animationSpec = selectModeSpring(),
         label = "listBottomInset",
     )
@@ -574,6 +591,7 @@ fun HomeShellView(
                                 isLoading = isLoading,
                                 bottomInset = listBottomInset,
                                 fallbackFolderId = tab.id,
+                                showsTags = true,
                                 isSelectMode = isSelectMode,
                                 selectedEmailIds = selectedEmailIds,
                                 onToggleSelect = { id ->
@@ -608,6 +626,7 @@ fun HomeShellView(
                                 isLoading = isLoading,
                                 bottomInset = listBottomInset,
                                 fallbackFolderId = null,
+                                showsTags = false,
                                 isSelectMode = isSelectMode,
                                 selectedEmailIds = selectedEmailIds,
                                 onToggleSelect = { id ->
@@ -664,6 +683,23 @@ fun HomeShellView(
                         modifier = Modifier
                             .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding)
                             .padding(bottom = HomeChromeMetrics.chromeSpacing),
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = showScreenerBanner,
+                    enter = slideInVertically(selectModeSpring()) { it } + fadeIn(selectModeSpring()),
+                    exit = slideOutVertically(selectModeSpring()) { it } + fadeOut(selectModeSpring()),
+                ) {
+                    ScreenerBanner(
+                        count = screenerSenderCount,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            selectTab(HomeTab.Folder(FolderIds.SCREENER))
+                        },
+                        modifier = Modifier
+                            .padding(horizontal = 24.dp)
+                            .padding(bottom = 8.dp),
                     )
                 }
 
@@ -754,6 +790,9 @@ fun HomeShellView(
                                         previousTabBeforeReplyLater
                                     }
                                     selectTab(target)
+                                } else if (replyLaterCount == 0) {
+                                    appModel.showToast("There is no reply later mail")
+                                    scope.launch { appModel.refreshReplyLaterCount() }
                                 } else {
                                     previousTabBeforeReplyLater = selectedTab
                                     selectTab(HomeTab.ReplyLater)
@@ -1164,37 +1203,35 @@ private fun BottomBar(
         horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
         verticalAlignment = Alignment.Bottom,
     ) {
-        if (replyLaterCount > 0 || isReplyLaterTab) {
-            Row(
-                modifier = Modifier
-                    .height(HomeChromeMetrics.actionBarHeight)
-                    .homeChromeToolbarSurface(RoundedCornerShape(50))
-                    .clickable {
-                        if (showComposeActions) {
-                            onCloseComposeMenu()
-                        } else {
-                            onReplyLater()
-                        }
+        Row(
+            modifier = Modifier
+                .height(HomeChromeMetrics.actionBarHeight)
+                .homeChromeToolbarSurface(RoundedCornerShape(50))
+                .clickable {
+                    if (showComposeActions) {
+                        onCloseComposeMenu()
+                    } else {
+                        onReplyLater()
                     }
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    Icons.Outlined.Schedule,
-                    contentDescription = "Reply Later",
-                    tint = if (isReplyLaterTab) colors.accent else colors.ink,
-                    modifier = Modifier.size(18.dp),
-                )
-                if (replyLaterCount > 0) {
-                    Text(
-                        "$replyLaterCount",
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 13.sp,
-                        color = if (isReplyLaterTab) colors.accent else colors.ink,
-                    )
                 }
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                Icons.Outlined.Schedule,
+                contentDescription = "Reply Later",
+                tint = if (isReplyLaterTab) colors.accent else colors.ink,
+                modifier = Modifier.size(18.dp),
+            )
+            if (replyLaterCount > 0) {
+                Text(
+                    "$replyLaterCount",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = if (isReplyLaterTab) colors.accent else colors.ink,
+                )
             }
         }
 
@@ -1285,6 +1322,65 @@ private fun BottomBar(
             contentAlignment = Alignment.BottomCenter,
         ) {
             ComposeStackButton(isExpanded = showComposeActions)
+        }
+    }
+}
+
+@Composable
+private fun ScreenerBanner(
+    count: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = inboxiesColors()
+    val text = if (count == 1) {
+        "1 first-time sender to screen"
+    } else {
+        "$count first-time senders to screen"
+    }
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = text
+            },
+        shape = RoundedCornerShape(50),
+        color = colors.surface.copy(alpha = 0.94f),
+        border = BorderStroke(0.5.dp, colors.line.copy(alpha = 0.6f)),
+        shadowElevation = 3.dp,
+        tonalElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Shield,
+                contentDescription = null,
+                tint = colors.accent,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = text,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                color = colors.ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = colors.muted,
+                modifier = Modifier.size(15.dp),
+            )
         }
     }
 }

@@ -8,7 +8,7 @@ final class AppModel {
     var mailboxes: [Mailbox] = []
     var selectedMailboxId: String?
     var folders: [Folder] = []
-    var selectedTab: HomeTab = .aiInbox
+    var selectedTab: HomeTab = .folder("inbox")
     var emails: [Email] = []
     var inboxDigest: InboxDigest?
     var isDigestLoading = false
@@ -41,6 +41,10 @@ final class AppModel {
     var toast: AppToast?
     /// Count for bottom Reply Later chrome (workflow pile).
     var replyLaterCount: Int = 0
+    /// Cached sign-in identities for settings navigation.
+    var identities: [LinkedIdentity]?
+    /// Cached domain admin mailboxes for settings navigation.
+    var adminMailboxes: [AdminMailboxRow]?
     private var toastDismissTask: Task<Void, Never>?
     
     struct UndoableAction: Identifiable {
@@ -62,6 +66,8 @@ final class AppModel {
     var swipePreferences = SwipeActionPreferences.current
     /// Preview hosts skip UserDefaults so Canvas cannot overwrite real swipe prefs.
     var persistsPreferences = true
+    /// When true, UI skips background network sync (DEBUG preview fixtures).
+    var isDebugPreview = false
 
     var selectedMailbox: Mailbox? {
         mailboxes.first { $0.id == selectedMailboxId }
@@ -80,6 +86,17 @@ final class AppModel {
 
     func unreadCount(forFolderId folderId: String) -> Int {
         folders.first(where: { $0.id == folderId })?.unreadCount ?? 0
+    }
+
+    var screenerSenderCount: Int {
+        if let mailboxId = selectedMailboxId {
+            let cached = db.getEmails(mailboxId: mailboxId, folderId: "screener")
+            let distinct = Set(cached.map { $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }).count
+            if distinct > 0 { return distinct }
+        }
+        let inMemory = Set(emails.filter { $0.folderId == "screener" }.map { $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }).count
+        if inMemory > 0 { return inMemory }
+        return unreadCount(forFolderId: "screener")
     }
 
     func adjustFolderUnread(folderId: String, delta: Int) {
@@ -118,13 +135,21 @@ final class AppModel {
                 if !cachedFolders.isEmpty {
                     folders = cachedFolders
                 }
-                if let folderId = selectedTab.syncFolderId {
+                replyLaterCount = db.getReplyLaterCount(mailboxId: id)
+                if selectedTab == .replyLater {
+                    let cached = db.getReplyLaterEmails(mailboxId: id, limit: 50)
+                    if !cached.isEmpty {
+                        emails = cached
+                        isLoading = false
+                    }
+                } else if let folderId = selectedTab.syncFolderId {
                     let cachedEmails = db.getEmails(mailboxId: id, folderId: folderId, limit: 50)
                     if !cachedEmails.isEmpty {
                         emails = cachedEmails
                         isLoading = false
                     }
                 }
+                Task { await refreshReplyLaterCount() }
             }
         }
 
@@ -219,6 +244,42 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    func loadIdentities(forceRefresh: Bool = false) async throws -> [LinkedIdentity] {
+        if !forceRefresh, let cached = identities {
+            return cached
+        }
+        let res = try await APIClient.shared.listIdentities()
+        identities = res.identities
+        return res.identities
+    }
+
+    func setIdentities(_ list: [LinkedIdentity]) {
+        identities = list
+    }
+
+    func invalidateIdentities() {
+        identities = nil
+    }
+
+    @discardableResult
+    func loadAdminMailboxes(forceRefresh: Bool = false) async throws -> [AdminMailboxRow] {
+        if !forceRefresh, let cached = adminMailboxes {
+            return cached
+        }
+        let rows = try await APIClient.shared.listAdminMailboxes()
+        adminMailboxes = rows
+        return rows
+    }
+
+    func setAdminMailboxes(_ list: [AdminMailboxRow]) {
+        adminMailboxes = list
+    }
+
+    func invalidateAdminMailboxes() {
+        adminMailboxes = nil
+    }
+
     func loadMailbox(_ id: String) async {
         if selectedMailboxId != id {
             activeConversationId = nil
@@ -238,7 +299,14 @@ final class AppModel {
             folders = cachedFolders
             isMailboxLoading = false
         }
-        if let folderId = selectedTab.syncFolderId {
+        replyLaterCount = db.getReplyLaterCount(mailboxId: id)
+        if selectedTab == .replyLater {
+            let cached = db.getReplyLaterEmails(mailboxId: id, limit: 50)
+            if !cached.isEmpty {
+                emails = cached
+                isLoading = false
+            }
+        } else if let folderId = selectedTab.syncFolderId {
             let cachedEmails = db.getEmails(mailboxId: id, folderId: folderId, limit: 50)
             if !cachedEmails.isEmpty {
                 emails = cachedEmails
@@ -257,6 +325,7 @@ final class AppModel {
             isMailboxLoading = false
             async let foldersTask = syncService.syncMailbox(mailboxId: id)
             async let conversationsTask = APIClient.shared.listConversations(mailboxId: id)
+            async let replyLaterTask: Void = refreshReplyLaterCount()
             folders = try await foldersTask
             if let server = try? await conversationsTask {
                 conversations = Self.visibleConversations(server)
@@ -266,7 +335,7 @@ final class AppModel {
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: inboxDigest == nil)
             }
-            await refreshReplyLaterCount()
+            _ = await replyLaterTask
         } catch let error as APIError {
             if case .http(let code, _) = error, code == 403 || code == 404 {
                 await dropInaccessibleMailbox(id)
@@ -325,29 +394,66 @@ final class AppModel {
         }
     }
 
-    func selectTab(_ tab: HomeTab) async {
+    func selectTab(_ tab: HomeTab) {
         selectedTab = tab
         selectedEmail = nil
 
-        // Instant local query for folder-backed tabs (< 2ms)
-        if let folderId = tab.syncFolderId, let mailboxId = selectedMailboxId {
+        if isDebugPreview {
+            if tab == .replyLater {
+                emails = PreviewSupport.emails.filter(\.replyLater)
+            } else if let folderId = tab.syncFolderId {
+                emails = PreviewSupport.emails.filter { $0.folderId == folderId }
+            }
+            isLoading = false
+            return
+        }
+
+        // Instant local query (< 2ms)
+        if tab == .replyLater {
+            if let mailboxId = selectedMailboxId {
+                let cached = db.getReplyLaterEmails(mailboxId: mailboxId, limit: 50)
+                if !cached.isEmpty {
+                    emails = cached
+                    isLoading = false
+                } else if replyLaterCount > 0 {
+                    emails = []
+                    isLoading = true
+                } else {
+                    emails = []
+                    isLoading = false
+                }
+            } else {
+                emails = []
+                isLoading = false
+            }
+        } else if let folderId = tab.syncFolderId, let mailboxId = selectedMailboxId {
             let cached = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
             if !cached.isEmpty {
-                emails = cached
+                emails = folderId == "inbox" ? Self.orderNewThenSeen(cached) : cached
                 isLoading = false
             } else {
+                emails = []
                 isLoading = true
             }
         }
-        await loadEmailsForCurrentTab(showLoading: emails.isEmpty)
-        if tab == .aiInbox {
-            await loadInboxDigest(showLoading: inboxDigest == nil)
+
+        Task {
+            await loadEmailsForCurrentTab(showLoading: emails.isEmpty)
+            if tab == .aiInbox {
+                await loadInboxDigest(showLoading: inboxDigest == nil)
+            }
         }
     }
 
     func loadEmailsForCurrentTab(showLoading: Bool = true) async {
         guard let mailboxId = selectedMailboxId else {
             isLoading = false
+            return
+        }
+
+        if isDebugPreview {
+            isLoading = false
+            isSyncing = false
             return
         }
 
@@ -362,9 +468,12 @@ final class AppModel {
             }
             do {
                 let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId)
-                emails = response.emails
+                db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
                 replyLaterCount = response.totalCount
                 lastSyncedAt = Date()
+                if selectedTab == .replyLater {
+                    emails = response.emails
+                }
             } catch {
                 if emails.isEmpty {
                     errorMessage = error.localizedDescription
@@ -395,7 +504,9 @@ final class AppModel {
 
         do {
             let synced = try await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId)
-            emails = folderId == "inbox" ? Self.orderNewThenSeen(synced) : synced
+            if selectedTab.syncFolderId == folderId {
+                emails = folderId == "inbox" ? Self.orderNewThenSeen(synced) : synced
+            }
             lastSyncedAt = Date()
             await refreshReplyLaterCount()
         } catch {
@@ -410,8 +521,25 @@ final class AppModel {
             replyLaterCount = 0
             return
         }
-        if let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId) {
-            replyLaterCount = piles.piles.first(where: { $0.id == "reply_later" })?.count ?? 0
+        let localCount = db.getReplyLaterCount(mailboxId: mailboxId)
+        if isDebugPreview {
+            replyLaterCount = localCount
+            return
+        }
+        if localCount > 0 || replyLaterCount == 0 {
+            replyLaterCount = localCount
+        }
+        do {
+            let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId)
+            db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
+            replyLaterCount = response.totalCount
+            if selectedTab == .replyLater {
+                emails = response.emails
+            }
+        } catch {
+            if let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId) {
+                replyLaterCount = piles.piles.first(where: { $0.id == "reply_later" })?.count ?? 0
+            }
         }
     }
 
@@ -1099,15 +1227,26 @@ final class AppModel {
     func setReplyLater(_ emailIDs: Set<String>, replyLater: Bool) async {
         guard let mailboxId = selectedMailboxId, !emailIDs.isEmpty else { return }
         for id in emailIDs {
-            if let updated = try? await APIClient.shared.updateEmail(
-                mailboxId: mailboxId,
-                id: id,
-                replyLater: replyLater
-            ) {
-                applyEmailUpdate(updated)
+            db.updateEmailFlags(id: id, replyLater: replyLater)
+            if var current = emails.first(where: { $0.id == id }) {
+                current.replyLater = replyLater
+                current.replyLaterAt = replyLater ? ISO8601DateFormatter().string(from: Date()) : nil
+                applyEmailUpdate(current)
             }
         }
         await refreshReplyLaterCount()
+        if !isDebugPreview {
+            for id in emailIDs {
+                if let updated = try? await APIClient.shared.updateEmail(
+                    mailboxId: mailboxId,
+                    id: id,
+                    replyLater: replyLater
+                ) {
+                    applyEmailUpdate(updated)
+                }
+            }
+            await refreshReplyLaterCount()
+        }
         if selectedTab == .replyLater {
             await loadEmailsForCurrentTab(showLoading: false)
         }
@@ -1140,12 +1279,17 @@ final class AppModel {
         if let idx = emails.firstIndex(where: { $0.id == updated.id }) {
             emails[idx].read = updated.read
             emails[idx].starred = updated.starred
+            emails[idx].replyLater = updated.replyLater
+            emails[idx].replyLaterAt = updated.replyLaterAt
             if updated.read {
                 emails[idx].threadUnreadCount = 0
                 emails[idx].listSection = "seen"
             } else {
                 emails[idx].listSection = "new"
             }
+        }
+        if selectedTab == .replyLater && !updated.replyLater {
+            emails.removeAll(where: { $0.id == updated.id })
         }
         if selectedTab.syncFolderId == "inbox" {
             emails = Self.orderNewThenSeen(emails)
