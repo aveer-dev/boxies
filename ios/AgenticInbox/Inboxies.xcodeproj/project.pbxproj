@@ -74,6 +74,7 @@
 		F2A1B2C3D4E5478990ABCD06 /* PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A1B2C3D4E5478990ABCD06 /* PushNotificationManager.swift */; };
 		F3A1B2C3D4E5478990ABCD12 /* EmailHTMLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A1B2C3D4E5478990ABCD11 /* EmailHTMLSanitizer.swift */; };
 		F3A1B2C3D4E5478990ABCD15 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = F3A1B2C3D4E5478990ABCD14 /* SwiftSoup */; };
+		A11CE7012345678901234567 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A11CE7022345678901234567 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -157,6 +158,7 @@
 		F444315A11E44D83826E7D65 /* Inboxies.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Inboxies.entitlements; sourceTree = "<group>"; };
 		F5D715022CEE90FF4B7CB680 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		FAA619084E624222B919A7C4 /* EmailListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/EmailListView.swift; sourceTree = "<group>"; };
+		A11CE7022345678901234567 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -291,6 +293,7 @@
 				063B7A93C3B6424791462165 /* RootView.swift */,
 				83D37F469E5F418DB189BA76 /* SearchView.swift */,
 				1ADA91EDA69A47BA95EB9514 /* Info.plist */,
+				A11CE7022345678901234567 /* Assets.xcassets */,
 				F444315A11E44D83826E7D65 /* Inboxies.entitlements */,
 				F017F0014567890123456781 /* Inter-Regular.ttf */,
 				F017F0024567890123456782 /* Inter-Medium.ttf */,
@@ -405,6 +408,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A11CE7012345678901234567 /* Assets.xcassets in Resources */,
 				F017B0014567890123456781 /* Inter-Regular.ttf in Resources */,
 				F017B0024567890123456782 /* Inter-Medium.ttf in Resources */,
 				F017B0034567890123456783 /* Inter-SemiBold.ttf in Resources */,
@@ -594,6 +598,8 @@
 		2F08F70CC3BF4FC3866A8685 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_ENTITLEMENTS = Inboxies/Inboxies.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -625,6 +631,8 @@
 		51B219445FFF45EBBA45DD05 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CLANG_ENABLE_OBJC_WEAK = YES;
 				CODE_SIGN_ENTITLEMENTS = Inboxies/Inboxies.entitlements;
 				CODE_SIGN_STYLE = Automatic;
