@@ -3,6 +3,14 @@
     "cloudflare": {
       "type": "http",
       "url": "https://mcp.cloudflare.com/mcp"
+    },
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp"
+    },
+    "stripe": {
+      "type": "http",
+      "url": "https://mcp.stripe.com"
     }
   }
 }

@@ -1,6 +1,7 @@
 package co.inboxies.app.ui.compose
 
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.getValue
@@ -65,6 +67,7 @@ fun ComposeFormatSheet(
     onClose: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
     Column(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -89,7 +92,13 @@ fun ComposeFormatSheet(
                     .size(36.dp)
                     .clip(CircleShape)
                     .background(colors.pillFill)
-                    .clickable(role = Role.Button, onClick = onClose),
+                    .clickable(
+                        role = Role.Button,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onClose()
+                        },
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.Outlined.Close, contentDescription = "Close format", tint = colors.ink)

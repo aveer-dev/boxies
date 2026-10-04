@@ -536,6 +536,7 @@ struct AddDnsRecordSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
@@ -715,6 +716,7 @@ struct AddDomainSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
@@ -918,6 +920,7 @@ struct DomainExportSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         pollingTask?.cancel()
                         dismiss()
                     } label: {
@@ -1212,6 +1215,7 @@ struct DomainOffboardSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")

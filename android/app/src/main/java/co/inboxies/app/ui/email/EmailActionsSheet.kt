@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.email
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Spring
@@ -59,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -92,6 +94,7 @@ fun EmailActionsSheetModal(
     onRemoveFromList: ((String) -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -239,7 +242,10 @@ fun EmailActionsSheet(
                 HomeChromeToolbarButton(
                     icon = Icons.Outlined.Close,
                     contentDescription = "Close",
-                    onClick = onDismiss,
+                    onClick = {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        onDismiss()
+                    },
                     size = 40.dp,
                 )
             }
@@ -618,6 +624,7 @@ private fun SubScreenHeader(
     onBack: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -628,7 +635,10 @@ private fun SubScreenHeader(
         HomeChromeToolbarButton(
             icon = Icons.AutoMirrored.Outlined.ArrowBack,
             contentDescription = "Back",
-            onClick = onBack,
+            onClick = {
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                onBack()
+            },
             size = 40.dp,
         )
         Text(
@@ -642,7 +652,10 @@ private fun SubScreenHeader(
         HomeChromeToolbarButton(
             icon = Icons.Outlined.Close,
             contentDescription = "Close",
-            onClick = onClose,
+            onClick = {
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                onClose()
+            },
             size = 40.dp,
         )
     }

@@ -193,6 +193,7 @@ struct SearchView: View {
 
     private var cancelButton: some View {
         Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
             focused = false
             if let onClose {
                 onClose()

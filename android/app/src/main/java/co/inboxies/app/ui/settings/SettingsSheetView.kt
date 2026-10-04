@@ -2,6 +2,7 @@ package co.inboxies.app.ui.settings
 
 import android.Manifest
 import android.os.Build
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -328,6 +330,7 @@ private fun SettingsRootPage(
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
+        val view = LocalView.current
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -337,7 +340,10 @@ private fun SettingsRootPage(
             HomeChromeToolbarButton(
                 icon = Icons.Outlined.Close,
                 contentDescription = "Close",
-                onClick = onClose,
+                onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    onClose()
+                },
             )
             Spacer(Modifier.weight(1f))
         }

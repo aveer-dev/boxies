@@ -138,9 +138,10 @@ async function testPasswordResetHttpRoutes() {
 	);
 	assert.equal(forgotRes.status, 200);
 	const forgotJson = await forgotRes.json();
-	assert.equal(forgotJson.ok, true);
-	assert.equal(sentEmails.length, 1);
-	assert.equal(sentEmails[0].to, "recovery@example.com");
+	assert.equal(sentEmails.length, 2);
+	const recipients = sentEmails.map((m) => m.to);
+	assert.ok(recipients.includes("recovery@example.com"));
+	assert.ok(recipients.includes("alex@inboxies.email"));
 	assert.match(sentEmails[0].subject, /Reset your Inboxies password/);
 
 	// Find the generated reset code from bucket

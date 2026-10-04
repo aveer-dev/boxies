@@ -494,6 +494,7 @@ private fun FilterActionsSheet(
     onDelete: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
@@ -553,7 +554,10 @@ private fun FilterActionsSheet(
                     HomeChromeToolbarButton(
                         icon = Icons.Outlined.Close,
                         contentDescription = "Close",
-                        onClick = onDismiss,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                     )
                 }
                 Column(
@@ -608,6 +612,7 @@ private fun FilterEditorDialog(
     onSave: (InboxFilterRule) -> Unit,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
     var rule by remember(draft.rule.id) { mutableStateOf(draft.rule) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var folderMenuExpanded by remember { mutableStateOf(false) }
@@ -653,7 +658,10 @@ private fun FilterEditorDialog(
                     HomeChromeToolbarButton(
                         icon = Icons.Outlined.Close,
                         contentDescription = "Cancel",
-                        onClick = onDismiss,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                     )
                     Text(
                         if (draft.isNew) "New Filter" else "Edit Filter",

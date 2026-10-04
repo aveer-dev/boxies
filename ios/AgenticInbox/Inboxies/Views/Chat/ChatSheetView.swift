@@ -1203,6 +1203,7 @@ private struct ReasoningModalView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")

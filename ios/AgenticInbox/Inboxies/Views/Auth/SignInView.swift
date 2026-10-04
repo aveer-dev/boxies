@@ -21,12 +21,35 @@ struct SignInView: View {
 
     @Environment(AuthStore.self) private var auth
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hasStartedTransition: Bool = false
-    @State private var isAuthRevealed: Bool = false
-    @State private var activeSubscreen: AuthSubscreen = .none
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var hasStartedTransition: Bool = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-previewGetStarted") {
+            return true
+        }
+        #endif
+        return false
+    }()
+    @State private var isAuthRevealed: Bool = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-previewGetStarted") {
+            return true
+        }
+        #endif
+        return false
+    }()
+    @State private var activeSubscreen: AuthSubscreen = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-previewGetStarted") {
+            return .onboarding
+        }
+        #endif
+        return .none
+    }()
     @State private var welcomeDragOffset: CGFloat = 0
     @State private var emailDragOffset: CGFloat = 0
     @State private var onboardingDragOffset: CGFloat = 0
+    @State private var emailRefocusTrigger: Int = 0
     @State private var showTermsBrowser = false
 
     /// Spring with obvious bounce for revealing auth buttons when the downward arrow is tapped.
@@ -37,12 +60,12 @@ struct SignInView: View {
         return .spring(duration: 0.52, bounce: 0.40)
     }
 
-    /// Smooth spring with subtle settling cushion for transitions to subpages ("Continue with Email" and "Get started").
+    /// Smooth transition for subpages ("Continue with Email" and "Get started") without spring bounce.
     private var subscreenTransitionAnimation: Animation {
         if reduceMotion {
-            return .spring(response: 0.32, dampingFraction: 0.86)
+            return .easeInOut(duration: 0.24)
         }
-        return .spring(duration: 0.40, bounce: 0.08)
+        return .easeInOut(duration: 0.32)
     }
 
     @State private var apiBase: String = {
@@ -88,7 +111,7 @@ struct SignInView: View {
                 // Page 1: Welcome Screen & Auth Buttons
                 ZStack(alignment: .top) {
                     // Base Canvas Background
-                    AppTheme.surface
+                    AppTheme.background
                         .frame(width: geometry.size.width, height: screenHeight)
 
                     // Layer 1: Auth Buttons Section (Fixed at bottom of canvas, revealed when welcome card moves up)
@@ -96,6 +119,7 @@ struct SignInView: View {
                         Spacer()
                         AuthButtonsSection(
                             onGetStarted: {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 commitAPIBaseURL()
                                 withAnimation(subscreenTransitionAnimation) {
                                     activeSubscreen = .onboarding
@@ -103,6 +127,7 @@ struct SignInView: View {
                                 }
                             },
                             onContinueWithEmail: {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                 withAnimation(subscreenTransitionAnimation) {
                                     activeSubscreen = .email
                                     emailDragOffset = 0
@@ -133,7 +158,8 @@ struct SignInView: View {
 
                     // Layer 2: Welcome Container (Moves UP to reveal auth buttons below)
                     VStack(spacing: 0) {
-                        Spacer()
+                        // Top spacer pushes contents much lower down so they remain comfortably positioned
+                        Spacer(minLength: isAuthRevealed ? (authRevealHeight + safeArea.top + 60) : max(safeArea.top + 160, 220))
 
                         // App Logo
                         InboxiesLogo()
@@ -200,16 +226,13 @@ struct SignInView: View {
                                 }
                             }
                             .buttonStyle(ArrowBounceButtonStyle())
-                            .padding(.top, 36)
+                            .padding(.top, 32)
                             .opacity(hasStartedTransition ? 1 : 0)
                             .scaleEffect(hasStartedTransition ? 1 : 0.8)
                             .transition(.scale.combined(with: .opacity))
-                        } else {
-                            Spacer()
-                                .frame(height: 20)
                         }
 
-                        Spacer()
+                        Spacer(minLength: 20)
 
                         // Bottom drag handle on the welcome card when revealed
                         if isAuthRevealed {
@@ -224,18 +247,38 @@ struct SignInView: View {
                     .padding(.bottom, isAuthRevealed ? 0 : safeArea.bottom)
                     .frame(maxWidth: .infinity)
                     .frame(height: screenHeight)
-                    .background(AppTheme.surface)
+                    .background(
+                        colorScheme == .dark
+                            ? (isAuthRevealed ? Color(red: 0.135, green: 0.135, blue: 0.145) : AppTheme.surface)
+                            : AppTheme.surface
+                    )
                     .clipShape(
                         UnevenRoundedRectangle(
                             bottomLeadingRadius: isAuthRevealed ? 36 : 0,
                             bottomTrailingRadius: isAuthRevealed ? 36 : 0
                         )
                     )
+                    .overlay {
+                        if isAuthRevealed {
+                            UnevenRoundedRectangle(
+                                bottomLeadingRadius: 36,
+                                bottomTrailingRadius: 36
+                            )
+                            .stroke(
+                                colorScheme == .dark
+                                    ? Color.white.opacity(0.14)
+                                    : AppTheme.line.opacity(0.55),
+                                lineWidth: 0.5
+                            )
+                        }
+                    }
                     .shadow(
-                        color: Color.black.opacity(isAuthRevealed ? 0.08 : 0),
-                        radius: 16,
+                        color: Color.black.opacity(
+                            isAuthRevealed ? (colorScheme == .dark ? 0.65 : 0.12) : 0
+                        ),
+                        radius: colorScheme == .dark ? 24 : 16,
                         x: 0,
-                        y: 6
+                        y: colorScheme == .dark ? 8 : 6
                     )
                     .offset(y: (isAuthRevealed ? -authRevealHeight : 0) + welcomeDragOffset)
                     .gesture(
@@ -286,10 +329,11 @@ struct SignInView: View {
                 EmailLoginScreen(
                     safeAreaTop: safeArea.top,
                     isPresented: activeSubscreen == .email,
+                    refocusTrigger: emailRefocusTrigger,
                     onDismiss: {
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         auth.errorMessage = nil
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                        withAnimation(subscreenTransitionAnimation) {
                             activeSubscreen = .none
                             emailDragOffset = 0
                         }
@@ -300,24 +344,40 @@ struct SignInView: View {
                 .background(AppTheme.surface)
                 .offset(y: emailPageOffsetY)
                 .gesture(
-                    DragGesture(minimumDistance: 15)
+                    DragGesture(minimumDistance: 12)
                         .onChanged { value in
                             if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) {
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                                emailDragOffset = value.translation.height
+                                if value.translation.height > 60 {
+                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                }
+                                // Apply a subtle resistance factor (~0.50) so pull is not loose
+                                emailDragOffset = value.translation.height * 0.50
                             }
                         }
                         .onEnded { value in
-                            if value.translation.height > 120 || value.velocity.height > 350 {
+                            let distance = value.translation.height
+                            let flicked: Bool
+                            if #available(iOS 18.0, *) {
+                                flicked = value.velocity.height > 400
+                            } else {
+                                flicked = value.predictedEndTranslation.height > 100
+                            }
+                            if distance > 140 || flicked {
                                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                                 auth.errorMessage = nil
-                                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(subscreenTransitionAnimation) {
                                     activeSubscreen = .none
                                     emailDragOffset = 0
                                 }
                             } else {
-                                withAnimation(subscreenTransitionAnimation) {
+                                // Snap back with resistance and re-focus input!
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(.easeOut(duration: 0.22)) {
                                     emailDragOffset = 0
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    emailRefocusTrigger += 1
                                 }
                             }
                         }
@@ -329,7 +389,7 @@ struct SignInView: View {
                     onDismiss: {
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         auth.errorMessage = nil
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                        withAnimation(subscreenTransitionAnimation) {
                             activeSubscreen = .none
                             onboardingDragOffset = 0
                         }
@@ -341,23 +401,35 @@ struct SignInView: View {
                 .background(AppTheme.surface)
                 .offset(y: onboardingPageOffsetY)
                 .gesture(
-                    DragGesture(minimumDistance: 15)
+                    DragGesture(minimumDistance: 12)
                         .onChanged { value in
                             if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) {
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                                onboardingDragOffset = value.translation.height
+                                if value.translation.height > 60 {
+                                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                }
+                                // Apply a subtle resistance factor (~0.50) so pull is not loose
+                                onboardingDragOffset = value.translation.height * 0.50
                             }
                         }
                         .onEnded { value in
-                            if value.translation.height > 120 || value.velocity.height > 350 {
+                            let distance = value.translation.height
+                            let flicked: Bool
+                            if #available(iOS 18.0, *) {
+                                flicked = value.velocity.height > 400
+                            } else {
+                                flicked = value.predictedEndTranslation.height > 100
+                            }
+                            if distance > 140 || flicked {
                                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                                 auth.errorMessage = nil
-                                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(subscreenTransitionAnimation) {
                                     activeSubscreen = .none
                                     onboardingDragOffset = 0
                                 }
                             } else {
-                                withAnimation(subscreenTransitionAnimation) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(.easeOut(duration: 0.22)) {
                                     onboardingDragOffset = 0
                                 }
                             }
@@ -381,6 +453,7 @@ struct SignInView: View {
             }
         }
         .ignoresSafeArea()
+        .ignoresSafeArea(.keyboard, edges: .bottom)
 
         if let error = auth.errorMessage {
             AuthToastBanner(message: error) {
@@ -681,6 +754,7 @@ private struct AuthButtonsSection: View {
 private struct EmailLoginScreen: View {
     var safeAreaTop: CGFloat = 0
     var isPresented: Bool = false
+    var refocusTrigger: Int = 0
     var onDismiss: () -> Void
     var commitAPIBaseURL: () -> Void
 
@@ -760,8 +834,9 @@ private struct EmailLoginScreen: View {
             HStack {
                 if step != .email {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         auth.errorMessage = nil
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                        withAnimation(.easeInOut(duration: 0.28)) {
                             if step == .resetPassword {
                                 step = .forgotPassword
                             } else {
@@ -770,19 +845,25 @@ private struct EmailLoginScreen: View {
                         }
                     } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)
                             .frame(width: 42, height: 42)
                             .liquidGlass(in: Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Back")
+                } else {
+                    Spacer()
+                        .frame(width: 42, height: 42)
                 }
 
                 Spacer()
 
                 // Bigger liquid glass close button
-                Button(action: onDismiss) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onDismiss()
+                } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(AppTheme.ink)
@@ -1098,21 +1179,24 @@ private struct EmailLoginScreen: View {
         .background(AppTheme.surface)
         .onChange(of: isPresented) { _, presented in
             if presented {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
                     isFieldFocused = true
                 }
             } else {
                 isFieldFocused = false
             }
         }
+        .onChange(of: refocusTrigger) { _, _ in
+            isFieldFocused = true
+        }
         .onChange(of: step) { _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 isFieldFocused = true
             }
         }
         .onAppear {
             if isPresented {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
                     isFieldFocused = true
                 }
             }

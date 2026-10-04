@@ -2,6 +2,7 @@ package co.inboxies.app.ui.auth
 
 import android.content.Intent
 import android.net.Uri
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
@@ -77,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -257,6 +259,7 @@ fun MailboxOnboardingView(
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    val view = LocalView.current
     val isAdmin by app.isAdmin.collectAsState()
     val mailDomain by app.mailDomain.collectAsState()
     val appErrorMessage by app.errorMessage.collectAsState()
@@ -385,7 +388,10 @@ fun MailboxOnboardingView(
                             .size(42.dp)
                             .liquidGlass(CircleShape)
                             .clip(CircleShape)
-                            .clickable(onClick = onDismiss),
+                            .clickable {
+                                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                onDismiss()
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -428,13 +434,17 @@ fun MailboxOnboardingView(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
+            // Left side: preserved strictly for back button (or empty spacer when at root)
             if (canGoBack) {
                 Box(
                     modifier = Modifier
                         .size(42.dp)
                         .liquidGlass(CircleShape)
                         .clip(CircleShape)
-                        .clickable { navigateBack() },
+                        .clickable {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            navigateBack()
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -444,23 +454,7 @@ fun MailboxOnboardingView(
                         modifier = Modifier.size(18.dp),
                     )
                 }
-            } else if (onDismiss != null) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .liquidGlass(CircleShape)
-                        .clip(CircleShape)
-                        .clickable(onClick = onDismiss),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.ink,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            } else if (auth.isAuthenticated) {
+            } else if (auth.isAuthenticated && onDismiss == null) {
                 TextButton(onClick = {
                     app.reset()
                     auth.signOut()
@@ -471,13 +465,17 @@ fun MailboxOnboardingView(
                 Spacer(Modifier.size(42.dp))
             }
 
-            if (canGoBack && onDismiss != null) {
+            // Right side: preserved strictly for close button
+            if (onDismiss != null) {
                 Box(
                     modifier = Modifier
                         .size(42.dp)
                         .liquidGlass(CircleShape)
                         .clip(CircleShape)
-                        .clickable(onClick = onDismiss),
+                        .clickable {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -486,6 +484,13 @@ fun MailboxOnboardingView(
                         tint = colors.ink,
                         modifier = Modifier.size(18.dp),
                     )
+                }
+            } else if (auth.isAuthenticated && canGoBack) {
+                TextButton(onClick = {
+                    app.reset()
+                    auth.signOut()
+                }) {
+                    Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                 }
             } else {
                 Spacer(Modifier.size(42.dp))

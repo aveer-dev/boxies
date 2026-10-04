@@ -12,7 +12,10 @@ struct ComposeFormatSheet: View {
                     .font(.inter(size: 22, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
                 Spacer()
-                Button(action: onClose) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onClose()
+                } label: {
                     Image(systemName: "xmark")
                         .font(.inter(size: 15, weight: .semibold))
                         .foregroundStyle(AppTheme.ink)

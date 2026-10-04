@@ -612,6 +612,7 @@ struct QuotedRepliesModalView: View {
                 Spacer()
 
                 Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")

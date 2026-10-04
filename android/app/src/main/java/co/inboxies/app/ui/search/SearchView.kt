@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.search
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,6 +44,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +77,7 @@ fun SearchView(
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -314,7 +317,10 @@ fun SearchView(
                 HomeChromeToolbarButton(
                     icon = Icons.Outlined.Close,
                     contentDescription = "Cancel",
-                    onClick = onClose,
+                    onClick = {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        onClose()
+                    },
                     size = HomeChromeMetrics.actionBarHeight,
                 )
             }

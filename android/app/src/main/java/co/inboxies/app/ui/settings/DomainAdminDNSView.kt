@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import android.content.Intent
 import android.net.Uri
+import android.view.HapticFeedbackConstants
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -76,6 +77,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -1021,6 +1023,7 @@ private fun AddDomainDialog(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val view = LocalView.current
 
     var domain by remember { mutableStateOf("") }
     var availability by remember { mutableStateOf<DomainAvailabilityResponse?>(null) }
@@ -1077,7 +1080,10 @@ private fun AddDomainDialog(
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                         modifier = Modifier.size(28.dp),
                     ) {
                         Icon(
@@ -1334,6 +1340,7 @@ private fun AddDnsRecordDialog(
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
 
     var type by remember { mutableStateOf("A") }
     var name by remember { mutableStateOf("@") }
@@ -1376,7 +1383,10 @@ private fun AddDnsRecordDialog(
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                         modifier = Modifier.size(28.dp),
                     ) {
                         Icon(
@@ -1609,6 +1619,7 @@ private fun DomainExportDialog(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val view = LocalView.current
 
     var currentJob by remember { mutableStateOf<ExportJob?>(null) }
     var isStarting by remember { mutableStateOf(false) }
@@ -1658,7 +1669,10 @@ private fun DomainExportDialog(
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                         modifier = Modifier.size(28.dp),
                     ) {
                         Icon(
@@ -1861,6 +1875,7 @@ private fun DomainOffboardDialog(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
+    val view = LocalView.current
 
     var preflight by remember { mutableStateOf<DecommissionPreflightResponse?>(null) }
     var isLoadingPreflight by remember { mutableStateOf(true) }
@@ -1921,7 +1936,10 @@ private fun DomainOffboardDialog(
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                         modifier = Modifier.size(28.dp),
                     ) {
                         Icon(

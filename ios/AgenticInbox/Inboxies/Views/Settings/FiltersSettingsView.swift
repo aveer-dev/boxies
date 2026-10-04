@@ -372,7 +372,10 @@ private struct FilterDeleteSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { dismiss() } label: {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        dismiss()
+                    } label: {
                         Image(systemName: "xmark")
                             .font(.inter(size: 13, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)

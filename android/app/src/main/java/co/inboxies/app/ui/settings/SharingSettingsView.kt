@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.settings
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -48,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -535,6 +537,7 @@ private fun AddMemberDialog(
     onSendInvite: (String, SharingRole) -> Unit,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
     var email by remember { mutableStateOf("") }
     var isOwner by remember { mutableStateOf(false) }
     var isSubmitting by remember { mutableStateOf(false) }
@@ -579,7 +582,10 @@ private fun AddMemberDialog(
                     color = colors.ink,
                 )
                 IconButton(
-                    onClick = onDismiss,
+                    onClick = {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        onDismiss()
+                    },
                     modifier = Modifier.size(32.dp),
                 ) {
                     Icon(

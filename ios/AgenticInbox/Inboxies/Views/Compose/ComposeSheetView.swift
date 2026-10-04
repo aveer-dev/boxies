@@ -116,6 +116,7 @@ struct ComposeSheetView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     if form.isEmpty {
                         Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             form.commitPendingTokens()
                             form.cancelAutoSave()
                             app.closeCompose()

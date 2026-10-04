@@ -3,6 +3,7 @@ package co.inboxies.app.ui.email
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -79,6 +80,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -122,6 +124,7 @@ fun EmailDetailView(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
+    val view = LocalView.current
     val email by app.selectedEmail.collectAsState()
     val thread by app.threadEmails.collectAsState()
     val listEmails by app.emails.collectAsState()
@@ -266,6 +269,7 @@ fun EmailDetailView(
                         icon = Icons.Outlined.Close,
                         contentDescription = "Close",
                         onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                             app.closeEmail()
                             onClose()
                         },

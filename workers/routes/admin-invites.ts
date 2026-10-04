@@ -874,8 +874,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (userId) {
 			const user = await loadPlatformUser(c.env.BUCKET, userId);
 			if (user) {
-				const targetEmail = user.contactEmail || user.mailboxEmail || inputEmail;
-				const reset = await createPasswordReset(c.env.BUCKET, user.id, targetEmail);
+				const reset = await createPasswordReset(c.env.BUCKET, user.id, inputEmail);
 				devResetCode = reset.code;
 				devResetToken = reset.token;
 
@@ -883,22 +882,41 @@ export function registerAdminAndInviteRoutes(app: App) {
 				const text = `Hi,\n\nWe received a request to reset your password on Inboxies.\n\nYour 6-digit reset code is:\n${reset.code}\n\nOr click this link to reset your password:\n${resetUrl}\n\nThis code and link will expire in 1 hour. If you didn't request this reset, you can safely ignore this email.\n`;
 				const html = `<p>Hi,</p><p>We received a request to reset your password on Inboxies.</p><p>Your 6-digit reset code is:</p><p style="font-size: 26px; font-weight: bold; letter-spacing: 4px; margin: 16px 0; color: #1e293b;">${reset.code}</p><p><a href="${resetUrl}">Reset your password</a></p><p>Or copy this link:<br/>${resetUrl}</p><p style="color: #64748b; font-size: 13px;">This code and link will expire in 1 hour. If you didn't request a password reset, you can safely ignore this email.</p>`;
 
+				// Deliver to all associated emails (personal recovery email and mailbox email)
+				const targetEmails = Array.from(
+					new Set(
+						[user.contactEmail, user.mailboxEmail, inputEmail]
+							.map((e) => e?.trim())
+							.filter((e): e is string => Boolean(e) && e.includes("@")),
+					),
+				);
+
 				if (c.env.EMAIL) {
-					try {
-						await sendEmail(c.env.EMAIL, {
-							to: targetEmail,
-							from: { email: inviteFromAddress(c), name: "Inboxies" },
-							subject: "Reset your Inboxies password",
-							text,
-							html,
-						});
-					} catch (e) {
-						console.error("Failed to send password reset email:", e);
+					for (const dest of targetEmails) {
+						try {
+							await sendEmail(c.env.EMAIL, {
+								to: dest,
+								from: { email: inviteFromAddress(c), name: "Inboxies" },
+								subject: "Reset your Inboxies password",
+								text,
+								html,
+							});
+							console.log(`[PasswordReset] Email sent successfully to ${dest}`);
+						} catch (e) {
+							console.error(
+								`[PasswordReset] Failed to send reset email to ${dest}:`,
+								(e as Error).message || e,
+							);
+						}
 					}
 				} else {
-					console.log(`[Dev] Password reset for ${targetEmail}: Code=${reset.code} Token=${reset.token}`);
+					console.log(
+						`[Dev] Password reset for ${targetEmails.join(", ")}: Code=${reset.code} Token=${reset.token}`,
+					);
 				}
 			}
+		} else {
+			console.warn(`[PasswordReset] No account found in R2 for login: ${login}`);
 		}
 
 		const isDev = isDevRuntime() || !c.env.EMAIL;

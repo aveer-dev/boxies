@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.compose
 
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -76,6 +77,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -142,6 +144,7 @@ fun ComposeSheetView(
     val mailboxes by app.mailboxes.collectAsState()
     val density = LocalDensity.current
     val context = LocalContext.current
+    val view = LocalView.current
 
     var toTokens by remember(form) { mutableStateOf(form.toTokens) }
     var ccTokens by remember(form) { mutableStateOf(form.ccTokens) }
@@ -461,6 +464,7 @@ fun ComposeSheetView(
                         icon = Icons.Outlined.Close,
                         contentDescription = "Close",
                         onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                             if (isEmpty) {
                                 form.cancelAutoSave()
                                 onClose()

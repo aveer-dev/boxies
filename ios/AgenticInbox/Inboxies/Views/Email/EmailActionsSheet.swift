@@ -341,7 +341,10 @@ private struct ActionsSheetChrome: ViewModifier {
             .toolbarBackground(.hidden, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: onClose) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onClose()
+                    } label: {
                         Image(systemName: "xmark")
                     }
                     .accessibilityLabel("Close")

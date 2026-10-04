@@ -3,6 +3,7 @@ package co.inboxies.app.ui.email
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.view.HapticFeedbackConstants
 import android.util.Base64
 import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
@@ -47,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -281,6 +283,7 @@ private fun QuotedRepliesSheet(
     onClose: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -297,7 +300,12 @@ private fun QuotedRepliesSheet(
                 color = colors.ink,
                 modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = onClose) {
+            IconButton(
+                onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                    onClose()
+                },
+            ) {
                 Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.ink)
             }
         }

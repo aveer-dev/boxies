@@ -654,6 +654,7 @@ struct AddMemberModalView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")

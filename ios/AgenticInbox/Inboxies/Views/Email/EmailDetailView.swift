@@ -93,6 +93,7 @@ struct EmailDetailView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         app.selectedEmail = nil
                     } label: {
                         Image(systemName: "xmark")

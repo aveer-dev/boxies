@@ -470,8 +470,10 @@ struct HomeShellView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button { showAddMailboxSheet = false }
-                        label: {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showAddMailboxSheet = false
+                        } label: {
                             Image(systemName: "xmark")
                         }
                     }

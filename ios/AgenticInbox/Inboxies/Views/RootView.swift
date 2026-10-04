@@ -373,6 +373,95 @@ struct MailboxOnboardingView: View {
         }
     }
 
+    private var canGoBack: Bool {
+        if !navigationPath.isEmpty {
+            return true
+        }
+        if personalStep > 1 {
+            return true
+        }
+        if domainStep > 1 && domainStep < 11 {
+            return true
+        }
+        return false
+    }
+
+    private func handleBack() {
+        if let current = navigationPath.last {
+            switch current {
+            case .select:
+                break
+            case .personal:
+                handlePersonalBack()
+            case .domain:
+                handleDomainBack()
+            case .dnsWizard:
+                if !navigationPath.isEmpty {
+                    navigationPath.removeLast()
+                } else {
+                    onDismiss?()
+                }
+            }
+        }
+    }
+
+    private var headerNavigationBar: some View {
+        HStack {
+            if canGoBack {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    handleBack()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 42, height: 42)
+                        .liquidGlass(in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+            } else if auth.isAuthenticated && onDismiss == nil {
+                Button("Sign out", role: .destructive) {
+                    app.reset()
+                    auth.signOut()
+                }
+                .foregroundStyle(.red)
+            } else {
+                Spacer()
+                    .frame(width: 42, height: 42)
+            }
+
+            Spacer()
+
+            if let onDismiss {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onDismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(width: 42, height: 42)
+                        .liquidGlass(in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close")
+            } else if auth.isAuthenticated && canGoBack {
+                Button("Sign out", role: .destructive) {
+                    app.reset()
+                    auth.signOut()
+                }
+                .foregroundStyle(.red)
+            } else {
+                Spacer()
+                    .frame(width: 42, height: 42)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, showsDragHandle ? 14 : max(safeAreaTop, 16))
+        .padding(.bottom, 8)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if showsDragHandle {
@@ -380,8 +469,9 @@ struct MailboxOnboardingView: View {
                     .fill(AppTheme.line)
                     .frame(width: 36, height: 5)
                     .padding(.top, max(safeAreaTop, 44) + 16)
-                    .padding(.bottom, 8)
             }
+
+            headerNavigationBar
 
             NavigationStack(path: $navigationPath) {
                 selectStepView
@@ -397,31 +487,10 @@ struct MailboxOnboardingView: View {
                             dnsWizardStepView(domain: domain, nameservers: nameservers)
                         }
                     }
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            if let onDismiss {
-                                Button {
-                                    onDismiss()
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(AppTheme.ink)
-                                        .frame(width: 32, height: 32)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Close")
-                            } else if auth.isAuthenticated {
-                                Button("Sign out", role: .destructive) {
-                                    app.reset()
-                                    auth.signOut()
-                                }
-                                .foregroundStyle(.red)
-                            }
-                        }
-                    }
+                    .toolbar(.hidden, for: .navigationBar)
             }
         }
+        .safeAreaPadding(.top)
         .background(AppTheme.surface)
     }
 
@@ -752,36 +821,7 @@ struct MailboxOnboardingView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.surface)
-            .navigationBarBackButtonHidden(true)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        handlePersonalBack()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.inter(size: 15, weight: .semibold))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Back")
-                }
-
-                if let onDismiss {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            onDismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(AppTheme.ink)
-                                .frame(width: 32, height: 32)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Close")
-                    }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 8) {
                     OnboardingContinueButton(
@@ -1032,38 +1072,7 @@ struct MailboxOnboardingView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(AppTheme.surface)
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            if domainStep < 11 {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        handleDomainBack()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.inter(size: 15, weight: .semibold))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Back")
-                }
-            }
-
-            if let onDismiss {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        onDismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
-                }
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
             if !isPaymentSyncing {
                 VStack(spacing: 8) {
@@ -1762,40 +1771,7 @@ struct MailboxOnboardingView: View {
             .padding(.bottom, 24)
         }
         .background(AppTheme.surface)
-        .navigationBarBackButtonHidden(true)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    if !navigationPath.isEmpty {
-                        navigationPath.removeLast()
-                    } else {
-                        onDismiss?()
-                    }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.inter(size: 15, weight: .semibold))
-                        .foregroundStyle(AppTheme.ink)
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
-            }
-
-            if let onDismiss {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        onDismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Close")
-                }
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
             OnboardingContinueButton(
                 title: "Go to Inbox",

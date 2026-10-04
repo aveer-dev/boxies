@@ -1,14 +1,18 @@
 package co.inboxies.app.ui.auth
 
 import android.app.Activity
+import android.view.HapticFeedbackConstants
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -18,6 +22,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -84,10 +89,12 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -146,6 +153,9 @@ fun SignInView(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val view = LocalView.current
+    val isSystemDark = isSystemInDarkTheme()
+    val isDark = isSystemDark || colors.surface.luminance() < 0.5f
     val isBusy by auth.isBusy.collectAsState()
     val error by auth.errorMessage.collectAsState()
     val focusManager = LocalFocusManager.current
@@ -166,6 +176,7 @@ fun SignInView(
     var welcomeDragOffset by remember { mutableFloatStateOf(0f) }
     var emailDragOffset by remember { mutableFloatStateOf(0f) }
     var onboardingDragOffset by remember { mutableFloatStateOf(0f) }
+    var emailRefocusTrigger by remember { mutableIntStateOf(0) }
 
     var apiBase by remember {
         mutableStateOf(
@@ -251,39 +262,25 @@ fun SignInView(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(colors.surface),
+            .background(colors.background),
     ) {
         val screenHeightPx = constraints.maxHeight.toFloat()
 
         val emailPageOffsetYAnimated by animateFloatAsState(
             targetValue = if (activeSubscreen == AuthSubscreen.Email) 0f else screenHeightPx,
-            animationSpec = if (activeSubscreen == AuthSubscreen.Email) {
-                spring(
-                    dampingRatio = 0.84f,
-                    stiffness = Spring.StiffnessMediumLow,
-                )
-            } else {
-                spring(
-                    dampingRatio = 0.86f,
-                    stiffness = Spring.StiffnessMediumLow,
-                )
-            },
+            animationSpec = tween(
+                durationMillis = 320,
+                easing = FastOutSlowInEasing,
+            ),
             label = "emailPageOffsetY",
         )
 
         val onboardingPageOffsetYAnimated by animateFloatAsState(
             targetValue = if (activeSubscreen == AuthSubscreen.Onboarding) 0f else screenHeightPx,
-            animationSpec = if (activeSubscreen == AuthSubscreen.Onboarding) {
-                spring(
-                    dampingRatio = 0.84f,
-                    stiffness = Spring.StiffnessMediumLow,
-                )
-            } else {
-                spring(
-                    dampingRatio = 0.86f,
-                    stiffness = Spring.StiffnessMediumLow,
-                )
-            },
+            animationSpec = tween(
+                durationMillis = 320,
+                easing = FastOutSlowInEasing,
+            ),
             label = "onboardingPageOffsetY",
         )
 
@@ -329,6 +326,7 @@ fun SignInView(
                     // Primary: Get started button (Capsule)
                     Button(
                         onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                             commitApiBase()
                             focusManager.clearFocus()
                             activeSubscreen = AuthSubscreen.Onboarding
@@ -385,6 +383,7 @@ fun SignInView(
                             .liquidGlass(CircleShape)
                             .clip(CircleShape)
                             .clickable {
+                                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                                 focusManager.clearFocus()
                                 activeSubscreen = AuthSubscreen.Email
                                 emailDragOffset = 0f
@@ -533,7 +532,7 @@ fun SignInView(
                         )
                     }
                     .shadow(
-                        elevation = if (isAuthRevealed) 12.dp else 0.dp,
+                        elevation = if (isAuthRevealed) (if (isDark) 16.dp else 10.dp) else 0.dp,
                         shape = RoundedCornerShape(
                             bottomStart = if (isAuthRevealed) 36.dp else 0.dp,
                             bottomEnd = if (isAuthRevealed) 36.dp else 0.dp,
@@ -544,6 +543,15 @@ fun SignInView(
                             bottomStart = if (isAuthRevealed) 36.dp else 0.dp,
                             bottomEnd = if (isAuthRevealed) 36.dp else 0.dp,
                         )
+                    )
+                    .then(
+                        if (isAuthRevealed) {
+                            Modifier.border(
+                                width = 0.5.dp,
+                                color = if (isDark) Color.White.copy(alpha = 0.14f) else colors.line.copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(bottomStart = 36.dp, bottomEnd = 36.dp),
+                            )
+                        } else Modifier
                     )
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -574,7 +582,7 @@ fun SignInView(
                             )
                         }
                     },
-                color = colors.surface,
+                color = if (isAuthRevealed && isDark) Color(0xFF222226) else colors.surface,
             ) {
                 Column(
                     modifier = Modifier
@@ -583,7 +591,8 @@ fun SignInView(
                         .navigationBarsPadding(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Spacer(Modifier.weight(1f))
+                    val topWeight = if (isAuthRevealed) 3.6f else 2.6f
+                    Spacer(Modifier.weight(topWeight))
 
                     // App Logo
                     Icon(
@@ -735,20 +744,43 @@ fun SignInView(
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragEnd = {
-                            if (emailDragOffset > 120f) {
+                            if (emailDragOffset > 70.dp.toPx()) {
                                 focusManager.clearFocus()
                                 auth.clearError()
+                                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                                 activeSubscreen = AuthSubscreen.None
+                                emailDragOffset = 0f
+                            } else {
+                                // Snap back with resistance and re-focus input!
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                scope.launch {
+                                    Animatable(emailDragOffset).animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                                    ) {
+                                        emailDragOffset = value
+                                    }
+                                }
+                                emailRefocusTrigger++
                             }
-                            emailDragOffset = 0f
                         },
                         onDragCancel = {
-                            emailDragOffset = 0f
+                            scope.launch {
+                                Animatable(emailDragOffset).animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                                ) {
+                                    emailDragOffset = value
+                                }
+                            }
                         },
                         onVerticalDrag = { _, dragAmount ->
-                            focusManager.clearFocus()
                             if (dragAmount > 0f || emailDragOffset > 0f) {
-                                emailDragOffset = maxOf(0f, emailDragOffset + dragAmount)
+                                // Apply resistance (~0.50) so pull is not loose
+                                emailDragOffset = maxOf(0f, emailDragOffset + dragAmount * 0.50f)
+                                if (emailDragOffset > 30.dp.toPx()) {
+                                    focusManager.clearFocus()
+                                }
                             }
                         },
                     )
@@ -757,6 +789,7 @@ fun SignInView(
         ) {
             EmailLoginScreen(
                 isPresented = activeSubscreen == AuthSubscreen.Email,
+                refocusTrigger = emailRefocusTrigger,
                 onDismiss = {
                     focusManager.clearFocus()
                     auth.clearError()
@@ -780,20 +813,41 @@ fun SignInView(
                 .pointerInput(Unit) {
                     detectVerticalDragGestures(
                         onDragEnd = {
-                            if (onboardingDragOffset > 120f) {
+                            if (onboardingDragOffset > 70.dp.toPx()) {
                                 focusManager.clearFocus()
                                 auth.clearError()
+                                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                                 activeSubscreen = AuthSubscreen.None
+                                onboardingDragOffset = 0f
+                            } else {
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                scope.launch {
+                                    Animatable(onboardingDragOffset).animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                                    ) {
+                                        onboardingDragOffset = value
+                                    }
+                                }
                             }
-                            onboardingDragOffset = 0f
                         },
                         onDragCancel = {
-                            onboardingDragOffset = 0f
+                            scope.launch {
+                                Animatable(onboardingDragOffset).animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+                                ) {
+                                    onboardingDragOffset = value
+                                }
+                            }
                         },
                         onVerticalDrag = { _, dragAmount ->
-                            focusManager.clearFocus()
                             if (dragAmount > 0f || onboardingDragOffset > 0f) {
-                                onboardingDragOffset = maxOf(0f, onboardingDragOffset + dragAmount)
+                                // Apply resistance (~0.50) so pull is not loose
+                                onboardingDragOffset = maxOf(0f, onboardingDragOffset + dragAmount * 0.50f)
+                                if (onboardingDragOffset > 30.dp.toPx()) {
+                                    focusManager.clearFocus()
+                                }
                             }
                         },
                     )
@@ -899,6 +953,7 @@ fun SignInView(
 @Composable
 private fun EmailLoginScreen(
     isPresented: Boolean = false,
+    refocusTrigger: Int = 0,
     onDismiss: () -> Unit,
     commitApiBase: () -> Unit,
 ) {
@@ -907,6 +962,7 @@ private fun EmailLoginScreen(
     val scope = rememberCoroutineScope()
     val isBusy by auth.isBusy.collectAsState()
     val context = LocalContext.current
+    val view = LocalView.current
 
     var step by remember {
         mutableStateOf(
@@ -932,9 +988,10 @@ private fun EmailLoginScreen(
     val forgotEmailFocusRequester = remember { FocusRequester() }
     val resetCodeFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(isPresented, step) {
+    LaunchedEffect(isPresented, step, refocusTrigger) {
         if (isPresented) {
-            kotlinx.coroutines.delay(300)
+            val delayMs = if (refocusTrigger > 0) 120L else 420L
+            kotlinx.coroutines.delay(delayMs)
             when (step) {
                 EmailStep.Email -> emailFocusRequester.requestFocus()
                 EmailStep.Password -> passwordFocusRequester.requestFocus()
@@ -978,6 +1035,7 @@ private fun EmailLoginScreen(
                         .liquidGlass(CircleShape)
                         .clip(CircleShape)
                         .clickable {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                             auth.clearError()
                             when (step) {
                                 EmailStep.ResetPassword -> step = EmailStep.ForgotPassword
@@ -1003,7 +1061,10 @@ private fun EmailLoginScreen(
                     .size(42.dp)
                     .liquidGlass(CircleShape)
                     .clip(CircleShape)
-                    .clickable(onClick = onDismiss),
+                    .clickable {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        onDismiss()
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -1515,6 +1576,7 @@ private fun InAppBrowserDialog(
     onDismiss: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    val view = LocalView.current
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1542,7 +1604,10 @@ private fun InAppBrowserDialog(
                     )
 
                     IconButton(
-                        onClick = onDismiss,
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
                         modifier = Modifier
                             .size(32.dp)
                             .clip(CircleShape)
