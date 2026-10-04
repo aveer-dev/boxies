@@ -32,6 +32,7 @@ targets:
         CURRENT_PROJECT_VERSION: 1
         MARKETING_VERSION: "1.0"
         INFOPLIST_KEY_CFBundleDisplayName: Inboxies
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         SUPPORTS_MACCATALYST: false
         SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: false
