@@ -5,6 +5,7 @@ import android.view.HapticFeedbackConstants
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -17,8 +18,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -75,6 +79,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -86,12 +91,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
@@ -177,6 +187,10 @@ fun SignInView(
     var emailDragOffset by remember { mutableFloatStateOf(0f) }
     var onboardingDragOffset by remember { mutableFloatStateOf(0f) }
     var emailRefocusTrigger by remember { mutableIntStateOf(0) }
+    var isEmailAtRoot by remember { mutableStateOf(true) }
+    var isOnboardingAtRoot by remember { mutableStateOf(true) }
+    var emailPastThreshold by remember { mutableStateOf(false) }
+    var onboardingPastThreshold by remember { mutableStateOf(false) }
 
     var apiBase by remember {
         mutableStateOf(
@@ -731,6 +745,160 @@ fun SignInView(
             }
         }
 
+        val dismissThresholdPx = with(LocalDensity.current) { 85.dp.toPx() }
+        val resistanceFactor = 0.85f
+
+        fun updateEmailOffset(delta: Float) {
+            val newOffset = maxOf(0f, emailDragOffset + delta)
+            emailDragOffset = newOffset
+            val isPast = newOffset >= dismissThresholdPx
+            if (isPast != emailPastThreshold) {
+                emailPastThreshold = isPast
+                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
+        }
+
+        fun finishEmailDrag(velocity: Float = 0f) {
+            val flicked = velocity > 1200f
+            if (emailDragOffset >= dismissThresholdPx || flicked) {
+                focusManager.clearFocus()
+                auth.clearError()
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                activeSubscreen = AuthSubscreen.None
+                emailDragOffset = 0f
+                emailPastThreshold = false
+            } else {
+                if (emailDragOffset > 0f) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+                emailPastThreshold = false
+                scope.launch {
+                    Animatable(emailDragOffset).animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow),
+                    ) {
+                        emailDragOffset = value
+                    }
+                }
+                emailRefocusTrigger++
+            }
+        }
+
+        val emailNestedScrollConnection = remember(isEmailAtRoot) {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    if (!isEmailAtRoot) return Offset.Zero
+                    if (available.y < 0f && emailDragOffset > 0f) {
+                        val dragDelta = available.y * resistanceFactor
+                        val prev = emailDragOffset
+                        updateEmailOffset(dragDelta)
+                        val consumedY = (emailDragOffset - prev) / resistanceFactor
+                        return Offset(0f, consumedY)
+                    }
+                    return Offset.Zero
+                }
+
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    if (!isEmailAtRoot) return Offset.Zero
+                    if (available.y > 0f) {
+                        if (emailDragOffset == 0f) {
+                            focusManager.clearFocus()
+                        }
+                        updateEmailOffset(available.y * resistanceFactor)
+                        return Offset(0f, available.y)
+                    }
+                    return Offset.Zero
+                }
+
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (!isEmailAtRoot || emailDragOffset == 0f) return Velocity.Zero
+                    finishEmailDrag(available.y)
+                    return Velocity(0f, available.y)
+                }
+
+                override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                    if (!isEmailAtRoot || emailDragOffset == 0f) return Velocity.Zero
+                    finishEmailDrag(available.y)
+                    return Velocity(0f, available.y)
+                }
+            }
+        }
+
+        fun updateOnboardingOffset(delta: Float) {
+            val newOffset = maxOf(0f, onboardingDragOffset + delta)
+            onboardingDragOffset = newOffset
+            val isPast = newOffset >= dismissThresholdPx
+            if (isPast != onboardingPastThreshold) {
+                onboardingPastThreshold = isPast
+                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
+        }
+
+        fun finishOnboardingDrag(velocity: Float = 0f) {
+            val flicked = velocity > 1200f
+            if (onboardingDragOffset >= dismissThresholdPx || flicked) {
+                focusManager.clearFocus()
+                auth.clearError()
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                activeSubscreen = AuthSubscreen.None
+                onboardingDragOffset = 0f
+                onboardingPastThreshold = false
+            } else {
+                if (onboardingDragOffset > 0f) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+                onboardingPastThreshold = false
+                scope.launch {
+                    Animatable(onboardingDragOffset).animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow),
+                    ) {
+                        onboardingDragOffset = value
+                    }
+                }
+            }
+        }
+
+        val onboardingNestedScrollConnection = remember(isOnboardingAtRoot) {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    if (!isOnboardingAtRoot) return Offset.Zero
+                    if (available.y < 0f && onboardingDragOffset > 0f) {
+                        val dragDelta = available.y * resistanceFactor
+                        val prev = onboardingDragOffset
+                        updateOnboardingOffset(dragDelta)
+                        val consumedY = (onboardingDragOffset - prev) / resistanceFactor
+                        return Offset(0f, consumedY)
+                    }
+                    return Offset.Zero
+                }
+
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    if (!isOnboardingAtRoot) return Offset.Zero
+                    if (available.y > 0f) {
+                        if (onboardingDragOffset == 0f) {
+                            focusManager.clearFocus()
+                        }
+                        updateOnboardingOffset(available.y * resistanceFactor)
+                        return Offset(0f, available.y)
+                    }
+                    return Offset.Zero
+                }
+
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (!isOnboardingAtRoot || onboardingDragOffset == 0f) return Velocity.Zero
+                    finishOnboardingDrag(available.y)
+                    return Velocity(0f, available.y)
+                }
+
+                override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                    if (!isOnboardingAtRoot || onboardingDragOffset == 0f) return Velocity.Zero
+                    finishOnboardingDrag(available.y)
+                    return Velocity(0f, available.y)
+                }
+            }
+        }
+
         // Page 2: Email Onboarding Screen (Pushes welcome screen entirely up, follows in lockstep, draggable back down)
         Surface(
             modifier = Modifier
@@ -741,55 +909,35 @@ fun SignInView(
                         y = page2OffsetY.roundToInt(),
                     )
                 }
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragEnd = {
-                            if (emailDragOffset > 70.dp.toPx()) {
-                                focusManager.clearFocus()
-                                auth.clearError()
-                                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                                activeSubscreen = AuthSubscreen.None
-                                emailDragOffset = 0f
-                            } else {
-                                // Snap back with resistance and re-focus input!
-                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                scope.launch {
-                                    Animatable(emailDragOffset).animateTo(
-                                        targetValue = 0f,
-                                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-                                    ) {
-                                        emailDragOffset = value
-                                    }
-                                }
-                                emailRefocusTrigger++
-                            }
-                        },
-                        onDragCancel = {
-                            scope.launch {
-                                Animatable(emailDragOffset).animateTo(
-                                    targetValue = 0f,
-                                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-                                ) {
-                                    emailDragOffset = value
-                                }
-                            }
-                        },
-                        onVerticalDrag = { _, dragAmount ->
-                            if (dragAmount > 0f || emailDragOffset > 0f) {
-                                // Apply resistance (~0.50) so pull is not loose
-                                emailDragOffset = maxOf(0f, emailDragOffset + dragAmount * 0.50f)
-                                if (emailDragOffset > 30.dp.toPx()) {
+                .nestedScroll(emailNestedScrollConnection)
+                .pointerInput(isEmailAtRoot) {
+                    if (isEmailAtRoot) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                if (emailDragOffset == 0f) {
                                     focusManager.clearFocus()
                                 }
-                            }
-                        },
-                    )
+                            },
+                            onDragEnd = {
+                                finishEmailDrag()
+                            },
+                            onDragCancel = {
+                                finishEmailDrag()
+                            },
+                            onVerticalDrag = { _, dragAmount ->
+                                if (dragAmount > 0f || emailDragOffset > 0f) {
+                                    updateEmailOffset(dragAmount * resistanceFactor)
+                                }
+                            },
+                        )
+                    }
                 },
             color = colors.surface,
         ) {
             EmailLoginScreen(
                 isPresented = activeSubscreen == AuthSubscreen.Email,
                 refocusTrigger = emailRefocusTrigger,
+                onRootChanged = { isEmailAtRoot = it },
                 onDismiss = {
                     focusManager.clearFocus()
                     auth.clearError()
@@ -800,7 +948,7 @@ fun SignInView(
             )
         }
 
-        // Page 3: Get Started Onboarding Screen (Pushes welcome screen entirely up, follows in lockstep, draggable back down)
+        // Page 3: Get Started Onboarding Screen (Pushes welcome screen entirely up, follows in lockstep, draggable back down only from root)
         Surface(
             modifier = Modifier
                 .fillMaxSize()
@@ -810,47 +958,28 @@ fun SignInView(
                         y = page3OffsetY.roundToInt(),
                     )
                 }
-                .pointerInput(Unit) {
-                    detectVerticalDragGestures(
-                        onDragEnd = {
-                            if (onboardingDragOffset > 70.dp.toPx()) {
-                                focusManager.clearFocus()
-                                auth.clearError()
-                                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                                activeSubscreen = AuthSubscreen.None
-                                onboardingDragOffset = 0f
-                            } else {
-                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                                scope.launch {
-                                    Animatable(onboardingDragOffset).animateTo(
-                                        targetValue = 0f,
-                                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-                                    ) {
-                                        onboardingDragOffset = value
-                                    }
-                                }
-                            }
-                        },
-                        onDragCancel = {
-                            scope.launch {
-                                Animatable(onboardingDragOffset).animateTo(
-                                    targetValue = 0f,
-                                    animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-                                ) {
-                                    onboardingDragOffset = value
-                                }
-                            }
-                        },
-                        onVerticalDrag = { _, dragAmount ->
-                            if (dragAmount > 0f || onboardingDragOffset > 0f) {
-                                // Apply resistance (~0.50) so pull is not loose
-                                onboardingDragOffset = maxOf(0f, onboardingDragOffset + dragAmount * 0.50f)
-                                if (onboardingDragOffset > 30.dp.toPx()) {
+                .nestedScroll(onboardingNestedScrollConnection)
+                .pointerInput(isOnboardingAtRoot) {
+                    if (isOnboardingAtRoot) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                if (onboardingDragOffset == 0f) {
                                     focusManager.clearFocus()
                                 }
-                            }
-                        },
-                    )
+                            },
+                            onDragEnd = {
+                                finishOnboardingDrag()
+                            },
+                            onDragCancel = {
+                                finishOnboardingDrag()
+                            },
+                            onVerticalDrag = { _, dragAmount ->
+                                if (dragAmount > 0f || onboardingDragOffset > 0f) {
+                                    updateOnboardingOffset(dragAmount * resistanceFactor)
+                                }
+                            },
+                        )
+                    }
                 },
             color = colors.surface,
         ) {
@@ -863,6 +992,7 @@ fun SignInView(
                     onboardingDragOffset = 0f
                 },
                 showsDragHandle = true,
+                onRootChanged = { isOnboardingAtRoot = it },
             )
         }
 
@@ -954,6 +1084,7 @@ fun SignInView(
 private fun EmailLoginScreen(
     isPresented: Boolean = false,
     refocusTrigger: Int = 0,
+    onRootChanged: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
     commitApiBase: () -> Unit,
 ) {
@@ -964,17 +1095,24 @@ private fun EmailLoginScreen(
     val context = LocalContext.current
     val view = LocalView.current
 
-    var step by remember {
-        mutableStateOf(
-            if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewPasswordSignIn") == true) {
-                EmailStep.Password
-            } else if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewForgotPassword") == true) {
-                EmailStep.ForgotPassword
-            } else {
-                EmailStep.Email
-            }
-        )
+    val initialStep = remember {
+        if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewPasswordSignIn") == true) {
+            EmailStep.Password
+        } else if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewForgotPassword") == true) {
+            EmailStep.ForgotPassword
+        } else {
+            EmailStep.Email
+        }
     }
+    val backStack = remember(initialStep) {
+        mutableStateListOf<EmailStep>().apply {
+            add(EmailStep.Email)
+            if (initialStep != EmailStep.Email) {
+                add(initialStep)
+            }
+        }
+    }
+    val currentStep = backStack.lastOrNull() ?: EmailStep.Email
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var resetCode by remember { mutableStateOf("") }
@@ -983,22 +1121,48 @@ private fun EmailLoginScreen(
     var isSendingReset by remember { mutableStateOf(false) }
     var isResetting by remember { mutableStateOf(false) }
 
+    fun navigateTo(newStep: EmailStep) {
+        auth.clearError()
+        backStack.add(newStep)
+    }
+
+    fun navigateBack() {
+        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+        auth.clearError()
+        if (backStack.size > 1) {
+            backStack.removeAt(backStack.lastIndex)
+        } else {
+            onDismiss()
+        }
+    }
+
+    LaunchedEffect(backStack.size) {
+        onRootChanged(backStack.size == 1)
+    }
+
     val emailFocusRequester = remember { FocusRequester() }
     val passwordFocusRequester = remember { FocusRequester() }
     val forgotEmailFocusRequester = remember { FocusRequester() }
     val resetCodeFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(isPresented, step, refocusTrigger) {
+    LaunchedEffect(isPresented, currentStep, refocusTrigger) {
         if (isPresented) {
             val delayMs = if (refocusTrigger > 0) 120L else 420L
             kotlinx.coroutines.delay(delayMs)
-            when (step) {
+            when (currentStep) {
                 EmailStep.Email -> emailFocusRequester.requestFocus()
                 EmailStep.Password -> passwordFocusRequester.requestFocus()
                 EmailStep.ForgotPassword -> forgotEmailFocusRequester.requestFocus()
                 EmailStep.ResetPassword -> resetCodeFocusRequester.requestFocus()
             }
         }
+    }
+
+    BackHandler(enabled = isPresented && backStack.size > 1) {
+        navigateBack()
+    }
+    BackHandler(enabled = isPresented && backStack.size <= 1) {
+        onDismiss()
     }
 
     val isValidEmail = email.trim().contains("@") && email.trim().contains(".") && email.trim().length >= 5
@@ -1009,89 +1173,124 @@ private fun EmailLoginScreen(
             .statusBarsPadding()
             .imePadding(),
     ) {
-        // Drag handle pill moved comfortably down below status bar / camera punch-hole
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterHorizontally)
-                .padding(top = 20.dp)
-                .size(width = 36.dp, height = 5.dp)
-                .clip(CircleShape)
-                .background(colors.line)
-        )
-
-        // Header Navigation Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(top = 14.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            if (step != EmailStep.Email) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .liquidGlass(CircleShape)
-                        .clip(CircleShape)
-                        .clickable {
-                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                            auth.clearError()
-                            when (step) {
-                                EmailStep.ResetPassword -> step = EmailStep.ForgotPassword
-                                else -> step = EmailStep.Email
-                            }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = "Back",
-                        tint = colors.ink,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            } else {
-                Spacer(Modifier.size(42.dp))
-            }
-
-            // Bigger liquid glass close button
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .liquidGlass(CircleShape)
-                    .clip(CircleShape)
-                    .clickable {
-                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                        onDismiss()
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.Close,
-                    contentDescription = "Close",
-                    tint = colors.ink,
-                    modifier = Modifier.size(18.dp),
+        AnimatedContent(
+            targetState = currentStep,
+            modifier = Modifier.fillMaxSize(),
+            transitionSpec = {
+                val forward = targetState.ordinal >= initialState.ordinal
+                val navSpring = spring<IntOffset>(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
+                val fadeSpring = spring<Float>(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
+                (
+                    slideInHorizontally(animationSpec = navSpring) { full ->
+                        if (forward) full / 3 else -full / 3
+                    } + fadeIn(animationSpec = fadeSpring)
+                ) togetherWith (
+                    slideOutHorizontally(animationSpec = navSpring) { full ->
+                        if (forward) -full / 4 else full / 4
+                    } + fadeOut(animationSpec = fadeSpring)
                 )
-            }
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            // Header icon - gray colored, just deeper than pillFill
-            Box(
-                modifier = Modifier
-                    .padding(top = 24.dp)
-                    .size(52.dp)
-                    .clip(CircleShape)
-                    .background(colors.pillFill),
-                contentAlignment = Alignment.Center,
+            },
+            label = "emailStepNav",
+        ) { step ->
+            Column(
+                modifier = Modifier.fillMaxSize(),
             ) {
+                if (step == EmailStep.Email) {
+                    // Drag handle pill moved comfortably down below status bar / camera punch-hole (initial screen only)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .height(24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(width = 36.dp, height = 5.dp)
+                                .clip(CircleShape)
+                                .background(colors.line),
+                        )
+                    }
+
+                    // Header Navigation Bar for initial screen: right side close button only (goes back to welcome screen)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp)
+                            .padding(top = 14.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Spacer(Modifier.size(42.dp))
+
+                        // Bigger liquid glass close button
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .liquidGlass(CircleShape)
+                                .clip(CircleShape)
+                                .clickable {
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                    onDismiss()
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Close,
+                                contentDescription = "Close",
+                                tint = colors.ink,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                } else {
+                    // Subsequent step toolbar: left side back button only
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp)
+                            .padding(top = 14.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .liquidGlass(CircleShape)
+                                .clip(CircleShape)
+                                .clickable {
+                                    navigateBack()
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                contentDescription = "Back",
+                                tint = colors.ink,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+
+                        Spacer(Modifier.size(42.dp))
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    // Header icon - gray colored, just deeper than pillFill
+                    Box(
+                        modifier = Modifier
+                            .padding(top = if (step == EmailStep.Email) 12.dp else 16.dp)
+                            .size(52.dp)
+                            .clip(CircleShape)
+                            .background(colors.pillFill),
+                        contentAlignment = Alignment.Center,
+                    ) {
                 Icon(
                     imageVector = when (step) {
                         EmailStep.Email, EmailStep.ForgotPassword -> Icons.Outlined.Email
@@ -1151,7 +1350,7 @@ private fun EmailLoginScreen(
                         keyboardActions = KeyboardActions(
                             onNext = {
                                 if (isValidEmail) {
-                                    step = EmailStep.Password
+                                    navigateTo(EmailStep.Password)
                                 }
                             }
                         ),
@@ -1180,8 +1379,7 @@ private fun EmailLoginScreen(
                             color = colors.accent,
                             modifier = Modifier
                                 .clickable {
-                                    auth.clearError()
-                                    step = EmailStep.ForgotPassword
+                                    navigateTo(EmailStep.ForgotPassword)
                                 }
                                 .padding(vertical = 4.dp, horizontal = 2.dp),
                         )
@@ -1190,7 +1388,7 @@ private fun EmailLoginScreen(
                     Spacer(Modifier.height(16.dp))
 
                     Button(
-                        onClick = { step = EmailStep.Password },
+                        onClick = { navigateTo(EmailStep.Password) },
                         enabled = isValidEmail,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1273,8 +1471,7 @@ private fun EmailLoginScreen(
                             color = colors.accent,
                             modifier = Modifier
                                 .clickable {
-                                    auth.clearError()
-                                    step = EmailStep.ForgotPassword
+                                    navigateTo(EmailStep.ForgotPassword)
                                 }
                                 .padding(vertical = 4.dp, horizontal = 2.dp),
                         )
@@ -1345,7 +1542,7 @@ private fun EmailLoginScreen(
                                             if (BuildConfig.DEBUG && res.devResetCode != null) {
                                                 resetCode = res.devResetCode
                                             }
-                                            step = EmailStep.ResetPassword
+                                            navigateTo(EmailStep.ResetPassword)
                                         } catch (_: Exception) {
                                         } finally {
                                             isSendingReset = false
@@ -1376,7 +1573,7 @@ private fun EmailLoginScreen(
                                     if (BuildConfig.DEBUG && res.devResetCode != null) {
                                         resetCode = res.devResetCode
                                     }
-                                    step = EmailStep.ResetPassword
+                                    navigateTo(EmailStep.ResetPassword)
                                 } catch (_: Exception) {
                                 } finally {
                                     isSendingReset = false
@@ -1557,6 +1754,8 @@ private fun EmailLoginScreen(
             Spacer(Modifier.height(48.dp))
         }
     }
+}
+}
 }
 
 private enum class EmailStep {

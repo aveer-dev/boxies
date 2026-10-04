@@ -96,7 +96,7 @@ fun PreviewRoot(
         PreviewMode.ForgotPassword -> SignInView(expandForgotPassword = true)
         PreviewMode.DomainOnboarding -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
-                MailboxOnboardingView(initialTrack = OnboardingTrack.Domain)
+                MailboxOnboardingView(initialTrack = OnboardingTrack.Domain(1))
             }
         }
         PreviewMode.InviteAccept -> InviteAcceptPreview()

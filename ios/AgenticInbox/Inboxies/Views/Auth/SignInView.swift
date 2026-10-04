@@ -51,6 +51,10 @@ struct SignInView: View {
     @State private var onboardingDragOffset: CGFloat = 0
     @State private var emailRefocusTrigger: Int = 0
     @State private var showTermsBrowser = false
+    @State private var isEmailAtRoot: Bool = true
+    @State private var isOnboardingAtRoot: Bool = true
+    @State private var emailPastThreshold: Bool = false
+    @State private var onboardingPastThreshold: Bool = false
 
     /// Spring with obvious bounce for revealing auth buttons when the downward arrow is tapped.
     private var authRevealAnimation: Animation {
@@ -325,11 +329,12 @@ struct SignInView: View {
                 .frame(width: geometry.size.width, height: screenHeight)
                 .offset(y: page1OffsetY)
 
-                // Page 2: Email Onboarding Screen (Pushes welcome view entirely up, follows in lockstep, draggable back down)
+                // Page 2: Email Onboarding Screen (Pushes welcome view entirely up, follows in lockstep, draggable back down only from root)
                 EmailLoginScreen(
                     safeAreaTop: safeArea.top,
                     isPresented: activeSubscreen == .email,
                     refocusTrigger: emailRefocusTrigger,
+                    isAtRoot: $isEmailAtRoot,
                     onDismiss: {
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                         auth.errorMessage = nil
@@ -343,47 +348,57 @@ struct SignInView: View {
                 .frame(width: geometry.size.width, height: screenHeight)
                 .background(AppTheme.surface)
                 .offset(y: emailPageOffsetY)
-                .gesture(
-                    DragGesture(minimumDistance: 12)
-                        .onChanged { value in
-                            if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) {
-                                if value.translation.height > 60 {
+                .simultaneousGesture(
+                    isEmailAtRoot ?
+                        DragGesture(minimumDistance: 4)
+                            .onChanged { value in
+                                if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) * 0.8 {
+                                    if value.translation.height > 30 {
+                                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                    }
+                                    let rawOffset = value.translation.height * 0.85
+                                    emailDragOffset = rawOffset
+                                    let isPast = rawOffset >= 90
+                                    if isPast != emailPastThreshold {
+                                        emailPastThreshold = isPast
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    }
+                                }
+                            }
+                            .onEnded { value in
+                                let distance = value.translation.height * 0.85
+                                let flicked: Bool
+                                if #available(iOS 18.0, *) {
+                                    flicked = value.velocity.height > 350
+                                } else {
+                                    flicked = value.predictedEndTranslation.height > 100
+                                }
+                                if distance >= 90 || flicked {
                                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                                }
-                                // Apply a subtle resistance factor (~0.50) so pull is not loose
-                                emailDragOffset = value.translation.height * 0.50
-                            }
-                        }
-                        .onEnded { value in
-                            let distance = value.translation.height
-                            let flicked: Bool
-                            if #available(iOS 18.0, *) {
-                                flicked = value.velocity.height > 400
-                            } else {
-                                flicked = value.predictedEndTranslation.height > 100
-                            }
-                            if distance > 140 || flicked {
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                                auth.errorMessage = nil
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                withAnimation(subscreenTransitionAnimation) {
-                                    activeSubscreen = .none
-                                    emailDragOffset = 0
-                                }
-                            } else {
-                                // Snap back with resistance and re-focus input!
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                withAnimation(.easeOut(duration: 0.22)) {
-                                    emailDragOffset = 0
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                    emailRefocusTrigger += 1
+                                    auth.errorMessage = nil
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                    emailPastThreshold = false
+                                    withAnimation(subscreenTransitionAnimation) {
+                                        activeSubscreen = .none
+                                        emailDragOffset = 0
+                                    }
+                                } else {
+                                    if emailDragOffset > 0 {
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    }
+                                    emailPastThreshold = false
+                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                        emailDragOffset = 0
+                                    }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                        emailRefocusTrigger += 1
+                                    }
                                 }
                             }
-                        }
+                        : nil
                 )
 
-                // Page 3: Get Started Onboarding Screen (Pushes welcome view entirely up, follows in lockstep, draggable back down)
+                // Page 3: Get Started Onboarding Screen (Pushes welcome view entirely up, follows in lockstep, draggable back down only from root)
                 MailboxOnboardingView(
                     initialTrack: .select,
                     onDismiss: {
@@ -395,45 +410,57 @@ struct SignInView: View {
                         }
                     },
                     showsDragHandle: true,
-                    safeAreaTop: safeArea.top
+                    safeAreaTop: safeArea.top,
+                    isAtRoot: $isOnboardingAtRoot
                 )
                 .frame(width: geometry.size.width, height: screenHeight)
                 .background(AppTheme.surface)
                 .offset(y: onboardingPageOffsetY)
-                .gesture(
-                    DragGesture(minimumDistance: 12)
-                        .onChanged { value in
-                            if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) {
-                                if value.translation.height > 60 {
+                .simultaneousGesture(
+                    isOnboardingAtRoot ?
+                        DragGesture(minimumDistance: 4)
+                            .onChanged { value in
+                                if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) * 0.8 {
+                                    if value.translation.height > 30 {
+                                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                    }
+                                    let rawOffset = value.translation.height * 0.85
+                                    onboardingDragOffset = rawOffset
+                                    let isPast = rawOffset >= 90
+                                    if isPast != onboardingPastThreshold {
+                                        onboardingPastThreshold = isPast
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    }
+                                }
+                            }
+                            .onEnded { value in
+                                let distance = value.translation.height * 0.85
+                                let flicked: Bool
+                                if #available(iOS 18.0, *) {
+                                    flicked = value.velocity.height > 350
+                                } else {
+                                    flicked = value.predictedEndTranslation.height > 100
+                                }
+                                if distance >= 90 || flicked {
                                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                                }
-                                // Apply a subtle resistance factor (~0.50) so pull is not loose
-                                onboardingDragOffset = value.translation.height * 0.50
-                            }
-                        }
-                        .onEnded { value in
-                            let distance = value.translation.height
-                            let flicked: Bool
-                            if #available(iOS 18.0, *) {
-                                flicked = value.velocity.height > 400
-                            } else {
-                                flicked = value.predictedEndTranslation.height > 100
-                            }
-                            if distance > 140 || flicked {
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                                auth.errorMessage = nil
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                withAnimation(subscreenTransitionAnimation) {
-                                    activeSubscreen = .none
-                                    onboardingDragOffset = 0
-                                }
-                            } else {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                withAnimation(.easeOut(duration: 0.22)) {
-                                    onboardingDragOffset = 0
+                                    auth.errorMessage = nil
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                    onboardingPastThreshold = false
+                                    withAnimation(subscreenTransitionAnimation) {
+                                        activeSubscreen = .none
+                                        onboardingDragOffset = 0
+                                    }
+                                } else {
+                                    if onboardingDragOffset > 0 {
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    }
+                                    onboardingPastThreshold = false
+                                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                        onboardingDragOffset = 0
+                                    }
                                 }
                             }
-                        }
+                        : nil
                 )
 
                 #if DEBUG
@@ -755,27 +782,27 @@ private struct EmailLoginScreen: View {
     var safeAreaTop: CGFloat = 0
     var isPresented: Bool = false
     var refocusTrigger: Int = 0
+    var isAtRoot: Binding<Bool> = .constant(true)
     var onDismiss: () -> Void
     var commitAPIBaseURL: () -> Void
 
-    enum Step {
-        case email
+    enum Step: Hashable {
         case password
         case forgotPassword
         case resetPassword
     }
 
     @Environment(AuthStore.self) private var auth
-    @State private var step: Step = {
+    @State private var navigationPath: [Step] = {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn") {
-            return .password
+            return [.password]
         }
         if ProcessInfo.processInfo.arguments.contains("-previewForgotPassword") {
-            return .forgotPassword
+            return [.forgotPassword]
         }
         #endif
-        return .email
+        return []
     }()
     @State private var email: String = ""
     @State private var password: String = ""
@@ -791,75 +818,92 @@ private struct EmailLoginScreen: View {
         return trimmed.contains("@") && trimmed.contains(".") && trimmed.count >= 5
     }
 
-    private var headerIcon: String {
-        switch step {
-        case .email: return "envelope.fill"
-        case .password: return "key.fill"
-        case .forgotPassword: return "envelope.badge.shield.half.filled"
-        case .resetPassword: return "lock.rotation"
-        }
-    }
-
-    private var titleText: String {
-        switch step {
-        case .email: return "Continue with Email"
-        case .password: return "Enter your password"
-        case .forgotPassword: return "Forgot password?"
-        case .resetPassword: return "Reset your password"
-        }
-    }
-
-    private var subtitleText: String {
-        switch step {
-        case .email:
-            return "Sign in or sign up with your email."
-        case .password:
-            return "Sign in with your email \(email.trimmingCharacters(in: .whitespacesAndNewlines))"
-        case .forgotPassword:
-            return "Enter your email to receive a 6-digit reset code."
-        case .resetPassword:
-            return "Enter the code sent to \(email.trimmingCharacters(in: .whitespacesAndNewlines))"
-        }
-    }
-
     var body: some View {
-        VStack(spacing: 0) {
-            // Drag handle pill placed comfortably below Dynamic Island / notch
-            Capsule()
-                .fill(AppTheme.line)
-                .frame(width: 36, height: 5)
-                .padding(.top, max(safeAreaTop, 44) + 16)
-
-            // Header bar with navigation controls
-            HStack {
-                if step != .email {
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        auth.errorMessage = nil
-                        withAnimation(.easeInOut(duration: 0.28)) {
-                            if step == .resetPassword {
-                                step = .forgotPassword
-                            } else {
-                                step = .email
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(width: 42, height: 42)
-                            .liquidGlass(in: Circle())
+        NavigationStack(path: $navigationPath) {
+            emailStepView
+                .navigationDestination(for: Step.self) { step in
+                    switch step {
+                    case .password:
+                        passwordStepView
+                    case .forgotPassword:
+                        forgotPasswordStepView
+                    case .resetPassword:
+                        resetPasswordStepView
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Back")
-                } else {
-                    Spacer()
-                        .frame(width: 42, height: 42)
                 }
+                .toolbar(.hidden, for: .navigationBar)
+        }
+        .background(AppTheme.surface)
+        .onChange(of: isPresented) { _, presented in
+            if presented {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+                    isFieldFocused = true
+                }
+            } else {
+                isFieldFocused = false
+            }
+        }
+        .onChange(of: refocusTrigger) { _, _ in
+            isFieldFocused = true
+        }
+        .onChange(of: navigationPath) { _, newPath in
+            isAtRoot.wrappedValue = newPath.isEmpty
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                isFieldFocused = true
+            }
+        }
+        .onAppear {
+            isAtRoot.wrappedValue = navigationPath.isEmpty
+            if isPresented {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+                    isFieldFocused = true
+                }
+            }
+        }
+    }
 
+    private var subsequentStepToolbar: some View {
+        HStack {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                auth.errorMessage = nil
+                if !navigationPath.isEmpty {
+                    navigationPath.removeLast()
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: 42, height: 42)
+                    .liquidGlass(in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Back")
+
+            Spacer()
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+    }
+
+    private var emailStepView: some View {
+        VStack(spacing: 0) {
+            // Drag handle pill placed comfortably below Dynamic Island / notch (initial screen only)
+            Color.clear
+                .frame(height: 24)
+                .overlay {
+                    Capsule()
+                        .fill(AppTheme.line)
+                        .frame(width: 36, height: 5)
+                }
+                .contentShape(Rectangle())
+                .padding(.top, max(safeAreaTop, 44) + 12)
+
+            // Header bar for initial screen: right side close button only (goes back to welcome screen)
+            HStack {
                 Spacer()
 
-                // Bigger liquid glass close button
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     onDismiss()
@@ -876,34 +920,30 @@ private struct EmailLoginScreen: View {
             .padding(.horizontal, 20)
             .padding(.top, 14)
 
-            VStack(spacing: 0) {
-                // Header icon in circle - gray colored, just deeper than pillFill
-                ZStack {
-                    Circle()
-                        .fill(AppTheme.pillFill)
-                        .frame(width: 52, height: 52)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(AppTheme.pillFill)
+                            .frame(width: 52, height: 52)
 
-                    Image(systemName: headerIcon)
-                        .font(.system(size: 22))
+                        Image(systemName: "envelope.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    .padding(.top, 12)
+
+                    Text("Continue with Email")
+                        .font(.inter(size: 22, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .padding(.top, 14)
+
+                    Text("Sign in or sign up with your email.")
+                        .font(.inter(size: 14))
                         .foregroundStyle(AppTheme.muted)
-                }
-                .padding(.top, 24)
+                        .lineLimit(1)
+                        .padding(.top, 4)
 
-                // Title & Subtitle
-                Text(titleText)
-                    .font(.inter(size: 22, weight: .bold))
-                    .foregroundStyle(AppTheme.ink)
-                    .padding(.top, 14)
-
-                Text(subtitleText)
-                    .font(.inter(size: 14))
-                    .foregroundStyle(AppTheme.muted)
-                    .lineLimit(1)
-                    .padding(.top, 4)
-
-                // Form Fields
-                switch step {
-                case .email:
                     TextField("Email Address", text: $email)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
@@ -921,20 +961,15 @@ private struct EmailLoginScreen: View {
                         .padding(.top, 24)
                         .onSubmit {
                             if isValidEmail {
-                                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                                    step = .password
-                                }
+                                navigationPath.append(.password)
                             }
                         }
 
-                    // Button for forgot password should be below the email input, then some extra space below it before the next button.
                     HStack {
                         Spacer()
                         Button {
                             auth.errorMessage = nil
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                                step = .forgotPassword
-                            }
+                            navigationPath.append(.forgotPassword)
                         } label: {
                             Text("Forgot password?")
                                 .font(.inter(size: 13, weight: .medium))
@@ -949,9 +984,7 @@ private struct EmailLoginScreen: View {
                         .frame(height: 16)
 
                     Button {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                            step = .password
-                        }
+                        navigationPath.append(.password)
                     } label: {
                         Text("Next")
                             .font(.inter(size: 16, weight: .semibold))
@@ -965,7 +998,45 @@ private struct EmailLoginScreen: View {
                     .disabled(!isValidEmail)
                     .padding(.horizontal, 24)
 
-                case .password:
+                    Spacer()
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .background(AppTheme.surface)
+        .ignoresSafeArea(.container, edges: .top)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var passwordStepView: some View {
+        VStack(spacing: 0) {
+            subsequentStepToolbar
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(AppTheme.pillFill)
+                            .frame(width: 52, height: 52)
+
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    .padding(.top, 16)
+
+                    Text("Enter your password")
+                        .font(.inter(size: 22, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .padding(.top, 14)
+
+                    Text("Sign in with your email \(email.trimmingCharacters(in: .whitespacesAndNewlines))")
+                        .font(.inter(size: 14))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(1)
+                        .padding(.top, 4)
+
                     HStack(spacing: 8) {
                         if isPasswordVisible {
                             TextField("Password", text: $password)
@@ -1009,9 +1080,7 @@ private struct EmailLoginScreen: View {
                         Spacer()
                         Button {
                             auth.errorMessage = nil
-                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                                step = .forgotPassword
-                            }
+                            navigationPath.append(.forgotPassword)
                         } label: {
                             Text("Forgot password?")
                                 .font(.inter(size: 13, weight: .medium))
@@ -1046,7 +1115,43 @@ private struct EmailLoginScreen: View {
                     .disabled(password.isEmpty || auth.isBusy)
                     .padding(.horizontal, 24)
 
-                case .forgotPassword:
+                    Spacer()
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+        .background(AppTheme.surface)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var forgotPasswordStepView: some View {
+        VStack(spacing: 0) {
+            subsequentStepToolbar
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(AppTheme.pillFill)
+                            .frame(width: 52, height: 52)
+
+                        Image(systemName: "envelope.badge.shield.half.filled")
+                            .font(.system(size: 22))
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    .padding(.top, 16)
+
+                    Text("Forgot password?")
+                        .font(.inter(size: 22, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .padding(.top, 14)
+
+                    Text("Enter your email to receive a 6-digit reset code.")
+                        .font(.inter(size: 14))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(1)
+                        .padding(.top, 4)
+
                     TextField("Email Address", text: $email)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
@@ -1092,7 +1197,43 @@ private struct EmailLoginScreen: View {
                     .disabled(!isValidEmail || isSendingReset)
                     .padding(.horizontal, 24)
 
-                case .resetPassword:
+                    Spacer()
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+        .background(AppTheme.surface)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var resetPasswordStepView: some View {
+        VStack(spacing: 0) {
+            subsequentStepToolbar
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(AppTheme.pillFill)
+                            .frame(width: 52, height: 52)
+
+                        Image(systemName: "lock.rotation")
+                            .font(.system(size: 22))
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    .padding(.top, 16)
+
+                    Text("Reset your password")
+                        .font(.inter(size: 22, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .padding(.top, 14)
+
+                    Text("Enter the code sent to \(email.trimmingCharacters(in: .whitespacesAndNewlines))")
+                        .font(.inter(size: 14))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(1)
+                        .padding(.top, 4)
+
                     VStack(spacing: 14) {
                         TextField("6-digit code", text: $resetCode)
                             .keyboardType(.numberPad)
@@ -1170,37 +1311,14 @@ private struct EmailLoginScreen: View {
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 24)
-                }
 
-                Spacer()
+                    Spacer()
+                }
             }
+            .scrollDismissesKeyboard(.interactively)
         }
-        .safeAreaPadding(.top)
         .background(AppTheme.surface)
-        .onChange(of: isPresented) { _, presented in
-            if presented {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-                    isFieldFocused = true
-                }
-            } else {
-                isFieldFocused = false
-            }
-        }
-        .onChange(of: refocusTrigger) { _, _ in
-            isFieldFocused = true
-        }
-        .onChange(of: step) { _, _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                isFieldFocused = true
-            }
-        }
-        .onAppear {
-            if isPresented {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
-                    isFieldFocused = true
-                }
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     private func submitPassword() {
@@ -1229,9 +1347,7 @@ private struct EmailLoginScreen: View {
                     resetCode = code
                 }
                 #endif
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    step = .resetPassword
-                }
+                navigationPath.append(.resetPassword)
             } catch {
                 // error set in auth.errorMessage
             }

@@ -222,16 +222,16 @@ fun InviteAcceptView(
 
 sealed interface OnboardingTrack {
     data object Select : OnboardingTrack
-    data object Personal : OnboardingTrack
-    data object Domain : OnboardingTrack
+    data class Personal(val step: Int = 1) : OnboardingTrack
+    data class Domain(val step: Int = 1) : OnboardingTrack
     data class DnsWizard(val domain: String, val nameservers: List<String>) : OnboardingTrack
 }
 
 private fun onboardingDepth(track: OnboardingTrack): Int = when (track) {
     OnboardingTrack.Select -> 0
-    OnboardingTrack.Personal -> 1
-    OnboardingTrack.Domain -> 1
-    is OnboardingTrack.DnsWizard -> 2
+    is OnboardingTrack.Personal -> 10 + track.step
+    is OnboardingTrack.Domain -> 100 + track.step
+    is OnboardingTrack.DnsWizard -> 200
 }
 
 data class OnboardingUserItem(
@@ -252,6 +252,7 @@ fun MailboxOnboardingView(
     initialTrack: OnboardingTrack = OnboardingTrack.Select,
     onDismiss: (() -> Unit)? = null,
     showsDragHandle: Boolean = false,
+    onRootChanged: (Boolean) -> Unit = {},
 ) {
     val app = LocalAppModel.current
     val auth = LocalAuthStore.current
@@ -274,18 +275,20 @@ fun MailboxOnboardingView(
     }
     val currentTrack = backStack.lastOrNull() ?: OnboardingTrack.Select
 
+    LaunchedEffect(backStack.size) {
+        onRootChanged(backStack.size == 1)
+    }
+
     var devTapCount by remember { mutableStateOf(0) }
 
-    // Personal track state (4 steps)
-    var personalStep by remember { mutableIntStateOf(1) }
+    // Personal track state
     var personalName by remember { mutableStateOf("") }
     var personalPassword by remember { mutableStateOf("") }
     var isPersonalPasswordVisible by remember { mutableStateOf(false) }
     var personalBackupEmail by remember { mutableStateOf("") }
     var personalUsername by remember { mutableStateOf("") }
 
-    // Custom domain track state (11 steps)
-    var domainStep by remember { mutableIntStateOf(1) }
+    // Custom domain track state
     var customName by remember { mutableStateOf("") }
     var customPassword by remember { mutableStateOf("") }
     var isCustomPasswordVisible by remember { mutableStateOf(false) }
@@ -318,7 +321,7 @@ fun MailboxOnboardingView(
             val domain = customDomain.trim().lowercase()
             try { ApiClient.shared.fixDomainEmailDns(domain) } catch (_: Exception) {}
             isPaymentSyncing = false
-            domainStep = 7
+            backStack.add(OnboardingTrack.Domain(7))
         }
     }
 
@@ -346,14 +349,10 @@ fun MailboxOnboardingView(
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
+    val canGoBack = backStack.size > 1 && !(currentTrack is OnboardingTrack.Domain && currentTrack.step >= 11)
+
     fun navigateBack() {
-        if (currentTrack == OnboardingTrack.Personal && personalStep > 1) {
-            errorMessage = null
-            personalStep = if (auth.isAuthenticated && personalStep == 4) 1 else personalStep - 1
-        } else if (currentTrack == OnboardingTrack.Domain && domainStep > 1 && domainStep < 11) {
-            errorMessage = null
-            domainStep -= 1
-        } else if (backStack.size > 1) {
+        if (canGoBack) {
             errorMessage = null
             statusMessage = null
             backStack.removeAt(backStack.lastIndex)
@@ -361,8 +360,6 @@ fun MailboxOnboardingView(
             onDismiss?.invoke()
         }
     }
-
-    val canGoBack = (backStack.size > 1) || (currentTrack == OnboardingTrack.Personal && personalStep > 1) || (currentTrack == OnboardingTrack.Domain && domainStep > 1 && domainStep < 11)
 
     BackHandler(enabled = canGoBack) {
         navigateBack()
@@ -424,98 +421,11 @@ fun MailboxOnboardingView(
             .statusBarsPadding()
             .imePadding(),
     ) {
-        if (showsDragHandle) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(top = 20.dp)
-                    .size(width = 36.dp, height = 5.dp)
-                    .clip(CircleShape)
-                    .background(colors.line),
-            )
-        }
-
-        // Header Navigation Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(top = 14.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            // Left side: preserved strictly for back button (or empty spacer when at root)
-            if (canGoBack) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .liquidGlass(CircleShape)
-                        .clip(CircleShape)
-                        .clickable {
-                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                            navigateBack()
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                        contentDescription = "Back",
-                        tint = colors.ink,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            } else if (auth.isAuthenticated && onDismiss == null) {
-                TextButton(onClick = {
-                    app.reset()
-                    auth.signOut()
-                }) {
-                    Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
-                }
-            } else {
-                Spacer(Modifier.size(42.dp))
-            }
-
-            // Right side: preserved strictly for close button
-            if (onDismiss != null) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .liquidGlass(CircleShape)
-                        .clip(CircleShape)
-                        .clickable {
-                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-                            onDismiss()
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.ink,
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            } else if (auth.isAuthenticated && canGoBack) {
-                TextButton(onClick = {
-                    app.reset()
-                    auth.signOut()
-                }) {
-                    Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
-                }
-            } else {
-                Spacer(Modifier.size(42.dp))
-            }
-        }
-
         AnimatedContent(
             targetState = currentTrack,
             modifier = Modifier.fillMaxSize(),
             transitionSpec = {
-                val forward = if (initialState == OnboardingTrack.Personal && targetState == OnboardingTrack.Domain) {
-                    true
-                } else {
-                    onboardingDepth(targetState) >= onboardingDepth(initialState)
-                }
+                val forward = onboardingDepth(targetState) >= onboardingDepth(initialState)
                 val navSpring = spring<IntOffset>(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
                 val fadeSpring = spring<Float>(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
                 (
@@ -533,11 +443,75 @@ fun MailboxOnboardingView(
             when (step) {
                 OnboardingTrack.Select -> {
                     Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(24.dp),
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        if (showsDragHandle) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 10.dp)
+                                    .height(24.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(width = 36.dp, height = 5.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.line),
+                                )
+                            }
+                        }
+
+                        // Header Navigation Bar for initial screen: right side close button (if onDismiss != null), left side sign out (if auth && onDismiss == null)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
+                                .padding(top = 14.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            if (auth.isAuthenticated && onDismiss == null) {
+                                TextButton(onClick = {
+                                    app.reset()
+                                    auth.signOut()
+                                }) {
+                                    Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
+                                }
+                            } else {
+                                Spacer(Modifier.size(42.dp))
+                            }
+
+                            if (onDismiss != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .liquidGlass(CircleShape)
+                                        .clip(CircleShape)
+                                        .clickable {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                            onDismiss()
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Close,
+                                        contentDescription = "Close",
+                                        tint = colors.ink,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            } else {
+                                Spacer(Modifier.size(42.dp))
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(24.dp),
+                        ) {
                         val currentErr = appErrorMessage
                         if (currentErr != null) {
                             Surface(
@@ -608,7 +582,7 @@ fun MailboxOnboardingView(
                                 .clickable {
                                     errorMessage = null
                                     statusMessage = null
-                                    backStack.add(OnboardingTrack.Personal)
+                                    backStack.add(OnboardingTrack.Personal(1))
                                 }
                                 .padding(horizontal = 18.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -662,7 +636,7 @@ fun MailboxOnboardingView(
                                 .clickable {
                                     errorMessage = null
                                     statusMessage = null
-                                    backStack.add(OnboardingTrack.Domain)
+                                    backStack.add(OnboardingTrack.Domain(1))
                                 }
                                 .padding(horizontal = 18.dp, vertical = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -705,15 +679,60 @@ fun MailboxOnboardingView(
                             )
                         }
                     }
+                    }
                 }
 
-                OnboardingTrack.Personal -> {
+                is OnboardingTrack.Personal -> {
+                    val personalStep = step.step
                     Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(24.dp),
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        // Subsequent step toolbar: left side back button only
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
+                                .padding(top = 14.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .liquidGlass(CircleShape)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                        navigateBack()
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = colors.ink,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+
+                            if (auth.isAuthenticated && onDismiss == null) {
+                                TextButton(onClick = {
+                                    app.reset()
+                                    auth.signOut()
+                                }) {
+                                    Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
+                                }
+                            } else {
+                                Spacer(Modifier.size(42.dp))
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(24.dp),
+                        ) {
                         errorMessage?.let { msg ->
                             Text(
                                 msg,
@@ -749,7 +768,7 @@ fun MailboxOnboardingView(
                                 )
                                 Spacer(Modifier.height(24.dp))
                                 Button(
-                                    onClick = { personalStep = if (auth.isAuthenticated) 4 else 2 },
+                                    onClick = { backStack.add(OnboardingTrack.Personal(if (auth.isAuthenticated) 4 else 2)) },
                                     enabled = personalName.isNotBlank(),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = colors.ink,
@@ -788,7 +807,7 @@ fun MailboxOnboardingView(
                                 )
                                 Spacer(Modifier.height(24.dp))
                                 Button(
-                                    onClick = { personalStep = 3 },
+                                    onClick = { backStack.add(OnboardingTrack.Personal(3)) },
                                     enabled = personalPassword.length >= 10,
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = colors.ink,
@@ -842,7 +861,7 @@ fun MailboxOnboardingView(
                                 }
                                 Spacer(Modifier.height(24.dp))
                                 Button(
-                                    onClick = { personalStep = 4 },
+                                    onClick = { backStack.add(OnboardingTrack.Personal(4)) },
                                     enabled = personalBackupEmail.contains("@") && personalBackupEmail.contains("."),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = colors.ink,
@@ -937,15 +956,64 @@ fun MailboxOnboardingView(
                             }
                         }
                     }
+                    }
                 }
 
-                OnboardingTrack.Domain -> {
+                is OnboardingTrack.Domain -> {
+                    val domainStep = step.step
                     Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(24.dp),
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        // Subsequent step toolbar: left side back button (if step < 11)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
+                                .padding(top = 14.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            if (domainStep < 11) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .liquidGlass(CircleShape)
+                                        .clip(CircleShape)
+                                        .clickable {
+                                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                            navigateBack()
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                        contentDescription = "Back",
+                                        tint = colors.ink,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            } else {
+                                Spacer(Modifier.size(42.dp))
+                            }
+
+                            if (auth.isAuthenticated && onDismiss == null) {
+                                TextButton(onClick = {
+                                    app.reset()
+                                    auth.signOut()
+                                }) {
+                                    Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
+                                }
+                            } else {
+                                Spacer(Modifier.size(42.dp))
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(24.dp),
+                        ) {
                         errorMessage?.let { msg ->
                             Text(
                                 msg,
@@ -1000,7 +1068,7 @@ fun MailboxOnboardingView(
                                     )
                                     Spacer(Modifier.height(24.dp))
                                     Button(
-                                        onClick = { domainStep = 2 },
+                                        onClick = { backStack.add(OnboardingTrack.Domain(2)) },
                                         enabled = customName.isNotBlank(),
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                                         shape = RoundedCornerShape(12.dp),
@@ -1034,7 +1102,7 @@ fun MailboxOnboardingView(
                                     )
                                     Spacer(Modifier.height(24.dp))
                                     Button(
-                                        onClick = { domainStep = 3 },
+                                        onClick = { backStack.add(OnboardingTrack.Domain(3)) },
                                         enabled = customPassword.length >= 10,
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                                         shape = RoundedCornerShape(12.dp),
@@ -1081,7 +1149,7 @@ fun MailboxOnboardingView(
                                     }
                                     Spacer(Modifier.height(24.dp))
                                     Button(
-                                        onClick = { domainStep = 4 },
+                                        onClick = { backStack.add(OnboardingTrack.Domain(4)) },
                                         enabled = customBackupEmail.contains("@") && customBackupEmail.contains("."),
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                                         shape = RoundedCornerShape(12.dp),
@@ -1179,7 +1247,7 @@ fun MailboxOnboardingView(
                                     }
                                     Spacer(Modifier.height(24.dp))
                                     Button(
-                                        onClick = { domainStep = 5 },
+                                        onClick = { backStack.add(OnboardingTrack.Domain(5)) },
                                         enabled = customDomain.isNotBlank() && !isCheckingDomain && availability?.alreadyInInboxies != true,
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                                         shape = RoundedCornerShape(12.dp),
@@ -1327,7 +1395,7 @@ fun MailboxOnboardingView(
                                                         try { ApiClient.shared.fixDomainEmailDns(domain) } catch (_: Exception) {}
                                                     }
                                                 }
-                                                domainStep = 6
+                                                backStack.add(OnboardingTrack.Domain(6))
                                             },
                                             colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                                             shape = RoundedCornerShape(12.dp),
@@ -1372,7 +1440,7 @@ fun MailboxOnboardingView(
                                                     if (res.domain.nameservers.isNotEmpty()) {
                                                         activeNameservers = res.domain.nameservers
                                                     }
-                                                    domainStep = 7
+                                                    backStack.add(OnboardingTrack.Domain(7))
                                                 } catch (e: Exception) {
                                                     errorMessage = e.message ?: "Failed to provision mailbox"
                                                 } finally {
@@ -1477,7 +1545,7 @@ fun MailboxOnboardingView(
                                                         ApiClient.shared.setupDomainUsers(domain, payload)
                                                     } catch (_: Exception) {}
                                                 }
-                                                domainStep = 8
+                                                backStack.add(OnboardingTrack.Domain(8))
                                             }
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
@@ -1487,7 +1555,7 @@ fun MailboxOnboardingView(
                                         Text("Continue", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
                                     }
                                     Spacer(Modifier.height(8.dp))
-                                    TextButton(onClick = { domainStep = 8 }, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = { backStack.add(OnboardingTrack.Domain(8)) }, modifier = Modifier.fillMaxWidth()) {
                                         Text("Skip", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.muted)
                                     }
                                 }
@@ -1582,7 +1650,7 @@ fun MailboxOnboardingView(
                                                         ApiClient.shared.setupDomainAliases(domain, payload)
                                                     } catch (_: Exception) {}
                                                 }
-                                                domainStep = 9
+                                                backStack.add(OnboardingTrack.Domain(9))
                                             }
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
@@ -1592,7 +1660,7 @@ fun MailboxOnboardingView(
                                         Text("Continue", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
                                     }
                                     Spacer(Modifier.height(8.dp))
-                                    TextButton(onClick = { domainStep = 9 }, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = { backStack.add(OnboardingTrack.Domain(9)) }, modifier = Modifier.fillMaxWidth()) {
                                         Text("Skip", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.muted)
                                     }
                                 }
@@ -1629,7 +1697,7 @@ fun MailboxOnboardingView(
 
                                     Spacer(Modifier.height(24.dp))
                                     Button(
-                                        onClick = { domainStep = 10 },
+                                        onClick = { backStack.add(OnboardingTrack.Domain(10)) },
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -1673,7 +1741,7 @@ fun MailboxOnboardingView(
 
                                     Spacer(Modifier.height(24.dp))
                                     Button(
-                                        onClick = { domainStep = 11 },
+                                        onClick = { backStack.add(OnboardingTrack.Domain(11)) },
                                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -1681,7 +1749,7 @@ fun MailboxOnboardingView(
                                         Text("Continue", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
                                     }
                                     Spacer(Modifier.height(8.dp))
-                                    TextButton(onClick = { domainStep = 11 }, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = { backStack.add(OnboardingTrack.Domain(11)) }, modifier = Modifier.fillMaxWidth()) {
                                         Text("Skip", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.muted)
                                     }
                                 }
@@ -1761,15 +1829,59 @@ fun MailboxOnboardingView(
                             }
                         }
                     }
+                    }
                 }
 
                 is OnboardingTrack.DnsWizard -> {
                     Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(24.dp),
+                        modifier = Modifier.fillMaxSize(),
                     ) {
+                        // Subsequent step toolbar: left side back button only
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp)
+                                .padding(top = 14.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .liquidGlass(CircleShape)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                        navigateBack()
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = colors.ink,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+
+                            if (auth.isAuthenticated && onDismiss == null) {
+                                TextButton(onClick = {
+                                    app.reset()
+                                    auth.signOut()
+                                }) {
+                                    Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
+                                }
+                            } else {
+                                Spacer(Modifier.size(42.dp))
+                            }
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(24.dp),
+                        ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(24.dp))
                             Spacer(Modifier.width(8.dp))
@@ -1814,6 +1926,7 @@ fun MailboxOnboardingView(
                         ) {
                             Text("Go to Inbox", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                         }
+                    }
                     }
                 }
             }

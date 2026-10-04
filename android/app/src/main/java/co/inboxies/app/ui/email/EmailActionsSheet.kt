@@ -162,6 +162,7 @@ fun EmailActionsSheet(
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
     val folders by app.folders.collectAsState()
     val availability = EmailActionAvailability(email)
     val fromList = onRemoveFromList != null

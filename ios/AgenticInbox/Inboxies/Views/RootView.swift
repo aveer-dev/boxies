@@ -274,9 +274,12 @@ struct MailboxOnboardingView: View {
 
     enum OnboardingTrack: Equatable, Hashable {
         case select
-        case personal
-        case domain
+        case personal(step: Int)
+        case domain(step: Int)
         case dnsWizard(domain: String, nameservers: [String])
+
+        static var personal: OnboardingTrack { .personal(step: 1) }
+        static var domain: OnboardingTrack { .domain(step: 1) }
     }
 
     struct OnboardingUserItem: Identifiable, Hashable {
@@ -296,12 +299,12 @@ struct MailboxOnboardingView: View {
     var onDismiss: (() -> Void)? = nil
     var showsDragHandle: Bool = false
     var safeAreaTop: CGFloat = 0
+    var isAtRoot: Binding<Bool> = .constant(true)
 
     @State private var navigationPath: [OnboardingTrack] = []
     @State private var devTapCount = 0
 
     // Personal track state (4 steps)
-    @State private var personalStep = 1
     @State private var personalName = ""
     @State private var personalPassword = ""
     @State private var isPersonalPasswordVisible = false
@@ -309,7 +312,6 @@ struct MailboxOnboardingView: View {
     @State private var personalUsername = ""
 
     // Custom domain track state (11 steps)
-    @State private var domainStep = 1
     @State private var customName = ""
     @State private var customPassword = ""
     @State private var isCustomPasswordVisible = false
@@ -349,65 +351,101 @@ struct MailboxOnboardingView: View {
         initialTrack: OnboardingTrack = .select,
         onDismiss: (() -> Void)? = nil,
         showsDragHandle: Bool = false,
-        safeAreaTop: CGFloat = 0
+        safeAreaTop: CGFloat = 0,
+        isAtRoot: Binding<Bool> = .constant(true)
     ) {
         self.initialTrack = initialTrack
         self.onDismiss = onDismiss
         self.showsDragHandle = showsDragHandle
         self.safeAreaTop = safeAreaTop
+        self.isAtRoot = isAtRoot
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-previewDomainOnboarding") {
-            _navigationPath = State(initialValue: [.domain])
+            _navigationPath = State(initialValue: [.domain(step: 1)])
             return
         }
         #endif
         switch initialTrack {
         case .select:
             _navigationPath = State(initialValue: [])
-        case .personal:
-            _navigationPath = State(initialValue: [.personal])
-        case .domain:
-            _navigationPath = State(initialValue: [.domain])
+        case .personal(let step):
+            _navigationPath = State(initialValue: [.personal(step: step)])
+        case .domain(let step):
+            _navigationPath = State(initialValue: [.domain(step: step)])
         case .dnsWizard(let domain, let nameservers):
             _navigationPath = State(initialValue: [.dnsWizard(domain: domain, nameservers: nameservers)])
         }
     }
 
     private var canGoBack: Bool {
-        if !navigationPath.isEmpty {
-            return true
-        }
-        if personalStep > 1 {
-            return true
-        }
-        if domainStep > 1 && domainStep < 11 {
-            return true
-        }
-        return false
+        !navigationPath.isEmpty
     }
 
     private func handleBack() {
-        if let current = navigationPath.last {
-            switch current {
-            case .select:
-                break
-            case .personal:
-                handlePersonalBack()
-            case .domain:
-                handleDomainBack()
-            case .dnsWizard:
-                if !navigationPath.isEmpty {
-                    navigationPath.removeLast()
-                } else {
-                    onDismiss?()
-                }
-            }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        errorMessage = nil
+        if !navigationPath.isEmpty {
+            navigationPath.removeLast()
+        } else {
+            onDismiss?()
         }
     }
 
-    private var headerNavigationBar: some View {
+    private var selectStepToolbar: some View {
+        VStack(spacing: 0) {
+            if showsDragHandle {
+                Color.clear
+                    .frame(height: 24)
+                    .overlay {
+                        Capsule()
+                            .fill(AppTheme.line)
+                            .frame(width: 36, height: 5)
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.top, max(safeAreaTop, 44) + 12)
+            }
+
+            HStack {
+                if auth.isAuthenticated && onDismiss == nil {
+                    Button("Sign out", role: .destructive) {
+                        app.reset()
+                        auth.signOut()
+                    }
+                    .foregroundStyle(.red)
+                } else {
+                    Spacer()
+                        .frame(width: 42, height: 42)
+                }
+
+                Spacer()
+
+                if let onDismiss {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onDismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AppTheme.ink)
+                            .frame(width: 42, height: 42)
+                            .liquidGlass(in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
+                } else {
+                    Spacer()
+                        .frame(width: 42, height: 42)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, showsDragHandle ? 14 : max(safeAreaTop, 16))
+            .padding(.bottom, 8)
+        }
+    }
+
+    private func subsequentStepToolbar(showsBack: Bool = true) -> some View {
         HStack {
-            if canGoBack {
+            if showsBack {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     handleBack()
@@ -420,12 +458,6 @@ struct MailboxOnboardingView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back")
-            } else if auth.isAuthenticated && onDismiss == nil {
-                Button("Sign out", role: .destructive) {
-                    app.reset()
-                    auth.signOut()
-                }
-                .foregroundStyle(.red)
             } else {
                 Spacer()
                     .frame(width: 42, height: 42)
@@ -433,20 +465,7 @@ struct MailboxOnboardingView: View {
 
             Spacer()
 
-            if let onDismiss {
-                Button {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    onDismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(AppTheme.ink)
-                        .frame(width: 42, height: 42)
-                        .liquidGlass(in: Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close")
-            } else if auth.isAuthenticated && canGoBack {
+            if auth.isAuthenticated && onDismiss == nil {
                 Button("Sign out", role: .destructive) {
                     app.reset()
                     auth.signOut()
@@ -458,153 +477,154 @@ struct MailboxOnboardingView: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.top, showsDragHandle ? 14 : max(safeAreaTop, 16))
+        .padding(.top, 14)
         .padding(.bottom, 8)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if showsDragHandle {
-                Capsule()
-                    .fill(AppTheme.line)
-                    .frame(width: 36, height: 5)
-                    .padding(.top, max(safeAreaTop, 44) + 16)
-            }
-
-            headerNavigationBar
-
-            NavigationStack(path: $navigationPath) {
-                selectStepView
-                    .navigationDestination(for: OnboardingTrack.self) { track in
-                        switch track {
-                        case .select:
-                            EmptyView()
-                        case .personal:
-                            personalStepView
-                        case .domain:
-                            domainStepView
-                        case .dnsWizard(let domain, let nameservers):
-                            dnsWizardStepView(domain: domain, nameservers: nameservers)
-                        }
+        NavigationStack(path: $navigationPath) {
+            selectStepView
+                .navigationDestination(for: OnboardingTrack.self) { track in
+                    switch track {
+                    case .select:
+                        EmptyView()
+                    case .personal(let step):
+                        personalStepView(step: step)
+                    case .domain(let step):
+                        domainStepView(step: step)
+                    case .dnsWizard(let domain, let nameservers):
+                        dnsWizardStepView(domain: domain, nameservers: nameservers)
                     }
-                    .toolbar(.hidden, for: .navigationBar)
-            }
+                }
+                .toolbar(.hidden, for: .navigationBar)
         }
-        .safeAreaPadding(.top)
         .background(AppTheme.surface)
+        .onChange(of: navigationPath) { _, newPath in
+            isAtRoot.wrappedValue = newPath.isEmpty
+        }
+        .onAppear {
+            isAtRoot.wrappedValue = navigationPath.isEmpty
+        }
     }
 
     private var selectStepView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 32) {
-                if let error = app.errorMessage {
+        VStack(spacing: 0) {
+            selectStepToolbar
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 32) {
+                    if let error = app.errorMessage {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .foregroundStyle(AppTheme.deepDarkRed)
+                                Text("Could not load mailboxes: \(error)")
+                                    .font(.inter(size: 13, weight: .medium))
+                                    .foregroundStyle(AppTheme.deepDarkRed)
+                            }
+                            Button {
+                                Task {
+                                    await app.refreshMailboxes(showLoading: true)
+                                }
+                            } label: {
+                                Text("Retry")
+                                    .font(.inter(size: 13, weight: .semibold))
+                                    .foregroundStyle(AppTheme.accent)
+                            }
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AppTheme.deepDarkRed.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(AppTheme.deepDarkRed)
-                            Text("Could not load mailboxes: \(error)")
-                                .font(.inter(size: 13, weight: .medium))
-                                .foregroundStyle(AppTheme.deepDarkRed)
-                        }
+                        Text("Welcome to Inboxies")
+                            .font(.inter(size: 28, weight: .bold))
+                            .foregroundStyle(AppTheme.ink)
+                        Text("Choose how you would like to set up your email.")
+                            .font(.inter(size: 16))
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    .padding(.top, 12)
+
+                    VStack(spacing: 14) {
                         Button {
-                            Task {
-                                await app.refreshMailboxes(showLoading: true)
-                            }
+                            navigationPath.append(.personal)
                         } label: {
-                            Text("Retry")
-                                .font(.inter(size: 13, weight: .semibold))
-                                .foregroundStyle(AppTheme.accent)
-                        }
-                    }
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppTheme.deepDarkRed.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
+                            HStack(spacing: 16) {
+                                Image(systemName: "envelope")
+                                    .font(.system(size: 22, weight: .regular))
+                                    .foregroundStyle(AppTheme.accent)
+                                    .frame(width: 36, height: 36)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Welcome to Inboxies")
-                        .font(.inter(size: 28, weight: .bold))
-                        .foregroundStyle(AppTheme.ink)
-                    Text("Choose how you would like to set up your email.")
-                        .font(.inter(size: 16))
-                        .foregroundStyle(AppTheme.muted)
-                }
-                .padding(.top, 12)
-
-                VStack(spacing: 14) {
-                    Button {
-                        navigationPath.append(.personal)
-                    } label: {
-                        HStack(spacing: 16) {
-                            Image(systemName: "envelope")
-                                .font(.system(size: 22, weight: .regular))
-                                .foregroundStyle(AppTheme.accent)
-                                .frame(width: 36, height: 36)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Personal Address")
-                                    .font(.inter(size: 15, weight: .semibold))
-                                    .foregroundStyle(AppTheme.ink)
-                                Text("Instant @\(app.mailDomain) email. No setup required.")
-                                    .font(.inter(size: 13))
-                                    .foregroundStyle(AppTheme.muted)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Personal Address")
+                                        .font(.inter(size: 15, weight: .semibold))
+                                        .foregroundStyle(AppTheme.ink)
+                                    Text("Instant @\(app.mailDomain) email. No setup required.")
+                                        .font(.inter(size: 13))
+                                        .foregroundStyle(AppTheme.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
                             }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 16)
+                            .background(AppTheme.pillFill)
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 16)
-                        .background(AppTheme.pillFill)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
+                        .buttonStyle(.plain)
 
-                    Button {
-                        navigationPath.append(.domain)
-                    } label: {
-                        HStack(spacing: 16) {
-                            Image(systemName: "globe")
-                                .font(.system(size: 22, weight: .regular))
-                                .foregroundStyle(AppTheme.accent)
-                                .frame(width: 36, height: 36)
+                        Button {
+                            navigationPath.append(.domain)
+                        } label: {
+                            HStack(spacing: 16) {
+                                Image(systemName: "globe")
+                                    .font(.system(size: 22, weight: .regular))
+                                    .foregroundStyle(AppTheme.accent)
+                                    .frame(width: 36, height: 36)
 
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Custom Domain")
-                                    .font(.inter(size: 15, weight: .semibold))
-                                    .foregroundStyle(AppTheme.ink)
-                                Text("We'll automate your custom domain setup via Cloudflare DNS.")
-                                    .font(.inter(size: 13))
-                                    .foregroundStyle(AppTheme.muted)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Custom Domain")
+                                        .font(.inter(size: 15, weight: .semibold))
+                                        .foregroundStyle(AppTheme.ink)
+                                    Text("We'll automate your custom domain setup via Cloudflare DNS.")
+                                        .font(.inter(size: 13))
+                                        .foregroundStyle(AppTheme.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(Color(uiColor: .tertiaryLabel))
                             }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Color(uiColor: .tertiaryLabel))
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 16)
+                            .background(AppTheme.pillFill)
+                            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                         }
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 16)
-                        .background(AppTheme.pillFill)
-                        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 32)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 32)
+            .scrollBounceBehavior(.basedOnSize)
         }
         .background(AppTheme.surface)
+        .ignoresSafeArea(.container, edges: .top)
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     // MARK: - Personal Track
 
-    private var isPersonalContinueEnabled: Bool {
-        switch personalStep {
+    private func isPersonalContinueEnabled(step: Int) -> Bool {
+        switch step {
         case 1:
             return !personalName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case 2:
@@ -618,47 +638,22 @@ struct MailboxOnboardingView: View {
         }
     }
 
-    private var personalContinueTitle: String {
-        if personalStep == 4 {
+    private func personalContinueTitle(step: Int) -> String {
+        if step == 4 {
             return auth.isAuthenticated ? "Create Mailbox" : "Create Account"
         }
         return "Continue"
     }
 
-    private func handlePersonalBack() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        errorMessage = nil
-        if auth.isAuthenticated && personalStep == 4 {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                personalStep = 1
-            }
-        } else if personalStep > 1 {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                personalStep -= 1
-            }
-        } else {
-            if !navigationPath.isEmpty {
-                navigationPath.removeLast()
-            } else {
-                onDismiss?()
-            }
-        }
-    }
-
-    private func handlePersonalContinue() {
-        switch personalStep {
+    private func handlePersonalContinue(from step: Int) {
+        switch step {
         case 1:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                personalStep = auth.isAuthenticated ? 4 : 2
-            }
+            let nextStep = auth.isAuthenticated ? 4 : 2
+            navigationPath.append(.personal(step: nextStep))
         case 2:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                personalStep = 3
-            }
+            navigationPath.append(.personal(step: 3))
         case 3:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                personalStep = 4
-            }
+            navigationPath.append(.personal(step: 4))
         case 4:
             Task { await createPersonal() }
         default:
@@ -666,9 +661,9 @@ struct MailboxOnboardingView: View {
         }
     }
 
-    private var personalStepHeader: some View {
+    private func personalStepHeader(step: Int) -> some View {
         let (title, subtitle): (String, String) = {
-            switch personalStep {
+            switch step {
             case 1:
                 return ("What's your name?", "Tell us what to call you. This will be shown on your outgoing emails.")
             case 2:
@@ -687,8 +682,8 @@ struct MailboxOnboardingView: View {
     }
 
     @ViewBuilder
-    private var personalStepFields: some View {
-        switch personalStep {
+    private func personalStepFields(step: Int) -> some View {
+        switch step {
         case 1:
             OnboardingCapsuleTextField(
                 "Full Name (e.g. Alex Miller)",
@@ -699,8 +694,8 @@ struct MailboxOnboardingView: View {
                 submitLabel: .next,
                 autoFocus: true,
                 onSubmit: {
-                    if isPersonalContinueEnabled {
-                        handlePersonalContinue()
+                    if isPersonalContinueEnabled(step: 1) {
+                        handlePersonalContinue(from: 1)
                     }
                 }
             )
@@ -715,8 +710,8 @@ struct MailboxOnboardingView: View {
                     submitLabel: .next,
                     autoFocus: true,
                     onSubmit: {
-                        if isPersonalContinueEnabled {
-                            handlePersonalContinue()
+                        if isPersonalContinueEnabled(step: 2) {
+                            handlePersonalContinue(from: 2)
                         }
                     }
                 ) {
@@ -750,8 +745,8 @@ struct MailboxOnboardingView: View {
                     submitLabel: .next,
                     autoFocus: true,
                     onSubmit: {
-                        if isPersonalContinueEnabled {
-                            handlePersonalContinue()
+                        if isPersonalContinueEnabled(step: 3) {
+                            handlePersonalContinue(from: 3)
                         }
                     }
                 )
@@ -779,8 +774,8 @@ struct MailboxOnboardingView: View {
                 submitLabel: .go,
                 autoFocus: true,
                 onSubmit: {
-                    if isPersonalContinueEnabled {
-                        handlePersonalContinue()
+                    if isPersonalContinueEnabled(step: step) {
+                        handlePersonalContinue(from: step)
                     }
                 }
             ) {
@@ -793,42 +788,48 @@ struct MailboxOnboardingView: View {
     }
 
     @ViewBuilder
-    private var personalStepView: some View {
+    private func personalStepView(step: Int) -> some View {
         if app.isAdmin && ProcessInfo.processInfo.arguments.contains("-previewDomainAdmin") {
             DomainAdminSettingsView(showsDismiss: false)
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    personalStepHeader
+            VStack(spacing: 0) {
+                subsequentStepToolbar(showsBack: true)
 
-                    if let errorMessage {
-                        HStack(spacing: 8) {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundStyle(AppTheme.deepDarkRed)
-                            Text(errorMessage)
-                                .font(.inter(size: 13))
-                                .foregroundStyle(AppTheme.deepDarkRed)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        personalStepHeader(step: step)
+
+                        if let errorMessage {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(AppTheme.deepDarkRed)
+                                Text(errorMessage)
+                                    .font(.inter(size: 13))
+                                    .foregroundStyle(AppTheme.deepDarkRed)
+                            }
+                            .padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
-                    }
 
-                    personalStepFields
+                        personalStepFields(step: step)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 16)
-                .padding(.bottom, 24)
+                .scrollDismissesKeyboard(.interactively)
             }
-            .scrollDismissesKeyboard(.interactively)
             .background(AppTheme.surface)
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 8) {
                     OnboardingContinueButton(
-                        title: personalContinueTitle,
-                        isEnabled: isPersonalContinueEnabled,
+                        title: personalContinueTitle(step: step),
+                        isEnabled: isPersonalContinueEnabled(step: step),
                         isSubmitting: isSubmitting,
-                        action: handlePersonalContinue
+                        action: {
+                            handlePersonalContinue(from: step)
+                        }
                     )
                 }
                 .padding(.horizontal, 24)
@@ -852,8 +853,8 @@ struct MailboxOnboardingView: View {
 
     // MARK: - Custom Domain Track
 
-    private var isDomainContinueEnabled: Bool {
-        switch domainStep {
+    private func isDomainContinueEnabled(step: Int) -> Bool {
+        switch step {
         case 1:
             return !customName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case 2:
@@ -881,8 +882,8 @@ struct MailboxOnboardingView: View {
         }
     }
 
-    private var domainContinueTitle: String {
-        switch domainStep {
+    private func domainContinueTitle(step: Int) -> String {
+        switch step {
         case 5:
             if domainAction == "purchase" && (availability?.available == true) {
                 let total = availability?.pricing?.totalAnnualUsd ?? availability?.retailPriceUsd ?? 20.0
@@ -908,73 +909,41 @@ struct MailboxOnboardingView: View {
         }
     }
 
-    private var domainSkipAction: (() -> Void)? {
-        switch domainStep {
+    private func domainSkipAction(step: Int) -> (() -> Void)? {
+        switch step {
         case 7:
             return {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    domainStep = 8
-                }
+                navigationPath.append(.domain(step: 8))
             }
         case 8:
             return {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    domainStep = 9
-                }
+                navigationPath.append(.domain(step: 9))
             }
         case 10:
             return {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    domainStep = 11
-                }
+                navigationPath.append(.domain(step: 11))
             }
         default:
             return nil
         }
     }
 
-    private func handleDomainBack() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        errorMessage = nil
-        if domainStep > 1 && domainStep < 11 {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep -= 1
-            }
-        } else {
-            if !navigationPath.isEmpty {
-                navigationPath.removeLast()
-            } else {
-                onDismiss?()
-            }
-        }
-    }
-
-    private func handleDomainContinue() {
-        switch domainStep {
+    private func handleDomainContinue(from step: Int) {
+        switch step {
         case 1:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep = 2
-            }
+            navigationPath.append(.domain(step: 2))
         case 2:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep = 3
-            }
+            navigationPath.append(.domain(step: 3))
         case 3:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep = 4
-            }
+            navigationPath.append(.domain(step: 4))
         case 4:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep = 5
-            }
+            navigationPath.append(.domain(step: 5))
         case 5:
             if domainAction == "purchase" && (availability?.available == true) {
                 Task { await startInAppBrowserPayment() }
             } else {
                 startDnsWatcher()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    domainStep = 6
-                }
+                navigationPath.append(.domain(step: 6))
             }
         case 6:
             Task { await provisionDomainAccount() }
@@ -983,13 +952,9 @@ struct MailboxOnboardingView: View {
         case 8:
             Task { await persistAliases() }
         case 9:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep = 10
-            }
+            navigationPath.append(.domain(step: 10))
         case 10:
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep = 11
-            }
+            navigationPath.append(.domain(step: 11))
         case 11:
             Task {
                 await app.refreshMailboxes(showLoading: true)
@@ -1000,9 +965,9 @@ struct MailboxOnboardingView: View {
         }
     }
 
-    private var domainStepHeader: some View {
+    private func domainStepHeader(step: Int) -> some View {
         let (title, subtitle): (String, String) = {
-            switch domainStep {
+            switch step {
             case 1:
                 return ("Admin Name", "Provide your full name for administrator communications.")
             case 2:
@@ -1038,53 +1003,59 @@ struct MailboxOnboardingView: View {
         )
     }
 
-    private var domainStepView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                domainStepHeader
+    private func domainStepView(step: Int) -> some View {
+        VStack(spacing: 0) {
+            subsequentStepToolbar(showsBack: step < 11)
 
-                if let errorMessage {
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(AppTheme.deepDarkRed)
-                        Text(errorMessage)
-                            .font(.inter(size: 13))
-                            .foregroundStyle(AppTheme.deepDarkRed)
-                    }
-                    .padding(.vertical, 4)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    domainStepHeader(step: step)
 
-                if isPaymentSyncing {
-                    HStack(spacing: 12) {
-                        ProgressView()
-                        Text("Syncing domain payment and configuring DNS...")
-                            .font(.inter(size: 14))
-                            .foregroundStyle(AppTheme.ink)
+                    if let errorMessage {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(AppTheme.deepDarkRed)
+                            Text(errorMessage)
+                                .font(.inter(size: 13))
+                                .foregroundStyle(AppTheme.deepDarkRed)
+                        }
+                        .padding(.vertical, 4)
                     }
-                    .padding(.vertical, 16)
-                } else {
-                    domainStepContent
+
+                    if isPaymentSyncing {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Syncing domain payment and configuring DNS...")
+                                .font(.inter(size: 14))
+                                .foregroundStyle(AppTheme.ink)
+                        }
+                        .padding(.vertical, 16)
+                    } else {
+                        domainStepContent(step: step)
+                    }
                 }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 24)
+            .scrollDismissesKeyboard(.interactively)
         }
-        .scrollDismissesKeyboard(.interactively)
         .background(AppTheme.surface)
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .bottom) {
             if !isPaymentSyncing {
                 VStack(spacing: 8) {
                     OnboardingContinueButton(
-                        title: domainContinueTitle,
-                        isEnabled: isDomainContinueEnabled,
+                        title: domainContinueTitle(step: step),
+                        isEnabled: isDomainContinueEnabled(step: step),
                         isSubmitting: isSubmitting,
-                        action: handleDomainContinue
+                        action: {
+                            handleDomainContinue(from: step)
+                        }
                     )
 
-                    if let skip = domainSkipAction {
+                    if let skip = domainSkipAction(step: step) {
                         Button("Skip") {
                             skip()
                         }
@@ -1114,8 +1085,8 @@ struct MailboxOnboardingView: View {
     }
 
     @ViewBuilder
-    private var domainStepContent: some View {
-        switch domainStep {
+    private func domainStepContent(step: Int) -> some View {
+        switch step {
         case 1:
             OnboardingCapsuleTextField(
                 "Full Name (e.g. Alex Miller)",
@@ -1126,8 +1097,8 @@ struct MailboxOnboardingView: View {
                 submitLabel: .next,
                 autoFocus: true,
                 onSubmit: {
-                    if isDomainContinueEnabled {
-                        handleDomainContinue()
+                    if isDomainContinueEnabled(step: 1) {
+                        handleDomainContinue(from: 1)
                     }
                 }
             )
@@ -1142,8 +1113,8 @@ struct MailboxOnboardingView: View {
                     submitLabel: .next,
                     autoFocus: true,
                     onSubmit: {
-                        if isDomainContinueEnabled {
-                            handleDomainContinue()
+                        if isDomainContinueEnabled(step: 2) {
+                            handleDomainContinue(from: 2)
                         }
                     }
                 ) {
@@ -1177,8 +1148,8 @@ struct MailboxOnboardingView: View {
                     submitLabel: .next,
                     autoFocus: true,
                     onSubmit: {
-                        if isDomainContinueEnabled {
-                            handleDomainContinue()
+                        if isDomainContinueEnabled(step: 3) {
+                            handleDomainContinue(from: 3)
                         }
                     }
                 )
@@ -1422,8 +1393,8 @@ struct MailboxOnboardingView: View {
                     submitLabel: .go,
                     autoFocus: true,
                     onSubmit: {
-                        if isDomainContinueEnabled {
-                            handleDomainContinue()
+                        if isDomainContinueEnabled(step: 6) {
+                            handleDomainContinue(from: 6)
                         }
                     }
                 ) {
@@ -1767,52 +1738,56 @@ struct MailboxOnboardingView: View {
     }
 
     private func dnsWizardStepView(domain: String, nameservers: [String]) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Domain Registered!", systemImage: "checkmark.circle.fill")
-                        .font(.inter(size: 22, weight: .bold))
-                        .foregroundStyle(Color.green)
-                    Text("Cloudflare Email Routing is ready for \(domain).")
-                        .font(.inter(size: 14))
-                        .foregroundStyle(AppTheme.muted)
-                }
+        VStack(spacing: 0) {
+            subsequentStepToolbar(showsBack: true)
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Nameservers")
-                        .font(.inter(size: 13, weight: .semibold))
-                        .foregroundStyle(AppTheme.muted)
-                        .textCase(.uppercase)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("Domain Registered!", systemImage: "checkmark.circle.fill")
+                            .font(.inter(size: 22, weight: .bold))
+                            .foregroundStyle(Color.green)
+                        Text("Cloudflare Email Routing is ready for \(domain).")
+                            .font(.inter(size: 14))
+                            .foregroundStyle(AppTheme.muted)
+                    }
 
-                    VStack(spacing: 10) {
-                        ForEach(nameservers, id: \.self) { ns in
-                            HStack {
-                                Text(ns)
-                                    .font(.system(size: 14, design: .monospaced))
-                                    .foregroundStyle(AppTheme.ink)
-                                Spacer()
-                                Button {
-                                    UIPasteboard.general.string = ns
-                                } label: {
-                                    Image(systemName: "doc.on.doc")
-                                        .foregroundStyle(AppTheme.accent)
-                                        .frame(width: 32, height: 32)
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Nameservers")
+                            .font(.inter(size: 13, weight: .semibold))
+                            .foregroundStyle(AppTheme.muted)
+                            .textCase(.uppercase)
+
+                        VStack(spacing: 10) {
+                            ForEach(nameservers, id: \.self) { ns in
+                                HStack {
+                                    Text(ns)
+                                        .font(.system(size: 14, design: .monospaced))
+                                        .foregroundStyle(AppTheme.ink)
+                                    Spacer()
+                                    Button {
+                                        UIPasteboard.general.string = ns
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .foregroundStyle(AppTheme.accent)
+                                            .frame(width: 32, height: 32)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
-                            }
-                            if ns != nameservers.last {
-                                Divider()
+                                if ns != nameservers.last {
+                                    Divider()
+                                }
                             }
                         }
+                        .padding(16)
+                        .background(AppTheme.pillFill)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     }
-                    .padding(16)
-                    .background(AppTheme.pillFill)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 24)
         }
         .background(AppTheme.surface)
         .toolbar(.hidden, for: .navigationBar)
@@ -1964,9 +1939,9 @@ struct MailboxOnboardingView: View {
 
             _ = try? await APIClient.shared.fixDomainEmailDns(domain: targetDomain)
 
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            await MainActor.run {
                 isPaymentSyncing = false
-                domainStep = 7
+                navigationPath.append(.domain(step: 7))
             }
         }
     }
@@ -1989,8 +1964,8 @@ struct MailboxOnboardingView: View {
             if !res.domain.nameservers.isEmpty {
                 activeNameservers = res.domain.nameservers
             }
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                domainStep = 7
+            await MainActor.run {
+                navigationPath.append(.domain(step: 7))
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -2007,8 +1982,8 @@ struct MailboxOnboardingView: View {
             ] }
             _ = try? await APIClient.shared.setupDomainUsers(domain: domain, users: payload)
         }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-            domainStep = 8
+        await MainActor.run {
+            navigationPath.append(.domain(step: 8))
         }
     }
 
@@ -2021,8 +1996,8 @@ struct MailboxOnboardingView: View {
             ] }
             _ = try? await APIClient.shared.setupDomainAliases(domain: domain, aliases: payload)
         }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-            domainStep = 9
+        await MainActor.run {
+            navigationPath.append(.domain(step: 9))
         }
     }
 
