@@ -682,7 +682,7 @@ final class AgentChatClient: NSObject, ObservableObject {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 25_000_000_000)
                 guard !Task.isCancelled else { break }
-                await self?.sendPing()
+                self?.sendPing()
             }
         }
     }

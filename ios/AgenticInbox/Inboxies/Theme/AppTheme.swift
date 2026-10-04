@@ -361,7 +361,7 @@ struct NavigationBarTitleFont: UIViewControllerRepresentable {
             let muted = AppTheme.uiMuted
 
             func styled(_ existing: UINavigationBarAppearance) -> UINavigationBarAppearance {
-                let appearance = existing.copy() as? UINavigationBarAppearance ?? existing
+                let appearance = existing.copy()
                 appearance.largeTitleTextAttributes[.font] = largeFont
                 appearance.largeTitleTextAttributes[.foregroundColor] = ink
                 appearance.titleTextAttributes[.font] = inlineFont

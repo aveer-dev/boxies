@@ -1176,12 +1176,13 @@ struct MailboxOnboardingView: View {
                     keyboardType: .URL,
                     contentType: .URL,
                     submitLabel: .done,
-                    autoFocus: true
-                ) {
-                    if isCheckingDomain {
-                        ProgressView().controlSize(.small)
+                    autoFocus: true,
+                    trailing: {
+                        if isCheckingDomain {
+                            ProgressView().controlSize(.small)
+                        }
                     }
-                }
+                )
                 .onChange(of: customDomain) { _, newDomain in
                     handleDomainChange(newDomain)
                 }

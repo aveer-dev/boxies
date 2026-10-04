@@ -20,7 +20,7 @@ actor MailboxSyncService {
         startNetworkMonitoring()
     }
 
-    private func startNetworkMonitoring() {
+    nonisolated private func startNetworkMonitoring() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let available = path.status == .satisfied
             Task { [weak self] in
