@@ -1071,6 +1071,13 @@ struct PasswordLoginResponse: Codable {
     var keys: [String]?
 }
 
+struct ForgotPasswordResponse: Codable {
+    var ok: Bool
+    var message: String?
+    var devResetCode: String?
+    var devResetToken: String?
+}
+
 struct InviteCreateResponse: Codable {
     var token: String
     var inviteUrl: String
@@ -1219,6 +1226,19 @@ struct DomainCheckoutResponse: Codable {
     var domain: String
     var priceUsd: Double
     var mock: Bool?
+}
+
+struct DomainAliasItem: Codable, Hashable, Identifiable {
+    var id: String { aliasLocal }
+    var aliasLocal: String
+    var aliasEmail: String
+    var targetMailboxId: String
+    var createdAt: String
+}
+
+struct DomainAliasesResponse: Codable {
+    var domain: String
+    var aliases: [DomainAliasItem]
 }
 
 struct ExportJobProgress: Codable, Hashable {

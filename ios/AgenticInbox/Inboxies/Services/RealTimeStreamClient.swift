@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// Real-time event streaming and adaptive polling client for Inboxies.
 /// Maintains a persistent Server-Sent Events (SSE) stream or low-latency adaptive polling
@@ -8,13 +9,35 @@ final class RealTimeStreamClient: @unchecked Sendable {
 
     private var activeTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
+    private var lifecycleObservers: [NSObjectProtocol] = []
     private var currentMailboxId: String?
 
     var onNewEmailReceived: (@Sendable (Email) -> Void)?
     var onSyncRequested: (@Sendable () -> Void)?
 
+    private lazy var streamSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        // Give the SSE stream a 120-second timeout interval for request chunks so that
+        // server heartbeats (: ping\n\n every 15s) easily maintain connectivity,
+        // and keep resource timeout open for long sessions.
+        configuration.timeoutIntervalForRequest = 120
+        configuration.timeoutIntervalForResource = TimeInterval(7 * 24 * 60 * 60)
+        return URLSession(configuration: configuration)
+    }()
+
+    private init() {
+        setupLifecycleObservers()
+    }
+
+    deinit {
+        for observer in lifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        streamSession.finishTasksAndInvalidate()
+    }
+
     func start(mailboxId: String) {
-        guard currentMailboxId != mailboxId else { return }
+        if currentMailboxId == mailboxId && activeTask != nil { return }
         stop()
         currentMailboxId = mailboxId
 
@@ -37,6 +60,48 @@ final class RealTimeStreamClient: @unchecked Sendable {
         currentMailboxId = nil
     }
 
+    // MARK: - App Lifecycle Handlers
+
+    private func setupLifecycleObservers() {
+        let center = NotificationCenter.default
+        let bg = center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.pauseForBackground()
+        }
+        let fg = center.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.resumeForForeground()
+        }
+        lifecycleObservers = [bg, fg]
+    }
+
+    private func pauseForBackground() {
+        activeTask?.cancel()
+        activeTask = nil
+        pollingTask?.cancel()
+        pollingTask = nil
+    }
+
+    private func resumeForForeground() {
+        guard let mailboxId = currentMailboxId else { return }
+        activeTask?.cancel()
+        pollingTask?.cancel()
+
+        activeTask = Task { [weak self, mailboxId] in
+            await self?.runEventStream(mailboxId: mailboxId)
+        }
+        pollingTask = Task { [weak self, mailboxId] in
+            await self?.runAdaptivePolling(mailboxId: mailboxId)
+        }
+        onSyncRequested?()
+    }
+
     // MARK: - Server-Sent Events (SSE) Stream
 
     private func runEventStream(mailboxId: String) async {
@@ -57,7 +122,7 @@ final class RealTimeStreamClient: @unchecked Sendable {
                     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 }
 
-                let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
+                let (asyncBytes, response) = try await streamSession.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                     try? await Task.sleep(nanoseconds: backoffSeconds * 1_000_000_000)
                     backoffSeconds = min(backoffSeconds * 2, 30)
@@ -83,14 +148,21 @@ final class RealTimeStreamClient: @unchecked Sendable {
                     }
                 }
             } catch {
-                if Task.isCancelled { break }
-                try? await Task.sleep(nanoseconds: backoffSeconds * 1_000_000_000)
-                backoffSeconds = min(backoffSeconds * 2, 30)
+                if Task.isCancelled || (error as? URLError)?.code == .cancelled { break }
+                let isTimeout = (error as? URLError)?.code == .timedOut
+                let sleepSeconds = isTimeout ? 1 : backoffSeconds
+                try? await Task.sleep(nanoseconds: sleepSeconds * 1_000_000_000)
+                if !isTimeout {
+                    backoffSeconds = min(backoffSeconds * 2, 30)
+                }
             }
         }
     }
 
     private func handleServerEvent(event: String, data: String, mailboxId: String) {
+        // Heartbeat or connection confirmation: ignore to prevent unnecessary full mailbox fetches
+        if event == "ping" || event == "connected" { return }
+
         guard let jsonData = data.data(using: .utf8) else { return }
 
         if event == "new_email" || event == "message" {

@@ -27,6 +27,13 @@ class DatabaseService private constructor() {
         emails.entries.removeIf { it.value.folderId != null && it.key.startsWith("$id:") }
     }
 
+    fun clearAll() {
+        mailboxes.clear()
+        folders.clear()
+        emails.clear()
+        folderUnread.clear()
+    }
+
     fun getFolders(mailboxId: String): List<Folder> = folders[mailboxId].orEmpty()
 
     fun upsertFolders(mailboxId: String, list: List<Folder>) {

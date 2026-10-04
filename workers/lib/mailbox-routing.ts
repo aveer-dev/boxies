@@ -19,6 +19,10 @@ export function mailboxMetadataKey(mailboxId: string): string {
 	return `mailboxes/${mailboxId}.json`;
 }
 
+export function aliasMetadataKey(aliasEmail: string): string {
+	return `platform/aliases/${aliasEmail}.json`;
+}
+
 export function canonicalMailboxId(address: string | null | undefined): string | null {
 	if (typeof address !== "string") return null;
 	const trimmed = address.trim();
@@ -66,24 +70,32 @@ export type MailboxExists = (
 ) => boolean | Promise<boolean>;
 
 export type InboundEnvelopeRoute =
-	| { action: "deliver"; mailboxId: string }
+	| { action: "deliver"; mailboxId: string; resolvedViaAlias?: boolean }
 	| { action: "reject"; reason: string };
 
 /**
  * Map one SMTP envelope recipient onto a mailbox, or a permanent bounce.
+ * Checks for direct canonical mailbox, then falls back to alias resolution.
  * `mailboxExists` must be an O(1) key check (R2 HEAD or Set), keyed by
  * the canonical mailbox id — never a linear scan of all mailboxes.
  */
 export async function routeInboundEnvelope(
 	envelopeTo: string | null | undefined,
 	mailboxExists: MailboxExists,
+	resolveAlias?: (aliasEmail: string) => Promise<string | null>,
 ): Promise<InboundEnvelopeRoute> {
 	const mailboxId = canonicalMailboxId(envelopeTo);
 	if (!mailboxId) return { action: "reject", reason: "Invalid recipient" };
-	if (!(await mailboxExists(mailboxId))) {
-		return { action: "reject", reason: "Mailbox does not exist" };
+	if (await mailboxExists(mailboxId)) {
+		return { action: "deliver", mailboxId };
 	}
-	return { action: "deliver", mailboxId };
+	if (resolveAlias) {
+		const targetMailboxId = await resolveAlias(mailboxId);
+		if (targetMailboxId && (await mailboxExists(targetMailboxId))) {
+			return { action: "deliver", mailboxId: targetMailboxId, resolvedViaAlias: true };
+		}
+	}
+	return { action: "reject", reason: "Mailbox does not exist" };
 }
 
 /**

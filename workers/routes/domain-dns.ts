@@ -12,7 +12,11 @@ import {
 	saveDomainMetadata,
 	listDomainsForPrincipal,
 	isPrincipalAdminForDomain,
+	saveEmailAlias,
+	deleteEmailAlias,
+	listEmailAliases,
 	type DomainMetadata,
+	type DomainAlias,
 } from "../lib/domain-registry";
 import {
 	getZone,
@@ -24,9 +28,15 @@ import {
 	updateDnsRecord,
 	deleteDnsRecord,
 	autoConfigureEmailDns,
+	ensureFullEmailDns,
 	auditEmailHealth,
 	type NewDnsRecord,
 } from "../lib/cloudflare-client";
+import { canonicalMailboxId, mailboxMetadataKey } from "../lib/mailbox-routing";
+import { ensurePrincipalAccount } from "../lib/identity-links";
+import { aclFromOwnerKeys, principalKeys } from "../lib/mailbox-acl";
+import { createInviteRecord, saveInvite, inviteAcceptUrl } from "../lib/invites";
+import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 
 type AppVariables = { principal?: RequestPrincipal };
 
@@ -255,61 +265,8 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 		const domain = domainMeta.domain;
 
 		try {
-			// 1. Run Cloudflare automatic email DNS configuration
-			await autoConfigureEmailDns(c.env, domainMeta.zoneId);
-
-			// 2. Fetch current records to check SPF & DMARC
-			const records = await listDnsRecords(c.env, domainMeta.zoneId);
-
-			// Ensure SPF TXT record exists with include:_spf.mx.cloudflare.net without creating duplicate SPF records
-			const rootTxt = records.filter(
-				(r) =>
-					r.type === "TXT" &&
-					(r.name.toLowerCase() === domain || r.name.toLowerCase() === `@.${domain}`),
-			);
-			const existingSpf = rootTxt.find((r) => r.content.toLowerCase().includes("v=spf1"));
-
-			if (!existingSpf) {
-				await createDnsRecord(c.env, domainMeta.zoneId, {
-					type: "TXT",
-					name: domain,
-					content: "v=spf1 include:_spf.mx.cloudflare.net ~all",
-					ttl: 1,
-				});
-			} else if (!existingSpf.content.toLowerCase().includes("include:_spf.mx.cloudflare.net")) {
-				// Safely insert include:_spf.mx.cloudflare.net before all directive, or append
-				let updatedContent: string;
-				if (/(~all|-all|\?all|\+all)/i.test(existingSpf.content)) {
-					updatedContent = existingSpf.content.replace(
-						/(~all|-all|\?all|\+all)/i,
-						"include:_spf.mx.cloudflare.net $1",
-					);
-				} else {
-					updatedContent = `${existingSpf.content} include:_spf.mx.cloudflare.net ~all`;
-				}
-				await updateDnsRecord(c.env, domainMeta.zoneId, existingSpf.id, {
-					type: "TXT",
-					name: existingSpf.name,
-					content: updatedContent,
-					ttl: existingSpf.ttl || 1,
-				});
-			}
-
-			// Ensure DMARC TXT record exists
-			const hasDmarc = records.some(
-				(r) =>
-					r.type === "TXT" &&
-					(r.name.toLowerCase().startsWith("_dmarc") || r.content.includes("v=DMARC1")),
-			);
-
-			if (!hasDmarc) {
-				await createDnsRecord(c.env, domainMeta.zoneId, {
-					type: "TXT",
-					name: `_dmarc.${domain}`,
-					content: "v=DMARC1; p=reject; sp=reject; adkim=r; aspf=r;",
-					ttl: 1,
-				});
-			}
+			// Ensure complete email DNS configuration (MX, SPF, DMARC, Catch-All)
+			await ensureFullEmailDns(c.env, domainMeta.zoneId, domain);
 
 			// Re-audit
 			const updatedZone = await getZone(c.env, domainMeta.zoneId);
@@ -431,5 +388,177 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			const msg = err instanceof Error ? err.message : "Failed to delete DNS record";
 			return c.json({ error: msg }, 502);
 		}
+	});
+
+	/**
+	 * List all email aliases configured for a custom domain.
+	 */
+	app.get("/api/v1/admin/domains/:domain/aliases", async (c) => {
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		if (authz instanceof Response) return authz;
+
+		const { domainMeta } = authz;
+		const aliases = await listEmailAliases(c.env.BUCKET, domainMeta.domain);
+		return c.json({ domain: domainMeta.domain, aliases });
+	});
+
+	/**
+	 * Create an email alias for a custom domain.
+	 */
+	app.post("/api/v1/admin/domains/:domain/aliases", async (c) => {
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		if (authz instanceof Response) return authz;
+
+		const { domainMeta } = authz;
+		const body = (await c.req.json().catch(() => ({}))) as {
+			aliasLocal?: string;
+			targetMailboxId?: string;
+		};
+
+		const aliasLocal = (body.aliasLocal || "").trim().toLowerCase().replace(/^@+/, "");
+		const targetMailboxId = (body.targetMailboxId || "").trim();
+
+		if (!aliasLocal || !/^[a-zA-Z0-9._-]+$/.test(aliasLocal)) {
+			return c.json({ error: "Invalid alias local part" }, 400);
+		}
+		if (!targetMailboxId) {
+			return c.json({ error: "Target mailbox is required" }, 400);
+		}
+
+		try {
+			const alias = await saveEmailAlias(
+				c.env.BUCKET,
+				domainMeta.domain,
+				aliasLocal,
+				targetMailboxId,
+			);
+			return c.json({ success: true, alias }, 201);
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : "Failed to create email alias";
+			return c.json({ error: msg }, 500);
+		}
+	});
+
+	/**
+	 * Delete an email alias for a custom domain.
+	 */
+	app.delete("/api/v1/admin/domains/:domain/aliases/:aliasLocal", async (c) => {
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		if (authz instanceof Response) return authz;
+
+		const { domainMeta } = authz;
+		const aliasLocal = c.req.param("aliasLocal");
+
+		try {
+			await deleteEmailAlias(c.env.BUCKET, domainMeta.domain, aliasLocal);
+			return c.json({ success: true, aliasLocal });
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : "Failed to delete email alias";
+			return c.json({ error: msg }, 500);
+		}
+	});
+
+	/**
+	 * Batch setup aliases during onboarding.
+	 */
+	app.post("/api/v1/admin/domains/:domain/setup-aliases", async (c) => {
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		if (authz instanceof Response) return authz;
+
+		const { domainMeta } = authz;
+		const body = (await c.req.json().catch(() => ({}))) as {
+			aliases?: Array<{ aliasLocal: string; targetMailboxId: string }>;
+		};
+
+		const inputAliases = body.aliases || [];
+		const created: DomainAlias[] = [];
+
+		for (const item of inputAliases) {
+			const local = (item.aliasLocal || "").trim().toLowerCase().replace(/^@+/, "");
+			const target = (item.targetMailboxId || "").trim();
+			if (local && target && /^[a-zA-Z0-9._-]+$/.test(local)) {
+				try {
+					const record = await saveEmailAlias(c.env.BUCKET, domainMeta.domain, local, target);
+					created.push(record);
+				} catch {
+					// continue with next
+				}
+			}
+		}
+
+		return c.json({ success: true, aliases: created });
+	});
+
+	/**
+	 * Batch setup team members/users during onboarding.
+	 */
+	app.post("/api/v1/admin/domains/:domain/setup-users", async (c) => {
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		if (authz instanceof Response) return authz;
+
+		const { domainMeta, principal } = authz;
+		const body = (await c.req.json().catch(() => ({}))) as {
+			users?: Array<{ fullName: string; contactEmail: string; username: string }>;
+		};
+
+		const inputUsers = body.users || [];
+		const results = [];
+		const domain = domainMeta.domain;
+
+		for (const u of inputUsers) {
+			const username = (u.username || "").trim().toLowerCase();
+			if (!username) continue;
+			const fullEmail = `${username}@${domain}`;
+			const canonical = canonicalMailboxId(fullEmail);
+			if (!canonical) continue;
+
+			const key = mailboxMetadataKey(canonical);
+			const exists = await c.env.BUCKET.head(key);
+			if (!exists) {
+				const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
+				const acl = aclFromOwnerKeys(ensured.ownerKeys);
+				const settings = {
+					fromName: u.fullName || username,
+					forwarding: { enabled: false, email: "" },
+					signature: { enabled: false, text: "" },
+					autoReply: { enabled: false, subject: "", message: "" },
+					screener: { enabled: true },
+					acl,
+				};
+				await c.env.BUCKET.put(key, JSON.stringify(settings));
+				const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
+				await stub.reviveMailbox();
+				await stub.getFolders();
+				await seedWelcomeEmailsForMailbox(c.env, canonical, u.fullName || username);
+			}
+
+			// If contactEmail provided, generate invite record
+			let inviteData = null;
+			if (u.contactEmail && u.contactEmail.includes("@")) {
+				const invite = createInviteRecord({
+					mailboxId: canonical,
+					inviteeEmail: u.contactEmail.trim().toLowerCase(),
+					inviteeName: u.fullName || username,
+					role: "owner",
+					createdByKeys: principalKeys(principal),
+				});
+				if ("token" in invite) {
+					await saveInvite(c.env.BUCKET, invite);
+					inviteData = {
+						token: invite.token,
+						inviteUrl: inviteAcceptUrl(c.env.APP_BASE_URL || "", invite.token),
+						inviteeEmail: invite.inviteeEmail,
+					};
+				}
+			}
+
+			results.push({
+				mailboxId: canonical,
+				name: u.fullName || username,
+				invite: inviteData,
+			});
+		}
+
+		return c.json({ success: true, users: results });
 	});
 }

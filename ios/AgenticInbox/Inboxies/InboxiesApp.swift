@@ -12,6 +12,10 @@ struct InboxiesApp: App {
 
     init() {
         AppTheme.configureGlobalAppearance()
+        if let stored = UserDefaults.standard.string(forKey: "apiBaseURL"),
+           (stored.contains("localhost") || stored.contains("127.0.0.1") || stored.contains("10.0.2.2")) {
+            UserDefaults.standard.removeObject(forKey: "apiBaseURL")
+        }
     }
 
     var body: some Scene {

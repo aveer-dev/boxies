@@ -99,6 +99,40 @@ export function computeRetailPrice(wholesalePrice: number): number {
 }
 
 /**
+ * Query DNS-over-HTTPS (DoH) via Cloudflare 1.1.1.1 to verify if a domain
+ * currently has active NS / SOA records on the public internet.
+ */
+export async function checkDomainViaDns(domain: string): Promise<{ registered: boolean }> {
+	try {
+		const dohUrl = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=NS`;
+		const res = await fetch(dohUrl, {
+			headers: { Accept: "application/dns-json" },
+		});
+		if (!res.ok) {
+			return { registered: false };
+		}
+		const data = (await res.json().catch(() => null)) as {
+			Status?: number; // 0 = NOERROR, 3 = NXDOMAIN
+			Answer?: Array<{ name: string; type: number; data: string }>;
+			Authority?: Array<{ name: string; type: number; data: string }>;
+		} | null;
+
+		if (!data) return { registered: false };
+
+		// Status 0 (NOERROR) with NS answer or SOA authority record indicates existing delegation
+		const hasNsAnswer = Array.isArray(data.Answer) && data.Answer.some((a) => a.type === 2);
+		const hasAuthority = Array.isArray(data.Authority) && data.Authority.some((a) => a.type === 2 || a.type === 6);
+
+		if (data.Status === 0 && (hasNsAnswer || hasAuthority)) {
+			return { registered: true };
+		}
+		return { registered: false };
+	} catch {
+		return { registered: false };
+	}
+}
+
+/**
  * Check if a domain is available for registration via Cloudflare Registrar.
  */
 export async function checkDomainAvailability(
@@ -139,22 +173,87 @@ export async function checkDomainAvailability(
 		};
 	}
 
-	// Live Cloudflare API call to check registrar domain status
-	const url = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}`;
-	const res = await fetch(url, {
-		method: "GET",
-		headers: {
-			Authorization: `Bearer ${env.CF_API_TOKEN}`,
-			"Content-Type": "application/json",
-		},
-	});
+	// 1. Authoritative check via Cloudflare Registrar API:
+	// POST /accounts/{account_id}/registrar/domain-check
+	try {
+		const checkUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domain-check`;
+		const res = await fetch(checkUrl, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${env.CF_API_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ domains: [domain] }),
+		});
 
-	if (res.status === 404) {
-		// Domain not found in registrar -> check RDAP / general registry availability
+		if (res.ok) {
+			const data = (await res.json().catch(() => ({}))) as {
+				success?: boolean;
+				result?: {
+					domains?: Array<{
+						name: string;
+						registrable?: boolean;
+						tier?: string;
+						reason?: string;
+						pricing?: {
+							currency?: "USD";
+							registration_cost?: string | number;
+							renewal_cost?: string | number;
+						};
+					}>;
+				} | Array<{
+					name: string;
+					registrable?: boolean;
+					tier?: string;
+					reason?: string;
+					pricing?: {
+						currency?: "USD";
+						registration_cost?: string | number;
+						renewal_cost?: string | number;
+					};
+				}>;
+				errors?: Array<{ code: number; message: string }>;
+			};
+
+			if (data.success !== false && data.result) {
+				const domainList = Array.isArray(data.result)
+					? data.result
+					: Array.isArray(data.result?.domains)
+					? data.result.domains
+					: [];
+				const match = domainList.find((d) => d.name?.toLowerCase() === domain) || domainList[0];
+
+				if (match) {
+					const isRegistrable = Boolean(match.registrable);
+					const rawCost = match.pricing?.registration_cost != null ? Number(match.pricing.registration_cost) : wholesalePrice;
+					const actualWholesale = Number.isFinite(rawCost) && rawCost > 0 ? rawCost : wholesalePrice;
+					const actualRetail = computeRetailPrice(actualWholesale);
+					const isTldSupported = match.reason !== "extension_not_supported" && match.reason !== "extension_not_supported_via_api";
+
+					return {
+						domain,
+						available: isRegistrable,
+						registered: !isRegistrable && isTldSupported,
+						wholesalePriceUsd: actualWholesale,
+						retailPriceUsd: actualRetail,
+						tldSupported: isTldSupported && isSupportedTld,
+						currency: "USD",
+						supportedTld: tld,
+					};
+				}
+			}
+		}
+	} catch (err: unknown) {
+		console.warn(`[cloudflare-registrar] domain-check API query error for ${domain}:`, err);
+	}
+
+	// 2. Fallback: Query Public DNS over HTTPS (1.1.1.1) to verify whether domain is registered on the internet
+	const dnsCheck = await checkDomainViaDns(domain);
+	if (dnsCheck.registered) {
 		return {
 			domain,
-			available: true,
-			registered: false,
+			available: false,
+			registered: true,
 			wholesalePriceUsd: wholesalePrice,
 			retailPriceUsd: retailPrice,
 			tldSupported: isSupportedTld,
@@ -163,19 +262,11 @@ export async function checkDomainAvailability(
 		};
 	}
 
-	if (!res.ok) {
-		const errData = (await res.json().catch(() => ({}))) as {
-			errors?: Array<{ code: number; message: string }>;
-		};
-		const msg = errData.errors?.[0]?.message || `Cloudflare Registrar error: ${res.status}`;
-		throw new CloudflareApiError(res.status, msg, errData.errors || []);
-	}
-
-	// Domain already exists in registrar
+	// 3. Fallback: If not found on DNS and TLD is supported, domain is available to purchase
 	return {
 		domain,
-		available: false,
-		registered: true,
+		available: isSupportedTld,
+		registered: false,
 		wholesalePriceUsd: wholesalePrice,
 		retailPriceUsd: retailPrice,
 		tldSupported: isSupportedTld,
@@ -220,25 +311,45 @@ export async function registerDomain(
 		return result;
 	}
 
-	const url = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains`;
-	const res = await fetch(url, {
+	// 1. Try modern Cloudflare Registrar API: POST /accounts/{account_id}/registrar/registrations
+	const registrationsUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/registrations`;
+	let res = await fetch(registrationsUrl, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${env.CF_API_TOKEN}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({
-			name: domain,
+			domain_name: domain,
 			auto_renew: true,
 			privacy: true,
 			contacts: contact,
 		}),
 	});
 
+	// If 404/405 on registrations, fall back to legacy POST /accounts/{account_id}/registrar/domains
+	if (res.status === 404 || res.status === 405) {
+		const legacyUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains`;
+		res = await fetch(legacyUrl, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${env.CF_API_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				name: domain,
+				auto_renew: true,
+				privacy: true,
+				contacts: contact,
+			}),
+		});
+	}
+
 	const data = (await res.json().catch(() => ({}))) as {
 		success?: boolean;
 		result?: {
-			name: string;
+			name?: string;
+			domain_name?: string;
 			expires_at?: string;
 			auto_renew?: boolean;
 			locked?: boolean;
@@ -289,14 +400,27 @@ export async function getDomainEppCode(
 		return `EPP-${prefix || "MOCK"}-998877`;
 	}
 
-	const url = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}/transfer_auth_code`;
-	const res = await fetch(url, {
+	// Try modern /registrar/registrations/{domain}/transfer_auth_code
+	const modernUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/registrations/${encodeURIComponent(domain)}/transfer_auth_code`;
+	let res = await fetch(modernUrl, {
 		method: "GET",
 		headers: {
 			Authorization: `Bearer ${env.CF_API_TOKEN}`,
 			"Content-Type": "application/json",
 		},
 	});
+
+	if (res.status === 404 || res.status === 405) {
+		// Fallback to legacy /registrar/domains/{domain}/transfer_auth_code
+		const legacyUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}/transfer_auth_code`;
+		res = await fetch(legacyUrl, {
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${env.CF_API_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+		});
+	}
 
 	const data = (await res.json().catch(() => ({}))) as {
 		success?: boolean;
@@ -332,15 +456,29 @@ export async function setDomainTransferLock(
 		return locked;
 	}
 
-	const url = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}`;
-	const res = await fetch(url, {
-		method: "PUT",
+	// Try modern PATCH /accounts/{account_id}/registrar/registrations/{domain}
+	const patchUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/registrations/${encodeURIComponent(domain)}`;
+	let res = await fetch(patchUrl, {
+		method: "PATCH",
 		headers: {
 			Authorization: `Bearer ${env.CF_API_TOKEN}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({ locked }),
 	});
+
+	if (res.status === 404 || res.status === 405) {
+		// Fallback to legacy PUT /accounts/{account_id}/registrar/domains/{domain}
+		const legacyUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}`;
+		res = await fetch(legacyUrl, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${env.CF_API_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ locked }),
+		});
+	}
 
 	const data = (await res.json().catch(() => ({}))) as {
 		success?: boolean;

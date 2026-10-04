@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import co.inboxies.app.config.AppConfig
+import co.inboxies.app.models.ForgotPasswordResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -92,6 +93,37 @@ class AuthStore(context: Context) {
             persist(response.token, response.email ?: email)
         } catch (e: Exception) {
             _errorMessage.value = e.message
+        } finally {
+            _isBusy.value = false
+        }
+    }
+
+    suspend fun forgotPassword(email: String): ForgotPasswordResponse {
+        _isBusy.value = true
+        _errorMessage.value = null
+        return try {
+            withContext(Dispatchers.IO) {
+                ApiClient.shared.forgotPassword(email)
+            }
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+            throw e
+        } finally {
+            _isBusy.value = false
+        }
+    }
+
+    suspend fun resetPassword(token: String? = null, code: String? = null, newPassword: String) {
+        _isBusy.value = true
+        _errorMessage.value = null
+        try {
+            val response = withContext(Dispatchers.IO) {
+                ApiClient.shared.resetPassword(token, code, newPassword)
+            }
+            persist(response.token, response.email)
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+            throw e
         } finally {
             _isBusy.value = false
         }

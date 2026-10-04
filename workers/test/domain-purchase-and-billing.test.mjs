@@ -132,6 +132,116 @@ async function runTests() {
 	const eppCode = await getDomainEppCode(mockEnvInst, "brand-new-startup-123.com");
 	assert.match(eppCode, /^EPP-/, "EPP code format should start with EPP-");
 
+	// Test live Cloudflare Registrar API check (POST /accounts/{account_id}/registrar/domain-check)
+	const origFetch = globalThis.fetch;
+	try {
+		globalThis.fetch = async (url, init) => {
+			const urlStr = String(url);
+			if (urlStr.includes("/registrar/domain-check")) {
+				const body = JSON.parse(init.body);
+				const reqDomain = body.domains[0];
+				if (reqDomain === "live-available.com") {
+					return {
+						ok: true,
+						status: 200,
+						json: async () => ({
+							success: true,
+							result: {
+								domains: [
+									{
+										name: "live-available.com",
+										registrable: true,
+										tier: "standard",
+										pricing: {
+											currency: "USD",
+											registration_cost: "10.44",
+											renewal_cost: "10.44",
+										},
+									},
+								],
+							},
+						}),
+					};
+				} else if (reqDomain === "live-taken.com") {
+					return {
+						ok: true,
+						status: 200,
+						json: async () => ({
+							success: true,
+							result: {
+								domains: [
+									{
+										name: "live-taken.com",
+										registrable: false,
+										reason: "domain_unavailable",
+									},
+								],
+							},
+						}),
+					};
+				}
+			}
+			return origFetch(url, init);
+		};
+
+		const liveEnv = { CF_API_TOKEN: "test-token", CF_ACCOUNT_ID: "test-account" };
+		const liveAvail = await checkDomainAvailability(liveEnv, "live-available.com");
+		assert.equal(liveAvail.available, true, "Domain from live domain-check should be available");
+		assert.equal(liveAvail.registered, false);
+		assert.equal(liveAvail.retailPriceUsd, 14.0);
+
+		const liveTaken = await checkDomainAvailability(liveEnv, "live-taken.com");
+		assert.equal(liveTaken.available, false, "Domain from live domain-check should be taken");
+		assert.equal(liveTaken.registered, true);
+
+		// Test DoH fallback when registrar domain-check endpoint errors
+		globalThis.fetch = async (url) => {
+			const urlStr = String(url);
+			if (urlStr.includes("/registrar/domain-check")) {
+				return {
+					ok: false,
+					status: 403,
+					json: async () => ({
+						success: false,
+						errors: [{ code: 10000, message: "Authentication error / unauthorized" }],
+					}),
+				};
+			}
+			if (urlStr.includes("cloudflare-dns.com/dns-query")) {
+				if (urlStr.includes("doh-taken.com")) {
+					return {
+						ok: true,
+						status: 200,
+						json: async () => ({
+							Status: 0,
+							Answer: [{ name: "doh-taken.com", type: 2, data: "ns1.cloudflare.com" }],
+						}),
+					};
+				}
+				if (urlStr.includes("doh-available.com")) {
+					return {
+						ok: true,
+						status: 200,
+						json: async () => ({
+							Status: 3, // NXDOMAIN
+						}),
+					};
+				}
+			}
+			return origFetch(url);
+		};
+
+		const fallbackAvail = await checkDomainAvailability(liveEnv, "doh-available.com");
+		assert.equal(fallbackAvail.available, true, "Fallback via DoH NXDOMAIN should report domain available");
+		assert.equal(fallbackAvail.registered, false);
+
+		const fallbackTaken = await checkDomainAvailability(liveEnv, "doh-taken.com");
+		assert.equal(fallbackTaken.available, false, "Fallback via DoH NS should report domain taken");
+		assert.equal(fallbackTaken.registered, true);
+	} finally {
+		globalThis.fetch = origFetch;
+	}
+
 	console.log("✔ Cloudflare Registrar unit tests passed");
 
 	// ---------------------------------------------------------

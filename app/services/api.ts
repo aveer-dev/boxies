@@ -317,6 +317,24 @@ const api = {
 			"/api/v1/auth/password",
 			{ email, password },
 		),
+	forgotPassword: (email: string) =>
+		post<{
+			ok: boolean;
+			message: string;
+			devResetCode?: string;
+			devResetToken?: string;
+		}>("/api/v1/auth/password/forgot", { email }),
+	resetPassword: (body: {
+		token?: string;
+		code?: string;
+		newPassword: string;
+	}) =>
+		post<{
+			ok: boolean;
+			token?: string;
+			expiresAt?: string;
+			email?: string | null;
+		}>("/api/v1/auth/password/reset", body),
 	passwordLogout: () => post<{ ok: boolean }>("/api/v1/auth/password/logout"),
 
 	// Sharing invite (owner)
@@ -533,7 +551,12 @@ const api = {
 		}>("/api/v1/auth/dev", { email }),
 
 	// Onboarding & Custom Domains
-	signupPersonal: (body: { username: string; password: string; displayName?: string }) =>
+	signupPersonal: (body: {
+		username: string;
+		password: string;
+		displayName?: string;
+		backupEmail?: string;
+	}) =>
 		post<{
 			token: string;
 			expiresAt: string;
@@ -546,6 +569,7 @@ const api = {
 		username: string;
 		password: string;
 		displayName?: string;
+		backupEmail?: string;
 	}) =>
 		post<{
 			token: string;
@@ -577,6 +601,50 @@ const api = {
 	fixDomainEmailDns: (domain: string) =>
 		post<{ success: boolean; audit: unknown }>(
 			`/api/v1/admin/domains/${encodeURIComponent(domain)}/dns/fix-email`,
+		),
+
+	// Email Aliases & Batch Onboarding Setup
+	listDomainAliases: (domain: string) =>
+		get<{
+			domain: string;
+			aliases: Array<{
+				aliasLocal: string;
+				aliasEmail: string;
+				targetMailboxId: string;
+				createdAt: string;
+			}>;
+		}>(`/api/v1/admin/domains/${encodeURIComponent(domain)}/aliases`),
+
+	createDomainAlias: (
+		domain: string,
+		body: { aliasLocal: string; targetMailboxId: string },
+	) =>
+		post<{ success: boolean; alias: unknown }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/aliases`,
+			body,
+		),
+
+	deleteDomainAlias: (domain: string, aliasLocal: string) =>
+		del<{ success: boolean; aliasLocal: string }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/aliases/${encodeURIComponent(aliasLocal)}`,
+		),
+
+	setupDomainAliases: (
+		domain: string,
+		aliases: Array<{ aliasLocal: string; targetMailboxId: string }>,
+	) =>
+		post<{ success: boolean; aliases: unknown[] }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/setup-aliases`,
+			{ aliases },
+		),
+
+	setupDomainUsers: (
+		domain: string,
+		users: Array<{ fullName: string; contactEmail: string; username: string }>,
+	) =>
+		post<{ success: boolean; users: unknown[] }>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/setup-users`,
+			{ users },
 		),
 
 	listDomainDnsRecords: (

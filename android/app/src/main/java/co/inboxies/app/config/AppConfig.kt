@@ -39,11 +39,19 @@ object AppConfig {
     var apiBaseURL: String
         get() {
             val override = prefs?.getString(KEY_API_BASE, null)
+            if (override != null && (override.contains("localhost") || override.contains("127.0.0.1") || override.contains("10.0.2.2"))) {
+                prefs?.edit { remove(KEY_API_BASE) }
+                return BuildConfig.DEFAULT_API_BASE
+            }
             val parsed = override?.let { parseAPIBaseURL(it) }
             return parsed ?: BuildConfig.DEFAULT_API_BASE
         }
         set(value) {
-            prefs?.edit { putString(KEY_API_BASE, value) }
+            if (value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")) {
+                prefs?.edit { remove(KEY_API_BASE) }
+            } else {
+                prefs?.edit { putString(KEY_API_BASE, value) }
+            }
         }
 
     val isLocalDevelopmentAPI: Boolean

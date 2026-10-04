@@ -14,6 +14,7 @@ export default [
 	route("checkout/mock", "routes/checkout-mock.tsx"),
 	route("invite/:token", "routes/invite.tsx"),
 	route("login", "routes/login.tsx"),
+	route("reset-password", "routes/reset-password.tsx"),
 	route("mailbox/:mailboxId", "routes/mailbox.tsx", [
 		index("routes/mailbox-index.tsx"),
 		route("emails/:folder", "routes/email-list.tsx"),

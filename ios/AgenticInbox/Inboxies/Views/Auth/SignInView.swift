@@ -13,46 +13,98 @@ struct SignInView: View {
     var isShowingSplash: Bool = false
     var expandPasswordForm: Bool = false
 
+    enum AuthSubscreen {
+        case none
+        case email
+        case onboarding
+    }
+
     @Environment(AuthStore.self) private var auth
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hasStartedTransition: Bool = false
     @State private var isAuthRevealed: Bool = false
-    @State private var showEmailScreen: Bool = false
+    @State private var activeSubscreen: AuthSubscreen = .none
     @State private var welcomeDragOffset: CGFloat = 0
     @State private var emailDragOffset: CGFloat = 0
+    @State private var onboardingDragOffset: CGFloat = 0
     @State private var showTermsBrowser = false
 
-    @State private var apiBase = AppConfig.apiBaseURL.absoluteString
+    /// Spring with obvious bounce for revealing auth buttons when the downward arrow is tapped.
+    private var authRevealAnimation: Animation {
+        if reduceMotion {
+            return .spring(response: 0.32, dampingFraction: 0.86)
+        }
+        return .spring(duration: 0.52, bounce: 0.40)
+    }
+
+    /// Smooth spring with subtle settling cushion for transitions to subpages ("Continue with Email" and "Get started").
+    private var subscreenTransitionAnimation: Animation {
+        if reduceMotion {
+            return .spring(response: 0.32, dampingFraction: 0.86)
+        }
+        return .spring(duration: 0.40, bounce: 0.08)
+    }
+
+    @State private var apiBase: String = {
+        if let stored = UserDefaults.standard.string(forKey: "apiBaseURL") {
+            if stored.contains("localhost") || stored.contains("127.0.0.1") || stored.contains("10.0.2.2") {
+                UserDefaults.standard.removeObject(forKey: "apiBaseURL")
+                return "https://inboxies.email"
+            }
+            return stored
+        }
+        return AppConfig.apiBaseURL.absoluteString
+    }()
     @State private var appleCoordinator = AppleAuthCoordinator()
+    @State private var toastDismissTask: Task<Void, Never>?
     #if DEBUG
     @State private var showDevConfig = ProcessInfo.processInfo.arguments.contains("-showApiBase")
     @State private var devTapCount = 0
     #endif
 
-    private let authRevealHeightBase: CGFloat = 250
+    private let authRevealHeightBase: CGFloat = 300
 
     var body: some View {
-        GeometryReader { geometry in
+        ZStack(alignment: .bottom) {
+            GeometryReader { geometry in
             let screenHeight = geometry.size.height
             let safeArea = geometry.safeAreaInsets
             let authRevealHeight = authRevealHeightBase + safeArea.bottom
 
-            let page1OffsetY: CGFloat = (showEmailScreen ? -screenHeight : 0) + emailDragOffset
-            let page2OffsetY: CGFloat = (showEmailScreen ? 0 : screenHeight) + emailDragOffset
+            let isSubscreenOpen = activeSubscreen != .none
+            let activeDragOffset: CGFloat = {
+                switch activeSubscreen {
+                case .email: return emailDragOffset
+                case .onboarding: return onboardingDragOffset
+                case .none: return 0
+                }
+            }()
+
+            let page1OffsetY: CGFloat = (isSubscreenOpen ? -screenHeight : 0) + activeDragOffset
+            let emailPageOffsetY: CGFloat = (activeSubscreen == .email ? 0 : screenHeight) + emailDragOffset
+            let onboardingPageOffsetY: CGFloat = (activeSubscreen == .onboarding ? 0 : screenHeight) + onboardingDragOffset
 
             ZStack(alignment: .top) {
                 // Page 1: Welcome Screen & Auth Buttons
                 ZStack(alignment: .top) {
                     // Base Canvas Background
-                    AppTheme.background
+                    AppTheme.surface
                         .frame(width: geometry.size.width, height: screenHeight)
 
                     // Layer 1: Auth Buttons Section (Fixed at bottom of canvas, revealed when welcome card moves up)
                     VStack {
                         Spacer()
                         AuthButtonsSection(
+                            onGetStarted: {
+                                commitAPIBaseURL()
+                                withAnimation(subscreenTransitionAnimation) {
+                                    activeSubscreen = .onboarding
+                                    onboardingDragOffset = 0
+                                }
+                            },
                             onContinueWithEmail: {
-                                withAnimation(.spring(response: 0.40, dampingFraction: 0.86)) {
-                                    showEmailScreen = true
+                                withAnimation(subscreenTransitionAnimation) {
+                                    activeSubscreen = .email
                                     emailDragOffset = 0
                                 }
                             },
@@ -125,7 +177,8 @@ struct SignInView: View {
                         // Circular Downward Arrow Button (Hidden when auth buttons are revealed)
                         if !isAuthRevealed {
                             Button {
-                                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                withAnimation(authRevealAnimation) {
                                     isAuthRevealed = true
                                 }
                             } label: {
@@ -146,7 +199,7 @@ struct SignInView: View {
                                         .foregroundStyle(.white)
                                 }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ArrowBounceButtonStyle())
                             .padding(.top, 36)
                             .opacity(hasStartedTransition ? 1 : 0)
                             .scaleEffect(hasStartedTransition ? 1 : 0.8)
@@ -186,7 +239,7 @@ struct SignInView: View {
                     )
                     .offset(y: (isAuthRevealed ? -authRevealHeight : 0) + welcomeDragOffset)
                     .gesture(
-                        isAuthRevealed && !showEmailScreen ?
+                        isAuthRevealed && activeSubscreen == .none ?
                             DragGesture(minimumDistance: 10)
                                 .onChanged { value in
                                     if value.translation.height > 0 {
@@ -200,7 +253,7 @@ struct SignInView: View {
                                             welcomeDragOffset = 0
                                         }
                                     } else {
-                                        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                        withAnimation(authRevealAnimation) {
                                             welcomeDragOffset = 0
                                         }
                                     }
@@ -208,7 +261,7 @@ struct SignInView: View {
                             : nil
                     )
                     .onTapGesture {
-                        if isAuthRevealed && !showEmailScreen {
+                        if isAuthRevealed && activeSubscreen == .none {
                             withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
                                 isAuthRevealed = false
                                 welcomeDragOffset = 0
@@ -232,11 +285,12 @@ struct SignInView: View {
                 // Page 2: Email Onboarding Screen (Pushes welcome view entirely up, follows in lockstep, draggable back down)
                 EmailLoginScreen(
                     safeAreaTop: safeArea.top,
-                    isPresented: showEmailScreen,
+                    isPresented: activeSubscreen == .email,
                     onDismiss: {
                         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        auth.errorMessage = nil
                         withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-                            showEmailScreen = false
+                            activeSubscreen = .none
                             emailDragOffset = 0
                         }
                     },
@@ -244,24 +298,67 @@ struct SignInView: View {
                 )
                 .frame(width: geometry.size.width, height: screenHeight)
                 .background(AppTheme.surface)
-                .offset(y: page2OffsetY)
+                .offset(y: emailPageOffsetY)
                 .gesture(
                     DragGesture(minimumDistance: 15)
                         .onChanged { value in
-                            if value.translation.height > 0 {
+                            if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) {
                                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                                 emailDragOffset = value.translation.height
                             }
                         }
                         .onEnded { value in
                             if value.translation.height > 120 || value.velocity.height > 350 {
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                auth.errorMessage = nil
                                 withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
-                                    showEmailScreen = false
+                                    activeSubscreen = .none
                                     emailDragOffset = 0
                                 }
                             } else {
-                                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                withAnimation(subscreenTransitionAnimation) {
                                     emailDragOffset = 0
+                                }
+                            }
+                        }
+                )
+
+                // Page 3: Get Started Onboarding Screen (Pushes welcome view entirely up, follows in lockstep, draggable back down)
+                MailboxOnboardingView(
+                    initialTrack: .select,
+                    onDismiss: {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                        auth.errorMessage = nil
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                            activeSubscreen = .none
+                            onboardingDragOffset = 0
+                        }
+                    },
+                    showsDragHandle: true,
+                    safeAreaTop: safeArea.top
+                )
+                .frame(width: geometry.size.width, height: screenHeight)
+                .background(AppTheme.surface)
+                .offset(y: onboardingPageOffsetY)
+                .gesture(
+                    DragGesture(minimumDistance: 15)
+                        .onChanged { value in
+                            if value.translation.height > 0 && abs(value.translation.height) >= abs(value.translation.width) {
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                onboardingDragOffset = value.translation.height
+                            }
+                        }
+                        .onEnded { value in
+                            if value.translation.height > 120 || value.velocity.height > 350 {
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                auth.errorMessage = nil
+                                withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                                    activeSubscreen = .none
+                                    onboardingDragOffset = 0
+                                }
+                            } else {
+                                withAnimation(subscreenTransitionAnimation) {
+                                    onboardingDragOffset = 0
                                 }
                             }
                         }
@@ -284,41 +381,87 @@ struct SignInView: View {
             }
         }
         .ignoresSafeArea()
-        .sheet(isPresented: $showTermsBrowser) {
-            if let termsURL = URL(string: "https://inboxies.email/terms") {
-                SafariView(url: termsURL)
-                    .ignoresSafeArea()
+
+        if let error = auth.errorMessage {
+            AuthToastBanner(message: error) {
+                toastDismissTask?.cancel()
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                    auth.errorMessage = nil
+                }
             }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
-        .task {
-            #if DEBUG
-            if expandPasswordForm || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn") {
-                hasStartedTransition = true
+    }
+    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: auth.errorMessage)
+    .sheet(isPresented: $showTermsBrowser) {
+        if let termsURL = URL(string: "https://inboxies.email/terms") {
+            SafariView(url: termsURL)
+                .ignoresSafeArea()
+        }
+    }
+    .onChange(of: auth.isAuthenticated) { _, authed in
+        if authed {
+            activeSubscreen = .none
+        }
+    }
+    .task {
+        #if DEBUG
+        if expandPasswordForm || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn") {
+            hasStartedTransition = true
+            isAuthRevealed = true
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            withAnimation(subscreenTransitionAnimation) {
+                activeSubscreen = .email
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("-previewForgotPassword") {
+            hasStartedTransition = true
+            isAuthRevealed = true
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            withAnimation(subscreenTransitionAnimation) {
+                activeSubscreen = .email
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("-previewAuthOptions") {
+            hasStartedTransition = true
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            withAnimation(authRevealAnimation) {
                 isAuthRevealed = true
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
-                    showEmailScreen = true
-                }
-            } else if ProcessInfo.processInfo.arguments.contains("-previewAuthOptions") {
-                hasStartedTransition = true
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
-                    isAuthRevealed = true
-                }
-            }
-            #endif
-        }
-        .onAppear {
-            if !isShowingSplash {
-                triggerEntranceAnimation()
             }
         }
-        .onChange(of: isShowingSplash) { _, showing in
-            if !showing {
-                triggerEntranceAnimation()
+        #endif
+    }
+    .onAppear {
+        if apiBase.contains("localhost") || apiBase.contains("127.0.0.1") || apiBase.contains("10.0.2.2") {
+            UserDefaults.standard.removeObject(forKey: "apiBaseURL")
+            apiBase = "https://inboxies.email"
+        }
+        if !isShowingSplash {
+            triggerEntranceAnimation()
+        }
+    }
+    .onChange(of: isShowingSplash) { _, showing in
+        if !showing {
+            triggerEntranceAnimation()
+        }
+    }
+    .onChange(of: auth.errorMessage) { _, newError in
+        toastDismissTask?.cancel()
+        if newError != nil {
+            toastDismissTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                    auth.errorMessage = nil
+                }
+                toastDismissTask = nil
             }
         }
     }
+    .onDisappear {
+        toastDismissTask?.cancel()
+        toastDismissTask = nil
+    }
+}
 
     private func triggerEntranceAnimation() {
         guard !hasStartedTransition else { return }
@@ -332,6 +475,11 @@ struct SignInView: View {
 
     private func commitAPIBaseURL() {
         let value = apiBase.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.isEmpty || value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2") {
+            apiBase = "https://inboxies.email"
+            UserDefaults.standard.removeObject(forKey: "apiBaseURL")
+            return
+        }
         if let url = AppConfig.parseAPIBaseURL(value) {
             apiBase = url.absoluteString
             UserDefaults.standard.set(apiBase, forKey: "apiBaseURL")
@@ -378,7 +526,7 @@ struct SignInView: View {
                 Spacer()
                 Button("Reset") {
                     UserDefaults.standard.removeObject(forKey: "apiBaseURL")
-                    apiBase = AppConfig.apiBaseURL.absoluteString
+                    apiBase = "https://inboxies.email"
                 }
                 .font(.inter(size: 12))
                 .foregroundStyle(AppTheme.accent)
@@ -407,10 +555,13 @@ struct SignInView: View {
 }
 
 /// Bottom Auth Section containing:
-/// 1. "Continue with Email" (fully rounded primary pill)
-/// 2. Side-by-side Apple and Google buttons as fully rounded liquid glass buttons
-/// 3. Terms of Use fine print
+/// 1. "Get started" (fully rounded primary pill)
+/// 2. "or" divider
+/// 3. "Continue with Email" (liquid glass capsule)
+/// 4. Side-by-side Apple and Google buttons as fully rounded liquid glass buttons
+/// 5. Terms of Use fine print
 private struct AuthButtonsSection: View {
+    var onGetStarted: () -> Void
     var onContinueWithEmail: () -> Void
     var onAppleSignIn: () -> Void
     var onGoogleSignIn: () -> Void
@@ -421,28 +572,40 @@ private struct AuthButtonsSection: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            if let error = auth.errorMessage {
-                Text(error)
-                    .font(.inter(size: 13))
-                    .foregroundStyle(AppTheme.deepDarkRed)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 2)
+            // Primary: Get started (Fully rounded capsule)
+            Button(action: onGetStarted) {
+                Text("Get started")
+                    .font(.inter(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(AppTheme.ink)
+                    .foregroundStyle(AppTheme.surface)
+                    .clipShape(Capsule())
             }
+            .buttonStyle(.plain)
 
-            // Primary: Continue with Email (Fully rounded capsule)
+            // Divider: or text
+            HStack(spacing: 12) {
+                Rectangle()
+                    .fill(AppTheme.line)
+                    .frame(height: 0.5)
+                Text("or")
+                    .font(.inter(size: 13, weight: .medium))
+                    .foregroundStyle(AppTheme.muted)
+                Rectangle()
+                    .fill(AppTheme.line)
+                    .frame(height: 0.5)
+            }
+            .padding(.vertical, 2)
+
+            // Continue with Email (Liquid glass capsule)
             Button(action: onContinueWithEmail) {
-                HStack(spacing: 10) {
-                    Image(systemName: "envelope.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                    Text("Continue with Email")
-                        .font(.inter(size: 16, weight: .semibold))
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .background(AppTheme.ink)
-                .foregroundStyle(AppTheme.surface)
-                .clipShape(Capsule())
+                Text("Continue with Email")
+                    .font(.inter(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .liquidGlass(in: Capsule())
+                    .foregroundStyle(AppTheme.ink)
             }
             .buttonStyle(.plain)
 
@@ -524,17 +687,65 @@ private struct EmailLoginScreen: View {
     enum Step {
         case email
         case password
+        case forgotPassword
+        case resetPassword
     }
 
     @Environment(AuthStore.self) private var auth
-    @State private var step: Step = .email
+    @State private var step: Step = {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn") {
+            return .password
+        }
+        if ProcessInfo.processInfo.arguments.contains("-previewForgotPassword") {
+            return .forgotPassword
+        }
+        #endif
+        return .email
+    }()
     @State private var email: String = ""
     @State private var password: String = ""
+    @State private var resetCode: String = ""
+    @State private var isPasswordVisible: Bool = false
+    @State private var isResetPasswordVisible: Bool = false
+    @State private var isSendingReset: Bool = false
+    @State private var isResetting: Bool = false
     @FocusState private var isFieldFocused: Bool
 
     private var isValidEmail: Bool {
         let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.contains("@") && trimmed.contains(".") && trimmed.count >= 5
+    }
+
+    private var headerIcon: String {
+        switch step {
+        case .email: return "envelope.fill"
+        case .password: return "key.fill"
+        case .forgotPassword: return "envelope.badge.shield.half.filled"
+        case .resetPassword: return "lock.rotation"
+        }
+    }
+
+    private var titleText: String {
+        switch step {
+        case .email: return "Continue with Email"
+        case .password: return "Enter your password"
+        case .forgotPassword: return "Forgot password?"
+        case .resetPassword: return "Reset your password"
+        }
+    }
+
+    private var subtitleText: String {
+        switch step {
+        case .email:
+            return "Sign in or sign up with your email."
+        case .password:
+            return "Sign in with your email \(email.trimmingCharacters(in: .whitespacesAndNewlines))"
+        case .forgotPassword:
+            return "Enter your email to receive a 6-digit reset code."
+        case .resetPassword:
+            return "Enter the code sent to \(email.trimmingCharacters(in: .whitespacesAndNewlines))"
+        }
     }
 
     var body: some View {
@@ -547,10 +758,15 @@ private struct EmailLoginScreen: View {
 
             // Header bar with navigation controls
             HStack {
-                if step == .password {
+                if step != .email {
                     Button {
+                        auth.errorMessage = nil
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                            step = .email
+                            if step == .resetPassword {
+                                step = .forgotPassword
+                            } else {
+                                step = .email
+                            }
                         }
                     } label: {
                         Image(systemName: "chevron.left")
@@ -586,26 +802,27 @@ private struct EmailLoginScreen: View {
                         .fill(AppTheme.pillFill)
                         .frame(width: 52, height: 52)
 
-                    Image(systemName: step == .email ? "envelope.fill" : "key.fill")
+                    Image(systemName: headerIcon)
                         .font(.system(size: 22))
                         .foregroundStyle(AppTheme.muted)
                 }
                 .padding(.top, 24)
 
                 // Title & Subtitle
-                Text(step == .email ? "Continue with Email" : "Enter your password")
+                Text(titleText)
                     .font(.inter(size: 22, weight: .bold))
                     .foregroundStyle(AppTheme.ink)
                     .padding(.top, 14)
 
-                Text(step == .email ? "Sign in or sign up with your email." : "Sign in with your email \(email.trimmingCharacters(in: .whitespacesAndNewlines))")
+                Text(subtitleText)
                     .font(.inter(size: 14))
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(1)
                     .padding(.top, 4)
 
                 // Form Fields
-                if step == .email {
+                switch step {
+                case .email:
                     TextField("Email Address", text: $email)
                         .keyboardType(.emailAddress)
                         .textInputAutocapitalization(.never)
@@ -629,6 +846,27 @@ private struct EmailLoginScreen: View {
                             }
                         }
 
+                    // Button for forgot password should be below the email input, then some extra space below it before the next button.
+                    HStack {
+                        Spacer()
+                        Button {
+                            auth.errorMessage = nil
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                step = .forgotPassword
+                            }
+                        } label: {
+                            Text("Forgot password?")
+                                .font(.inter(size: 13, weight: .medium))
+                                .foregroundStyle(AppTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+
+                    Spacer()
+                        .frame(height: 16)
+
                     Button {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
                             step = .password
@@ -645,34 +883,66 @@ private struct EmailLoginScreen: View {
                     .buttonStyle(.plain)
                     .disabled(!isValidEmail)
                     .padding(.horizontal, 24)
-                    .padding(.top, 16)
-                } else {
-                    SecureField("Password", text: $password)
-                        .font(.inter(size: 15))
-                        .padding(14)
-                        .background(AppTheme.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(AppTheme.line, lineWidth: 1)
-                        )
-                        .focused($isFieldFocused)
-                        .padding(.horizontal, 24)
-                        .padding(.top, 24)
-                        .onSubmit {
-                            if !password.isEmpty && !auth.isBusy {
-                                submitPassword()
-                            }
+
+                case .password:
+                    HStack(spacing: 8) {
+                        if isPasswordVisible {
+                            TextField("Password", text: $password)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .font(.inter(size: 15))
+                                .focused($isFieldFocused)
+                        } else {
+                            SecureField("Password", text: $password)
+                                .font(.inter(size: 15))
+                                .focused($isFieldFocused)
                         }
 
-                    if let error = auth.errorMessage {
-                        Text(error)
-                            .font(.inter(size: 13))
-                            .foregroundStyle(AppTheme.deepDarkRed)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                            .padding(.top, 10)
+                        Button {
+                            isPasswordVisible.toggle()
+                        } label: {
+                            Image(systemName: isPasswordVisible ? "eye.slash" : "eye")
+                                .font(.system(size: 15))
+                                .foregroundStyle(AppTheme.muted)
+                                .frame(width: 32, height: 32)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isPasswordVisible ? "Hide password" : "Show password")
                     }
+                    .padding(14)
+                    .background(AppTheme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(AppTheme.line, lineWidth: 1)
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .onSubmit {
+                        if !password.isEmpty && !auth.isBusy {
+                            submitPassword()
+                        }
+                    }
+
+                    HStack {
+                        Spacer()
+                        Button {
+                            auth.errorMessage = nil
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                step = .forgotPassword
+                            }
+                        } label: {
+                            Text("Forgot password?")
+                                .font(.inter(size: 13, weight: .medium))
+                                .foregroundStyle(AppTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+
+                    Spacer()
+                        .frame(height: 16)
 
                     Button(action: submitPassword) {
                         HStack {
@@ -694,7 +964,131 @@ private struct EmailLoginScreen: View {
                     .buttonStyle(.plain)
                     .disabled(password.isEmpty || auth.isBusy)
                     .padding(.horizontal, 24)
-                    .padding(.top, 16)
+
+                case .forgotPassword:
+                    TextField("Email Address", text: $email)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.inter(size: 15))
+                        .padding(14)
+                        .background(AppTheme.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(AppTheme.line, lineWidth: 1)
+                        )
+                        .focused($isFieldFocused)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 24)
+                        .onSubmit {
+                            if isValidEmail && !isSendingReset {
+                                sendResetCode()
+                            }
+                        }
+
+                    Spacer()
+                        .frame(height: 20)
+
+                    Button(action: sendResetCode) {
+                        HStack {
+                            if isSendingReset {
+                                ProgressView()
+                                    .tint(AppTheme.surface)
+                                    .scaleEffect(0.9)
+                            } else {
+                                Text("Send Reset Code")
+                                    .font(.inter(size: 16, weight: .semibold))
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(isValidEmail && !isSendingReset ? AppTheme.ink : AppTheme.pillActive)
+                        .foregroundStyle(isValidEmail && !isSendingReset ? AppTheme.surface : AppTheme.muted)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!isValidEmail || isSendingReset)
+                    .padding(.horizontal, 24)
+
+                case .resetPassword:
+                    VStack(spacing: 14) {
+                        TextField("6-digit code", text: $resetCode)
+                            .keyboardType(.numberPad)
+                            .font(.inter(size: 20, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .padding(14)
+                            .background(AppTheme.surface)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(AppTheme.line, lineWidth: 1)
+                            )
+                            .focused($isFieldFocused)
+
+                        HStack(spacing: 8) {
+                            if isResetPasswordVisible {
+                                TextField("New password (min 10 chars)", text: $password)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .font(.inter(size: 15))
+                            } else {
+                                SecureField("New password (min 10 chars)", text: $password)
+                                    .font(.inter(size: 15))
+                            }
+
+                            Button {
+                                isResetPasswordVisible.toggle()
+                            } label: {
+                                Image(systemName: isResetPasswordVisible ? "eye.slash" : "eye")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(AppTheme.muted)
+                                    .frame(width: 32, height: 32)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(isResetPasswordVisible ? "Hide password" : "Show password")
+                        }
+                        .padding(14)
+                        .background(AppTheme.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(AppTheme.line, lineWidth: 1)
+                        )
+
+                        if !password.isEmpty && password.count < 10 {
+                            HStack {
+                                Text("\(10 - password.count) more characters needed")
+                                    .font(.inter(size: 12))
+                                    .foregroundStyle(AppTheme.muted)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 4)
+                        }
+
+                        Button(action: submitResetPassword) {
+                            HStack {
+                                if isResetting {
+                                    ProgressView()
+                                        .tint(AppTheme.surface)
+                                        .scaleEffect(0.9)
+                                } else {
+                                    Text("Reset and Sign In")
+                                        .font(.inter(size: 16, weight: .semibold))
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                            .background(resetCode.count >= 6 && password.count >= 10 && !isResetting ? AppTheme.ink : AppTheme.pillActive)
+                            .foregroundStyle(resetCode.count >= 6 && password.count >= 10 && !isResetting ? AppTheme.surface : AppTheme.muted)
+                            .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(resetCode.count < 6 || password.count < 10 || isResetting)
+                        .padding(.top, 4)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
                 }
 
                 Spacer()
@@ -709,6 +1103,11 @@ private struct EmailLoginScreen: View {
                 }
             } else {
                 isFieldFocused = false
+            }
+        }
+        .onChange(of: step) { _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                isFieldFocused = true
             }
         }
         .onAppear {
@@ -729,6 +1128,48 @@ private struct EmailLoginScreen: View {
             )
             if auth.isAuthenticated {
                 onDismiss()
+            }
+        }
+    }
+
+    private func sendResetCode() {
+        isSendingReset = true
+        auth.errorMessage = nil
+        Task {
+            commitAPIBaseURL()
+            defer { isSendingReset = false }
+            do {
+                let res = try await auth.forgotPassword(email: email.trimmingCharacters(in: .whitespacesAndNewlines))
+                #if DEBUG
+                if let code = res.devResetCode {
+                    resetCode = code
+                }
+                #endif
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                    step = .resetPassword
+                }
+            } catch {
+                // error set in auth.errorMessage
+            }
+        }
+    }
+
+    private func submitResetPassword() {
+        isResetting = true
+        auth.errorMessage = nil
+        Task {
+            commitAPIBaseURL()
+            defer { isResetting = false }
+            do {
+                try await auth.resetPassword(
+                    code: resetCode.trimmingCharacters(in: .whitespacesAndNewlines),
+                    newPassword: password
+                )
+                if auth.isAuthenticated {
+                    onDismiss()
+                }
+            } catch {
+                // error set in auth.errorMessage
             }
         }
     }
@@ -845,3 +1286,44 @@ final class AppleAuthCoordinator: NSObject, ASAuthorizationControllerDelegate, A
         continuation = nil
     }
 }
+
+private struct AuthToastBanner: View {
+    let message: String
+    var onDismiss: () -> Void
+
+    var body: some View {
+        Button(action: onDismiss) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.inter(size: 13, weight: .semibold))
+                    .foregroundStyle(.red)
+
+                Text(message)
+                    .font(.inter(size: 13, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct ArrowBounceButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.86 : 1.0)
+            .opacity(configuration.isPressed ? 0.88 : 1.0)
+            .animation(.spring(duration: 0.32, bounce: 0.45), value: configuration.isPressed)
+    }
+}
+
+

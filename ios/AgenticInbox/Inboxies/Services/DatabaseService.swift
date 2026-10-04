@@ -796,6 +796,20 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    /// Purges all local user data across tables on user sign-out to prevent cross-account leakage.
+    func clearAll() {
+        queue.sync {
+            sqlite3_exec(db, "BEGIN TRANSACTION;", nil, nil, nil)
+            sqlite3_exec(db, "DELETE FROM emails;", nil, nil, nil)
+            sqlite3_exec(db, "DELETE FROM email_fts;", nil, nil, nil)
+            sqlite3_exec(db, "DELETE FROM folders;", nil, nil, nil)
+            sqlite3_exec(db, "DELETE FROM mailboxes;", nil, nil, nil)
+            sqlite3_exec(db, "DELETE FROM outbox_mutations;", nil, nil, nil)
+            sqlite3_exec(db, "DELETE FROM sync_state;", nil, nil, nil)
+            sqlite3_exec(db, "COMMIT;", nil, nil, nil)
+        }
+    }
+
     func pruneRemovedEmails(
         mailboxId: String,
         folderId: String,

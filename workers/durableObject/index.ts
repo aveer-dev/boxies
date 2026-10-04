@@ -59,6 +59,10 @@ import {
 	purposeFoldersSqlList,
 	type SenderPreference,
 } from "../lib/sender-preferences";
+import {
+	seedWelcomeEmailsInDO,
+	WELCOME_FLAG_KEY,
+} from "../lib/welcome-emails";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -185,6 +189,33 @@ export class MailboxDO extends DurableObject<Env> {
 	declare __DURABLE_OBJECT_BRAND: never;
 	db: ReturnType<typeof drizzle>;
 	#subscribers: Set<ReadableStreamDefaultController> = new Set();
+	#pingInterval: ReturnType<typeof setInterval> | null = null;
+
+	#ensurePingInterval() {
+		if (this.#pingInterval !== null || this.#subscribers.size === 0) return;
+		this.#pingInterval = setInterval(() => {
+			if (this.#subscribers.size === 0) {
+				this.#stopPingIntervalIfNeeded();
+				return;
+			}
+			const pingBytes = new TextEncoder().encode(": ping\n\n");
+			for (const controller of this.#subscribers) {
+				try {
+					controller.enqueue(pingBytes);
+				} catch {
+					this.#subscribers.delete(controller);
+				}
+			}
+			this.#stopPingIntervalIfNeeded();
+		}, 15000);
+	}
+
+	#stopPingIntervalIfNeeded() {
+		if (this.#subscribers.size === 0 && this.#pingInterval !== null) {
+			clearInterval(this.#pingInterval);
+			this.#pingInterval = null;
+		}
+	}
 
 	subscribeEvents(): ReadableStream {
 		let controller: ReadableStreamDefaultController;
@@ -193,10 +224,12 @@ export class MailboxDO extends DurableObject<Env> {
 				controller = c;
 				this.#subscribers.add(c);
 				c.enqueue(new TextEncoder().encode("event: connected\ndata: {}\n\n"));
+				this.#ensurePingInterval();
 			},
 			cancel: () => {
 				if (controller) {
 					this.#subscribers.delete(controller);
+					this.#stopPingIntervalIfNeeded();
 				}
 			},
 		});
@@ -212,6 +245,7 @@ export class MailboxDO extends DurableObject<Env> {
 				this.#subscribers.delete(controller);
 			}
 		}
+		this.#stopPingIntervalIfNeeded();
 	}
 
 	async #isMailboxDeleted(): Promise<boolean> {
@@ -1493,6 +1527,12 @@ export class MailboxDO extends DurableObject<Env> {
 
 		try {
 			await this.ctx.storage.delete("sender_triage_bootstrapped");
+		} catch {
+			/* ignore */
+		}
+
+		try {
+			await this.ctx.storage.delete(WELCOME_FLAG_KEY);
 		} catch {
 			/* ignore */
 		}
@@ -2797,5 +2837,18 @@ export class MailboxDO extends DurableObject<Env> {
 			await this.ctx.storage.put(flagKey, "1");
 		}
 		return { seeded };
+	}
+
+	/**
+	 * Seed initial onboarding and platform guide emails into the mailbox.
+	 * Idempotent via storage flag.
+	 */
+	async seedWelcomeEmails(options: {
+		recipientEmail: string;
+		recipientName?: string | null;
+		force?: boolean;
+	}): Promise<{ seeded: number }> {
+		await this.#assertMailboxWritable();
+		return seedWelcomeEmailsInDO(this, options);
 	}
 }

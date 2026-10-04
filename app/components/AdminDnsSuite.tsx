@@ -255,10 +255,12 @@ export function AdminDnsSuite({
 		if (!trimmed || !trimmed.includes(".") || trimmed.endsWith(".")) {
 			setNewDomainAvailability(null);
 			setIsCheckingNewDomain(false);
+			setAddDomainError(null);
 			return;
 		}
 
 		setIsCheckingNewDomain(true);
+		setAddDomainError(null);
 		let cancelled = false;
 
 		const timer = setTimeout(async () => {
@@ -266,10 +268,13 @@ export function AdminDnsSuite({
 				const res = await api.checkDomainAvailability(trimmed);
 				if (!cancelled) {
 					setNewDomainAvailability(res);
+					setAddDomainError(null);
 				}
-			} catch {
+			} catch (err: unknown) {
 				if (!cancelled) {
 					setNewDomainAvailability(null);
+					const msg = err instanceof Error ? err.message : "Failed to check domain availability";
+					setAddDomainError(msg);
 				}
 			} finally {
 				if (!cancelled) {

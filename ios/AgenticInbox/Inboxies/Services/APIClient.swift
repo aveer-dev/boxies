@@ -259,6 +259,27 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func forgotPassword(email: String) async throws -> ForgotPasswordResponse {
+        try await request(
+            path: "/api/v1/auth/password/forgot",
+            method: "POST",
+            body: ["email": email],
+            authed: false
+        )
+    }
+
+    func resetPassword(token: String? = nil, code: String? = nil, newPassword: String) async throws -> PasswordLoginResponse {
+        var body: [String: Any] = ["newPassword": newPassword]
+        if let token, !token.isEmpty { body["token"] = token }
+        if let code, !code.isEmpty { body["code"] = code }
+        return try await request(
+            path: "/api/v1/auth/password/reset",
+            method: "POST",
+            body: body,
+            authed: false
+        )
+    }
+
     func listAdminMailboxes() async throws -> [AdminMailboxRow] {
         try await request(path: "/api/v1/admin/mailboxes")
     }
@@ -303,12 +324,18 @@ final class APIClient: @unchecked Sendable {
 
     // MARK: - Onboarding & Custom Domains
 
-    func signupPersonal(username: String, password: String, displayName: String? = nil) async throws -> OnboardingPersonalResponse {
+    func signupPersonal(
+        username: String,
+        password: String,
+        displayName: String? = nil,
+        backupEmail: String? = nil
+    ) async throws -> OnboardingPersonalResponse {
         var body: [String: Any] = [
             "username": username,
             "password": password,
         ]
         if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
+        if let backupEmail, !backupEmail.isEmpty { body["backupEmail"] = backupEmail }
         return try await request(
             path: "/api/v1/auth/signup-personal",
             method: "POST",
@@ -317,18 +344,66 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func signupDomain(domain: String, username: String, password: String, displayName: String? = nil) async throws -> OnboardingDomainResponse {
+    func signupDomain(
+        domain: String,
+        username: String,
+        password: String,
+        displayName: String? = nil,
+        backupEmail: String? = nil
+    ) async throws -> OnboardingDomainResponse {
         var body: [String: Any] = [
             "domain": domain,
             "username": username,
             "password": password,
         ]
         if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
+        if let backupEmail, !backupEmail.isEmpty { body["backupEmail"] = backupEmail }
         return try await request(
             path: "/api/v1/auth/signup-domain",
             method: "POST",
             body: body,
             authed: false
+        )
+    }
+
+    func listDomainAliases(domain: String) async throws -> [DomainAliasItem] {
+        let res: DomainAliasesResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? domain)/aliases"
+        )
+        return res.aliases
+    }
+
+    func createDomainAlias(domain: String, aliasLocal: String, targetMailboxId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? domain)/aliases",
+            method: "POST",
+            body: [
+                "aliasLocal": aliasLocal,
+                "targetMailboxId": targetMailboxId
+            ]
+        )
+    }
+
+    func deleteDomainAlias(domain: String, aliasLocal: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? domain)/aliases/\(aliasLocal.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? aliasLocal)",
+            method: "DELETE"
+        )
+    }
+
+    func setupDomainAliases(domain: String, aliases: [[String: String]]) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? domain)/setup-aliases",
+            method: "POST",
+            body: ["aliases": aliases]
+        )
+    }
+
+    func setupDomainUsers(domain: String, users: [[String: String]]) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/admin/domains/\(domain.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? domain)/setup-users",
+            method: "POST",
+            body: ["users": users]
         )
     }
 

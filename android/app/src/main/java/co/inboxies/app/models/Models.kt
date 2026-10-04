@@ -158,6 +158,14 @@ data class PasswordLoginResponse(
 )
 
 @Serializable
+data class ForgotPasswordResponse(
+    val ok: Boolean,
+    val message: String? = null,
+    val devResetCode: String? = null,
+    val devResetToken: String? = null,
+)
+
+@Serializable
 data class InviteCreateResponse(
     val token: String,
     val inviteUrl: String,
@@ -1213,5 +1221,20 @@ data class AdminDomainConnectResponse(
     val domain: AdminDomainInfo,
     val audit: EmailHealthAudit? = null,
 )
+
+@Serializable
+data class DomainAliasItem(
+    val id: String,
+    val domain: String,
+    val alias: String,
+    val target: String,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class DomainAliasesResponse(
+    val aliases: List<DomainAliasItem> = emptyList(),
+)
+
 
 

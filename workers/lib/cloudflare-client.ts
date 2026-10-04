@@ -418,6 +418,92 @@ export async function deleteDnsRecord(
 }
 
 /**
+ * Fully ensures all Cloudflare Email Routing DNS records (MX, SPF, DMARC, Catch-all)
+ * are configured and staged for the zone without duplicating records.
+ */
+export async function ensureFullEmailDns(
+	env: CloudflareClientEnv,
+	zoneId: string,
+	domain: string,
+): Promise<{ success: boolean; records: CloudflareDnsRecord[] }> {
+	const normalizedDomain = domain.trim().toLowerCase();
+
+	// 1. Enable email routing
+	try {
+		await enableEmailRouting(env, zoneId);
+	} catch {
+		// ignore if already enabled
+	}
+
+	// 2. Ensure catch-all rule
+	try {
+		await createCatchAllWorkerRule(env, zoneId, env.WORKER_NAME);
+	} catch {
+		// ignore if already created
+	}
+
+	// 3. Auto-configure Cloudflare email routing MX records
+	try {
+		await autoConfigureEmailDns(env, zoneId);
+	} catch {
+		// ignore error if already configured
+	}
+
+	// 4. Ensure SPF TXT record
+	const records = await listDnsRecords(env, zoneId);
+	const rootTxt = records.filter(
+		(r) =>
+			r.type === "TXT" &&
+			(r.name.toLowerCase() === normalizedDomain || r.name.toLowerCase() === `@.${normalizedDomain}`),
+	);
+	const existingSpf = rootTxt.find((r) => r.content.toLowerCase().includes("v=spf1"));
+
+	if (!existingSpf) {
+		await createDnsRecord(env, zoneId, {
+			type: "TXT",
+			name: normalizedDomain,
+			content: "v=spf1 include:_spf.mx.cloudflare.net ~all",
+			ttl: 1,
+		});
+	} else if (!existingSpf.content.toLowerCase().includes("include:_spf.mx.cloudflare.net")) {
+		let updatedContent: string;
+		if (/(~all|-all|\?all|\+all)/i.test(existingSpf.content)) {
+			updatedContent = existingSpf.content.replace(
+				/(~all|-all|\?all|\+all)/i,
+				"include:_spf.mx.cloudflare.net $1",
+			);
+		} else {
+			updatedContent = `${existingSpf.content} include:_spf.mx.cloudflare.net ~all`;
+		}
+		await updateDnsRecord(env, zoneId, existingSpf.id, {
+			type: "TXT",
+			name: existingSpf.name,
+			content: updatedContent,
+			ttl: existingSpf.ttl || 1,
+		});
+	}
+
+	// 5. Ensure DMARC TXT record
+	const hasDmarc = records.some(
+		(r) =>
+			r.type === "TXT" &&
+			(r.name.toLowerCase().startsWith("_dmarc") || r.content.includes("v=DMARC1")),
+	);
+
+	if (!hasDmarc) {
+		await createDnsRecord(env, zoneId, {
+			type: "TXT",
+			name: `_dmarc.${normalizedDomain}`,
+			content: "v=DMARC1; p=reject; sp=reject; adkim=r; aspf=r;",
+			ttl: 1,
+		});
+	}
+
+	const updatedRecords = await listDnsRecords(env, zoneId);
+	return { success: true, records: updatedRecords };
+}
+
+/**
  * Audits the zone's DNS records for email readiness (MX, SPF, DKIM, DMARC).
  */
 export function auditEmailHealth(

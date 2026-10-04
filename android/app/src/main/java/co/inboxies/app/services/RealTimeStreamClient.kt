@@ -92,6 +92,7 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
     }
 
     private fun handleServerEvent(event: String, data: String) {
+        if (event == "ping" || event == "connected") return
         if (event == "new_email" || event == "message") {
             runCatching { AppJson.decodeFromString(Email.serializer(), data) }.getOrNull()?.let { email ->
                 onNewEmailReceived?.invoke(email)

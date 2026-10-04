@@ -42,6 +42,7 @@ import {
 } from "../shared/agent-conversations";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
+import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -78,6 +79,7 @@ import { verifyGoogleIdentityToken } from "./lib/google-auth";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
 import { sendFcmPush } from "./lib/fcm";
 import {
+	aliasMetadataKey,
 	allowedMailboxSet,
 	canonicalMailboxId,
 	isDuplicateInbound,
@@ -317,6 +319,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 	await stub.reviveMailbox();
 	await stub.getFolders();
+	await seedWelcomeEmailsForMailbox(c.env, email, name);
 	return c.json(
 		{ ...mailboxAccessPayload(email, finalSettings, ensured.principal), name },
 		201,
@@ -1596,8 +1599,20 @@ async function sendInboundAutoReply(options: {
 }
 
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
-	const route = await routeInboundEnvelope(message.to, async (mailboxId) =>
-		Boolean(await env.BUCKET.head(mailboxMetadataKey(mailboxId))),
+	const route = await routeInboundEnvelope(
+		message.to,
+		async (mailboxId) =>
+			Boolean(await env.BUCKET.head(mailboxMetadataKey(mailboxId))),
+		async (aliasEmail) => {
+			const obj = await env.BUCKET.get(aliasMetadataKey(aliasEmail));
+			if (!obj) return null;
+			try {
+				const data = (await obj.json()) as { targetMailboxId?: string };
+				return data.targetMailboxId || null;
+			} catch {
+				return null;
+			}
+		},
 	);
 	if (route.action === "reject") {
 		console.log(`Rejecting email for ${message.to}: ${route.reason}`);

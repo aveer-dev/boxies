@@ -12,9 +12,12 @@ enum AppConfig {
             return url
         }
         #endif
-        if let override = UserDefaults.standard.string(forKey: "apiBaseURL"),
-           let url = parseAPIBaseURL(override) {
-            return url
+        if let override = UserDefaults.standard.string(forKey: "apiBaseURL") {
+            if override.contains("localhost") || override.contains("127.0.0.1") || override.contains("10.0.2.2") {
+                UserDefaults.standard.removeObject(forKey: "apiBaseURL")
+            } else if let url = parseAPIBaseURL(override) {
+                return url
+            }
         }
         return URL(string: "https://inboxies.email")!
     }

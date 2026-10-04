@@ -14,12 +14,15 @@ import co.inboxies.app.models.ChangePasswordResponse
 import co.inboxies.app.models.CloudflareDnsRecord
 import co.inboxies.app.models.DnsRecordMutationResponse
 import co.inboxies.app.models.DnsRecordsListResponse
+import co.inboxies.app.models.DomainAliasItem
+import co.inboxies.app.models.DomainAliasesResponse
 import co.inboxies.app.models.DomainAvailabilityResponse
 import co.inboxies.app.models.DomainCheckoutResponse
 import co.inboxies.app.models.DomainEppCodeResponse
 import co.inboxies.app.models.DomainHealthResponse
 import co.inboxies.app.models.DomainTransferLockResponse
 import co.inboxies.app.models.ExportJob
+import co.inboxies.app.models.ForgotPasswordResponse
 import co.inboxies.app.models.DecommissionPreflightResponse
 import co.inboxies.app.models.DecommissionResponse
 import co.inboxies.app.models.FixEmailDnsResponse
@@ -318,6 +321,26 @@ class ApiClient private constructor() {
         authed = false,
     )
 
+    suspend fun forgotPassword(email: String): ForgotPasswordResponse = request(
+        "/api/v1/auth/password/forgot",
+        method = "POST",
+        body = buildJsonObject {
+            put("email", email)
+        },
+        authed = false,
+    )
+
+    suspend fun resetPassword(token: String? = null, code: String? = null, newPassword: String): PasswordLoginResponse = request(
+        "/api/v1/auth/password/reset",
+        method = "POST",
+        body = buildJsonObject {
+            if (token != null) put("token", token)
+            if (code != null) put("code", code)
+            put("newPassword", newPassword)
+        },
+        authed = false,
+    )
+
     suspend fun listAdminMailboxes(): List<AdminMailboxRow> =
         request("/api/v1/admin/mailboxes")
 
@@ -367,6 +390,7 @@ class ApiClient private constructor() {
         username: String,
         password: String,
         displayName: String? = null,
+        backupEmail: String? = null,
     ): OnboardingPersonalResponse = request(
         "/api/v1/auth/signup-personal",
         method = "POST",
@@ -374,6 +398,7 @@ class ApiClient private constructor() {
             put("username", username)
             put("password", password)
             if (!displayName.isNullOrBlank()) put("displayName", displayName)
+            if (!backupEmail.isNullOrBlank()) put("backupEmail", backupEmail)
         },
         authed = false,
     )
@@ -383,6 +408,7 @@ class ApiClient private constructor() {
         username: String,
         password: String,
         displayName: String? = null,
+        backupEmail: String? = null,
     ): OnboardingDomainResponse = request(
         "/api/v1/auth/signup-domain",
         method = "POST",
@@ -391,9 +417,43 @@ class ApiClient private constructor() {
             put("username", username)
             put("password", password)
             if (!displayName.isNullOrBlank()) put("displayName", displayName)
+            if (!backupEmail.isNullOrBlank()) put("backupEmail", backupEmail)
         },
         authed = false,
     )
+
+    suspend fun listDomainAliases(domain: String): List<DomainAliasItem> {
+        val res = request<DomainAliasesResponse>("/api/v1/admin/domains/${pathEncode(domain)}/aliases")
+        return res.aliases
+    }
+
+    suspend fun setupDomainAliases(domain: String, aliases: List<Map<String, String>>) {
+        request<EmptyResponse>(
+            "/api/v1/admin/domains/${pathEncode(domain)}/setup-aliases",
+            method = "POST",
+            body = buildJsonObject {
+                put("aliases", kotlinx.serialization.json.JsonArray(aliases.map { map ->
+                    buildJsonObject {
+                        map.forEach { (k, v) -> put(k, v) }
+                    }
+                }))
+            },
+        )
+    }
+
+    suspend fun setupDomainUsers(domain: String, users: List<Map<String, String>>) {
+        request<EmptyResponse>(
+            "/api/v1/admin/domains/${pathEncode(domain)}/setup-users",
+            method = "POST",
+            body = buildJsonObject {
+                put("users", kotlinx.serialization.json.JsonArray(users.map { map ->
+                    buildJsonObject {
+                        map.forEach { (k, v) -> put(k, v) }
+                    }
+                }))
+            },
+        )
+    }
 
     // MARK: - Admin DNS Suite
 

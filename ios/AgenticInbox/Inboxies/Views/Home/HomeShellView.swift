@@ -430,6 +430,7 @@ struct HomeShellView: View {
                 showSettings = true
             }
             Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                app.reset()
                 auth.signOut()
             }
         } label: {
@@ -478,10 +479,14 @@ struct HomeShellView: View {
                         Button("Create") {
                             Task {
                                 let fullEmail = "\(newMailboxEmail)@\(app.mailDomain)"
-                                await app.createMailbox(name: newMailboxName, email: fullEmail)
-                                showAddMailboxSheet = false
-                                newMailboxName = ""
-                                newMailboxEmail = ""
+                                do {
+                                    try await app.createMailbox(name: newMailboxName, email: fullEmail)
+                                    showAddMailboxSheet = false
+                                    newMailboxName = ""
+                                    newMailboxEmail = ""
+                                } catch {
+                                    // Toast already presented by AppModel
+                                }
                             }
                         }
                         .disabled(newMailboxEmail.isEmpty || newMailboxName.isEmpty)

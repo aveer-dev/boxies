@@ -1097,6 +1097,7 @@ class AppModel {
         _errorMessage.value = null
         _toast.value = null
         isDebugPreview = false
+        DatabaseService.shared.clearAll()
     }
 
     /**

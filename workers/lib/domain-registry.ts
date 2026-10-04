@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { principalKeys, type RequestPrincipal } from "./mailbox-acl";
+import { aliasMetadataKey, canonicalMailboxId } from "./mailbox-routing";
 
 export interface DomainRegistrationInfo {
 	provider: "cloudflare_registrar" | "external";
@@ -16,6 +17,13 @@ export interface DomainRegistrationInfo {
 	retailPriceUsd?: number;
 }
 
+export interface DomainAlias {
+	aliasLocal: string;
+	aliasEmail: string;
+	targetMailboxId: string;
+	createdAt: string;
+}
+
 export interface DomainMetadata {
 	domain: string;
 	zoneId: string;
@@ -25,6 +33,7 @@ export interface DomainMetadata {
 	nameservers: string[];
 	emailRoutingEnabled: boolean;
 	registration?: DomainRegistrationInfo;
+	aliases?: DomainAlias[];
 	createdAt: string;
 	updatedAt: string;
 }
@@ -144,4 +153,91 @@ export async function listDomainsForPrincipal(
 	if (!principal) return [];
 
 	return all.filter((meta) => isPrincipalAdminForDomain(meta, principal, isSuperAdmin));
+}
+
+/**
+ * Save an email alias for a domain and store its fast-lookup record in R2.
+ */
+export async function saveEmailAlias(
+	bucket: R2Bucket,
+	domain: string,
+	aliasLocal: string,
+	targetMailboxId: string,
+): Promise<DomainAlias> {
+	const normalizedDomain = domain.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+	const cleanLocal = aliasLocal.trim().toLowerCase().replace(/^@+/, "");
+	const aliasEmail = `${cleanLocal}@${normalizedDomain}`;
+	const canonicalTarget = canonicalMailboxId(targetMailboxId) || targetMailboxId.trim().toLowerCase();
+
+	const meta = await getDomainMetadata(bucket, normalizedDomain);
+	if (!meta) {
+		throw new Error(`Domain '${normalizedDomain}' not found`);
+	}
+
+	const aliasRecord: DomainAlias = {
+		aliasLocal: cleanLocal,
+		aliasEmail,
+		targetMailboxId: canonicalTarget,
+		createdAt: new Date().toISOString(),
+	};
+
+	// 1. Store direct O(1) resolution record in R2
+	await bucket.put(
+		aliasMetadataKey(aliasEmail),
+		JSON.stringify({
+			aliasEmail,
+			targetMailboxId: canonicalTarget,
+			domain: normalizedDomain,
+			createdAt: aliasRecord.createdAt,
+		}),
+		{ httpMetadata: { contentType: "application/json" } },
+	);
+
+	// 2. Update DomainMetadata aliases array
+	const existingAliases = (meta.aliases || []).filter((a) => a.aliasLocal !== cleanLocal);
+	existingAliases.push(aliasRecord);
+	meta.aliases = existingAliases;
+	meta.updatedAt = new Date().toISOString();
+	await saveDomainMetadata(bucket, meta);
+
+	return aliasRecord;
+}
+
+/**
+ * Delete an email alias for a domain.
+ */
+export async function deleteEmailAlias(
+	bucket: R2Bucket,
+	domain: string,
+	aliasLocal: string,
+): Promise<void> {
+	const normalizedDomain = domain.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+	const cleanLocal = aliasLocal.trim().toLowerCase().replace(/^@+/, "");
+	const aliasEmail = `${cleanLocal}@${normalizedDomain}`;
+
+	const meta = await getDomainMetadata(bucket, normalizedDomain);
+	if (!meta) {
+		throw new Error(`Domain '${normalizedDomain}' not found`);
+	}
+
+	// 1. Delete O(1) lookup record
+	await bucket.delete(aliasMetadataKey(aliasEmail));
+
+	// 2. Remove from DomainMetadata
+	if (meta.aliases) {
+		meta.aliases = meta.aliases.filter((a) => a.aliasLocal !== cleanLocal);
+		meta.updatedAt = new Date().toISOString();
+		await saveDomainMetadata(bucket, meta);
+	}
+}
+
+/**
+ * List all email aliases configured for a domain.
+ */
+export async function listEmailAliases(
+	bucket: R2Bucket,
+	domain: string,
+): Promise<DomainAlias[]> {
+	const meta = await getDomainMetadata(bucket, domain);
+	return meta?.aliases || [];
 }

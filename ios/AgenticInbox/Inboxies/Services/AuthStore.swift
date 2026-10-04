@@ -73,6 +73,31 @@ final class AuthStore {
         }
     }
 
+    func forgotPassword(email: String) async throws -> ForgotPasswordResponse {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            return try await APIClient.shared.forgotPassword(email: email)
+        } catch {
+            errorMessage = error.localizedDescription
+            throw error
+        }
+    }
+
+    func resetPassword(token: String? = nil, code: String? = nil, newPassword: String) async throws {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            let response = try await APIClient.shared.resetPassword(token: token, code: code, newPassword: newPassword)
+            persist(token: response.token, email: response.email)
+        } catch {
+            errorMessage = error.localizedDescription
+            throw error
+        }
+    }
+
     func applySession(token: String, email: String?) {
         persist(token: token, email: email)
     }

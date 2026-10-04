@@ -3,6 +3,7 @@ package co.inboxies.app.ui.auth
 import android.app.Activity
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -12,11 +13,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -44,11 +48,15 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -61,6 +69,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -74,6 +83,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -84,6 +94,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntOffset
@@ -107,6 +118,12 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+enum class AuthSubscreen {
+    None,
+    Email,
+    Onboarding,
+}
+
 /**
  * Redesigned onboarding welcome and sign-in flow for Android.
  * Design twin of iOS SignInView:
@@ -122,6 +139,7 @@ fun SignInView(
     isShowingSplash: Boolean = false,
     /** DEBUG preview: open the auth sheet and password form immediately. */
     expandPasswordForm: Boolean = false,
+    expandForgotPassword: Boolean = false,
     showAuthOptionsInitial: Boolean = false,
 ) {
     val auth = LocalAuthStore.current
@@ -132,15 +150,32 @@ fun SignInView(
     val error by auth.errorMessage.collectAsState()
     val focusManager = LocalFocusManager.current
 
-    var isHeroAnimated by remember { mutableStateOf(expandPasswordForm || showAuthOptionsInitial) }
-    var isAuthRevealed by remember { mutableStateOf(expandPasswordForm || showAuthOptionsInitial) }
-    var showEmailScreen by remember { mutableStateOf(expandPasswordForm) }
+    var isHeroAnimated by remember { mutableStateOf(expandPasswordForm || expandForgotPassword || showAuthOptionsInitial) }
+    var isAuthRevealed by remember { mutableStateOf(expandPasswordForm || expandForgotPassword || showAuthOptionsInitial) }
+    var activeSubscreen by remember {
+        mutableStateOf(if (expandPasswordForm || expandForgotPassword) AuthSubscreen.Email else AuthSubscreen.None)
+    }
     var showTermsBrowser by remember { mutableStateOf(false) }
+
+    LaunchedEffect(auth.isAuthenticated) {
+        if (auth.isAuthenticated) {
+            activeSubscreen = AuthSubscreen.None
+        }
+    }
 
     var welcomeDragOffset by remember { mutableFloatStateOf(0f) }
     var emailDragOffset by remember { mutableFloatStateOf(0f) }
+    var onboardingDragOffset by remember { mutableFloatStateOf(0f) }
 
-    var apiBase by remember { mutableStateOf(AppConfig.apiBaseURL) }
+    var apiBase by remember {
+        mutableStateOf(
+            if (AppConfig.apiBaseURL.contains("localhost") || AppConfig.apiBaseURL.contains("127.0.0.1") || AppConfig.apiBaseURL.contains("10.0.2.2")) {
+                BuildConfig.DEFAULT_API_BASE
+            } else {
+                AppConfig.apiBaseURL
+            }
+        )
+    }
     val showDevLogin = BuildConfig.DEBUG && AppConfig.isLocalDevelopmentAPI
     var showDevConfig by remember {
         mutableStateOf(
@@ -150,7 +185,13 @@ fun SignInView(
     var devTapCount by remember { mutableStateOf(0) }
 
     fun commitApiBase() {
-        val parsed = AppConfig.parseAPIBaseURL(apiBase.trim())
+        val trimmed = apiBase.trim()
+        if (trimmed.isEmpty() || trimmed.contains("localhost") || trimmed.contains("127.0.0.1") || trimmed.contains("10.0.2.2")) {
+            apiBase = BuildConfig.DEFAULT_API_BASE
+            AppConfig.apiBaseURL = BuildConfig.DEFAULT_API_BASE
+            return
+        }
+        val parsed = AppConfig.parseAPIBaseURL(trimmed)
         if (parsed != null) {
             apiBase = parsed
             AppConfig.apiBaseURL = parsed
@@ -167,7 +208,14 @@ fun SignInView(
         if (expandPasswordForm) {
             isHeroAnimated = true
             isAuthRevealed = true
-            showEmailScreen = true
+            activeSubscreen = AuthSubscreen.Email
+        }
+    }
+
+    LaunchedEffect(error) {
+        if (error != null) {
+            kotlinx.coroutines.delay(3500)
+            auth.clearError()
         }
     }
 
@@ -180,37 +228,78 @@ fun SignInView(
         label = "heroProgress",
     )
 
-    val authRevealHeightDp = 250.dp
+    val authRevealHeightDp = 300.dp
     val density = LocalDensity.current
     val authRevealHeightPx = with(density) { authRevealHeightDp.toPx() }
 
     val welcomeOffsetYAnimated by animateFloatAsState(
         targetValue = if (isAuthRevealed) -authRevealHeightPx else 0f,
-        animationSpec = spring(
-            dampingRatio = 0.86f,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = if (isAuthRevealed) {
+            spring(
+                dampingRatio = 0.50f,
+                stiffness = Spring.StiffnessMediumLow,
+            )
+        } else {
+            spring(
+                dampingRatio = 0.86f,
+                stiffness = Spring.StiffnessMediumLow,
+            )
+        },
         label = "welcomeOffsetY",
     )
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(colors.background),
+            .background(colors.surface),
     ) {
         val screenHeightPx = constraints.maxHeight.toFloat()
 
         val emailPageOffsetYAnimated by animateFloatAsState(
-            targetValue = if (showEmailScreen) 0f else screenHeightPx,
-            animationSpec = spring(
-                dampingRatio = 0.86f,
-                stiffness = Spring.StiffnessMediumLow,
-            ),
+            targetValue = if (activeSubscreen == AuthSubscreen.Email) 0f else screenHeightPx,
+            animationSpec = if (activeSubscreen == AuthSubscreen.Email) {
+                spring(
+                    dampingRatio = 0.84f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            } else {
+                spring(
+                    dampingRatio = 0.86f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            },
             label = "emailPageOffsetY",
         )
 
-        val page1OffsetY = (emailPageOffsetYAnimated - screenHeightPx) + emailDragOffset
+        val onboardingPageOffsetYAnimated by animateFloatAsState(
+            targetValue = if (activeSubscreen == AuthSubscreen.Onboarding) 0f else screenHeightPx,
+            animationSpec = if (activeSubscreen == AuthSubscreen.Onboarding) {
+                spring(
+                    dampingRatio = 0.84f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            } else {
+                spring(
+                    dampingRatio = 0.86f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            },
+            label = "onboardingPageOffsetY",
+        )
+
+        val activeDragOffset = when (activeSubscreen) {
+            AuthSubscreen.Email -> emailDragOffset
+            AuthSubscreen.Onboarding -> onboardingDragOffset
+            AuthSubscreen.None -> 0f
+        }
+        val targetPage1OffsetY = when (activeSubscreen) {
+            AuthSubscreen.Email -> emailPageOffsetYAnimated - screenHeightPx
+            AuthSubscreen.Onboarding -> onboardingPageOffsetYAnimated - screenHeightPx
+            AuthSubscreen.None -> 0f
+        }
+        val page1OffsetY = targetPage1OffsetY + activeDragOffset
         val page2OffsetY = emailPageOffsetYAnimated + emailDragOffset
+        val page3OffsetY = onboardingPageOffsetYAnimated + onboardingDragOffset
 
         // Page 1: Welcome Screen & Auth Buttons
         Box(
@@ -237,12 +326,13 @@ fun SignInView(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    // Primary: Continue with Email (Fully rounded capsule)
+                    // Primary: Get started button (Capsule)
                     Button(
                         onClick = {
+                            commitApiBase()
                             focusManager.clearFocus()
-                            showEmailScreen = true
-                            emailDragOffset = 0f
+                            activeSubscreen = AuthSubscreen.Onboarding
+                            onboardingDragOffset = 0f
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -253,23 +343,61 @@ fun SignInView(
                         ),
                         shape = CircleShape,
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Email,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.width(10.dp))
-                            Text(
-                                "Continue with Email",
-                                fontFamily = InterFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp,
-                            )
-                        }
+                        Text(
+                            "Get started",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                        )
+                    }
+
+                    // Divider: or text
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = colors.line.copy(alpha = 0.65f),
+                            thickness = 0.5.dp,
+                        )
+                        Text(
+                            "or",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            color = colors.muted,
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = colors.line.copy(alpha = 0.65f),
+                            thickness = 0.5.dp,
+                        )
+                    }
+                    // Continue with Email (Liquid glass capsule)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .liquidGlass(CircleShape)
+                            .clip(CircleShape)
+                            .clickable {
+                                focusManager.clearFocus()
+                                activeSubscreen = AuthSubscreen.Email
+                                emailDragOffset = 0f
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "Continue with Email",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            color = colors.ink,
+                        )
                     }
 
                     // Secondary: Apple & Google side-by-side as liquid glass capsule buttons
@@ -421,13 +549,13 @@ fun SignInView(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                     ) {
-                        if (isAuthRevealed && !showEmailScreen) {
+                        if (isAuthRevealed && activeSubscreen == AuthSubscreen.None) {
                             isAuthRevealed = false
                             welcomeDragOffset = 0f
                         }
                     }
-                    .pointerInput(isAuthRevealed, showEmailScreen) {
-                        if (isAuthRevealed && !showEmailScreen) {
+                    .pointerInput(isAuthRevealed, activeSubscreen) {
+                        if (isAuthRevealed && activeSubscreen == AuthSubscreen.None) {
                             detectVerticalDragGestures(
                                 onDragEnd = {
                                     if (welcomeDragOffset > 80f) {
@@ -531,12 +659,29 @@ fun SignInView(
                     AnimatedVisibility(
                         visible = !isAuthRevealed,
                         enter = scaleIn() + fadeIn(),
-                        exit = scaleOut() + fadeOut(),
+                        exit = scaleOut(
+                            animationSpec = spring(
+                                dampingRatio = 0.50f,
+                                stiffness = Spring.StiffnessMediumLow,
+                            )
+                        ) + fadeOut(),
                     ) {
+                        val arrowInteractionSource = remember { MutableInteractionSource() }
+                        val isArrowPressed by arrowInteractionSource.collectIsPressedAsState()
+                        val arrowScale by animateFloatAsState(
+                            targetValue = if (isArrowPressed) 0.86f else 1.0f,
+                            animationSpec = spring(dampingRatio = 0.48f, stiffness = 500f),
+                            label = "arrowScale",
+                        )
+
                         Box(
                             modifier = Modifier
                                 .padding(top = 36.dp)
                                 .size(54.dp)
+                                .graphicsLayer {
+                                    scaleX = arrowScale
+                                    scaleY = arrowScale
+                                }
                                 .shadow(10.dp, CircleShape, spotColor = colors.accent)
                                 .clip(CircleShape)
                                 .background(
@@ -544,7 +689,10 @@ fun SignInView(
                                         listOf(colors.accent, Color(0xFF477BFA))
                                     )
                                 )
-                                .clickable {
+                                .clickable(
+                                    interactionSource = arrowInteractionSource,
+                                    indication = null,
+                                ) {
                                     isAuthRevealed = true
                                 },
                             contentAlignment = Alignment.Center,
@@ -589,7 +737,8 @@ fun SignInView(
                         onDragEnd = {
                             if (emailDragOffset > 120f) {
                                 focusManager.clearFocus()
-                                showEmailScreen = false
+                                auth.clearError()
+                                activeSubscreen = AuthSubscreen.None
                             }
                             emailDragOffset = 0f
                         },
@@ -607,13 +756,59 @@ fun SignInView(
             color = colors.surface,
         ) {
             EmailLoginScreen(
-                isPresented = showEmailScreen,
+                isPresented = activeSubscreen == AuthSubscreen.Email,
                 onDismiss = {
                     focusManager.clearFocus()
-                    showEmailScreen = false
+                    auth.clearError()
+                    activeSubscreen = AuthSubscreen.None
                     emailDragOffset = 0f
                 },
                 commitApiBase = ::commitApiBase,
+            )
+        }
+
+        // Page 3: Get Started Onboarding Screen (Pushes welcome screen entirely up, follows in lockstep, draggable back down)
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .offset {
+                    IntOffset(
+                        x = 0,
+                        y = page3OffsetY.roundToInt(),
+                    )
+                }
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragEnd = {
+                            if (onboardingDragOffset > 120f) {
+                                focusManager.clearFocus()
+                                auth.clearError()
+                                activeSubscreen = AuthSubscreen.None
+                            }
+                            onboardingDragOffset = 0f
+                        },
+                        onDragCancel = {
+                            onboardingDragOffset = 0f
+                        },
+                        onVerticalDrag = { _, dragAmount ->
+                            focusManager.clearFocus()
+                            if (dragAmount > 0f || onboardingDragOffset > 0f) {
+                                onboardingDragOffset = maxOf(0f, onboardingDragOffset + dragAmount)
+                            }
+                        },
+                    )
+                },
+            color = colors.surface,
+        ) {
+            MailboxOnboardingView(
+                initialTrack = OnboardingTrack.Select,
+                onDismiss = {
+                    focusManager.clearFocus()
+                    auth.clearError()
+                    activeSubscreen = AuthSubscreen.None
+                    onboardingDragOffset = 0f
+                },
+                showsDragHandle = true,
             )
         }
 
@@ -662,6 +857,36 @@ fun SignInView(
                 onDismiss = { showTermsBrowser = false },
             )
         }
+
+        // Error Toast
+        AnimatedVisibility(
+            visible = error != null,
+            enter = slideInVertically(
+                animationSpec = spring(
+                    dampingRatio = 0.86f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            ) { it } + fadeIn(),
+            exit = slideOutVertically(
+                animationSpec = spring(
+                    dampingRatio = 0.86f,
+                    stiffness = Spring.StiffnessMediumLow,
+                )
+            ) { it } + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(bottom = 24.dp)
+                .padding(horizontal = 24.dp),
+        ) {
+            error?.let { msg ->
+                AuthToastBanner(
+                    message = msg,
+                    onDismiss = { auth.clearError() },
+                )
+            }
+        }
     }
 }
 
@@ -681,22 +906,40 @@ private fun EmailLoginScreen(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val isBusy by auth.isBusy.collectAsState()
-    val error by auth.errorMessage.collectAsState()
+    val context = LocalContext.current
 
-    var step by remember { mutableStateOf(EmailStep.Email) }
+    var step by remember {
+        mutableStateOf(
+            if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewPasswordSignIn") == true) {
+                EmailStep.Password
+            } else if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewForgotPassword") == true) {
+                EmailStep.ForgotPassword
+            } else {
+                EmailStep.Email
+            }
+        )
+    }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var resetCode by remember { mutableStateOf("") }
+    var isPasswordVisible by remember { mutableStateOf(false) }
+    var isResetPasswordVisible by remember { mutableStateOf(false) }
+    var isSendingReset by remember { mutableStateOf(false) }
+    var isResetting by remember { mutableStateOf(false) }
 
     val emailFocusRequester = remember { FocusRequester() }
     val passwordFocusRequester = remember { FocusRequester() }
+    val forgotEmailFocusRequester = remember { FocusRequester() }
+    val resetCodeFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(isPresented, step) {
         if (isPresented) {
             kotlinx.coroutines.delay(300)
-            if (step == EmailStep.Email) {
-                emailFocusRequester.requestFocus()
-            } else {
-                passwordFocusRequester.requestFocus()
+            when (step) {
+                EmailStep.Email -> emailFocusRequester.requestFocus()
+                EmailStep.Password -> passwordFocusRequester.requestFocus()
+                EmailStep.ForgotPassword -> forgotEmailFocusRequester.requestFocus()
+                EmailStep.ResetPassword -> resetCodeFocusRequester.requestFocus()
             }
         }
     }
@@ -728,13 +971,19 @@ private fun EmailLoginScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            if (step == EmailStep.Password) {
+            if (step != EmailStep.Email) {
                 Box(
                     modifier = Modifier
                         .size(42.dp)
                         .liquidGlass(CircleShape)
                         .clip(CircleShape)
-                        .clickable { step = EmailStep.Email },
+                        .clickable {
+                            auth.clearError()
+                            when (step) {
+                                EmailStep.ResetPassword -> step = EmailStep.ForgotPassword
+                                else -> step = EmailStep.Email
+                            }
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -783,7 +1032,10 @@ private fun EmailLoginScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = if (step == EmailStep.Email) Icons.Outlined.Email else Icons.Outlined.Lock,
+                    imageVector = when (step) {
+                        EmailStep.Email, EmailStep.ForgotPassword -> Icons.Outlined.Email
+                        EmailStep.Password, EmailStep.ResetPassword -> Icons.Outlined.Lock
+                    },
                     contentDescription = null,
                     tint = colors.muted,
                     modifier = Modifier.size(24.dp),
@@ -792,7 +1044,12 @@ private fun EmailLoginScreen(
 
             // Title & Subtitle
             Text(
-                text = if (step == EmailStep.Email) "Continue with Email" else "Enter your password",
+                text = when (step) {
+                    EmailStep.Email -> "Continue with Email"
+                    EmailStep.Password -> "Enter your password"
+                    EmailStep.ForgotPassword -> "Forgot password?"
+                    EmailStep.ResetPassword -> "Reset your password"
+                },
                 fontFamily = InterFontFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 24.sp,
@@ -801,10 +1058,11 @@ private fun EmailLoginScreen(
             )
 
             Text(
-                text = if (step == EmailStep.Email) {
-                    "Sign in or sign up with your email."
-                } else {
-                    "Sign in with your email ${email.trim()}"
+                text = when (step) {
+                    EmailStep.Email -> "Sign in or sign up with your email."
+                    EmailStep.Password -> "Sign in with your email ${email.trim()}"
+                    EmailStep.ForgotPassword -> "Enter your email to receive a 6-digit reset code."
+                    EmailStep.ResetPassword -> "Enter the code sent to ${email.trim()}"
                 },
                 fontFamily = InterFontFamily,
                 fontSize = 14.sp,
@@ -815,144 +1073,422 @@ private fun EmailLoginScreen(
 
             Spacer(Modifier.height(28.dp))
 
-            if (step == EmailStep.Email) {
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    placeholder = { Text("Email Address", fontFamily = InterFontFamily, color = colors.muted) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(emailFocusRequester),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Email,
-                        imeAction = ImeAction.Next,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onNext = {
-                            if (isValidEmail) {
-                                step = EmailStep.Password
-                            }
-                        }
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.accent,
-                        unfocusedBorderColor = colors.line,
-                        focusedTextColor = colors.ink,
-                        unfocusedTextColor = colors.ink,
-                        cursorColor = colors.accent,
-                    ),
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                Button(
-                    onClick = { step = EmailStep.Password },
-                    enabled = isValidEmail,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.ink,
-                        contentColor = colors.surface,
-                        disabledContainerColor = colors.pillActive,
-                        disabledContentColor = colors.muted,
-                    ),
-                    shape = CircleShape,
-                ) {
-                    Text(
-                        "Next",
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
-                    )
-                }
-            } else {
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    placeholder = { Text("Password", fontFamily = InterFontFamily, color = colors.muted) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(passwordFocusRequester),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            if (password.isNotBlank() && !isBusy) {
-                                scope.launch {
-                                    commitApiBase()
-                                    auth.signInWithPassword(email.trim(), password)
-                                    if (auth.isAuthenticated) {
-                                        onDismiss()
-                                    }
+            when (step) {
+                EmailStep.Email -> {
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it },
+                        placeholder = { Text("Email Address", fontFamily = InterFontFamily, color = colors.muted) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(emailFocusRequester),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Next,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = {
+                                if (isValidEmail) {
+                                    step = EmailStep.Password
                                 }
                             }
-                        }
-                    ),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = colors.accent,
-                        unfocusedBorderColor = colors.line,
-                        focusedTextColor = colors.ink,
-                        unfocusedTextColor = colors.ink,
-                        cursorColor = colors.accent,
-                    ),
-                )
-
-                if (error != null) {
-                    Text(
-                        text = error.orEmpty(),
-                        color = colors.unread,
-                        fontFamily = InterFontFamily,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 12.dp),
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.accent,
+                            unfocusedBorderColor = colors.line,
+                            focusedTextColor = colors.ink,
+                            unfocusedTextColor = colors.ink,
+                            cursorColor = colors.accent,
+                        ),
                     )
-                }
 
-                Spacer(Modifier.height(20.dp))
-
-                Button(
-                    onClick = {
-                        scope.launch {
-                            commitApiBase()
-                            auth.signInWithPassword(email.trim(), password)
-                            if (auth.isAuthenticated) {
-                                onDismiss()
-                            }
-                        }
-                    },
-                    enabled = password.isNotBlank() && !isBusy,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.ink,
-                        contentColor = colors.surface,
-                        disabledContainerColor = colors.pillActive,
-                        disabledContentColor = colors.muted,
-                    ),
-                    shape = CircleShape,
-                ) {
-                    if (isBusy) {
-                        CircularProgressIndicator(
-                            color = colors.surface,
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
+                    // Button for forgot password should be below the email input, then some extra space below it before the next button
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
                         Text(
-                            "Sign In",
+                            text = "Forgot password?",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            color = colors.accent,
+                            modifier = Modifier
+                                .clickable {
+                                    auth.clearError()
+                                    step = EmailStep.ForgotPassword
+                                }
+                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Button(
+                        onClick = { step = EmailStep.Password },
+                        enabled = isValidEmail,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.ink,
+                            contentColor = colors.surface,
+                            disabledContainerColor = colors.pillActive,
+                            disabledContentColor = colors.muted,
+                        ),
+                        shape = CircleShape,
+                    ) {
+                        Text(
+                            "Next",
                             fontFamily = InterFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 16.sp,
                         )
+                    }
+                }
+
+                EmailStep.Password -> {
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        placeholder = { Text("Password", fontFamily = InterFontFamily, color = colors.muted) },
+                        visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (isPasswordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    contentDescription = if (isPasswordVisible) "Hide password" else "Show password",
+                                    tint = colors.muted,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(passwordFocusRequester),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (password.isNotBlank() && !isBusy) {
+                                    scope.launch {
+                                        commitApiBase()
+                                        auth.signInWithPassword(email.trim(), password)
+                                        if (auth.isAuthenticated) {
+                                            onDismiss()
+                                        }
+                                    }
+                                }
+                            }
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.accent,
+                            unfocusedBorderColor = colors.line,
+                            focusedTextColor = colors.ink,
+                            unfocusedTextColor = colors.ink,
+                            cursorColor = colors.accent,
+                        ),
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        Text(
+                            text = "Forgot password?",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            color = colors.accent,
+                            modifier = Modifier
+                                .clickable {
+                                    auth.clearError()
+                                    step = EmailStep.ForgotPassword
+                                }
+                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                commitApiBase()
+                                auth.signInWithPassword(email.trim(), password)
+                                if (auth.isAuthenticated) {
+                                    onDismiss()
+                                }
+                            }
+                        },
+                        enabled = password.isNotBlank() && !isBusy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.ink,
+                            contentColor = colors.surface,
+                            disabledContainerColor = colors.pillActive,
+                            disabledContentColor = colors.muted,
+                        ),
+                        shape = CircleShape,
+                    ) {
+                        if (isBusy) {
+                            CircularProgressIndicator(
+                                color = colors.surface,
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(
+                                "Sign In",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp,
+                            )
+                        }
+                    }
+                }
+
+                EmailStep.ForgotPassword -> {
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = { email = it },
+                        placeholder = { Text("Email Address", fontFamily = InterFontFamily, color = colors.muted) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(forgotEmailFocusRequester),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (isValidEmail && !isSendingReset) {
+                                    scope.launch {
+                                        commitApiBase()
+                                        isSendingReset = true
+                                        try {
+                                            val res = auth.forgotPassword(email.trim())
+                                            if (BuildConfig.DEBUG && res.devResetCode != null) {
+                                                resetCode = res.devResetCode
+                                            }
+                                            step = EmailStep.ResetPassword
+                                        } catch (_: Exception) {
+                                        } finally {
+                                            isSendingReset = false
+                                        }
+                                    }
+                                }
+                            }
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.accent,
+                            unfocusedBorderColor = colors.line,
+                            focusedTextColor = colors.ink,
+                            unfocusedTextColor = colors.ink,
+                            cursorColor = colors.accent,
+                        ),
+                    )
+
+                    Spacer(Modifier.height(20.dp))
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                commitApiBase()
+                                isSendingReset = true
+                                try {
+                                    val res = auth.forgotPassword(email.trim())
+                                    if (BuildConfig.DEBUG && res.devResetCode != null) {
+                                        resetCode = res.devResetCode
+                                    }
+                                    step = EmailStep.ResetPassword
+                                } catch (_: Exception) {
+                                } finally {
+                                    isSendingReset = false
+                                }
+                            }
+                        },
+                        enabled = isValidEmail && !isSendingReset,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.ink,
+                            contentColor = colors.surface,
+                            disabledContainerColor = colors.pillActive,
+                            disabledContentColor = colors.muted,
+                        ),
+                        shape = CircleShape,
+                    ) {
+                        if (isSendingReset) {
+                            CircularProgressIndicator(
+                                color = colors.surface,
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(
+                                "Send Reset Code",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp,
+                            )
+                        }
+                    }
+                }
+
+                EmailStep.ResetPassword -> {
+                    OutlinedTextField(
+                        value = resetCode,
+                        onValueChange = { if (it.length <= 6) resetCode = it },
+                        placeholder = { Text("6-digit code", fontFamily = InterFontFamily, color = colors.muted) },
+                        textStyle = TextStyle(
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            textAlign = TextAlign.Center,
+                            color = colors.ink,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(resetCodeFocusRequester),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Next,
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.accent,
+                            unfocusedBorderColor = colors.line,
+                            focusedTextColor = colors.ink,
+                            unfocusedTextColor = colors.ink,
+                            cursorColor = colors.accent,
+                        ),
+                    )
+
+                    Spacer(Modifier.height(14.dp))
+
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        placeholder = { Text("New password (min 10 chars)", fontFamily = InterFontFamily, color = colors.muted) },
+                        visualTransformation = if (isResetPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { isResetPasswordVisible = !isResetPasswordVisible }) {
+                                Icon(
+                                    imageVector = if (isResetPasswordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    contentDescription = if (isResetPasswordVisible) "Hide password" else "Show password",
+                                    tint = colors.muted,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (resetCode.length >= 6 && password.length >= 10 && !isResetting) {
+                                    scope.launch {
+                                        commitApiBase()
+                                        isResetting = true
+                                        try {
+                                            auth.resetPassword(code = resetCode.trim(), newPassword = password)
+                                            if (auth.isAuthenticated) {
+                                                onDismiss()
+                                            }
+                                        } catch (_: Exception) {
+                                        } finally {
+                                            isResetting = false
+                                        }
+                                    }
+                                }
+                            }
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.accent,
+                            unfocusedBorderColor = colors.line,
+                            focusedTextColor = colors.ink,
+                            unfocusedTextColor = colors.ink,
+                            cursorColor = colors.accent,
+                        ),
+                    )
+
+                    if (password.isNotEmpty() && password.length < 10) {
+                        Text(
+                            text = "${10 - password.length} more characters needed",
+                            fontFamily = InterFontFamily,
+                            fontSize = 12.sp,
+                            color = colors.muted,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp, start = 8.dp),
+                        )
+                    }
+
+                    Spacer(Modifier.height(20.dp))
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                commitApiBase()
+                                isResetting = true
+                                try {
+                                    auth.resetPassword(code = resetCode.trim(), newPassword = password)
+                                    if (auth.isAuthenticated) {
+                                        onDismiss()
+                                    }
+                                } catch (_: Exception) {
+                                } finally {
+                                    isResetting = false
+                                }
+                            }
+                        },
+                        enabled = resetCode.length >= 6 && password.length >= 10 && !isResetting,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.ink,
+                            contentColor = colors.surface,
+                            disabledContainerColor = colors.pillActive,
+                            disabledContentColor = colors.muted,
+                        ),
+                        shape = CircleShape,
+                    ) {
+                        if (isResetting) {
+                            CircularProgressIndicator(
+                                color = colors.surface,
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(
+                                "Reset and Sign In",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp,
+                            )
+                        }
                     }
                 }
             }
@@ -965,6 +1501,8 @@ private fun EmailLoginScreen(
 private enum class EmailStep {
     Email,
     Password,
+    ForgotPassword,
+    ResetPassword,
 }
 
 /**
@@ -1034,3 +1572,39 @@ private fun InAppBrowserDialog(
         }
     }
 }
+
+@Composable
+private fun AuthToastBanner(
+    message: String,
+    onDismiss: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = modifier
+            .shadow(12.dp, RoundedCornerShape(50))
+            .clip(RoundedCornerShape(50))
+            .background(colors.surface)
+            .border(0.5.dp, colors.line.copy(alpha = 0.6f), RoundedCornerShape(50))
+            .clickable(onClick = onDismiss)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Outlined.Error,
+            contentDescription = null,
+            tint = colors.deepDarkRed,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = message,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 13.sp,
+            color = colors.ink,
+            maxLines = 2,
+        )
+    }
+}
+

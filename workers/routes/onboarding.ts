@@ -29,6 +29,7 @@ import {
 	enableEmailRouting,
 	createCatchAllWorkerRule,
 	autoConfigureEmailDns,
+	ensureFullEmailDns,
 	listDnsRecords,
 	auditEmailHealth,
 } from "../lib/cloudflare-client";
@@ -38,6 +39,7 @@ import {
 	type DomainMetadata,
 } from "../lib/domain-registry";
 import { checkDomainAvailability } from "../lib/cloudflare-registrar";
+import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 
 const SignupPersonalBody = z.object({
 	username: z
@@ -51,6 +53,7 @@ const SignupPersonalBody = z.object({
 		),
 	password: z.string().min(10, "Password must be at least 10 characters").max(200),
 	displayName: z.string().trim().max(200).optional(),
+	backupEmail: z.string().trim().email("Please provide a valid backup email address").optional(),
 });
 
 const SignupDomainBody = z.object({
@@ -74,6 +77,7 @@ const SignupDomainBody = z.object({
 		),
 	password: z.string().min(10, "Password must be at least 10 characters").max(200),
 	displayName: z.string().trim().max(200).optional(),
+	backupEmail: z.string().trim().email("Please provide a valid backup email address").optional(),
 });
 
 function defaultMailboxSettings(name: string) {
@@ -149,7 +153,7 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 				400,
 			);
 		}
-		const { username, password, displayName } = parsed.data;
+		const { username, password, displayName, backupEmail } = parsed.data;
 
 		const strengthErr = validatePasswordStrength(password);
 		if (strengthErr) return c.json({ error: strengthErr }, 400);
@@ -183,7 +187,7 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		const passwordHash = await hashPassword(password);
 		const user: PlatformUser = {
 			id: userId,
-			contactEmail: canonical,
+			contactEmail: backupEmail || canonical,
 			mailboxEmail: canonical,
 			passwordHash,
 			linkedSubs: [],
@@ -205,6 +209,7 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
 		await stub.reviveMailbox();
 		await stub.getFolders();
+		await seedWelcomeEmailsForMailbox(c.env, canonical, displayName || username);
 
 		const { token, expiresAt } = await issuePasswordSessionToken(secret, {
 			userId,
@@ -242,7 +247,7 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 				400,
 			);
 		}
-		const { domain: rawDomain, username, password, displayName } = parsed.data;
+		const { domain: rawDomain, username, password, displayName, backupEmail } = parsed.data;
 		const domain = rawDomain.toLowerCase();
 
 		const strengthErr = validatePasswordStrength(password);
@@ -273,9 +278,7 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		let zone;
 		try {
 			zone = await createZone(c.env, domain);
-			await enableEmailRouting(c.env, zone.id);
-			await createCatchAllWorkerRule(c.env, zone.id, c.env.WORKER_NAME);
-			await autoConfigureEmailDns(c.env, zone.id);
+			await ensureFullEmailDns(c.env, zone.id, domain);
 		} catch (cfErr: unknown) {
 			const msg = cfErr instanceof Error ? cfErr.message : "Failed to provision domain in Cloudflare";
 			return c.json({ error: `Cloudflare setup failed: ${msg}` }, 502);
@@ -290,7 +293,7 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		const passwordHash = await hashPassword(password);
 		const user: PlatformUser = {
 			id: userId,
-			contactEmail: canonical,
+			contactEmail: backupEmail || canonical,
 			mailboxEmail: canonical,
 			passwordHash,
 			linkedSubs: [],
@@ -326,6 +329,7 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
 		await stub.reviveMailbox();
 		await stub.getFolders();
+		await seedWelcomeEmailsForMailbox(c.env, canonical, displayName || username);
 
 		// 6. Issue Session Token
 		const { token, expiresAt } = await issuePasswordSessionToken(secret, {

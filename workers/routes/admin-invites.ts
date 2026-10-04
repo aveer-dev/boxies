@@ -83,7 +83,13 @@ import {
 	savePlatformUser,
 	type PlatformUser,
 } from "../lib/platform-users";
+import {
+	createPasswordReset,
+	verifyPasswordReset,
+	consumePasswordReset,
+} from "../lib/password-reset";
 import { agentInstanceName } from "../../shared/agent-conversations";
+import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 import type { Env } from "../types";
 
 type App = Hono<MailboxContext>;
@@ -140,6 +146,16 @@ const AcceptInviteBody = z.object({
 const PasswordLoginBody = z.object({
 	email: z.string().email(),
 	password: z.string().min(1).max(200),
+});
+
+const ForgotPasswordBody = z.object({
+	email: z.string().email(),
+});
+
+const ResetPasswordBody = z.object({
+	token: z.string().optional(),
+	code: z.string().optional(),
+	newPassword: z.string().min(1).max(200),
 });
 
 const TransferAclBody = z.object({
@@ -353,6 +369,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
 		await stub.reviveMailbox();
 		await stub.getFolders();
+		await seedWelcomeEmailsForMailbox(c.env, email, name);
 
 		let inviteResult: Awaited<ReturnType<typeof createPendingInvite>> | null =
 			null;
@@ -840,6 +857,116 @@ export function registerAdminAndInviteRoutes(app: App) {
 			clearPasswordSessionCookieHeader(!isDevRuntime()),
 		);
 		return c.json({ ok: true });
+	});
+
+	app.post("/api/v1/auth/password/forgot", async (c) => {
+		const parsed = ForgotPasswordBody.safeParse(await c.req.json().catch(() => ({})));
+		if (!parsed.success) {
+			return c.json({ error: "Please enter a valid email address" }, 400);
+		}
+		const inputEmail = parsed.data.email.trim();
+		const login = canonicalMailboxId(inputEmail) ?? inputEmail.toLowerCase();
+		const userId = await findUserIdByLoginEmail(c.env.BUCKET, login);
+
+		let devResetCode: string | undefined;
+		let devResetToken: string | undefined;
+
+		if (userId) {
+			const user = await loadPlatformUser(c.env.BUCKET, userId);
+			if (user) {
+				const targetEmail = user.contactEmail || user.mailboxEmail || inputEmail;
+				const reset = await createPasswordReset(c.env.BUCKET, user.id, targetEmail);
+				devResetCode = reset.code;
+				devResetToken = reset.token;
+
+				const resetUrl = `${appBaseUrl(c)}/reset-password?token=${reset.token}`;
+				const text = `Hi,\n\nWe received a request to reset your password on Inboxies.\n\nYour 6-digit reset code is:\n${reset.code}\n\nOr click this link to reset your password:\n${resetUrl}\n\nThis code and link will expire in 1 hour. If you didn't request this reset, you can safely ignore this email.\n`;
+				const html = `<p>Hi,</p><p>We received a request to reset your password on Inboxies.</p><p>Your 6-digit reset code is:</p><p style="font-size: 26px; font-weight: bold; letter-spacing: 4px; margin: 16px 0; color: #1e293b;">${reset.code}</p><p><a href="${resetUrl}">Reset your password</a></p><p>Or copy this link:<br/>${resetUrl}</p><p style="color: #64748b; font-size: 13px;">This code and link will expire in 1 hour. If you didn't request a password reset, you can safely ignore this email.</p>`;
+
+				if (c.env.EMAIL) {
+					try {
+						await sendEmail(c.env.EMAIL, {
+							to: targetEmail,
+							from: { email: inviteFromAddress(c), name: "Inboxies" },
+							subject: "Reset your Inboxies password",
+							text,
+							html,
+						});
+					} catch (e) {
+						console.error("Failed to send password reset email:", e);
+					}
+				} else {
+					console.log(`[Dev] Password reset for ${targetEmail}: Code=${reset.code} Token=${reset.token}`);
+				}
+			}
+		}
+
+		const isDev = isDevRuntime() || !c.env.EMAIL;
+		return c.json({
+			ok: true,
+			message: "If an account exists with this email, reset instructions have been sent.",
+			...(isDev && devResetCode ? { devResetCode, devResetToken } : {}),
+		});
+	});
+
+	app.post("/api/v1/auth/password/reset", async (c) => {
+		const parsed = ResetPasswordBody.safeParse(await c.req.json().catch(() => ({})));
+		if (!parsed.success) {
+			return c.json({ error: "Invalid request. Provide token or code, and newPassword." }, 400);
+		}
+		const { token, code, newPassword } = parsed.data;
+		if (!token?.trim() && !code?.trim()) {
+			return c.json({ error: "Reset token or 6-digit code is required." }, 400);
+		}
+
+		const strengthErr = validatePasswordStrength(newPassword);
+		if (strengthErr) {
+			return c.json({ error: strengthErr }, 400);
+		}
+
+		const resetRecord = await verifyPasswordReset(c.env.BUCKET, { token, code });
+		if (!resetRecord) {
+			return c.json({ error: "Invalid or expired reset code or link." }, 400);
+		}
+
+		const user = await loadPlatformUser(c.env.BUCKET, resetRecord.userId);
+		if (!user) {
+			return c.json({ error: "User account not found." }, 404);
+		}
+
+		const mobileSecret =
+			c.env.MOBILE_JWT_SECRET ||
+			(isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
+		if (!mobileSecret) {
+			return c.json({ error: "Password auth is not configured. Set MOBILE_JWT_SECRET." }, 500);
+		}
+
+		const newHash = await hashPassword(newPassword);
+		user.passwordHash = newHash;
+		user.updatedAt = new Date().toISOString();
+		await savePlatformUser(c.env.BUCKET, user);
+
+		await consumePasswordReset(c.env.BUCKET, resetRecord);
+
+		const session = await issuePasswordSessionToken(mobileSecret, {
+			userId: user.id,
+			email: user.mailboxEmail ?? user.contactEmail,
+		});
+		c.header(
+			"Set-Cookie",
+			passwordSessionCookieHeader(session.token, {
+				secure: !isDevRuntime(),
+			}),
+		);
+		const principal = principalFromPlatformUser(user);
+		return c.json({
+			ok: true,
+			token: session.token,
+			expiresAt: session.expiresAt,
+			email: principal.email ?? null,
+			sub: principal.sub ?? null,
+			keys: principalKeys(principal),
+		});
 	});
 
 	app.post("/api/v1/auth/link-provider", async (c) => {

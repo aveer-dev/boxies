@@ -47,6 +47,7 @@ object PreviewHarness {
     fun seed(mode: PreviewMode, auth: AuthStore, appModel: AppModel) {
         when (mode) {
             PreviewMode.PasswordSignIn,
+            PreviewMode.ForgotPassword,
             PreviewMode.Welcome,
             PreviewMode.AuthOptions,
             -> {
@@ -92,6 +93,7 @@ fun PreviewRoot(
         PreviewMode.Welcome -> SignInView(isShowingSplash = false, expandPasswordForm = false)
         PreviewMode.AuthOptions -> SignInView(isShowingSplash = false, expandPasswordForm = false, showAuthOptionsInitial = true)
         PreviewMode.PasswordSignIn -> SignInView(expandPasswordForm = true)
+        PreviewMode.ForgotPassword -> SignInView(expandForgotPassword = true)
         PreviewMode.DomainOnboarding -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
                 MailboxOnboardingView(initialTrack = OnboardingTrack.Domain)

@@ -533,6 +533,119 @@ async function runTests() {
 	}
 	console.log("✔ Domain-scoped Admin mailboxes & invites tests passed");
 
+	// =========================================================================
+	// 7. Email Aliases & Batch Onboarding Setup Tests
+	// =========================================================================
+	{
+		const bucket = mockBucket();
+		const env = mockEnv(bucket);
+		const app = harness(env);
+
+		const signupRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/auth/signup-domain", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					domain: "startup.dev",
+					username: "alice",
+					password: "alicepassword123",
+				}),
+			}),
+		);
+		assert.equal(signupRes.status, 201);
+		const { token } = await signupRes.json();
+		const authHeader = { Authorization: `Bearer ${token}` };
+
+		// 7.1 List aliases (initially empty)
+		const listRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/admin/domains/startup.dev/aliases", {
+				headers: authHeader,
+			}),
+		);
+		assert.equal(listRes.status, 200);
+		const listData = await listRes.json();
+		assert.equal(listData.domain, "startup.dev");
+		assert.deepEqual(listData.aliases, []);
+
+		// 7.2 Create an email alias support -> alice@startup.dev
+		const createAliasRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/admin/domains/startup.dev/aliases", {
+				method: "POST",
+				headers: { ...authHeader, "Content-Type": "application/json" },
+				body: JSON.stringify({
+					aliasLocal: "support",
+					targetMailboxId: "alice@startup.dev",
+				}),
+			}),
+		);
+		assert.equal(createAliasRes.status, 201);
+		const createdAlias = await createAliasRes.json();
+		assert.equal(createdAlias.alias.aliasEmail, "support@startup.dev");
+		assert.equal(createdAlias.alias.targetMailboxId, "alice@startup.dev");
+
+		// 7.3 Test alias resolution via routeInboundEnvelope
+		const { routeInboundEnvelope, aliasMetadataKey } = await import("../lib/mailbox-routing.ts");
+		const routeResult = await routeInboundEnvelope(
+			"support@startup.dev",
+			async (id) => id === "alice@startup.dev",
+			async (alias) => {
+				const obj = await bucket.get(aliasMetadataKey(alias));
+				if (!obj) return null;
+				const data = await obj.json();
+				return data.targetMailboxId || null;
+			},
+		);
+		assert.equal(routeResult.action, "deliver");
+		assert.equal(routeResult.mailboxId, "alice@startup.dev");
+		assert.equal(routeResult.resolvedViaAlias, true);
+
+		// 7.4 Batch setup aliases during onboarding
+		const batchAliasRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/admin/domains/startup.dev/setup-aliases", {
+				method: "POST",
+				headers: { ...authHeader, "Content-Type": "application/json" },
+				body: JSON.stringify({
+					aliases: [
+						{ aliasLocal: "billing", targetMailboxId: "alice@startup.dev" },
+						{ aliasLocal: "hello", targetMailboxId: "alice@startup.dev" },
+					],
+				}),
+			}),
+		);
+		assert.equal(batchAliasRes.status, 200);
+		const batchAliasData = await batchAliasRes.json();
+		assert.equal(batchAliasData.aliases.length, 2);
+
+		// 7.5 Batch setup team users during onboarding
+		const batchUsersRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/admin/domains/startup.dev/setup-users", {
+				method: "POST",
+				headers: { ...authHeader, "Content-Type": "application/json" },
+				body: JSON.stringify({
+					users: [
+						{ fullName: "Carol Danvers", contactEmail: "carol@external.com", username: "carol" },
+						{ fullName: "Dave Bowman", contactEmail: "dave@external.com", username: "dave" },
+					],
+				}),
+			}),
+		);
+		assert.equal(batchUsersRes.status, 200);
+		const batchUsersData = await batchUsersRes.json();
+		assert.equal(batchUsersData.users.length, 2);
+		assert.equal(batchUsersData.users[0].mailboxId, "carol@startup.dev");
+		assert.ok(batchUsersData.users[0].invite?.token);
+
+		// 7.6 Delete an alias
+		const delAliasRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/admin/domains/startup.dev/aliases/hello", {
+				method: "DELETE",
+				headers: authHeader,
+			}),
+		);
+		assert.equal(delAliasRes.status, 200);
+	}
+	console.log("✔ Email Aliases & Batch Onboarding setup tests passed");
+
 	console.log("\nALL DNS SUITE & ONBOARDING TESTS PASSED!\n");
 }
 

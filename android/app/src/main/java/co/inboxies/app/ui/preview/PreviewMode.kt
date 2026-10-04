@@ -21,6 +21,7 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     DomainDns("domainDns", "previewDomainDns"),
     DomainOnboarding("domainOnboarding", "previewDomainOnboarding"),
     PasswordSignIn("passwordSignIn", "previewPasswordSignIn"),
+    ForgotPassword("forgotPassword", "previewForgotPassword"),
     InviteAccept("inviteAccept", "previewInviteAccept"),
     SignInMethods("signInMethods", "previewSignInMethods"),
     Mailbox("mailbox", "previewMailbox"),

@@ -234,13 +234,16 @@ final class AppModel {
         }
     }
 
-    func createMailbox(name: String, email: String) async {
+    @discardableResult
+    func createMailbox(name: String, email: String) async throws -> Mailbox {
         do {
-            let _ = try await APIClient.shared.createMailbox(name: name, email: email)
+            let mailbox = try await APIClient.shared.createMailbox(name: name, email: email)
             await refreshMailboxes(showLoading: true)
             showToast("Mailbox created")
+            return mailbox
         } catch {
             showToast("Failed to create mailbox: \(error.localizedDescription)", isError: true)
+            throw error
         }
     }
 
@@ -1118,6 +1121,42 @@ final class AppModel {
         toastDismissTask?.cancel()
         toast = nil
         toastDismissTask = nil
+    }
+
+    func reset() {
+        streamClient.stop()
+        mailboxes = []
+        selectedMailboxId = nil
+        folders = []
+        selectedTab = .folder("inbox")
+        emails = []
+        inboxDigest = nil
+        isDigestLoading = false
+        conversations = []
+        activeConversationId = nil
+        chatSession = .dismissed
+        pendingConversationIds.removeAll()
+        isMailboxLoading = true
+        isAdmin = false
+        isLoading = true
+        isEmailDetailLoading = false
+        isSyncing = false
+        lastSyncedAt = nil
+        errorMessage = nil
+        selectedEmail = nil
+        threadEmails = []
+        composeSession = nil
+        toastDismissTask?.cancel()
+        toastDismissTask = nil
+        toast = nil
+        replyLaterCount = 0
+        identities = nil
+        adminMailboxes = nil
+        pendingUndoTask?.cancel()
+        pendingUndoTask = nil
+        pendingUndoAction = nil
+        isDebugPreview = false
+        db.clearAll()
     }
 
     func scheduleUndoableAction(
