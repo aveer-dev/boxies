@@ -50,31 +50,9 @@ function getAccessUrls(teamDomain: string) {
 	return { issuer, certsUrl };
 }
 
-/** Public API + SPA paths that must work without Access / Bearer (token-gated later). */
-function isPublicAuthPath(pathname: string): boolean {
-	if (
-		pathname === "/api/v1/auth/apple" ||
-		pathname === "/api/v1/auth/google" ||
-		pathname === "/api/v1/auth/dev" ||
-		pathname === "/api/v1/auth/password" ||
-		pathname === "/api/v1/auth/password/logout" ||
-		pathname === "/api/v1/auth/signup-personal" ||
-		pathname === "/api/v1/auth/signup-domain" ||
-		pathname === "/api/v1/auth/domains/check" ||
-		pathname === "/api/v1/billing/create-domain-checkout" ||
-		pathname === "/api/v1/billing/checkout-return" ||
-		pathname === "/api/v1/billing/stripe-webhook"
-	) {
-		return true;
-	}
-	if (pathname.startsWith("/api/v1/invites/")) return true;
-	// Public deployment config (mail domain) for native create-address UI.
-	if (pathname === "/api/v1/config") return true;
-	// Invite accept + password login SPA shells (Access bypass required at edge too).
-	if (pathname === "/login" || pathname.startsWith("/login/")) return true;
-	if (pathname === "/invite" || pathname.startsWith("/invite/")) return true;
-	return false;
-}
+import { isPublicAuthPath } from "./lib/auth-paths";
+
+export { isPublicAuthPath };
 
 function readCookie(header: string | undefined, name: string): string | undefined {
 	if (!header) return undefined;

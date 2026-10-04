@@ -19,6 +19,7 @@ import {
 	loadPlatformUser,
 } from "../lib/platform-users.ts";
 import { registerAdminAndInviteRoutes } from "../routes/admin-invites.ts";
+import { isPublicAuthPath } from "../lib/auth-paths.ts";
 
 function mockBucket(initial = {}) {
 	const store = new Map(
@@ -232,6 +233,11 @@ async function testPasswordResetHttpRoutes() {
 }
 
 async function main() {
+	assert.equal(isPublicAuthPath("/api/v1/auth/password/forgot"), true, "forgot endpoint must bypass auth");
+	assert.equal(isPublicAuthPath("/api/v1/auth/password/reset"), true, "reset endpoint must bypass auth");
+	assert.equal(isPublicAuthPath("/reset-password"), true, "reset-password SPA path must bypass auth");
+	assert.equal(isPublicAuthPath("/reset-password/sub"), true, "reset-password subpaths must bypass auth");
+
 	await testPasswordResetDirect();
 	await testPasswordResetHttpRoutes();
 	console.log("All password reset tests passed!");
