@@ -981,6 +981,7 @@ class ApiClient private constructor() {
         password: String? = null,
         displayName: String? = null,
         returnUrl: String? = null,
+        client: String? = "android",
     ): DomainCheckoutResponse = request(
         "/api/v1/billing/create-domain-checkout",
         method = "POST",
@@ -990,6 +991,7 @@ class ApiClient private constructor() {
             if (password != null) put("password", password)
             if (displayName != null) put("displayName", displayName)
             if (returnUrl != null) put("returnUrl", returnUrl)
+            if (client != null) put("client", client)
         },
         authed = false,
     )

@@ -1208,6 +1208,21 @@ struct OnboardingDomainInfo: Codable {
     var nameservers: [String]
 }
 
+struct DomainPricingLineItem: Codable, Hashable {
+    var name: String
+    var description: String
+    var amountUsd: Double
+}
+
+struct DomainPricingBreakdown: Codable, Hashable {
+    var domainWholesaleUsd: Double
+    var platformFeeUsd: Double
+    var totalAnnualUsd: Double
+    var currency: String
+    var interval: String
+    var lineItems: [DomainPricingLineItem]?
+}
+
 struct DomainAvailabilityResponse: Codable, Hashable {
     var domain: String
     var available: Bool
@@ -1218,6 +1233,7 @@ struct DomainAvailabilityResponse: Codable, Hashable {
     var tldSupported: Bool
     var alreadyInInboxies: Bool?
     var message: String?
+    var pricing: DomainPricingBreakdown?
 }
 
 struct DomainCheckoutResponse: Codable {
@@ -1226,6 +1242,7 @@ struct DomainCheckoutResponse: Codable {
     var domain: String
     var priceUsd: Double
     var mock: Bool?
+    var pricing: DomainPricingBreakdown?
 }
 
 struct DomainAliasItem: Codable, Hashable, Identifiable {

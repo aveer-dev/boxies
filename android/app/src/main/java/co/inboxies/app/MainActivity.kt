@@ -124,7 +124,19 @@ class MainActivity : ComponentActivity() {
         val isOnboarding = (data.scheme == "inboxies" && (data.host == "onboarding" || data.host == "domain-ready"))
             || (data.host == "inboxies.email" && data.path?.startsWith("/onboarding") == true)
         if (isOnboarding) {
-            if (::appModel.isInitialized) {
+            val token = data.getQueryParameter("token")
+            val domain = data.getQueryParameter("domain")
+            if (!token.isNullOrBlank()) {
+                val auth = (application as InboxiesApplication).authStore
+                val email = if (!domain.isNullOrBlank()) "admin@$domain" else null
+                auth.applySession(token, email)
+                if (::appModel.isInitialized) {
+                    lifecycleScope.launch {
+                        appModel.bootstrap(token)
+                        appModel.refreshMailboxes(showLoading = true)
+                    }
+                }
+            } else if (::appModel.isInitialized) {
                 lifecycleScope.launch {
                     appModel.refreshMailboxes(showLoading = true)
                 }

@@ -10,12 +10,25 @@
 import { CloudflareApiError, type CloudflareClientEnv } from "./cloudflare-client";
 import type { DomainRegistrationInfo } from "./domain-registry";
 
+export interface DomainPricingBreakdown {
+	domainFeeUsd: number;      // Wholesale domain cost (e.g. 10.44 for .com)
+	platformFeeUsd: number;    // Platform, AI, storage & server fee (e.g. 9.56 or 10.00)
+	totalAnnualUsd: number;    // Total annual subscription (e.g. 20.00 or wholesale + 10.00)
+	billingInterval: "year";
+	currency: "USD";
+	features: {
+		domain: string;
+		aiAndPlatform: string[];
+	};
+}
+
 export interface DomainAvailabilityResult {
 	domain: string;
 	available: boolean;
 	registered: boolean;
 	wholesalePriceUsd: number;
 	retailPriceUsd: number;
+	pricing: DomainPricingBreakdown;
 	tldSupported: boolean;
 	currency: "USD";
 	supportedTld: string;
@@ -65,7 +78,7 @@ const TLD_WHOLESALE_PRICING: Record<string, number> = {
 	email: 18.0,
 };
 
-const STANDARD_RETAIL_PRICE = 14.0;
+const STANDARD_RETAIL_PRICE = 20.0;
 
 function isMockEnv(env: CloudflareClientEnv): boolean {
 	return !env.CF_API_TOKEN || !env.CF_ACCOUNT_ID;
@@ -89,13 +102,38 @@ export function extractTld(domain: string): string {
 	return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
+/**
+ * Transparent domain + platform/AI subscription fee calculator:
+ * - When domain wholesale is <= $15.00: Total is $20.00/yr ($10.44 domain + $9.56 platform/AI/storage).
+ * - When domain wholesale is > $15.00: Total is wholesale + $10.00/yr platform fee.
+ */
+export function computeDomainPricing(wholesalePrice: number): DomainPricingBreakdown {
+	const domainFee = Math.round(wholesalePrice * 100) / 100;
+	const isStandard = domainFee <= 15.0;
+	const totalAnnualUsd = isStandard ? STANDARD_RETAIL_PRICE : Math.round((domainFee + 10.0) * 100) / 100;
+	const platformFeeUsd = Math.round((totalAnnualUsd - domainFee) * 100) / 100;
+
+	return {
+		domainFeeUsd: domainFee,
+		platformFeeUsd,
+		totalAnnualUsd,
+		billingInterval: "year",
+		currency: "USD",
+		features: {
+			domain: "1-year domain registration & wholesale ICANN fee via Cloudflare Registrar",
+			aiAndPlatform: [
+				"Dedicated AI email agent (Workers AI triage, summaries & auto-drafting)",
+				"Realtime mailbox sync & search indexing (Cloudflare Durable Objects)",
+				"Encrypted email & attachment storage (Cloudflare R2)",
+				"Global Anycast DNS, SSL & automated Email Routing",
+				"Inbound spam protection & automated SPF/DKIM/DMARC signing",
+			],
+		},
+	};
+}
+
 export function computeRetailPrice(wholesalePrice: number): number {
-	// Standard price is $14.00/yr. For premium/expensive TLDs (e.g. .io, .ai),
-	// charge wholesale + standard $3.50 payment/handling margin.
-	if (wholesalePrice <= 10.5) {
-		return STANDARD_RETAIL_PRICE;
-	}
-	return Math.ceil(wholesalePrice + 3.5);
+	return computeDomainPricing(wholesalePrice).totalAnnualUsd;
 }
 
 /**
@@ -143,12 +181,14 @@ export async function checkDomainAvailability(
 	const tld = extractTld(domain);
 
 	if (!tld || tld === domain) {
+		const emptyPricing = computeDomainPricing(0);
 		return {
 			domain,
 			available: false,
 			registered: false,
 			wholesalePriceUsd: 0,
 			retailPriceUsd: 0,
+			pricing: emptyPricing,
 			tldSupported: false,
 			currency: "USD",
 			supportedTld: tld,
@@ -156,7 +196,8 @@ export async function checkDomainAvailability(
 	}
 
 	const wholesalePrice = TLD_WHOLESALE_PRICING[tld] ?? 10.44;
-	const retailPrice = computeRetailPrice(wholesalePrice);
+	const pricing = computeDomainPricing(wholesalePrice);
+	const retailPrice = pricing.totalAnnualUsd;
 	const isSupportedTld = tld in TLD_WHOLESALE_PRICING || ["com", "net", "org"].includes(tld);
 
 	if (isMockEnv(env)) {
@@ -167,6 +208,7 @@ export async function checkDomainAvailability(
 			registered: isTaken,
 			wholesalePriceUsd: wholesalePrice,
 			retailPriceUsd: retailPrice,
+			pricing,
 			tldSupported: isSupportedTld,
 			currency: "USD",
 			supportedTld: tld,
@@ -227,7 +269,8 @@ export async function checkDomainAvailability(
 					const isRegistrable = Boolean(match.registrable);
 					const rawCost = match.pricing?.registration_cost != null ? Number(match.pricing.registration_cost) : wholesalePrice;
 					const actualWholesale = Number.isFinite(rawCost) && rawCost > 0 ? rawCost : wholesalePrice;
-					const actualRetail = computeRetailPrice(actualWholesale);
+					const actualPricing = computeDomainPricing(actualWholesale);
+					const actualRetail = actualPricing.totalAnnualUsd;
 					const isTldSupported = match.reason !== "extension_not_supported" && match.reason !== "extension_not_supported_via_api";
 
 					return {
@@ -236,6 +279,7 @@ export async function checkDomainAvailability(
 						registered: !isRegistrable && isTldSupported,
 						wholesalePriceUsd: actualWholesale,
 						retailPriceUsd: actualRetail,
+						pricing: actualPricing,
 						tldSupported: isTldSupported && isSupportedTld,
 						currency: "USD",
 						supportedTld: tld,
@@ -256,6 +300,7 @@ export async function checkDomainAvailability(
 			registered: true,
 			wholesalePriceUsd: wholesalePrice,
 			retailPriceUsd: retailPrice,
+			pricing,
 			tldSupported: isSupportedTld,
 			currency: "USD",
 			supportedTld: tld,
@@ -269,6 +314,7 @@ export async function checkDomainAvailability(
 		registered: false,
 		wholesalePriceUsd: wholesalePrice,
 		retailPriceUsd: retailPrice,
+		pricing,
 		tldSupported: isSupportedTld,
 		currency: "USD",
 		supportedTld: tld,

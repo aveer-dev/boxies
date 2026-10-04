@@ -12,6 +12,8 @@ export default [
 	index("routes/home.tsx"),
 	route("admin", "routes/admin.tsx"),
 	route("checkout/mock", "routes/checkout-mock.tsx"),
+	route("checkout/success", "routes/checkout-success.tsx"),
+	route("checkout/cancel", "routes/checkout-cancel.tsx"),
 	route("invite/:token", "routes/invite.tsx"),
 	route("login", "routes/login.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),

@@ -17,6 +17,8 @@ export function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/auth/domains/check" ||
 		pathname === "/api/v1/billing/create-domain-checkout" ||
 		pathname === "/api/v1/billing/checkout-return" ||
+		pathname === "/api/v1/billing/checkout-cancel" ||
+		pathname === "/api/v1/billing/checkout-status" ||
 		pathname === "/api/v1/billing/stripe-webhook"
 	) {
 		return true;
@@ -28,5 +30,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 	if (pathname === "/login" || pathname.startsWith("/login/")) return true;
 	if (pathname === "/reset-password" || pathname.startsWith("/reset-password/")) return true;
 	if (pathname === "/invite" || pathname.startsWith("/invite/")) return true;
+	if (pathname === "/checkout/success" || pathname.startsWith("/checkout/success/")) return true;
+	if (pathname === "/checkout/cancel" || pathname.startsWith("/checkout/cancel/")) return true;
 	return false;
 }

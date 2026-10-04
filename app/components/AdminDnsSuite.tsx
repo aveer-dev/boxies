@@ -312,7 +312,7 @@ export function AdminDnsSuite({
 		setAddDomainError(null);
 		try {
 			const returnUrl = `${window.location.origin}/admin?tab=dns&purchased=true`;
-			const res = await api.createDomainCheckout({ domain: domainToPurchase, returnUrl });
+			const res = await api.createDomainCheckout({ domain: domainToPurchase, returnUrl, client: "web" });
 			window.location.href = res.checkoutUrl;
 		} catch (err: unknown) {
 			setAddDomainError(err instanceof Error ? err.message : "Failed to create checkout");
@@ -1503,32 +1503,34 @@ export function AdminDnsSuite({
 								</div>
 
 								{newDomainAvailability.available ? (
-									<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-kumo-line">
-										<div>
-											<div className="text-sm font-bold text-kumo-default">
-												${newDomainAvailability.retailPriceUsd.toFixed(2)} / year
+									<div className="pt-2 border-t border-kumo-line space-y-3">
+										<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+											<div>
+												<div className="text-sm font-bold text-kumo-default">
+													${(newDomainAvailability.pricing?.totalAnnualUsd ?? newDomainAvailability.retailPriceUsd ?? 20).toFixed(2)} USD / year
+												</div>
+												<div className="text-[11px] text-kumo-subtle">
+													Domain wholesale (${(newDomainAvailability.pricing?.domainWholesaleUsd ?? 10.46).toFixed(2)}) + Platform, AI & Cloud Suite (${(newDomainAvailability.pricing?.platformFeeUsd ?? 9.54).toFixed(2)})
+												</div>
 											</div>
-											<div className="text-[11px] text-kumo-subtle">
-												Wholesale via Cloudflare Registrar (zero markup)
+											<div className="flex gap-2">
+												<Button
+													variant="secondary"
+													size="sm"
+													disabled={isConnectingDomain}
+													onClick={() => handleConnectDomain(newDomainAvailability.domain)}
+												>
+													Connect DNS Only
+												</Button>
+												<Button
+													variant="primary"
+													size="sm"
+													disabled={isConnectingDomain}
+													onClick={() => handlePurchaseDomain(newDomainAvailability.domain)}
+												>
+													{isConnectingDomain ? "Redirecting..." : `Subscribe & Register ($${(newDomainAvailability.pricing?.totalAnnualUsd ?? newDomainAvailability.retailPriceUsd ?? 20).toFixed(2)}/yr)`}
+												</Button>
 											</div>
-										</div>
-										<div className="flex gap-2">
-											<Button
-												variant="secondary"
-												size="sm"
-												disabled={isConnectingDomain}
-												onClick={() => handleConnectDomain(newDomainAvailability.domain)}
-											>
-												Connect DNS Only
-											</Button>
-											<Button
-												variant="primary"
-												size="sm"
-												disabled={isConnectingDomain}
-												onClick={() => handlePurchaseDomain(newDomainAvailability.domain)}
-											>
-												{isConnectingDomain ? "Redirecting..." : "Purchase Domain"}
-											</Button>
 										</div>
 									</div>
 								) : (

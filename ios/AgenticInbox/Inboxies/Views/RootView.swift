@@ -885,8 +885,9 @@ struct MailboxOnboardingView: View {
         switch domainStep {
         case 5:
             if domainAction == "purchase" && (availability?.available == true) {
-                let price = String(format: "%.2f", availability?.retailPriceUsd ?? 14.0)
-                return "Continue to Payment ($\(price)/yr)"
+                let total = availability?.pricing?.totalAnnualUsd ?? availability?.retailPriceUsd ?? 20.0
+                let price = String(format: "%.2f", total)
+                return "Subscribe & Register ($\(price)/yr)"
             } else {
                 return "I've Updated My Nameservers"
             }
@@ -1228,18 +1229,19 @@ struct MailboxOnboardingView: View {
                         .background(AppTheme.pillFill)
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     } else if avail.available {
+                        let total = avail.pricing?.totalAnnualUsd ?? avail.retailPriceUsd
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundStyle(Color.green)
                                     .font(.system(size: 15))
-                                Text("Available for $\(String(format: "%.2f", avail.retailPriceUsd))/yr")
+                                Text("Available for $\(String(format: "%.2f", total))/yr")
                                     .font(.inter(size: 14, weight: .semibold))
                                     .foregroundStyle(AppTheme.ink)
                                 Spacer()
                             }
                             Picker("Setup Mode", selection: $domainAction) {
-                                Text("Register ($\(String(format: "%.0f", avail.retailPriceUsd))/yr)").tag("purchase")
+                                Text("Register ($\(String(format: "%.0f", total))/yr)").tag("purchase")
                                 Text("I already own it").tag("connect")
                             }
                             .pickerStyle(.segmented)
@@ -1265,52 +1267,94 @@ struct MailboxOnboardingView: View {
 
         case 5:
             if domainAction == "purchase" && (availability?.available == true) {
+                let total = availability?.pricing?.totalAnnualUsd ?? availability?.retailPriceUsd ?? 20.0
+                let domainCost = availability?.pricing?.domainWholesaleUsd ?? 10.46
+                let platformCost = availability?.pricing?.platformFeeUsd ?? (total - domainCost)
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Pricing Summary")
+                    Text("Subscription & Fee Breakdown")
                         .font(.inter(size: 13, weight: .semibold))
                         .foregroundStyle(AppTheme.muted)
                         .textCase(.uppercase)
 
-                    VStack(spacing: 10) {
+                    VStack(spacing: 12) {
                         HStack {
-                            Text("Domain Registration (.com / TLD)")
-                                .font(.inter(size: 14))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Domain Registration")
+                                    .font(.inter(size: 14, weight: .medium))
+                                    .foregroundStyle(AppTheme.ink)
+                                Text("Wholesale pass-through via Cloudflare Registrar")
+                                    .font(.inter(size: 11))
+                                    .foregroundStyle(AppTheme.muted)
+                            }
                             Spacer()
-                            Text("$\(String(format: "%.2f", availability?.retailPriceUsd ?? 14.0))/yr")
+                            Text("$\(String(format: "%.2f", domainCost))/yr")
                                 .font(.inter(size: 14, weight: .semibold))
+                                .foregroundStyle(AppTheme.ink)
                         }
+
                         HStack {
-                            Text("ICANN Registration Fee")
-                                .font(.inter(size: 14))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Platform, AI & Infrastructure")
+                                    .font(.inter(size: 14, weight: .medium))
+                                    .foregroundStyle(AppTheme.ink)
+                                Text("Workers AI agent, edge sync, R2 storage & DNS")
+                                    .font(.inter(size: 11))
+                                    .foregroundStyle(AppTheme.muted)
+                            }
                             Spacer()
-                            Text("Included")
-                                .font(.inter(size: 13, weight: .medium))
-                                .foregroundStyle(Color.green)
+                            Text("$\(String(format: "%.2f", platformCost))/yr")
+                                .font(.inter(size: 14, weight: .semibold))
+                                .foregroundStyle(AppTheme.ink)
                         }
-                        HStack {
-                            Text("WHOIS Privacy Protection")
-                                .font(.inter(size: 14))
-                            Spacer()
-                            Text("Included")
-                                .font(.inter(size: 13, weight: .medium))
-                                .foregroundStyle(Color.green)
-                        }
-                        HStack {
-                            Text("Cloudflare DNS & Email Routing")
-                                .font(.inter(size: 14))
-                            Spacer()
-                            Text("Included")
-                                .font(.inter(size: 13, weight: .medium))
-                                .foregroundStyle(Color.green)
-                        }
+
                         Divider()
                             .padding(.vertical, 2)
+
                         HStack {
-                            Text("Total Due Today")
-                                .font(.inter(size: 15, weight: .bold))
+                            Text("ICANN & Registry Fees")
+                                .font(.inter(size: 13))
+                                .foregroundStyle(AppTheme.muted)
                             Spacer()
-                            Text("$\(String(format: "%.2f", availability?.retailPriceUsd ?? 14.0))/yr")
-                                .font(.inter(size: 15, weight: .bold))
+                            Text("Included")
+                                .font(.inter(size: 12, weight: .medium))
+                                .foregroundStyle(Color.green)
+                        }
+
+                        HStack {
+                            Text("WHOIS Privacy Protection")
+                                .font(.inter(size: 13))
+                                .foregroundStyle(AppTheme.muted)
+                            Spacer()
+                            Text("Free")
+                                .font(.inter(size: 12, weight: .medium))
+                                .foregroundStyle(Color.green)
+                        }
+
+                        HStack {
+                            Text("Auto MX/SPF/DKIM/DMARC")
+                                .font(.inter(size: 13))
+                                .foregroundStyle(AppTheme.muted)
+                            Spacer()
+                            Text("Automatic")
+                                .font(.inter(size: 12, weight: .medium))
+                                .foregroundStyle(Color.green)
+                        }
+
+                        Divider()
+                            .padding(.vertical, 2)
+
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Total Annual Subscription")
+                                    .font(.inter(size: 15, weight: .bold))
+                                    .foregroundStyle(AppTheme.ink)
+                                Text("Billed annually • Cancel anytime")
+                                    .font(.inter(size: 11))
+                                    .foregroundStyle(AppTheme.muted)
+                            }
+                            Spacer()
+                            Text("$\(String(format: "%.2f", total))/yr")
+                                .font(.inter(size: 16, weight: .bold))
                                 .foregroundStyle(AppTheme.accent)
                         }
                     }
@@ -1876,7 +1920,8 @@ struct MailboxOnboardingView: View {
                 username: username,
                 password: customPassword,
                 displayName: customName.isEmpty ? nil : customName,
-                returnUrl: returnUrl
+                returnUrl: returnUrl,
+                client: "ios"
             )
             guard let url = URL(string: res.checkoutUrl) else { return }
 
@@ -1904,12 +1949,24 @@ struct MailboxOnboardingView: View {
     private func handlePaymentComplete(callbackUrl: URL) {
         isPaymentSyncing = true
         Task {
-            let domain = customDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            _ = try? await APIClient.shared.fixDomainEmailDns(domain: domain)
+            let components = URLComponents(url: callbackUrl, resolvingAgainstBaseURL: false)
+            let token = components?.queryItems?.first(where: { $0.name == "token" })?.value
+            let domainFromUrl = components?.queryItems?.first(where: { $0.name == "domain" })?.value
+            let targetDomain = domainFromUrl ?? customDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+            if let token = token, !token.isEmpty {
+                createdAuthToken = token
+                let username = customUsername.isEmpty ? "admin" : customUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let email = "\(username)@\(targetDomain)"
+                auth.applySession(token: token, email: email)
+                await app.bootstrap(authToken: token)
+            }
+
+            _ = try? await APIClient.shared.fixDomainEmailDns(domain: targetDomain)
+
             withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
                 isPaymentSyncing = false
-                domainStep = 6
+                domainStep = 7
             }
         }
     }

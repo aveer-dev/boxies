@@ -845,13 +845,15 @@ final class APIClient: @unchecked Sendable {
         username: String? = nil,
         password: String? = nil,
         displayName: String? = nil,
-        returnUrl: String? = nil
+        returnUrl: String? = nil,
+        client: String? = "ios"
     ) async throws -> DomainCheckoutResponse {
         var body: [String: Any] = ["domain": domain]
         if let username { body["username"] = username }
         if let password { body["password"] = password }
         if let displayName { body["displayName"] = displayName }
         if let returnUrl { body["returnUrl"] = returnUrl }
+        if let client { body["client"] = client }
         return try await request(
             path: "/api/v1/billing/create-domain-checkout",
             method: "POST",

@@ -2,8 +2,8 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Loader, Text } from "@cloudflare/kumo";
-import { CheckCircleIcon, CreditCardIcon, ShieldCheckIcon } from "@phosphor-icons/react";
+import { Button, Loader } from "@cloudflare/kumo";
+import { CreditCardIcon, GlobeIcon, ShieldCheckIcon, SparkleIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -16,7 +16,12 @@ export default function CheckoutMockRoute() {
 	const navigate = useNavigate();
 	const domain = searchParams.get("domain") || "example.com";
 	const sessionId = searchParams.get("session_id") || `mock_cs_${Date.now()}`;
+	const client = searchParams.get("client") || "";
 	const [completing, setCompleting] = useState(false);
+
+	const domainFee = 10.44;
+	const platformFee = 9.56;
+	const total = 20.0;
 
 	const handleCompletePayment = async () => {
 		setCompleting(true);
@@ -34,18 +39,22 @@ export default function CheckoutMockRoute() {
 								domain,
 								username: "admin",
 								displayName: "Admin",
-								retailPriceUsd: "14.00",
+								totalAnnualUsd: total.toFixed(2),
+								domainFeeUsd: domainFee.toFixed(2),
+								platformFeeUsd: platformFee.toFixed(2),
+								retailPriceUsd: total.toFixed(2),
 							},
 						},
 					},
 				}),
 			}).catch(() => {});
 
-			// Redirect through standard return URL
-			window.location.href = `/api/v1/billing/checkout-return?domain=${encodeURIComponent(domain)}&session_id=${encodeURIComponent(sessionId)}`;
+			// Redirect through hosted bridge return URL
+			const clientParam = client ? `&client=${encodeURIComponent(client)}` : "";
+			window.location.href = `/api/v1/billing/checkout-return?domain=${encodeURIComponent(domain)}&session_id=${encodeURIComponent(sessionId)}${clientParam}`;
 		} catch (err) {
 			console.error("Mock checkout error:", err);
-			window.location.href = `/admin?tab=dns&domain=${encodeURIComponent(domain)}&purchased=true`;
+			window.location.href = `/checkout/success?domain=${encodeURIComponent(domain)}&session_id=${encodeURIComponent(sessionId)}`;
 		}
 	};
 
@@ -65,16 +74,38 @@ export default function CheckoutMockRoute() {
 				</div>
 
 				<div className="space-y-4">
-					<div className="p-4 rounded-xl bg-kumo-recessed border border-kumo-line space-y-2">
-						<div className="text-xs text-kumo-subtle font-medium uppercase tracking-wider">
-							Order Summary
+					<div className="p-4 rounded-xl bg-kumo-recessed border border-kumo-line space-y-3">
+						<div className="text-xs text-kumo-subtle font-semibold uppercase tracking-wider">
+							Subscription Order Summary
 						</div>
-						<div className="flex justify-between items-center text-sm font-semibold text-kumo-default">
-							<span>Domain Registration (1 Year)</span>
-							<span>$14.00 USD</span>
+
+						<div className="space-y-2 text-xs">
+							<div className="flex justify-between items-center text-kumo-default">
+								<span className="flex items-center gap-1.5">
+									<GlobeIcon size={14} className="text-kumo-subtle" />
+									Domain Registration (1 Year)
+								</span>
+								<span className="font-mono font-medium">${domainFee.toFixed(2)} USD</span>
+							</div>
+
+							<div className="flex justify-between items-center text-kumo-default">
+								<span className="flex items-center gap-1.5">
+									<SparkleIcon size={14} className="text-sky-600 dark:text-sky-400" />
+									Platform, AI & Cloud Infrastructure
+								</span>
+								<span className="font-mono font-medium">${platformFee.toFixed(2)} USD</span>
+							</div>
+
+							<div className="flex justify-between items-center pt-2 border-t border-kumo-line font-bold text-sm text-kumo-default">
+								<span>Total Due Today</span>
+								<span className="font-mono text-emerald-600 dark:text-emerald-400">
+									${total.toFixed(2)} USD / yr
+								</span>
+							</div>
 						</div>
-						<div className="text-xs text-kumo-subtle font-mono">
-							{domain}
+
+						<div className="text-[11px] text-kumo-subtle font-mono border-t border-kumo-line/50 pt-2">
+							Domain: {domain}
 						</div>
 					</div>
 
@@ -98,13 +129,13 @@ export default function CheckoutMockRoute() {
 								<Loader size="xs" /> Simulating payment...
 							</span>
 						) : (
-							"Pay $14.00 & Activate Domain"
+							`Pay $${total.toFixed(2)} & Subscribe`
 						)}
 					</Button>
 					<Button
 						variant="secondary"
 						className="w-full justify-center"
-						onClick={() => navigate("/")}
+						onClick={() => navigate(`/checkout/cancel?domain=${encodeURIComponent(domain)}`)}
 						disabled={completing}
 					>
 						Cancel

@@ -245,13 +245,12 @@ export function OnboardingFlow({
 
 		const domain = customDomain.trim().toLowerCase();
 		try {
-			const returnUrl = `${window.location.origin}/api/v1/billing/checkout-return?domain=${encodeURIComponent(domain)}`;
 			const res = await api.createDomainCheckout({
 				domain,
 				username: customUsername.trim().toLowerCase() || "admin",
 				password: customPassword,
 				displayName: customName.trim() || undefined,
-				returnUrl,
+				client: "web",
 			});
 
 			if (res.checkoutUrl) {
@@ -871,10 +870,10 @@ export function OnboardingFlow({
 											<div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400 font-medium">
 												<span className="flex items-center gap-1.5">
 													<CheckCircleIcon size={16} weight="fill" />
-													Domain available to buy wholesale!
+													Domain available to register!
 												</span>
 												<span className="font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full">
-													$14.00 / yr
+													${(availability.pricing?.totalAnnualUsd ?? availability.retailPriceUsd ?? 20).toFixed(2)} / yr
 												</span>
 											</div>
 										) : (
@@ -915,19 +914,40 @@ export function OnboardingFlow({
 									<>
 										<div>
 											<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
-												Pricing breakdown
+												Subscription & fee breakdown
 											</Dialog.Title>
 											<p className="text-xs text-kumo-subtle">
-												Instant wholesale domain registration powered by Cloudflare Registrar.
+												Transparent annual subscription. Cloudflare wholesale registrar + full Inboxies platform & AI suite.
 											</p>
 										</div>
 
 										<div className="rounded-xl border border-kumo-line bg-kumo-recessed p-4 space-y-3">
 											<div className="flex justify-between items-center text-sm font-semibold text-kumo-default border-b border-kumo-line pb-2">
-												<span>1-Year Domain Registration</span>
-												<span>$14.00 USD</span>
+												<span>Annual Total</span>
+												<span>
+													${(availability.pricing?.totalAnnualUsd ?? availability.retailPriceUsd ?? 20).toFixed(2)} USD / yr
+												</span>
 											</div>
-											<div className="text-xs text-kumo-subtle space-y-1.5">
+
+											<div className="space-y-2 text-xs">
+												<div className="flex justify-between items-center text-kumo-default font-medium">
+													<span>1. Domain Registration ({customDomain})</span>
+													<span>${(availability.pricing?.domainWholesaleUsd ?? 10.46).toFixed(2)}</span>
+												</div>
+												<p className="text-[11px] text-kumo-subtle pl-3">
+													Wholesale registrar pass-through cost via Cloudflare Registrar. Zero registrar markup.
+												</p>
+
+												<div className="flex justify-between items-center text-kumo-default font-medium pt-1">
+													<span>2. Inboxies Platform, AI & Cloud Infrastructure</span>
+													<span>${(availability.pricing?.platformFeeUsd ?? 9.54).toFixed(2)}</span>
+												</div>
+												<p className="text-[11px] text-kumo-subtle pl-3">
+													Workers AI intelligent semantic agent, Durable Objects edge server sync, encrypted R2 storage, Anycast DNS, SSL, and automated SPF/DKIM/DMARC routing.
+												</p>
+											</div>
+
+											<div className="text-xs text-kumo-subtle pt-2 border-t border-kumo-line space-y-1.5">
 												<div className="flex items-center justify-between">
 													<span>ICANN Fees</span>
 													<span className="text-emerald-600 dark:text-emerald-400 font-medium">Included</span>
@@ -941,7 +961,7 @@ export function OnboardingFlow({
 													<span className="text-emerald-600 dark:text-emerald-400 font-medium">Included</span>
 												</div>
 												<div className="flex items-center justify-between">
-													<span>Auto-Configured MX/SPF/DMARC</span>
+													<span>Auto-Configured MX/SPF/DKIM/DMARC</span>
 													<span className="text-emerald-600 dark:text-emerald-400 font-medium">Automatic</span>
 												</div>
 											</div>
@@ -966,9 +986,9 @@ export function OnboardingFlow({
 													disabled={customLoading || checkoutRedirecting}
 												>
 													{checkoutRedirecting ? (
-														"Redirecting to payment..."
+														"Redirecting to Stripe..."
 													) : (
-														"Pay $14.00 & Register →"
+														`Subscribe & Register ($${(availability.pricing?.totalAnnualUsd ?? availability.retailPriceUsd ?? 20).toFixed(2)}/yr) →`
 													)}
 												</Button>
 											</div>

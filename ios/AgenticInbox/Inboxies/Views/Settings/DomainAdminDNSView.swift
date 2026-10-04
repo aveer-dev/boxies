@@ -651,7 +651,8 @@ struct AddDomainSheet: View {
                                     if isSubmitting {
                                         ProgressView()
                                     } else {
-                                        Text("Register for $\(String(format: "%.2f", availability.retailPriceUsd))/yr")
+                                        let total = availability.pricing?.totalAnnualUsd ?? availability.retailPriceUsd
+                                        Text("Subscribe & Register ($\(String(format: "%.2f", total))/yr)")
                                             .font(.inter(size: 15, weight: .medium))
                                     }
                                     Spacer()
@@ -778,7 +779,7 @@ struct AddDomainSheet: View {
         defer { isSubmitting = false }
         do {
             let returnUrl = "inboxies://onboarding/domain-ready?domain=\(trimmed)"
-            let res = try await APIClient.shared.createDomainCheckout(domain: trimmed, returnUrl: returnUrl)
+            let res = try await APIClient.shared.createDomainCheckout(domain: trimmed, returnUrl: returnUrl, client: "ios")
             if let url = URL(string: res.checkoutUrl) {
                 await MainActor.run {
                     UIApplication.shared.open(url)

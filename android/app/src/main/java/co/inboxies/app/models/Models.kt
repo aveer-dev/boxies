@@ -1131,6 +1131,23 @@ data class OnboardingDomainInfo(
 )
 
 @Serializable
+data class DomainPricingLineItem(
+    val name: String,
+    val description: String,
+    val amountUsd: Double,
+)
+
+@Serializable
+data class DomainPricingBreakdown(
+    val domainWholesaleUsd: Double,
+    val platformFeeUsd: Double,
+    val totalAnnualUsd: Double,
+    val currency: String = "usd",
+    val interval: String = "year",
+    val lineItems: List<DomainPricingLineItem> = emptyList(),
+)
+
+@Serializable
 data class DomainAvailabilityResponse(
     val domain: String,
     val available: Boolean,
@@ -1141,6 +1158,7 @@ data class DomainAvailabilityResponse(
     val tldSupported: Boolean,
     val alreadyInInboxies: Boolean? = null,
     val message: String? = null,
+    val pricing: DomainPricingBreakdown? = null,
 )
 
 @Serializable
@@ -1150,6 +1168,7 @@ data class DomainCheckoutResponse(
     val domain: String,
     val priceUsd: Double,
     val mock: Boolean? = null,
+    val pricing: DomainPricingBreakdown? = null,
 )
 
 @Serializable

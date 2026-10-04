@@ -104,6 +104,18 @@ export interface AdminDomainInfo {
 	updatedAt?: string;
 }
 
+export interface DomainPricingBreakdown {
+	domainFeeUsd: number;
+	platformFeeUsd: number;
+	totalAnnualUsd: number;
+	billingInterval: "year";
+	currency: "USD";
+	features?: {
+		domain: string;
+		aiAndPlatform: string[];
+	};
+}
+
 export interface DomainAvailabilityResponse {
 	domain: string;
 	available: boolean;
@@ -111,6 +123,7 @@ export interface DomainAvailabilityResponse {
 	tldSupported: boolean;
 	wholesalePriceUsd: number;
 	retailPriceUsd: number;
+	pricing?: DomainPricingBreakdown;
 	currency: string;
 	periodYears?: number;
 	supportedTld?: string;
@@ -123,7 +136,17 @@ export interface DomainCheckoutResponse {
 	sessionId: string;
 	domain: string;
 	priceUsd: number;
+	pricing?: DomainPricingBreakdown;
 	mock?: boolean;
+}
+
+export interface CheckoutStatusResponse {
+	status: "pending" | "provisioning" | "ready" | "failed";
+	domain: string;
+	pricing?: DomainPricingBreakdown;
+	mailboxId?: string;
+	ownerUserId?: string;
+	error?: string;
 }
 
 export interface ExportJob {

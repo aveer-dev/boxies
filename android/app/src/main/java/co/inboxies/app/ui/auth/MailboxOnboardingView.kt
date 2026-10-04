@@ -312,6 +312,16 @@ fun MailboxOnboardingView(
     var newAliasUsername by remember { mutableStateOf("") }
     var newAliasTarget by remember { mutableStateOf("") }
 
+    val token by auth.token.collectAsState()
+    LaunchedEffect(token, isPaymentSyncing) {
+        if (isPaymentSyncing && !token.isNullOrBlank()) {
+            val domain = customDomain.trim().lowercase()
+            try { ApiClient.shared.fixDomainEmailDns(domain) } catch (_: Exception) {}
+            isPaymentSyncing = false
+            domainStep = 7
+        }
+    }
+
     LaunchedEffect(customDomain) {
         val trimmed = customDomain.trim().lowercase().removePrefix(".").removeSuffix(".")
         if (!trimmed.contains(".") || trimmed.endsWith(".")) {
@@ -1132,8 +1142,9 @@ fun MailboxOnboardingView(
                                                             .clickable { domainAction = "purchase" }.padding(vertical = 8.dp),
                                                         contentAlignment = Alignment.Center,
                                                     ) {
+                                                        val total = availability?.pricing?.totalAnnualUsd ?: avail.retailPriceUsd
                                                         Text(
-                                                            "Register ($${String.format(java.util.Locale.US, "%.0f", avail.retailPriceUsd)}/yr)",
+                                                            "Register ($${String.format(java.util.Locale.US, "%.0f", total)}/yr)",
                                                             fontFamily = InterFontFamily,
                                                             fontWeight = if (domainAction == "purchase") FontWeight.SemiBold else FontWeight.Normal,
                                                             fontSize = 12.sp,
@@ -1180,9 +1191,12 @@ fun MailboxOnboardingView(
 
                                 5 -> {
                                     if (domainAction == "purchase" && (availability?.available == true)) {
+                                        val total = availability?.pricing?.totalAnnualUsd ?: availability?.retailPriceUsd ?: 20.0
+                                        val domainCost = availability?.pricing?.domainWholesaleUsd ?: 10.46
+                                        val platformCost = availability?.pricing?.platformFeeUsd ?: (total - domainCost)
                                         OnboardingStepHeader(
-                                            title = "Pricing Breakdown",
-                                            subtitle = "Review your domain purchase details. Automatic DNS is included.",
+                                            title = "Subscription & Fee Breakdown",
+                                            subtitle = "Transparent annual subscription. Cloudflare registrar + full Inboxies platform & AI suite.",
                                         )
                                         Column(
                                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(colors.surface)
@@ -1190,67 +1204,88 @@ fun MailboxOnboardingView(
                                             verticalArrangement = Arrangement.spacedBy(10.dp),
                                         ) {
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text("Domain Registration (.com / TLD)", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.ink)
-                                                Text("$${String.format(java.util.Locale.US, "%.2f", availability?.retailPriceUsd ?: 14.0)}/yr", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = colors.ink)
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("1. Domain Registration ($customDomain)", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 14.sp, color = colors.ink)
+                                                    Text("Wholesale pass-through via Cloudflare Registrar", fontFamily = InterFontFamily, fontSize = 11.sp, color = colors.muted)
+                                                }
+                                                Text("$${String.format(java.util.Locale.US, "%.2f", domainCost)}/yr", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = colors.ink)
                                             }
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text("ICANN Registration Fee", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.ink)
-                                                Text("Included", fontFamily = InterFontFamily, fontSize = 13.sp, color = Color(0xFF16A34A))
-                                            }
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text("WHOIS Privacy Protection", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.ink)
-                                                Text("Included", fontFamily = InterFontFamily, fontSize = 13.sp, color = Color(0xFF16A34A))
-                                            }
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text("Cloudflare DNS & Email Routing", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.ink)
-                                                Text("Included", fontFamily = InterFontFamily, fontSize = 13.sp, color = Color(0xFF16A34A))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text("2. Platform, AI & Infrastructure", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 14.sp, color = colors.ink)
+                                                    Text("Workers AI agent, edge sync, R2 storage & DNS", fontFamily = InterFontFamily, fontSize = 11.sp, color = colors.muted)
+                                                }
+                                                Text("$${String.format(java.util.Locale.US, "%.2f", platformCost)}/yr", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = colors.ink)
                                             }
                                             HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text("Total Due Today", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = colors.ink)
-                                                Text("$${String.format(java.util.Locale.US, "%.2f", availability?.retailPriceUsd ?: 14.0)}/yr", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = colors.accent)
+                                                Text("ICANN & Registry Fees", fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.muted)
+                                                Text("Included", fontFamily = InterFontFamily, fontSize = 12.sp, color = Color(0xFF16A34A))
+                                            }
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Text("WHOIS Privacy Protection", fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.muted)
+                                                Text("Free", fontFamily = InterFontFamily, fontSize = 12.sp, color = Color(0xFF16A34A))
+                                            }
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Text("Auto MX/SPF/DKIM/DMARC", fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.muted)
+                                                Text("Automatic", fontFamily = InterFontFamily, fontSize = 12.sp, color = Color(0xFF16A34A))
+                                            }
+                                            HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                Column {
+                                                    Text("Total Annual Subscription", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = colors.ink)
+                                                    Text("Billed annually • Cancel anytime", fontFamily = InterFontFamily, fontSize = 11.sp, color = colors.muted)
+                                                }
+                                                Text("$${String.format(java.util.Locale.US, "%.2f", total)}/yr", fontFamily = InterFontFamily, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = colors.accent)
                                             }
                                         }
-                                        Spacer(Modifier.height(24.dp))
-                                        Button(
-                                            onClick = {
-                                                scope.launch {
-                                                    isSubmitting = true
-                                                    errorMessage = null
-                                                    try {
-                                                        val domain = customDomain.trim().lowercase()
-                                                        val username = customUsername.ifBlank { "admin" }.trim().lowercase()
-                                                        val returnUrl = "inboxies://onboarding/domain-ready"
-                                                        val res = ApiClient.shared.createDomainCheckout(
-                                                            domain = domain,
-                                                            username = username,
-                                                            password = customPassword,
-                                                            displayName = customName.ifBlank { null },
-                                                            returnUrl = returnUrl,
-                                                        )
-                                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(res.checkoutUrl))
-                                                        context.startActivity(intent)
-                                                        isPaymentSyncing = true
-                                                        delay(3000)
-                                                        try { ApiClient.shared.fixDomainEmailDns(domain) } catch (_: Exception) {}
-                                                        isPaymentSyncing = false
-                                                        domainStep = 6
-                                                    } catch (e: Exception) {
-                                                        errorMessage = e.message ?: "Failed to initiate payment"
-                                                    } finally {
-                                                        isSubmitting = false
+                                        if (isPaymentSyncing) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(colors.pillFill).padding(16.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                CircularProgressIndicator(color = colors.accent, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                                Text("Completing payment in browser...", fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.ink)
+                                            }
+                                        } else {
+                                            Button(
+                                                onClick = {
+                                                    scope.launch {
+                                                        isSubmitting = true
+                                                        errorMessage = null
+                                                        try {
+                                                            val domain = customDomain.trim().lowercase()
+                                                            val username = customUsername.ifBlank { "admin" }.trim().lowercase()
+                                                            val returnUrl = "inboxies://onboarding/domain-ready"
+                                                            val res = ApiClient.shared.createDomainCheckout(
+                                                                domain = domain,
+                                                                username = username,
+                                                                password = customPassword,
+                                                                displayName = customName.ifBlank { null },
+                                                                returnUrl = returnUrl,
+                                                                client = "android",
+                                                            )
+                                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(res.checkoutUrl))
+                                                            context.startActivity(intent)
+                                                            isPaymentSyncing = true
+                                                        } catch (e: Exception) {
+                                                            errorMessage = e.message ?: "Failed to initiate payment"
+                                                        } finally {
+                                                            isSubmitting = false
+                                                        }
                                                     }
+                                                },
+                                                enabled = !isSubmitting,
+                                                colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
+                                                shape = RoundedCornerShape(12.dp),
+                                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                            ) {
+                                                if (isSubmitting) {
+                                                    CircularProgressIndicator(color = colors.surface, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                                } else {
+                                                    Text("Subscribe & Register ($${String.format(java.util.Locale.US, "%.2f", total)}/yr)", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
                                                 }
-                                            },
-                                            enabled = !isSubmitting,
-                                            colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
-                                            shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                                        ) {
-                                            if (isSubmitting) {
-                                                CircularProgressIndicator(color = colors.surface, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                                            } else {
-                                                Text("Continue to Payment ($${String.format(java.util.Locale.US, "%.2f", availability?.retailPriceUsd ?: 14.0)}/yr)", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 16.sp)
                                             }
                                         }
                                     } else {

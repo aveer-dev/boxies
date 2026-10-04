@@ -1179,6 +1179,7 @@ private fun AddDomainDialog(
                                         val res = ApiClient.shared.createDomainCheckout(
                                             domain = trimmed,
                                             returnUrl = returnUrl,
+                                            client = "android",
                                         )
                                         val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(res.checkoutUrl))
                                         browserIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -1208,8 +1209,9 @@ private fun AddDomainDialog(
                                     strokeWidth = 2.dp,
                                 )
                             } else {
+                                val total = avail.pricing?.totalAnnualUsd ?: avail.retailPriceUsd
                                 Text(
-                                    "Register for $${String.format(java.util.Locale.US, "%.2f", avail.retailPriceUsd)}/yr",
+                                    "Subscribe & Register ($${String.format(java.util.Locale.US, "%.2f", total)}/yr)",
                                     fontFamily = InterFontFamily,
                                     fontWeight = FontWeight.Medium,
                                     fontSize = 15.sp,

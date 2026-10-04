@@ -16,6 +16,7 @@ import type {
 	NewDnsRecord,
 	DomainAvailabilityResponse,
 	DomainCheckoutResponse,
+	CheckoutStatusResponse,
 	ExportJob,
 	DecommissionPreflightResponse,
 	DecommissionResponse,
@@ -692,9 +693,18 @@ const api = {
 		username?: string;
 		password?: string;
 		displayName?: string;
+		client?: "web" | "ios" | "android";
 		returnUrl?: string;
 	}) =>
 		post<DomainCheckoutResponse>("/api/v1/billing/create-domain-checkout", body),
+
+	getCheckoutStatus: (params: { sessionId?: string; domain?: string }) =>
+		get<CheckoutStatusResponse>("/api/v1/billing/checkout-status", {
+			params: {
+				session_id: params.sessionId,
+				domain: params.domain,
+			},
+		}),
 
 	// Email Data Export Engine
 	exportMailbox: (mailboxId: string) =>

@@ -38,7 +38,7 @@ import {
 	saveDomainMetadata,
 	type DomainMetadata,
 } from "../lib/domain-registry";
-import { checkDomainAvailability } from "../lib/cloudflare-registrar";
+import { checkDomainAvailability, computeDomainPricing } from "../lib/cloudflare-registrar";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 
 const SignupPersonalBody = z.object({
@@ -116,13 +116,15 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		// 1. Check if already managed inside Inboxies
 		const existingDomain = await getDomainMetadata(c.env.BUCKET, domain);
 		if (existingDomain) {
+			const pricing = computeDomainPricing(10.44);
 			return c.json({
 				domain,
 				available: false,
 				registered: true,
 				alreadyInInboxies: true,
-				retailPriceUsd: 14.0,
+				retailPriceUsd: pricing.totalAnnualUsd,
 				wholesalePriceUsd: 10.44,
+				pricing,
 				currency: "USD",
 				tldSupported: true,
 				message: "This domain is already registered with Inboxies.",
