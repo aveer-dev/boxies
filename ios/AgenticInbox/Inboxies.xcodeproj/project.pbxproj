@@ -49,6 +49,7 @@
 		B1C2D3E4F5A6478990ABCD08 /* Views/Settings/AutoReplySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD08 /* Views/Settings/AutoReplySettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD17 /* Views/Settings/FiltersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD17 /* Views/Settings/FiltersSettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD18 /* Views/Settings/SendersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD18 /* Views/Settings/SendersSettingsView.swift */; };
+		B1C2D3E4F5A6478990ABCD88 /* Views/Settings/AliasesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD88 /* Views/Settings/AliasesSettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD19 /* Views/Settings/SharingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD19 /* Views/Settings/SharingSettingsView.swift */; };
 		B1C2D3E4F5A6478990ABCD1A /* Views/Settings/SignInMethodsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6478990ABCD1A /* Views/Settings/SignInMethodsSettingsView.swift */; };
 		B2C3D4E5F60718293A4B5C6D /* Views/Components/CoverDragDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60718293A4B5C /* Views/Components/CoverDragDismiss.swift */; };
@@ -123,6 +124,7 @@
 		A1B2C3D4E5F6478990ABCD08 /* Views/Settings/AutoReplySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/AutoReplySettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD17 /* Views/Settings/FiltersSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/FiltersSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD18 /* Views/Settings/SendersSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SendersSettingsView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6478990ABCD88 /* Views/Settings/AliasesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/AliasesSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD19 /* Views/Settings/SharingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SharingSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990ABCD1A /* Views/Settings/SignInMethodsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SignInMethodsSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990DLVR00 /* Services/DeliveryStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/DeliveryStatus.swift; sourceTree = "<group>"; };
@@ -289,6 +291,7 @@
 				A1B2C3D4E5F6478990ABCD07 /* Views/Settings/ForwardingSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD17 /* Views/Settings/FiltersSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD18 /* Views/Settings/SendersSettingsView.swift */,
+				A1B2C3D4E5F6478990ABCD88 /* Views/Settings/AliasesSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD19 /* Views/Settings/SharingSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD1A /* Views/Settings/SignInMethodsSettingsView.swift */,
 				C2D3E4F5A6478990ABCD20 /* Views/Settings/DomainAdminSettingsView.swift */,
@@ -488,6 +491,7 @@
 				B1C2D3E4F5A6478990ABCD07 /* Views/Settings/ForwardingSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD17 /* Views/Settings/FiltersSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD18 /* Views/Settings/SendersSettingsView.swift in Sources */,
+				B1C2D3E4F5A6478990ABCD88 /* Views/Settings/AliasesSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD19 /* Views/Settings/SharingSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD1A /* Views/Settings/SignInMethodsSettingsView.swift in Sources */,
 				D3E4F5A6478990ABCD21AB /* Views/Settings/DomainAdminSettingsView.swift in Sources */,

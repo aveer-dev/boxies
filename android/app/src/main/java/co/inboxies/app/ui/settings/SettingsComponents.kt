@@ -75,6 +75,28 @@ internal fun SettingsNavRow(
     onClick: () -> Unit,
     isLoading: Boolean = false,
 ) {
+    SettingsNavRow(
+        title = title,
+        onClick = onClick,
+        isLoading = isLoading,
+        icon = {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = inboxiesColors().ink,
+                modifier = Modifier.size(22.dp),
+            )
+        },
+    )
+}
+
+@Composable
+internal fun SettingsNavRow(
+    title: String,
+    onClick: () -> Unit,
+    isLoading: Boolean = false,
+    icon: @Composable () -> Unit,
+) {
     val colors = inboxiesColors()
     Row(
         modifier = Modifier
@@ -83,12 +105,12 @@ internal fun SettingsNavRow(
             .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = colors.ink,
+        Box(
             modifier = Modifier.size(22.dp),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            icon()
+        }
         Spacer(Modifier.width(14.dp))
         Text(
             title,

@@ -331,6 +331,7 @@ struct Email: Identifiable, Codable, Hashable {
     var deliveryError: String? = nil
     /// Inbox New vs Seen (`new` | `seen`); derived from read state when absent.
     var listSection: String? = nil
+    var aliasId: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -352,6 +353,7 @@ struct Email: Identifiable, Codable, Hashable {
         case listSection = "list_section"
         case replyLater = "reply_later"
         case replyLaterAt = "reply_later_at"
+        case aliasId = "alias_id"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -1318,6 +1320,91 @@ struct DomainTransferLockResponse: Codable {
 struct AdminDomainConnectResponse: Codable {
     var domain: AdminDomainInfo
     var audit: EmailHealthAudit?
+}
+
+struct MaskedAlias: Identifiable, Codable, Hashable {
+    let id: String
+    var mailboxId: String?
+    let aliasEmail: String
+    var label: String?
+    var notes: String?
+    var isActive: Bool
+    var pausedAction: String
+    var expiresAt: String?
+    var forwardedCount: Int?
+    var createdAt: String?
+    var updatedAt: String?
+
+    var active: Bool {
+        isActive
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, label, notes
+        case mailboxId = "mailbox_id"
+        case aliasEmail = "alias_email"
+        case isActive = "is_active"
+        case pausedAction = "paused_action"
+        case expiresAt = "expires_at"
+        case forwardedCount = "forwarded_count"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    init(
+        id: String,
+        mailboxId: String? = nil,
+        aliasEmail: String,
+        label: String? = nil,
+        notes: String? = nil,
+        isActive: Bool = true,
+        pausedAction: String = "drop",
+        expiresAt: String? = nil,
+        forwardedCount: Int? = 0,
+        createdAt: String? = nil,
+        updatedAt: String? = nil
+    ) {
+        self.id = id
+        self.mailboxId = mailboxId
+        self.aliasEmail = aliasEmail
+        self.label = label
+        self.notes = notes
+        self.isActive = isActive
+        self.pausedAction = pausedAction
+        self.expiresAt = expiresAt
+        self.forwardedCount = forwardedCount
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        mailboxId = try container.decodeIfPresent(String.self, forKey: .mailboxId)
+        aliasEmail = try container.decode(String.self, forKey: .aliasEmail)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        if let boolVal = try? container.decode(Bool.self, forKey: .isActive) {
+            isActive = boolVal
+        } else if let intVal = try? container.decode(Int.self, forKey: .isActive) {
+            isActive = intVal != 0
+        } else {
+            isActive = true
+        }
+        pausedAction = try container.decodeIfPresent(String.self, forKey: .pausedAction) ?? "drop"
+        expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
+        forwardedCount = try container.decodeIfPresent(Int.self, forKey: .forwardedCount) ?? 0
+        createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+    }
+}
+
+struct AliasesResponse: Codable {
+    var aliases: [MaskedAlias]
+}
+
+struct CreateAliasResponse: Codable {
+    var alias: MaskedAlias
 }
 
 

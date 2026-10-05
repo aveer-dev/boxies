@@ -20,6 +20,7 @@ import type {
 	ExportJob,
 	DecommissionPreflightResponse,
 	DecommissionResponse,
+	MaskedAlias,
 } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -743,6 +744,52 @@ const api = {
 		post<{ success: boolean; domain: string; locked: boolean }>(
 			`/api/v1/admin/domains/${encodeURIComponent(domain)}/transfer-lock`,
 			{ locked },
+		),
+
+	// Masked Email Aliases
+	listAliases: (mailboxId: string, options?: RequestOptions) =>
+		get<{ aliases: MaskedAlias[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases`,
+			options,
+		),
+
+	createAlias: (
+		mailboxId: string,
+		body: {
+			baseDomain?: string;
+			label?: string;
+			expiresAt?: string | null;
+			pausedAction?: "drop" | "reject";
+		},
+		options?: RequestOptions,
+	) =>
+		post<{ alias: MaskedAlias }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases`,
+			body,
+			options,
+		),
+
+	updateAlias: (
+		mailboxId: string,
+		aliasId: string,
+		updates: {
+			label?: string | null;
+			isActive?: boolean;
+			pausedAction?: "drop" | "reject";
+			expiresAt?: string | null;
+		},
+		options?: RequestOptions,
+	) =>
+		patch<{ alias: MaskedAlias }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases/${encodeURIComponent(aliasId)}`,
+			updates,
+			options,
+		),
+
+	deleteAlias: (mailboxId: string, aliasId: string, options?: RequestOptions) =>
+		del<void>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases/${encodeURIComponent(aliasId)}`,
+			options,
 		),
 };
 

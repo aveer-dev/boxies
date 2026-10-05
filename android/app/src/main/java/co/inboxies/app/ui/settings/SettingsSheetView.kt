@@ -30,6 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import co.inboxies.app.ui.components.PrivateEmailLogoView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Reply
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ForwardToInbox
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -90,6 +92,7 @@ private sealed class SettingsPage {
     data object AutoReply : SettingsPage()
     data object Filters : SettingsPage()
     data object Senders : SettingsPage()
+    data object Aliases : SettingsPage()
     data object Sharing : SettingsPage()
     data object SignInMethods : SettingsPage()
     data object DomainAdmin : SettingsPage()
@@ -224,6 +227,7 @@ fun SettingsSheetView(
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenFilters = { page = SettingsPage.Filters },
                     onOpenSenders = { page = SettingsPage.Senders },
+                    onOpenAliases = { page = SettingsPage.Aliases },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSignInMethods = { page = SettingsPage.SignInMethods },
                     onOpenDomainAdmin = { page = SettingsPage.DomainAdmin },
@@ -258,6 +262,9 @@ fun SettingsSheetView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Senders -> SendersSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.Aliases -> AliasesSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Sharing -> SharingSettingsView(
@@ -295,6 +302,7 @@ private fun SettingsRootPage(
     onOpenAutoReply: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenSenders: () -> Unit,
+    onOpenAliases: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSignInMethods: () -> Unit,
     onOpenDomainAdmin: () -> Unit,
@@ -444,6 +452,13 @@ private fun SettingsRootPage(
                 title = "Senders",
                 icon = Icons.Outlined.Person,
                 onClick = onOpenSenders,
+            )
+            SettingsNavRow(
+                title = "Private email",
+                onClick = onOpenAliases,
+                icon = {
+                    PrivateEmailLogoView(size = 20.dp, showTile = false)
+                },
             )
             SettingsNavRow(
                 title = "Sharing",

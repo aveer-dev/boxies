@@ -8,6 +8,7 @@ enum SettingsDestination: Hashable {
     case autoReply
     case filters
     case senders
+    case aliases
     case sharing
     case signInMethods
     case domainAdmin
@@ -71,6 +72,9 @@ struct SettingsSheetView: View {
                     settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
                     settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
                     settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
+                    settingsNavRow("Private email", destination: .aliases) {
+                        PrivateEmailLogoView(size: 18, showTile: false)
+                    }
                     settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
                     settingsNavRow("Sign-in methods", systemImage: "key", destination: .signInMethods)
 
@@ -131,6 +135,8 @@ struct SettingsSheetView: View {
                     FiltersSettingsView()
                 case .senders:
                     SendersSettingsView()
+                case .aliases:
+                    AliasesSettingsView()
                 case .sharing:
                     SharingSettingsView()
                 case .signInMethods:
@@ -287,11 +293,27 @@ struct SettingsSheetView: View {
         systemImage: String,
         destination: SettingsDestination
     ) -> some View {
+        settingsNavRow(title, destination: destination) {
+            Image(systemName: systemImage)
+                .foregroundStyle(AppTheme.ink)
+        }
+    }
+
+    private func settingsNavRow<Icon: View>(
+        _ title: String,
+        destination: SettingsDestination,
+        @ViewBuilder icon: () -> Icon
+    ) -> some View {
         Button {
             handleNavTap(destination)
         } label: {
             HStack(spacing: 12) {
-                settingsLabel(title, systemImage: systemImage)
+                Label {
+                    Text(title)
+                        .foregroundStyle(AppTheme.ink)
+                } icon: {
+                    icon()
+                }
                 Spacer()
                 if loadingDestination == destination {
                     ProgressView()

@@ -264,6 +264,7 @@ export interface Email {
 	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
 	delivery_error?: string | null;
 	auth?: EmailAuthSnapshot | null;
+	alias_id?: string | null;
 	attachments?: Attachment[];
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)
@@ -313,3 +314,17 @@ export type {
 	InboxDigestTopic,
 	InboxDigestTopicItem,
 } from "shared/inbox-digest";
+
+export interface MaskedAlias {
+	id: string;
+	alias_email: string;
+	domain: string;
+	base_domain: string;
+	label: string | null;
+	is_active: number;
+	paused_action: "drop" | "reject";
+	expires_at: string | null;
+	created_at: string;
+	stats_received: number;
+	stats_blocked: number;
+}
