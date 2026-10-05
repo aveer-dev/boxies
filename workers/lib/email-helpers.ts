@@ -57,12 +57,20 @@ export function validateSender(
 	to: string | string[],
 	from: string | { email: string; name: string },
 	mailboxId: string,
+	allowedSenders?: Set<string> | string[],
 ): { toStr: string; fromEmail: string; fromDomain: string } {
 	const toStr = (Array.isArray(to) ? to.join(", ") : to).toLowerCase();
 	const fromEmail = (typeof from === "string" ? from : from.email).toLowerCase();
 
-	if (fromEmail !== mailboxId.toLowerCase()) {
-		throw new SenderValidationError("From address must match the mailbox email address");
+	const isPrimary = fromEmail === mailboxId.toLowerCase();
+	const isAllowedAlias = allowedSenders
+		? (Array.isArray(allowedSenders)
+				? allowedSenders.includes(fromEmail)
+				: allowedSenders.has(fromEmail))
+		: false;
+
+	if (!isPrimary && !isAllowedAlias) {
+		throw new SenderValidationError("From address must match the mailbox email address or an active alias");
 	}
 
 	const fromDomain = fromEmail.split("@")[1];

@@ -379,11 +379,18 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		}
 		saveGenerationRef.current += 1;
 		const ccRecipients = splitEmailList(cc); const bccRecipients = splitEmailList(bcc);
-		const fromName = currentMailbox.settings?.fromName || currentMailbox.name;
-		const from = fromName && fromName !== currentMailbox.email ? { email: currentMailbox.email, name: fromName } : currentMailbox.email;
-		let sendTo: string | string[] = toEmailListValue(toRecipients) ?? toRecipients;
 		const original = composeOptions.originalEmail;
 		const mode = composeOptions.mode;
+		const isAliasReply = Boolean(
+			(mode === "reply" || mode === "reply-all") &&
+			(original?.alias_id || original?.recipient?.includes("@private."))
+		);
+		const fromAddress = isAliasReply && original?.recipient
+			? original.recipient
+			: currentMailbox.email;
+		const fromName = currentMailbox.settings?.fromName || currentMailbox.name;
+		const from = fromName && fromName !== fromAddress ? { email: fromAddress, name: fromName } : fromAddress;
+		let sendTo: string | string[] = toEmailListValue(toRecipients) ?? toRecipients;
 		if ((mode === "reply" || mode === "reply-all") && original) {
 			sendTo = rewriteSelfReplyTo(sendTo, original, currentMailbox.email || mailboxId);
 		}

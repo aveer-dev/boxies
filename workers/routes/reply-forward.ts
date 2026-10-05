@@ -45,9 +45,23 @@ export async function handleReplyEmail(c: AppContext) {
 	const { originalMsgId, references, threadId: thread_id } = buildReferencesChain(originalEmail);
 	const to = rewriteSelfReplyTo(body.to, originalEmail, mailboxId);
 
+	const candidateFrom = (typeof from === "string" ? from : from?.email)?.toLowerCase();
+	let allowedSenders: string[] | undefined;
+	if (candidateFrom && candidateFrom !== mailboxId.toLowerCase()) {
+		const alias = await (stub as any).getAlias(candidateFrom);
+		if (alias && alias.is_active) {
+			allowedSenders = [candidateFrom];
+		}
+	} else if ((originalEmail as any).alias_id) {
+		const alias = await (stub as any).getAlias((originalEmail as any).alias_id);
+		if (alias && alias.is_active) {
+			allowedSenders = [alias.alias_email.toLowerCase()];
+		}
+	}
+
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId));
+		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId, allowedSenders));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;

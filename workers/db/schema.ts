@@ -42,6 +42,8 @@ export const emails = sqliteTable("emails", {
 	delivery_error: text("delivery_error"),
 	/** JSON EmailAuth snapshot (SPF/DKIM/DMARC). Null on outbound and legacy rows. */
 	auth: text("auth"),
+	/** Masked email alias ID if this email was received via an alias. */
+	alias_id: text("alias_id"),
 });
 
 export const attachments = sqliteTable("attachments", {
@@ -73,4 +75,19 @@ export const senderTriage = sqliteTable("sender_triage", {
 	display_name: text("display_name"),
 	decided_at: text("decided_at").notNull(),
 	updated_at: text("updated_at").notNull(),
+});
+
+/** Masked email aliases configured for this mailbox. */
+export const aliases = sqliteTable("aliases", {
+	id: text("id").primaryKey(),
+	alias_email: text("alias_email").notNull().unique(),
+	domain: text("domain").notNull(),
+	base_domain: text("base_domain").notNull(),
+	label: text("label"),
+	is_active: integer("is_active").notNull().default(1),
+	paused_action: text("paused_action").notNull().default("drop"),
+	expires_at: text("expires_at"),
+	created_at: text("created_at").notNull(),
+	stats_received: integer("stats_received").notNull().default(0),
+	stats_blocked: integer("stats_blocked").notNull().default(0),
 });

@@ -28,6 +28,7 @@ export default [
 		route("settings/senders", "routes/settings-senders.tsx"),
 		route("settings/sharing", "routes/settings-sharing.tsx"),
 		route("settings/sign-in", "routes/settings-sign-in.tsx"),
+		route("settings/aliases", "routes/settings-aliases.tsx"),
 		route("search", "routes/search-results.tsx"),
 	]),
 	route("*", "routes/not-found.tsx"),

@@ -136,12 +136,26 @@ final class ComposeFormModel {
 
         if mode == .reply || mode == .replyAll, let original {
             nextQuoted = ComposeHTML.quotedOriginal(from: original)
+            if original.aliasId != nil || original.recipient.contains("@private.") {
+                let parsed = MailAddress.parseList(original.recipient).first?.email ?? original.recipient
+                let trimmed = parsed.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    self.fromEmail = trimmed
+                }
+            }
         }
 
         if let draft {
             nextDraftId = draft.id
             nextOriginalId = draft.inReplyTo
             nextThreadId = draft.threadId
+            if !draft.sender.isEmpty && (draft.aliasId != nil || draft.sender.contains("@private.")) {
+                let parsed = MailAddress.parseList(draft.sender).first?.email ?? draft.sender
+                let trimmed = parsed.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    self.fromEmail = trimmed
+                }
+            }
             nextTo = MailAddress.parseList(draft.recipient)
             nextCc = MailAddress.parseList(draft.cc)
             nextBcc = MailAddress.parseList(draft.bcc)

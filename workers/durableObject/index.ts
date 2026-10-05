@@ -173,6 +173,7 @@ interface EmailData {
 	delivery_status?: DeliveryStatus | null;
 	delivery_error?: string | null;
 	auth?: EmailAuth | string | null;
+	alias_id?: string | null;
 }
 
 interface AttachmentData {
@@ -595,6 +596,7 @@ export class MailboxDO extends DurableObject<Env> {
 				delivery_error: schema.emails.delivery_error,
 				snippet: schema.emails.snippet,
 				auth: schema.emails.auth,
+				alias_id: schema.emails.alias_id,
 			})
 			.from(schema.emails)
 			.where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -1972,6 +1974,132 @@ export class MailboxDO extends DurableObject<Env> {
 		return before.length;
 	}
 
+	// ── Masked Email Aliases ────────────────────────────────────────
+
+	async listAliases() {
+		return [
+			...this.ctx.storage.sql.exec(
+				`SELECT id, alias_email, domain, base_domain, label, is_active, paused_action, expires_at, created_at, stats_received, stats_blocked
+				 FROM aliases
+				 ORDER BY created_at DESC`,
+			),
+		] as Array<{
+			id: string;
+			alias_email: string;
+			domain: string;
+			base_domain: string;
+			label: string | null;
+			is_active: number;
+			paused_action: string;
+			expires_at: string | null;
+			created_at: string;
+			stats_received: number;
+			stats_blocked: number;
+		}>;
+	}
+
+	async getAlias(idOrEmail: string) {
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id, alias_email, domain, base_domain, label, is_active, paused_action, expires_at, created_at, stats_received, stats_blocked
+				 FROM aliases
+				 WHERE id = ?1 OR alias_email = ?1
+				 LIMIT 1`,
+				idOrEmail.toLowerCase().trim(),
+			),
+		] as Array<{
+			id: string;
+			alias_email: string;
+			domain: string;
+			base_domain: string;
+			label: string | null;
+			is_active: number;
+			paused_action: string;
+			expires_at: string | null;
+			created_at: string;
+			stats_received: number;
+			stats_blocked: number;
+		}>;
+		return rows[0] || null;
+	}
+
+	async createAlias(alias: {
+		id: string;
+		alias_email: string;
+		domain: string;
+		base_domain: string;
+		label?: string | null;
+		is_active?: number;
+		paused_action?: string;
+		expires_at?: string | null;
+		created_at: string;
+	}) {
+		this.ctx.storage.sql.exec(
+			`INSERT INTO aliases (id, alias_email, domain, base_domain, label, is_active, paused_action, expires_at, created_at, stats_received, stats_blocked)
+			 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0)`,
+			alias.id,
+			alias.alias_email.toLowerCase().trim(),
+			alias.domain.toLowerCase().trim(),
+			alias.base_domain.toLowerCase().trim(),
+			alias.label ?? null,
+			alias.is_active ?? 1,
+			alias.paused_action ?? "drop",
+			alias.expires_at ?? null,
+			alias.created_at,
+		);
+		const created = await this.getAlias(alias.id);
+		this.broadcastEvent("alias_created", { alias: created });
+		return created;
+	}
+
+	async updateAlias(
+		id: string,
+		updates: {
+			label?: string | null;
+			is_active?: number;
+			paused_action?: string;
+			expires_at?: string | null;
+		},
+	) {
+		const existing = await this.getAlias(id);
+		if (!existing) return null;
+
+		const label = updates.label !== undefined ? updates.label : existing.label;
+		const isActive = updates.is_active !== undefined ? updates.is_active : existing.is_active;
+		const pausedAction = updates.paused_action !== undefined ? updates.paused_action : existing.paused_action;
+		const expiresAt = updates.expires_at !== undefined ? updates.expires_at : existing.expires_at;
+
+		this.ctx.storage.sql.exec(
+			`UPDATE aliases
+			 SET label = ?1, is_active = ?2, paused_action = ?3, expires_at = ?4
+			 WHERE id = ?5`,
+			label,
+			isActive,
+			pausedAction,
+			expiresAt,
+			id,
+		);
+		const updated = await this.getAlias(id);
+		this.broadcastEvent("alias_updated", { alias: updated });
+		return updated;
+	}
+
+	async deleteAlias(id: string) {
+		const existing = await this.getAlias(id);
+		if (!existing) return false;
+		this.ctx.storage.sql.exec(`DELETE FROM aliases WHERE id = ?1`, id);
+		this.broadcastEvent("alias_deleted", { id, alias_email: existing.alias_email });
+		return true;
+	}
+
+	async recordAliasInbound(aliasEmail: string, blocked: boolean) {
+		const column = blocked ? "stats_blocked" : "stats_received";
+		this.ctx.storage.sql.exec(
+			`UPDATE aliases SET ${column} = ${column} + 1 WHERE alias_email = ?1`,
+			aliasEmail.toLowerCase().trim(),
+		);
+	}
+
 	// ── Search (raw SQL — dynamic condition builder) ───────────────
 
 	/**
@@ -2370,6 +2498,7 @@ export class MailboxDO extends DurableObject<Env> {
 						? parseStoredEmailAuth(email.auth)
 						: email.auth,
 				),
+				alias_id: email.alias_id ?? null,
 			})
 			.run();
 

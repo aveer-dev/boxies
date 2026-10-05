@@ -44,6 +44,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ForwardToInbox
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -90,6 +91,7 @@ private sealed class SettingsPage {
     data object AutoReply : SettingsPage()
     data object Filters : SettingsPage()
     data object Senders : SettingsPage()
+    data object Aliases : SettingsPage()
     data object Sharing : SettingsPage()
     data object SignInMethods : SettingsPage()
     data object DomainAdmin : SettingsPage()
@@ -224,6 +226,7 @@ fun SettingsSheetView(
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenFilters = { page = SettingsPage.Filters },
                     onOpenSenders = { page = SettingsPage.Senders },
+                    onOpenAliases = { page = SettingsPage.Aliases },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSignInMethods = { page = SettingsPage.SignInMethods },
                     onOpenDomainAdmin = { page = SettingsPage.DomainAdmin },
@@ -258,6 +261,9 @@ fun SettingsSheetView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Senders -> SendersSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.Aliases -> AliasesSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Sharing -> SharingSettingsView(
@@ -295,6 +301,7 @@ private fun SettingsRootPage(
     onOpenAutoReply: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenSenders: () -> Unit,
+    onOpenAliases: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSignInMethods: () -> Unit,
     onOpenDomainAdmin: () -> Unit,
@@ -444,6 +451,11 @@ private fun SettingsRootPage(
                 title = "Senders",
                 icon = Icons.Outlined.Person,
                 onClick = onOpenSenders,
+            )
+            SettingsNavRow(
+                title = "Masked emails",
+                icon = Icons.Outlined.Shield,
+                onClick = onOpenAliases,
             )
             SettingsNavRow(
                 title = "Sharing",
