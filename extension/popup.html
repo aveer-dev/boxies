@@ -3,7 +3,7 @@
 
 	<head>
 		<meta charset="utf-8">
-		<title>Boxies Masked Email</title>
+		<title>Private email</title>
 		<style>
 			* {
 				box-sizing: border-box;
@@ -37,10 +37,10 @@
 				font-size: 14px;
 			}
 
-			.shield-icon {
-				width: 18px;
-				height: 18px;
-				fill: #38bdf8;
+			.brand-logo {
+				width: 22px;
+				height: 22px;
+				flex-shrink: 0;
 			}
 
 			.status-dot {
@@ -220,10 +220,8 @@
 	<body>
 		<div class="header">
 			<div class="brand">
-				<svg class="shield-icon" viewBox="0 0 24 24">
-					<path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z" />
-				</svg>
-				<span>Boxies Mask</span>
+				<img class="brand-logo" src="icons/icon-48.png" alt="Private email" />
+				<span>Private email</span>
 			</div>
 			<div id="statusDot" class="status-dot" title="Not connected"></div>
 		</div>
@@ -235,11 +233,11 @@
 
 		<div id="sectionGenerate" class="content-section active">
 			<div id="siteBanner" class="site-banner">
-				Create masked email for <strong id="siteHost">current site</strong>
+				Create private email for <strong id="siteHost">current site</strong>
 			</div>
 
 			<button id="btnGenerate" class="btn-primary">
-				Generate Masked Email
+				Generate Private Email
 			</button>
 
 			<div id="resultBox" class="result-box">
@@ -248,7 +246,7 @@
 			</div>
 
 			<div class="recent-list">
-				<div class="recent-title">Recent Aliases</div>
+				<div class="recent-title">Recent Private Emails</div>
 				<div id="recentItems"></div>
 			</div>
 		</div>

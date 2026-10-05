@@ -99,7 +99,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		});
 
 		btnGenerate.disabled = false;
-		btnGenerate.textContent = "Generate Masked Email";
+		btnGenerate.textContent = "Generate Private Email";
 
 		if (response && response.success && response.email) {
 			resultEmail.textContent = response.email;

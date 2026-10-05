@@ -17,6 +17,7 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
+import PrivateEmailLogo from "~/components/PrivateEmailLogo";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
 // Placeholder shown in the textarea when no custom prompt is set.
@@ -127,9 +128,9 @@ export default function SettingsRoute() {
 							to={`/mailbox/${mailboxId}/settings/aliases`}
 							className="flex items-center gap-3 px-1 py-3 hover:bg-kumo-tint rounded-md"
 						>
-							<ShieldCheckIcon size={18} className="text-kumo-subtle shrink-0" />
+							<PrivateEmailLogo size={18} className="text-kumo-subtle shrink-0" />
 							<div className="min-w-0 flex-1">
-								<div className="text-sm text-kumo-default">Masked emails</div>
+								<div className="text-sm text-kumo-default">Private email</div>
 								<p className="text-xs text-kumo-subtle">
 									Create and manage private aliases on private.&lt;domain&gt;
 								</p>

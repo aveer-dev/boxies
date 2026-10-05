@@ -46,7 +46,7 @@ struct EmailDetailView: View {
         if email.hasDraft == true { tags.append("Has draft") }
         if email.isSpoofed { tags.append("Spoofed") }
         if email.aliasId != nil || email.recipient.contains("@private.") {
-            tags.append("Masked")
+            tags.append("Private email")
         }
         if let label = email.deliveryStatusLabel {
             tags.append(label)

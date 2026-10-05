@@ -35,7 +35,6 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PauseCircle
 import androidx.compose.material.icons.outlined.PlayCircle
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -56,6 +55,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -73,6 +73,7 @@ import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.PrivateEmailLogoView
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import kotlinx.coroutines.delay
@@ -106,7 +107,7 @@ fun AliasesSettingsView(
                 val res = ApiClient.shared.listAliases(mid)
                 aliases = res.aliases
             } catch (e: Exception) {
-                errorMessage = "Failed to load masked emails"
+                errorMessage = "Failed to load private emails"
             } finally {
                 isLoading = false
             }
@@ -150,7 +151,7 @@ fun AliasesSettingsView(
                     onClick = onBack,
                 )
                 Text(
-                    "Masked emails",
+                    "Private email",
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp,
@@ -174,14 +175,12 @@ fun AliasesSettingsView(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(
-                            Icons.Outlined.Shield,
-                            contentDescription = null,
-                            tint = colors.accent,
-                            modifier = Modifier.size(18.dp),
+                        PrivateEmailLogoView(
+                            size = 20.dp,
+                            showTile = false,
                         )
                         Text(
-                            "Hide My Email",
+                            "Private email",
                             fontFamily = InterFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 15.sp,
@@ -216,14 +215,12 @@ fun AliasesSettingsView(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Icon(
-                        Icons.Outlined.Shield,
-                        contentDescription = null,
-                        tint = colors.accent,
-                        modifier = Modifier.size(20.dp),
+                    PrivateEmailLogoView(
+                        size = 20.dp,
+                        showTile = false,
                     )
                     Text(
-                        "Create new masked email",
+                        "Create new private email",
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.Medium,
                         fontSize = 15.sp,
@@ -318,21 +315,20 @@ fun AliasesSettingsView(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(
-                            Icons.Outlined.Shield,
-                            contentDescription = null,
-                            tint = colors.muted.copy(alpha = 0.5f),
-                            modifier = Modifier.size(36.dp),
+                        PrivateEmailLogoView(
+                            size = 36.dp,
+                            showTile = false,
+                            modifier = Modifier.alpha(0.5f),
                         )
                         Text(
-                            if (searchQuery.isEmpty()) "No masked emails yet" else "No matching addresses",
+                            if (searchQuery.isEmpty()) "No private emails yet" else "No matching addresses",
                             fontFamily = InterFontFamily,
                             fontWeight = FontWeight.Medium,
                             fontSize = 15.sp,
                             color = colors.ink,
                         )
                         Text(
-                            if (searchQuery.isEmpty()) "Tap 'Create new masked email' to protect your address."
+                            if (searchQuery.isEmpty()) "Tap 'Create new private email' to protect your address."
                             else "Try searching for a different label or address.",
                             fontFamily = InterFontFamily,
                             fontSize = 13.sp,
@@ -356,7 +352,7 @@ fun AliasesSettingsView(
                                 isCopied = copiedAliasId == alias.id,
                                 onCopy = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Masked Email", alias.aliasEmail))
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Private Email", alias.aliasEmail))
                                     view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                                     copiedAliasId = alias.id
                                     scope.launch {
@@ -408,7 +404,7 @@ fun AliasesSettingsView(
                 onDismissRequest = { deletingAlias = null },
                 title = {
                     Text(
-                        "Delete Masked Email",
+                        "Delete Private Email",
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         color = colors.ink,
@@ -433,7 +429,7 @@ fun AliasesSettingsView(
                                     try {
                                         ApiClient.shared.deleteAlias(mid, toDelete.id)
                                         aliases = aliases.filterNot { it.id == toDelete.id }
-                                        app.showToast("Masked address deleted")
+                                        app.showToast("Private email deleted")
                                     } catch (e: Exception) {
                                         app.showToast("Could not delete address", isError = true)
                                     }
@@ -639,7 +635,7 @@ private fun CreateAliasDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "New Masked Email",
+                        "New Private Email",
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 17.sp,
@@ -752,7 +748,7 @@ private fun CreateAliasDialog(
                                     )
                                     onCreated(res.alias)
                                 } catch (e: Exception) {
-                                    errorMessage = "Failed to create masked address"
+                                    errorMessage = "Failed to create private email"
                                 } finally {
                                     isCreating = false
                                 }

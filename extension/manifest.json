@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Boxies Masked Email",
+  "name": "Private email",
   "version": "1.0.0",
-  "description": "Generate private masked email aliases on the fly for any website with 1 tap.",
+  "description": "Generate private email addresses on the fly for any website with 1 tap.",
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
@@ -10,7 +10,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Boxies Masked Email",
+    "default_title": "Private email",
     "default_icon": {
       "16": "icons/icon-16.png",
       "48": "icons/icon-48.png",

@@ -58,7 +58,7 @@ export default function SingleMessageView({
 				<div className="mx-4 mt-3 md:mx-6 flex items-center gap-2 rounded-md border border-sky-500/20 bg-sky-950/20 px-3 py-2 text-xs text-sky-300">
 					<ShieldCheckIcon size={16} className="text-sky-400 shrink-0" />
 					<span>
-						Received via masked email: <strong className="font-mono font-medium text-sky-200">{email.recipient}</strong>
+						Received via private email: <strong className="font-mono font-medium text-sky-200">{email.recipient}</strong>
 					</span>
 				</div>
 			)}

@@ -1,4 +1,4 @@
-// Boxies Masked Email - Background Service Worker
+// Boxies Private Email - Background Service Worker
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 	if (message.action === "GENERATE_ALIAS") {
