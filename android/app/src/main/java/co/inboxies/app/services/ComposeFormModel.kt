@@ -146,6 +146,23 @@ class ComposeFormModel(
 
         val selfAddresses = ComposeHtml.selfAddresses(mailbox)
 
+        if (original != null && (mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll)) {
+            if (original.aliasId != null || original.recipient.contains("@private.")) {
+                val parsed = MailAddress.parseList(original.recipient).firstOrNull()?.email ?: original.recipient
+                val trimmed = parsed.trim()
+                if (trimmed.isNotEmpty()) {
+                    fromEmail = trimmed
+                }
+            }
+        }
+        if (draft != null && draft.sender.isNotEmpty() && (draft.aliasId != null || draft.sender.contains("@private."))) {
+            val parsed = MailAddress.parseList(draft.sender).firstOrNull()?.email ?: draft.sender
+            val trimmed = parsed.trim()
+            if (trimmed.isNotEmpty()) {
+                fromEmail = trimmed
+            }
+        }
+
         when {
             draft != null -> {
                 toTokens = MailAddress.parseList(draft.recipient)

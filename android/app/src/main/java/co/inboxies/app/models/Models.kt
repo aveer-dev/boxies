@@ -428,6 +428,7 @@ data class Email(
     @SerialName("delivery_error") val deliveryError: String? = null,
     /** Inbox New vs Seen (`new` | `seen`); derived from read state when absent. */
     @SerialName("list_section") val listSection: String? = null,
+    @SerialName("alias_id") val aliasId: String? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -1254,6 +1255,48 @@ data class DomainAliasItem(
 data class DomainAliasesResponse(
     val aliases: List<DomainAliasItem> = emptyList(),
 )
+
+@Serializable
+data class MaskedAlias(
+    val id: String,
+    @SerialName("mailbox_id") val mailboxId: String,
+    @SerialName("alias_email") val aliasEmail: String,
+    val label: String? = null,
+    val notes: String? = null,
+    @SerialName("is_active") val isActive: Boolean = true,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("paused_action") val pausedAction: String = "drop",
+    @SerialName("forwarded_count") val forwardedCount: Int = 0,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+)
+
+@Serializable
+data class AliasesResponse(
+    val aliases: List<MaskedAlias> = emptyList(),
+)
+
+@Serializable
+data class CreateAliasResponse(
+    val alias: MaskedAlias,
+)
+
+@Serializable
+data class CreateAliasRequest(
+    val label: String? = null,
+    val notes: String? = null,
+    @SerialName("expires_in_seconds") val expiresInSeconds: Int? = null,
+    @SerialName("paused_action") val pausedAction: String = "drop",
+)
+
+@Serializable
+data class UpdateAliasRequest(
+    val label: String? = null,
+    val notes: String? = null,
+    @SerialName("is_active") val isActive: Boolean? = null,
+    @SerialName("paused_action") val pausedAction: String? = null,
+)
+
 
 
 

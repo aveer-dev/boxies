@@ -191,6 +191,7 @@ fun EmailDetailView(
             if (current.needsReply == true) add("Needs reply")
             if (current.hasDraft == true) add("Has draft")
             if (current.isSpoofed) add("Spoofed")
+            if (current.aliasId != null || current.recipient.contains("@private.")) add("Private email")
             current.deliveryStatusLabel?.let { add(it) }
             val messageCount = maxOf(messages.size, current.threadCount ?: 1)
             if (messageCount > 1) add("$messageCount messages")

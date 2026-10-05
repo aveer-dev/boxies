@@ -7,6 +7,9 @@ import co.inboxies.app.models.AdminDomainConnectResponse
 import co.inboxies.app.models.AdminDomainInfo
 import co.inboxies.app.models.AdminDomainsResponse
 import co.inboxies.app.models.AdminMailboxRow
+import co.inboxies.app.models.AliasesResponse
+import co.inboxies.app.models.CreateAliasResponse
+import co.inboxies.app.models.MaskedAlias
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AppConfigResponse
 import co.inboxies.app.models.AttachIdentityResponse
@@ -1040,6 +1043,52 @@ class ApiClient private constructor() {
         body = buildJsonObject {
             put("locked", locked)
         },
+    )
+
+    // MARK: - Masked Email Aliases
+
+    suspend fun listAliases(mailboxId: String): AliasesResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases",
+    )
+
+    suspend fun createAlias(
+        mailboxId: String,
+        label: String? = null,
+        notes: String? = null,
+        expiresInSeconds: Int? = null,
+        pausedAction: String = "drop",
+    ): CreateAliasResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases",
+        method = "POST",
+        body = buildJsonObject {
+            label?.let { put("label", it) }
+            notes?.let { put("notes", it) }
+            expiresInSeconds?.let { put("expires_in_seconds", it) }
+            put("paused_action", pausedAction)
+        },
+    )
+
+    suspend fun updateAlias(
+        mailboxId: String,
+        aliasId: String,
+        label: String? = null,
+        notes: String? = null,
+        isActive: Boolean? = null,
+        pausedAction: String? = null,
+    ): CreateAliasResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases/${pathEncode(aliasId)}",
+        method = "PATCH",
+        body = buildJsonObject {
+            label?.let { put("label", it) }
+            notes?.let { put("notes", it) }
+            isActive?.let { put("is_active", it) }
+            pausedAction?.let { put("paused_action", it) }
+        },
+    )
+
+    suspend fun deleteAlias(mailboxId: String, aliasId: String): EmptyResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases/${pathEncode(aliasId)}",
+        method = "DELETE",
     )
 
     private fun pathEncode(value: String): String =

@@ -70,6 +70,7 @@ import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerDomainDnsRoutes } from "./routes/domain-dns";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
+import { registerAliasRoutes } from "./routes/aliases";
 import { listDomainsForPrincipal } from "./lib/domain-registry";
 import {
 	issueMobileSessionToken,
@@ -86,6 +87,7 @@ import {
 	mailboxMetadataKey,
 	routeInboundEnvelope,
 } from "./lib/mailbox-routing";
+import { isAliasExpired, type StoredAliasMetadata } from "./lib/alias-utils";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
@@ -264,6 +266,7 @@ registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);
 registerBillingRoutes(app);
 registerExportAndOffboardingRoutes(app);
+registerAliasRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
@@ -482,16 +485,25 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
 
+	const stub = c.var.mailboxStub;
+	const candidateFrom = (typeof from === "string" ? from : from?.email)?.toLowerCase();
+	let allowedSenders: string[] | undefined;
+	if (candidateFrom && candidateFrom !== mailboxId.toLowerCase()) {
+		const alias = await (stub as any).getAlias(candidateFrom);
+		if (alias && alias.is_active) {
+			allowedSenders = [candidateFrom];
+		}
+	}
+
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId));
+		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId, allowedSenders));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
-	const stub = c.var.mailboxStub;
 	const rateLimitError = await (stub as any).checkSendRateLimit();
 	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
 	try {
@@ -1599,6 +1611,7 @@ async function sendInboundAutoReply(options: {
 }
 
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+	let matchedAliasMeta: StoredAliasMetadata | null = null;
 	const route = await routeInboundEnvelope(
 		message.to,
 		async (mailboxId) =>
@@ -1607,7 +1620,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			const obj = await env.BUCKET.get(aliasMetadataKey(aliasEmail));
 			if (!obj) return null;
 			try {
-				const data = (await obj.json()) as { targetMailboxId?: string };
+				const data = (await obj.json()) as StoredAliasMetadata;
+				matchedAliasMeta = data;
 				return data.targetMailboxId || null;
 			} catch {
 				return null;
@@ -1620,6 +1634,21 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		return;
 	}
 	const mailboxId = route.mailboxId;
+
+	// Check if this inbound email is addressed to a masked alias that is paused or expired
+	if (matchedAliasMeta) {
+		const isExpired = isAliasExpired(matchedAliasMeta.expiresAt);
+		const isPaused = matchedAliasMeta.isActive === false;
+		if (isPaused || isExpired) {
+			console.log(`Masked alias ${matchedAliasMeta.aliasEmail} is ${isExpired ? "expired" : "paused"}`);
+			const targetStub = getMailboxStub(env, mailboxId);
+			await (targetStub as any).recordAliasInbound(matchedAliasMeta.aliasEmail, true);
+			if (matchedAliasMeta.pausedAction === "reject") {
+				message.setReject(isExpired ? "Address expired" : "Address paused");
+			}
+			return;
+		}
+	}
 
 	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
@@ -1745,6 +1774,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 		auth: serializeEmailAuth(auth),
+		alias_id: matchedAliasMeta?.aliasId || null,
 	};
 
 	const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -1801,6 +1831,9 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	let filedFolder: string = targetFolder;
 	try {
 		await stub.createEmail(targetFolder, inboundEmail, attachmentData);
+		if (matchedAliasMeta) {
+			await (stub as any).recordAliasInbound(matchedAliasMeta.aliasEmail, false);
+		}
 	} catch (e) {
 		if ((e as Error).message === "Mailbox has been deleted") {
 			console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);

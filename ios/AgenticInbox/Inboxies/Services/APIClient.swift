@@ -913,6 +913,70 @@ final class APIClient: @unchecked Sendable {
             body: ["locked": locked]
         )
     }
+
+    // MARK: - Masked Email Aliases
+
+    func listAliases(mailboxId: String) async throws -> [MaskedAlias] {
+        let response: AliasesResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/aliases"
+        )
+        return response.aliases
+    }
+
+    func createAlias(
+        mailboxId: String,
+        label: String? = nil,
+        notes: String? = nil,
+        expiresInSeconds: Int? = nil,
+        expiresAt: String? = nil,
+        pausedAction: String = "drop"
+    ) async throws -> MaskedAlias {
+        var body: [String: Any] = [
+            "paused_action": pausedAction
+        ]
+        if let label, !label.isEmpty { body["label"] = label }
+        if let notes, !notes.isEmpty { body["notes"] = notes }
+        if let expiresInSeconds { body["expires_in_seconds"] = expiresInSeconds }
+        if let expiresAt { body["expires_at"] = expiresAt }
+
+        let response: CreateAliasResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/aliases",
+            method: "POST",
+            body: body
+        )
+        return response.alias
+    }
+
+    func updateAlias(
+        mailboxId: String,
+        aliasId: String,
+        isActive: Bool? = nil,
+        label: String? = nil,
+        notes: String? = nil,
+        pausedAction: String? = nil,
+        expiresAt: String? = nil
+    ) async throws -> MaskedAlias {
+        var body: [String: Any] = [:]
+        if let isActive { body["is_active"] = isActive }
+        if let label { body["label"] = label }
+        if let notes { body["notes"] = notes }
+        if let pausedAction { body["paused_action"] = pausedAction }
+        if let expiresAt { body["expires_at"] = expiresAt }
+
+        let response: CreateAliasResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/aliases/\(aliasId.urlPathEncoded)",
+            method: "PATCH",
+            body: body
+        )
+        return response.alias
+    }
+
+    func deleteAlias(mailboxId: String, aliasId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/aliases/\(aliasId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
 }
 
 struct EmptyResponse: Decodable {}

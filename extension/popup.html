@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+
+	<head>
+		<meta charset="utf-8">
+		<title>Private email</title>
+		<style>
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+				font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+			}
+
+			body {
+				width: 320px;
+				background: #0f172a;
+				color: #f8fafc;
+				padding: 16px;
+				font-size: 13px;
+			}
+
+			.header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-bottom: 14px;
+				padding-bottom: 10px;
+				border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			}
+
+			.brand {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				font-weight: 600;
+				font-size: 14px;
+			}
+
+			.brand-logo {
+				width: 22px;
+				height: 22px;
+				flex-shrink: 0;
+			}
+
+			.status-dot {
+				width: 8px;
+				height: 8px;
+				border-radius: 50%;
+				background: #ef4444;
+			}
+
+			.status-dot.connected {
+				background: #10b981;
+				box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+			}
+
+			.tabs {
+				display: flex;
+				gap: 6px;
+				margin-bottom: 14px;
+			}
+
+			.tab-btn {
+				flex: 1;
+				background: rgba(255, 255, 255, 0.05);
+				border: 1px solid transparent;
+				color: #94a3b8;
+				border-radius: 6px;
+				padding: 6px;
+				font-size: 12px;
+				font-weight: 500;
+				cursor: pointer;
+				transition: all 0.15s ease;
+			}
+
+			.tab-btn.active {
+				background: rgba(255, 255, 255, 0.12);
+				color: #ffffff;
+				border-color: rgba(255, 255, 255, 0.1);
+			}
+
+			.content-section {
+				display: none;
+			}
+
+			.content-section.active {
+				display: block;
+			}
+
+			.site-banner {
+				background: rgba(56, 189, 248, 0.08);
+				border: 1px solid rgba(56, 189, 248, 0.2);
+				border-radius: 8px;
+				padding: 10px;
+				margin-bottom: 12px;
+				font-size: 12px;
+				color: #cbd5e1;
+			}
+
+			.site-banner strong {
+				color: #38bdf8;
+			}
+
+			.btn-primary {
+				width: 100%;
+				background: #0284c7;
+				color: white;
+				border: none;
+				border-radius: 8px;
+				padding: 10px;
+				font-weight: 600;
+				font-size: 13px;
+				cursor: pointer;
+				transition: background 0.15s ease;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				gap: 6px;
+			}
+
+			.btn-primary:hover {
+				background: #0369a1;
+			}
+
+			.btn-primary:disabled {
+				opacity: 0.5;
+				cursor: not-allowed;
+			}
+
+			.result-box {
+				margin-top: 12px;
+				background: rgba(255, 255, 255, 0.05);
+				border: 1px solid rgba(255, 255, 255, 0.1);
+				border-radius: 8px;
+				padding: 8px 10px;
+				display: none;
+				align-items: center;
+				justify-content: space-between;
+				gap: 8px;
+			}
+
+			.result-email {
+				font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+				font-size: 11px;
+				color: #38bdf8;
+				word-break: break-all;
+			}
+
+			.btn-copy {
+				background: rgba(255, 255, 255, 0.1);
+				border: none;
+				color: white;
+				padding: 4px 8px;
+				border-radius: 4px;
+				font-size: 11px;
+				cursor: pointer;
+				flex-shrink: 0;
+			}
+
+			.btn-copy:hover {
+				background: rgba(255, 255, 255, 0.2);
+			}
+
+			.form-group {
+				margin-bottom: 10px;
+			}
+
+			.form-group label {
+				display: block;
+				font-size: 11px;
+				color: #94a3b8;
+				margin-bottom: 4px;
+				font-weight: 500;
+			}
+
+			.form-control {
+				width: 100%;
+				background: rgba(255, 255, 255, 0.07);
+				border: 1px solid rgba(255, 255, 255, 0.12);
+				border-radius: 6px;
+				padding: 7px 10px;
+				color: white;
+				font-size: 12px;
+				outline: none;
+			}
+
+			.form-control:focus {
+				border-color: #38bdf8;
+			}
+
+			.recent-list {
+				margin-top: 14px;
+			}
+
+			.recent-title {
+				font-size: 11px;
+				text-transform: uppercase;
+				letter-spacing: 0.05em;
+				color: #64748b;
+				margin-bottom: 6px;
+			}
+
+			.recent-item {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				padding: 6px 0;
+				border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+				font-size: 11px;
+			}
+
+			.recent-email {
+				font-family: ui-monospace, monospace;
+				color: #cbd5e1;
+			}
+		</style>
+	</head>
+
+	<body>
+		<div class="header">
+			<div class="brand">
+				<img class="brand-logo" src="icons/icon-48.png" alt="Private email" />
+				<span>Private email</span>
+			</div>
+			<div id="statusDot" class="status-dot" title="Not connected"></div>
+		</div>
+
+		<div class="tabs">
+			<button id="tabGenerate" class="tab-btn active">Generate</button>
+			<button id="tabSettings" class="tab-btn">Settings</button>
+		</div>
+
+		<div id="sectionGenerate" class="content-section active">
+			<div id="siteBanner" class="site-banner">
+				Create private email for <strong id="siteHost">current site</strong>
+			</div>
+
+			<button id="btnGenerate" class="btn-primary">
+				Generate Private Email
+			</button>
+
+			<div id="resultBox" class="result-box">
+				<span id="resultEmail" class="result-email"></span>
+				<button id="btnCopy" class="btn-copy">Copy</button>
+			</div>
+
+			<div class="recent-list">
+				<div class="recent-title">Recent Private Emails</div>
+				<div id="recentItems"></div>
+			</div>
+		</div>
+
+		<div id="sectionSettings" class="content-section">
+			<div class="form-group">
+				<label>Boxies API URL</label>
+				<input id="cfgApiUrl" class="form-control" placeholder="https://inboxies.email" />
+			</div>
+			<div class="form-group">
+				<label>Mailbox ID (Address)</label>
+				<input id="cfgMailboxId" class="form-control" placeholder="you@domain.com" />
+			</div>
+			<div class="form-group">
+				<label>Auth Token (Bearer or Link Key)</label>
+				<input id="cfgToken" type="password" class="form-control" placeholder="JWT Session Token" />
+			</div>
+			<button id="btnSaveConfig" class="btn-primary" style="margin-top: 12px;">
+				Save Settings
+			</button>
+		</div>
+
+		<script src="popup.js"></script>
+	</body>
+
+</html>

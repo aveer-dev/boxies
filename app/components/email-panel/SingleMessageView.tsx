@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { PaperclipIcon } from "@phosphor-icons/react";
+import { PaperclipIcon, ShieldCheckIcon } from "@phosphor-icons/react";
 import EmailAttachmentList from "~/components/EmailAttachmentList";
 import EmailIframe from "~/components/EmailIframe";
 import { formatDetailDate, hasFileAttachment, rewriteInlineImages } from "~/lib/utils";
@@ -53,6 +53,15 @@ export default function SingleMessageView({
 					</span>
 				</div>
 			</div>
+
+			{(email.alias_id || email.recipient?.includes("@private.")) && (
+				<div className="mx-4 mt-3 md:mx-6 flex items-center gap-2 rounded-md border border-sky-500/20 bg-sky-950/20 px-3 py-2 text-xs text-sky-300">
+					<ShieldCheckIcon size={16} className="text-sky-400 shrink-0" />
+					<span>
+						Received via private email: <strong className="font-mono font-medium text-sky-200">{email.recipient}</strong>
+					</span>
+				</div>
+			)}
 
 			{spoofed && (
 				<div className="mx-4 mt-3 md:mx-6 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">

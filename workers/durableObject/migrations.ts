@@ -392,5 +392,28 @@ export const mailboxMigrations: Migration[] = [
                 ON emails(reply_later, reply_later_at);
         `),
 	},
+	{
+		name: "24_masked_email_aliases",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS aliases (
+                id TEXT PRIMARY KEY,
+                alias_email TEXT UNIQUE NOT NULL,
+                domain TEXT NOT NULL,
+                base_domain TEXT NOT NULL,
+                label TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                paused_action TEXT NOT NULL DEFAULT 'drop',
+                expires_at TEXT,
+                created_at TEXT NOT NULL,
+                stats_received INTEGER NOT NULL DEFAULT 0,
+                stats_blocked INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_aliases_domain ON aliases(domain);
+            CREATE INDEX IF NOT EXISTS idx_aliases_active ON aliases(is_active);
+
+            ALTER TABLE emails ADD COLUMN alias_id TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_alias_id ON emails(alias_id);
+        `),
+	},
 ];
 

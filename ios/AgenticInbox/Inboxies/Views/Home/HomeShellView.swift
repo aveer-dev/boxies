@@ -693,12 +693,20 @@ struct HomeShellView: View {
             }
     }
 
+    private var showReplyLaterButton: Bool {
+        app.replyLaterCount > 0 || app.selectedTab == .replyLater
+    }
+
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            replyLaterPileButton
+            if showReplyLaterButton {
+                replyLaterPileButton
+                    .transition(.scale.combined(with: .opacity))
+            }
             askAIButton
             composeButton
         }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showReplyLaterButton)
     }
 
     private var replyLaterPileButton: some View {

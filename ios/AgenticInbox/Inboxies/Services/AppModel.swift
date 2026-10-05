@@ -1401,6 +1401,7 @@ final class AppModel {
         )
     }
 
+    @discardableResult
     func createConversation(id: String? = nil, title: String? = nil, lastMessagePreview: String? = nil) async -> AgentConversation? {
         guard let mailboxId = selectedMailboxId else { return nil }
 

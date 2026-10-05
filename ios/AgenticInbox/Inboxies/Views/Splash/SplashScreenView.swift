@@ -44,6 +44,110 @@ struct AppLogoView: View {
     }
 }
 
+/// Private Email product logo:
+/// The app's origami paper plane logo with a reduced black and white shield at the top left corner.
+struct PrivateEmailLogoView: View {
+    var size: CGFloat = 24
+    var showTile: Bool = false
+    var alwaysLight: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var isLight: Bool {
+        alwaysLight || colorScheme == .light
+    }
+
+    var body: some View {
+        let planeColor = isLight ? Color.black : Color.white
+        if showTile {
+            let cornerRadius = size * 0.25
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(isLight ? Color.white : Color.black)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .stroke(isLight ? Color.black.opacity(0.12) : Color.white.opacity(0.2), lineWidth: 1)
+                    )
+                    .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 3)
+
+                InboxiesLogo()
+                    .foregroundStyle(planeColor)
+                    .frame(width: size * 0.60, height: size * 0.60)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+
+                privateEmailShield(shieldSize: size * 0.26)
+                    .padding(size * 0.08)
+            }
+            .frame(width: size, height: size)
+        } else {
+            ZStack(alignment: .topLeading) {
+                InboxiesLogo()
+                    .foregroundStyle(planeColor)
+                    .frame(width: size, height: size)
+
+                privateEmailShield(shieldSize: size * 0.36)
+                    .offset(x: -size * 0.02, y: -size * 0.02)
+            }
+            .frame(width: size, height: size)
+        }
+    }
+
+    @ViewBuilder
+    private func privateEmailShield(shieldSize: CGFloat) -> some View {
+        let strokeColor = isLight ? Color.black : Color.white
+        let leftFill = Color.white
+        let rightFill = Color.black
+
+        ZStack {
+            PrivateEmailShieldLeftHalf()
+                .fill(leftFill)
+            PrivateEmailShieldLeftHalf()
+                .stroke(strokeColor, lineWidth: max(1, shieldSize * 0.09))
+
+            PrivateEmailShieldRightHalf()
+                .fill(rightFill)
+            PrivateEmailShieldRightHalf()
+                .stroke(strokeColor, lineWidth: max(1, shieldSize * 0.09))
+        }
+        .frame(width: shieldSize * 0.85, height: shieldSize)
+    }
+}
+
+struct PrivateEmailShieldLeftHalf: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let topCenter = CGPoint(x: rect.midX, y: rect.minY)
+        let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
+        let topLeft = CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.16)
+        let midLeft = CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.55)
+
+        path.move(to: topCenter)
+        path.addCurve(to: topLeft, control1: CGPoint(x: rect.minX + rect.width * 0.35, y: rect.minY + rect.height * 0.05), control2: CGPoint(x: rect.minX + rect.width * 0.1, y: rect.minY + rect.height * 0.12))
+        path.addLine(to: midLeft)
+        path.addCurve(to: bottomCenter, control1: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.8), control2: CGPoint(x: rect.minX + rect.width * 0.25, y: rect.maxY))
+        path.addLine(to: topCenter)
+        path.closeSubpath()
+        return path
+    }
+}
+
+struct PrivateEmailShieldRightHalf: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let topCenter = CGPoint(x: rect.midX, y: rect.minY)
+        let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
+        let topRight = CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.16)
+        let midRight = CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.55)
+
+        path.move(to: topCenter)
+        path.addLine(to: bottomCenter)
+        path.addCurve(to: midRight, control1: CGPoint(x: rect.maxX - rect.width * 0.25, y: rect.maxY), control2: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.8))
+        path.addLine(to: topRight)
+        path.addCurve(to: topCenter, control1: CGPoint(x: rect.maxX - rect.width * 0.1, y: rect.minY + rect.height * 0.12), control2: CGPoint(x: rect.maxX - rect.width * 0.35, y: rect.minY + rect.height * 0.05))
+        path.closeSubpath()
+        return path
+    }
+}
+
 /// Vector origami paper plane logo for Inboxies.
 struct InboxiesLogo: View {
     var body: some View {
