@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Private email aliases management.
+/// Private email management: random addresses on the mailbox's own domain.
 struct AliasesSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -17,6 +17,9 @@ struct AliasesSettingsView: View {
     @State private var showEditLabel = false
     @State private var deletingAlias: MaskedAlias?
     @State private var showDeleteConfirm = false
+    /// Local toast: the app-level toast sits underneath the settings sheet.
+    @State private var toast: ComposeToast?
+    @State private var toastDismissTask: Task<Void, Never>?
 
     private var mailboxId: String? {
         app.selectedMailboxId
@@ -29,8 +32,7 @@ struct AliasesSettingsView: View {
         let q = searchQuery.lowercased()
         return aliases.filter {
             $0.aliasEmail.lowercased().contains(q) ||
-            ($0.label?.lowercased().contains(q) ?? false) ||
-            ($0.notes?.lowercased().contains(q) ?? false)
+            ($0.label?.lowercased().contains(q) ?? false)
         }
     }
 
@@ -44,7 +46,7 @@ struct AliasesSettingsView: View {
                             .font(.inter(size: 15, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)
                     }
-                    Text("Generate private alphanumeric email addresses that forward directly into this mailbox. Keep your primary address private from web trackers, spam lists, and signups.")
+                    Text("Random addresses on your domain that deliver straight into this mailbox. Replies to mail sent to one go out from that address, so your real address stays private.")
                         .font(.inter(size: 13))
                         .foregroundStyle(AppTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -69,6 +71,7 @@ struct AliasesSettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(mailboxId == nil)
             }
 
             if !aliases.isEmpty {
@@ -77,7 +80,7 @@ struct AliasesSettingsView: View {
                         Image(systemName: "magnifyingglass")
                             .font(.inter(size: 13))
                             .foregroundStyle(AppTheme.muted)
-                        TextField("Search aliases", text: $searchQuery)
+                        TextField("Search private emails", text: $searchQuery)
                             .font(.inter(size: 14))
                             .foregroundStyle(AppTheme.ink)
                             .textInputAutocapitalization(.never)
@@ -114,7 +117,7 @@ struct AliasesSettingsView: View {
                     ContentUnavailableView(
                         searchQuery.isEmpty ? "No Private Emails" : "No Matches",
                         systemImage: searchQuery.isEmpty ? "shield.slash" : "magnifyingglass",
-                        description: Text(searchQuery.isEmpty ? "Tap 'Create new private email' to generate your first private address." : "No aliases matched '\(searchQuery)'.")
+                        description: Text(searchQuery.isEmpty ? "Tap 'Create new private email' to generate your first private address." : "No private emails match '\(searchQuery)'.")
                     )
                     .listRowBackground(Color.clear)
                     .padding(.vertical, 20)
@@ -126,6 +129,10 @@ struct AliasesSettingsView: View {
             } header: {
                 if !filteredAliases.isEmpty {
                     Text("\(filteredAliases.count) \(filteredAliases.count == 1 ? "Address" : "Addresses")")
+                }
+            } footer: {
+                if !filteredAliases.isEmpty {
+                    SettingsFormFooter(text: "Touch and hold an address to pause it, relabel it, or change what happens to its mail.")
                 }
             }
         }
@@ -162,7 +169,7 @@ struct AliasesSettingsView: View {
                 }
             }
         } message: {
-            Text("Provide a recognizable label or purpose for this private address.")
+            Text("Provide a recognizable label or purpose for this private address. Leave it empty to remove the label.")
         }
         .confirmationDialog(
             "Delete Private Email",
@@ -176,8 +183,14 @@ struct AliasesSettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Emails sent to \(deletingAlias?.aliasEmail ?? "this address") will no longer be delivered. This action cannot be undone.")
+            Text("Emails sent to \(deletingAlias?.aliasEmail ?? "this address") will no longer be delivered, and you won't be able to reply from it. This action cannot be undone.")
         }
+        .overlay(alignment: .bottom) {
+            if let toast {
+                toastView(toast)
+            }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: toast?.id)
         .task {
             await loadAliases()
         }
@@ -189,41 +202,36 @@ struct AliasesSettingsView: View {
 
     @ViewBuilder
     private func aliasRow(_ alias: MaskedAlias) -> some View {
+        let status = AliasStatus(alias)
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: 8) {
-                Text(alias.label?.isEmpty == false ? alias.label! : "Untitled alias")
+                Text(displayLabel(for: alias))
                     .font(.inter(size: 15, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
                     .lineLimit(1)
 
                 Spacer(minLength: 4)
 
-                // Active / Paused Pill
-                Text(alias.isActive ? "Active" : "Paused")
-                    .font(.inter(size: 11, weight: .semibold))
-                    .foregroundStyle(alias.isActive ? AppTheme.accent : AppTheme.muted)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(alias.isActive ? AppTheme.accent.opacity(0.12) : AppTheme.pillFill, in: Capsule())
+                statusPill(status)
 
-                // Toggle
                 Toggle("", isOn: Binding(
                     get: { alias.isActive },
                     set: { newValue in
-                        Task { await toggleActive(alias: alias, isActive: newValue) }
+                        Task { await setActive(alias, isActive: newValue) }
                     }
                 ))
                 .labelsHidden()
                 .tint(AppTheme.accent)
                 .scaleEffect(0.8)
+                .accessibilityLabel(alias.isActive ? "Pause \(alias.aliasEmail)" : "Resume \(alias.aliasEmail)")
             }
 
-            // Alias Address Row + Copy
             HStack(spacing: 6) {
                 Text(alias.aliasEmail)
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundStyle(alias.isActive ? AppTheme.ink : AppTheme.muted)
+                    .font(.inter(size: 13))
+                    .foregroundStyle(status == .active ? AppTheme.ink : AppTheme.muted)
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
                 Button {
                     copyToClipboard(alias.aliasEmail, id: alias.id)
@@ -234,22 +242,15 @@ struct AliasesSettingsView: View {
                         .padding(4)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Copy address")
 
-                Spacer()
-
-                if let count = alias.forwardedCount, count > 0 {
-                    Text("\(count) received")
-                        .font(.inter(size: 11))
-                        .foregroundStyle(AppTheme.muted)
-                }
+                Spacer(minLength: 0)
             }
 
-            // Expiry note or paused drop info
-            if let expStr = alias.expiresAt {
-                Text("Expires: \(formattedDate(expStr))")
-                    .font(.inter(size: 11))
-                    .foregroundStyle(AppTheme.muted)
-            }
+            Text(metaLine(for: alias, status: status))
+                .font(.inter(size: 11))
+                .foregroundStyle(AppTheme.muted)
+                .lineLimit(2)
         }
         .padding(.vertical, 4)
         .contextMenu {
@@ -260,9 +261,9 @@ struct AliasesSettingsView: View {
             }
 
             Button {
-                Task { await toggleActive(alias: alias, isActive: !alias.isActive) }
+                Task { await setActive(alias, isActive: !alias.isActive) }
             } label: {
-                Label(alias.isActive ? "Pause Forwarding" : "Resume Forwarding", systemImage: alias.isActive ? "pause.circle" : "play.circle")
+                Label(alias.isActive ? "Pause" : "Resume", systemImage: alias.isActive ? "pause.circle" : "play.circle")
             }
 
             Button {
@@ -271,6 +272,35 @@ struct AliasesSettingsView: View {
                 showEditLabel = true
             } label: {
                 Label("Edit Label", systemImage: "pencil")
+            }
+
+            Picker(selection: Binding(
+                get: { alias.pausedAction },
+                set: { action in
+                    Task { await setPausedAction(alias, action: action) }
+                }
+            )) {
+                Text("Drop Silently").tag("drop")
+                Text("Reject (Bounce)").tag("reject")
+            } label: {
+                Label("When Paused", systemImage: "hand.raised")
+            }
+            .pickerStyle(.menu)
+
+            Menu {
+                ForEach(AliasExpiryOption.allCases) { option in
+                    Button {
+                        Task { await setExpiry(alias, option: option) }
+                    } label: {
+                        if option == .never && alias.expiresAt == nil {
+                            Label(option.editTitle, systemImage: "checkmark")
+                        } else {
+                            Text(option.editTitle)
+                        }
+                    }
+                }
+            } label: {
+                Label("Expiration", systemImage: "clock")
             }
 
             Divider()
@@ -282,6 +312,55 @@ struct AliasesSettingsView: View {
                 Label("Delete Address", systemImage: "trash")
             }
         }
+    }
+
+    private func statusPill(_ status: AliasStatus) -> some View {
+        Text(status.title)
+            .font(.inter(size: 11, weight: .semibold))
+            .foregroundStyle(status.foreground)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(status.background, in: Capsule())
+    }
+
+    private func toastView(_ toast: ComposeToast) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .font(.inter(size: 13, weight: .semibold))
+                .foregroundStyle(toast.isError ? .red : AppTheme.ink)
+
+            Text(toast.message)
+                .font(.inter(size: 13, weight: .medium))
+                .foregroundStyle(AppTheme.ink)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 24)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private func displayLabel(for alias: MaskedAlias) -> String {
+        if let label = alias.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            return label
+        }
+        return "Untitled"
+    }
+
+    /// "12 received · 3 blocked · Expires Oct 8, 2026 at 4:00 PM"
+    private func metaLine(for alias: MaskedAlias, status: AliasStatus) -> String {
+        var parts = ["\(alias.statsReceived) received", "\(alias.statsBlocked) blocked"]
+        if let expiry = alias.expiryDate {
+            let formatted = expiry.formatted(date: .abbreviated, time: .shortened)
+            parts.append(status == .expired ? "Expired \(formatted)" : "Expires \(formatted)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func copyToClipboard(_ text: String, id: String) {
@@ -300,69 +379,186 @@ struct AliasesSettingsView: View {
         }
     }
 
+    private func showToast(_ message: String, isError: Bool = false) {
+        toastDismissTask?.cancel()
+        toast = ComposeToast(message: message, isError: isError)
+        toastDismissTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            toast = nil
+        }
+    }
+
     private func loadAliases() async {
-        guard let mailboxId else { return }
+        guard let mailboxId else {
+            isLoading = false
+            errorMessage = "Select a mailbox to manage its private emails."
+            return
+        }
         isLoading = true
         errorMessage = nil
         do {
             aliases = try await APIClient.shared.listAliases(mailboxId: mailboxId)
         } catch {
-            errorMessage = "Failed to load private emails"
+            if !Task.isCancelled {
+                if aliases.isEmpty {
+                    errorMessage = "Couldn’t load private emails"
+                } else {
+                    showToast("Couldn’t refresh private emails", isError: true)
+                }
+            }
         }
         isLoading = false
     }
 
-    private func toggleActive(alias: MaskedAlias, isActive: Bool) async {
+    private func replaceLocal(_ alias: MaskedAlias) {
+        guard let index = aliases.firstIndex(where: { $0.id == alias.id }) else { return }
+        aliases[index] = alias
+    }
+
+    /// Shows the edit right away, then saves; rolls back and toasts on failure.
+    private func applyUpdate(
+        to alias: MaskedAlias,
+        failureMessage: String,
+        change: (inout MaskedAlias) -> Void,
+        save: (_ mailboxId: String) async throws -> MaskedAlias
+    ) async {
         guard let mailboxId else { return }
+        var optimistic = alias
+        change(&optimistic)
+        replaceLocal(optimistic)
         do {
-            let res = try await APIClient.shared.updateAlias(mailboxId: mailboxId, aliasId: alias.id, isActive: isActive)
-            if let index = aliases.firstIndex(where: { $0.id == alias.id }) {
-                aliases[index] = res
-            }
+            replaceLocal(try await save(mailboxId))
         } catch {
-            app.showToast("Could not update status", isError: true)
+            replaceLocal(alias)
+            showToast(failureMessage, isError: true)
+        }
+    }
+
+    private func setActive(_ alias: MaskedAlias, isActive: Bool) async {
+        await applyUpdate(
+            to: alias,
+            failureMessage: "Couldn’t update status",
+            change: { $0.isActive = isActive }
+        ) { mailboxId in
+            try await APIClient.shared.updateAlias(mailboxId: mailboxId, aliasId: alias.id, isActive: isActive)
         }
     }
 
     private func saveLabel(for alias: MaskedAlias, label: String) async {
-        guard let mailboxId else { return }
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            let res = try await APIClient.shared.updateAlias(mailboxId: mailboxId, aliasId: alias.id, label: trimmed.isEmpty ? nil : trimmed)
-            if let index = aliases.firstIndex(where: { $0.id == alias.id }) {
-                aliases[index] = res
-            }
-        } catch {
-            app.showToast("Could not save label", isError: true)
+        await applyUpdate(
+            to: alias,
+            failureMessage: "Couldn’t save label",
+            change: { $0.label = trimmed.isEmpty ? nil : trimmed }
+        ) { mailboxId in
+            // Empty clears the label server-side.
+            try await APIClient.shared.updateAlias(mailboxId: mailboxId, aliasId: alias.id, label: trimmed)
+        }
+    }
+
+    private func setPausedAction(_ alias: MaskedAlias, action: String) async {
+        guard action != alias.pausedAction else { return }
+        await applyUpdate(
+            to: alias,
+            failureMessage: "Couldn’t update paused behavior",
+            change: { $0.pausedAction = action }
+        ) { mailboxId in
+            try await APIClient.shared.updateAlias(mailboxId: mailboxId, aliasId: alias.id, pausedAction: action)
+        }
+    }
+
+    private func setExpiry(_ alias: MaskedAlias, option: AliasExpiryOption) async {
+        let expiry = option.expiry(from: Date())
+        await applyUpdate(
+            to: alias,
+            failureMessage: "Couldn’t update expiration",
+            change: { $0.expiresAt = expiry.isoString }
+        ) { mailboxId in
+            try await APIClient.shared.updateAlias(mailboxId: mailboxId, aliasId: alias.id, expiry: expiry)
         }
     }
 
     private func performDelete(_ alias: MaskedAlias) async {
         guard let mailboxId else { return }
         do {
-            _ = try await APIClient.shared.deleteAlias(mailboxId: mailboxId, aliasId: alias.id)
+            try await APIClient.shared.deleteAlias(mailboxId: mailboxId, aliasId: alias.id)
             withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
                 aliases.removeAll { $0.id == alias.id }
             }
-            app.showToast("Masked address deleted")
+            showToast("Private email deleted")
         } catch {
-            app.showToast("Could not delete address", isError: true)
+            showToast("Couldn’t delete address", isError: true)
+        }
+    }
+}
+
+/// Row state. Expired wins over paused: resuming alone won't revive it.
+private enum AliasStatus {
+    case active, paused, expired
+
+    init(_ alias: MaskedAlias, now: Date = Date()) {
+        if alias.isExpired(now: now) {
+            self = .expired
+        } else {
+            self = alias.isActive ? .active : .paused
         }
     }
 
-    private func formattedDate(_ isoDate: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        var date = formatter.date(from: isoDate)
-        if date == nil {
-            formatter.formatOptions = [.withInternetDateTime]
-            date = formatter.date(from: isoDate)
+    var title: String {
+        switch self {
+        case .active: return "Active"
+        case .paused: return "Paused"
+        case .expired: return "Expired"
         }
-        guard let date else { return isoDate }
-        let display = DateFormatter()
-        display.dateStyle = .medium
-        display.timeStyle = .short
-        return display.string(from: date)
+    }
+
+    var foreground: Color {
+        switch self {
+        case .active: return AppTheme.accent
+        case .paused: return AppTheme.muted
+        case .expired: return AppTheme.deepDarkRed
+        }
+    }
+
+    var background: Color {
+        switch self {
+        case .active: return AppTheme.accent.opacity(0.12)
+        case .paused: return AppTheme.pillFill
+        case .expired: return AppTheme.deepDarkRed.opacity(0.12)
+        }
+    }
+}
+
+/// Expiry presets; relative choices become an absolute date when saved.
+enum AliasExpiryOption: String, CaseIterable, Identifiable {
+    case never = "Never"
+    case hours24 = "24 Hours"
+    case days7 = "7 Days"
+    case days30 = "30 Days"
+
+    var id: String { rawValue }
+
+    /// Context-menu wording, where the clock starts when you pick it.
+    var editTitle: String {
+        self == .never ? "Never" : "\(rawValue) from Now"
+    }
+
+    private var interval: TimeInterval? {
+        switch self {
+        case .never: return nil
+        case .hours24: return 24 * 3600
+        case .days7: return 7 * 86400
+        case .days30: return 30 * 86400
+        }
+    }
+
+    func date(from now: Date) -> Date? {
+        interval.map { now.addingTimeInterval($0) }
+    }
+
+    func expiry(from now: Date) -> AliasExpiry {
+        date(from: now).map(AliasExpiry.at) ?? .never
     }
 }
 
@@ -374,28 +570,21 @@ struct CreateAliasSheet: View {
     var onCreated: (MaskedAlias) -> Void
 
     @State private var label = ""
-    @State private var notes = ""
-    @State private var expiryOption: ExpiryOption = .never
+    @State private var expiryOption: AliasExpiryOption = .never
     @State private var pausedAction: String = "drop"
     @State private var isCreating = false
     @State private var errorMessage: String?
 
-    enum ExpiryOption: String, CaseIterable, Identifiable {
-        case never = "Never"
-        case hours24 = "24 Hours"
-        case days7 = "7 Days"
-        case days30 = "30 Days"
-
-        var id: String { rawValue }
-
-        var seconds: Int? {
-            switch self {
-            case .never: return nil
-            case .hours24: return 24 * 3600
-            case .days7: return 7 * 86400
-            case .days30: return 30 * 86400
+    /// Private emails live on the apex of the mailbox's own domain.
+    private var addressFooter: String {
+        let mailbox = app.selectedMailbox?.email ?? app.selectedMailboxId ?? ""
+        if let at = mailbox.lastIndex(of: "@") {
+            let domain = mailbox[mailbox.index(after: at)...]
+            if !domain.isEmpty {
+                return "A random address like k8m2p9v4@\(domain) will be assigned automatically."
             }
         }
+        return "A random address on your mailbox's domain will be assigned automatically."
     }
 
     var body: some View {
@@ -407,20 +596,15 @@ struct CreateAliasSheet: View {
                         text: $label,
                         placeholder: "e.g., Online Store, Newsletter"
                     )
-                    SettingsTextFieldRow(
-                        title: "Note",
-                        text: $notes,
-                        placeholder: "Optional notes"
-                    )
                 } header: {
                     Text("Identity")
                 } footer: {
-                    SettingsFormFooter(text: "A unique private address like random@private.domain.com will be automatically assigned.")
+                    SettingsFormFooter(text: addressFooter)
                 }
 
                 Section {
                     SettingsMenuPickerRow(title: "Expiration", selection: $expiryOption) {
-                        ForEach(ExpiryOption.allCases) { opt in
+                        ForEach(AliasExpiryOption.allCases) { opt in
                             Text(opt.rawValue).tag(opt)
                         }
                     }
@@ -472,26 +656,32 @@ struct CreateAliasSheet: View {
     }
 
     private func create() async {
-        guard let mailboxId = app.selectedMailboxId else { return }
+        guard let mailboxId = app.selectedMailboxId else {
+            errorMessage = "Select a mailbox first."
+            return
+        }
         isCreating = true
         errorMessage = nil
 
         let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
 
         do {
             let res = try await APIClient.shared.createAlias(
                 mailboxId: mailboxId,
                 label: trimmedLabel.isEmpty ? nil : trimmedLabel,
-                notes: trimmedNotes.isEmpty ? nil : trimmedNotes,
-                expiresInSeconds: expiryOption.seconds,
+                expiresAt: expiryOption.date(from: Date()),
                 pausedAction: pausedAction
             )
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             onCreated(res)
             dismiss()
         } catch {
-            errorMessage = "Failed to create private email"
+            // Server reasons (e.g. the per-mailbox limit) are worth showing as-is.
+            if case APIError.http(_, let message) = error, !message.isEmpty {
+                errorMessage = message
+            } else {
+                errorMessage = "Failed to create private email"
+            }
         }
         isCreating = false
     }

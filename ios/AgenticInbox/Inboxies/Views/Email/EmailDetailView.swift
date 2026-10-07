@@ -45,8 +45,11 @@ struct EmailDetailView: View {
         if email.needsReply == true { tags.append("Needs reply") }
         if email.hasDraft == true { tags.append("Has draft") }
         if email.isSpoofed { tags.append("Spoofed") }
-        if email.aliasId != nil || email.recipient.contains("@private.") {
-            tags.append("Private email")
+        // Keyed on aliasId only: alias addresses share the mailbox domain.
+        if email.aliasId != nil || app.threadEmails.contains(where: { $0.aliasId != nil }) {
+            let aliasEmail = email.aliasEmail
+                ?? app.threadEmails.lazy.compactMap(\.aliasEmail).first
+            tags.append(aliasEmail.map { "Private email · \($0)" } ?? "Private email")
         }
         if let label = email.deliveryStatusLabel {
             tags.append(label)

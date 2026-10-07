@@ -199,6 +199,13 @@ final class DatabaseService: @unchecked Sendable {
             exec("CREATE INDEX IF NOT EXISTS idx_emails_reply_later ON emails(mailbox_id, reply_later, reply_later_at);")
             setVersion(5)
         }
+
+        // Private email binding, so cached threads still reply from the alias.
+        if (getVersion() < 6) {
+            exec("ALTER TABLE emails ADD COLUMN alias_id TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN alias_email TEXT;")
+            setVersion(6)
+        }
     }
 
     private func getVersion() -> Int {
@@ -402,14 +409,14 @@ final class DatabaseService: @unchecked Sendable {
                 message_id, raw_headers, thread_count, thread_unread_count, participants,
                 folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id, reply_later, reply_later_at,
-                updated_at
+                updated_at, alias_id, alias_email
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
-                ?
+                ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -443,7 +450,9 @@ final class DatabaseService: @unchecked Sendable {
                 provider_message_id = excluded.provider_message_id,
                 reply_later = excluded.reply_later,
                 reply_later_at = excluded.reply_later_at,
-                updated_at = excluded.updated_at;
+                updated_at = excluded.updated_at,
+                alias_id = COALESCE(excluded.alias_id, emails.alias_id),
+                alias_email = COALESCE(excluded.alias_email, emails.alias_email);
             """
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -491,6 +500,8 @@ final class DatabaseService: @unchecked Sendable {
                     sqlite3_bind_int(stmt, 31, e.replyLater ? 1 : 0)
                     bindOptionalString(stmt, 32, e.replyLaterAt)
                     bindString(stmt, 33, now)
+                    bindOptionalString(stmt, 34, e.aliasId)
+                    bindOptionalString(stmt, 35, e.aliasEmail)
 
                     sqlite3_step(stmt)
                 }
@@ -512,7 +523,7 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at
+                reply_later, reply_later_at, alias_id, alias_email
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ?
             ORDER BY date DESC
@@ -547,7 +558,7 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at
+                reply_later, reply_later_at, alias_id, alias_email
             FROM emails
             WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
             ORDER BY CASE WHEN reply_later_at IS NOT NULL THEN reply_later_at ELSE date END ASC, date DESC
@@ -596,7 +607,7 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at
+                reply_later, reply_later_at, alias_id, alias_email
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -625,7 +636,7 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at
+                reply_later, reply_later_at, alias_id, alias_email
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -883,7 +894,7 @@ final class DatabaseService: @unchecked Sendable {
                 e.thread_unread_count, e.participants, e.folder_name, e.has_draft,
                 e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json,
                 e.delivery_status, e.delivery_error, e.provider_message_id,
-                e.reply_later, e.reply_later_at
+                e.reply_later, e.reply_later_at, e.alias_id, e.alias_email
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -1042,7 +1053,9 @@ final class DatabaseService: @unchecked Sendable {
             auth: decodeAuth(columnOptionalString(stmt, 25)),
             providerMessageId: columnOptionalString(stmt, 28),
             deliveryStatus: columnOptionalString(stmt, 26),
-            deliveryError: columnOptionalString(stmt, 27)
+            deliveryError: columnOptionalString(stmt, 27),
+            aliasId: columnOptionalString(stmt, 31),
+            aliasEmail: columnOptionalString(stmt, 32)
         )
     }
 

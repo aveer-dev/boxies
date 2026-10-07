@@ -103,6 +103,20 @@ final class ComposeFormModel {
     private let originalEmail: Email?
     private let selfAddresses: Set<String>
 
+    /// Reply in a conversation that came in on a private email. The server sends
+    /// it from that alias with no display name, so From is fixed here too.
+    let isPrivateReply: Bool
+    /// The alias address, when the payload carried it.
+    let privateEmail: String?
+
+    var isFromLocked: Bool { isPrivateReply }
+
+    var fromDisplayName: String {
+        if isPrivateReply { return privateEmail ?? "Private email" }
+        if let fromName, !fromName.isEmpty { return fromName }
+        return fromEmail
+    }
+
     init(
         mode: ComposeMode,
         mailbox: Mailbox,
@@ -114,13 +128,30 @@ final class ComposeFormModel {
         let mailboxId = mailbox.id
         let mailboxEmail = mailbox.email
         let mailboxFromName = mailbox.settings?.fromName ?? (mailbox.name != mailbox.email ? mailbox.name : nil)
-        self.fromMailboxId = mailboxId
-        self.fromEmail = mailboxEmail
-        self.fromName = mailboxFromName
-        self.originalEmail = original
-        self.selfAddresses = ComposeHTML.selfAddresses(mailbox: mailbox)
 
-        let signature = ComposeHTML.signatureText(settings: mailbox.settings, fromName: mailboxFromName)
+        // Keyed on aliasId only; the alias address shares the mailbox domain.
+        let replySource = (mode == .reply || mode == .replyAll) ? original : nil
+        let aliasCarriers = [draft, replySource].compactMap { $0 }.filter { $0.aliasId != nil }
+        let privateEmail = aliasCarriers.lazy
+            .compactMap { $0.aliasEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .first { !$0.isEmpty }
+        let isPrivateReply = !aliasCarriers.isEmpty
+        let resolvedFrom = privateEmail ?? mailboxEmail
+        var selves = ComposeHTML.selfAddresses(mailbox: mailbox)
+        if let privateEmail { selves.insert(privateEmail) }
+
+        self.isPrivateReply = isPrivateReply
+        self.privateEmail = privateEmail
+        self.fromMailboxId = mailboxId
+        self.fromEmail = resolvedFrom
+        // A name or signature next to the alias would tie it back to the owner.
+        self.fromName = isPrivateReply ? nil : mailboxFromName
+        self.originalEmail = original
+        self.selfAddresses = selves
+
+        let signature = isPrivateReply
+            ? ""
+            : ComposeHTML.signatureText(settings: mailbox.settings, fromName: mailboxFromName)
         self.signature = signature
 
         var nextTo: [MailAddress] = []
@@ -136,26 +167,12 @@ final class ComposeFormModel {
 
         if mode == .reply || mode == .replyAll, let original {
             nextQuoted = ComposeHTML.quotedOriginal(from: original)
-            if original.aliasId != nil || original.recipient.contains("@private.") {
-                let parsed = MailAddress.parseList(original.recipient).first?.email ?? original.recipient
-                let trimmed = parsed.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    self.fromEmail = trimmed
-                }
-            }
         }
 
         if let draft {
             nextDraftId = draft.id
             nextOriginalId = draft.inReplyTo
             nextThreadId = draft.threadId
-            if !draft.sender.isEmpty && (draft.aliasId != nil || draft.sender.contains("@private.")) {
-                let parsed = MailAddress.parseList(draft.sender).first?.email ?? draft.sender
-                let trimmed = parsed.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    self.fromEmail = trimmed
-                }
-            }
             nextTo = MailAddress.parseList(draft.recipient)
             nextCc = MailAddress.parseList(draft.cc)
             nextBcc = MailAddress.parseList(draft.bcc)
@@ -169,7 +186,7 @@ final class ComposeFormModel {
                 nextTo = ComposeHTML.correctedReplyTo(
                     draftTo: nextTo,
                     original: original,
-                    selfAddresses: ComposeHTML.selfAddresses(mailbox: mailbox)
+                    selfAddresses: selves
                 )
             }
         } else if let original {
@@ -177,11 +194,11 @@ final class ComposeFormModel {
             nextThreadId = original.threadId ?? original.id
             switch mode {
             case .reply:
-                nextTo = ComposeHTML.replyFields(original: original, selfAddresses: ComposeHTML.selfAddresses(mailbox: mailbox))
+                nextTo = ComposeHTML.replyFields(original: original, selfAddresses: selves)
                 nextSubject = ComposeHTML.prefixedSubject(original.subject, prefix: "Re")
                 nextBody = ComposeHTML.replyBody(signature: signature)
             case .replyAll:
-                let fields = ComposeHTML.replyAllFields(original: original, selfAddresses: ComposeHTML.selfAddresses(mailbox: mailbox))
+                let fields = ComposeHTML.replyAllFields(original: original, selfAddresses: selves)
                 nextTo = fields.to
                 nextCc = fields.cc
                 nextShowCcBcc = !fields.cc.isEmpty
@@ -213,9 +230,10 @@ final class ComposeFormModel {
         self.originalEmailId = nextOriginalId
         self.threadId = nextThreadId
         self.draftId = nextDraftId
+        // Same From as `currentSnapshot`, so an untouched alias reply isn't dirty.
         let initial = Self.snapshot(
             to: nextTo, cc: nextCc, bcc: nextBcc,
-            subject: nextSubject, body: nextBody, from: mailboxEmail
+            subject: nextSubject, body: nextBody, from: resolvedFrom
         )
         self.initialSnapshot = initial
         self.lastSavedSnapshot = initial
@@ -333,6 +351,7 @@ final class ComposeFormModel {
     }
 
     func selectFrom(mailbox: Mailbox) {
+        guard !isFromLocked else { return }
         fromMailboxId = mailbox.id
         fromEmail = mailbox.email
         fromName = mailbox.settings?.fromName ?? (mailbox.name != mailbox.email ? mailbox.name : nil)
