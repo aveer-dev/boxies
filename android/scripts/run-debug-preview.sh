@@ -6,6 +6,9 @@
 #   ./scripts/run-debug-preview.sh domainAdmin
 #   ./scripts/run-debug-preview.sh mailbox
 #   ./scripts/run-debug-preview.sh screener
+#   ./scripts/run-debug-preview.sh screenerList
+#   ./scripts/run-debug-preview.sh domainDns
+#   ./scripts/run-debug-preview.sh forgotPassword
 #   ./scripts/run-debug-preview.sh replyLater
 #   ./scripts/run-debug-preview.sh passwordSignIn
 #   ./scripts/run-debug-preview.sh inviteAccept
@@ -32,12 +35,15 @@ case "$mode" in
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
+  screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;
+  domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
+  forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
   -h|--help|help)
-    sed -n '2,20p' "$0"
+    sed -n '2,22p' "$0"
     exit 0
     ;;
   *)
