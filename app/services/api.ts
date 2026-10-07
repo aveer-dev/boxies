@@ -108,8 +108,20 @@ function put<T>(url: string, body?: unknown) {
 	});
 }
 
-function del<T>(url: string) {
-	return request<T>(url, { method: "DELETE" });
+function patch<T>(url: string, body?: unknown, opts?: RequestOptions) {
+	return request<T>(url, {
+		method: "PATCH",
+		signal: opts?.signal,
+		body: body != null ? JSON.stringify(body) : undefined,
+	});
+}
+
+function del<T>(url: string, opts?: RequestOptions) {
+	return request<T>(url, { method: "DELETE", signal: opts?.signal });
+}
+
+interface RequestOptions {
+	signal?: AbortSignal;
 }
 
 // ---------- Typed response shapes ----------
@@ -746,7 +758,7 @@ const api = {
 			{ locked },
 		),
 
-	// Masked Email Aliases
+	// Private emails (aliases on the mailbox's own domain)
 	listAliases: (mailboxId: string, options?: RequestOptions) =>
 		get<{ aliases: MaskedAlias[] }>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases`,
@@ -756,8 +768,7 @@ const api = {
 	createAlias: (
 		mailboxId: string,
 		body: {
-			baseDomain?: string;
-			label?: string;
+			label?: string | null;
 			expiresAt?: string | null;
 			pausedAction?: "drop" | "reject";
 		},

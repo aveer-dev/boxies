@@ -8,6 +8,7 @@ import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import ComposeBodyChrome from "./compose/ComposeBodyChrome";
+import PrivateEmailLogo from "./PrivateEmailLogo";
 import { useUIStore } from "~/hooks/useUIStore";
 
 export default function ComposeEmail() {
@@ -40,6 +41,7 @@ export default function ComposeEmail() {
 		isSending,
 		saveStatus,
 		formTitle,
+		aliasEmail,
 		handleSaveDraft,
 		handleDiscard,
 		handleSend,
@@ -56,6 +58,13 @@ export default function ComposeEmail() {
 				</Dialog.Title>
 				<form onSubmit={(e) => handleSend(e, closeComposeModal)} className="space-y-4">
 					{error && <Banner variant="error" text={error} />}
+					{aliasEmail && (
+						<div className="flex items-center gap-1.5 text-sm text-kumo-default" title="Replies in this conversation always come from your private email">
+							<span className="text-kumo-subtle">From</span>
+							<PrivateEmailLogo size={16} className="shrink-0" />
+							<span className="truncate">{aliasEmail}</span>
+						</div>
+					)}
 					<div className="flex items-center gap-2">
 						<div className="flex-1">
 							<RecipientAutocompleteInput

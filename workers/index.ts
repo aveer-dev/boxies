@@ -633,16 +633,24 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 		}
 	}
 
+	// A reply draft in a private-email thread carries the alias, so clients
+	// reopening it show the alias as From (the send path enforces it anyway).
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const draftAliasId = await findThreadAliasId(aliasStub, { threadId: resolvedThreadId });
+	const draftAlias = draftAliasId ? await aliasStub.getAlias(draftAliasId) : null;
+
 	const messageId = crypto.randomUUID();
 	if (!resolvedThreadId) {
 		resolvedThreadId = messageId;
 	}
 
 	await stub.createEmail(Folders.DRAFT, {
-		id: messageId, subject: draftFields.subject, sender: mailboxId.toLowerCase(),
+		id: messageId, subject: draftFields.subject,
+		sender: (draftAlias?.alias_email ?? mailboxId).toLowerCase(),
 		recipient: draftFields.recipient, cc: draftFields.cc, bcc: draftFields.bcc,
 		date: now, body, in_reply_to: in_reply_to || null, email_references: null,
 		thread_id: resolvedThreadId,
+		alias_id: draftAlias?.id ?? null,
 	}, []);
 	await stub.deleteSiblingDrafts(messageId, {
 		threadId: resolvedThreadId,

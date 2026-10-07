@@ -33,11 +33,19 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 			invalidateEmailData();
 		};
 
+		// Private emails created elsewhere (extension, phone) show up live.
+		const onAliasChanged = () => {
+			qc.invalidateQueries({ queryKey: ["aliases", mailboxId] });
+		};
+
 		source.addEventListener("email_updated", onEmailUpdated);
 		source.addEventListener("new_email", onNewEmail);
 		source.addEventListener("email_moved", onEmailUpdated);
 		source.addEventListener("emails_refiled", onEmailUpdated);
 		source.addEventListener("sender_preference_updated", onEmailUpdated);
+		source.addEventListener("alias_created", onAliasChanged);
+		source.addEventListener("alias_updated", onAliasChanged);
+		source.addEventListener("alias_deleted", onAliasChanged);
 
 		source.onerror = () => {
 			// Browser auto-reconnects EventSource; avoid noisy logs.
@@ -49,6 +57,9 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 			source.removeEventListener("email_moved", onEmailUpdated);
 			source.removeEventListener("emails_refiled", onEmailUpdated);
 			source.removeEventListener("sender_preference_updated", onEmailUpdated);
+			source.removeEventListener("alias_created", onAliasChanged);
+			source.removeEventListener("alias_updated", onAliasChanged);
+			source.removeEventListener("alias_deleted", onAliasChanged);
 			source.close();
 		};
 	}, [mailboxId, qc]);

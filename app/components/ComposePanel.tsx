@@ -8,6 +8,7 @@ import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import ComposeBodyChrome from "./compose/ComposeBodyChrome";
+import PrivateEmailLogo from "./PrivateEmailLogo";
 
 export default function ComposePanel() {
 	const { mailboxId, folder } = useParams<{
@@ -37,6 +38,7 @@ export default function ComposePanel() {
 		isSending,
 		saveStatus,
 		formTitle,
+		aliasEmail,
 		handleSaveDraft,
 		handleDiscard,
 		handleSend,
@@ -71,6 +73,15 @@ export default function ComposePanel() {
 					{error && <Banner variant="error" text={error} />}
 
 					<div className="space-y-3">
+						{aliasEmail && (
+							<div className="flex items-center gap-2">
+								<span className="text-sm font-medium text-kumo-subtle w-14 shrink-0">From</span>
+								<span className="flex items-center gap-1.5 min-w-0 text-sm text-kumo-default" title="Replies in this conversation always come from your private email">
+									<PrivateEmailLogo size={16} className="shrink-0" />
+									<span className="truncate">{aliasEmail}</span>
+								</span>
+							</div>
+						)}
 						<div className="flex items-start gap-2">
 							<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0 pt-1">
 								To
