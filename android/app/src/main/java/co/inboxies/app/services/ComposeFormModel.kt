@@ -60,10 +60,27 @@ class ComposeFormModel(
     draft: Email? = null,
     initialTo: List<MailAddress> = emptyList(),
 ) {
+    /**
+     * Bound to a private email: a reply in a private-email thread, or a reopened reply draft
+     * from one. The Worker sends those from the alias with no display name, so From locks
+     * and the signature (which could carry the real name) is skipped. Keyed on `alias_id`
+     * only; forwards are never bound.
+     */
+    val isAliasBound: Boolean = aliasSource(mode, original, draft) != null
+
+    /** The bound alias address, when the payload carried `alias_email` (detail / draft rows do). */
+    val aliasEmail: String? = aliasSource(mode, original, draft)
+        ?.aliasEmail
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+
     var fromMailboxId: String = mailbox.id
-    var fromEmail: String = mailbox.email
-    var fromName: String? = mailbox.settings?.fromName
-        ?: mailbox.name.takeIf { it != mailbox.email }
+    var fromEmail: String = aliasEmail ?: mailbox.email
+    var fromName: String? = if (isAliasBound) {
+        null
+    } else {
+        mailbox.settings?.fromName ?: mailbox.name.takeIf { it != mailbox.email }
+    }
     val original: Email? = original
 
     var toTokens: List<MailAddress> = initialTo
@@ -134,34 +151,23 @@ class ComposeFormModel(
             attachments.isNotEmpty()
 
     init {
-        signature = ComposeHtml.signatureText(
-            settings = mailbox.settings,
-            fromName = fromName,
-        )
+        signature = if (isAliasBound) {
+            ""
+        } else {
+            ComposeHtml.signatureText(
+                settings = mailbox.settings,
+                fromName = fromName,
+            )
+        }
         quotedOriginal = if (mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll) {
             original?.let { ComposeHtml.quotedOriginal(it) }
         } else {
             null
         }
 
-        val selfAddresses = ComposeHtml.selfAddresses(mailbox)
-
-        if (original != null && (mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll)) {
-            if (original.aliasId != null || original.recipient.contains("@private.")) {
-                val parsed = MailAddress.parseList(original.recipient).firstOrNull()?.email ?: original.recipient
-                val trimmed = parsed.trim()
-                if (trimmed.isNotEmpty()) {
-                    fromEmail = trimmed
-                }
-            }
-        }
-        if (draft != null && draft.sender.isNotEmpty() && (draft.aliasId != null || draft.sender.contains("@private."))) {
-            val parsed = MailAddress.parseList(draft.sender).firstOrNull()?.email ?: draft.sender
-            val trimmed = parsed.trim()
-            if (trimmed.isNotEmpty()) {
-                fromEmail = trimmed
-            }
-        }
+        // The alias is "us" too, so Reply / Reply All never address it back.
+        val selfAddresses = ComposeHtml.selfAddresses(mailbox) +
+            listOfNotNull(aliasEmail?.lowercase())
 
         when {
             draft != null -> {
@@ -228,6 +234,7 @@ class ComposeFormModel(
     }
 
     fun selectFrom(mailbox: Mailbox) {
+        if (isAliasBound) return
         fromMailboxId = mailbox.id
         fromEmail = mailbox.email
         fromName = mailbox.settings?.fromName
@@ -291,7 +298,11 @@ class ComposeFormModel(
             put("html", outgoingHtml())
             put("text", outgoingPlainText())
             val name = fromName
-            if (!name.isNullOrBlank()) {
+            if (isAliasBound) {
+                // Bare address: a display name would pair the alias with the real owner.
+                // The Worker substitutes the thread's alias regardless.
+                put("from", fromEmail)
+            } else if (!name.isNullOrBlank()) {
                 put("from", buildJsonObject {
                     put("email", fromEmail)
                     put("name", name)
@@ -338,6 +349,17 @@ class ComposeFormModel(
     fun cancelAutoSave() {
         autoSaveJob?.cancel()
         autoSaveJob = null
+    }
+
+    private companion object {
+        /** Message whose `alias_id` binds this compose; prefers the one carrying the address. */
+        fun aliasSource(mode: ComposeMode, original: Email?, draft: Email?): Email? {
+            if (mode == ComposeMode.Forward) return null
+            val replying = mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll
+            val candidates = listOfNotNull(draft, original?.takeIf { replying })
+                .filter { it.aliasId != null }
+            return candidates.firstOrNull { !it.aliasEmail.isNullOrBlank() } ?: candidates.firstOrNull()
+        }
     }
 
     private fun mergeTokens(existing: List<MailAddress>, draft: String): List<MailAddress> {

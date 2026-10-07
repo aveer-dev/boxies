@@ -74,6 +74,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeUnit
 
 sealed class ApiException(message: String) : Exception(message) {
@@ -90,6 +92,37 @@ sealed class ApiException(message: String) : Exception(message) {
 
 @Serializable
 class EmptyResponse
+
+/** PATCH field wrapper: omit the argument to leave a field alone; `FieldUpdate(null)` sends JSON `null`. */
+data class FieldUpdate<out T>(val value: T?)
+
+/**
+ * Private email request bodies. Keys are camelCase: the Worker's zod schemas silently drop
+ * unknown keys, so snake_case would be a no-op. Expiry is absolute ISO-8601 UTC.
+ */
+internal object AliasRequestBodies {
+    fun create(label: String?, expiresAt: Instant?, pausedAction: String): JsonObject =
+        buildJsonObject {
+            label?.let { put("label", it) }
+            expiresAt?.let { put("expiresAt", isoUtc(it)) }
+            put("pausedAction", pausedAction)
+        }
+
+    fun update(
+        label: FieldUpdate<String>?,
+        isActive: Boolean?,
+        pausedAction: String?,
+        expiresAt: FieldUpdate<Instant>?,
+    ): JsonObject = buildJsonObject {
+        label?.let { put("label", it.value) }
+        isActive?.let { put("isActive", it) }
+        pausedAction?.let { put("pausedAction", it) }
+        expiresAt?.let { update -> put("expiresAt", update.value?.let(::isoUtc)) }
+    }
+
+    /** Second precision (`2026-10-08T12:00:00Z`), which zod `datetime()` accepts. */
+    fun isoUtc(instant: Instant): String = instant.truncatedTo(ChronoUnit.SECONDS).toString()
+}
 
 /** Thin OkHttp + kotlinx.serialization client mirroring iOS APIClient. */
 class ApiClient private constructor() {
@@ -1045,7 +1078,7 @@ class ApiClient private constructor() {
         },
     )
 
-    // MARK: - Masked Email Aliases
+    // MARK: - Private Email Aliases
 
     suspend fun listAliases(mailboxId: String): AliasesResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases",
@@ -1054,38 +1087,29 @@ class ApiClient private constructor() {
     suspend fun createAlias(
         mailboxId: String,
         label: String? = null,
-        notes: String? = null,
-        expiresInSeconds: Int? = null,
-        pausedAction: String = "drop",
+        expiresAt: Instant? = null,
+        pausedAction: String = MaskedAlias.PAUSED_DROP,
     ): CreateAliasResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases",
         method = "POST",
-        body = buildJsonObject {
-            label?.let { put("label", it) }
-            notes?.let { put("notes", it) }
-            expiresInSeconds?.let { put("expires_in_seconds", it) }
-            put("paused_action", pausedAction)
-        },
+        body = AliasRequestBodies.create(label, expiresAt, pausedAction),
     )
 
+    /** `null` arguments are left unchanged; pass `FieldUpdate(null)` to clear a label or expiry. */
     suspend fun updateAlias(
         mailboxId: String,
         aliasId: String,
-        label: String? = null,
-        notes: String? = null,
+        label: FieldUpdate<String>? = null,
         isActive: Boolean? = null,
         pausedAction: String? = null,
+        expiresAt: FieldUpdate<Instant>? = null,
     ): CreateAliasResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases/${pathEncode(aliasId)}",
         method = "PATCH",
-        body = buildJsonObject {
-            label?.let { put("label", it) }
-            notes?.let { put("notes", it) }
-            isActive?.let { put("is_active", it) }
-            pausedAction?.let { put("paused_action", it) }
-        },
+        body = AliasRequestBodies.update(label, isActive, pausedAction, expiresAt),
     )
 
+    /** 204 No Content on success. */
     suspend fun deleteAlias(mailboxId: String, aliasId: String): EmptyResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases/${pathEncode(aliasId)}",
         method = "DELETE",
