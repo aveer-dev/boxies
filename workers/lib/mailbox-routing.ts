@@ -23,6 +23,24 @@ export function aliasMetadataKey(aliasEmail: string): string {
 	return `platform/aliases/${aliasEmail}.json`;
 }
 
+/**
+ * Mailboxes and aliases (private emails + domain aliases) share one
+ * address space: inbound routing tries the mailbox key first, then the
+ * alias key, so neither may claim an address the other already holds.
+ */
+export async function isAddressTaken(
+	bucket: Pick<R2Bucket, "head">,
+	address: string,
+): Promise<boolean> {
+	const id = canonicalMailboxId(address);
+	if (!id) return false;
+	const [mailbox, alias] = await Promise.all([
+		bucket.head(mailboxMetadataKey(id)),
+		bucket.head(aliasMetadataKey(id)),
+	]);
+	return Boolean(mailbox || alias);
+}
+
 export function canonicalMailboxId(address: string | null | undefined): string | null {
 	if (typeof address !== "string") return null;
 	const trimmed = address.trim();

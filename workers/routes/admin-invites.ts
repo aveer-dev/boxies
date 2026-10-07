@@ -62,6 +62,7 @@ import type { MailboxContext } from "../lib/mailbox";
 import {
 	allowedMailboxSet,
 	canonicalMailboxId,
+	isAddressTaken,
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
 import { normalizeEmailAddress } from "../lib/mail-automations";
@@ -359,6 +360,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const key = mailboxMetadataKey(email);
 		if (await c.env.BUCKET.head(key)) {
 			return c.json({ error: "Mailbox already exists" }, 409);
+		}
+		if (await isAddressTaken(c.env.BUCKET, email)) {
+			return c.json({ error: "Address is already in use" }, 409);
 		}
 		const name = body.name || email.split("@")[0] || email;
 		const assignTo = body.assignTo ?? "self";

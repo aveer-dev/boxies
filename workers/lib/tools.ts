@@ -36,6 +36,11 @@ import {
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { allowOutboundRecipients } from "./sender-triage";
+import {
+	findThreadAliasId,
+	resolveOutboundSender,
+	type AliasSenderStub,
+} from "./alias-sender";
 import type { Env } from "../types";
 
 // ── Type casts for DO methods not on the base stub type ────────────
@@ -432,10 +437,26 @@ export async function toolSendReply(
 		return { error: "Original email not found" };
 	}
 
-	const rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
-	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 	const { originalMsgId, references, threadId } = buildReferencesChain(originalEmail);
-	const fromDomain = mailboxId.split("@")[1];
+
+	// Agent replies follow the same private-email binding as the API.
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const sender = await resolveOutboundSender({
+		stub: aliasStub,
+		mailboxId,
+		requestedFrom: mailboxId,
+		threadAliasId: await findThreadAliasId(aliasStub, {
+			aliasId: originalEmail.alias_id ?? null,
+			threadId,
+		}),
+	});
+	if (!sender.ok) return { error: sender.error };
+	const fromAddress = sender.fromEmail;
+
+	let rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
+	if (sender.aliasId) rewrittenTo = rewriteSelfReplyTo(rewrittenTo, originalEmail, fromAddress);
+	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
+	const fromDomain = fromAddress.split("@")[1];
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
@@ -462,7 +483,7 @@ export async function toolSendReply(
 	try {
 		const result = await sendEmail(env.EMAIL, {
 			to,
-			from: mailboxId,
+			from: fromAddress,
 			subject: params.subject,
 			html: fullBodyHtml,
 			headers: buildThreadingHeaders(originalMsgId, references),
@@ -479,7 +500,7 @@ export async function toolSendReply(
 		{
 			id: messageId,
 			subject: params.subject,
-			sender: mailboxId.toLowerCase(),
+			sender: fromAddress.toLowerCase(),
 			recipient: to.toLowerCase(),
 			date: new Date().toISOString(),
 			body: fullBodyHtml,
@@ -491,6 +512,7 @@ export async function toolSendReply(
 			provider_message_id: providerMessageId,
 			delivery_status: "accepted",
 			delivery_error: null,
+			alias_id: sender.aliasId,
 		},
 		[],
 	);
