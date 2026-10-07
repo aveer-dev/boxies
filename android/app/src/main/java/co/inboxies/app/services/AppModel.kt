@@ -49,6 +49,15 @@ class AppModel {
     private val _selectedMailboxId = MutableStateFlow<String?>(null)
     val selectedMailboxId: StateFlow<String?> = _selectedMailboxId.asStateFlow()
 
+    init {
+        // Autofill creates private emails in the mailbox last chosen here (never a preview fixture).
+        scope.launch {
+            _selectedMailboxId.collect { id ->
+                if (id != null && !isDebugPreview) AutofillMailboxPreference.save(id)
+            }
+        }
+    }
+
     private val _folders = MutableStateFlow<List<Folder>>(emptyList())
     val folders: StateFlow<List<Folder>> = _folders.asStateFlow()
 
@@ -1097,6 +1106,7 @@ class AppModel {
         _errorMessage.value = null
         _toast.value = null
         isDebugPreview = false
+        AutofillMailboxPreference.clear()
         DatabaseService.shared.clearAll()
     }
 

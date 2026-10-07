@@ -1,4 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Inboxies</string>
+
+    <!-- Autofill: private email suggestion (dropdown + keyboard inline chip) -->
+    <string name="autofill_create_title">Create private email</string>
+    <string name="autofill_create_subtitle">New Inboxies address for %1$s</string>
+    <string name="autofill_create_subtitle_default">New Inboxies address</string>
+    <string name="autofill_sign_in_title">Sign in to Inboxies</string>
+    <string name="autofill_sign_in_subtitle">to create private emails</string>
+    <string name="autofill_content_description">Inboxies private email</string>
+
+    <!-- Autofill: creation card shown while the address is made -->
+    <string name="autofill_creating">Creating private email…</string>
+    <string name="autofill_creating_for">For %1$s</string>
+    <string name="autofill_create_failed">Couldn’t create a private email</string>
+    <string name="autofill_close">Close</string>
 </resources>

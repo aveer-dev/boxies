@@ -35,8 +35,7 @@ import co.inboxies.app.theme.inboxiesColors
  *
  * Colors come from the in-app palette (not `values-night`), so the mark follows the
  * Inboxies theme setting like iOS: plane + shield outline in `ink`, shield halves fixed
- * light / dark. `res/drawable/ic_private_email_logo.xml` stays for the system-rendered
- * autofill suggestion, which has no access to the in-app theme.
+ * light / dark.
  */
 @Composable
 fun PrivateEmailLogoView(
@@ -92,7 +91,7 @@ private fun PrivateEmailMark(ink: Color, modifier: Modifier) {
     }
 }
 
-/** Shield from `ic_private_email_logo.xml` (same viewport + group transform), themed. */
+/** Top-left shield, drawn in the plane drawable's proportions (512 viewport), themed. */
 private fun privateEmailShield(ink: Color): ImageVector =
     ImageVector.Builder(
         name = "PrivateEmailShield",

@@ -3,7 +3,13 @@ package co.inboxies.app.ui.settings
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.provider.Settings
 import android.view.HapticFeedbackConstants
+import android.view.autofill.AutofillManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.net.toUri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -373,6 +379,9 @@ fun AliasesSettingsView(
                             )
                         }
                     }
+                    mailboxId?.let { id ->
+                        AutofillMailboxFooter(mailboxEmail = app.selectedMailbox?.email ?: id)
+                    }
 
                     if (aliases.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
@@ -568,6 +577,45 @@ private fun aliasMetaLine(alias: MaskedAlias, status: AliasStatus): String {
         parts += if (status == AliasStatus.Expired) "Expired $formatted" else "Expires $formatted"
     }
     return parts.joinToString(" · ")
+}
+
+/**
+ * System autofill offers "Create private email" in other apps; it uses the mailbox selected
+ * here. When Inboxies isn't the autofill service yet, offer to switch.
+ */
+@Composable
+private fun AutofillMailboxFooter(mailboxEmail: String) {
+    val context = LocalContext.current
+    val colors = inboxiesColors()
+    val autofillManager = remember(context) { context.getSystemService(AutofillManager::class.java) }
+    var isEnabled by remember { mutableStateOf(autofillManager?.hasEnabledAutofillServices() == true) }
+    val chooseService = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        isEnabled = autofillManager?.hasEnabledAutofillServices() == true
+    }
+
+    when {
+        isEnabled -> SettingsFormFooter("Autofill creates private emails in $mailboxEmail.")
+        autofillManager?.isAutofillSupported == true -> Text(
+            "Use Inboxies for autofill to create private emails right from sign-up forms.",
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            color = colors.accent,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    runCatching {
+                        chooseService.launch(
+                            Intent(
+                                Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE,
+                                "package:${context.packageName}".toUri(),
+                            ),
+                        )
+                    }
+                }
+                .padding(horizontal = 20.dp)
+                .padding(top = 8.dp, bottom = 4.dp),
+        )
+    }
 }
 
 @Composable
