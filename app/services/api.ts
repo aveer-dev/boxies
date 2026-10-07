@@ -159,6 +159,9 @@ const api = {
 
     // Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
+	/** Token for the browser extension; the Worker scopes it to private emails. */
+	createExtensionSession: () =>
+		post<{ token: string; expiresAt: string }>("/api/v1/me/extension-session"),
 	getMe: () =>
 		get<{
 			email: string | null;

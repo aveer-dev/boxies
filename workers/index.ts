@@ -272,6 +272,28 @@ app.get("/api/v1/me", async (c) => {
 	});
 });
 
+/**
+ * Mint a browser-extension session for the signed-in user. The token is
+ * scoped to private emails (see isPathAllowedForTokenScope), so a leaked
+ * extension token can create aliases but never read or send mail.
+ */
+app.post("/api/v1/me/extension-session", async (c) => {
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	if (!principal?.email && !principal?.sub) return c.json({ error: "Unauthorized" }, 401);
+	const mobileSecret =
+		c.env.MOBILE_JWT_SECRET || (import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
+	if (!mobileSecret) {
+		return c.json({ error: "Mobile auth is not configured. Set MOBILE_JWT_SECRET." }, 500);
+	}
+	const session = await issueMobileSessionToken(mobileSecret, {
+		sub: principal.sub || `email:${principal.email}`,
+		email: principal.email,
+		auth: "extension",
+		scope: "aliases",
+	});
+	return c.json({ token: session.token, expiresAt: session.expiresAt });
+});
+
 registerAdminAndInviteRoutes(app);
 registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);

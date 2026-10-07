@@ -2,6 +2,26 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+const MAILBOX_ALIASES_PATH = /^\/api\/v1\/mailboxes\/[^/]+\/aliases$/;
+
+/**
+ * What a scoped session token may call. Browser-extension tokens live in a
+ * less trusted place than the app, so they can list mailboxes and create or
+ * list private emails — never read mail, send, or reach agents/MCP.
+ */
+export function isPathAllowedForTokenScope(
+	scope: "aliases",
+	method: string,
+	pathname: string,
+): boolean {
+	if (scope !== "aliases") return false;
+	const verb = method.toUpperCase();
+	if (verb === "GET" && (pathname === "/api/v1/mailboxes" || pathname === "/api/v1/me" || pathname === "/api/v1/config")) {
+		return true;
+	}
+	return (verb === "GET" || verb === "POST") && MAILBOX_ALIASES_PATH.test(pathname);
+}
+
 /** Public API + SPA paths that must work without Access / Bearer (token-gated later). */
 export function isPublicAuthPath(pathname: string): boolean {
 	if (

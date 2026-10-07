@@ -497,3 +497,48 @@ test("inbound mail to a paused or expired private email is dropped or bounced", 
 	// Unknown address still bounces as before
 	assert.deepEqual(await deliver("nobody@example.com"), ["Mailbox does not exist"]);
 });
+
+test("extension tokens are scoped to private emails", async () => {
+	const { isPathAllowedForTokenScope } = await import("../lib/auth-paths.ts");
+	const { issueMobileSessionToken, verifyMobileSessionToken } = await import("../lib/apple-auth.ts");
+	const { SignJWT } = await import("jose");
+
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/me"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes/alex%40example.com/aliases"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/mailboxes/alex@example.com/aliases"), true);
+	// Never mail, sends, alias edits/deletes, token minting, agents or MCP
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes/alex@example.com/emails"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/mailboxes/alex@example.com/emails"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "DELETE", "/api/v1/mailboxes/alex@example.com/aliases/a1"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "PATCH", "/api/v1/mailboxes/alex@example.com/aliases/a1"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/me/extension-session"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/agents/email-agent/x"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/mcp"), false);
+
+	const secret = "test-secret";
+	const { token } = await issueMobileSessionToken(secret, {
+		sub: "alex-sub",
+		email: "alex@example.com",
+		auth: "extension",
+		scope: "aliases",
+	});
+	const claims = await verifyMobileSessionToken(token, secret);
+	assert.equal(claims.auth, "extension");
+	assert.equal(claims.scope, "aliases");
+
+	// Regular sessions stay unscoped
+	const app = await issueMobileSessionToken(secret, { sub: "alex-sub", auth: "apple" });
+	assert.equal((await verifyMobileSessionToken(app.token, secret)).scope, undefined);
+
+	// A hand-made unscoped extension token is refused
+	const forged = await new SignJWT({ auth: "extension" })
+		.setProtectedHeader({ alg: "HS256" })
+		.setSubject("alex-sub")
+		.setIssuer("agentic-inbox")
+		.setAudience("agentic-inbox-ios")
+		.setIssuedAt()
+		.setExpirationTime("1h")
+		.sign(new TextEncoder().encode(secret));
+	await assert.rejects(verifyMobileSessionToken(forged, secret));
+});

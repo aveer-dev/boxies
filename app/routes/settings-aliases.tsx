@@ -247,14 +247,18 @@ function AliasListItem({ mailboxId, alias }: { mailboxId: string; alias: MaskedA
 						onChange={(e) => setLabel(e.target.value)}
 					/>
 					<div className="flex flex-col gap-3 sm:flex-row">
-						<label className="flex flex-col gap-1 text-xs font-medium text-kumo-subtle" htmlFor={`${editId}-expiry`}>
-							Expires
+						<div className="flex flex-col gap-1">
+							<label className="text-xs font-medium text-kumo-subtle" htmlFor={`${editId}-expiry`}>
+								Expires
+							</label>
 							<ExpirySelect id={`${editId}-expiry`} value={expiry} onChange={setExpiry} allowKeep />
-						</label>
-						<label className="flex flex-col gap-1 text-xs font-medium text-kumo-subtle" htmlFor={`${editId}-paused`}>
-							When paused or expired
+						</div>
+						<div className="flex flex-col gap-1">
+							<label className="text-xs font-medium text-kumo-subtle" htmlFor={`${editId}-paused`}>
+								When paused or expired
+							</label>
 							<PausedActionSelect id={`${editId}-paused`} value={pausedAction} onChange={setPausedAction} />
-						</label>
+						</div>
 					</div>
 					<div className="flex justify-end gap-2">
 						<Button variant="secondary" size="sm" onClick={() => setEditing(false)}>
@@ -354,14 +358,18 @@ export default function AliasesSettingsRoute() {
 						onChange={(e) => setNewLabel(e.target.value)}
 					/>
 					<div className="flex flex-col gap-3 sm:flex-row">
-						<label className="flex flex-col gap-1 text-xs font-medium text-kumo-subtle" htmlFor="new-alias-expiry">
-							Expires
+						<div className="flex flex-col gap-1">
+							<label className="text-xs font-medium text-kumo-subtle" htmlFor="new-alias-expiry">
+								Expires
+							</label>
 							<ExpirySelect id="new-alias-expiry" value={newExpiry} onChange={setNewExpiry} />
-						</label>
-						<label className="flex flex-col gap-1 text-xs font-medium text-kumo-subtle" htmlFor="new-alias-paused">
-							When paused or expired
+						</div>
+						<div className="flex flex-col gap-1">
+							<label className="text-xs font-medium text-kumo-subtle" htmlFor="new-alias-paused">
+								When paused or expired
+							</label>
 							<PausedActionSelect id="new-alias-paused" value={newPausedAction} onChange={setNewPausedAction} />
-						</label>
+						</div>
 					</div>
 					<div className="flex justify-end gap-2">
 						<Button variant="secondary" size="sm" onClick={() => setCreating(false)}>

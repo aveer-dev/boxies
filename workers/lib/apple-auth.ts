@@ -23,7 +23,10 @@ export interface AppleIdentityClaims {
 	email?: string;
 }
 
-export type MobileAuthProvider = "apple" | "dev" | "google" | "password";
+export type MobileAuthProvider = "apple" | "dev" | "google" | "password" | "extension";
+
+/** Narrow token capability; see isPathAllowedForTokenScope. */
+export type SessionTokenScope = "aliases";
 
 export interface MobileSessionClaims extends JWTPayload {
 	sub: string;
@@ -31,6 +34,8 @@ export interface MobileSessionClaims extends JWTPayload {
 	auth: MobileAuthProvider;
 	/** Present on password sessions. */
 	uid?: string;
+	/** Present on browser-extension sessions: private emails only. */
+	scope?: SessionTokenScope;
 }
 
 /**
@@ -58,7 +63,7 @@ export async function verifyAppleIdentityToken(
 
 export async function issueMobileSessionToken(
 	secret: string,
-	claims: { sub: string; email?: string; auth: MobileAuthProvider },
+	claims: { sub: string; email?: string; auth: MobileAuthProvider; scope?: SessionTokenScope },
 ): Promise<{ token: string; expiresAt: string }> {
 	const key = new TextEncoder().encode(secret);
 	const expiresAtMs = Date.now() + MOBILE_TOKEN_TTL_SECONDS * 1000;
@@ -66,6 +71,7 @@ export async function issueMobileSessionToken(
 	const token = await new SignJWT({
 		email: claims.email,
 		auth: claims.auth,
+		...(claims.scope ? { scope: claims.scope } : {}),
 	})
 		.setProtectedHeader({ alg: "HS256" })
 		.setSubject(claims.sub)
@@ -97,9 +103,16 @@ export async function verifyMobileSessionToken(
 		auth !== "apple" &&
 		auth !== "dev" &&
 		auth !== "google" &&
-		auth !== "password"
+		auth !== "password" &&
+		auth !== "extension"
 	) {
 		throw new Error("Mobile session token missing auth claim");
+	}
+
+	const scope = payload.scope === "aliases" ? "aliases" : undefined;
+	// Extension tokens are only ever minted scoped; never accept an unscoped one.
+	if (auth === "extension" && !scope) {
+		throw new Error("Extension session token missing scope");
 	}
 
 	return {
@@ -108,5 +121,6 @@ export async function verifyMobileSessionToken(
 		email: typeof payload.email === "string" ? payload.email : undefined,
 		auth,
 		uid: typeof payload.uid === "string" ? payload.uid : undefined,
+		scope,
 	};
 }
