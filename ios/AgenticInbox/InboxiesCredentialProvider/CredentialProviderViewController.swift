@@ -1,107 +1,78 @@
-import UIKit
 import AuthenticationServices
+import SwiftUI
+import UIKit
 
-/// iOS Credential Provider Extension for Autofilling Masked Emails.
-/// Provides native system autofill suggestions when users focus email input fields in Safari and third-party apps.
-class CredentialProviderViewController: ASCredentialProviderViewController {
-
-    private let titleLabel: UILabel = {
-        let label = UILabel()
-        label.text = "Inboxies Private Email"
-        label.font = UIFont.systemFont(ofSize: 18, weight: .bold)
-        label.textAlignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
-
-    private let subtitleLabel: UILabel = {
-        let label = UILabel()
-        label.text = "Generate a private address for this website or service."
-        label.font = UIFont.systemFont(ofSize: 13, weight: .regular)
-        label.textColor = .secondaryLabel
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        label.translatesAutoresizingMaskIntoConstraints = false
-        return label
-    }()
-
-    private let generateButton: UIButton = {
-        var config = UIButton.Configuration.filled()
-        config.title = "Generate Private Email"
-        config.baseBackgroundColor = UIColor(red: 0.15, green: 0.35, blue: 0.85, alpha: 1.0)
-        config.cornerStyle = .capsule
-        let button = UIButton(configuration: config)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }()
-
-    private let cancelButton: UIButton = {
-        var config = UIButton.Configuration.plain()
-        config.title = "Cancel"
-        config.baseForegroundColor = .secondaryLabel
-        let button = UIButton(configuration: config)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }()
-
-    private var serviceIdentifier: ASCredentialServiceIdentifier?
+/// AutoFill entry point: creates a private email through the Inboxies API.
+/// iOS 18+ inserts it into the focused field; the password-list flow copies it.
+final class CredentialProviderViewController: ASCredentialProviderViewController {
+    private let model = PrivateEmailRequest()
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        // Registers the bundled Inter fonts (no UIAppFonts here) and Inter nav chrome.
+        AppTheme.configureGlobalAppearance()
+        view.backgroundColor = AppTheme.uiBackground
 
-        view.addSubview(titleLabel)
-        view.addSubview(subtitleLabel)
-        view.addSubview(generateButton)
-        view.addSubview(cancelButton)
+        model.onInsert = { [weak self] text in self?.insert(text) }
+        model.onCancel = { [weak self] in self?.cancel() }
 
+        let host = UIHostingController(rootView: PrivateEmailRequestView(model: model))
+        host.view.backgroundColor = .clear
+        addChild(host)
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(host.view)
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 40),
-            titleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            titleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
-            subtitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            subtitleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-
-            generateButton.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 32),
-            generateButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            generateButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
-            generateButton.heightAnchor.constraint(equalToConstant: 48),
-
-            cancelButton.topAnchor.constraint(equalTo: generateButton.bottomAnchor, constant: 12),
-            cancelButton.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-
-        generateButton.addTarget(self, action: #selector(didTapGenerate), for: .touchUpInside)
-        cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
+        host.didMove(toParent: self)
     }
 
+    /// Password-list flow (from the QuickType bar). There is no text-insertion
+    /// path here and an empty-password credential is not allowed, so the new
+    /// address is copied to the pasteboard and the request is cancelled on Done.
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
-        self.serviceIdentifier = serviceIdentifiers.first
-        if let domain = serviceIdentifier?.identifier {
-            subtitleLabel.text = "Generate a private address for \(domain)"
+        model.configure(mode: .copyToPasteboard, host: Self.host(from: serviceIdentifiers))
+    }
+
+    /// iOS 18+: AutoFill → Inboxies from a text field's edit menu.
+    @available(iOS 18.0, *)
+    override func prepareInterfaceForUserChoosingTextToInsert() {
+        model.configure(mode: .insertText, host: nil)
+    }
+
+    private func insert(_ text: String) {
+        if #available(iOS 18.0, *) {
+            extensionContext.completeRequest(withTextToInsert: text, completionHandler: nil)
+        } else {
+            cancel()
         }
     }
 
-    @objc private func didTapGenerate() {
-        generateButton.isEnabled = false
-        let domain = serviceIdentifier?.identifier ?? "Website"
-
-        // Generate a random 10-char alias token
-        let chars = Array("abcdefghjkmnpqrstuvwxyz23456789")
-        var token = ""
-        for _ in 0..<10 {
-            if let c = chars.randomElement() { token.append(c) }
-        }
-        let generatedEmail = "\(token)@private.inboxies.app"
-
-        // Provide the generated credential back to the host app's email input
-        let credential = ASPasswordCredential(user: generatedEmail, password: "")
-        self.extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
+    private func cancel() {
+        extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
     }
 
-    @objc private func didTapCancel() {
-        self.extensionContext.cancelRequest(withError: NSError(domain: ASExtensionErrorDomain, code: ASExtensionError.userCanceled.rawValue))
+    /// First service identifier as a bare host (`https://www.shop.com/signup` → `shop.com`).
+    private static func host(from identifiers: [ASCredentialServiceIdentifier]) -> String? {
+        for identifier in identifiers {
+            let raw = identifier.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { continue }
+            var host: String
+            switch identifier.type {
+            case .URL:
+                host = URL(string: raw)?.host ?? raw
+            default:
+                host = raw
+            }
+            host = host.lowercased()
+            if host.hasPrefix("www.") {
+                host.removeFirst(4)
+            }
+            if !host.isEmpty { return host }
+        }
+        return nil
     }
 }

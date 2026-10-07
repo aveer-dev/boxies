@@ -6,7 +6,11 @@ import Observation
 @MainActor
 final class AppModel {
     var mailboxes: [Mailbox] = []
-    var selectedMailboxId: String?
+    var selectedMailboxId: String? {
+        didSet {
+            if selectedMailboxId != oldValue { publishSharedSession() }
+        }
+    }
     var folders: [Folder] = []
     var selectedTab: HomeTab = .folder("inbox")
     var emails: [Email] = []
@@ -71,6 +75,12 @@ final class AppModel {
 
     var selectedMailbox: Mailbox? {
         mailboxes.first { $0.id == selectedMailboxId }
+    }
+
+    /// Mirrors the active mailbox for the AutoFill extension. Previews never write.
+    private func publishSharedSession() {
+        guard persistsPreferences, !isDebugPreview else { return }
+        SharedSession.publish(mailboxId: selectedMailboxId, apiBaseURL: AppConfig.apiBaseURL)
     }
 
     func updateSwipePreferences(_ transform: (inout SwipeActionPreferences) -> Void) {

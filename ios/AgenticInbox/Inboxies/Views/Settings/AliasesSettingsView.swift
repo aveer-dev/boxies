@@ -72,6 +72,8 @@ struct AliasesSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(mailboxId == nil)
+            } footer: {
+                SettingsFormFooter(text: "Turn on Inboxies in Settings → General → AutoFill & Passwords to create private emails from any sign-up form.")
             }
 
             if !aliases.isEmpty {
