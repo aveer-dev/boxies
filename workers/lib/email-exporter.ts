@@ -125,7 +125,9 @@ export async function saveExportJob(
 }
 
 /**
- * Check if a domain has an export generated in the last 7 days.
+ * Check if a domain has a domain-wide export generated in the last 7 days.
+ * Single-mailbox exports don't count: they don't back up the whole domain,
+ * and the domain admin isn't necessarily allowed to download them.
  */
 export async function hasRecentExportForDomain(
 	bucket: R2Bucket,
@@ -141,7 +143,8 @@ export async function hasRecentExportForDomain(
 		try {
 			const job = (await res.json()) as ExportJob;
 			if (
-				job.targetId.toLowerCase().endsWith(normalizedDomain) &&
+				job.targetType === "domain" &&
+				job.targetId.toLowerCase().trim() === normalizedDomain &&
 				job.status === "completed"
 			) {
 				const isExpired = new Date(job.expiresAt).getTime() < Date.now();
