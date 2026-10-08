@@ -88,7 +88,7 @@ import {
 	verifyPasswordReset,
 	consumePasswordReset,
 } from "../lib/password-reset";
-import { agentInstanceName } from "../../shared/agent-conversations";
+import { purgeEmailAgents } from "../lib/email-agent";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 import type { Env } from "../types";
 
@@ -499,33 +499,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		const stub = getMailboxStub(c.env, mailboxId);
 		const { conversationIds } = await stub.purgeMailbox(mailboxId);
-		const agentNames = new Set<string>([
-			mailboxId,
-			...conversationIds.map((id) => agentInstanceName(mailboxId, id)),
-		]);
-		for (const name of agentNames) {
-			try {
-				const agentStub = c.env.EMAIL_AGENT.get(
-					c.env.EMAIL_AGENT.idFromName(name),
-				);
-				const purgable = agentStub as {
-					purge?: () => Promise<unknown>;
-					fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
-				};
-				if (typeof purgable.purge === "function") {
-					await purgable.purge();
-				} else {
-					await purgable.fetch(
-						new Request("https://agents/purge", { method: "POST" }),
-					);
-				}
-			} catch (e) {
-				console.error(
-					`EmailAgent purge failed for ${name}:`,
-					(e as Error).message,
-				);
-			}
-		}
+		await purgeEmailAgents(c.env, mailboxId, conversationIds);
 		await appendAdminAudit(c.env.BUCKET, {
 			actorKeys: principalKeys(principal),
 			action: "mailbox.delete",
