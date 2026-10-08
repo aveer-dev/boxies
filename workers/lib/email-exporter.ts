@@ -125,6 +125,16 @@ export async function saveExportJob(
 }
 
 /**
+ * Newest first by createdAt, then by id. Ids embed Date.now(), so jobs created
+ * in the same millisecond still order deterministically.
+ */
+function compareExportJobsNewestFirst(a: ExportJob, b: ExportJob): number {
+	const byCreatedAt = Date.parse(b.createdAt) - Date.parse(a.createdAt) || 0;
+	if (byCreatedAt !== 0) return byCreatedAt;
+	return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
+/**
  * Check if a domain has a domain-wide export generated in the last 7 days.
  * Single-mailbox exports don't count: they don't back up the whole domain,
  * and the domain admin isn't necessarily allowed to download them.
@@ -149,7 +159,7 @@ export async function hasRecentExportForDomain(
 			) {
 				const isExpired = new Date(job.expiresAt).getTime() < Date.now();
 				if (!isExpired) {
-					if (!latestJob || new Date(job.createdAt) > new Date(latestJob.createdAt)) {
+					if (!latestJob || compareExportJobsNewestFirst(job, latestJob) < 0) {
 						latestJob = job;
 					}
 				}

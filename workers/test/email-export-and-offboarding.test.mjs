@@ -220,6 +220,32 @@ async function runTests() {
 	assert.equal(recentCheck.hasExport, true, "Should report recent export exists");
 	assert.equal(recentCheck.lastExport?.id, domainJob.id);
 
+	// Same-millisecond domain jobs are broken deterministically by id.
+	const tieBucket = mockBucket();
+	const tieCreatedAt = "2026-10-01T12:00:00.000Z";
+	const tieExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+	const tieJob = (id, targetType, targetId) => ({
+		id,
+		targetType,
+		targetId,
+		status: "completed",
+		progress: 100,
+		totalEmails: 0,
+		processedEmails: 0,
+		createdAt: tieCreatedAt,
+		expiresAt: tieExpiresAt,
+	});
+	for (const job of [
+		tieJob("exp_mbx_1791000000000_ffffffff", "mailbox", "you@acme.com"),
+		tieJob("exp_dom_1791000000000_aaaaaaaa", "domain", "acme.com"),
+		tieJob("exp_dom_1791000000000_bbbbbbbb", "domain", "acme.com"),
+		tieJob("exp_dom_1791000000000_zzzzzzzz", "domain", "notacme.com"),
+	]) {
+		await tieBucket.put(`exports/jobs/${job.id}.json`, JSON.stringify(job));
+	}
+	const tieCheck = await hasRecentExportForDomain(tieBucket, "acme.com");
+	assert.equal(tieCheck.lastExport?.id, "exp_dom_1791000000000_bbbbbbbb");
+
 	console.log("✔ Mailbox & Domain export execution tests passed");
 
 	// ---------------------------------------------------------
