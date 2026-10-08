@@ -191,7 +191,13 @@ fun EmailDetailView(
             if (current.needsReply == true) add("Needs reply")
             if (current.hasDraft == true) add("Has draft")
             if (current.isSpoofed) add("Spoofed")
-            if (current.aliasId != null || current.recipient.contains("@private.")) add("Private email")
+            // Keyed on aliasId only: alias addresses share the mailbox domain.
+            if (current.aliasId != null || messages.any { it.aliasId != null }) {
+                val address = (sequenceOf(current) + messages.asSequence())
+                    .mapNotNull { it.aliasEmail?.trim()?.takeIf { email -> email.isNotEmpty() } }
+                    .firstOrNull()
+                add(if (address != null) "Private email · $address" else "Private email")
+            }
             current.deliveryStatusLabel?.let { add(it) }
             val messageCount = maxOf(messages.size, current.threadCount ?: 1)
             if (messageCount > 1) add("$messageCount messages")

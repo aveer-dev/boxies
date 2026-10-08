@@ -19,8 +19,10 @@ enum AppConfig {
                 return url
             }
         }
-        return URL(string: "https://inboxies.email")!
+        return defaultAPIBaseURL
     }
+
+    static let defaultAPIBaseURL = URL(string: "https://inboxies.email")!
 
     /// Must match APPLE_CLIENT_ID / Xcode bundle identifier.
     static let bundleID = "co.inboxies.app"

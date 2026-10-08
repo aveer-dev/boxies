@@ -4,7 +4,8 @@
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
-      buildImplicitDependencies = "YES">
+      buildImplicitDependencies = "YES"
+      runPostActionsOnFailure = "NO">
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
@@ -14,9 +15,23 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "33113F54BEEF49AE94810DA3"
+               BlueprintIdentifier = "5C005FCFFEB0AD7C79137BB5"
                BuildableName = "Inboxies.app"
                BlueprintName = "Inboxies"
+               ReferencedContainer = "container:Inboxies.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "3360CDCBB929592264F4BF9E"
+               BuildableName = "InboxiesTests.xctest"
+               BlueprintName = "InboxiesTests"
                ReferencedContainer = "container:Inboxies.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -27,19 +42,31 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES"
-      shouldAutocreateTestPlan = "YES">
+      onlyGenerateCoverageForSpecifiedTargets = "NO">
+      <MacroExpansion>
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "5C005FCFFEB0AD7C79137BB5"
+            BuildableName = "Inboxies.app"
+            BlueprintName = "Inboxies"
+            ReferencedContainer = "container:Inboxies.xcodeproj">
+         </BuildableReference>
+      </MacroExpansion>
       <Testables>
          <TestableReference
-            skipped = "NO">
+            skipped = "NO"
+            parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "0C7DB852B10DCFB89463193F"
+               BlueprintIdentifier = "3360CDCBB929592264F4BF9E"
                BuildableName = "InboxiesTests.xctest"
                BlueprintName = "InboxiesTests"
                ReferencedContainer = "container:Inboxies.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"
@@ -55,12 +82,14 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "33113F54BEEF49AE94810DA3"
+            BlueprintIdentifier = "5C005FCFFEB0AD7C79137BB5"
             BuildableName = "Inboxies.app"
             BlueprintName = "Inboxies"
             ReferencedContainer = "container:Inboxies.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </LaunchAction>
    <ProfileAction
       buildConfiguration = "Release"
@@ -72,7 +101,7 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "33113F54BEEF49AE94810DA3"
+            BlueprintIdentifier = "5C005FCFFEB0AD7C79137BB5"
             BuildableName = "Inboxies.app"
             BlueprintName = "Inboxies"
             ReferencedContainer = "container:Inboxies.xcodeproj">

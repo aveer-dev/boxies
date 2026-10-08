@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Private email",
-  "version": "1.0.0",
-  "description": "Generate private email addresses on the fly for any website with 1 tap.",
+  "name": "Inboxies Private Email",
+  "version": "1.1.0",
+  "description": "Create Inboxies private emails from any sign-up form, so sites never see your real address.",
+  "minimum_chrome_version": "120",
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
@@ -10,7 +11,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Private email",
+    "default_title": "Inboxies Private Email",
     "default_icon": {
       "16": "icons/icon-16.png",
       "48": "icons/icon-48.png",
@@ -20,10 +21,9 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": [
-    "storage",
-    "activeTab"
-  ],
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://inboxies.email/*"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

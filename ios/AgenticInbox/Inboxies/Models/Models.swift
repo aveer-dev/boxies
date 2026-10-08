@@ -332,6 +332,10 @@ struct Email: Identifiable, Codable, Hashable {
     /// Inbox New vs Seen (`new` | `seen`); derived from read state when absent.
     var listSection: String? = nil
     var aliasId: String? = nil
+    /// Private email this conversation came in on; replies go out from it.
+    var aliasEmail: String? = nil
+    /// False when that private email is paused, expired or deleted (detail payloads only).
+    var aliasActive: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -354,6 +358,8 @@ struct Email: Identifiable, Codable, Hashable {
         case replyLater = "reply_later"
         case replyLaterAt = "reply_later_at"
         case aliasId = "alias_id"
+        case aliasEmail = "alias_email"
+        case aliasActive = "alias_active"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -1322,68 +1328,59 @@ struct AdminDomainConnectResponse: Codable {
     var audit: EmailHealthAudit?
 }
 
+/// Private email: a random address on the mailbox's own domain that delivers
+/// into the mailbox. Replies in its conversations go out from it.
 struct MaskedAlias: Identifiable, Codable, Hashable {
     let id: String
-    var mailboxId: String?
     let aliasEmail: String
     var label: String?
-    var notes: String?
     var isActive: Bool
+    /// What inbound mail gets while paused: `drop` (silent) or `reject` (bounce).
     var pausedAction: String
     var expiresAt: String?
-    var forwardedCount: Int?
     var createdAt: String?
-    var updatedAt: String?
-
-    var active: Bool {
-        isActive
-    }
+    var statsReceived: Int
+    var statsBlocked: Int
 
     enum CodingKeys: String, CodingKey {
-        case id, label, notes
-        case mailboxId = "mailbox_id"
+        case id, label
         case aliasEmail = "alias_email"
         case isActive = "is_active"
         case pausedAction = "paused_action"
         case expiresAt = "expires_at"
-        case forwardedCount = "forwarded_count"
         case createdAt = "created_at"
-        case updatedAt = "updated_at"
+        case statsReceived = "stats_received"
+        case statsBlocked = "stats_blocked"
     }
 
     init(
         id: String,
-        mailboxId: String? = nil,
         aliasEmail: String,
         label: String? = nil,
-        notes: String? = nil,
         isActive: Bool = true,
         pausedAction: String = "drop",
         expiresAt: String? = nil,
-        forwardedCount: Int? = 0,
         createdAt: String? = nil,
-        updatedAt: String? = nil
+        statsReceived: Int = 0,
+        statsBlocked: Int = 0
     ) {
         self.id = id
-        self.mailboxId = mailboxId
         self.aliasEmail = aliasEmail
         self.label = label
-        self.notes = notes
         self.isActive = isActive
         self.pausedAction = pausedAction
         self.expiresAt = expiresAt
-        self.forwardedCount = forwardedCount
         self.createdAt = createdAt
-        self.updatedAt = updatedAt
+        self.statsReceived = statsReceived
+        self.statsBlocked = statsBlocked
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        mailboxId = try container.decodeIfPresent(String.self, forKey: .mailboxId)
         aliasEmail = try container.decode(String.self, forKey: .aliasEmail)
         label = try container.decodeIfPresent(String.self, forKey: .label)
-        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        // SQLite rows send 0/1; tolerate a JSON bool too.
         if let boolVal = try? container.decode(Bool.self, forKey: .isActive) {
             isActive = boolVal
         } else if let intVal = try? container.decode(Int.self, forKey: .isActive) {
@@ -1393,9 +1390,48 @@ struct MaskedAlias: Identifiable, Codable, Hashable {
         }
         pausedAction = try container.decodeIfPresent(String.self, forKey: .pausedAction) ?? "drop"
         expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
-        forwardedCount = try container.decodeIfPresent(Int.self, forKey: .forwardedCount) ?? 0
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
-        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        statsReceived = (try? container.decodeIfPresent(Int.self, forKey: .statsReceived)) ?? 0
+        statsBlocked = (try? container.decodeIfPresent(Int.self, forKey: .statsBlocked)) ?? 0
+    }
+
+    var expiryDate: Date? {
+        guard let expiresAt, !expiresAt.isEmpty else { return nil }
+        return Self.parseISODate(expiresAt)
+    }
+
+    /// Past its expiry: mail is refused and replies are blocked even if not paused.
+    func isExpired(now: Date = Date()) -> Bool {
+        guard let expiryDate else { return false }
+        return expiryDate <= now
+    }
+
+    static func parseISODate(_ iso: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: iso) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: iso)
+    }
+}
+
+/// Expiry edit for a private email; `.never` clears it (sent as JSON null).
+enum AliasExpiry: Hashable {
+    case never
+    case at(Date)
+
+    /// ISO 8601 UTC with `Z`, the shape the API's `datetime()` check accepts.
+    var isoString: String? {
+        guard case .at(let date) = self else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    /// JSON body value: the ISO string, or null to clear.
+    var apiValue: Any {
+        if let isoString { return isoString }
+        return NSNull()
     }
 }
 

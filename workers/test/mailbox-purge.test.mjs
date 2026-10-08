@@ -16,6 +16,7 @@ import {
 	emailRawKey,
 	storeEmailContent,
 } from "../lib/email-content.ts";
+import { aliasMetadataKey } from "../lib/mailbox-routing.ts";
 
 function createMockBucket() {
 	/** @type {Map<string, string | Uint8Array>} */
@@ -72,6 +73,11 @@ const attB = attachmentKey(emailB, "att-2", "photo.jpg");
 await bucket.put(attA, "pdf-bytes");
 await bucket.put(attB, "jpg-bytes");
 await bucket.put(metaKey, JSON.stringify({ fromName: "Hello" }));
+const privateAlias = "k8m2p9v4@inboxies.email";
+await bucket.put(
+	aliasMetadataKey(privateAlias),
+	JSON.stringify({ kind: "private", aliasId: "a1", targetMailboxId: "hello@inboxies.email" }),
+);
 
 assert.ok(bucket.store.has(emailBodyKey(emailA)));
 assert.ok(bucket.store.has(emailRawKey(emailB)));
@@ -86,6 +92,7 @@ const keys = collectMailboxPurgeR2Keys(
 		{ email_id: emailB, id: "att-2", filename: "photo.jpg" },
 	],
 	emailContentKeys,
+	[privateAlias],
 );
 await deleteR2Keys(bucket, keys);
 await bucket.delete(metaKey);
@@ -97,6 +104,8 @@ assert.equal(bucket.store.has(emailRawKey(emailB)), false);
 assert.equal(bucket.store.has(attA), false);
 assert.equal(bucket.store.has(attB), false);
 assert.equal(bucket.store.has(metaKey), false);
+// Private-email routing records go too: a recreated mailbox must not inherit them.
+assert.equal(bucket.store.has(aliasMetadataKey(privateAlias)), false);
 
 // deleteEmail-style path: body + attachments for one message
 const single = "single-del";

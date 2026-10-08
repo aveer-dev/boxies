@@ -94,6 +94,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.autofill)
 
     implementation(libs.androidx.credentials)
     implementation(libs.androidx.credentials.play)

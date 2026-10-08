@@ -49,6 +49,15 @@ class AppModel {
     private val _selectedMailboxId = MutableStateFlow<String?>(null)
     val selectedMailboxId: StateFlow<String?> = _selectedMailboxId.asStateFlow()
 
+    init {
+        // Autofill creates private emails in the mailbox last chosen here (never a preview fixture).
+        scope.launch {
+            _selectedMailboxId.collect { id ->
+                if (id != null && !isDebugPreview) AutofillMailboxPreference.save(id)
+            }
+        }
+    }
+
     private val _folders = MutableStateFlow<List<Folder>>(emptyList())
     val folders: StateFlow<List<Folder>> = _folders.asStateFlow()
 
@@ -1097,6 +1106,7 @@ class AppModel {
         _errorMessage.value = null
         _toast.value = null
         isDebugPreview = false
+        AutofillMailboxPreference.clear()
         DatabaseService.shared.clearAll()
     }
 
@@ -1144,6 +1154,8 @@ class AppModel {
 
     fun updateComposeFromMailbox(mailboxId: String) {
         val session = _composeSession.value ?: return
+        // Private-email replies are pinned to the alias by the server.
+        if (session.form.isAliasBound) return
         val mailbox = _mailboxes.value.firstOrNull { it.id == mailboxId } ?: return
         session.form.selectFrom(mailbox)
         _composeSession.value = session
@@ -1157,6 +1169,7 @@ class AppModel {
         val form = session.form
         if (form.isSending) return
         form.isSending = true
+        form.errorMessage = null
         showToast("Sending…", isLoading = true)
         try {
             runCatching {
@@ -1196,7 +1209,11 @@ class AppModel {
                 closeCompose()
                 refreshCurrentTabSilently()
             }.onFailure {
-                showToast(it.message ?: "Send failed", isError = true)
+                // Server errors (e.g. 409 `alias_inactive` for a paused private email) carry a
+                // readable `error` message; keep it on the form so the open sheet can show it.
+                val message = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "Send failed"
+                form.errorMessage = message
+                showToast(message, isError = true)
             }
         } finally {
             form.isSending = false

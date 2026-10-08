@@ -19,18 +19,16 @@ export function useCreateAlias() {
 	return useMutation({
 		mutationFn: ({
 			mailboxId,
-			baseDomain,
 			label,
 			expiresAt,
 			pausedAction,
 		}: {
 			mailboxId: string;
-			baseDomain?: string;
-			label?: string;
+			label?: string | null;
 			expiresAt?: string | null;
 			pausedAction?: "drop" | "reject";
 		}) =>
-			api.createAlias(mailboxId, { baseDomain, label, expiresAt, pausedAction }),
+			api.createAlias(mailboxId, { label, expiresAt, pausedAction }),
 		onSuccess: (_data, { mailboxId }) => {
 			qc.invalidateQueries({ queryKey: ["aliases", mailboxId] });
 		},

@@ -17,6 +17,7 @@ export default [
 	route("invite/:token", "routes/invite.tsx"),
 	route("login", "routes/login.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
+	route("extension/connect", "routes/extension-connect.tsx"),
 	route("mailbox/:mailboxId", "routes/mailbox.tsx", [
 		index("routes/mailbox-index.tsx"),
 		route("emails/:folder", "routes/email-list.tsx"),

@@ -17,9 +17,11 @@ import {
 } from "~/lib/utils";
 import { displaySenderName } from "shared/sender";
 import {
+	isSameAddress,
 	replyToAddresses,
 	replyAllAddresses,
 	rewriteSelfReplyTo,
+	uniqueAddresses,
 } from "shared/reply-recipients";
 import { composeBodyHasUserContent } from "shared/compose-body";
 import {
@@ -82,13 +84,41 @@ function buildForwardBody(
 function buildReplyAllFields(
 	original: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"]>,
 	selfAddress?: string,
+	aliasEmail?: string | null,
 ) {
 	const recipients = replyAllAddresses(original, selfAddress);
+	// The private email is you too; never Reply All back to it.
+	const to = aliasEmail ? uniqueAddresses(recipients.to, aliasEmail) : recipients.to;
+	const cc = aliasEmail ? uniqueAddresses(recipients.cc, aliasEmail) : recipients.cc;
 	return {
-		to: recipients.to.join(", "),
-		cc: recipients.cc.join(", "),
-		showCcBcc: recipients.cc.length > 0,
+		to: to.join(", "),
+		cc: cc.join(", "),
+		showCcBcc: cc.length > 0,
 	};
+}
+
+/**
+ * Private email this compose sends from: a reply in a thread that arrived on
+ * one, or a draft saved in such a thread. The server enforces the same rule.
+ */
+function composeAliasEmail(
+	composeOptions: ReturnType<typeof useUIStore.getState>["composeOptions"],
+): string | null {
+	const { mode, originalEmail: original, draftEmail: draft } = composeOptions;
+	if (draft?.alias_email) return draft.alias_email.toLowerCase();
+	if ((mode === "reply" || mode === "reply-all") && original?.alias_email) {
+		return original.alias_email.toLowerCase();
+	}
+	return null;
+}
+
+/** Your own address in this conversation: the alias if the original came from it. */
+function replySelfAddress(
+	original: { sender: string },
+	mailboxEmail: string | undefined,
+	aliasEmail: string | null,
+) {
+	return aliasEmail && isSameAddress(original.sender, aliasEmail) ? aliasEmail : mailboxEmail;
 }
 
 function recipientFieldToString(value: string | string[]): string {
@@ -118,22 +148,26 @@ function draftToField(
 	draft: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["draftEmail"]>,
 	original: ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"],
 	mailboxEmail?: string,
+	aliasEmail?: string | null,
 ) {
 	const savedTo = draft.recipient || "";
 	if (!original || !mailboxEmail) return savedTo;
-	return recipientFieldToString(rewriteSelfReplyTo(savedTo, original, mailboxEmail));
+	let to = rewriteSelfReplyTo(savedTo, original, mailboxEmail);
+	if (aliasEmail) to = rewriteSelfReplyTo(to, original, aliasEmail);
+	return recipientFieldToString(to);
 }
 
 function buildInitialComposeFields(
 	composeOptions: ReturnType<typeof useUIStore.getState>["composeOptions"],
 	mailboxEmail: string | undefined,
 	sigBlock: string,
+	aliasEmail: string | null = null,
 ): ComposeFormFields {
 	const { draftEmail: draft, originalEmail: original, mode } = composeOptions;
 
 	if (draft) {
 		return {
-			to: draftToField(draft, original, mailboxEmail?.toLowerCase()),
+			to: draftToField(draft, original, mailboxEmail?.toLowerCase(), aliasEmail),
 			cc: draft.cc || "",
 			bcc: draft.bcc || "",
 			showCcBcc: Boolean(draft.cc || draft.bcc),
@@ -152,14 +186,18 @@ function buildInitialComposeFields(
 	if (mode === "reply") {
 		return {
 			...EMPTY_FIELDS,
-			to: replyToAddresses(original, mailboxEmail?.toLowerCase()).join(", "),
+			to: replyToAddresses(original, replySelfAddress(original, mailboxEmail?.toLowerCase(), aliasEmail)).join(", "),
 			subject: getPrefixedSubject(original.subject, "Re"),
 			body: `${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
 		};
 	}
 
 	if (mode === "reply-all") {
-		const recipients = buildReplyAllFields(original, mailboxEmail?.toLowerCase());
+		const recipients = buildReplyAllFields(
+			original,
+			replySelfAddress(original, mailboxEmail?.toLowerCase(), aliasEmail),
+			aliasEmail,
+		);
 		return {
 			...EMPTY_FIELDS,
 			...recipients,
@@ -217,7 +255,12 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		switch (composeOptions.mode) { case "reply": return "Reply"; case "reply-all": return "Reply All"; case "forward": return "Forward"; default: return "New Message"; }
 	}, [composeOptions.mode, isDraftEdit]);
 
-	const sigBlock = useMemo(() => getSignatureBlock(currentMailbox?.settings), [currentMailbox]);
+	const aliasEmail = useMemo(() => composeAliasEmail(composeOptions), [composeOptions]);
+	// A signature usually carries your real name, so private-email replies go without.
+	const sigBlock = useMemo(
+		() => (aliasEmail ? "" : getSignatureBlock(currentMailbox?.settings)),
+		[currentMailbox, aliasEmail],
+	);
 
 	useEffect(() => {
 		if (lastInitializedOptionsRef.current === composeOptions) return;
@@ -228,6 +271,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 			composeOptions,
 			selfAddress,
 			sigBlock,
+			aliasEmail,
 		);
 		setError(null);
 		setTo(initialFields.to);
@@ -242,7 +286,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		setSaveStatus("idle");
 		saveGenerationRef.current += 1;
 		isSendingRef.current = false;
-	}, [composeOptions, currentMailbox?.email, sigBlock, mailboxId]);
+	}, [composeOptions, currentMailbox?.email, sigBlock, mailboxId, aliasEmail]);
 
 	const resolvedDraftId = (res?: { id?: string; draft_id?: string } | null) =>
 		res?.draft_id || res?.id;
@@ -381,18 +425,14 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		const ccRecipients = splitEmailList(cc); const bccRecipients = splitEmailList(bcc);
 		const original = composeOptions.originalEmail;
 		const mode = composeOptions.mode;
-		const isAliasReply = Boolean(
-			(mode === "reply" || mode === "reply-all") &&
-			(original?.alias_id || original?.recipient?.includes("@private."))
-		);
-		const fromAddress = isAliasReply && original?.recipient
-			? original.recipient
-			: currentMailbox.email;
-		const fromName = currentMailbox.settings?.fromName || currentMailbox.name;
+		const fromAddress = aliasEmail ?? currentMailbox.email;
+		// A private email never carries the owner's display name.
+		const fromName = aliasEmail ? null : currentMailbox.settings?.fromName || currentMailbox.name;
 		const from = fromName && fromName !== fromAddress ? { email: fromAddress, name: fromName } : fromAddress;
 		let sendTo: string | string[] = toEmailListValue(toRecipients) ?? toRecipients;
 		if ((mode === "reply" || mode === "reply-all") && original) {
 			sendTo = rewriteSelfReplyTo(sendTo, original, currentMailbox.email || mailboxId);
+			if (aliasEmail) sendTo = rewriteSelfReplyTo(sendTo, original, aliasEmail);
 		}
 		const text = htmlToPlainText(body);
 		const sizeInput = {
@@ -507,6 +547,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		isSending,
 		saveStatus,
 		formTitle,
+		aliasEmail,
 		handleSaveDraft,
 		handleDiscard,
 		handleSend,

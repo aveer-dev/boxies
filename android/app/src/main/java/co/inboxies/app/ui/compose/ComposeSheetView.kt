@@ -79,6 +79,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -108,6 +109,7 @@ import co.inboxies.app.theme.TransparentSystemBars
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.components.PrivateEmailLogoView
 import co.inboxies.app.ui.components.rememberSheetDragY
 import co.inboxies.app.ui.components.sheetDragToDismiss
 import co.inboxies.app.util.ComposeHtml
@@ -582,6 +584,11 @@ fun ComposeSheetView(
                         FromRow(
                             displayName = fromDisplayName,
                             mailboxes = mailboxes,
+                            privateEmail = if (form.isAliasBound) {
+                                form.aliasEmail ?: "Private email"
+                            } else {
+                                null
+                            },
                             showMenu = showFromMenu,
                             onShowMenu = { showFromMenu = it },
                             onSelect = { mailbox ->
@@ -837,6 +844,8 @@ private fun FromRow(
     showMenu: Boolean,
     onShowMenu: (Boolean) -> Unit,
     onSelect: (Mailbox) -> Unit,
+    /** Private-email thread: the server sends from the alias, so the picker is locked. */
+    privateEmail: String? = null,
 ) {
     val colors = inboxiesColors()
     Row(
@@ -854,7 +863,30 @@ private fun FromRow(
             color = colors.muted,
         )
         Spacer(Modifier.width(4.dp))
-        if (mailboxes.size > 1) {
+        if (privateEmail != null) {
+            Row(
+                modifier = Modifier.clearAndSetSemantics {
+                    contentDescription = if (privateEmail.contains('@')) {
+                        "From private email $privateEmail"
+                    } else {
+                        "From private email"
+                    }
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PrivateEmailLogoView(size = 14.dp)
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    privateEmail,
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = AppThemeDims.FontSize.sender,
+                    color = colors.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        } else if (mailboxes.size > 1) {
             Box {
                 Row(
                     modifier = Modifier

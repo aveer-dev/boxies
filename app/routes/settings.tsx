@@ -13,7 +13,6 @@ import {
 	UsersThreeIcon,
 	AddressBookIcon,
 	KeyIcon,
-	ShieldCheckIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
@@ -132,7 +131,7 @@ export default function SettingsRoute() {
 							<div className="min-w-0 flex-1">
 								<div className="text-sm text-kumo-default">Private email</div>
 								<p className="text-xs text-kumo-subtle">
-									Create and manage private aliases on private.&lt;domain&gt;
+									Random addresses that keep your real one hidden
 								</p>
 							</div>
 							<CaretRightIcon size={16} className="text-kumo-subtle shrink-0" />

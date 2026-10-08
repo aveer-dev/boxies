@@ -7,6 +7,7 @@
  * Eliminates the triplicated atob → Uint8Array → R2.put pattern.
  */
 import type { Env } from "../types";
+import { aliasMetadataKey } from "./mailbox-routing.ts";
 
 export interface StoredAttachment {
 	id: string;
@@ -41,13 +42,15 @@ export function attachmentKey(
 }
 
 /**
- * Collect R2 keys for a mailbox purge (email bodies/raw + attachment blobs).
+ * Collect R2 keys for a mailbox purge (email bodies/raw, attachment blobs
+ * and private-email routing records).
  * Pure helper for tests and MailboxDO.purgeMailbox.
  */
 export function collectMailboxPurgeR2Keys(
 	emailIds: string[],
 	attachments: { email_id: string; id: string; filename: string }[],
 	emailContentKeys: (emailId: string) => string[],
+	aliasEmails: string[] = [],
 ): string[] {
 	const keys: string[] = [];
 	for (const emailId of emailIds) {
@@ -55,6 +58,10 @@ export function collectMailboxPurgeR2Keys(
 	}
 	for (const att of attachments) {
 		keys.push(attachmentKey(att.email_id, att.id, att.filename));
+	}
+	// A later mailbox at the same address must not inherit these aliases.
+	for (const email of aliasEmails) {
+		keys.push(aliasMetadataKey(email));
 	}
 	return keys;
 }

@@ -24,6 +24,11 @@ import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
 import { allowOutboundRecipients } from "../lib/sender-triage";
+import {
+	findThreadAliasId,
+	resolveOutboundSender,
+	type AliasSenderStub,
+} from "../lib/alias-sender";
 
 type AppContext = Context<MailboxContext>;
 type RateLimitStub = { checkSendRateLimit: () => Promise<string | null> };
@@ -32,7 +37,7 @@ export async function handleReplyEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { cc, bcc, from, subject, html, text, attachments } = body;
+	const { cc, bcc, subject, html, text, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -43,25 +48,34 @@ export async function handleReplyEmail(c: AppContext) {
 
 	const originalEmail = await resolveOriginalEmail(stub, rawOriginal);
 	const { originalMsgId, references, threadId: thread_id } = buildReferencesChain(originalEmail);
-	const to = rewriteSelfReplyTo(body.to, originalEmail, mailboxId);
 
-	const candidateFrom = (typeof from === "string" ? from : from?.email)?.toLowerCase();
-	let allowedSenders: string[] | undefined;
-	if (candidateFrom && candidateFrom !== mailboxId.toLowerCase()) {
-		const alias = await (stub as any).getAlias(candidateFrom);
-		if (alias && alias.is_active) {
-			allowedSenders = [candidateFrom];
-		}
-	} else if ((originalEmail as any).alias_id) {
-		const alias = await (stub as any).getAlias((originalEmail as any).alias_id);
-		if (alias && alias.is_active) {
-			allowedSenders = [alias.alias_email.toLowerCase()];
-		}
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const sender = await resolveOutboundSender({
+		stub: aliasStub,
+		mailboxId,
+		requestedFrom: body.from,
+		threadAliasId: await findThreadAliasId(aliasStub, {
+			aliasId: rawOriginal.alias_id ?? originalEmail.alias_id ?? null,
+			threadId: thread_id,
+		}),
+	});
+	if (!sender.ok) {
+		return c.json({ error: sender.error, ...(sender.code ? { code: sender.code } : {}) }, sender.status);
 	}
+	const from = sender.from;
+	// Replying to your own Sent copy must not address the alias you sent from.
+	const to = sender.aliasId
+		? rewriteSelfReplyTo(rewriteSelfReplyTo(body.to, originalEmail, mailboxId), originalEmail, sender.fromEmail)
+		: rewriteSelfReplyTo(body.to, originalEmail, mailboxId);
 
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId, allowedSenders));
+		({ toStr, fromEmail, fromDomain } = validateSender(
+			to,
+			from,
+			mailboxId,
+			sender.aliasId ? [sender.fromEmail] : undefined,
+		));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
@@ -102,6 +116,7 @@ export async function handleReplyEmail(c: AppContext) {
 			message_id: outgoingMessageId,
 			delivery_status: "queued",
 			delivery_error: null,
+			alias_id: sender.aliasId,
 			raw_headers: JSON.stringify([
 				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -149,7 +164,7 @@ export async function handleForwardEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments } = body;
+	const { to, cc, bcc, subject, html, text, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -160,9 +175,26 @@ export async function handleForwardEmail(c: AppContext) {
 
 	await resolveOriginalEmail(stub, rawOriginal);
 
+	// A forward starts a new conversation with someone you chose, so it is
+	// not bound to the original's private email — but may still use one.
+	const sender = await resolveOutboundSender({
+		stub: stub as unknown as AliasSenderStub,
+		mailboxId,
+		requestedFrom: body.from,
+	});
+	if (!sender.ok) {
+		return c.json({ error: sender.error, ...(sender.code ? { code: sender.code } : {}) }, sender.status);
+	}
+	const from = sender.from;
+
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId));
+		({ toStr, fromEmail, fromDomain } = validateSender(
+			to,
+			from,
+			mailboxId,
+			sender.aliasId ? [sender.fromEmail] : undefined,
+		));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
@@ -203,6 +235,7 @@ export async function handleForwardEmail(c: AppContext) {
 			message_id: outgoingMessageId,
 			delivery_status: "queued",
 			delivery_error: null,
+			alias_id: sender.aliasId,
 			raw_headers: JSON.stringify([
 				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },

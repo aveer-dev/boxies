@@ -54,12 +54,19 @@ export default function SingleMessageView({
 				</div>
 			</div>
 
-			{(email.alias_id || email.recipient?.includes("@private.")) && (
-				<div className="mx-4 mt-3 md:mx-6 flex items-center gap-2 rounded-md border border-sky-500/20 bg-sky-950/20 px-3 py-2 text-xs text-sky-300">
-					<ShieldCheckIcon size={16} className="text-sky-400 shrink-0" />
-					<span>
-						Received via private email: <strong className="font-mono font-medium text-sky-200">{email.recipient}</strong>
-					</span>
+			{email.alias_id && (
+				<div className="mx-4 mt-3 md:mx-6 flex items-center gap-2 rounded-md border border-kumo-line bg-kumo-tint px-3 py-2 text-xs text-kumo-default" role="status">
+					<ShieldCheckIcon size={16} className="text-kumo-brand shrink-0" aria-hidden />
+					{email.alias_email ? (
+						<span className="min-w-0 break-all">
+							Private email <strong className="font-medium">{email.alias_email}</strong>
+							{email.alias_active === false && (
+								<span className="text-kumo-subtle"> · paused, resume it to reply</span>
+							)}
+						</span>
+					) : (
+						<span>Sent to a private email that has since been deleted.</span>
+					)}
 				</div>
 			)}
 

@@ -50,7 +50,7 @@ function getAccessUrls(teamDomain: string) {
 	return { issuer, certsUrl };
 }
 
-import { isPublicAuthPath } from "./lib/auth-paths";
+import { isPathAllowedForTokenScope, isPublicAuthPath } from "./lib/auth-paths";
 
 export { isPublicAuthPath };
 
@@ -155,6 +155,9 @@ app.use("*", async (c, next) => {
 		}
 		try {
 			const claims = await verifyMobileSessionToken(sessionToken, mobileSecret);
+			if (claims.scope && !isPathAllowedForTokenScope(claims.scope, c.req.method, pathname)) {
+				return c.text("This session can only manage private emails", 403);
+			}
 			const principal = await expandPrincipalWithLinks(
 				c.env.BUCKET,
 				principalFromClaims(claims),
