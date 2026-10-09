@@ -12,7 +12,7 @@ import {
 	runMailboxExportJob,
 	runDomainExportJob,
 	hasRecentExportForDomain,
-	exportDataKey,
+	type ExportJob,
 } from "../lib/email-exporter";
 import {
 	authorizeDomainAdmin,
@@ -26,6 +26,7 @@ import {
 } from "../lib/domain-registry";
 
 type AppVariables = { principal?: RequestPrincipal };
+type AppContext = Context<{ Bindings: Env; Variables: AppVariables }>;
 
 const DecommissionBody = z.object({
 	confirmDomain: z.string().trim().min(1, "Confirmation domain is required"),
@@ -35,6 +36,33 @@ const DecommissionBody = z.object({
 const TransferLockBody = z.object({
 	locked: z.boolean(),
 });
+
+/**
+ * Load an export job only if the caller may access its target: mailbox
+ * exports require mailbox ACL access, domain exports require domain admin.
+ * Returns null for both missing and unauthorized jobs so callers answer 404
+ * either way and export ids can't be probed.
+ */
+async function loadAuthorizedExportJob(
+	c: AppContext,
+	exportId: string,
+): Promise<ExportJob | null> {
+	const job = await getExportJob(c.env.BUCKET, exportId);
+	if (!job) return null;
+
+	if (job.targetType === "mailbox") {
+		const principal = c.get("principal") as RequestPrincipal | undefined;
+		const auth = await authorizeMailbox(c.env.BUCKET, principal, job.targetId);
+		return auth.ok ? job : null;
+	}
+
+	if (job.targetType === "domain") {
+		const authz = await authorizeDomainAdmin(c, job.targetId);
+		return authz instanceof Response ? null : job;
+	}
+
+	return null;
+}
 
 export function registerExportAndOffboardingRoutes(
 	app: Hono<{ Bindings: Env; Variables: AppVariables }>,
@@ -98,8 +126,7 @@ export function registerExportAndOffboardingRoutes(
 	 * Query export job status and progress.
 	 */
 	app.get("/api/v1/exports/:exportId", async (c) => {
-		const exportId = c.req.param("exportId");
-		const job = await getExportJob(c.env.BUCKET, exportId);
+		const job = await loadAuthorizedExportJob(c, c.req.param("exportId"));
 
 		if (!job) {
 			return c.json({ error: "Export job not found" }, 404);
@@ -113,16 +140,17 @@ export function registerExportAndOffboardingRoutes(
 	 */
 	app.get("/api/v1/exports/:exportId/download", async (c) => {
 		const exportId = c.req.param("exportId");
-		const job = await getExportJob(c.env.BUCKET, exportId);
+		const job = await loadAuthorizedExportJob(c, exportId);
 
-		const dataKey = job?.downloadKey || exportDataKey(exportId, "mbox");
-		const fileObj = await c.env.BUCKET.get(dataKey);
+		// Only serve archives referenced by job metadata the caller is
+		// authorized for — never guess the R2 key from the id alone.
+		const fileObj = job?.downloadKey ? await c.env.BUCKET.get(job.downloadKey) : null;
 
-		if (!fileObj) {
+		if (!job || !fileObj) {
 			return c.json({ error: "Export archive file not found or expired" }, 404);
 		}
 
-		const filename = job?.filename || `inboxies-export-${exportId}.mbox`;
+		const filename = job.filename || `inboxies-export-${exportId}.mbox`;
 
 		return new Response(fileObj.body, {
 			headers: {

@@ -13,6 +13,7 @@ import {
 	runMailboxExportJob,
 	runDomainExportJob,
 	hasRecentExportForDomain,
+	exportDataKey,
 } from "../lib/email-exporter.ts";
 import {
 	saveDomainMetadata,
@@ -297,6 +298,85 @@ async function runTests() {
 	assert.equal(downloadRes.status, 200);
 	assert.equal(downloadRes.headers.get("Content-Type"), "application/mbox; charset=utf-8");
 	assert.ok(downloadRes.headers.get("Content-Disposition").includes(".mbox"));
+
+	// Domain admin can read the domain export job status
+	const domainJobRes = await client.request(`/api/v1/exports/${exportData.exportId}`);
+	assert.equal(domainJobRes.status, 200);
+	const domainJobData = await domainJobRes.json();
+	assert.equal(domainJobData.id, exportData.exportId);
+	assert.equal(domainJobData.targetType, "domain");
+
+	// Unrelated user gets 404 (not 403) for domain export status and download
+	const outsider = { "x-test-user": "mallory@evil.example" };
+	const outsiderDomainJobRes = await client.request(
+		`/api/v1/exports/${exportData.exportId}`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderDomainJobRes.status, 404, "Outsider must not read domain export status");
+	const outsiderDomainDownloadRes = await client.request(
+		`/api/v1/exports/${exportData.exportId}/download`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderDomainDownloadRes.status, 404, "Outsider must not download domain export");
+
+	// Mailbox export: owner can read status and download
+	await bucket.put(
+		"mailboxes/you@acme.com.json",
+		JSON.stringify({ fromName: "You", acl: { owners: ["email:you@acme.com"], members: [] } }),
+	);
+	const owner = { "x-test-user": "you@acme.com" };
+	const mailboxExportRes = await client.request(
+		"/api/v1/mailboxes/you@acme.com/export",
+		{ method: "POST", headers: owner },
+	);
+	assert.equal(mailboxExportRes.status, 200);
+	const mailboxExport = await mailboxExportRes.json();
+	assert.equal(mailboxExport.status, "completed");
+
+	const ownerJobRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}`,
+		{ headers: owner },
+	);
+	assert.equal(ownerJobRes.status, 200);
+	const ownerJobData = await ownerJobRes.json();
+	assert.equal(ownerJobData.targetType, "mailbox");
+	assert.equal(ownerJobData.targetId, "you@acme.com");
+
+	const ownerDownloadRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}/download`,
+		{ headers: owner },
+	);
+	assert.equal(ownerDownloadRes.status, 200);
+	assert.equal(ownerDownloadRes.headers.get("Content-Type"), "application/mbox; charset=utf-8");
+	assert.ok((await ownerDownloadRes.text()).includes("From bob@example.com "));
+
+	// Unrelated user gets 404 for mailbox export status and download
+	const outsiderMailboxJobRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderMailboxJobRes.status, 404, "Outsider must not read mailbox export status");
+	const outsiderMailboxDownloadRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}/download`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderMailboxDownloadRes.status, 404, "Outsider must not download mailbox export");
+
+	// Unauthenticated callers get 404 too
+	const anonymous = harness(env);
+	assert.equal((await anonymous.request(`/api/v1/exports/${exportData.exportId}`)).status, 404);
+	assert.equal(
+		(await anonymous.request(`/api/v1/exports/${mailboxExport.exportId}/download`)).status,
+		404,
+	);
+
+	// Unknown job ids are 404
+	assert.equal((await client.request("/api/v1/exports/exp_mbx_0_missing")).status, 404);
+
+	// An archive with no job metadata is never served (no exportDataKey fallback)
+	await bucket.put(exportDataKey("exp_mbx_0_orphan1"), "From x@example.com Thu Jan  1 00:00:00 1970\r\n\r\n");
+	const orphanRes = await client.request("/api/v1/exports/exp_mbx_0_orphan1/download");
+	assert.equal(orphanRes.status, 404, "Archives without job metadata must not be downloadable");
 
 	console.log("✔ Export API & Download tests passed");
 
