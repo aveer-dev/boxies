@@ -40,6 +40,7 @@ import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
 } from "../shared/agent-conversations";
+import { getEmailAgent, purgeEmailAgents } from "./lib/email-agent";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
@@ -435,32 +436,7 @@ app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 	// Purge DO + R2 and remove metadata inside the DO RPC (closes inbound HEAD).
 	const stub = getMailboxStub(c.env, mailboxId);
 	const { conversationIds } = await stub.purgeMailbox(mailboxId);
-	const agentNames = new Set<string>([
-		mailboxId, // legacy single-chat EmailAgent name
-		...conversationIds.map((id) => agentInstanceName(mailboxId, id)),
-	]);
-	for (const name of agentNames) {
-		try {
-			const agentStub = c.env.EMAIL_AGENT.get(c.env.EMAIL_AGENT.idFromName(name));
-			// Prefer RPC; fall back to HTTP for agent stubs that only expose fetch.
-			const purgable = agentStub as {
-				purge?: () => Promise<unknown>;
-				fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
-			};
-			if (typeof purgable.purge === "function") {
-				await purgable.purge();
-			} else {
-				await purgable.fetch(new Request("https://agents/purge", { method: "POST" }));
-			}
-		} catch (e) {
-			// Best-effort: conversation ids are already captured; chat storage
-			// orphans are lower impact than blocking mailbox delete.
-			console.error(
-				`EmailAgent purge failed for ${name}:`,
-				(e as Error).message,
-			);
-		}
-	}
+	await purgeEmailAgents(c.env, mailboxId, conversationIds);
 
 	return c.body(null, 204);
 });
@@ -1997,23 +1973,17 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		ctx.waitUntil(
 			(async () => {
 				await stub.ensureAutoAgentConversation();
-				const agentName = agentInstanceName(mailboxId, AUTO_CONVERSATION_ID);
-				const agentStub = env.EMAIL_AGENT.get(
-					env.EMAIL_AGENT.idFromName(agentName),
+				const agent = await getEmailAgent(
+					env,
+					agentInstanceName(mailboxId, AUTO_CONVERSATION_ID),
 				);
-				await agentStub.fetch(
-					new Request("https://agents/onNewEmail", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							mailboxId,
-							emailId: messageId,
-							sender: (parsedEmail.from?.address || "").toLowerCase(),
-							subject: parsedEmail.subject || "",
-							threadId,
-						}),
-					}),
-				);
+				await agent.handleNewEmail({
+					mailboxId,
+					emailId: messageId,
+					sender: (parsedEmail.from?.address || "").toLowerCase(),
+					subject: parsedEmail.subject || "",
+					threadId,
+				});
 			})().catch((e) =>
 				console.error("Auto-draft trigger failed:", (e as Error).message),
 			),
