@@ -67,19 +67,45 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
 /// Compose stack — same-size discs with top peeks.
 /// Back layers share the horizontal center and lift upward.
 /// Uses native button surface fill, natural shadow, and faint hairline border.
+/// While pressed the stack squishes; on release it springs back with a bounce.
 struct ComposeStackButton: View {
     var size: CGFloat = HomeChromeMetrics.actionBarHeight
     var isExpanded: Bool = false
+    var isPressed: Bool = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var layerCount: Int { HomeChromeMetrics.composeStackLayerCount }
     private var peek: CGFloat { HomeChromeMetrics.composeStackPeekOffset }
+
+    private var squishes: Bool { isPressed && !reduceMotion }
+
+    private var pressAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.16, dampingFraction: 0.72)
+    }
+
+    private var releaseAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.32, dampingFraction: 0.45)
+    }
+
+    /// A touch looser than the discs so the glyph overshoots on its own beat.
+    private var iconReleaseAnimation: Animation {
+        reduceMotion ? .easeOut(duration: 0.12) : .spring(response: 0.32, dampingFraction: 0.4)
+    }
+
+    /// Scale around the front disc's center, not the taller stack frame.
+    private var frontDiscCenter: UnitPoint {
+        let height = HomeChromeMetrics.composeStackHeight(frontSize: size)
+        return UnitPoint(x: 0.5, y: 1 - (size / 2) / height)
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             ForEach((0..<layerCount).reversed(), id: \.self) { depth in
                 let scale = HomeChromeMetrics.composeStackScale(depth: depth)
                 let layerSize = size * scale
-                let lift: CGFloat = isExpanded ? 0 : peek * CGFloat(depth)
+                let squash = squishes ? HomeChromeMetrics.composeStackPressedPeekRatio : 1
+                let lift: CGFloat = isExpanded ? 0 : peek * CGFloat(depth) * squash
                 Circle()
                     .fill(AppTheme.surface)
                     .overlay {
@@ -93,14 +119,23 @@ struct ComposeStackButton: View {
                     .zIndex(Double(layerCount - depth))
             }
 
-            Image(systemName: "square.and.pencil")
+            Image(systemName: "square.stack")
                 .font(.inter(size: 18, weight: .medium))
                 .foregroundStyle(AppTheme.ink)
+                .animation(isPressed ? pressAnimation : iconReleaseAnimation) {
+                    $0.scaleEffect(squishes ? HomeChromeMetrics.composeStackPressedIconScale : 1)
+                }
                 .frame(width: size, height: size)
                 .zIndex(Double(layerCount + 1))
         }
         .frame(width: size, height: HomeChromeMetrics.composeStackHeight(frontSize: size), alignment: .bottom)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isExpanded)
+        .animation(isPressed ? pressAnimation : releaseAnimation) {
+            $0
+                .scaleEffect(squishes ? HomeChromeMetrics.composeStackPressedScale : 1, anchor: frontDiscCenter)
+                .opacity(isPressed && reduceMotion ? 0.55 : 1)
+        }
+        .animation(isPressed ? pressAnimation : releaseAnimation, value: isPressed)
         .accessibilityHidden(true)
     }
 }

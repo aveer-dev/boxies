@@ -32,6 +32,7 @@ struct HomeShellView: View {
     @State private var composePressToken = UUID()
     @State private var composeLastTapAt: Date?
     @State private var composeDoubleTapArmed = false
+    @GestureState private var isComposePressed = false
 
     private let folderTabs: [HomeTab] = [
 //        .aiInbox,
@@ -746,7 +747,10 @@ struct HomeShellView: View {
     }
 
     private var composeButton: some View {
-        ComposeStackButton(isExpanded: showComposeActions && !isClosingComposeActions)
+        ComposeStackButton(
+            isExpanded: showComposeActions && !isClosingComposeActions,
+            isPressed: isComposePressed
+        )
             .contentShape(Rectangle())
             .gesture(composePressGesture)
             .accessibilityElement(children: .ignore)
@@ -760,6 +764,9 @@ struct HomeShellView: View {
 
     private var composePressGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .updating($isComposePressed) { _, pressed, _ in
+                pressed = true
+            }
             .onChanged { _ in
                 if showComposeActions {
                     dismissComposeActions()
