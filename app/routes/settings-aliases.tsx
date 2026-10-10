@@ -22,6 +22,7 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { useParams } from "react-router";
+import PrivateEmailLogo from "~/components/PrivateEmailLogo";
 import SettingsSubpage from "~/components/SettingsSubpage";
 import {
 	useAliases,
@@ -82,7 +83,7 @@ export default function AliasesSettingsRoute() {
 				pausedAction: newPausedAction,
 			});
 			toastManager.add({
-				title: "Masked email created!",
+				title: "Private email created!",
 				description: res.alias.alias_email,
 			});
 			setShowCreateModal(false);
@@ -90,8 +91,8 @@ export default function AliasesSettingsRoute() {
 			setNewExpiry("never");
 		} catch (err: any) {
 			toastManager.add({
-				title: "Failed to create alias",
-				description: err?.message || "Error generating masked email",
+				title: "Failed to create private email",
+				description: err?.message || "Error generating private email",
 				variant: "error",
 			});
 		}
@@ -152,20 +153,20 @@ export default function AliasesSettingsRoute() {
 	}
 
 	return (
-		<SettingsSubpage mailboxId={mailboxId} title="Masked Emails">
+		<SettingsSubpage mailboxId={mailboxId} title="Private email">
 			<div className="space-y-6">
 				{/* Top overview banner */}
 				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
 					<div className="flex items-start justify-between gap-4">
 						<div className="space-y-1">
 							<div className="flex items-center gap-2">
-								<ShieldCheckIcon size={20} className="text-sky-500" />
+								<PrivateEmailLogo size={22} className="text-kumo-default shrink-0" />
 								<h2 className="text-sm font-semibold text-kumo-default">
-									Private Relay Subdomain (Hide My Email)
+									Private email
 								</h2>
 							</div>
 							<p className="text-xs text-kumo-subtle leading-relaxed">
-								Masked emails are randomly generated addresses on your dedicated{" "}
+								Private emails are randomly generated addresses on your dedicated{" "}
 								<code className="text-sky-400 font-mono">private.&lt;domain&gt;</code> subdomain.
 								Inbound emails land directly in this inbox, and outbound replies automatically preserve
 								your alias address.
@@ -204,7 +205,7 @@ export default function AliasesSettingsRoute() {
 				{showCreateModal && (
 					<div className="rounded-lg border border-sky-500/30 bg-sky-950/20 p-5 space-y-4">
 						<h3 className="text-sm font-semibold text-kumo-default">
-							Generate New Masked Email
+							Generate New Private Email
 						</h3>
 						<div className="space-y-3">
 							<Input
@@ -314,7 +315,7 @@ export default function AliasesSettingsRoute() {
 
 					{filteredAliases.length === 0 ? (
 						<div className="py-12 text-center text-xs text-kumo-subtle">
-							{searchQuery ? "No aliases match your search" : "No masked emails created yet."}
+							{searchQuery ? "No aliases match your search" : "No private emails created yet."}
 						</div>
 					) : (
 						<div className="divide-y divide-kumo-line -mx-1">
@@ -390,7 +391,7 @@ export default function AliasesSettingsRoute() {
 						<span>Browser Extension for Safari, Chrome & Firefox</span>
 					</div>
 					<p className="text-xs text-kumo-subtle leading-relaxed">
-						Install the Boxies Web Extension from the <code className="text-sky-400 font-mono">extension/</code> directory to get 1-tap masked email generation directly inside any website's signup form.
+						Install the Private Email Web Extension from the <code className="text-sky-400 font-mono">extension/</code> directory to get 1-tap private email generation directly inside any website's signup form.
 					</p>
 				</div>
 			</div>

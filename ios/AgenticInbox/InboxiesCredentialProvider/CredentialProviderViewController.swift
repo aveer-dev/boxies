@@ -7,7 +7,7 @@ class CredentialProviderViewController: ASCredentialProviderViewController {
 
     private let titleLabel: UILabel = {
         let label = UILabel()
-        label.text = "Inboxies Masked Email"
+        label.text = "Inboxies Private Email"
         label.font = UIFont.systemFont(ofSize: 18, weight: .bold)
         label.textAlignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false

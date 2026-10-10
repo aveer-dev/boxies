@@ -30,6 +30,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import co.inboxies.app.ui.components.PrivateEmailLogoView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Reply
@@ -453,9 +454,11 @@ private fun SettingsRootPage(
                 onClick = onOpenSenders,
             )
             SettingsNavRow(
-                title = "Masked emails",
-                icon = Icons.Outlined.Shield,
+                title = "Private email",
                 onClick = onOpenAliases,
+                icon = {
+                    PrivateEmailLogoView(size = 20.dp, showTile = false)
+                },
             )
             SettingsNavRow(
                 title = "Sharing",

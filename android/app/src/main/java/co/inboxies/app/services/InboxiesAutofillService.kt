@@ -19,7 +19,7 @@ import co.inboxies.app.R
 import java.security.SecureRandom
 
 /**
- * System Autofill Service providing native "Hide My Email" inline suggestions across Android apps and Chrome.
+ * System Autofill Service providing native "Private Email" inline suggestions across Android apps and Chrome.
  */
 class InboxiesAutofillService : AutofillService() {
 
@@ -45,7 +45,7 @@ class InboxiesAutofillService : AutofillService() {
         val generatedEmail = generateRandomAlias()
 
         val presentation = RemoteViews(packageName, R.layout.autofill_inline_suggestion).apply {
-            setTextViewText(R.id.autofill_title, "Generate Masked Email")
+            setTextViewText(R.id.autofill_title, "Generate Private Email")
             setTextViewText(R.id.autofill_subtitle, generatedEmail)
         }
 

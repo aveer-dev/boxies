@@ -14,8 +14,8 @@
         android:id="@+id/autofill_icon"
         android:layout_width="24dp"
         android:layout_height="24dp"
-        android:src="@drawable/ic_inboxies_logo"
-        android:contentDescription="Inboxies" />
+        android:src="@drawable/ic_private_email_logo"
+        android:contentDescription="Private email" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -28,7 +28,7 @@
             android:id="@+id/autofill_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Generate Masked Email"
+            android:text="Generate Private Email"
             android:textSize="14sp"
             android:textStyle="bold"
             android:textColor="?android:attr/textColorPrimary" />

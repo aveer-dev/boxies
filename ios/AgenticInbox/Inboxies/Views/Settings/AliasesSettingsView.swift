@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Masked email aliases management (Hide My Email).
+/// Private email aliases management.
 struct AliasesSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -39,10 +39,8 @@ struct AliasesSettingsView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        Image(systemName: "shield.checkered")
-                            .font(.inter(size: 16, weight: .semibold))
-                            .foregroundStyle(AppTheme.accent)
-                        Text("Hide My Email")
+                        PrivateEmailLogoView(size: 20, showTile: false)
+                        Text("Private email")
                             .font(.inter(size: 15, weight: .semibold))
                             .foregroundStyle(AppTheme.ink)
                     }
@@ -63,7 +61,7 @@ struct AliasesSettingsView: View {
                         Image(systemName: "plus.circle.fill")
                             .font(.inter(size: 15, weight: .semibold))
                             .foregroundStyle(AppTheme.accent)
-                        Text("Create new masked email")
+                        Text("Create new private email")
                             .font(.inter(size: 15, weight: .medium))
                             .foregroundStyle(AppTheme.accent)
                         Spacer()
@@ -114,9 +112,9 @@ struct AliasesSettingsView: View {
                         .foregroundStyle(AppTheme.deepDarkRed)
                 } else if filteredAliases.isEmpty {
                     ContentUnavailableView(
-                        searchQuery.isEmpty ? "No Masked Emails" : "No Matches",
+                        searchQuery.isEmpty ? "No Private Emails" : "No Matches",
                         systemImage: searchQuery.isEmpty ? "shield.slash" : "magnifyingglass",
-                        description: Text(searchQuery.isEmpty ? "Tap 'Create new masked email' to generate your first private address." : "No aliases matched '\(searchQuery)'.")
+                        description: Text(searchQuery.isEmpty ? "Tap 'Create new private email' to generate your first private address." : "No aliases matched '\(searchQuery)'.")
                     )
                     .listRowBackground(Color.clear)
                     .padding(.vertical, 20)
@@ -132,7 +130,7 @@ struct AliasesSettingsView: View {
             }
         }
         .settingsFormListStyle()
-        .navigationTitle("Masked emails")
+        .navigationTitle("Private email")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -164,10 +162,10 @@ struct AliasesSettingsView: View {
                 }
             }
         } message: {
-            Text("Provide a recognizable label or purpose for this masked address.")
+            Text("Provide a recognizable label or purpose for this private address.")
         }
         .confirmationDialog(
-            "Delete Masked Email",
+            "Delete Private Email",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
@@ -309,7 +307,7 @@ struct AliasesSettingsView: View {
         do {
             aliases = try await APIClient.shared.listAliases(mailboxId: mailboxId)
         } catch {
-            errorMessage = "Failed to load masked emails"
+            errorMessage = "Failed to load private emails"
         }
         isLoading = false
     }
@@ -444,7 +442,7 @@ struct CreateAliasSheet: View {
                 }
             }
             .settingsFormListStyle()
-            .navigationTitle("New Masked Email")
+            .navigationTitle("New Private Email")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -493,7 +491,7 @@ struct CreateAliasSheet: View {
             onCreated(res)
             dismiss()
         } catch {
-            errorMessage = "Failed to create masked address"
+            errorMessage = "Failed to create private email"
         }
         isCreating = false
     }

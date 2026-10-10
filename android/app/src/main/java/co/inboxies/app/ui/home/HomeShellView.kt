@@ -13,10 +13,12 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -1276,42 +1278,64 @@ private fun BottomBar(
     val scope = rememberCoroutineScope()
     val view = LocalView.current
 
+    val showReplyLater = replyLaterCount > 0 || isReplyLaterTab
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = HomeChromeMetrics.bottomBarHorizontalPadding),
-        horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
         verticalAlignment = Alignment.Bottom,
     ) {
-        Row(
-            modifier = Modifier
-                .height(HomeChromeMetrics.actionBarHeight)
-                .homeChromeToolbarSurface(RoundedCornerShape(50))
-                .clickable {
-                    if (showComposeActions) {
-                        onCloseComposeMenu()
-                    } else {
-                        onReplyLater()
+        AnimatedVisibility(
+            visible = showReplyLater,
+            enter = fadeIn(selectModeSpring()) +
+                expandHorizontally(
+                    animationSpec = selectModeSpring(),
+                    expandFrom = Alignment.Start,
+                    clip = false,
+                ) +
+                scaleIn(animationSpec = selectModeSpring(), initialScale = 0.72f),
+            exit = fadeOut(selectModeSpring()) +
+                shrinkHorizontally(
+                    animationSpec = selectModeSpring(),
+                    shrinkTowards = Alignment.Start,
+                    clip = false,
+                ) +
+                scaleOut(animationSpec = selectModeSpring(), targetScale = 0.72f),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .height(HomeChromeMetrics.actionBarHeight)
+                        .homeChromeToolbarSurface(RoundedCornerShape(50))
+                        .clickable {
+                            if (showComposeActions) {
+                                onCloseComposeMenu()
+                            } else {
+                                onReplyLater()
+                            }
+                        }
+                        .padding(horizontal = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Schedule,
+                        contentDescription = "Reply Later",
+                        tint = if (isReplyLaterTab) colors.accent else colors.ink,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    if (replyLaterCount > 0) {
+                        Text(
+                            "$replyLaterCount",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = if (isReplyLaterTab) colors.accent else colors.ink,
+                        )
                     }
                 }
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Icon(
-                Icons.Outlined.Schedule,
-                contentDescription = "Reply Later",
-                tint = if (isReplyLaterTab) colors.accent else colors.ink,
-                modifier = Modifier.size(18.dp),
-            )
-            if (replyLaterCount > 0) {
-                Text(
-                    "$replyLaterCount",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    color = if (isReplyLaterTab) colors.accent else colors.ink,
-                )
+                Spacer(modifier = Modifier.width(HomeChromeMetrics.chromeSpacing))
             }
         }
 
@@ -1340,6 +1364,8 @@ private fun BottomBar(
                 color = colors.muted,
             )
         }
+
+        Spacer(modifier = Modifier.width(HomeChromeMetrics.chromeSpacing))
 
         val composeButtonAlpha by animateFloatAsState(
             targetValue = if (showComposeActions) 0f else 1f,
