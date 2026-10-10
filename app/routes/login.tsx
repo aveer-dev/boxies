@@ -130,6 +130,7 @@ export default function PasswordLoginRoute() {
 		setSubmitting(true);
 		try {
 			await api.resetPassword({
+				email: email.trim(),
 				code: resetCode.trim(),
 				newPassword,
 			});

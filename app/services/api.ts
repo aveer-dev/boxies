@@ -326,8 +326,10 @@ const api = {
 			devResetCode?: string;
 			devResetToken?: string;
 		}>("/api/v1/auth/password/forgot", { email }),
+	/** Pass `token` (email link), or `email` + `code` (6-digit code). */
 	resetPassword: (body: {
 		token?: string;
+		email?: string;
 		code?: string;
 		newPassword: string;
 	}) =>

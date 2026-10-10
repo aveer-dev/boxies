@@ -333,11 +333,13 @@ class ApiClient private constructor() {
         authed = false,
     )
 
-    suspend fun resetPassword(token: String? = null, code: String? = null, newPassword: String): PasswordLoginResponse = request(
+    /** Pass [token] (email link), or [email] + [code] (6-digit code). */
+    suspend fun resetPassword(token: String? = null, email: String? = null, code: String? = null, newPassword: String): PasswordLoginResponse = request(
         "/api/v1/auth/password/reset",
         method = "POST",
         body = buildJsonObject {
             if (token != null) put("token", token)
+            if (email != null) put("email", email)
             if (code != null) put("code", code)
             put("newPassword", newPassword)
         },
