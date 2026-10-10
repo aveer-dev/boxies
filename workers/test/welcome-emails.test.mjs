@@ -148,6 +148,11 @@ console.log("Starting Welcome & Onboarding Emails test suite...");
 	assert.equal(storage.get(WELCOME_FLAG_KEY), "1", "Flag key set in storage");
 	assert.equal(triagedSenders.length, 3, "Triaged 3 platform senders as allowed");
 	assert.equal(triagedSenders[0].status, "allowed");
+	assert.equal(
+		triagedSenders[0].destination_folder_id,
+		null,
+		"Platform senders get no pinned destination (classify sorts them)",
+	);
 
 	// Second run without force: should be idempotent and return 0
 	const res2 = await seedWelcomeEmailsInDO(mockDO, {

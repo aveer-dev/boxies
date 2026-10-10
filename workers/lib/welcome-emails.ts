@@ -672,7 +672,7 @@ export async function seedWelcomeEmailsInDO(
 				await mailboxDO.upsertSenderTriage({
 					sender,
 					status: "allowed",
-					destination_folder_id: Folders.INBOX,
+					destination_folder_id: null,
 					display_name: name,
 				});
 			}
