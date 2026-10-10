@@ -4,42 +4,37 @@
 
 import { useEffect, useRef } from "react";
 import { Outlet, useNavigate, useParams } from "react-router";
-import AgentSidebar from "~/components/AgentSidebar";
-import ComposeEmail from "~/components/ComposeEmail";
-import Header from "~/components/Header";
-import Sidebar from "~/components/Sidebar";
-import { useMailbox } from "~/queries/mailboxes";
+import AccountsColumn from "~/components/columns/AccountsColumn";
+import ColumnCanvas from "~/components/columns/ColumnCanvas";
+import FloatingDock from "~/components/columns/FloatingDock";
+import FoldersColumn from "~/components/columns/FoldersColumn";
+import { AgentColumn, ComposeColumn } from "~/components/columns/PlatformColumns";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
+import { useMailbox } from "~/queries/mailboxes";
 import { ApiError } from "~/services/api";
 
+/**
+ * Horizontal Miller columns:
+ *   [Inboxies] [Folders & tags] [<Outlet/>: list → reader | settings → page] [Compose] [Agent]
+ * plus the floating dock. Which list/reader/settings columns show is decided
+ * by the child route; compose and agent are transient UI state.
+ */
 export default function MailboxRoute() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const navigate = useNavigate();
 	const mailboxQuery = useMailbox(mailboxId);
 	useMailboxEvents(mailboxId);
+	const { isComposing, isAgentPanelOpen, resetColumns } = useUIStore();
 	const prevMailboxIdRef = useRef<string | undefined>(undefined);
-	const {
-		isSidebarOpen,
-		closeSidebar,
-		isAgentPanelOpen,
-		closePanel,
-		closeComposeModal,
-	} = useUIStore();
 
+	// Switching mailbox drops a compose that belongs to the previous one.
 	useEffect(() => {
-		if (
-			prevMailboxIdRef.current &&
-			mailboxId &&
-			prevMailboxIdRef.current !== mailboxId
-		) {
-			closePanel();
-			closeComposeModal();
-			closeSidebar();
+		if (prevMailboxIdRef.current && mailboxId && prevMailboxIdRef.current !== mailboxId) {
+			resetColumns();
 		}
-
 		prevMailboxIdRef.current = mailboxId;
-	}, [mailboxId, closeComposeModal, closePanel, closeSidebar]);
+	}, [mailboxId, resetColumns]);
 
 	useEffect(() => {
 		const err = mailboxQuery.error;
@@ -49,44 +44,15 @@ export default function MailboxRoute() {
 	}, [mailboxQuery.error, navigate]);
 
 	return (
-		<div className="flex h-screen overflow-hidden">
-			{/* Mobile sidebar overlay backdrop */}
-			{isSidebarOpen && (
-				<div
-					className="fixed inset-0 z-30 bg-black/30 md:hidden"
-					onClick={closeSidebar}
-					onKeyDown={(e) => e.key === "Escape" && closeSidebar()}
-					role="button"
-					tabIndex={-1}
-					aria-label="Close sidebar"
-				/>
-			)}
-
-			{/* Sidebar: hidden on mobile by default, shown as overlay when open */}
-			<div
-				className={`fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 ease-in-out md:relative md:translate-x-0 md:z-0 ${
-					isSidebarOpen ? "translate-x-0" : "-translate-x-full"
-				}`}
-			>
-				<Sidebar />
-			</div>
-
-			{/* Main content */}
-			<div className="flex-1 flex flex-col min-w-0 bg-kumo-base">
-				<Header />
-				<main className="flex-1 overflow-hidden">
-					<Outlet />
-				</main>
-			</div>
-
-			{/* Agent + MCP sidebar -- togglable on desktop */}
-			{isAgentPanelOpen && (
-				<div className="hidden lg:flex w-[380px] shrink-0 border-l border-kumo-line flex-col bg-kumo-base overflow-hidden">
-					<AgentSidebar />
-				</div>
-			)}
-
-			<ComposeEmail />
-		</div>
+		<>
+			<ColumnCanvas>
+				<AccountsColumn />
+				<FoldersColumn />
+				<Outlet />
+				{isComposing && <ComposeColumn />}
+				{isAgentPanelOpen && <AgentColumn />}
+			</ColumnCanvas>
+			<FloatingDock />
+		</>
 	);
 }

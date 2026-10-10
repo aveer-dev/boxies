@@ -22,6 +22,7 @@ import {
 	rewriteSelfReplyTo,
 } from "shared/reply-recipients";
 import { composeBodyHasUserContent } from "shared/compose-body";
+import { plainTextToHtml, prefixSubject, replyFrom } from "shared/reply-envelope";
 import {
 	OUTBOUND_SIZE_ERROR,
 	remainingOutboundBudget,
@@ -55,13 +56,6 @@ const EMPTY_FIELDS: ComposeFormFields = {
 	subject: "",
 	body: "",
 };
-
-function getPrefixedSubject(subject: string, prefix: "Re" | "Fwd") {
-	const expectedPrefix = `${prefix}: `;
-	return subject.startsWith(expectedPrefix)
-		? subject
-		: `${expectedPrefix}${subject}`;
-}
 
 function buildForwardBody(
 	original: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"]>,
@@ -153,8 +147,8 @@ function buildInitialComposeFields(
 		return {
 			...EMPTY_FIELDS,
 			to: replyToAddresses(original, mailboxEmail?.toLowerCase()).join(", "),
-			subject: getPrefixedSubject(original.subject, "Re"),
-			body: `${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
+			subject: prefixSubject(original.subject, "Re"),
+			body: `${plainTextToHtml(composeOptions.initialBody ?? "")}${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
 		};
 	}
 
@@ -163,15 +157,15 @@ function buildInitialComposeFields(
 		return {
 			...EMPTY_FIELDS,
 			...recipients,
-			subject: getPrefixedSubject(original.subject, "Re"),
-			body: `${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
+			subject: prefixSubject(original.subject, "Re"),
+			body: `${plainTextToHtml(composeOptions.initialBody ?? "")}${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
 		};
 	}
 
 	if (mode === "forward") {
 		return {
 			...EMPTY_FIELDS,
-			subject: getPrefixedSubject(original.subject, "Fwd"),
+			subject: prefixSubject(original.subject, "Fwd"),
 			body: buildForwardBody(original, sigBlock),
 		};
 	}
@@ -186,7 +180,7 @@ export type DraftSaveStatus = "idle" | "saving" | "saved" | "error";
 
 export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const toastManager = useKumoToastManager();
-	const { composeOptions, closePanel, closeCompose } = useUIStore();
+	const { composeOptions, closeCompose } = useUIStore();
 	const { data: currentMailbox } = useMailbox(mailboxId);
 	const sendEmailMutation = useSendEmail();
 	const saveDraftMutation = useSaveDraft();
@@ -381,15 +375,11 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		const ccRecipients = splitEmailList(cc); const bccRecipients = splitEmailList(bcc);
 		const original = composeOptions.originalEmail;
 		const mode = composeOptions.mode;
-		const isAliasReply = Boolean(
-			(mode === "reply" || mode === "reply-all") &&
-			(original?.alias_id || original?.recipient?.includes("@private."))
-		);
-		const fromAddress = isAliasReply && original?.recipient
-			? original.recipient
-			: currentMailbox.email;
-		const fromName = currentMailbox.settings?.fromName || currentMailbox.name;
-		const from = fromName && fromName !== fromAddress ? { email: fromAddress, name: fromName } : fromAddress;
+		const from = replyFrom(mode, original, {
+			email: currentMailbox.email,
+			name: currentMailbox.name,
+			fromName: currentMailbox.settings?.fromName,
+		});
 		let sendTo: string | string[] = toEmailListValue(toRecipients) ?? toRecipients;
 		if ((mode === "reply" || mode === "reply-all") && original) {
 			sendTo = rewriteSelfReplyTo(sendTo, original, currentMailbox.email || mailboxId);
@@ -511,6 +501,5 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		handleDiscard,
 		handleSend,
 		closeCompose,
-		closePanel,
 	};
 }

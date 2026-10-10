@@ -16,7 +16,9 @@ import {
 	ShieldCheckIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useOutlet, useParams } from "react-router";
+import ColumnPane from "~/components/columns/ColumnPane";
+import { useMailNavigation } from "~/hooks/useMailNavigation";
 import PrivateEmailLogo from "~/components/PrivateEmailLogo";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
@@ -24,7 +26,7 @@ import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
 const PROMPT_PLACEHOLDER = `You are an email assistant that helps manage this inbox. You read emails, draft replies, and help organize conversations.\n\nWrite like a real person. Short, direct, flowing prose. Plain text only.\n\n(Leave empty to use the full built-in default prompt)`;
 
-export default function SettingsRoute() {
+function SettingsContent() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
@@ -77,8 +79,7 @@ export default function SettingsRoute() {
 	const isCustomPrompt = agentPrompt.trim().length > 0;
 
 	return (
-		<div className="max-w-2xl px-4 py-4 md:px-8 md:py-6 h-full overflow-y-auto">
-			<h1 className="text-lg font-semibold text-kumo-default mb-6">Settings</h1>
+		<div className="px-4 py-4 md:px-6 md:py-5">
 
 			<div className="space-y-6">
 				{/* Account */}
@@ -255,5 +256,33 @@ export default function SettingsRoute() {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+/** Settings column; the matched sub-page (if any) opens in the next column. */
+export default function SettingsRoute() {
+	const subpage = useOutlet();
+	const { closeSettings } = useMailNavigation();
+	return (
+		<>
+			<ColumnPane
+				id="settings"
+				title="Settings"
+				onClose={closeSettings}
+				closeLabel="Close settings"
+				widthClassName="md:w-[460px]"
+			>
+				<SettingsContent />
+			</ColumnPane>
+			{subpage && (
+				<ColumnPane
+					id="settings-page"
+					hideHeader
+					widthClassName="md:w-auto md:flex-1 md:min-w-[560px]"
+				>
+					{subpage}
+				</ColumnPane>
+			)}
+		</>
 	);
 }
