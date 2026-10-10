@@ -8,6 +8,7 @@
  */
 
 import { getMailboxStub } from "./email-helpers";
+import { aliasMetadataKey } from "./alias-utils";
 import {
 	applyEmailSendingEvent,
 	type DeliveryStub,
@@ -22,10 +23,20 @@ export async function handleEmailSendingQueueMessage(
 	env: Env,
 	body: unknown,
 ): Promise<boolean> {
-	return applyEmailSendingEvent(
-		body,
-		(sender) => getMailboxStub(env, sender) as unknown as DeliveryStub,
-	);
+	return applyEmailSendingEvent(body, async (sender) => {
+		// Mail sent from a private alias is stored in the alias's target mailbox.
+		const alias = await env.BUCKET.get(aliasMetadataKey(sender.toLowerCase()));
+		let mailboxId = sender;
+		if (alias) {
+			try {
+				const meta = (await alias.json()) as { targetMailboxId?: string };
+				if (meta.targetMailboxId) mailboxId = meta.targetMailboxId;
+			} catch {
+				// Unreadable alias record: fall back to the sender address.
+			}
+		}
+		return getMailboxStub(env, mailboxId) as unknown as DeliveryStub;
+	});
 }
 
 export async function handleEmailSendingQueueBatch(

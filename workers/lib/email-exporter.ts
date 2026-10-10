@@ -12,6 +12,7 @@ import type { Env } from "../types";
 import { emailBodyKey, emailRawKey, buildSimpleMime } from "./email-content";
 import { canonicalMailboxId } from "./mailbox-routing";
 import { getFolderDisplayName } from "../../shared/folders";
+import { listAllR2Objects } from "./r2-list";
 
 export interface ExportJob {
 	id: string;
@@ -131,7 +132,7 @@ export async function hasRecentExportForDomain(
 	bucket: R2Bucket,
 	domain: string,
 ): Promise<{ hasExport: boolean; lastExport?: ExportJob }> {
-	const listed = await bucket.list({ prefix: EXPORTS_JOB_PREFIX });
+	const listed = { objects: await listAllR2Objects(bucket, EXPORTS_JOB_PREFIX) };
 	const normalizedDomain = domain.toLowerCase().trim();
 	let latestJob: ExportJob | undefined;
 
@@ -315,7 +316,7 @@ export async function runDomainExportJob(
 
 	try {
 		// Find all mailboxes for domain in R2
-		const listed = await env.BUCKET.list({ prefix: "mailboxes/" });
+		const listed = { objects: await listAllR2Objects(env.BUCKET, "mailboxes/") };
 		const domainSuffix = `@${normalizedDomain}.json`;
 		const mailboxes: string[] = [];
 

@@ -13,26 +13,71 @@ import {
 } from "../lib/alias-utils";
 import { mailDomainConfig } from "../lib/mail-domain";
 
-const CreateAliasSchema = z.object({
-	baseDomain: z.string().trim().optional(),
-	label: z.string().trim().max(100).optional(),
-	expiresAt: z.string().datetime().optional().nullable(),
-	pausedAction: z.enum(["drop", "reject"]).default("drop"),
-});
+/**
+ * Shipped iOS / Android builds send snake_case (`is_active`, `paused_action`,
+ * `expires_in_seconds`) while web sends camelCase; zod would silently drop the
+ * unknown keys. Fold both spellings into the camelCase schema fields.
+ */
+function normalizeAliasBody(raw: unknown): unknown {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+	const body = raw as Record<string, unknown>;
+	const pick = (camel: string, snake: string) =>
+		body[camel] !== undefined ? body[camel] : body[snake];
+	const out: Record<string, unknown> = {
+		baseDomain: pick("baseDomain", "base_domain"),
+		label: body.label,
+		isActive: pick("isActive", "is_active"),
+		pausedAction: pick("pausedAction", "paused_action"),
+		expiresAt: pick("expiresAt", "expires_at"),
+	};
+	const ttl = pick("expiresInSeconds", "expires_in_seconds");
+	if (out.expiresAt === undefined && ttl !== undefined) {
+		out.expiresAt =
+			ttl === null || Number(ttl) <= 0
+				? null
+				: new Date(Date.now() + Number(ttl) * 1000).toISOString();
+	}
+	for (const key of Object.keys(out)) if (out[key] === undefined) delete out[key];
+	return out;
+}
 
-const UpdateAliasSchema = z.object({
-	label: z.string().trim().max(100).optional().nullable(),
-	isActive: z.boolean().optional(),
-	pausedAction: z.enum(["drop", "reject"]).optional(),
-	expiresAt: z.string().datetime().optional().nullable(),
-});
+const CreateAliasSchema = z.preprocess(
+	normalizeAliasBody,
+	z.object({
+		baseDomain: z.string().trim().optional(),
+		label: z.string().trim().max(100).optional(),
+		expiresAt: z.string().datetime().optional().nullable(),
+		pausedAction: z.enum(["drop", "reject"]).default("drop"),
+	}),
+);
+
+const UpdateAliasSchema = z.preprocess(
+	normalizeAliasBody,
+	z.object({
+		label: z.string().trim().max(100).optional().nullable(),
+		isActive: z.union([z.boolean(), z.number().transform((n) => n !== 0)]).optional(),
+		pausedAction: z.enum(["drop", "reject"]).optional(),
+		expiresAt: z.string().datetime().optional().nullable(),
+	}),
+);
+
+type AliasRow = { is_active: number | boolean } & Record<string, unknown>;
+
+/**
+ * One response shape for list / create / update: the snake_case rows every
+ * client decodes, plus `mailbox_id`, with `is_active` as a real boolean
+ * (Android can't decode 1/0 as Boolean).
+ */
+function toAliasResponse<T extends AliasRow>(row: T, mailboxId: string) {
+	return { ...row, mailbox_id: mailboxId, is_active: Boolean(row.is_active) };
+}
 
 export function registerAliasRoutes(app: Hono<any>) {
 	// List all masked aliases for this mailbox
 	app.get("/api/v1/mailboxes/:mailboxId/aliases", async (c) => {
 		const stub = c.var.mailboxStub;
 		const list = await stub.listAliases();
-		return c.json({ aliases: list });
+		return c.json({ aliases: list.map((row: AliasRow) => toAliasResponse(row, c.var.mailboxId)) });
 	});
 
 	// Create a new masked alias on private.<domain>
@@ -113,7 +158,7 @@ export function registerAliasRoutes(app: Hono<any>) {
 			httpMetadata: { contentType: "application/json" },
 		});
 
-		return c.json({ alias: created }, 201);
+		return c.json({ alias: toAliasResponse(created, mailboxId) }, 201);
 	});
 
 	// Update an existing masked alias (active/pause, label, expiry, action)
@@ -164,7 +209,7 @@ export function registerAliasRoutes(app: Hono<any>) {
 			httpMetadata: { contentType: "application/json" },
 		});
 
-		return c.json({ alias: updated });
+		return c.json({ alias: toAliasResponse(updated, mailboxId) });
 	});
 
 	// Delete an alias

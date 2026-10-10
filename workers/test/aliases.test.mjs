@@ -9,8 +9,7 @@ import {
 	buildMaskedAddress,
 	isAliasExpired,
 	normalizePausedAction,
-	aliasMetadataKey,
-} from "../lib/alias-utils.ts";
+	aliasMetadataKey, resolveAliasFrom } from "../lib/alias-utils.ts";
 import { validateSender, SenderValidationError } from "../lib/email-helpers.ts";
 
 test("generateRandomAliasToken generates valid lowercase alphanumeric strings", () => {
@@ -230,13 +229,40 @@ test("aliases HTTP endpoints CRUD operations", async () => {
 	);
 	assert.equal(res3.status, 200);
 	const data3 = await res3.json();
-	assert.equal(data3.alias.is_active, 0);
+	assert.equal(data3.alias.is_active, false);
+	assert.equal(data3.alias.mailbox_id, mailboxId);
 	assert.equal(data3.alias.paused_action, "reject");
 
 	// Verify R2 updated
 	const r2Updated = await (await bucket.get(aliasMetadataKey(data2.alias.alias_email))).json();
 	assert.equal(r2Updated.isActive, false);
 	assert.equal(r2Updated.pausedAction, "reject");
+
+	// 3b. Shipped iOS / Android builds send snake_case; it must not be dropped.
+	const res3b = await testApp.request(
+		`http://localhost/api/v1/mailboxes/${mailboxId}/aliases/${data2.alias.id}`,
+		{
+			method: "PATCH",
+			headers,
+			body: JSON.stringify({ is_active: true, paused_action: "drop", expires_in_seconds: 3600 }),
+		},
+		env,
+	);
+	assert.equal(res3b.status, 200);
+	const data3b = await res3b.json();
+	assert.equal(data3b.alias.is_active, true);
+	assert.equal(data3b.alias.paused_action, "drop");
+	assert.ok(data3b.alias.expires_at, "expires_in_seconds becomes an expiry");
+	const r2Resumed = await (await bucket.get(aliasMetadataKey(data2.alias.alias_email))).json();
+	assert.equal(r2Resumed.isActive, true);
+
+	// A base domain that isn't the mailbox's (or a service domain) is refused.
+	const resForeign = await testApp.request(
+		`http://localhost/api/v1/mailboxes/${mailboxId}/aliases`,
+		{ method: "POST", headers, body: JSON.stringify({ baseDomain: "someone-else.com" }) },
+		env,
+	);
+	assert.equal(resForeign.status, 403);
 
 	// 4. Delete alias
 	const res4 = await testApp.request(
@@ -250,4 +276,33 @@ test("aliases HTTP endpoints CRUD operations", async () => {
 	const r2Deleted = await bucket.get(aliasMetadataKey(data2.alias.alias_email));
 	assert.equal(r2Deleted, null);
 	assert.equal(aliasList.length, 0);
+});
+
+test("resolveAliasFrom never reveals the primary address on alias threads", async () => {
+	const aliases = {
+		"a1": { alias_email: "abc@private.example.com", is_active: 1, expires_at: null },
+		"abc@private.example.com": { alias_email: "abc@private.example.com", is_active: 1, expires_at: null },
+		"old": { alias_email: "old@private.example.com", is_active: 1, expires_at: "2000-01-01T00:00:00Z" },
+	};
+	const stub = { getAlias: async (key) => aliases[key] ?? null };
+	const mailboxId = "me@example.com";
+
+	// Reply to alias mail while the client asked for the primary: forced to the alias.
+	const forced = await resolveAliasFrom(stub, {
+		mailboxId,
+		requestedFrom: { email: mailboxId, name: "Me" },
+		originalAliasId: "a1",
+	});
+	assert.deepEqual(forced.from, { email: "abc@private.example.com", name: "Me" });
+	assert.deepEqual(forced.allowedSenders, ["abc@private.example.com"]);
+
+	// Explicit alias request is allowed; an unknown address is not added.
+	const explicit = await resolveAliasFrom(stub, { mailboxId, requestedFrom: "abc@private.example.com" });
+	assert.deepEqual(explicit.allowedSenders, ["abc@private.example.com"]);
+	const stranger = await resolveAliasFrom(stub, { mailboxId, requestedFrom: "x@evil.com" });
+	assert.deepEqual(stranger.allowedSenders, []);
+
+	// Expired aliases are not used.
+	const expired = await resolveAliasFrom(stub, { mailboxId, originalAliasId: "old" });
+	assert.equal(expired.from, mailboxId);
 });

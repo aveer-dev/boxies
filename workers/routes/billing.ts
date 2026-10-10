@@ -524,7 +524,7 @@ window.location.href = ${JSON.stringify(deepLink)};
 					status: "ready",
 					domain: targetDomain,
 					ownerUserId: meta.ownerUserId,
-					pricing: sessionRecord?.pricing ?? computeDomainPricing(10.44),
+					pricing: computeDomainPricing(sessionRecord?.pricing?.domainFeeUsd ?? 10.44),
 					mailboxId: sessionRecord?.mailboxId,
 				});
 			}
@@ -534,7 +534,8 @@ window.location.href = ${JSON.stringify(deepLink)};
 			return c.json({
 				status: sessionRecord.status,
 				domain: sessionRecord.domain,
-				pricing: sessionRecord.pricing,
+				// Recompute so records saved before the client field names existed still decode.
+				pricing: computeDomainPricing(sessionRecord.pricing.domainFeeUsd),
 				mailboxId: sessionRecord.mailboxId,
 			});
 		}

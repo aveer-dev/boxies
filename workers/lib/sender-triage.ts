@@ -102,6 +102,9 @@ export function resolveInboundFolder(
 	const { classification, triage, filterHit } = input;
 	const screenerEnabled = input.screenerEnabled !== false;
 	const preferenceFolder = input.preferenceFolderId?.trim() || null;
+	// A filter that files mail away (archive, trash, a custom folder…) means the
+	// user doesn't want to be pinged or have the agent draft a reply for it.
+	const filedAway = Boolean(filterHit?.folderId && !isScreenerDestination(filterHit.folderId));
 
 	if (classification.class === "spam" || classification.folderId === Folders.SPAM) {
 		return {
@@ -118,8 +121,8 @@ export function resolveInboundFolder(
 		return {
 			folderId:
 				filterHit?.folderId || preferenceFolder || classification.folderId,
-			skipAutoDraft: Boolean(filterHit?.skipAutoDraft),
-			skipPush: false,
+			skipAutoDraft: Boolean(filterHit?.skipAutoDraft) || filedAway,
+			skipPush: filedAway,
 			skipAutoReply: false,
 			skipForward: false,
 			triageAction: "disabled",
@@ -144,21 +147,23 @@ export function resolveInboundFolder(
 				: Folders.INBOX;
 		return {
 			folderId: filterHit?.folderId || preferenceFolder || dest,
-			skipAutoDraft: Boolean(filterHit?.skipAutoDraft),
-			skipPush: false,
+			skipAutoDraft: Boolean(filterHit?.skipAutoDraft) || filedAway,
+			skipPush: filedAway,
 			skipAutoReply: false,
 			skipForward: false,
 			triageAction: "allowed",
 		};
 	}
 
-	// Unknown sender — Screener. Filters must not smuggle past the gate.
+	// Unknown sender — Screener. Filters must not smuggle past the gate. Forwarding
+	// still applies: the setting promises a copy of each incoming message, and the
+	// forwarder itself drops spam and spoofed mail.
 	return {
 		folderId: Folders.SCREENER,
 		skipAutoDraft: true,
 		skipPush: true,
 		skipAutoReply: true,
-		skipForward: true,
+		skipForward: false,
 		triageAction: "unknown",
 	};
 }

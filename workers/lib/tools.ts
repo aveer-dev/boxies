@@ -36,6 +36,7 @@ import {
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { allowOutboundRecipients } from "./sender-triage";
+import { resolveAliasFrom } from "./alias-utils";
 import type { Env } from "../types";
 
 // ── Type casts for DO methods not on the base stub type ────────────
@@ -187,12 +188,14 @@ export async function toolDraftReply(
 			in_reply_to: params.originalEmailId,
 			email_references: null,
 			thread_id: threadId,
+			source: "agent",
 		},
 		[],
 	);
 	await stub.deleteSiblingDrafts(draftId, {
 		threadId,
 		inReplyTo: params.originalEmailId,
+		onlySource: "agent",
 	});
 
 	return {
@@ -267,12 +270,14 @@ export async function toolDraftEmail(
 			in_reply_to: params.in_reply_to || null,
 			email_references: null,
 			thread_id: resolvedThreadId,
+			source: "agent",
 		},
 		[],
 	);
 	await stub.deleteSiblingDrafts(draftId, {
 		threadId: resolvedThreadId,
 		inReplyTo: params.in_reply_to,
+		onlySource: "agent",
 	});
 
 	return {
@@ -397,11 +402,14 @@ export async function toolDeleteEmail(
 	emailId: string,
 ) {
 	const stub = getMailboxStub(env, mailboxId);
-	const result = await stub.deleteEmail(emailId);
+	// Same as the app: moves to Trash, permanent only from Trash / Drafts.
+	const result = await (stub as unknown as {
+		trashOrDeleteEmail: (id: string) => Promise<"trashed" | "deleted" | null>;
+	}).trashOrDeleteEmail(emailId);
 	if (result === null) {
 		return { error: "Email not found", emailId };
 	}
-	return { status: "deleted", emailId };
+	return { status: result, emailId };
 }
 
 // ── send_reply ─────────────────────────────────────────────────────
@@ -435,7 +443,13 @@ export async function toolSendReply(
 	const rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
 	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 	const { originalMsgId, references, threadId } = buildReferencesChain(originalEmail);
-	const fromDomain = mailboxId.split("@")[1];
+	// Replies to mail received on a private alias must not reveal the primary address.
+	const { from: resolvedFrom } = await resolveAliasFrom(stub as any, {
+		mailboxId,
+		originalAliasId: (originalEmail as { alias_id?: string | null }).alias_id,
+	});
+	const senderEmail = (typeof resolvedFrom === "string" ? resolvedFrom : resolvedFrom.email).toLowerCase();
+	const fromDomain = senderEmail.split("@")[1];
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
@@ -462,7 +476,7 @@ export async function toolSendReply(
 	try {
 		const result = await sendEmail(env.EMAIL, {
 			to,
-			from: mailboxId,
+			from: senderEmail,
 			subject: params.subject,
 			html: fullBodyHtml,
 			headers: buildThreadingHeaders(originalMsgId, references),
@@ -479,7 +493,7 @@ export async function toolSendReply(
 		{
 			id: messageId,
 			subject: params.subject,
-			sender: mailboxId.toLowerCase(),
+			sender: senderEmail,
 			recipient: to.toLowerCase(),
 			date: new Date().toISOString(),
 			body: fullBodyHtml,

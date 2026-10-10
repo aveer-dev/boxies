@@ -9,6 +9,7 @@ import {
 	attachIdpToSessionAccount,
 	attachPasswordToSessionAccount,
 	createIdentityLinkCode,
+	deleteIdentityAccountData,
 	ensureIdentityAccount,
 	expandPrincipalWithLinks,
 	IdentityAlreadyLinkedError,
@@ -712,6 +713,22 @@ function mockBucket(initial = {}) {
 	});
 	assert.ok(owned.userId);
 	assert.equal(await findUserIdByLoginEmail(bucket, "team@inboxies.email"), owned.userId);
+}
+
+{
+	// Account deletion removes the account, its pointers and the password login.
+	const bucket = mockBucket();
+	const access = principalFromClaims({ email: "leaver@example.com", sub: "leaver-access" });
+	const pwd = await attachPasswordToSessionAccount(bucket, access, { passwordHash: "h" });
+	const expanded = await expandPrincipalWithLinks(bucket, access);
+	assert.ok(await findUserIdByLoginEmail(bucket, "leaver@example.com"));
+
+	const result = await deleteIdentityAccountData(bucket, expanded);
+	assert.ok(result.accountId);
+	assert.equal(await findUserIdByLoginEmail(bucket, "leaver@example.com"), null);
+	assert.equal(bucket.store.has(`platform/identity/passwords/${pwd.userId}.json`), false);
+	const leftover = [...bucket.store.keys()].filter((k) => k.includes(result.accountId));
+	assert.deepEqual(leftover, [], "no account documents left behind");
 }
 
 console.log("identity-links: ok");

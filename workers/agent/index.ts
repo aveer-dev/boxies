@@ -358,7 +358,14 @@ export class EmailAgent extends AIChatAgent<any> {
 	}) {
 		const env = this.env as Env;
 		const workersai = createWorkersAI({ binding: env.AI });
-		const tools = createEmailTools(env, emailData.mailboxId);
+		// The auto-run reads attacker-controlled mail, so it only gets read tools plus
+		// draft_reply: no moving, deleting, searching other mail, or free-form drafts.
+		const allTools = createEmailTools(env, emailData.mailboxId);
+		const tools = {
+			get_email: allTools.get_email,
+			get_thread: allTools.get_thread,
+			draft_reply: allTools.draft_reply,
+		};
 		const systemPrompt = await getSystemPrompt(env, emailData.mailboxId);
 
 		// Pre-read the email and thread so the agent has full context
@@ -370,7 +377,11 @@ export class EmailAgent extends AIChatAgent<any> {
 		try {
 			const email = (await stub.getEmail(emailData.emailId)) as EmailFull | null;
 			if (email?.body) {
-				const isInjection = await isPromptInjection(env.AI, email.body);
+				// The subject reaches the prompt too, so scan it with the body.
+				const isInjection = await isPromptInjection(
+					env.AI,
+					`Subject: ${emailData.subject}\n\n${email.body}`,
+				);
 				if (isInjection) {
 					console.warn("Skipping auto-draft due to detected prompt injection:", emailData.emailId);
 					
@@ -443,7 +454,10 @@ export class EmailAgent extends AIChatAgent<any> {
 			}
 		}
 		} catch (e) {
-			console.warn("Pre-read failed, agent will use tools:", (e as Error).message);
+			// Without the pre-read the injection scan didn't run; don't let the model
+			// read the mail unscanned through get_email.
+			console.warn("Pre-read failed, skipping auto-draft:", (e as Error).message);
+			return;
 		}
 
 		let autoPrompt = `A new email just arrived. Draft an appropriate response using draft_reply.
@@ -526,6 +540,7 @@ Based on the email content and thread context above, draft a reply using draft_r
 						in_reply_to: emailData.emailId,
 							email_references: null,
 							thread_id: emailData.threadId,
+							source: "agent",
 						},
 						[],
 					);

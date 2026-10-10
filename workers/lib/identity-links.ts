@@ -34,10 +34,17 @@ import {
 import { canonicalMailboxId } from "./mailbox-routing.ts";
 import {
 	findUserIdByLoginEmail,
+	legacyUserByEmailKey,
+	legacyUserByLoginKey,
+	legacyUserR2Key,
 	loadPlatformUser,
 	savePlatformUser,
+	userByEmailKey,
+	userByLoginKey,
+	userR2Key,
 	type PlatformUser,
 } from "./platform-users.ts";
+import { listAllR2Objects } from "./r2-list.ts";
 
 export const IDENTITY_ACCOUNT_PREFIX = "platform/identity/accounts/";
 export const IDENTITY_ACCOUNT_BY_KEY_PREFIX = "platform/identity/by-key/";
@@ -1524,7 +1531,7 @@ export async function listAllIdentityAccounts(
 	const seenEmails = new Set<string>();
 
 	for (const prefix of [IDENTITY_ACCOUNT_PREFIX, LEGACY_IDENTITY_ACCOUNT_PREFIX]) {
-		const list = await bucket.list({ prefix });
+		const list = { objects: await listAllR2Objects(bucket, prefix) };
 		for (const obj of list.objects) {
 			const id = obj.key.replace(prefix, "").replace(".json", "");
 			const account = await loadIdentityAccount(bucket, id);
@@ -1543,3 +1550,59 @@ export async function listAllIdentityAccounts(
 
 	return out;
 }
+
+/**
+ * Account deletion: remove the durable identity account, its by-key pointers,
+ * IdP link records, and any password user (record + login pointers that still
+ * point at it). Mailbox ACLs are handled by the caller.
+ */
+export async function deleteIdentityAccountData(
+	bucket: R2Bucket,
+	principal: RequestPrincipal,
+): Promise<{ accountId: string | null; keys: string[] }> {
+	const sessionKeys = principalKeys(principal);
+	let accountId: string | null = null;
+	for (const key of sessionKeys) {
+		accountId = await findAccountIdByPrincipalKey(bucket, key);
+		if (accountId) break;
+	}
+	const account = accountId ? await loadIdentityAccount(bucket, accountId) : null;
+	const keys = uniquePrincipalKeys([
+		...sessionKeys,
+		...(account?.principals ?? []),
+		...(accountId ? [`account:${accountId}`] : []),
+	]);
+
+	const deletions: string[] = [];
+	for (const key of keys) {
+		deletions.push(identityAccountByKeyKey(key), legacyIdentityAccountByKeyKey(key));
+		if (key.startsWith("sub:") && !key.startsWith("sub:user:")) {
+			deletions.push(identityLinkBySubKey(key.slice("sub:".length)));
+		} else if (key.startsWith("email:")) {
+			deletions.push(identityLinkByEmailKey(key.slice("email:".length)));
+		} else if (key.startsWith("user:")) {
+			const user = await loadPlatformUser(bucket, key.slice("user:".length));
+			if (!user) continue;
+			deletions.push(userR2Key(user.id), legacyUserR2Key(user.id));
+			// Only drop login pointers that still resolve to this user.
+			for (const email of [user.mailboxEmail, user.contactEmail]) {
+				if (email && (await findUserIdByLoginEmail(bucket, email)) === user.id) {
+					deletions.push(
+						userByLoginKey(email),
+						legacyUserByLoginKey(email),
+						userByEmailKey(email),
+						legacyUserByEmailKey(email),
+					);
+				}
+			}
+		}
+	}
+	if (accountId) {
+		deletions.push(identityAccountKey(accountId), legacyIdentityAccountKey(accountId));
+	}
+	for (const key of new Set(deletions)) {
+		await bucket.delete(key);
+	}
+	return { accountId, keys };
+}
+

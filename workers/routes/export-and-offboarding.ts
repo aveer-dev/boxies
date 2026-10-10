@@ -24,6 +24,8 @@ import {
 import {
 	saveDomainMetadata,
 } from "../lib/domain-registry";
+import { disableCatchAllRule } from "../lib/cloudflare-client";
+import { listAllR2Objects } from "../lib/r2-list";
 
 type AppVariables = { principal?: RequestPrincipal };
 
@@ -37,6 +39,30 @@ const TransferLockBody = z.object({
 });
 
 type ExportContext = Context<{ Bindings: Env; Variables: AppVariables }>;
+
+/**
+ * Wire shape every client decodes (web, iOS, Android): `id`, a progress object,
+ * and the target as `domain` / `mailboxId`. `exportId` is kept for older callers.
+ */
+function toExportResponse(job: ExportJob) {
+	return {
+		id: job.id,
+		exportId: job.id,
+		...(job.targetType === "domain" ? { domain: job.targetId } : { mailboxId: job.targetId }),
+		status: job.status,
+		progress: {
+			processedCount: job.processedEmails,
+			totalCount: job.totalEmails,
+			percent: job.progress,
+		},
+		totalEmails: job.totalEmails,
+		fileSizeBytes: job.fileSizeBytes,
+		downloadUrl: job.downloadUrl,
+		expiresAt: job.expiresAt,
+		createdAt: job.createdAt,
+		...(job.error ? { error: job.error } : {}),
+	};
+}
 
 /**
  * Load an export job the caller may read: the same mailbox ACL / domain admin
@@ -83,15 +109,7 @@ export function registerExportAndOffboardingRoutes(
 
 		try {
 			const job = await runMailboxExportJob(c.env, mailboxId);
-			return c.json({
-				exportId: job.id,
-				status: job.status,
-				progress: job.progress,
-				totalEmails: job.totalEmails,
-				fileSizeBytes: job.fileSizeBytes,
-				downloadUrl: job.downloadUrl,
-				expiresAt: job.expiresAt,
-			});
+			return c.json(toExportResponse(job));
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Export failed";
 			return c.json({ error: msg }, 500);
@@ -109,15 +127,7 @@ export function registerExportAndOffboardingRoutes(
 
 		try {
 			const job = await runDomainExportJob(c.env, domainMeta.domain);
-			return c.json({
-				exportId: job.id,
-				status: job.status,
-				progress: job.progress,
-				totalEmails: job.totalEmails,
-				fileSizeBytes: job.fileSizeBytes,
-				downloadUrl: job.downloadUrl,
-				expiresAt: job.expiresAt,
-			});
+			return c.json(toExportResponse(job));
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Domain export failed";
 			return c.json({ error: msg }, 500);
@@ -130,7 +140,7 @@ export function registerExportAndOffboardingRoutes(
 	app.get("/api/v1/exports/:exportId", async (c) => {
 		const job = await loadAuthorizedExport(c, c.req.param("exportId"));
 		if (job instanceof Response) return job;
-		return c.json(job);
+		return c.json(toExportResponse(job));
 	});
 
 	/**
@@ -168,7 +178,7 @@ export function registerExportAndOffboardingRoutes(
 		const normalizedDomain = domainMeta.domain.toLowerCase();
 
 		// Count mailboxes for domain
-		const listed = await c.env.BUCKET.list({ prefix: "mailboxes/" });
+		const listed = { objects: await listAllR2Objects(c.env.BUCKET, "mailboxes/") };
 		const suffix = `@${normalizedDomain}.json`;
 		const activeMailboxes = listed.objects
 			.filter((o) => o.key.endsWith(suffix))
@@ -242,8 +252,20 @@ export function registerExportAndOffboardingRoutes(
 		}
 
 		let eppCode: string | undefined;
+		const warnings: string[] = [];
 
-		// 3. If registered via Cloudflare Registrar, unlock domain and fetch transfer EPP code
+		// 3. Stop Cloudflare delivering this zone's mail to us. Inbound also rejects
+		// offboarding domains, so mail stops even if this call fails.
+		let routingDisconnected = false;
+		try {
+			await disableCatchAllRule(c.env, domainMeta.zoneId);
+			routingDisconnected = true;
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : "unknown error";
+			warnings.push(`Could not disable the Email Routing catch-all: ${msg}`);
+		}
+
+		// 4. If registered via Cloudflare Registrar, unlock domain and fetch transfer EPP code
 		if (domainMeta.registration?.provider === "cloudflare_registrar") {
 			try {
 				await setDomainTransferLock(c.env, domainMeta.domain, false);
@@ -253,11 +275,12 @@ export function registerExportAndOffboardingRoutes(
 					domainMeta.registration.eppAuthCodeRequestedAt = new Date().toISOString();
 				}
 			} catch (regErr: unknown) {
-				// Non-fatal if registrar unlock encounters an issue in testing
+				const msg = regErr instanceof Error ? regErr.message : "unknown error";
+				warnings.push(`Could not unlock the domain for transfer: ${msg}`);
 			}
 		}
 
-		// 4. Update domain status to "offboarding"
+		// 5. Update domain status to "offboarding"
 		domainMeta.status = "offboarding";
 		domainMeta.emailRoutingEnabled = false;
 		domainMeta.updatedAt = new Date().toISOString();
@@ -269,8 +292,11 @@ export function registerExportAndOffboardingRoutes(
 			domain: domainMeta.domain,
 			status: "offboarding",
 			eppCode,
-			message:
-				"Email routing has been safely disconnected. You may now point your nameservers elsewhere or transfer your domain registration.",
+			routingDisconnected,
+			...(warnings.length > 0 ? { warnings } : {}),
+			message: routingDisconnected
+				? "Email routing has been disconnected. You may now point your nameservers elsewhere or transfer your domain registration."
+				: "Inboxies now rejects mail for this domain, but the Email Routing catch-all could not be disabled; check the warnings.",
 		});
 	});
 
@@ -314,7 +340,7 @@ export function registerExportAndOffboardingRoutes(
 				domainMeta.updatedAt = new Date().toISOString();
 				await saveDomainMetadata(c.env.BUCKET, domainMeta);
 			}
-			return c.json({ domain: domainMeta.domain, locked: updatedLock });
+			return c.json({ success: true, domain: domainMeta.domain, locked: updatedLock });
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Failed to update transfer lock";
 			return c.json({ error: msg }, 502);
