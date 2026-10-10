@@ -273,6 +273,30 @@ export async function createCatchAllWorkerRule(
 }
 
 /**
+ * Stop delivering a zone's mail to this Worker: the catch-all is switched to a
+ * disabled drop rule (used when a domain is decommissioned).
+ */
+export async function disableCatchAllRule(
+	env: CloudflareClientEnv,
+	zoneId: string,
+): Promise<void> {
+	if (isMockEnv(env)) return;
+	await cfRequest<unknown>(
+		env,
+		`/zones/${encodeURIComponent(zoneId)}/email/routing/rules/catch_all`,
+		{
+			method: "PUT",
+			body: JSON.stringify({
+				name: "Inboxies Catch-All (decommissioned)",
+				enabled: false,
+				matchers: [{ type: "all" }],
+				actions: [{ type: "drop" }],
+			}),
+		},
+	);
+}
+
+/**
  * List all DNS records for a given zone.
  */
 export async function listDnsRecords(

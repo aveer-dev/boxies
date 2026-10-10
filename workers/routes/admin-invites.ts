@@ -471,6 +471,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 		);
 		const next = { ...settings, acl: resolved };
 		await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
+		// Previous owners/members stop getting this mailbox's push notifications.
+		const transferStub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(mailboxId));
+		await (transferStub as any).pruneDeviceTokensToAcl([...resolved.owners, ...resolved.members]);
 		await appendAdminAudit(c.env.BUCKET, {
 			actorKeys: principalKeys(principal),
 			action: "mailbox.transfer_acl",

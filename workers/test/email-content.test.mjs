@@ -25,6 +25,9 @@ assert.equal(computeSnippet("short"), "short");
 const long = "x".repeat(SNIPPET_MAX_LENGTH + 50);
 assert.equal(computeSnippet(long).length, SNIPPET_MAX_LENGTH);
 assert.equal(computeSnippet(long), long.slice(0, SNIPPET_MAX_LENGTH));
+// HTML bodies preview as text: no CSS from <style>, no tags, entities decoded.
+const htmlMail = `<html><head><style>${"body{color:red}".repeat(40)}</style></head><body><p>Hi&nbsp;Sam &amp; team,</p><p>See&#39;s you</p></body></html>`;
+assert.equal(computeSnippet(htmlMail), "Hi Sam & team, See's you");
 
 const mime = buildSimpleMime(
 	{

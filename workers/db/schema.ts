@@ -44,6 +44,8 @@ export const emails = sqliteTable("emails", {
 	auth: text("auth"),
 	/** Masked email alias ID if this email was received via an alias. */
 	alias_id: text("alias_id"),
+	/** Draft author: "agent" for AI drafts, null for the user's own. */
+	source: text("source"),
 });
 
 export const attachments = sqliteTable("attachments", {

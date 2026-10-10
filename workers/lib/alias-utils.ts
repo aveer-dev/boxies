@@ -79,3 +79,58 @@ export function normalizePausedAction(raw: unknown): "drop" | "reject" {
 }
 
 export { aliasMetadataKey };
+
+type AliasLookupStub = {
+	getAlias(idOrEmail: string): Promise<{
+		alias_email: string;
+		is_active: number | boolean;
+		expires_at: string | null;
+	} | null>;
+};
+
+type FromField = string | { email: string; name: string };
+
+/**
+ * Pick the From for an outbound message.
+ * - An explicitly requested address that is an active alias of this mailbox is allowed.
+ * - A reply to mail that arrived on an active alias always goes out from that alias,
+ *   even if the client asked for the primary address, so it is never revealed.
+ * Returns the From to use plus the alias senders `validateSender` should accept.
+ */
+export async function resolveAliasFrom(
+	stub: AliasLookupStub,
+	opts: { mailboxId: string; requestedFrom?: FromField | null; originalAliasId?: string | null },
+): Promise<{ from: FromField; allowedSenders: string[] }> {
+	const primary = opts.mailboxId.toLowerCase();
+	const requested = opts.requestedFrom ?? null;
+	const requestedEmail = (typeof requested === "string" ? requested : requested?.email ?? "")
+		.trim()
+		.toLowerCase();
+	const name = requested && typeof requested !== "string" ? requested.name : "";
+	const activeAlias = async (idOrEmail: string) => {
+		const alias = await stub.getAlias(idOrEmail);
+		return alias && alias.is_active && !isAliasExpired(alias.expires_at)
+			? alias.alias_email.toLowerCase()
+			: null;
+	};
+
+	const allowedSenders: string[] = [];
+	let from: FromField = requested ?? opts.mailboxId;
+
+	if (requestedEmail && requestedEmail !== primary) {
+		const alias = await activeAlias(requestedEmail);
+		if (alias) allowedSenders.push(alias);
+	}
+
+	if (opts.originalAliasId) {
+		const alias = await activeAlias(opts.originalAliasId);
+		if (alias) {
+			if (!allowedSenders.includes(alias)) allowedSenders.push(alias);
+			if (!requestedEmail || requestedEmail === primary) {
+				from = name ? { email: alias, name } : alias;
+			}
+		}
+	}
+
+	return { from, allowedSenders };
+}

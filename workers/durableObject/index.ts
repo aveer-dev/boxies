@@ -37,7 +37,7 @@ import {
 	deleteEmailAttachments,
 	deleteR2Keys,
 } from "../lib/attachments";
-import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import { aliasMetadataKey, mailboxMetadataKey } from "../lib/mailbox-routing";
 import {
 	FTS_BACKFILL_BATCH_SIZE,
 	FTS_BACKFILL_MIGRATION,
@@ -174,6 +174,8 @@ interface EmailData {
 	delivery_error?: string | null;
 	auth?: EmailAuth | string | null;
 	alias_id?: string | null;
+	/** "agent" for AI-written drafts; omitted for the user's own mail. */
+	source?: "agent" | null;
 }
 
 interface AttachmentData {
@@ -872,7 +874,7 @@ export class MailboxDO extends DurableObject<Env> {
 					e.*,
 					COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
 				FROM emails e
-				LEFT JOIN thread_to_conversation tc
+				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
 					ON COALESCE(e.thread_id, e.id) = tc.raw_thread_id
 			),
 			conversation_stats AS (
@@ -906,7 +908,7 @@ export class MailboxDO extends DurableObject<Env> {
 						ORDER BY fe.date DESC
 					) as rn
 				FROM folder_emails fe
-				LEFT JOIN thread_to_conversation tc
+				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
 					ON fe.raw_thread_id = tc.raw_thread_id
 			)
 			SELECT
@@ -1041,7 +1043,7 @@ export class MailboxDO extends DurableObject<Env> {
 						e.*,
 						COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
 					FROM emails e
-					LEFT JOIN thread_to_conversation tc
+					LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
 						ON COALESCE(e.thread_id, e.id) = tc.raw_thread_id
 				),
 				conversation_stats AS (
@@ -1241,6 +1243,8 @@ export class MailboxDO extends DurableObject<Env> {
 			date: string;
 			in_reply_to: string | null;
 			thread_id: string | null;
+			/** null when the user saves it (they now own it); omit to keep as-is. */
+			source?: "agent" | null;
 		},
 	) {
 		await this.#assertMailboxWritable();
@@ -1285,6 +1289,7 @@ export class MailboxDO extends DurableObject<Env> {
 				date: data.date,
 				in_reply_to: data.in_reply_to,
 				thread_id: data.thread_id,
+				...(data.source !== undefined ? { source: data.source } : {}),
 			})
 			.where(eq(schema.emails.id, id))
 			.run();
@@ -1382,7 +1387,12 @@ export class MailboxDO extends DurableObject<Env> {
 
 	async deleteSiblingDrafts(
 		keepId: string,
-		opts: { threadId?: string | null; inReplyTo?: string | null },
+		opts: {
+			threadId?: string | null;
+			inReplyTo?: string | null;
+			/** Only replace drafts with this source (the agent never deletes the user's drafts). */
+			onlySource?: "agent";
+		},
 	) {
 		const threadId = opts.threadId?.trim() || "";
 		const inReplyTo = opts.inReplyTo?.trim() || "";
@@ -1399,10 +1409,16 @@ export class MailboxDO extends DurableObject<Env> {
 			params.push(inReplyTo);
 		}
 
+		let sourceClause = "";
+		if (opts.onlySource) {
+			params.push(opts.onlySource);
+			sourceClause = `AND source = ?${params.length}`;
+		}
+
 		const rows = [
 			...this.ctx.storage.sql.exec(
 				`SELECT id FROM emails
-				 WHERE folder_id = ?1 AND id != ?2 AND (${clauses.join(" OR ")})`,
+				 WHERE folder_id = ?1 AND id != ?2 AND (${clauses.join(" OR ")}) ${sourceClause}`,
 				...params,
 			),
 		] as { id: string }[];
@@ -1456,6 +1472,40 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
+	 * User-facing delete: anything outside Trash moves to Trash and can be
+	 * restored; deleting from Trash or Drafts is permanent.
+	 * Returns null when the email doesn't exist.
+	 */
+	async trashOrDeleteEmail(id: string): Promise<"trashed" | "deleted" | null> {
+		const row = this.db
+			.select({ folder_id: schema.emails.folder_id })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, id))
+			.get();
+		if (!row) return null;
+		if (row.folder_id === Folders.TRASH || row.folder_id === Folders.DRAFT) {
+			await this.deleteEmail(id);
+			return "deleted";
+		}
+		await this.moveEmail(id, Folders.TRASH);
+		return "trashed";
+	}
+
+	/** Permanently delete everything in Trash. Returns how many emails were removed. */
+	async emptyTrash(): Promise<number> {
+		const ids = this.db
+			.select({ id: schema.emails.id })
+			.from(schema.emails)
+			.where(eq(schema.emails.folder_id, Folders.TRASH))
+			.all()
+			.map((r) => r.id);
+		for (const id of ids) {
+			await this.deleteEmail(id);
+		}
+		return ids.length;
+	}
+
+	/**
 	 * Wipe mailbox SQLite + all inventoried R2 email/attachment blobs, then
 	 * remove `mailboxes/{id}.json` so inbound/API stop treating it as live.
 	 * Returns conversation ids so the HTTP layer can purge EmailAgent DOs.
@@ -1493,8 +1543,17 @@ export class MailboxDO extends DurableObject<Env> {
 
 		// Wipe tables first; only then clear FTS / alarm so a failed txn
 		// leaves searchable mail + backfill alarm intact.
+		// Private aliases route through R2 records; drop them so a re-created
+		// mailbox at this address doesn't inherit (and receive) the old aliases.
+		const aliasEmails = [
+			...this.ctx.storage.sql.exec(`SELECT alias_email FROM aliases`),
+		].map((row) => String((row as { alias_email: string }).alias_email));
+		await deleteR2Keys(this.env.BUCKET, aliasEmails.map((email) => aliasMetadataKey(email)));
+
 		this.ctx.storage.transactionSync(() => {
 			const sql = this.ctx.storage.sql;
+			sql.exec(`DELETE FROM aliases`);
+			sql.exec(`DELETE FROM send_log`);
 			sql.exec(`DELETE FROM attachments`);
 			sql.exec(`DELETE FROM emails`);
 			sql.exec(`DELETE FROM folders`);
@@ -1588,17 +1647,49 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 	}
 
-	async updateFolder(id: string, name: string) {
-		const result = this.db
+	/**
+	 * Rename a custom folder. System folders keep their names, and a name may not
+	 * collide with another folder's name or id (lookups resolve by either).
+	 */
+	async updateFolder(
+		id: string,
+		name: string,
+	): Promise<{ id: string; name: string } | { error: "not_found" | "system" | "conflict" | "invalid" }> {
+		const trimmed = (name ?? "").trim();
+		if (!trimmed) return { error: "invalid" };
+		const folder = this.db
+			.select({ is_deletable: schema.folders.is_deletable })
+			.from(schema.folders)
+			.where(eq(schema.folders.id, id))
+			.get();
+		if (!folder) return { error: "not_found" };
+		if (folder.is_deletable === 0) return { error: "system" };
+
+		const lowered = trimmed.toLowerCase();
+		const clash = [
+			...this.ctx.storage.sql.exec(
+				`SELECT 1 FROM folders WHERE id != ?1 AND (LOWER(name) = ?2 OR LOWER(id) = ?2) LIMIT 1`,
+				id,
+				lowered,
+			),
+		];
+		if (clash.length > 0) return { error: "conflict" };
+
+		return this.db
 			.update(schema.folders)
-			.set({ name })
+			.set({ name: trimmed })
 			.where(eq(schema.folders.id, id))
 			.returning({ id: schema.folders.id, name: schema.folders.name })
 			.get();
-		return result;
 	}
 
+	/**
+	 * Delete a custom folder. Its mail moves to the Inbox first — `emails.folder_id`
+	 * cascades on delete, so deleting first would silently destroy the mail and
+	 * orphan its R2 bodies and attachments.
+	 */
 	async deleteFolder(id: string) {
+		await this.#assertMailboxWritable();
 		const folder = this.db
 			.select({ is_deletable: schema.folders.is_deletable })
 			.from(schema.folders)
@@ -1609,11 +1700,22 @@ export class MailboxDO extends DurableObject<Env> {
 			return false;
 		}
 
-		this.db
-			.delete(schema.folders)
-			.where(eq(schema.folders.id, id))
-			.run();
+		const moved = this.ctx.storage.transactionSync(() => {
+			const ids = [
+				...this.ctx.storage.sql.exec(`SELECT id FROM emails WHERE folder_id = ?1`, id),
+			].map((row) => String((row as { id: string }).id));
+			this.ctx.storage.sql.exec(
+				`UPDATE emails SET folder_id = ?1 WHERE folder_id = ?2`,
+				Folders.INBOX,
+				id,
+			);
+			this.ctx.storage.sql.exec(`DELETE FROM folders WHERE id = ?1`, id);
+			return ids;
+		});
 
+		for (const emailId of moved) {
+			this.broadcastEvent("email_moved", { id: emailId, folder_id: Folders.INBOX });
+		}
 		return true;
 	}
 
@@ -1758,6 +1860,19 @@ export class MailboxDO extends DurableObject<Env> {
 			.get();
 
 		if (!folder) return false;
+		const current = this.db
+			.select({ folder_id: schema.emails.folder_id })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, id))
+			.get();
+		if (!current) return false;
+		// Sent and Drafts only hold mail this mailbox wrote; nothing moves in.
+		if (
+			(folderId === Folders.SENT || folderId === Folders.DRAFT) &&
+			current.folder_id !== folderId
+		) {
+			return false;
+		}
 
 		const clearReplyLater =
 			folderId === Folders.TRASH || folderId === Folders.SPAM;
@@ -2272,18 +2387,24 @@ export class MailboxDO extends DurableObject<Env> {
 
 		if (cleaned.length === 0) return null;
 
-		// Limit to 50 candidate references to avoid SQLite query limit
-		const refs = cleaned.slice(0, 50);
+		// Each ref is bound 3x and DO SQLite allows 100 bound params, so keep the
+		// 33 most recent refs (In-Reply-To / the newest References come last).
+		const refs = cleaned.slice(-33);
 		const n = refs.length;
 		const p1 = refs.map((_, i) => `?${i + 1}`).join(",");
 		const p2 = refs.map((_, i) => `?${n + i + 1}`).join(",");
+		const p3 = refs.map((_, i) => `?${2 * n + i + 1}`).join(",");
 
+		// Outbound Message-IDs are assigned by the provider, so replies to our mail
+		// reference provider_message_id, not the id we generated.
 		const result = [
 			...this.ctx.storage.sql.exec(
 				`SELECT thread_id, id FROM emails
 				 WHERE message_id IN (${p1}) OR id IN (${p2})
+				    OR TRIM(provider_message_id, '<>') IN (${p3})
 				 ORDER BY date DESC
 				 LIMIT 1`,
+				...refs,
 				...refs,
 				...refs,
 			),
@@ -2310,7 +2431,7 @@ export class MailboxDO extends DurableObject<Env> {
 			        GROUP_CONCAT(DISTINCT LOWER(recipient)) as recipients
 			 FROM emails
 			 WHERE thread_id IS NOT NULL
-			   AND date >= datetime('now', '-7 days')
+			   AND date >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
 			 GROUP BY thread_id
 			 ORDER BY MAX(date) DESC
 			 LIMIT 50`,
@@ -2326,10 +2447,14 @@ export class MailboxDO extends DurableObject<Env> {
 			if (rowSubject !== normalized) continue;
 
 			if (normalizedSender) {
-				const threadSenders = String((row as any).senders || "");
-				const threadRecipients = String((row as any).recipients || "");
-				const allParticipants = `${threadSenders},${threadRecipients}`;
-				if (!allParticipants.includes(normalizedSender)) {
+				// Exact address match: a substring test let a@x.com join aa@x.com's thread.
+				const participants = new Set(
+					`${(row as any).senders || ""},${(row as any).recipients || ""}`
+						.split(",")
+						.map((p) => (p.match(/<([^>]+)>/)?.[1] ?? p).trim().toLowerCase())
+						.filter(Boolean),
+				);
+				if (!participants.has(normalizedSender)) {
 					continue;
 				}
 			}
@@ -2342,33 +2467,32 @@ export class MailboxDO extends DurableObject<Env> {
 	// ── Rate limiting (raw SQL) ────────────────────────────────────
 
 	/**
-	 * Check if the mailbox has exceeded the send rate limit.
-	 * Limits: 20 emails per hour, 100 per day per mailbox.
-	 * Returns null if under limit, or an error message string if exceeded.
+	 * Send rate limit: 20 per hour, 100 per day per mailbox. When under the limit
+	 * this also reserves the slot (check + insert run without awaiting, so two
+	 * concurrent sends can't both pass). Returns an error message when exceeded.
 	 */
 	async checkSendRateLimit(): Promise<string | null> {
-		const hourRow = [...this.ctx.storage.sql.exec(
-			`SELECT COUNT(*) as cnt FROM emails
-			 WHERE folder_id = ?1
-			   AND date >= datetime('now', '-1 hour')`,
-			Folders.SENT,
-		)][0] as { cnt: number } | undefined;
+		const now = Date.now();
+		const hourAgo = new Date(now - 60 * 60 * 1000).toISOString();
+		const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+		const count = (since: string) =>
+			([...this.ctx.storage.sql.exec(
+				`SELECT COUNT(*) as cnt FROM send_log WHERE sent_at >= ?1`,
+				since,
+			)][0] as { cnt: number } | undefined)?.cnt ?? 0;
 
-		if ((hourRow?.cnt ?? 0) >= 20) {
+		if (count(hourAgo) >= 20) {
 			return "Rate limit exceeded: max 20 emails per hour per mailbox";
 		}
-
-		const dayRow = [...this.ctx.storage.sql.exec(
-			`SELECT COUNT(*) as cnt FROM emails
-			 WHERE folder_id = ?1
-			   AND date >= datetime('now', '-1 day')`,
-			Folders.SENT,
-		)][0] as { cnt: number } | undefined;
-
-		if ((dayRow?.cnt ?? 0) >= 100) {
+		if (count(dayAgo) >= 100) {
 			return "Rate limit exceeded: max 100 emails per day per mailbox";
 		}
 
+		this.ctx.storage.sql.exec(`DELETE FROM send_log WHERE sent_at < ?1`, dayAgo);
+		this.ctx.storage.sql.exec(
+			`INSERT INTO send_log (sent_at) VALUES (?1)`,
+			new Date(now).toISOString(),
+		);
 		return null;
 	}
 
@@ -2499,6 +2623,7 @@ export class MailboxDO extends DurableObject<Env> {
 						: email.auth,
 				),
 				alias_id: email.alias_id ?? null,
+				source: email.source ?? null,
 			})
 			.run();
 
@@ -2538,6 +2663,9 @@ export class MailboxDO extends DurableObject<Env> {
 			auth: typeof email.auth === "string"
 				? parseStoredEmailAuth(email.auth)
 				: email.auth ?? null,
+			// iOS decodes the full Email model from this event; it requires these.
+			reply_later: false,
+			alias_id: email.alias_id ?? null,
 		});
 	}
 
@@ -2598,17 +2726,46 @@ export class MailboxDO extends DurableObject<Env> {
 
 	// ── Push Notification Device Tokens ────────────────────────────
 
-	async registerDeviceToken(token: string, platform = "ios") {
+	async registerDeviceToken(token: string, platform = "ios", ownerKeys: string[] = []) {
+		const owners = ownerKeys.length > 0 ? JSON.stringify(ownerKeys) : null;
 		this.ctx.storage.sql.exec(
-			`INSERT INTO device_tokens (token, platform, updated_at)
-			 VALUES (?, ?, datetime('now'))
+			`INSERT INTO device_tokens (token, platform, owner_keys, updated_at)
+			 VALUES (?, ?, ?, datetime('now'))
 			 ON CONFLICT(token) DO UPDATE SET
 			   platform = excluded.platform,
+			   owner_keys = COALESCE(excluded.owner_keys, device_tokens.owner_keys),
 			   updated_at = datetime('now');`,
 			token,
 			platform,
+			owners,
 		);
 		return { status: "registered" };
+	}
+
+	/**
+	 * Drop push tokens registered by principals no longer on the ACL. Tokens from
+	 * before owners were recorded are kept; apps re-register on launch.
+	 */
+	async pruneDeviceTokensToAcl(aclKeys: string[]): Promise<number> {
+		const allowed = new Set(aclKeys);
+		let removed = 0;
+		const rows = [
+			...this.ctx.storage.sql.exec(`SELECT token, owner_keys FROM device_tokens`),
+		] as { token: string; owner_keys: string | null }[];
+		for (const row of rows) {
+			if (!row.owner_keys) continue;
+			let keys: string[] = [];
+			try {
+				keys = JSON.parse(row.owner_keys) as string[];
+			} catch {
+				continue;
+			}
+			if (!keys.some((k) => allowed.has(k))) {
+				this.ctx.storage.sql.exec(`DELETE FROM device_tokens WHERE token = ?`, row.token);
+				removed++;
+			}
+		}
+		return removed;
 	}
 
 	async unregisterDeviceToken(token: string) {

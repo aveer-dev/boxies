@@ -8,6 +8,7 @@
 
 import { normalizeEmailAddress } from "./mail-automations.ts";
 import { canonicalMailboxId } from "./mailbox-routing.ts";
+import { listAllR2Objects } from "./r2-list.ts";
 
 export const PLATFORM_INVITES_PREFIX = "platform/invites/";
 export const PLATFORM_INVITES_BY_MAILBOX_PREFIX = "platform/invites-by-mailbox/";
@@ -166,7 +167,7 @@ export async function listInviteTokensForMailbox(
 ): Promise<string[]> {
 	const id = canonicalMailboxId(mailboxId) ?? mailboxId;
 	const prefix = `${PLATFORM_INVITES_BY_MAILBOX_PREFIX}${id}/`;
-	const listed = await bucket.list({ prefix });
+	const listed = { objects: await listAllR2Objects(bucket, prefix) };
 	const tokens: string[] = [];
 	for (const obj of listed.objects) {
 		const token = obj.key.slice(prefix.length).replace(/\.json$/, "");

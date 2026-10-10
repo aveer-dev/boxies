@@ -4,6 +4,7 @@
 
 import { principalKeys, type RequestPrincipal } from "./mailbox-acl";
 import { aliasMetadataKey, canonicalMailboxId } from "./mailbox-routing";
+import { listAllR2Objects } from "./r2-list";
 
 export interface DomainRegistrationInfo {
 	provider: "cloudflare_registrar" | "external";
@@ -92,7 +93,7 @@ export async function deleteDomainMetadata(
 export async function listAllRegisteredDomains(
 	bucket: R2Bucket,
 ): Promise<DomainMetadata[]> {
-	const listed = await bucket.list({ prefix: DOMAINS_PREFIX });
+	const listed = { objects: await listAllR2Objects(bucket, DOMAINS_PREFIX) };
 	const results: DomainMetadata[] = [];
 
 	for (const object of listed.objects) {

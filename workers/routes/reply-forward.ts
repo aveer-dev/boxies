@@ -24,6 +24,7 @@ import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
 import { allowOutboundRecipients } from "../lib/sender-triage";
+import { resolveAliasFrom } from "../lib/alias-utils";
 
 type AppContext = Context<MailboxContext>;
 type RateLimitStub = { checkSendRateLimit: () => Promise<string | null> };
@@ -32,7 +33,7 @@ export async function handleReplyEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { cc, bcc, from, subject, html, text, attachments } = body;
+	const { cc, bcc, subject, html, text, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -42,22 +43,14 @@ export async function handleReplyEmail(c: AppContext) {
 	}
 
 	const originalEmail = await resolveOriginalEmail(stub, rawOriginal);
+	// Replies to mail received on a private alias go out from that alias.
+	const { from, allowedSenders } = await resolveAliasFrom(stub as any, {
+		mailboxId,
+		requestedFrom: body.from,
+		originalAliasId: (originalEmail as { alias_id?: string | null }).alias_id,
+	});
 	const { originalMsgId, references, threadId: thread_id } = buildReferencesChain(originalEmail);
 	const to = rewriteSelfReplyTo(body.to, originalEmail, mailboxId);
-
-	const candidateFrom = (typeof from === "string" ? from : from?.email)?.toLowerCase();
-	let allowedSenders: string[] | undefined;
-	if (candidateFrom && candidateFrom !== mailboxId.toLowerCase()) {
-		const alias = await (stub as any).getAlias(candidateFrom);
-		if (alias && alias.is_active) {
-			allowedSenders = [candidateFrom];
-		}
-	} else if ((originalEmail as any).alias_id) {
-		const alias = await (stub as any).getAlias((originalEmail as any).alias_id);
-		if (alias && alias.is_active) {
-			allowedSenders = [alias.alias_email.toLowerCase()];
-		}
-	}
 
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
@@ -149,7 +142,7 @@ export async function handleForwardEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments } = body;
+	const { to, cc, bcc, subject, html, text, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -159,10 +152,15 @@ export async function handleForwardEmail(c: AppContext) {
 	}
 
 	await resolveOriginalEmail(stub, rawOriginal);
+	// Forwarding may be sent from an alias when asked; it is never forced.
+	const { from, allowedSenders } = await resolveAliasFrom(stub as any, {
+		mailboxId,
+		requestedFrom: body.from,
+	});
 
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId));
+		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId, allowedSenders));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;

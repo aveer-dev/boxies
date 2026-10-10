@@ -21,6 +21,10 @@ export interface DomainPricingBreakdown {
 		domain: string;
 		aiAndPlatform: string[];
 	};
+	/** Same as domainFeeUsd / billingInterval: the names the iOS & Android models decode. */
+	domainWholesaleUsd: number;
+	interval: "year";
+	lineItems: { name: string; description: string; amountUsd: number }[];
 }
 
 export interface DomainAvailabilityResult {
@@ -117,10 +121,24 @@ export function computeDomainPricing(wholesalePrice: number): DomainPricingBreak
 
 	return {
 		domainFeeUsd: domainFee,
+		domainWholesaleUsd: domainFee,
 		platformFeeUsd,
 		totalAnnualUsd,
 		billingInterval: "year",
+		interval: "year",
 		currency: "USD",
+		lineItems: [
+			{
+				name: "Domain registration",
+				description: "1-year registration at the wholesale ICANN price via Cloudflare Registrar",
+				amountUsd: domainFee,
+			},
+			{
+				name: "Inboxies platform, AI & infrastructure",
+				description: "AI email agent, sync, storage, DNS and email security",
+				amountUsd: platformFeeUsd,
+			},
+		],
 		features: {
 			domain: "1-year domain registration & wholesale ICANN fee via Cloudflare Registrar",
 			aiAndPlatform: [
