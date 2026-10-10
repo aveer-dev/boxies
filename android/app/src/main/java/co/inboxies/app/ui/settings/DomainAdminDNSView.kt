@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import android.content.Intent
 import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.File
 import android.view.HapticFeedbackConstants
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -1627,9 +1629,10 @@ private fun DomainExportDialog(
     var currentJob by remember { mutableStateOf<ExportJob?>(null) }
     var isStarting by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isDownloading by remember { mutableStateOf(false) }
 
-    LaunchedEffect(currentJob?.id) {
-        val jobId = currentJob?.id ?: return@LaunchedEffect
+    LaunchedEffect(currentJob?.resolvedId) {
+        val jobId = currentJob?.resolvedId?.takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
         while (true) {
             delay(1500)
             try {
@@ -1836,10 +1839,39 @@ private fun DomainExportDialog(
 
                             Button(
                                 onClick = {
-                                    val downloadUrl = ApiClient.shared.exportDownloadUrl(job.id)
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl))
-                                    context.startActivity(intent)
+                                    if (isDownloading) return@Button
+                                    isDownloading = true
+                                    errorMessage = null
+                                    scope.launch {
+                                        try {
+                                            // Authenticated download into cache/exports, then hand the
+                                            // file to the share sheet (Files, Drive, email…).
+                                            val exportId = job.resolvedId
+                                            val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+                                            dir.listFiles()?.forEach { it.delete() }
+                                            val file = File(dir, "inboxies-export-$exportId.mbox")
+                                            ApiClient.shared.downloadExport(exportId, file)
+                                            val uri = FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                file,
+                                            )
+                                            val send = Intent(Intent.ACTION_SEND).apply {
+                                                type = "application/mbox"
+                                                putExtra(Intent.EXTRA_STREAM, uri)
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(
+                                                Intent.createChooser(send, "Save export"),
+                                            )
+                                        } catch (e: Exception) {
+                                            errorMessage = e.message ?: "Couldn't download export"
+                                        } finally {
+                                            isDownloading = false
+                                        }
+                                    }
                                 },
+                                enabled = !isDownloading,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = colors.accent,
                                     contentColor = Color.White,
@@ -1849,9 +1881,21 @@ private fun DomainExportDialog(
                                     .fillMaxWidth()
                                     .height(40.dp),
                             ) {
-                                Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                if (isDownloading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = Color.White,
+                                    )
+                                } else {
+                                    Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
                                 Spacer(Modifier.width(8.dp))
-                                Text("Download .mbox Archive", fontFamily = InterFontFamily, fontSize = 14.sp)
+                                Text(
+                                    if (isDownloading) "Downloading…" else "Download .mbox Archive",
+                                    fontFamily = InterFontFamily,
+                                    fontSize = 14.sp,
+                                )
                             }
 
                             Text(

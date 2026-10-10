@@ -190,7 +190,9 @@ object PreviewSupport {
             date = "2026-09-03T14:30:00.000Z",
             read = false,
             starred = false,
-            body = "<p>Can we move Thursday's sync to the morning instead?</p>",
+            // Remote pixel exercises the "Load images" bar in DEBUG previews.
+            body = "<p>Can we move Thursday's sync to the morning instead?</p>" +
+                "<img src=\"https://example.com/pixel.gif\" width=\"1\" height=\"1\" alt=\"\">",
             snippet = "Can we move Thursday's sync to the morning instead?",
             threadCount = 3,
             listSection = "new",

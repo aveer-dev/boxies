@@ -319,12 +319,95 @@ class ComposeFormModel(
         }
     }
 
+    /** (draftId, threadId, originalEmailId, subject, bodyHtml, recipients) after a server save. */
+    var onDraftSaved: ((String, String?, String?, String, String, String) -> Unit)? = null
+
+    /** (draftId, threadId, originalEmailId) after the server copy is removed. */
+    var onDraftDeleted: ((String, String?, String?) -> Unit)? = null
+
+    private var lastSavedSnapshot: String? = null
+
+    private val currentSnapshot: String
+        get() = listOf(
+            fromMailboxId,
+            fromEmail,
+            toJoined(),
+            ccJoined(),
+            bccJoined(),
+            subject,
+            outgoingHtml(),
+        ).joinToString("\u0000")
+
+    /**
+     * POST /drafts (mirrors iOS ComposeFormModel.performSaveDraft). Sends `draft_id`
+     * once the server has assigned one so repeat saves update in place. Callers show
+     * the "Draft saved" toast only for explicit saves; returns false on failure with
+     * [errorMessage] set.
+     */
     suspend fun saveDraft(explicit: Boolean = true): Boolean {
         cancelAutoSave()
         commitPendingTokens()
         if (isEmpty) return true
-        if (explicit) showToast("Draft saved")
-        return true
+        val snapshot = currentSnapshot
+        if (draftId != null && snapshot == lastSavedSnapshot) return true
+        // A save is already in flight; the next minimize/explicit save picks up any delta.
+        if (isSavingDraft) return true
+
+        // DEBUG preview fixtures (mailbox ids `mb-*`) never hit the network.
+        if (fromMailboxId.startsWith("mb-")) {
+            if (draftId == null) draftId = UUID.randomUUID().toString()
+            lastSavedSnapshot = snapshot
+            return true
+        }
+
+        isSavingDraft = true
+        saveStatus = DraftSaveStatus.Saving
+        errorMessage = null
+        try {
+            val payload = buildJsonObject {
+                put("body", outgoingHtml())
+                if (toTokens.isNotEmpty()) put("to", toJoined())
+                if (ccTokens.isNotEmpty()) put("cc", ccJoined())
+                if (bccTokens.isNotEmpty()) put("bcc", bccJoined())
+                if (subject.isNotEmpty()) put("subject", subject)
+                originalEmailId?.let { put("in_reply_to", it) }
+                threadId?.let { put("thread_id", it) }
+                draftId?.let { put("draft_id", it) }
+            }
+            val saved = ApiClient.shared.saveDraft(fromMailboxId, payload)
+            val resolved = saved.resolvedId.ifEmpty { draftId.orEmpty() }
+            if (isSending) {
+                // Send won the race — drop the copy this save just wrote.
+                if (resolved.isNotEmpty() && resolved != draftId) {
+                    runCatching { ApiClient.shared.deleteEmail(fromMailboxId, resolved) }
+                }
+                return false
+            }
+            if (resolved.isNotEmpty()) {
+                draftId = resolved
+                lastSavedSnapshot = snapshot
+                onDraftSaved?.invoke(resolved, threadId, originalEmailId, subject, outgoingHtml(), toJoined())
+            }
+            return true
+        } catch (e: Exception) {
+            errorMessage = e.message ?: "Failed to save draft"
+            return false
+        } finally {
+            isSavingDraft = false
+            saveStatus = DraftSaveStatus.Idle
+        }
+    }
+
+    /** Remove the server copy (after a successful send, or "Delete Draft"). */
+    suspend fun deleteSavedDraft() {
+        cancelAutoSave()
+        val id = draftId?.takeIf { it.isNotEmpty() } ?: return
+        if (fromMailboxId.startsWith("mb-")) return
+        runCatching { ApiClient.shared.deleteEmail(fromMailboxId, id) }
+            .onSuccess {
+                draftId = null
+                onDraftDeleted?.invoke(id, threadId, originalEmailId)
+            }
     }
 
     fun scheduleAutoSave(onSave: () -> Unit) {

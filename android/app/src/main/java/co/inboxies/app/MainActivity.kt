@@ -44,13 +44,20 @@ class MainActivity : ComponentActivity() {
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }
-        val auth = (application as InboxiesApplication).authStore
-        appModel = AppModel()
+        val app = application as InboxiesApplication
+        val auth = app.authStore
+        appModel = app.appModel
         val model = appModel
         val previewMode = PreviewMode.fromIntent(intent)
+        val isRecreation = savedInstanceState != null
         if (previewMode != null) {
-            PreviewHarness.seed(previewMode, auth, model)
-        } else {
+            // Re-seed only on a cold start (or after process death); a config change
+            // keeps the already-seeded app-scoped model.
+            if (!isRecreation || !model.isDebugPreview) PreviewHarness.seed(previewMode, auth, model)
+        } else if (!isRecreation) {
+            // The process (and AppModel) can outlive a finished Activity; a cold
+            // launch should still refresh, only config-change recreation skips it.
+            model.invalidateBootstrap()
             auth.resyncFromStorage()
             // Debug-only: the launcher activity is exported, so in release any app
             // could point the API (and our Bearer token) at its own host.

@@ -383,8 +383,7 @@ fun MailboxOnboardingView(
             ) {
                 TextButton(
                     onClick = {
-                        app.reset()
-                        auth.signOut()
+                        app.signOut(auth)
                     },
                 ) {
                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
@@ -473,8 +472,7 @@ fun MailboxOnboardingView(
                         ) {
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }
@@ -717,8 +715,7 @@ fun MailboxOnboardingView(
 
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }
@@ -998,8 +995,7 @@ fun MailboxOnboardingView(
 
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }
@@ -1260,7 +1256,7 @@ fun MailboxOnboardingView(
                                 5 -> {
                                     if (domainAction == "purchase" && (availability?.available == true)) {
                                         val total = availability?.pricing?.totalAnnualUsd ?: availability?.retailPriceUsd ?: 20.0
-                                        val domainCost = availability?.pricing?.domainWholesaleUsd ?: 10.46
+                                        val domainCost = availability?.pricing?.domainUsd ?: 10.46
                                         val platformCost = availability?.pricing?.platformFeeUsd ?: (total - domainCost)
                                         OnboardingStepHeader(
                                             title = "Subscription & Fee Breakdown",
@@ -1867,8 +1863,7 @@ fun MailboxOnboardingView(
 
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }

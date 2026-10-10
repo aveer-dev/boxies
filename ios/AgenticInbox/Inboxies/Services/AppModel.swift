@@ -119,8 +119,11 @@ final class AppModel {
     }
 
     func bootstrap(authToken: String?) async {
-        let token = authToken
-        APIClient.shared.authTokenProvider = { token }
+        // AuthStore owns the shared token; this only covers callers that bootstrap
+        // with a token AuthStore has not published yet.
+        if let authToken, !authToken.isEmpty {
+            APIClient.shared.authToken = authToken
+        }
 
         // 1. Instant local read (0ms) — eliminate cold start spinners
         let cachedMailboxes = db.getMailboxes()
@@ -340,6 +343,9 @@ final class AppModel {
             }
             _ = await replyLaterTask
         } catch let error as APIError {
+            // An expired session signs out globally (RootView); never treat it as
+            // losing access to this one mailbox.
+            if case .sessionExpired = error { return }
             if case .http(let code, _) = error, code == 403 || code == 404 {
                 await dropInaccessibleMailbox(id)
                 return
@@ -1123,8 +1129,40 @@ final class AppModel {
         toastDismissTask = nil
     }
 
+    /// Every sign-out path: unregister this device's push token from each mailbox
+    /// (with the outgoing session), wipe local state, then drop the session.
+    func signOut(auth: AuthStore) {
+        PushNotificationManager.shared.unregisterAll(
+            mailboxIds: mailboxes.map(\.id),
+            sessionToken: auth.token
+        )
+        reset()
+        auth.signOut()
+    }
+
+    /// Deletes the account on the server, then cleans up like sign-out. Push tokens
+    /// are unregistered first because the session dies with the account.
+    func deleteAccount(auth: AuthStore) async throws -> DeleteAccountResponse {
+        let mailboxIds = mailboxes.map(\.id)
+        let push = PushNotificationManager.shared
+        await push.unregisterAllAndWait(mailboxIds: mailboxIds, sessionToken: auth.token)
+        do {
+            let response = try await APIClient.shared.deleteAccount()
+            reset()
+            auth.signOut()
+            return response
+        } catch {
+            // Still signed in: restore push for the mailbox on screen.
+            if let selectedMailboxId {
+                push.requestPermissionAndRegister(mailboxId: selectedMailboxId)
+            }
+            throw error
+        }
+    }
+
     func reset() {
         streamClient.stop()
+        APIClient.shared.authToken = nil
         mailboxes = []
         selectedMailboxId = nil
         folders = []

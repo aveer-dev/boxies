@@ -6,7 +6,7 @@ import Observation
 @Observable
 @MainActor
 final class AuthStore {
-    private let tokenKey = "mobileSessionToken"
+    private let tokenKey = KeychainStore.sessionTokenKey
     private let emailKey = "mobileUserEmail"
 
     var token: String?
@@ -20,6 +20,7 @@ final class AuthStore {
     init() {
         token = KeychainStore.read(tokenKey)
         userEmail = UserDefaults.standard.string(forKey: emailKey)
+        APIClient.shared.authToken = token
     }
 
     func signInWithApple(identityToken: String, email: String?) async {
@@ -105,6 +106,7 @@ final class AuthStore {
     func signOut() {
         token = nil
         userEmail = nil
+        APIClient.shared.authToken = nil
         guard persistsSession else { return }
         KeychainStore.delete(tokenKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
@@ -113,6 +115,8 @@ final class AuthStore {
     private func persist(token: String, email: String?) {
         self.token = token
         self.userEmail = email
+        // Set before any view reacts to `token`, so follow-up calls in the same flow are authed.
+        APIClient.shared.authToken = token
         guard persistsSession else { return }
         KeychainStore.write(tokenKey, value: token)
         if let email {
@@ -122,15 +126,23 @@ final class AuthStore {
 }
 
 enum KeychainStore {
+    static let sessionTokenKey = "mobileSessionToken"
+
+    /// Readable after the first unlock so background push sync works while the
+    /// device is locked.
+    private static let accessibility = kSecAttrAccessibleAfterFirstUnlock
+
     static func write(_ key: String, value: String) {
         let data = Data(value.utf8)
-        let query: [String: Any] = [
+        let match: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
-            kSecValueData as String: data,
         ]
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
+        SecItemDelete(match as CFDictionary)
+        var add = match
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = accessibility
+        SecItemAdd(add as CFDictionary, nil)
     }
 
     static func read(_ key: String) -> String? {
@@ -138,12 +150,20 @@ enum KeychainStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
+            kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        guard status == errSecSuccess,
+              let attributes = item as? [String: Any],
+              let data = attributes[kSecValueData as String] as? Data,
+              let value = String(data: data, encoding: .utf8) else { return nil }
+        // Items saved by older builds used the default (WhenUnlocked) class; re-save once.
+        if (attributes[kSecAttrAccessible as String] as? String) != (accessibility as String) {
+            write(key, value: value)
+        }
+        return value
     }
 
     static func delete(_ key: String) {

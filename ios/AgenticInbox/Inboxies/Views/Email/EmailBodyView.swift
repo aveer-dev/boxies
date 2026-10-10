@@ -16,6 +16,8 @@ struct EmailBodyView: View {
     @State private var isWebLoading = true
     @State private var isResolvingImages = false
     @State private var activeQuotedContent: QuotedMailContent? = nil
+    /// Remote images stay blocked until the reader taps "Load images" (per message).
+    @State private var allowsRemoteImages = false
 
     private var isHTML: Bool {
         htmlOrText.range(of: #"</?[a-zA-Z][^>]*>"#, options: .regularExpression) != nil
@@ -33,6 +35,20 @@ struct EmailBodyView: View {
         isHTML && (isWebLoading || webHeight <= 1)
     }
 
+    private var hasBlockedRemoteImages: Bool {
+        guard isHTML, !allowsRemoteImages else { return false }
+        let split = sanitizedSplit
+        return EmailHTMLSanitizer.containsRemoteImages(split.main)
+            || EmailHTMLSanitizer.containsRemoteImages(split.quote ?? "")
+    }
+
+    /// Opted-in policy only after "Load images"; otherwise remote `https:` images are blocked.
+    private var contentSecurityPolicy: String {
+        allowsRemoteImages
+            ? EmailHTMLSanitizer.contentSecurityPolicy
+            : EmailHTMLSanitizer.remoteImagesBlockedPolicy
+    }
+
     private var hasQuotedReplies: Bool {
         if isHTML {
             return sanitizedSplit.quote != nil
@@ -46,6 +62,11 @@ struct EmailBodyView: View {
             if isHTML {
                 if isResolvingImages && !showLoading {
                     inlineImageLoadingBar
+                }
+
+                if hasBlockedRemoteImages && !showLoading {
+                    remoteImagesBar
+                        .transition(.opacity)
                 }
 
                 ZStack(alignment: .topLeading) {
@@ -76,7 +97,11 @@ struct EmailBodyView: View {
             if hasQuotedReplies && !showLoading {
                 Button {
                     if let quote = (isHTML ? sanitizedSplit.quote : plainTextParts.quote) {
-                        activeQuotedContent = QuotedMailContent(text: quote, isHTML: isHTML)
+                        activeQuotedContent = QuotedMailContent(
+                            text: quote,
+                            isHTML: isHTML,
+                            allowsRemoteImages: allowsRemoteImages
+                        )
                     }
                 } label: {
                     GhostThreeDotButton()
@@ -98,6 +123,7 @@ struct EmailBodyView: View {
         }
         .onChange(of: emailId) { _, _ in
             activeQuotedContent = nil
+            allowsRemoteImages = false
             webHeight = 1
             isWebLoading = true
         }
@@ -105,9 +131,41 @@ struct EmailBodyView: View {
             QuotedRepliesModalView(
                 content: quoted.text,
                 isHTML: quoted.isHTML,
-                attachments: attachments
+                attachments: attachments,
+                allowsRemoteImages: quoted.allowsRemoteImages
             )
         }
+    }
+
+    /// Web parity: remote images are opt-in per message.
+    private var remoteImagesBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "photo")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AppTheme.muted)
+            Text("Remote images are hidden")
+                .font(.inter(size: 12, weight: .medium))
+                .foregroundStyle(AppTheme.muted)
+            Text("·")
+                .font(.inter(size: 12, weight: .medium))
+                .foregroundStyle(AppTheme.muted)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                    allowsRemoteImages = true
+                }
+            } label: {
+                Text("Load images")
+                    .font(.inter(size: 12, weight: .semibold))
+                    .foregroundStyle(AppTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Loads images from the sender's servers for this message")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(AppTheme.pillFill)
+        .clipShape(Capsule())
     }
 
     private var inlineImageLoadingBar: some View {
@@ -199,7 +257,7 @@ struct EmailBodyView: View {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="\(EmailHTMLSanitizer.contentSecurityPolicy)">
+        <meta http-equiv="Content-Security-Policy" content="\(contentSecurityPolicy)">
         <style>
           :root { color-scheme: light dark; }
           html, body {
@@ -553,6 +611,7 @@ struct QuotedMailContent: Identifiable {
     let id = UUID()
     let text: String
     let isHTML: Bool
+    var allowsRemoteImages = false
 }
 
 /// Horizontal three-dot toggle button with ghost styling.
@@ -600,6 +659,7 @@ struct QuotedRepliesModalView: View {
     let content: String
     let isHTML: Bool
     var attachments: [Attachment] = []
+    var allowsRemoteImages = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -632,7 +692,7 @@ struct QuotedRepliesModalView: View {
                 AppTheme.background.ignoresSafeArea()
 
                 if isHTML {
-                    QuotedHTMLFullView(html: content)
+                    QuotedHTMLFullView(html: content, allowsRemoteImages: allowsRemoteImages)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
@@ -660,6 +720,7 @@ struct QuotedRepliesModalView: View {
 /// Full scrollable web view for quoted HTML in a modal.
 private struct QuotedHTMLFullView: UIViewRepresentable {
     let html: String
+    var allowsRemoteImages = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -683,9 +744,9 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        guard context.coordinator.loadedHTML != html else { return }
-        context.coordinator.loadedHTML = html
         let fullHTML = wrapQuotedHTML(html)
+        guard context.coordinator.loadedHTML != fullHTML else { return }
+        context.coordinator.loadedHTML = fullHTML
         webView.loadHTMLString(fullHTML, baseURL: EmailHTMLSanitizer.opaqueOrigin)
     }
 
@@ -712,13 +773,16 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
 
     private func wrapQuotedHTML(_ bodyContent: String) -> String {
         let sanitized = EmailHTMLSanitizer.sanitize(bodyContent)
+        let contentSecurityPolicy = allowsRemoteImages
+            ? EmailHTMLSanitizer.contentSecurityPolicy
+            : EmailHTMLSanitizer.remoteImagesBlockedPolicy
         return """
         <!DOCTYPE html>
         <html>
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="\(EmailHTMLSanitizer.contentSecurityPolicy)">
+        <meta http-equiv="Content-Security-Policy" content="\(contentSecurityPolicy)">
         <style>
           :root { color-scheme: light dark; }
           html, body {
@@ -782,6 +846,9 @@ enum HTMLHardenFixture {
       <a href="javascript:alert(1)">javascript alert</a>
       <a href="https://inboxies.invalid/stay">opaque origin</a>
       <img src="x" onerror="alert(1)">
+    </p>
+    <p>Remote image (hidden until "Load images"):
+      <img src="https://example.com/pixel.gif" width="1" height="1" alt="">
     </p>
     <script>document.title = "xss"</script>
     <blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em;">

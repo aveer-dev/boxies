@@ -1,7 +1,18 @@
 package co.inboxies.app.models
 
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonDecoder
+import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -818,12 +829,14 @@ data class DraftSaveResponse(
     val resolvedId: String get() = id ?: draftId ?: ""
 }
 
+/** Registry rows are camelCase on the Worker; snake_case still decodes for older builds. */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AgentConversation(
     val id: String,
     val title: String = "",
-    @SerialName("created_at") val createdAt: String = "",
-    @SerialName("updated_at") val updatedAt: String = "",
+    @JsonNames("created_at") val createdAt: String = "",
+    @JsonNames("updated_at") val updatedAt: String = "",
     val lastMessagePreview: String? = null,
 )
 
@@ -1140,13 +1153,19 @@ data class DomainPricingLineItem(
 
 @Serializable
 data class DomainPricingBreakdown(
-    val domainWholesaleUsd: Double,
-    val platformFeeUsd: Double,
-    val totalAnnualUsd: Double,
+    /** Registrar fee the user pays for the domain (preferred over [domainWholesaleUsd]). */
+    val domainFeeUsd: Double? = null,
+    val domainWholesaleUsd: Double? = null,
+    val platformFeeUsd: Double = 0.0,
+    val totalAnnualUsd: Double = 0.0,
     val currency: String = "usd",
+    val billingInterval: String? = null,
     val interval: String = "year",
     val lineItems: List<DomainPricingLineItem> = emptyList(),
-)
+) {
+    val domainUsd: Double? get() = domainFeeUsd ?: domainWholesaleUsd
+    val resolvedInterval: String get() = billingInterval ?: interval
+}
 
 @Serializable
 data class DomainAvailabilityResponse(
@@ -1181,7 +1200,8 @@ data class ExportJobProgress(
 
 @Serializable
 data class ExportJob(
-    val id: String,
+    val id: String = "",
+    val exportId: String? = null,
     val domain: String? = null,
     val mailboxId: String? = null,
     val status: String = "pending",
@@ -1192,7 +1212,9 @@ data class ExportJob(
     val expiresAt: String? = null,
     val createdAt: String? = null,
     val error: String? = null,
-)
+) {
+    val resolvedId: String get() = id.ifEmpty { exportId.orEmpty() }
+}
 
 @Serializable
 data class DecommissionLastExport(
@@ -1231,7 +1253,7 @@ data class DomainEppCodeResponse(
 
 @Serializable
 data class DomainTransferLockResponse(
-    val success: Boolean,
+    val success: Boolean = true,
     val domain: String,
     val locked: Boolean,
 )
@@ -1259,10 +1281,11 @@ data class DomainAliasesResponse(
 @Serializable
 data class MaskedAlias(
     val id: String,
-    @SerialName("mailbox_id") val mailboxId: String,
+    @SerialName("mailbox_id") val mailboxId: String? = null,
     @SerialName("alias_email") val aliasEmail: String,
     val label: String? = null,
     val notes: String? = null,
+    @Serializable(with = LenientBooleanSerializer::class)
     @SerialName("is_active") val isActive: Boolean = true,
     @SerialName("expires_at") val expiresAt: String? = null,
     @SerialName("paused_action") val pausedAction: String = "drop",
@@ -1297,6 +1320,30 @@ data class UpdateAliasRequest(
     @SerialName("paused_action") val pausedAction: String? = null,
 )
 
+@Serializable
+data class DeleteAccountResponse(
+    val ok: Boolean = false,
+    val deletedMailboxes: List<String> = emptyList(),
+    val leftMailboxes: List<String> = emptyList(),
+)
 
+@Serializable
+data class EmptyTrashResponse(
+    val deleted: Int = 0,
+)
 
+/** Decodes `true`/`false`, SQLite-style `1`/`0`, or their string forms. */
+object LenientBooleanSerializer : KSerializer<Boolean> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("co.inboxies.LenientBoolean", PrimitiveKind.BOOLEAN)
 
+    override fun serialize(encoder: Encoder, value: Boolean) = encoder.encodeBoolean(value)
+
+    override fun deserialize(decoder: Decoder): Boolean {
+        val element = (decoder as? JsonDecoder)?.decodeJsonElement() ?: return decoder.decodeBoolean()
+        val primitive = element as? JsonPrimitive ?: return false
+        primitive.booleanOrNull?.let { return it }
+        primitive.doubleOrNull?.let { return it != 0.0 }
+        return primitive.content.equals("true", ignoreCase = true)
+    }
+}

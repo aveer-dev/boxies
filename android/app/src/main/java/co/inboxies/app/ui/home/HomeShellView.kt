@@ -1,9 +1,12 @@
 package co.inboxies.app.ui.home
 
+import android.Manifest
 import android.os.Build
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -113,6 +116,7 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
+import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.theme.AvatarInitials
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
@@ -203,6 +207,23 @@ fun HomeShellView(
     LaunchedEffect(Unit) {
         if (!appModel.isDebugPreview) {
             appModel.refreshReplyLaterCount()
+        }
+    }
+
+    // POST_NOTIFICATIONS is a runtime permission (minSdk 34): ask once the user has
+    // a mailbox to register for, then register the FCM token if granted.
+    val selectedMailboxId by appModel.selectedMailboxId.collectAsState()
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        PushNotificationManager.shared.onPermissionResult(granted, appModel.selectedMailboxId.value)
+    }
+    LaunchedEffect(selectedMailboxId) {
+        if (selectedMailboxId == null || appModel.isDebugPreview) return@LaunchedEffect
+        val push = PushNotificationManager.shared
+        if (push.shouldPromptForPermission()) {
+            push.markPermissionPrompted()
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -396,8 +417,7 @@ fun HomeShellView(
                             },
                             onSignOut = {
                                 showMailboxMenu = false
-                                auth.signOut()
-                                appModel.reset()
+                                appModel.signOut(auth)
                             },
                         )
                     }

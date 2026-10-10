@@ -4,10 +4,29 @@ import SwiftSoup
 /// Native analogue of web `EmailIframe` DOMPurify options:
 /// HTML profile, forbid `<style>` tags, keep `target` on links.
 enum EmailHTMLSanitizer {
+    /// Policy once the reader taps "Load images" (same as web's opted-in policy).
     static let contentSecurityPolicy =
         "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'"
 
+    /// Default policy: remote images stay blocked (tracking pixels, read receipts)
+    /// until the reader opts in; inline `data:` / `cid:` images still render.
+    static let remoteImagesBlockedPolicy =
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'unsafe-inline'"
+
     static let opaqueOrigin = URL(string: "https://inboxies.invalid/")!
+
+    private static let remoteImageReference = try? NSRegularExpression(
+        pattern: #"(?:\bsrc|\bbackground)\s*=\s*["']?\s*(?:https:)?//|url\(\s*["']?\s*(?:https:)?//"#,
+        options: [.caseInsensitive]
+    )
+
+    /// True when sanitized HTML references images the default policy would block
+    /// (`https:` or protocol-relative, which resolves to https on the opaque origin).
+    static func containsRemoteImages(_ html: String) -> Bool {
+        guard let remoteImageReference, !html.isEmpty else { return false }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return remoteImageReference.firstMatch(in: html, range: range) != nil
+    }
 
     struct SplitBody {
         let main: String

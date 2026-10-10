@@ -45,9 +45,11 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ForwardToInbox
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PersonRemove
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -67,6 +69,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
+import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.SignatureSettings
 import co.inboxies.app.services.PushNotificationManager
@@ -119,7 +122,8 @@ fun SettingsSheetView(
 
     val push = PushNotificationManager.shared
     var notificationsEnabled by remember {
-        mutableStateOf(push.isNotificationsEnabled())
+        // Off until the OS permission is granted, not just the stored preference.
+        mutableStateOf(push.isEffectivelyEnabled())
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -322,6 +326,10 @@ private fun SettingsRootPage(
     var showEditName by remember { mutableStateOf(false) }
     var editNameDraft by remember { mutableStateOf("") }
     var showDeleteMenu by remember { mutableStateOf(false) }
+    var showDeleteAccount by remember { mutableStateOf(false) }
+    var isDeletingAccount by remember { mutableStateOf(false) }
+    var deleteAccountError by remember { mutableStateOf<String?>(null) }
+    val auth = LocalAuthStore.current
     var loadingSignInMethods by remember { mutableStateOf(false) }
     var loadingDomainAdmin by remember { mutableStateOf(false) }
 
@@ -564,6 +572,17 @@ private fun SettingsRootPage(
                 onClick = onOpenSupport,
             )
 
+            SettingsSectionHeader("Account")
+            SettingsActionRow(
+                title = "Delete account",
+                icon = Icons.Outlined.PersonRemove,
+                destructive = true,
+                onClick = {
+                    deleteAccountError = null
+                    showDeleteAccount = true
+                },
+            )
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -649,6 +668,85 @@ private fun SettingsRootPage(
             },
         )
     }
+
+    if (showDeleteAccount) {
+        DeleteAccountDialog(
+            isDeleting = isDeletingAccount,
+            error = deleteAccountError,
+            onConfirm = {
+                isDeletingAccount = true
+                deleteAccountError = null
+                scope.launch {
+                    try {
+                        // Unregisters push, deletes server-side, clears the local cache, signs out.
+                        app.deleteAccount(auth)
+                        showDeleteAccount = false
+                        onClose()
+                    } catch (e: Exception) {
+                        deleteAccountError = e.message ?: "Couldn't delete account"
+                    } finally {
+                        isDeletingAccount = false
+                    }
+                }
+            },
+            onDismiss = { showDeleteAccount = false },
+        )
+    }
+}
+
+@Composable
+private fun DeleteAccountDialog(
+    isDeleting: Boolean,
+    error: String?,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    AlertDialog(
+        onDismissRequest = { if (!isDeleting) onDismiss() },
+        title = {
+            Text("Delete account?", fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "This permanently deletes your Inboxies account and signs you out on this device.",
+                    fontFamily = InterFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.ink,
+                )
+                Text(
+                    "Mailboxes you are the only owner of — and all of their mail — are deleted. " +
+                        "Mailboxes shared with other owners stay with them; you just lose access. " +
+                        "This can't be undone.",
+                    fontFamily = InterFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.muted,
+                )
+                if (error != null) {
+                    Text(error, fontFamily = InterFontFamily, fontSize = 12.sp, color = colors.deepDarkRed)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = !isDeleting) {
+                if (isDeleting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = colors.deepDarkRed,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Text("Delete account", fontFamily = InterFontFamily, color = colors.deepDarkRed)
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isDeleting) {
+                Text("Cancel", fontFamily = InterFontFamily)
+            }
+        },
+    )
 }
 
 private fun mailboxDisplayName(mailbox: Mailbox?): String {

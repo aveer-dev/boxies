@@ -19,6 +19,7 @@
 		2EC70370129F423785536DB2 /* Services/AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010262344D5842BD893A671C /* Services/AppModel.swift */; };
 		340C18C527B44FD1B96E612C /* Services/AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43432D294A6A4E8886288B5C /* Services/AuthStore.swift */; };
 		3678C00ABE92E13F67C2AF29 /* SearchQueryParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B993BD164ECE844C8F497E29 /* SearchQueryParserTests.swift */; };
+		C4E1A7B20000000000000003 /* ClientContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4E1A7B20000000000000004 /* ClientContractTests.swift */; };
 		36FD2CCDC03848B0B12D0871 /* InboxiesApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CA5A54FAAA74727A76C3CC2 /* InboxiesApp.swift */; };
 		3DFE9829C1A91D111C5C4FFD /* Views/Settings/ThemeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2D50AE4A35F064918C6153F /* Views/Settings/ThemeSettingsView.swift */; };
 		411FB5F3E3824817A4909D02 /* Views/Email/EmailDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68CBCACD0F1941F796F4F461 /* Views/Email/EmailDetailView.swift */; };
@@ -76,6 +77,7 @@
 		F2A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift */; };
 		F2A1B2C3D4E5478990ABCD05 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A1B2C3D4E5478990ABCD05 /* AppDelegate.swift */; };
 		F2A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift */; };
+		C4E1A7B20000000000000001 /* Services/PaymentCallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4E1A7B20000000000000002 /* Services/PaymentCallback.swift */; };
 		F3A1B2C3D4E5478990ABCD12 /* Services/EmailHTMLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A1B2C3D4E5478990ABCD11 /* Services/EmailHTMLSanitizer.swift */; };
 		F3A1B2C3D4E5478990ABCD15 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = F3A1B2C3D4E5478990ABCD14 /* SwiftSoup */; };
 /* End PBXBuildFile section */
@@ -136,6 +138,7 @@
 		B572B6236F2243868CCEFD07 /* Views/Email/EmailBodyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/EmailBodyView.swift; sourceTree = "<group>"; };
 		B7BDA4C7494146D8B2557D10 /* Views/Auth/SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Auth/SignInView.swift; sourceTree = "<group>"; };
 		B993BD164ECE844C8F497E29 /* SearchQueryParserTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SearchQueryParserTests.swift; sourceTree = "<group>"; };
+		C4E1A7B20000000000000004 /* ClientContractTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ClientContractTests.swift; sourceTree = "<group>"; };
 		C2D3E4F5A6478990ABCD20 /* Views/Settings/DomainAdminSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/DomainAdminSettingsView.swift; sourceTree = "<group>"; };
 		C2D3E4F5A6478990ABCD21 /* Views/Settings/DomainAdminDNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/DomainAdminDNSView.swift; sourceTree = "<group>"; };
 		C2D3E4F5A6478990ABCD22 /* Views/Splash/SplashScreenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Splash/SplashScreenView.swift; sourceTree = "<group>"; };
@@ -161,6 +164,7 @@
 		F1A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/RealTimeStreamClient.swift; sourceTree = "<group>"; };
 		F1A1B2C3D4E5478990ABCD05 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		F1A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/PushNotificationManager.swift; sourceTree = "<group>"; };
+		C4E1A7B20000000000000002 /* Services/PaymentCallback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/PaymentCallback.swift; sourceTree = "<group>"; };
 		F3A1B2C3D4E5478990ABCD11 /* Services/EmailHTMLSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/EmailHTMLSanitizer.swift; sourceTree = "<group>"; };
 		F444315A11E44D83826E7D65 /* Inboxies.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Inboxies.entitlements; sourceTree = "<group>"; };
 		F5D715022CEE90FF4B7CB680 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
@@ -260,6 +264,7 @@
 				F1A1B2C3D4E5478990ABCD03 /* Services/OutboxQueueWorker.swift */,
 				F1A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift */,
 				F1A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift */,
+				C4E1A7B20000000000000002 /* Services/PaymentCallback.swift */,
 				A1B2C3D4E5F6478990ABCD01 /* Services/SwipeActionPreferences.swift */,
 				A1B2C3D4E5F6478990ABCD02 /* Services/EmailActionExecutor.swift */,
 				28CDA4BA87F547B6A4A0DD65 /* Theme/AppTheme.swift */,
@@ -319,6 +324,7 @@
 			isa = PBXGroup;
 			children = (
 				B993BD164ECE844C8F497E29 /* SearchQueryParserTests.swift */,
+				C4E1A7B20000000000000004 /* ClientContractTests.swift */,
 			);
 			path = InboxiesTests;
 			sourceTree = "<group>";
@@ -433,6 +439,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3678C00ABE92E13F67C2AF29 /* SearchQueryParserTests.swift in Sources */,
+				C4E1A7B20000000000000003 /* ClientContractTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -460,6 +467,7 @@
 				F2A1B2C3D4E5478990ABCD03 /* Services/OutboxQueueWorker.swift in Sources */,
 				F2A1B2C3D4E5478990ABCD04 /* Services/RealTimeStreamClient.swift in Sources */,
 				F2A1B2C3D4E5478990ABCD06 /* Services/PushNotificationManager.swift in Sources */,
+				C4E1A7B20000000000000001 /* Services/PaymentCallback.swift in Sources */,
 				18F25040136B47988CE9E925 /* Theme/AppTheme.swift in Sources */,
 				C1D2E3F4A5B6478990ABCD04 /* Theme/LiquidGlass.swift in Sources */,
 				83101517849E451C9A64357A /* Views/Auth/SignInView.swift in Sources */,
