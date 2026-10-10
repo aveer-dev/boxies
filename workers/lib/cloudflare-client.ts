@@ -8,6 +8,8 @@
  * and provides simulated/mock responses in development / testing environments.
  */
 
+import { isDevRuntime } from "./runtime-env";
+
 export interface CloudflareZone {
 	id: string;
 	name: string;
@@ -83,8 +85,9 @@ const CF_API_BASE = "https://api.cloudflare.com/client/v4";
 const mockZones = new Map<string, CloudflareZone>();
 const mockDnsRecords = new Map<string, CloudflareDnsRecord[]>();
 
+// Mock only in local dev / tests. In production missing credentials must fail closed.
 function isMockEnv(env: CloudflareClientEnv): boolean {
-	return !env.CF_API_TOKEN || !env.CF_ACCOUNT_ID;
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
 }
 
 async function cfRequest<T>(

@@ -454,4 +454,19 @@ const CF_BLOG_ARC =
 	assert.equal(auth.spoofed, false);
 }
 
+{
+	// Our MX prepends its verdict on top; a sender can append a forged
+	// "cloudflare.net ... dmarc=pass" lower down. The topmost trusted one wins.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["Authentication-Results", CF_FAIL],
+			["Authentication-Results", CF_PASS],
+		),
+		headerFrom: "PayPal <service@paypal.com>",
+		envelopeFrom: "spoof@evil.example",
+	});
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.spoofed, true);
+}
+
 console.log("email-auth tests passed");

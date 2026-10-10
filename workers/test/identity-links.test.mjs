@@ -33,6 +33,8 @@ import {
 import { principalIsDomainAdmin, parseDomainAdminsEnv } from "../lib/domain-admin.ts";
 import { mailboxMetadataKey } from "../lib/mailbox-routing.ts";
 import {
+	findUserIdByLoginEmail,
+	principalFromPlatformUser,
 	savePlatformUser,
 } from "../lib/platform-users.ts";
 
@@ -657,6 +659,59 @@ function mockBucket(initial = {}) {
 		persisted.acl.owners.includes("email:relay@privaterelay.appleid.com"),
 		false,
 	);
+}
+
+// ── Unverified emails never become principals ─────────────────────
+
+{
+	// Sign-up stores a typed backup address as recoveryEmail; even a legacy
+	// record with it in contactEmail must not reach the account principals.
+	const bucket = mockBucket();
+	const env = { BUCKET: bucket, DOMAIN_ADMINS: "boss@corp.com" };
+	const user = {
+		id: "u-attacker",
+		contactEmail: "boss@corp.com",
+		recoveryEmail: "boss@corp.com",
+		mailboxEmail: "attacker@inboxies.email",
+		passwordHash: "h",
+		linkedSubs: [],
+		createdAt: new Date().toISOString(),
+		updatedAt: new Date().toISOString(),
+	};
+	await savePlatformUser(bucket, user);
+	const session = principalFromPlatformUser(user);
+	await mintIdentityLinkCode(env, session);
+	const expanded = await expandPrincipalWithLinks(bucket, session);
+	assert.equal(principalKeys(expanded).includes("email:boss@corp.com"), false);
+	assert.equal(
+		principalIsDomainAdmin(expanded, new Set(parseDomainAdminsEnv(env.DOMAIN_ADMINS))),
+		false,
+		"a typed backup email must not grant Domain Admin",
+	);
+}
+
+{
+	// Add password with someone else's address: rejected, and nothing written.
+	const bucket = mockBucket();
+	const access = principalFromClaims({ email: "mallory@example.com", sub: "mallory-access" });
+	await assert.rejects(
+		() =>
+			attachPasswordToSessionAccount(bucket, access, {
+				passwordHash: "h",
+				loginEmail: "victim@corp.com",
+			}),
+		(err) => err instanceof Error && err.message.startsWith("Password login must be"),
+	);
+	assert.equal(await findUserIdByLoginEmail(bucket, "victim@corp.com"), null);
+
+	// A mailbox the caller owns is allowed.
+	const owned = await attachPasswordToSessionAccount(bucket, access, {
+		passwordHash: "h",
+		loginEmail: "team@inboxies.email",
+		isOwnedMailbox: async (login) => login === "team@inboxies.email",
+	});
+	assert.ok(owned.userId);
+	assert.equal(await findUserIdByLoginEmail(bucket, "team@inboxies.email"), owned.userId);
 }
 
 console.log("identity-links: ok");

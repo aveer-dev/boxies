@@ -107,7 +107,7 @@ export function validatePasswordStrength(password: string): string | null {
 
 export async function issuePasswordSessionToken(
 	secret: string,
-	claims: { userId: string; email?: string },
+	claims: { userId: string; email?: string; tokenVersion?: number },
 ): Promise<{ token: string; expiresAt: string }> {
 	const key = new TextEncoder().encode(secret);
 	const expiresAtMs = Date.now() + SESSION_TTL_SECONDS * 1000;
@@ -116,6 +116,7 @@ export async function issuePasswordSessionToken(
 		email: claims.email,
 		auth: "password" as const,
 		uid: claims.userId,
+		tv: claims.tokenVersion ?? 0,
 	})
 		.setProtectedHeader({ alg: "HS256" })
 		.setSubject(sub)

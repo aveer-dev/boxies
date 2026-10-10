@@ -37,11 +37,15 @@ export async function verifyGoogleIdentityToken(
 		throw new Error("Google identity token missing subject");
 	}
 
+	const emailVerified =
+		payload.email_verified === true || payload.email_verified === "true";
 	return {
 		sub: payload.sub,
-		email: typeof payload.email === "string" ? payload.email : undefined,
-		emailVerified:
-			payload.email_verified === true || payload.email_verified === "true",
+		// An unverified email must never become an `email:` principal (ACL keys,
+		// Domain Admin auto-link, unclaimed-mailbox claim), so drop it here.
+		email:
+			emailVerified && typeof payload.email === "string" ? payload.email : undefined,
+		emailVerified,
 		name: typeof payload.name === "string" ? payload.name : undefined,
 	};
 }

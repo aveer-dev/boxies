@@ -23,6 +23,10 @@ import {
 	billingSessionKey,
 } from "../routes/billing.ts";
 
+// These suites drive the in-memory Cloudflare / registrar mocks, which are
+// dev-only (production fails closed without credentials). Opt in explicitly.
+globalThis.__INBOXIES_DEV__ = true;
+
 function mockBucket(initial = {}) {
 	const store = new Map(
 		Object.entries(initial).map(([key, value]) => [
@@ -518,6 +522,7 @@ async function runTests() {
 		data: {
 			object: {
 				id: "cs_test_completed_123",
+				payment_status: "paid",
 				metadata: {
 					domain: "my-novel-company.com",
 					username: "founder",
@@ -541,6 +546,16 @@ async function runTests() {
 	const hookSigHex = Array.from(new Uint8Array(hookSigBuf))
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
+
+	// The checkout session record that create-domain-checkout would have saved.
+	await bucket.put(billingSessionKey("cs_test_completed_123"), {
+		sessionId: "cs_test_completed_123",
+		domain: "my-novel-company.com",
+		status: "pending",
+		pricing: computeDomainPricing(10.44),
+		createdAt: new Date().toISOString(),
+		updatedAt: new Date().toISOString(),
+	});
 
 	// 1. Rejected on invalid signature
 	const rejectRes = await apiApp.request(
@@ -603,6 +618,121 @@ async function runTests() {
 	assert.equal(readyStatus.domain, "my-novel-company.com");
 
 	console.log("✔ Stripe webhook fulfillment & HMAC verification tests passed");
+
+	// ---------------------------------------------------------
+	// 6. Hardening: checkout-return token minting, replay, unpaid, prod-only gates
+	// ---------------------------------------------------------
+	console.log("\n6. Testing checkout-return token gating & webhook hardening...");
+
+	const tokenFrom = (res) => new URL(res.headers.get("Location").replace("inboxies://", "https://x/")).searchParams.get("token");
+	const mobileReturn = (query) =>
+		apiApp.request(`/api/v1/billing/checkout-return?${query}&client=ios`, {}, env);
+
+	// A bare domain (the old takeover) never yields a session.
+	assert.equal(tokenFrom(await mobileReturn("domain=my-novel-company.com")), null);
+	// Session id for a different domain: no token.
+	assert.equal(
+		tokenFrom(await mobileReturn("domain=other-domain.com&session_id=cs_test_completed_123")),
+		null,
+	);
+	// The paid session for this domain: exactly one token.
+	const firstReturn = await mobileReturn("domain=my-novel-company.com&session_id=cs_test_completed_123");
+	assert.ok(tokenFrom(firstReturn), "paid session should hand out the owner session once");
+	assert.equal(
+		tokenFrom(await mobileReturn("domain=my-novel-company.com&session_id=cs_test_completed_123")),
+		null,
+		"token must not be minted twice",
+	);
+	// Web: no cookie without a matching ready session.
+	const webBare = await apiApp.request("/api/v1/billing/checkout-return?domain=my-novel-company.com", {}, env);
+	assert.equal(webBare.headers.get("Set-Cookie"), null);
+
+	const signedPost = async (payload, envToUse) => {
+		const raw = JSON.stringify(payload);
+		const t = Math.floor(Date.now() / 1000);
+		const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${raw}`));
+		const hex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+		return apiApp.request(
+			"/api/v1/billing/stripe-webhook",
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json", "stripe-signature": `t=${t},v1=${hex}` },
+				body: raw,
+			},
+			envToUse,
+		);
+	};
+
+	// Stripe retries the same event: no second provisioning.
+	const replay = await (await signedPost(webhookPayload, secureEnv)).json();
+	assert.equal(replay.duplicate, true);
+
+	// Unpaid sessions never provision.
+	const unpaid = await (
+		await signedPost(
+			{
+				id: "evt_unpaid_1",
+				type: "checkout.session.completed",
+				data: { object: { id: "cs_unpaid", payment_status: "unpaid", metadata: { domain: "unpaid-domain.com" } } },
+			},
+			secureEnv,
+		)
+	).json();
+	assert.equal(unpaid.ignored, true);
+	assert.equal(await getDomainMetadata(bucket, "unpaid-domain.com"), null);
+
+	globalThis.__INBOXIES_DEV__ = false;
+	try {
+		// Production without a webhook secret fails closed instead of trusting the body.
+		const unsignedProd = await apiApp.request(
+			"/api/v1/billing/stripe-webhook",
+			{ method: "POST", headers: { "Content-Type": "application/json" }, body: rawWebhookBody },
+			env,
+		);
+		assert.equal(unsignedProd.status, 500);
+
+		// Production without Stripe keys must not fall back to the mock checkout.
+		const prevFetch = globalThis.fetch;
+		globalThis.fetch = async (url) => {
+			if (String(url).includes("/registrar/domain-check")) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						success: true,
+						result: {
+							domains: [
+								{
+									name: "brand-new-prod-domain.com",
+									registrable: true,
+									pricing: { currency: "USD", registration_cost: "10.44", renewal_cost: "10.44" },
+								},
+							],
+						},
+					}),
+				};
+			}
+			throw new Error(`unexpected fetch ${url}`);
+		};
+		try {
+			const prodCheckout = await apiApp.request(
+				"/api/v1/billing/create-domain-checkout",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ domain: "brand-new-prod-domain.com" }),
+				},
+				{ ...env, CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" },
+			);
+			assert.equal(prodCheckout.status, 503);
+		} finally {
+			globalThis.fetch = prevFetch;
+		}
+	} finally {
+		globalThis.__INBOXIES_DEV__ = true;
+	}
+
+	console.log("✔ checkout-return & webhook hardening tests passed");
 
 	console.log("\n=========================================");
 	console.log("ALL REGISTRAR & BILLING TESTS PASSED!");

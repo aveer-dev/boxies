@@ -37,9 +37,19 @@ export type PlatformUser = {
 	contactEmail: string;
 	/** Primary mailbox address this user owns (login email for password). */
 	mailboxEmail?: string;
+	/**
+	 * Unverified backup address typed at sign-up. Only used to deliver password
+	 * reset mail; never indexed as a login and never an ACL principal.
+	 */
+	recoveryEmail?: string;
 	passwordHash: string;
 	/** Linked IdP subs (Apple/Google), stored without prefix. */
 	linkedSubs: string[];
+	/**
+	 * Bumped on password reset. Password session JWTs carry the version they
+	 * were minted with, and the auth middleware rejects stale ones.
+	 */
+	tokenVersion?: number;
 	createdAt: string;
 	updatedAt: string;
 };
@@ -89,8 +99,10 @@ export function parsePlatformUser(raw: unknown): PlatformUser | null {
 		contactEmail: raw.contactEmail,
 		mailboxEmail:
 			typeof raw.mailboxEmail === "string" ? raw.mailboxEmail : undefined,
+		...(typeof raw.recoveryEmail === "string" ? { recoveryEmail: raw.recoveryEmail } : {}),
 		passwordHash: raw.passwordHash,
 		linkedSubs,
+		...(typeof raw.tokenVersion === "number" ? { tokenVersion: raw.tokenVersion } : {}),
 		createdAt:
 			typeof raw.createdAt === "string"
 				? raw.createdAt
@@ -183,6 +195,19 @@ export async function savePlatformUser(
 		await bucket.put(userByLoginKey(user.mailboxEmail), ptr);
 		await bucket.put(legacyUserByLoginKey(user.mailboxEmail), ptr);
 	}
+}
+
+/**
+ * A password session is current while its user exists and its `tv` claim
+ * matches the user's tokenVersion (bumped on password reset).
+ */
+export async function passwordSessionIsCurrent(
+	bucket: R2Bucket,
+	userId: string,
+	tokenVersion: number | undefined,
+): Promise<boolean> {
+	const user = await loadPlatformUser(bucket, userId);
+	return Boolean(user) && (user?.tokenVersion ?? 0) === (tokenVersion ?? 0);
 }
 
 export function principalFromPlatformUser(

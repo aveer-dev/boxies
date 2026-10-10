@@ -261,14 +261,17 @@ function parseReceivedSpf(value: string): MethodHit | null {
 	return { method: "spf", result, properties };
 }
 
-function lastTrusted(values: string[]): ParsedAuthHeader | null {
-	let found: ParsedAuthHeader | null = null;
+/**
+ * Each MTA prepends its Authentication-Results, so the topmost trusted header is
+ * the one our receiving hop wrote. Lower ones can be forged by the sender
+ * (e.g. a fake `cloudflare.net; dmarc=pass`), so take the first, not the last.
+ */
+function firstTrusted(values: string[]): ParsedAuthHeader | null {
 	for (const value of values) {
 		const parsed = parseAuthenticationResultsValue(value);
-		if (!parsed || !isTrustedAuthserv(parsed.authserv)) continue;
-		found = parsed;
+		if (parsed && isTrustedAuthserv(parsed.authserv)) return parsed;
 	}
-	return found;
+	return null;
 }
 
 function pickVerdict(hits: MethodHit[], method: string): MethodHit | null {
@@ -336,9 +339,9 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	);
 
 	const trustedAr =
-		lastTrusted(envelopeAr) ?? lastTrusted(mimeAr);
+		firstTrusted(envelopeAr) ?? firstTrusted(mimeAr);
 	const trustedArc =
-		lastTrusted(envelopeArc) ?? lastTrusted(mimeArc);
+		firstTrusted(envelopeArc) ?? firstTrusted(mimeArc);
 
 	let source: AuthSource = "none";
 	let methods: MethodHit[] = [];

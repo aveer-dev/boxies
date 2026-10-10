@@ -1334,6 +1334,7 @@ fun MailboxOnboardingView(
                                                                 returnUrl = returnUrl,
                                                                 client = "android",
                                                             )
+                                                            co.inboxies.app.config.AppConfig.rememberPendingCheckout(res.sessionId)
                                                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(res.checkoutUrl))
                                                             context.startActivity(intent)
                                                             isPaymentSyncing = true

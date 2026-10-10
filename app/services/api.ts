@@ -329,6 +329,8 @@ const api = {
 	resetPassword: (body: {
 		token?: string;
 		code?: string;
+		/** Required with `code`. */
+		email?: string;
 		newPassword: string;
 	}) =>
 		post<{

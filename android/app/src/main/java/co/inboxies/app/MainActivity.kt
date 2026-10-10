@@ -52,7 +52,9 @@ class MainActivity : ComponentActivity() {
             PreviewHarness.seed(previewMode, auth, model)
         } else {
             auth.resyncFromStorage()
-            val extraApiBase = intent.getStringExtra("apiBase")
+            // Debug-only: the launcher activity is exported, so in release any app
+            // could point the API (and our Bearer token) at its own host.
+            val extraApiBase = if (BuildConfig.DEBUG) intent.getStringExtra("apiBase") else null
             if (!extraApiBase.isNullOrBlank()) {
                 co.inboxies.app.config.AppConfig.parseAPIBaseURL(extraApiBase)?.let { parsed ->
                     co.inboxies.app.config.AppConfig.apiBaseURL = parsed
@@ -124,8 +126,11 @@ class MainActivity : ComponentActivity() {
         val isOnboarding = (data.scheme == "inboxies" && (data.host == "onboarding" || data.host == "domain-ready"))
             || (data.host == "inboxies.email" && data.path?.startsWith("/onboarding") == true)
         if (isOnboarding) {
-            val token = data.getQueryParameter("token")
             val domain = data.getQueryParameter("domain")
+            // Only trust a token returned for the checkout this app started.
+            val token = data.getQueryParameter("token")?.takeIf {
+                co.inboxies.app.config.AppConfig.consumePendingCheckout(data.getQueryParameter("session_id"))
+            }
             if (!token.isNullOrBlank()) {
                 val auth = (application as InboxiesApplication).authStore
                 val email = if (!domain.isNullOrBlank()) "admin@$domain" else null

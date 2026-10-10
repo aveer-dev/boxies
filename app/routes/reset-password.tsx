@@ -20,6 +20,7 @@ export default function ResetPasswordRoute() {
 	const tokenParam = searchParams.get("token") || "";
 	const [token, setToken] = useState(tokenParam);
 	const [code, setCode] = useState("");
+	const [email, setEmail] = useState(searchParams.get("email") || "");
 	const [newPassword, setNewPassword] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
@@ -54,6 +55,8 @@ export default function ResetPasswordRoute() {
 			await api.resetPassword({
 				token: token.trim() || undefined,
 				code: code.trim() || undefined,
+				// A 6-digit code is only valid together with the account's email.
+				email: token.trim() ? undefined : email.trim() || undefined,
 				newPassword,
 			});
 			toastManager.add({
@@ -85,6 +88,17 @@ export default function ResetPasswordRoute() {
 				</div>
 
 				<form onSubmit={handleSubmit} className="space-y-4">
+					{!tokenParam && (
+						<Input
+							label="Email"
+							type="email"
+							size="sm"
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							placeholder="you@example.com"
+							required={!token}
+						/>
+					)}
 					{!tokenParam && (
 						<Input
 							label="6-digit reset code"
@@ -134,7 +148,7 @@ export default function ResetPasswordRoute() {
 						variant="primary"
 						className="w-full"
 						loading={submitting}
-						disabled={newPassword.length < 10 || (!token && code.length < 6)}
+						disabled={newPassword.length < 10 || (!token && (code.length < 6 || !email.trim()))}
 					>
 						Reset password & sign in
 					</Button>

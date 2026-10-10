@@ -961,15 +961,15 @@ export async function resolveLinkEmailsForPrincipal(
 		}
 	}
 
-	// Password accounts: include contact / mailbox emails from the user record.
+	// Password accounts: include the mailbox email they own. Never the contact /
+	// recovery email — it is user-typed and unverified, and becoming an `email:`
+	// principal would let anyone claim another person's ACLs or admin rights.
 	if (principal.sub?.startsWith("user:")) {
 		const user = await loadPlatformUser(
 			env.BUCKET,
 			principal.sub.slice("user:".length),
 		);
 		if (user) {
-			const contact = normalizeEmailAddress(user.contactEmail);
-			if (contact) emails.add(contact);
 			if (user.mailboxEmail) {
 				const mailbox =
 					normalizeEmailAddress(user.mailboxEmail) ?? user.mailboxEmail;
@@ -1406,6 +1406,8 @@ export async function attachPasswordToSessionAccount(
 		passwordHash: string;
 		loginEmail?: string;
 		contactEmail?: string;
+		/** True when the caller owns this mailbox (ACL owner), so it may be a login. */
+		isOwnedMailbox?: (login: string) => Promise<boolean>;
 	},
 ): Promise<{
 	account: IdentityAccount;
@@ -1440,6 +1442,22 @@ export async function attachPasswordToSessionAccount(
 	const contact =
 		normalizeEmailAddress(opts.contactEmail ?? loginRaw) ?? login;
 
+	// The login becomes an `email:` principal, so it must be an address this
+	// account already proved (session / linked emails) or a mailbox it owns.
+	const verifiedEmails = new Set(
+		emailsForPrincipal(applyAccountToPrincipal(session, sessionAccount)).map(
+			(e) => canonicalMailboxId(e) ?? e.toLowerCase(),
+		),
+	);
+	const loginAllowed =
+		verifiedEmails.has(login) ||
+		(opts.isOwnedMailbox ? await opts.isOwnedMailbox(login) : false);
+	if (!loginAllowed) {
+		throw new Error(
+			"Password login must be an email on this account or a mailbox you own",
+		);
+	}
+
 	const existingLogin = await findUserIdByLoginEmail(bucket, login);
 	if (existingLogin) {
 		const existingUserAccount = await findAccountIdByPrincipalKey(
@@ -1467,13 +1485,14 @@ export async function attachPasswordToSessionAccount(
 		createdAt: now,
 		updatedAt: now,
 	};
-	await savePlatformUser(bucket, user);
 
+	// Check before writing: savePlatformUser publishes the login pointer.
 	const userKey = `user:${userId}`;
 	await assertPrincipalsAttachable(bucket, sessionAccount.id, [
 		userKey,
 		`email:${login}`,
 	]);
+	await savePlatformUser(bucket, user);
 
 	const account: IdentityAccount = {
 		...sessionAccount,

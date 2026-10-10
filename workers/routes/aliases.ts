@@ -48,16 +48,19 @@ export function registerAliasRoutes(app: Hono<any>) {
 			return c.json({ error: err.message || "Invalid request body" }, 400);
 		}
 
-		// Determine base domain: request body -> mailbox domain -> fallback mail domain
-		let baseDomain = body.baseDomain?.trim();
-		if (!baseDomain) {
-			const atIdx = mailboxId.lastIndexOf("@");
-			if (atIdx !== -1) {
-				baseDomain = mailboxId.slice(atIdx + 1);
-			} else {
-				const config = mailDomainConfig(c.env);
-				baseDomain = config.mailDomain || config.domains[0] || "inboxies.email";
+		// Base domain: the mailbox's own domain by default. A caller-supplied one must be
+		// that domain or an operator mail domain — never another tenant's domain.
+		const config = mailDomainConfig(c.env);
+		const atIdx = mailboxId.lastIndexOf("@");
+		const mailboxDomain = atIdx !== -1 ? mailboxId.slice(atIdx + 1).toLowerCase() : "";
+		const requestedBase = body.baseDomain?.trim().toLowerCase();
+		let baseDomain = requestedBase || mailboxDomain || config.mailDomain || config.domains[0] || "inboxies.email";
+		if (requestedBase) {
+			const allowedBases = new Set([mailboxDomain, ...config.domains].filter(Boolean));
+			if (!allowedBases.has(requestedBase)) {
+				return c.json({ error: "baseDomain must be your mailbox domain or a service mail domain" }, 403);
 			}
+			baseDomain = requestedBase;
 		}
 
 		// Generate random token and ensure no collision in R2 index
