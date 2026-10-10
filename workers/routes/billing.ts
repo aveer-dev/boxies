@@ -46,6 +46,7 @@ import {
 import { ensurePrincipalAccount } from "../lib/identity-links";
 import { aclFromOwnerKeys } from "../lib/mailbox-acl";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { isDevRuntime } from "../lib/dev-runtime";
 
 const CreateDomainCheckoutBody = z.object({
 	domain: z
@@ -184,7 +185,36 @@ export async function verifyStripeWebhookSignature(
 	return { valid: false, error: "Signature mismatch" };
 }
 
+/** The value `.dev.vars.example` ships with; never a usable signing secret. */
+const STRIPE_WEBHOOK_SECRET_PLACEHOLDER = "whsec_...";
+
+function configuredStripeWebhookSecret(env: Env): string | undefined {
+	const secret = env.STRIPE_WEBHOOK_SECRET;
+	if (!secret || secret === STRIPE_WEBHOOK_SECRET_PLACEHOLDER) return undefined;
+	return secret;
+}
+
+/** `/checkout/mock` and its React Router `.data` / nested variants, however the path is cased or encoded. */
+function isMockCheckoutPath(pathname: string): boolean {
+	let decoded = pathname;
+	try {
+		decoded = decodeURIComponent(pathname);
+	} catch {}
+	return /^\/checkout\/mock(?:[/.]|$)/i.test(decoded);
+}
+
 export function registerBillingRoutes(app: Hono<{ Bindings: Env }>) {
+	/**
+	 * The mock checkout page simulates payment by posting an unsigned webhook event,
+	 * so it only exists in local dev. Runs ahead of the React Router catch-all.
+	 */
+	app.use("*", async (c, next) => {
+		if (!isDevRuntime() && isMockCheckoutPath(new URL(c.req.url).pathname)) {
+			return c.text("Not Found", 404);
+		}
+		await next();
+	});
+
 	/**
 	 * Initiate an annual Stripe Checkout subscription session to purchase and register a domain.
 	 * Transparent fee breakdown:
@@ -230,7 +260,7 @@ export function registerBillingRoutes(app: Hono<{ Bindings: Env }>) {
 		const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
 		const cookieSession = readCookie(c.req.header("cookie"), PASSWORD_SESSION_COOKIE);
 		const sessionToken = bearer || cookieSession;
-		const secret = c.env.MOBILE_JWT_SECRET || (import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
+		const secret = c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
 		if (sessionToken && secret) {
 			try {
 				const claims = await verifyPasswordSessionToken(sessionToken, secret);
@@ -335,7 +365,11 @@ export function registerBillingRoutes(app: Hono<{ Bindings: Env }>) {
 			});
 		}
 
-		// In development/testing without live Stripe credentials, return deterministic mock session
+		// Without live Stripe credentials only local dev gets the /checkout/mock simulator
+		if (!isDevRuntime()) {
+			return c.json({ error: "Domain checkout is not configured" }, 503);
+		}
+
 		const mockSessionId = `mock_cs_${domain.replace(/[^a-z0-9]/gi, "_")}_${Date.now()}`;
 		const mockUrl = `${appBase}/checkout/mock?session_id=${mockSessionId}&domain=${encodeURIComponent(domain)}${clientParam}`;
 
@@ -386,7 +420,7 @@ export function registerBillingRoutes(app: Hono<{ Bindings: Env }>) {
 				const owner = await loadPlatformUser(c.env.BUCKET, meta.ownerUserId);
 				if (owner && owner.mailboxEmail) {
 					mailboxId = owner.mailboxEmail;
-					const secret = c.env.MOBILE_JWT_SECRET || (import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
+					const secret = c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
 					if (secret) {
 						const session = await issuePasswordSessionToken(secret, {
 							userId: owner.id,
@@ -431,7 +465,7 @@ window.location.href = ${JSON.stringify(deepLink)};
 		};
 		if (token) {
 			headers["Set-Cookie"] = passwordSessionCookieHeader(token, {
-				secure: !import.meta.env.DEV,
+				secure: !isDevRuntime(),
 			});
 		}
 		return new Response(null, {
@@ -515,17 +549,20 @@ window.location.href = ${JSON.stringify(deepLink)};
 	app.post("/api/v1/billing/stripe-webhook", async (c) => {
 		const rawBody = await c.req.text();
 		const sigHeader = c.req.header("stripe-signature") || "";
+		const webhookSecret = configuredStripeWebhookSecret(c.env);
 
-		// Verify Stripe signature if secret is configured (bypass placeholder in dev mock)
-		if (c.env.STRIPE_WEBHOOK_SECRET && c.env.STRIPE_WEBHOOK_SECRET !== "whsec_...") {
-			const verifyRes = await verifyStripeWebhookSignature(
-				rawBody,
-				sigHeader,
-				c.env.STRIPE_WEBHOOK_SECRET,
-			);
+		// Fulfillment buys domains, so unsigned events are only accepted from the local
+		// /checkout/mock simulator. A real secret is always enforced, dev included.
+		if (webhookSecret) {
+			const verifyRes = await verifyStripeWebhookSignature(rawBody, sigHeader, webhookSecret);
 			if (!verifyRes.valid) {
 				return c.json({ error: `Webhook verification failed: ${verifyRes.error}` }, 400);
 			}
+		} else if (!isDevRuntime()) {
+			return c.json({ error: "Stripe webhook secret is not configured" }, 503);
+		} else if (sigHeader) {
+			// A signed delivery (e.g. `stripe listen`) can't be checked without the secret
+			return c.json({ error: "Webhook verification failed: STRIPE_WEBHOOK_SECRET is not set" }, 400);
 		}
 
 		let event: any;
