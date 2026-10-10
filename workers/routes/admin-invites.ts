@@ -91,19 +91,11 @@ import {
 } from "../lib/password-reset";
 import { agentInstanceName } from "../../shared/agent-conversations";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { isDevRuntime } from "../lib/dev-runtime";
 import type { Env } from "../types";
 
 type App = Hono<MailboxContext>;
 type C = Context<MailboxContext>;
-
-function isDevRuntime(): boolean {
-	try {
-		const metaEnv = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
-		return Boolean(metaEnv && metaEnv.DEV);
-	} catch {
-		return false;
-	}
-}
 
 const CreateAdminMailboxBody = z.object({
 	email: z.string().email(),
