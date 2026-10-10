@@ -87,6 +87,7 @@ import {
 	createPasswordReset,
 	verifyPasswordReset,
 	consumePasswordReset,
+	type PasswordResetRecord,
 } from "../lib/password-reset";
 import { agentInstanceName } from "../../shared/agent-conversations";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
@@ -154,6 +155,8 @@ const ForgotPasswordBody = z.object({
 
 const ResetPasswordBody = z.object({
 	token: z.string().optional(),
+	/** Account email used for `/password/forgot`; required with `code`. */
+	email: z.string().max(320).optional(),
 	code: z.string().optional(),
 	newPassword: z.string().min(1).max(200),
 });
@@ -181,6 +184,24 @@ function appBaseUrl(c: C): string {
 function inviteFromAddress(c: C): string {
 	if (c.env.INVITE_FROM_EMAIL?.trim()) return c.env.INVITE_FROM_EMAIL.trim();
 	return `noreply@${resolveMailDomain(c.env)}`;
+}
+
+/**
+ * Per-IP throttle on 6-digit reset code guesses (Workers Rate Limiting).
+ * Fails open when the binding is absent or errors: the per-code attempt cap
+ * in `verifyPasswordReset` still applies.
+ */
+async function passwordResetCodeRateLimited(c: C): Promise<boolean> {
+	const limiter = c.env.PASSWORD_RESET_LIMITER;
+	if (!limiter) return false;
+	const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+	try {
+		const { success } = await limiter.limit({ key: `password-reset-code:${ip}` });
+		return !success;
+	} catch (e) {
+		console.error("[PasswordReset] Rate limiter failed:", (e as Error).message || e);
+		return false;
+	}
 }
 
 async function trySendInviteEmail(
@@ -875,6 +896,14 @@ export function registerAdminAndInviteRoutes(app: App) {
 			const user = await loadPlatformUser(c.env.BUCKET, userId);
 			if (user) {
 				const reset = await createPasswordReset(c.env.BUCKET, user.id, inputEmail);
+				if (!reset) {
+					// Same response as success so the cap doesn't reveal the account.
+					console.warn(`[PasswordReset] Issuance cap reached for user ${user.id}`);
+					return c.json({
+						ok: true,
+						message: "If an account exists with this email, reset instructions have been sent.",
+					});
+				}
 				devResetCode = reset.code;
 				devResetToken = reset.token;
 
@@ -930,11 +959,20 @@ export function registerAdminAndInviteRoutes(app: App) {
 	app.post("/api/v1/auth/password/reset", async (c) => {
 		const parsed = ResetPasswordBody.safeParse(await c.req.json().catch(() => ({})));
 		if (!parsed.success) {
-			return c.json({ error: "Invalid request. Provide token or code, and newPassword." }, 400);
+			return c.json(
+				{ error: "Invalid request. Provide token, or email and code, and newPassword." },
+				400,
+			);
 		}
-		const { token, code, newPassword } = parsed.data;
-		if (!token?.trim() && !code?.trim()) {
+		const { newPassword } = parsed.data;
+		const token = parsed.data.token?.trim() ?? "";
+		const code = parsed.data.code?.trim() ?? "";
+		const email = parsed.data.email?.trim() ?? "";
+		if (!token && !code) {
 			return c.json({ error: "Reset token or 6-digit code is required." }, 400);
+		}
+		if (!token && !email) {
+			return c.json({ error: "Email is required with the 6-digit code." }, 400);
 		}
 
 		const strengthErr = validatePasswordStrength(newPassword);
@@ -942,7 +980,19 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: strengthErr }, 400);
 		}
 
-		const resetRecord = await verifyPasswordReset(c.env.BUCKET, { token, code });
+		let resetRecord: PasswordResetRecord | null = null;
+		if (token) {
+			resetRecord = await verifyPasswordReset(c.env.BUCKET, { token });
+		} else {
+			if (await passwordResetCodeRateLimited(c)) {
+				return c.json({ error: "Too many attempts. Wait a minute and try again." }, 429);
+			}
+			const login = canonicalMailboxId(email) ?? email.toLowerCase();
+			const userId = await findUserIdByLoginEmail(c.env.BUCKET, login);
+			if (userId) {
+				resetRecord = await verifyPasswordReset(c.env.BUCKET, { userId, code });
+			}
+		}
 		if (!resetRecord) {
 			return c.json({ error: "Invalid or expired reset code or link." }, 400);
 		}

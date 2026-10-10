@@ -1362,6 +1362,7 @@ private struct EmailLoginScreen: View {
             defer { isResetting = false }
             do {
                 try await auth.resetPassword(
+                    email: email.trimmingCharacters(in: .whitespacesAndNewlines),
                     code: resetCode.trimmingCharacters(in: .whitespacesAndNewlines),
                     newPassword: password
                 )

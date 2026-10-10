@@ -19,6 +19,7 @@ export default function ResetPasswordRoute() {
 
 	const tokenParam = searchParams.get("token") || "";
 	const [token, setToken] = useState(tokenParam);
+	const [email, setEmail] = useState(searchParams.get("email") || "");
 	const [code, setCode] = useState("");
 	const [newPassword, setNewPassword] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
@@ -34,9 +35,9 @@ export default function ResetPasswordRoute() {
 
 	const handleSubmit = async (e: FormEvent) => {
 		e.preventDefault();
-		if (!token && !code) {
+		if (!token && (!email.trim() || !code)) {
 			toastManager.add({
-				title: "Reset token or 6-digit code is required",
+				title: "Email and 6-digit reset code are required",
 				variant: "error",
 			});
 			return;
@@ -51,11 +52,11 @@ export default function ResetPasswordRoute() {
 
 		setSubmitting(true);
 		try {
-			await api.resetPassword({
-				token: token.trim() || undefined,
-				code: code.trim() || undefined,
-				newPassword,
-			});
+			await api.resetPassword(
+				token.trim()
+					? { token: token.trim(), newPassword }
+					: { email: email.trim(), code: code.trim(), newPassword },
+			);
 			toastManager.add({
 				title: "Password reset successfully",
 				variant: "success",
@@ -86,16 +87,30 @@ export default function ResetPasswordRoute() {
 
 				<form onSubmit={handleSubmit} className="space-y-4">
 					{!tokenParam && (
-						<Input
-							label="6-digit reset code"
-							type="text"
-							size="sm"
-							value={code}
-							onChange={(e) => setCode(e.target.value)}
-							placeholder="123456"
-							maxLength={6}
-							required={!token}
-						/>
+						<>
+							<Input
+								label="Email"
+								type="email"
+								size="sm"
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								placeholder="you@example.com"
+								autoComplete="email"
+								required={!token}
+							/>
+							<Input
+								label="6-digit reset code"
+								type="text"
+								size="sm"
+								value={code}
+								onChange={(e) => setCode(e.target.value)}
+								placeholder="123456"
+								maxLength={6}
+								inputMode="numeric"
+								autoComplete="one-time-code"
+								required={!token}
+							/>
+						</>
 					)}
 
 					<div className="relative">
@@ -134,7 +149,9 @@ export default function ResetPasswordRoute() {
 						variant="primary"
 						className="w-full"
 						loading={submitting}
-						disabled={newPassword.length < 10 || (!token && code.length < 6)}
+						disabled={
+							newPassword.length < 10 || (!token && (!email.trim() || code.length < 6))
+						}
 					>
 						Reset password & sign in
 					</Button>

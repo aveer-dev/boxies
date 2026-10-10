@@ -1669,7 +1669,7 @@ private fun EmailLoginScreen(
                                         commitApiBase()
                                         isResetting = true
                                         try {
-                                            auth.resetPassword(code = resetCode.trim(), newPassword = password)
+                                            auth.resetPassword(email = email.trim(), code = resetCode.trim(), newPassword = password)
                                             if (auth.isAuthenticated) {
                                                 onDismiss()
                                             }
@@ -1711,7 +1711,7 @@ private fun EmailLoginScreen(
                                 commitApiBase()
                                 isResetting = true
                                 try {
-                                    auth.resetPassword(code = resetCode.trim(), newPassword = password)
+                                    auth.resetPassword(email = email.trim(), code = resetCode.trim(), newPassword = password)
                                     if (auth.isAuthenticated) {
                                         onDismiss()
                                     }
