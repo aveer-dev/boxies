@@ -18,6 +18,8 @@ import {
 
 const ham = { class: "ham", folderId: "inbox", reason: "ai-ham" };
 const spam = { class: "spam", folderId: "spam", reason: "spam-headers" };
+const newsletter = { class: "bulk", folderId: "promotions", reason: "bulk-list-headers" };
+const receipt = { class: "bulk", folderId: "updates", reason: "bulk-transactional" };
 
 function inboundPipeline({
 	classification,
@@ -26,6 +28,7 @@ function inboundPipeline({
 	sender,
 	subject = "Hi",
 	auth = null,
+	preferenceFolderId = null,
 }) {
 	const filterHit = applyInboxFilters(parseInboxFilters(rawSettings), {
 		sender,
@@ -38,6 +41,7 @@ function inboundPipeline({
 		triage,
 		filterHit,
 		screenerEnabled: parseScreenerEnabled(rawSettings),
+		preferenceFolderId,
 	});
 	const autoDraft =
 		!decision.skipAutoDraft &&
@@ -63,14 +67,14 @@ function inboundPipeline({
 	assert.equal(r.skipForward, true);
 }
 
-// Allowed after you emailed them
+// Allowed after you emailed them (outbound allow stores no destination)
 {
 	const r = inboundPipeline({
 		classification: ham,
 		triage: {
 			sender: "friend@example.com",
 			status: "allowed",
-			destination_folder_id: "inbox",
+			destination_folder_id: null,
 			decided_at: "t",
 			updated_at: "t",
 		},
@@ -79,6 +83,79 @@ function inboundPipeline({
 	assert.equal(r.folderId, "inbox");
 	assert.equal(r.autoDraft, true);
 	assert.equal(r.push, true);
+}
+
+// Auto-allowed list mail still sorts into Promotions / Updates
+{
+	const autoAllowed = (sender) => ({
+		sender,
+		status: "allowed",
+		destination_folder_id: null,
+		decided_at: "t",
+		updated_at: "t",
+	});
+	const promo = inboundPipeline({
+		classification: newsletter,
+		triage: autoAllowed("deals@shop.example"),
+		sender: "deals@shop.example",
+	});
+	assert.equal(promo.folderId, "promotions");
+	assert.equal(promo.triageAction, "allowed");
+	assert.equal(promo.push, true);
+	assert.equal(promo.autoDraft, false);
+
+	const updates = inboundPipeline({
+		classification: receipt,
+		triage: autoAllowed("orders@shop.example"),
+		sender: "orders@shop.example",
+	});
+	assert.equal(updates.folderId, "updates");
+
+	// Explicit sender preference (Settings → Senders) beats classify
+	const pinnedByPref = inboundPipeline({
+		classification: newsletter,
+		triage: autoAllowed("digest@club.example"),
+		sender: "digest@club.example",
+		preferenceFolderId: "inbox",
+	});
+	assert.equal(pinnedByPref.folderId, "inbox");
+
+	// Filter folder beats classify
+	const filtered = inboundPipeline({
+		classification: newsletter,
+		triage: autoAllowed("deals@shop.example"),
+		sender: "deals@shop.example",
+		rawSettings: {
+			filters: [
+				{ id: "f", enabled: true, from: "deals@shop.example", folderId: "archive" },
+			],
+		},
+	});
+	assert.equal(filtered.folderId, "archive");
+}
+
+// Accepted with an explicit destination keeps it over classify
+{
+	const acceptedTo = (destination_folder_id) => ({
+		sender: "letters@writer.example",
+		status: "allowed",
+		destination_folder_id,
+		decided_at: "t",
+		updated_at: "t",
+	});
+	const inbox = inboundPipeline({
+		classification: newsletter,
+		triage: acceptedTo("inbox"),
+		sender: "letters@writer.example",
+	});
+	assert.equal(inbox.folderId, "inbox");
+
+	const promotions = inboundPipeline({
+		classification: ham,
+		triage: acceptedTo("promotions"),
+		sender: "letters@writer.example",
+	});
+	assert.equal(promotions.folderId, "promotions");
 }
 
 // Rejected stays quiet in screened_out

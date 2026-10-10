@@ -5,8 +5,9 @@
 /**
  * Screener-lite: consent gate for unknown senders.
  *
- * Spam files to spam first. Rejected → screened_out. Allowed → destination
- * (filters may override). Unknown → screener (filters cannot bypass).
+ * Spam files to spam first. Rejected → screened_out. Allowed → explicit
+ * destination, else classify (filters may override). Unknown → screener
+ * (filters cannot bypass).
  */
 
 import {
@@ -22,6 +23,11 @@ export type SenderTriageStatus = "allowed" | "rejected";
 export interface SenderTriageRow {
 	sender: string;
 	status: SenderTriageStatus;
+	/**
+	 * Purpose box the user explicitly picked (Accept menu, Settings → Senders).
+	 * Null for auto-allowed senders (outbound recipients, bootstrap), whose
+	 * mail is filed by the classifier.
+	 */
 	destination_folder_id: string | null;
 	display_name?: string | null;
 	decided_at: string;
@@ -93,7 +99,7 @@ export function screenerSettingsError(raw: unknown): string | null {
  * Resolve where to file inbound mail after classification + triage lookup.
  *
  * Order: spam → rejected → unknown(screener) → allowed:
- *   filter folder → purpose preference → triage destination → classify.
+ *   filter folder → purpose preference → explicit triage destination → classify.
  * When screener is disabled: filter → preference → classify.
  */
 export function resolveInboundFolder(
@@ -138,12 +144,17 @@ export function resolveInboundFolder(
 	}
 
 	if (triage?.status === "allowed") {
-		const dest =
+		const explicitDest =
 			triage.destination_folder_id && isScreenerDestination(triage.destination_folder_id)
 				? triage.destination_folder_id
-				: Folders.INBOX;
+				: null;
 		return {
-			folderId: filterHit?.folderId || preferenceFolder || dest,
+			folderId:
+				filterHit?.folderId ||
+				preferenceFolder ||
+				explicitDest ||
+				classification.folderId ||
+				Folders.INBOX,
 			skipAutoDraft: Boolean(filterHit?.skipAutoDraft),
 			skipPush: false,
 			skipAutoReply: false,
@@ -172,13 +183,13 @@ export function normalizeTriageSender(
 
 export interface BootstrapSenderSeed {
 	sender: string;
-	destination_folder_id: ScreenerDestinationId;
 	display_name?: string | null;
 }
 
 /**
  * Build allow-list seeds from Sent recipients and prior folder senders.
- * Priority: Sent → inbox → promotions → updates (first wins).
+ * Seeds carry no destination — the classifier keeps sorting their mail.
+ * Display-name priority: Sent → inbox → promotions → updates (first wins).
  */
 export function buildBootstrapAllowSeeds(input: {
 	sentAddresses: Array<{ email: string; name?: string | null }>;
@@ -188,26 +199,22 @@ export function buildBootstrapAllowSeeds(input: {
 }): BootstrapSenderSeed[] {
 	const bySender = new Map<string, BootstrapSenderSeed>();
 
-	const add = (
-		entries: Array<{ email: string; name?: string | null }>,
-		destination: ScreenerDestinationId,
-	) => {
+	const add = (entries: Array<{ email: string; name?: string | null }>) => {
 		for (const entry of entries) {
 			const email = normalizeTriageSender(entry.email);
 			if (!email) continue;
 			if (bySender.has(email)) continue;
 			bySender.set(email, {
 				sender: email,
-				destination_folder_id: destination,
 				display_name: entry.name?.trim() || null,
 			});
 		}
 	};
 
-	add(input.sentAddresses, Folders.INBOX);
-	add(input.inboxSenders, Folders.INBOX);
-	add(input.promotionsSenders ?? [], Folders.PROMOTIONS);
-	add(input.updatesSenders ?? [], Folders.UPDATES);
+	add(input.sentAddresses);
+	add(input.inboxSenders);
+	add(input.promotionsSenders ?? []);
+	add(input.updatesSenders ?? []);
 
 	return Array.from(bySender.values());
 }
@@ -255,7 +262,8 @@ export type SenderTriageStub = {
 
 /**
  * After a successful send, allow-list recipients so their replies skip Screener.
- * Never overrides an explicit reject.
+ * No destination is stored, so their mail is still sorted by the classifier.
+ * Never overrides an existing decision.
  */
 export async function allowOutboundRecipients(
 	stub: SenderTriageStub,
@@ -275,7 +283,7 @@ export async function allowOutboundRecipients(
 			await stub.upsertSenderTriage({
 				sender: dest,
 				status: "allowed",
-				destination_folder_id: Folders.INBOX,
+				destination_folder_id: null,
 			});
 			upserted += 1;
 		} catch (e) {
