@@ -19,6 +19,7 @@ import { useEmails, useUpdateEmail } from "~/queries/emails";
 import { queryKeys } from "~/queries/keys";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { Email } from "~/types";
+import { ListLoadError } from "~/components/ListLoadError";
 
 const PAGE_SIZE = 25;
 
@@ -46,11 +47,12 @@ export default function ReplyLaterRoute() {
 		[page],
 	);
 
-	const { data: emailData, isFetching: isRefreshing } = useEmails(
-		mailboxId,
-		params,
-		{ refetchInterval: 30_000 },
-	);
+	const {
+		data: emailData,
+		isFetching: isRefreshing,
+		error: loadError,
+		refetch,
+	} = useEmails(mailboxId, params, { refetchInterval: 30_000 });
 
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
@@ -172,6 +174,8 @@ export default function ReplyLaterRoute() {
 							<div key={i} className="h-14 rounded bg-kumo-fill mx-2" />
 						))}
 					</div>
+				) : loadError && emails.length === 0 ? (
+					<ListLoadError error={loadError} onRetry={() => void refetch()} />
 				) : emails.length === 0 ? (
 					<div className="flex flex-col items-center justify-center py-24 px-6 text-center">
 						<ClockCounterClockwiseIcon
@@ -263,8 +267,9 @@ export default function ReplyLaterRoute() {
 				<div className="border-t border-kumo-line px-4 py-2 shrink-0">
 					<Pagination
 						page={page}
-						totalPages={Math.ceil(totalCount / PAGE_SIZE)}
-						onPageChange={setPage}
+						setPage={setPage}
+						perPage={PAGE_SIZE}
+						totalCount={totalCount}
 					/>
 				</div>
 			)}

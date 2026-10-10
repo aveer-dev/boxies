@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 import PrivateEmailLogo from "~/components/PrivateEmailLogo";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
+import { signOut } from "~/lib/sign-out";
 
 // Placeholder shown in the textarea when no custom prompt is set.
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
@@ -108,11 +109,9 @@ export default function SettingsRoute() {
 							<Button
 								variant="secondary"
 								size="sm"
-								onClick={() => {
-									window.location.href = "/cdn-cgi/access/logout";
-								}}
+								onClick={() => void signOut()}
 							>
-								Log out of Cloudflare Access
+								Log out
 							</Button>
 						</div>
 					</div>

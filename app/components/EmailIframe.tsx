@@ -25,11 +25,20 @@ interface EmailIframeProps {
  *   The `allow-scripts` flag is required for this, but scripts inside
  *   the opaque-origin sandbox cannot access anything useful.
  * - A strict CSP meta tag blocks external resource loads inside the
- *   iframe as a defense-in-depth layer.
+ *   iframe as a defense-in-depth layer. Remote images (tracking pixels) are
+ *   blocked until the reader opts in; same-origin inline (cid) images load.
+ * - Links always open in a new tab; the email can't navigate the app away.
  */
 export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const [height, setHeight] = useState(autoSize ? 100 : 0);
+	const [allowRemoteImages, setAllowRemoteImages] = useState(false);
+	const hasRemoteImages = REMOTE_IMAGE_PATTERN.test(body);
+
+	// A different message starts blocked again.
+	useEffect(() => {
+		setAllowRemoteImages(false);
+	}, [body]);
 
 	// Listen for height reports from the sandboxed iframe
 	const handleMessage = useCallback(
@@ -59,12 +68,24 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 		const iframe = iframeRef.current;
 		if (!iframe || !body) return;
 
+		// Every link opens in a new tab instead of navigating the iframe or the app.
+		DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+			if (node.tagName === "A" && node.getAttribute("href")) {
+				node.setAttribute("target", "_blank");
+				node.setAttribute("rel", "noopener noreferrer");
+			}
+		});
 		const cleanBody = DOMPurify.sanitize(body, {
 			USE_PROFILES: { html: true },
 			FORBID_TAGS: ["style"],
 			ADD_ATTR: ["target"],
 			FORCE_BODY: true,
 		});
+		DOMPurify.removeHook("afterSanitizeAttributes");
+
+		const imgSrc = allowRemoteImages
+			? "data: cid: https:"
+			: `data: cid: ${window.location.origin}`;
 
 		const padding = autoSize ? "0" : "24px";
 
@@ -91,7 +112,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src ${imgSrc}; script-src 'unsafe-inline';">
 <style>
 * { box-sizing: border-box; }
 html {
@@ -137,15 +158,34 @@ ul, ol { padding-left: 20px; margin: 4px 0; }
 </head>
 <body>${cleanBody}${heightScript}</body>
 </html>`;
-	}, [body, autoSize]);
+	}, [body, autoSize, allowRemoteImages]);
 
-	return (
+	const frame = (
 		<iframe
 			ref={iframeRef}
 			className="block w-full border-0"
 			style={autoSize ? { height: `${height}px` } : { height: "100%" }}
-			sandbox="allow-scripts allow-popups allow-top-navigation-by-user-activation"
+			sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
 			title="Email content"
 		/>
 	);
+	if (!hasRemoteImages || allowRemoteImages) return frame;
+	return (
+		<div className={autoSize ? undefined : "flex h-full flex-col"}>
+			<div className="flex items-center justify-between gap-3 border-b border-kumo-line bg-kumo-tint px-4 py-2 text-xs text-kumo-subtle">
+				<span>Remote images are hidden to protect your privacy.</span>
+				<button
+					type="button"
+					className="font-medium text-kumo-default hover:underline"
+					onClick={() => setAllowRemoteImages(true)}
+				>
+					Load images
+				</button>
+			</div>
+			<div className={autoSize ? undefined : "min-h-0 flex-1"}>{frame}</div>
+		</div>
+	);
 }
+
+/** Remote images: <img src="http…">, srcset, or CSS url(http…) in inline styles. */
+const REMOTE_IMAGE_PATTERN = /<img[^>]+(?:src|srcset)\s*=\s*["']?\s*(?:https?:)?\/\/|url\(\s*["']?\s*(?:https?:)?\/\//i;

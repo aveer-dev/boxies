@@ -26,6 +26,9 @@ export function isPublicAuthPath(pathname: string): boolean {
 	if (pathname.startsWith("/api/v1/invites/")) return true;
 	// Public deployment config (mail domain) for native create-address UI.
 	if (pathname === "/api/v1/config") return true;
+	// React Router lazy route discovery; public pages (login, invite, reset)
+	// fetch it on client-side navigation.
+	if (pathname === "/__manifest") return true;
 	// Invite accept + password login SPA shells (Access bypass required at edge too).
 	if (pathname === "/login" || pathname.startsWith("/login/")) return true;
 	if (pathname === "/reset-password" || pathname.startsWith("/reset-password/")) return true;

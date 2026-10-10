@@ -181,6 +181,20 @@ app.use("*", async (c, next) => {
 		return next();
 	}
 
+	// A signed-out browser opening an app page gets the sign-in screen, not raw
+	// 403/500 text. API, agent and MCP callers still get the error below.
+	const wantsHtml = (c.req.header("accept") || "").includes("text/html");
+	const isAppPage =
+		c.req.method === "GET" &&
+		!pathname.startsWith("/api/") &&
+		!pathname.startsWith("/agents/") &&
+		!pathname.startsWith("/mcp");
+	if (wantsHtml && isAppPage) {
+		const url = new URL(c.req.url);
+		const next = `${url.pathname}${url.search}`;
+		return c.redirect(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`, 302);
+	}
+
 	// Fail closed: require Access config message if neither token present
 	if (!POLICY_AUD || !TEAM_DOMAIN) {
 		return c.text(
