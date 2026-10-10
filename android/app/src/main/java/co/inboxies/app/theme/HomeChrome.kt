@@ -55,6 +55,14 @@ object HomeChromeMetrics {
     val composeStackPeekOffset: Dp = 3.dp
     /** Same radius per layer — depth comes from Y offset + darker fill, not scale. */
     val composeStackScales: FloatArray = floatArrayOf(1.0f, 1.0f, 1.0f)
+    /**
+     * Press feedback: the stack squishes on touch-down and pops back with a bounce on release.
+     * The glyph shrinks a little further than the discs so it overshoots on its own.
+     */
+    const val composeStackPressedScale: Float = 0.88f
+    const val composeStackPressedIconScale: Float = 0.84f
+    /** Peeks compress while pressed so the stack squashes, then spring back up. */
+    const val composeStackPressedPeekRatio: Float = 0.4f
 
     /** Short long-press opens compose (menu opens on tap, instantly). */
     const val composeLongPressMs: Long = 180L

@@ -18,6 +18,12 @@ enum HomeChromeMetrics {
     static let composeStackPeekOffset: CGFloat = 3
     /// Same radius per layer — depth comes from Y offset + darker fill, not scale.
     static let composeStackScales: [CGFloat] = [1.0, 1.0, 1.0]
+    /// Press feedback: the stack squishes on touch-down and pops back with a bounce on release.
+    /// The glyph shrinks a little further than the discs so it overshoots on its own.
+    static let composeStackPressedScale: CGFloat = 0.88
+    static let composeStackPressedIconScale: CGFloat = 0.84
+    /// Peeks compress while pressed so the stack squashes, then spring back up.
+    static let composeStackPressedPeekRatio: CGFloat = 0.4
 
     /// Short long-press opens compose (menu opens on tap, instantly).
     static let composeLongPressDuration: TimeInterval = 0.18
