@@ -430,8 +430,7 @@ struct HomeShellView: View {
                 showSettings = true
             }
             Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                app.reset()
-                auth.signOut()
+                app.signOut(auth: auth)
             }
         } label: {
             mailboxAvatar(initials: initials)

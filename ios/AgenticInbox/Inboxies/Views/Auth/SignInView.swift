@@ -7,7 +7,7 @@ import SwiftUI
 /// 1. Splash handoff transition with logo gliding up.
 /// 2. 3-line headline ("Your \n Personal \n email app") + circular downward arrow button.
 /// 3. Auth buttons reveal by moving the welcome view UP (not a modal).
-/// 4. Side-by-side Apple and Google buttons displaying ONLY company logos in black (no text).
+/// 4. Continue with Apple (Google sign-in is web/Android only, so iOS does not offer it).
 /// 5. Email login screen pushes entire view UP from below, with interactive drag-down return.
 struct SignInView: View {
     var isShowingSplash: Bool = false
@@ -142,12 +142,6 @@ struct SignInView: View {
                                     commitAPIBaseURL()
                                     let result = await appleCoordinator.authenticate()
                                     await handleApple(result)
-                                }
-                            },
-                            onGoogleSignIn: {
-                                Task {
-                                    commitAPIBaseURL()
-                                    await handleGoogle()
                                 }
                             },
                             onOpenTerms: {
@@ -606,16 +600,6 @@ struct SignInView: View {
         }
     }
 
-    private func handleGoogle() async {
-        #if DEBUG
-        if AppConfig.isLocalDevelopmentAPI {
-            await auth.signInDev()
-            return
-        }
-        #endif
-        auth.errorMessage = "Google sign-in is managed via Web/Android. Please use Email or Apple sign-in."
-    }
-
     #if DEBUG
     private var devConfigView: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -658,13 +642,12 @@ struct SignInView: View {
 /// 1. "Get started" (fully rounded primary pill)
 /// 2. "or" divider
 /// 3. "Continue with Email" (liquid glass capsule)
-/// 4. Side-by-side Apple and Google buttons as fully rounded liquid glass buttons
+/// 4. "Continue with Apple" liquid glass capsule
 /// 5. Terms of Use fine print
 private struct AuthButtonsSection: View {
     var onGetStarted: () -> Void
     var onContinueWithEmail: () -> Void
     var onAppleSignIn: () -> Void
-    var onGoogleSignIn: () -> Void
     var onOpenTerms: () -> Void
     var commitAPIBaseURL: () -> Void
 
@@ -709,35 +692,23 @@ private struct AuthButtonsSection: View {
             }
             .buttonStyle(.plain)
 
-            // Secondary: Apple & Google side-by-side as liquid glass capsule buttons
-            HStack(spacing: 12) {
-                // Apple button (Black logo only, liquid glass capsule)
-                Button(action: onAppleSignIn) {
+            // Secondary: Apple (liquid glass capsule). Google sign-in has no native
+            // iOS flow, so it is not offered here; linked Google accounts still sign
+            // in on web/Android.
+            Button(action: onAppleSignIn) {
+                HStack(spacing: 8) {
                     Image(systemName: "apple.logo")
-                        .font(.system(size: 22))
-                        .foregroundStyle(AppTheme.ink)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .liquidGlass(in: Capsule())
+                        .font(.system(size: 18))
+                    Text("Continue with Apple")
+                        .font(.inter(size: 16, weight: .semibold))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Sign in with Apple")
+                .foregroundStyle(AppTheme.ink)
                 .frame(maxWidth: .infinity)
-                .frame(height: 50)
-
-                // Google button (Black 'G' logo only, liquid glass capsule)
-                Button(action: onGoogleSignIn) {
-                    GoogleLogoShape()
-                        .fill(AppTheme.ink)
-                        .frame(width: 20, height: 20)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .liquidGlass(in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
-                .frame(height: 50)
+                .frame(height: 52)
+                .liquidGlass(in: Capsule())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Sign in with Apple")
 
             #if DEBUG
             if AppConfig.isLocalDevelopmentAPI {
@@ -1387,65 +1358,6 @@ private struct SafariView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
-}
-
-/// Clean official single-color Google "G" brand icon shape.
-private struct GoogleLogoShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let sx = rect.width / 24.0
-        let sy = rect.height / 24.0
-
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * sx, y: rect.minY + y * sy)
-        }
-
-        // Subpath 1: Horizontal crossbar and right arc
-        path.move(to: p(22.56, 12.25))
-        path.addCurve(to: p(22.36, 10), control1: p(22.56, 11.47), control2: p(22.49, 10.72))
-        path.addLine(to: p(12, 10))
-        path.addLine(to: p(12, 14.26))
-        path.addLine(to: p(17.92, 14.26))
-        path.addCurve(to: p(15.71, 17.57), control1: p(17.66, 15.63), control2: p(16.88, 16.79))
-        path.addLine(to: p(15.71, 20.34))
-        path.addLine(to: p(19.28, 20.34))
-        path.addCurve(to: p(22.56, 12.25), control1: p(21.36, 18.42), control2: p(22.56, 15.6))
-        path.closeSubpath()
-
-        // Subpath 2: Bottom arc
-        path.move(to: p(12, 23))
-        path.addCurve(to: p(19.28, 20.34), control1: p(14.97, 23), control2: p(17.46, 22.02))
-        path.addLine(to: p(15.71, 17.57))
-        path.addCurve(to: p(12, 18.63), control1: p(14.73, 18.23), control2: p(13.48, 18.63))
-        path.addCurve(to: p(5.84, 14.1), control1: p(9.14, 18.63), control2: p(6.71, 16.7))
-        path.addLine(to: p(2.18, 14.1))
-        path.addLine(to: p(2.18, 16.94))
-        path.addCurve(to: p(12, 23), control1: p(3.99, 20.53), control2: p(7.7, 23))
-        path.closeSubpath()
-
-        // Subpath 3: Left arc
-        path.move(to: p(5.84, 14.1))
-        path.addCurve(to: p(5.49, 12.01), control1: p(5.62, 13.44), control2: p(5.49, 12.74))
-        path.addCurve(to: p(5.84, 9.92), control1: p(5.49, 11.28), control2: p(5.62, 10.58))
-        path.addLine(to: p(5.84, 7.08))
-        path.addLine(to: p(2.18, 7.08))
-        path.addCurve(to: p(1, 12.01), control1: p(1.43, 8.57), control2: p(1, 10.24))
-        path.addCurve(to: p(2.18, 16.94), control1: p(1, 13.78), control2: p(1.43, 15.45))
-        path.addLine(to: p(5.84, 14.1))
-        path.closeSubpath()
-
-        // Subpath 4: Top arc
-        path.move(to: p(12, 5.38))
-        path.addCurve(to: p(16.21, 7.02), control1: p(13.62, 5.38), control2: p(15.06, 5.94))
-        path.addLine(to: p(19.36, 3.87))
-        path.addCurve(to: p(12, 1), control1: p(17.45, 2.09), control2: p(14.97, 1))
-        path.addCurve(to: p(2.18, 7.08), control1: p(7.7, 1), control2: p(3.99, 3.47))
-        path.addLine(to: p(5.84, 9.92))
-        path.addCurve(to: p(12, 5.38), control1: p(6.71, 7.32), control2: p(9.14, 5.38))
-        path.closeSubpath()
-
-        return path
-    }
 }
 
 /// Coordinates native Apple Sign In authorization using ASAuthorizationController.

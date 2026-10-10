@@ -641,6 +641,57 @@ struct Email: Identifiable, Codable, Hashable {
     }
 }
 
+extension Email {
+    /// Lenient decode: list, detail, cache and SSE `new_email` payloads do not all
+    /// carry every column (older Workers omit `reply_later`), and SQLite booleans
+    /// can arrive as 0/1. Lives in an extension so the memberwise init survives.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
+        folderId = try c.decodeIfPresent(String.self, forKey: .folderId)
+        subject = try c.decodeIfPresent(String.self, forKey: .subject) ?? ""
+        sender = try c.decodeIfPresent(String.self, forKey: .sender) ?? ""
+        senderName = try c.decodeIfPresent(String.self, forKey: .senderName)
+        recipient = try c.decodeIfPresent(String.self, forKey: .recipient) ?? ""
+        cc = try c.decodeIfPresent(String.self, forKey: .cc)
+        bcc = try c.decodeIfPresent(String.self, forKey: .bcc)
+        date = try c.decodeIfPresent(String.self, forKey: .date) ?? ""
+        read = c.decodeLenientBool(forKey: .read) ?? false
+        starred = c.decodeLenientBool(forKey: .starred) ?? false
+        replyLater = c.decodeLenientBool(forKey: .replyLater) ?? false
+        replyLaterAt = try c.decodeIfPresent(String.self, forKey: .replyLaterAt)
+        body = try c.decodeIfPresent(String.self, forKey: .body)
+        snippet = try c.decodeIfPresent(String.self, forKey: .snippet)
+        inReplyTo = try c.decodeIfPresent(String.self, forKey: .inReplyTo)
+        messageId = try c.decodeIfPresent(String.self, forKey: .messageId)
+        rawHeaders = try c.decodeIfPresent(String.self, forKey: .rawHeaders)
+        threadCount = try c.decodeIfPresent(Int.self, forKey: .threadCount)
+        threadUnreadCount = try c.decodeIfPresent(Int.self, forKey: .threadUnreadCount)
+        participants = try c.decodeIfPresent(String.self, forKey: .participants)
+        folderName = try c.decodeIfPresent(String.self, forKey: .folderName)
+        hasDraft = c.decodeLenientBool(forKey: .hasDraft)
+        needsReply = c.decodeLenientBool(forKey: .needsReply)
+        hasAttachment = c.decodeLenientBool(forKey: .hasAttachment)
+        attachments = try c.decodeIfPresent([Attachment].self, forKey: .attachments)
+        auth = try? c.decodeIfPresent(EmailAuth.self, forKey: .auth)
+        providerMessageId = try c.decodeIfPresent(String.self, forKey: .providerMessageId)
+        deliveryStatus = try c.decodeIfPresent(String.self, forKey: .deliveryStatus)
+        deliveryError = try c.decodeIfPresent(String.self, forKey: .deliveryError)
+        listSection = try c.decodeIfPresent(String.self, forKey: .listSection)
+        aliasId = try c.decodeIfPresent(String.self, forKey: .aliasId)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// `true`/`false` or SQLite-style `0`/`1`; nil when absent, null, or another type.
+    func decodeLenientBool(forKey key: Key) -> Bool? {
+        if let value = try? decodeIfPresent(Bool.self, forKey: key) { return value }
+        if let value = try? decodeIfPresent(Int.self, forKey: key) { return value != 0 }
+        return nil
+    }
+}
+
 enum EmailDateFilter: String, CaseIterable, Equatable, Hashable {
     case any = "Any time"
     case today = "Today"
@@ -1223,6 +1274,42 @@ struct DomainPricingBreakdown: Codable, Hashable {
     var currency: String
     var interval: String
     var lineItems: [DomainPricingLineItem]?
+
+    enum CodingKeys: String, CodingKey {
+        case domainWholesaleUsd, platformFeeUsd, totalAnnualUsd, currency, interval, lineItems
+        case domainFeeUsd, billingInterval
+    }
+
+    /// The Worker sends both `domainWholesaleUsd`/`interval` and the newer
+    /// `domainFeeUsd`/`billingInterval`; accept either.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let wholesale = try c.decodeIfPresent(Double.self, forKey: .domainWholesaleUsd)
+            ?? c.decodeIfPresent(Double.self, forKey: .domainFeeUsd) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.domainWholesaleUsd,
+                .init(codingPath: c.codingPath, debugDescription: "Missing domainWholesaleUsd / domainFeeUsd")
+            )
+        }
+        domainWholesaleUsd = wholesale
+        platformFeeUsd = try c.decode(Double.self, forKey: .platformFeeUsd)
+        totalAnnualUsd = try c.decode(Double.self, forKey: .totalAnnualUsd)
+        currency = try c.decodeIfPresent(String.self, forKey: .currency) ?? "USD"
+        interval = try c.decodeIfPresent(String.self, forKey: .interval)
+            ?? c.decodeIfPresent(String.self, forKey: .billingInterval)
+            ?? "year"
+        lineItems = try c.decodeIfPresent([DomainPricingLineItem].self, forKey: .lineItems)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(domainWholesaleUsd, forKey: .domainWholesaleUsd)
+        try c.encode(platformFeeUsd, forKey: .platformFeeUsd)
+        try c.encode(totalAnnualUsd, forKey: .totalAnnualUsd)
+        try c.encode(currency, forKey: .currency)
+        try c.encode(interval, forKey: .interval)
+        try c.encodeIfPresent(lineItems, forKey: .lineItems)
+    }
 }
 
 struct DomainAvailabilityResponse: Codable, Hashable {
@@ -1264,8 +1351,25 @@ struct ExportJobProgress: Codable, Hashable {
     var processedCount: Int
     var totalCount: Int
     var percent: Int
+
+    init(processedCount: Int, totalCount: Int, percent: Int) {
+        self.processedCount = processedCount
+        self.totalCount = totalCount
+        self.percent = percent
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        processedCount = (try? c.decodeIfPresent(Int.self, forKey: .processedCount)) ?? 0
+        totalCount = (try? c.decodeIfPresent(Int.self, forKey: .totalCount)) ?? 0
+        // Percent may be fractional; clamp for ProgressView.
+        let raw = (try? c.decodeIfPresent(Double.self, forKey: .percent)) ?? 0
+        percent = min(100, max(0, Int(raw.rounded())))
+    }
 }
 
+/// `GET /api/v1/exports/:id` and `POST …/export`. The Worker sends `id` plus a
+/// legacy `exportId`, and `domain` or `mailboxId` depending on the target.
 struct ExportJob: Codable, Identifiable, Hashable {
     var id: String
     var domain: String?
@@ -1278,6 +1382,48 @@ struct ExportJob: Codable, Identifiable, Hashable {
     var expiresAt: String?
     var createdAt: String?
     var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, exportId, domain, mailboxId, status, progress, totalEmails, fileSizeBytes
+        case downloadUrl, expiresAt, createdAt, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let jobId = try c.decodeIfPresent(String.self, forKey: .id)
+            ?? c.decodeIfPresent(String.self, forKey: .exportId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.id,
+                .init(codingPath: c.codingPath, debugDescription: "Missing id / exportId")
+            )
+        }
+        id = jobId
+        domain = try c.decodeIfPresent(String.self, forKey: .domain)
+        mailboxId = try c.decodeIfPresent(String.self, forKey: .mailboxId)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "pending"
+        progress = try? c.decodeIfPresent(ExportJobProgress.self, forKey: .progress)
+        totalEmails = try? c.decodeIfPresent(Int.self, forKey: .totalEmails)
+        fileSizeBytes = try? c.decodeIfPresent(Int64.self, forKey: .fileSizeBytes)
+        downloadUrl = try c.decodeIfPresent(String.self, forKey: .downloadUrl)
+        expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(domain, forKey: .domain)
+        try c.encodeIfPresent(mailboxId, forKey: .mailboxId)
+        try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(progress, forKey: .progress)
+        try c.encodeIfPresent(totalEmails, forKey: .totalEmails)
+        try c.encodeIfPresent(fileSizeBytes, forKey: .fileSizeBytes)
+        try c.encodeIfPresent(downloadUrl, forKey: .downloadUrl)
+        try c.encodeIfPresent(expiresAt, forKey: .expiresAt)
+        try c.encodeIfPresent(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(error, forKey: .error)
+    }
 }
 
 struct DecommissionLastExport: Codable, Hashable {
@@ -1312,9 +1458,16 @@ struct DomainEppCodeResponse: Codable {
 }
 
 struct DomainTransferLockResponse: Codable {
-    var success: Bool
+    var success: Bool?
     var domain: String
     var locked: Bool
+}
+
+/// `DELETE /api/v1/me` — account deletion result.
+struct DeleteAccountResponse: Codable {
+    var ok: Bool?
+    var deletedMailboxes: [String]?
+    var leftMailboxes: [String]?
 }
 
 struct AdminDomainConnectResponse: Codable {

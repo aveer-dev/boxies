@@ -183,8 +183,10 @@ internal fun SettingsActionRow(
     title: String,
     icon: ImageVector,
     onClick: () -> Unit,
+    destructive: Boolean = false,
 ) {
     val colors = inboxiesColors()
+    val tint = if (destructive) colors.deepDarkRed else colors.ink
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -195,7 +197,7 @@ internal fun SettingsActionRow(
         Icon(
             icon,
             contentDescription = null,
-            tint = colors.ink,
+            tint = tint,
             modifier = Modifier.size(22.dp),
         )
         Spacer(Modifier.width(14.dp))
@@ -203,7 +205,7 @@ internal fun SettingsActionRow(
             title,
             fontFamily = InterFontFamily,
             fontSize = 16.sp,
-            color = colors.ink,
+            color = tint,
             modifier = Modifier.weight(1f),
         )
         Icon(

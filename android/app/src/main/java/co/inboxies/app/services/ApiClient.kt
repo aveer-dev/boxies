@@ -28,6 +28,8 @@ import co.inboxies.app.models.ExportJob
 import co.inboxies.app.models.ForgotPasswordResponse
 import co.inboxies.app.models.DecommissionPreflightResponse
 import co.inboxies.app.models.DecommissionResponse
+import co.inboxies.app.models.DeleteAccountResponse
+import co.inboxies.app.models.EmptyTrashResponse
 import co.inboxies.app.models.FixEmailDnsResponse
 import co.inboxies.app.models.OnboardingDomainResponse
 import co.inboxies.app.models.OnboardingPersonalResponse
@@ -98,6 +100,8 @@ class ApiClient private constructor() {
     val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+        // A `null` for a non-null field with a default falls back to the default.
+        coerceInputValues = true
         encodeDefaults = false
     }
 
@@ -153,26 +157,7 @@ class ApiClient private constructor() {
         authed: Boolean,
         asBytes: Boolean = false,
     ): Triple<String, Int, String> {
-        val base = AppConfig.apiBaseURL
-        val uri = try {
-            URI(base)
-        } catch (_: Exception) {
-            throw ApiException.InvalidURL()
-        }
-        val cleanPath = if (path.startsWith("/")) path else "/$path"
-        val basePath = uri.path?.trim('/')?.takeIf { it.isNotEmpty() }
-        val fullPath = if (basePath == null) cleanPath else "/$basePath$cleanPath"
-        val queryString = if (query.isEmpty()) {
-            ""
-        } else {
-            "?" + query.entries.joinToString("&") { (k, v) ->
-                "${urlEncode(k)}=${urlEncode(v)}"
-            }
-        }
-        val port = if (uri.port != -1) ":${uri.port}" else ""
-        val url = "${uri.scheme}://${uri.host}$port$fullPath$queryString"
-
-        val builder = Request.Builder().url(url)
+        val builder = Request.Builder().url(buildUrl(path, query))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
         if (authed) {
@@ -207,12 +192,71 @@ class ApiClient private constructor() {
         }
     }
 
+    private fun buildUrl(path: String, query: Map<String, String> = emptyMap()): String {
+        val base = AppConfig.apiBaseURL
+        val uri = try {
+            URI(base)
+        } catch (_: Exception) {
+            throw ApiException.InvalidURL()
+        }
+        val cleanPath = if (path.startsWith("/")) path else "/$path"
+        val basePath = uri.path?.trim('/')?.takeIf { it.isNotEmpty() }
+        val fullPath = if (basePath == null) cleanPath else "/$basePath$cleanPath"
+        val queryString = if (query.isEmpty()) {
+            ""
+        } else {
+            "?" + query.entries.joinToString("&") { (k, v) ->
+                "${urlEncode(k)}=${urlEncode(v)}"
+            }
+        }
+        val port = if (uri.port != -1) ":${uri.port}" else ""
+        return "${uri.scheme}://${uri.host}$port$fullPath$queryString"
+    }
+
+    /**
+     * Stream an authenticated GET to [destination] (exports can be large, so the
+     * body never sits in memory). Sends the Bearer token like [request].
+     */
+    suspend fun downloadToFile(path: String, destination: java.io.File) = withContext(Dispatchers.IO) {
+        val builder = Request.Builder().url(buildUrl(path)).get()
+        authTokenProvider()?.let { builder.header("Authorization", "Bearer $it") }
+        try {
+            client.newCall(builder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val text = response.body?.string().orEmpty()
+                    throw ApiException.Http(response.code, httpErrorMessage(text))
+                }
+                val source = response.body ?: throw ApiException.Http(response.code, "Empty download")
+                destination.parentFile?.mkdirs()
+                source.byteStream().use { input ->
+                    destination.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+        } catch (e: ApiException) {
+            destination.delete()
+            throw e
+        } catch (e: Exception) {
+            destination.delete()
+            throw ApiException.Transport(e)
+        }
+    }
+
     suspend fun listMailboxes(): List<Mailbox> = request("/api/v1/mailboxes")
 
     suspend fun getConfig(): AppConfigResponse =
         request("/api/v1/config", method = "GET", authed = false)
 
     suspend fun getMe(): MeResponse = request("/api/v1/me")
+
+    /**
+     * Permanently delete the signed-in account (Play account-deletion requirement).
+     * Sole-owned mailboxes are purged; shared ones just drop this user.
+     */
+    suspend fun deleteAccount(): DeleteAccountResponse = request(
+        "/api/v1/me",
+        method = "DELETE",
+        body = buildJsonObject { put("confirm", "DELETE") },
+    )
 
     suspend fun listIdentities(): IdentitiesResponse = request("/api/v1/me/identities")
     suspend fun listAccounts(): List<AccountSummary> = request("/api/v1/accounts")
@@ -767,12 +811,18 @@ class ApiClient private constructor() {
         )
     }
 
+    /** Outside Trash this moves to Trash; from Trash/Drafts the server deletes permanently. */
     suspend fun deleteEmail(mailboxId: String, id: String) {
         request<EmptyResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
             method = "DELETE",
         )
     }
+
+    suspend fun emptyTrash(mailboxId: String): EmptyTrashResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/folders/trash/empty",
+        method = "POST",
+    )
 
     suspend fun searchEmails(mailboxId: String, query: String, page: Int = 1): EmailListResponse =
         searchEmails(mailboxId, SearchQueryParser.parse(query), page)
@@ -870,33 +920,14 @@ class ApiClient private constructor() {
         },
     )
 
+    /**
+     * POST /drafts. Server keys are snake_case: `to`, `cc`, `bcc`, `subject`,
+     * `body` (HTML), `in_reply_to`, `thread_id`, and `draft_id` to update in place.
+     */
     suspend fun saveDraft(mailboxId: String, draft: JsonObject): DraftSaveResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/drafts",
         method = "POST",
         body = draft,
-    )
-
-    suspend fun saveDraft(
-        mailboxId: String,
-        to: String,
-        subject: String,
-        body: String,
-        draftId: String? = null,
-        inReplyTo: String? = null,
-        cc: String? = null,
-        bcc: String? = null,
-    ): DraftSaveResponse = saveDraft(
-        mailboxId,
-        buildJsonObject {
-            put("to", to)
-            put("subject", subject)
-            put("body", body)
-            put("html", true)
-            if (!draftId.isNullOrBlank()) put("id", draftId)
-            if (!inReplyTo.isNullOrBlank()) put("inReplyTo", inReplyTo)
-            if (!cc.isNullOrBlank()) put("cc", cc)
-            if (!bcc.isNullOrBlank()) put("bcc", bcc)
-        },
     )
 
     suspend fun getAttachment(mailboxId: String, emailId: String, attachmentId: String): ByteArray =
@@ -998,7 +1029,9 @@ class ApiClient private constructor() {
             if (returnUrl != null) put("returnUrl", returnUrl)
             if (client != null) put("client", client)
         },
-        authed = false,
+        // Send the Bearer token when signed in so the purchase links to this account;
+        // signed-out checkout still works (no token → no Authorization header).
+        authed = true,
     )
 
     // MARK: - Email Export Engine
@@ -1012,8 +1045,9 @@ class ApiClient private constructor() {
         "/api/v1/exports/${pathEncode(exportId)}",
     )
 
-    fun exportDownloadUrl(exportId: String): String =
-        "${co.inboxies.app.config.AppConfig.apiBaseURL}/api/v1/exports/${pathEncode(exportId)}/download"
+    /** Download requires the Bearer token (ownership is checked), so never hand the URL to a browser. */
+    suspend fun downloadExport(exportId: String, destination: java.io.File) =
+        downloadToFile("/api/v1/exports/${pathEncode(exportId)}/download", destination)
 
     // MARK: - DNS Offboarding & Decommission
 

@@ -27,6 +27,9 @@ struct SettingsSheetView: View {
     @State private var signatureEnabled = false
     @State private var navigationPath: [SettingsDestination] = []
     @State private var loadingDestination: SettingsDestination?
+    @State private var showDeleteAccountConfirm = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountError: String?
     @AppStorage("push_notifications_enabled") private var notificationsEnabled = true
     @AppStorage("app_theme") private var appTheme: ThemeMode = .system
 
@@ -116,6 +119,42 @@ struct SettingsSheetView: View {
                             .foregroundStyle(.red)
                     }
                 }
+
+                Section {
+                    Button(role: .destructive) {
+                        showDeleteAccountConfirm = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Spacer()
+                            if isDeletingAccount {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(isDeletingAccount ? "Deleting account…" : "Delete account")
+                                .font(.inter(size: 16, weight: .medium))
+                                .foregroundStyle(.red)
+                            Spacer()
+                        }
+                    }
+                    .disabled(isDeletingAccount)
+                    // Attached to the button so the iOS 26 popover points at it, not the list.
+                    .confirmationDialog(
+                        "Delete your account?",
+                        isPresented: $showDeleteAccountConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Delete account", role: .destructive) {
+                            Task { await deleteAccount() }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Mailboxes only you own are permanently deleted with all their mail. Mailboxes shared with others stay for them; you are just removed. This cannot be undone.")
+                    }
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text("Permanently deletes your Inboxies account and sign-in methods.")
+                }
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -162,6 +201,18 @@ struct SettingsSheetView: View {
                     }
                     .accessibilityLabel("Close")
                 }
+            }
+            .interactiveDismissDisabled(isDeletingAccount)
+            .alert(
+                "Could not delete account",
+                isPresented: Binding(
+                    get: { deleteAccountError != nil },
+                    set: { if !$0 { deleteAccountError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(deleteAccountError ?? "")
             }
             .alert("Edit name", isPresented: $showEditName) {
                 TextField("Display name", text: $editNameDraft)
@@ -408,6 +459,18 @@ struct SettingsSheetView: View {
         }
         if !success {
             signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+        }
+    }
+
+    private func deleteAccount() async {
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+        do {
+            // Unregisters push, deletes on the server, then clears local data and the session.
+            _ = try await app.deleteAccount(auth: auth)
+            dismiss()
+        } catch {
+            deleteAccountError = error.localizedDescription
         }
     }
 

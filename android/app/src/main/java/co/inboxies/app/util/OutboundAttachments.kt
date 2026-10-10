@@ -16,6 +16,11 @@ object OutboundLimits {
     const val SIZE_ERROR = "Message exceeds the 5 MiB outbound limit"
     const val VIDEO_REJECT = "Videos aren't supported (5 MiB send limit)"
     const val MAX_IMAGE_EDGE = 1600
+    /**
+     * Read cap for picked images before re-encode (they shrink to fit the 5 MiB
+     * message budget). Non-images are capped at the remaining budget directly.
+     */
+    const val MAX_IMAGE_SOURCE_BYTES = 32 * 1024 * 1024
     val jpegQualities = floatArrayOf(0.72f, 0.55f, 0.4f)
 
     fun utf8ByteLength(value: String): Int = value.toByteArray(Charsets.UTF_8).size
@@ -25,6 +30,24 @@ object OutboundLimits {
 
     fun remainingBudget(html: String, text: String, attachmentBytes: List<Int>): Int =
         max(0, MAX_MESSAGE_BYTES - estimateMessageBytes(html, text, attachmentBytes))
+
+    /**
+     * Read at most [maxBytes] from [input]; throws [OutboundAttachmentException] with
+     * [SIZE_ERROR] instead of buffering an oversized file into memory. Call off Main.
+     */
+    fun readCapped(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        var total = 0
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            if (total > maxBytes) throw OutboundAttachmentException(SIZE_ERROR)
+            out.write(buffer, 0, read)
+        }
+        return out.toByteArray()
+    }
 }
 
 data class ComposePendingAttachment(

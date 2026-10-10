@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -48,7 +49,8 @@ fun RootView(
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
     val pendingInvite by appModel.pendingInviteToken.collectAsState()
 
-    var isShowingSplash by remember { mutableStateOf(!appModel.isDebugPreview) }
+    // Saveable so a configuration change doesn't replay the splash.
+    var isShowingSplash by rememberSaveable { mutableStateOf(!appModel.isDebugPreview) }
 
     LaunchedEffect(Unit) {
         if (!isShowingSplash) return@LaunchedEffect
@@ -59,6 +61,8 @@ fun RootView(
     LaunchedEffect(token) {
         if (appModel.isDebugPreview) return@LaunchedEffect
         if (!token.isNullOrBlank()) {
+            // AppModel outlives the Activity; a recreated RootView keeps its state.
+            if (appModel.hasBootstrapped(token)) return@LaunchedEffect
             appModel.bootstrap(token)
         } else {
             appModel.reset()

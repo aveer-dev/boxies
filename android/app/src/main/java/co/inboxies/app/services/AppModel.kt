@@ -27,6 +27,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 import java.util.UUID
 
@@ -195,8 +198,22 @@ class AppModel {
         adjustFolderUnread(folderId, if (isUnread) 1 else -1)
     }
 
+    /** Token the last [bootstrap] ran for — lets a recreated Activity skip a redundant reload. */
+    @Volatile
+    private var bootstrappedToken: String? = null
+
+    fun hasBootstrapped(authToken: String?): Boolean =
+        authToken != null && authToken == bootstrappedToken
+
+    /** Fresh Activity launch (not a config change): let RootView bootstrap/refresh again. */
+    fun invalidateBootstrap() {
+        bootstrappedToken = null
+    }
+
     suspend fun bootstrap(authToken: String?) {
-        ApiClient.shared.authTokenProvider = { authToken }
+        bootstrappedToken = authToken
+        // AuthStore owns ApiClient.authTokenProvider (a live read of its token), so a
+        // sign-out stops sending the old token; don't pin it to this snapshot here.
         val cached = db.getMailboxes()
         if (cached.isNotEmpty()) {
             _mailboxes.value = cached
@@ -882,6 +899,12 @@ class AppModel {
             draft = enrichedDraft ?: draft,
             initialTo = initialTo,
         )
+        form.onDraftSaved = { id, threadId, originalId, subject, body, recipient ->
+            markThreadHasDraft(id, threadId, originalId, subject, body, recipient, hasDraft = true)
+        }
+        form.onDraftDeleted = { id, threadId, originalId ->
+            markThreadHasDraft(id, threadId, originalId, null, null, null, hasDraft = false)
+        }
         _composeSession.value = ComposeSession(form, ComposePresentation.Expanded)
         _selectedEmail.value = null
     }
@@ -1077,7 +1100,41 @@ class AppModel {
 
     fun clearToast() = hideToast()
 
+    /**
+     * Unregister this device's push token from every mailbox while the session is
+     * still valid, then end the session. Runs on the app-scoped [scope] so leaving
+     * the current screen doesn't cancel it.
+     */
+    fun signOut(auth: AuthStore) {
+        val mailboxIds = _mailboxes.value.map { it.id }
+        scope.launch {
+            if (!isDebugPreview) {
+                withTimeoutOrNull(PUSH_UNREGISTER_TIMEOUT_MS) {
+                    PushNotificationManager.shared.unregisterAll(mailboxIds)
+                }
+            }
+            auth.signOut()
+            reset()
+        }
+    }
+
+    /**
+     * DELETE /api/v1/me — sole-owned mailboxes are purged, shared ones are left.
+     * Throws on failure so the caller can keep the confirmation UI up.
+     */
+    suspend fun deleteAccount(auth: AuthStore) = withContext(NonCancellable) {
+        // NonCancellable: once started, leaving Settings must not strand a half-deleted session.
+        val mailboxIds = _mailboxes.value.map { it.id }
+        withTimeoutOrNull(PUSH_UNREGISTER_TIMEOUT_MS) {
+            PushNotificationManager.shared.unregisterAll(mailboxIds)
+        }
+        ApiClient.shared.deleteAccount()
+        auth.signOut()
+        reset()
+    }
+
     fun reset() {
+        bootstrappedToken = null
         streamClient.stop()
         _mailboxes.value = emptyList()
         _selectedMailboxId.value = null
@@ -1192,6 +1249,7 @@ class AppModel {
                     else -> ApiClient.shared.sendEmail(mailboxId, payload)
                 }
             }.onSuccess {
+                form.deleteSavedDraft()
                 showToast("Sent")
                 closeCompose()
                 refreshCurrentTabSilently()
@@ -1203,10 +1261,13 @@ class AppModel {
         }
     }
 
-    fun saveDraft() {
-        scope.launch {
-            _composeSession.value?.form?.saveDraft(explicit = true)
+    suspend fun saveDraft() {
+        val form = _composeSession.value?.form ?: return
+        if (form.isEmpty) return
+        if (form.saveDraft(explicit = true)) {
             showToast("Draft saved")
+        } else if (!form.isSending) {
+            showToast(form.errorMessage ?: "Failed to save draft", isError = true)
         }
     }
 
@@ -1386,18 +1447,27 @@ class AppModel {
         }
     }
 
+    /**
+     * Server DELETE moves to Trash unless the message is already in Trash/Drafts,
+     * where it is permanent. Mirror that locally so the cache matches the next sync.
+     */
     suspend fun deleteEmail(email: Email) {
         val mailboxId = _selectedMailboxId.value ?: return
+        val isPermanent = email.isDraft || email.folderId == FolderIds.TRASH
         scheduleUndoableAction(
             optimistic = { removeEmailLocally(email) },
             commit = {
-                db.deleteEmail(email.id)
-                db.enqueueMutation(mailboxId, email.id, "delete")
-                OutboxQueueWorker.trigger()
+                try {
+                    ApiClient.shared.deleteEmail(mailboxId, email.id)
+                    if (isPermanent) db.deleteEmail(email.id) else db.moveEmail(email.id, FolderIds.TRASH)
+                } catch (e: Exception) {
+                    loadEmailsForCurrentTab(showLoading = false)
+                    showToast("Couldn't delete", isError = true)
+                }
             },
             rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
             pendingMessage = "Deleting...",
-            completedMessage = "Deleted",
+            completedMessage = if (isPermanent) "Deleted" else "Moved to Trash",
         )
     }
 
@@ -1406,9 +1476,13 @@ class AppModel {
         scheduleUndoableAction(
             optimistic = { removeEmailLocally(email) },
             commit = {
-                db.moveEmail(email.id, "archive")
-                db.enqueueMutation(mailboxId, email.id, "move", mapOf("folderId" to "archive"))
-                OutboxQueueWorker.trigger()
+                try {
+                    ApiClient.shared.moveEmail(mailboxId, email.id, FolderIds.ARCHIVE)
+                    db.moveEmail(email.id, FolderIds.ARCHIVE)
+                } catch (e: Exception) {
+                    loadEmailsForCurrentTab(showLoading = false)
+                    showToast("Couldn't archive", isError = true)
+                }
             },
             rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
             pendingMessage = "Archiving...",
@@ -1560,7 +1634,11 @@ class AppModel {
         _composeSession.value = ComposeSession(session.form, ComposePresentation.Minimized)
         val form = session.form
         if (!form.isEmpty && form.hasUnsavedChanges) {
-            scope.launch { form.saveDraft(explicit = false) }
+            scope.launch {
+                if (!form.saveDraft(explicit = false) && !form.isSending) {
+                    showToast("Couldn't save draft", isError = true)
+                }
+            }
         }
     }
 
@@ -1798,6 +1876,7 @@ class AppModel {
 
     companion object {
         private const val AUTO_CONVERSATION_ID = "auto"
+        private const val PUSH_UNREGISTER_TIMEOUT_MS = 4_000L
 
         private fun visibleConversations(conversations: List<AgentConversation>) =
             conversations.filter { it.id != AUTO_CONVERSATION_ID }

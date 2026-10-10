@@ -27,9 +27,3 @@ object MailboxSyncService {
         return list
     }
 }
-
-object OutboxQueueWorker {
-    fun trigger() {
-        // Online-first: mutations already hit the API. Hook reserved for offline drain.
-    }
-}
