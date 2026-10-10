@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Dialog, Input, Tooltip } from "@cloudflare/kumo";
+import { Badge, Button, Dialog, Input, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
 import {
 	ArchiveIcon,
 	CaretLeftIcon,
@@ -91,6 +91,7 @@ export default function Sidebar() {
 	const { data: folders = [] } = useFolders(mailboxId);
 	const { data: workflowPiles = [] } = useWorkflowPiles(mailboxId);
 	const createFolderMutation = useCreateFolder();
+	const toastManager = useKumoToastManager();
 	const { startCompose, closeSidebar } = useUIStore();
 	const { data: currentMailbox } = useMailbox(mailboxId);
 	const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
@@ -113,9 +114,21 @@ export default function Sidebar() {
 	const handleCreateFolder = (e: React.FormEvent) => {
 		e.preventDefault();
 		if (newFolderName.trim() && mailboxId) {
-			createFolderMutation.mutate({ mailboxId, name: newFolderName.trim() });
-			setNewFolderName("");
-			setIsCreateFolderOpen(false);
+			createFolderMutation.mutate(
+				{ mailboxId, name: newFolderName.trim() },
+				{
+					onSuccess: () => {
+						setNewFolderName("");
+						setIsCreateFolderOpen(false);
+					},
+					// Keep the dialog open with the name so the user can fix it.
+					onError: (err) =>
+						toastManager.add({
+							title: err instanceof Error ? err.message : "Couldn't create folder",
+							variant: "error",
+						}),
+				},
+			);
 		}
 	};
 

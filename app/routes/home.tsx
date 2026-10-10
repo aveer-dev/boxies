@@ -24,6 +24,7 @@ import {
 	useMailboxes,
 } from "~/queries/mailboxes";
 import { queryKeys } from "~/queries/keys";
+import { signOut } from "~/lib/sign-out";
 
 export function meta() {
 	return [{ title: "Agentic Inbox" }];
@@ -188,9 +189,7 @@ export default function HomeRoute() {
 							)}
 							<Button
 								variant="secondary"
-								onClick={() => {
-									window.location.href = "/cdn-cgi/access/logout";
-								}}
+								onClick={() => void signOut()}
 							>
 								Log out
 							</Button>

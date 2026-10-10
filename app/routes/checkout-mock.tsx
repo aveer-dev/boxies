@@ -138,7 +138,7 @@ function CheckoutMockSimulator() {
 					>
 						{completing ? (
 							<span className="flex items-center gap-2">
-								<Loader size="xs" /> Simulating payment...
+								<Loader size="sm" /> Simulating payment...
 							</span>
 						) : (
 							`Pay $${total.toFixed(2)} & Subscribe`

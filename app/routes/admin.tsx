@@ -147,7 +147,7 @@ export default function AdminRoute() {
 			setInviteEmail("");
 			setInviteName("");
 			await refetch();
-			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes });
+			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
 		} catch (err: unknown) {
 			setCreateError(
 				err instanceof Error ? err.message : "Failed to create mailbox",
@@ -163,7 +163,7 @@ export default function AdminRoute() {
 			await api.assignAdminMailbox(mailboxId, "self");
 			toastManager.add({ title: "Assigned to you" });
 			await refetch();
-			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes });
+			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
 		} catch (err: unknown) {
 			toastManager.add({
 				title: err instanceof Error ? err.message : "Assign failed",
@@ -182,7 +182,7 @@ export default function AdminRoute() {
 			toastManager.add({ title: "Mailbox deleted" });
 			setDeleteTarget(null);
 			await refetch();
-			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes });
+			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
 		} catch {
 			toastManager.add({ title: "Delete failed", variant: "error" });
 		} finally {

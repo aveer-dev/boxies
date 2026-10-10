@@ -838,7 +838,7 @@ export function OnboardingFlow({
 										</label>
 										{checkLoading && (
 											<span className="text-[11px] text-kumo-subtle flex items-center gap-1">
-												<Loader size="xs" /> Checking availability...
+												<Loader size="sm" /> Checking availability...
 											</span>
 										)}
 									</div>
@@ -932,7 +932,7 @@ export function OnboardingFlow({
 											<div className="space-y-2 text-xs">
 												<div className="flex justify-between items-center text-kumo-default font-medium">
 													<span>1. Domain Registration ({customDomain})</span>
-													<span>${(availability.pricing?.domainWholesaleUsd ?? 10.46).toFixed(2)}</span>
+													<span>${(availability.pricing?.domainFeeUsd ?? 10.44).toFixed(2)}</span>
 												</div>
 												<p className="text-[11px] text-kumo-subtle pl-3">
 													Wholesale registrar pass-through cost via Cloudflare Registrar. Zero registrar markup.
@@ -940,7 +940,7 @@ export function OnboardingFlow({
 
 												<div className="flex justify-between items-center text-kumo-default font-medium pt-1">
 													<span>2. Inboxies Platform, AI & Cloud Infrastructure</span>
-													<span>${(availability.pricing?.platformFeeUsd ?? 9.54).toFixed(2)}</span>
+													<span>${(availability.pricing?.platformFeeUsd ?? 9.56).toFixed(2)}</span>
 												</div>
 												<p className="text-[11px] text-kumo-subtle pl-3">
 													Workers AI intelligent semantic agent, Durable Objects edge server sync, encrypted R2 storage, Anycast DNS, SSL, and automated SPF/DKIM/DMARC routing.

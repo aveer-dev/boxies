@@ -4,7 +4,7 @@
 
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError } from "~/services/api";
+import api, { ApiError } from "~/services/api";
 import {
 	buildQuotedReplyBlock,
 	escapeHtml,
@@ -12,7 +12,7 @@ import {
 	getSignatureBlock,
 	htmlToPlainText,
 	splitEmailList,
-	stripHtml,
+	htmlToQuotedText,
 	toEmailListValue,
 } from "~/lib/utils";
 import { displaySenderName } from "shared/sender";
@@ -24,6 +24,7 @@ import {
 import { composeBodyHasUserContent } from "shared/compose-body";
 import {
 	OUTBOUND_SIZE_ERROR,
+	bytesToBase64,
 	remainingOutboundBudget,
 } from "shared/compose-attachments";
 import {
@@ -74,7 +75,7 @@ function buildForwardBody(
 			: original.sender,
 	);
 	const safeSubject = escapeHtml(original.subject);
-	const safeBody = escapeHtml(stripHtml(original.body || "")).replace(/\n/g, "<br>");
+	const safeBody = escapeHtml(htmlToQuotedText(original.body || "")).replace(/\n/g, "<br>");
 
 	return `${sigBlock || "<p><br></p>"}<div style="border: 1px solid #ddd; padding: 1em; background-color: #f9f9f9; margin: 1em 0;"><strong>Forwarded message:</strong><br><strong>From:</strong> ${safeSender}<br><strong>Date:</strong> ${formatComposeDate(original.date)}<br><strong>Subject:</strong> ${safeSubject}<br><br>${safeBody}</div>`;
 }
@@ -238,6 +239,36 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		setBody(initialFields.body);
 		setAttachments([]);
 		setSavedDraftId(composeOptions.draftEmail?.id);
+
+		// Forwarding carries the original's files along.
+		const forwardFrom = composeOptions.mode === "forward" ? composeOptions.originalEmail : undefined;
+		const forwardFiles = forwardFrom?.attachments ?? [];
+		if (mailboxId && forwardFrom && forwardFiles.length > 0) {
+			const initializedFor = composeOptions;
+			void (async () => {
+				const loaded: PreparedAttachment[] = [];
+				for (const file of forwardFiles) {
+					try {
+						const blob = await api.getAttachment(mailboxId, forwardFrom.id, file.id);
+						const bytes = new Uint8Array(await blob.arrayBuffer());
+						loaded.push({
+							id: crypto.randomUUID(),
+							content: bytesToBase64(bytes),
+							filename: file.filename,
+							type: file.mimetype || "application/octet-stream",
+							disposition: "attachment",
+							size: bytes.byteLength,
+						});
+					} catch {
+						toastManager.add({ title: `Couldn't attach ${file.filename}`, variant: "error" });
+					}
+				}
+				// Ignore if the user already moved on to a different compose.
+				if (lastInitializedOptionsRef.current === initializedFor && loaded.length > 0) {
+					setAttachments((current) => [...loaded, ...current]);
+				}
+			})();
+		}
 		lastSavedSnapshotRef.current = `${initialFields.to}|${initialFields.cc}|${initialFields.bcc}|${initialFields.subject}|${initialFields.body}`;
 		setSaveStatus("idle");
 		saveGenerationRef.current += 1;

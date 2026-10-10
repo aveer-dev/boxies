@@ -37,7 +37,14 @@ const csp =
 	"default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'";
 
 assert.match(webIframe, /DOMPurify\.sanitize/);
-assert.match(webIframe, new RegExp(csp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+// Web fills img-src per message: remote images are blocked until the reader
+// opts in, and the opted-in policy is the shared one below.
+assert.match(
+	webIframe,
+	/default-src 'none'; style-src 'unsafe-inline'; img-src \$\{imgSrc\}; script-src 'unsafe-inline'/,
+);
+assert.match(webIframe, /\? "data: cid: https:"/, "opted-in img-src matches native");
+assert.match(webIframe, /`data: cid: \$\{window\.location\.origin\}`/, "default blocks remote images");
 
 for (const [name, src] of [
 	["android sanitizer", androidSanitizer],
@@ -48,6 +55,8 @@ for (const [name, src] of [
 	assert.match(src, /inboxies\.invalid/, `${name} keeps the opaque origin`);
 }
 
+assert.ok(androidSanitizer.includes(csp), "android CSP matches web's opted-in policy");
+assert.ok(iosSanitizer.includes(csp), "ios CSP matches web's opted-in policy");
 assert.match(androidSanitizer, /CONTENT_SECURITY_POLICY/);
 assert.match(iosSanitizer, /contentSecurityPolicy/);
 assert.match(androidView, /CONTENT_SECURITY_POLICY/);

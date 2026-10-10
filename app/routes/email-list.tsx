@@ -37,6 +37,8 @@ import {
 	useUpdateEmail,
 } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
+import { ListLoadError } from "~/components/ListLoadError";
+import api from "~/services/api";
 import { queryKeys } from "~/queries/keys";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { Email } from "~/types";
@@ -195,6 +197,8 @@ export default function EmailListRoute() {
 	const {
 		data: emailData,
 		isFetching: isRefreshing,
+		error: loadError,
+		refetch,
 	} = useEmails(mailboxId, params, { refetchInterval: 30_000 });
 
 	const emails = emailData?.emails ?? [];
@@ -254,10 +258,27 @@ export default function EmailListRoute() {
 		e.preventDefault();
 		e.stopPropagation();
 		if (mailboxId) {
-			const confirmed = window.confirm("Are you sure you want to delete this email?");
-			if (!confirmed) return;
+			// Outside Trash, delete just moves to Trash (restorable); only confirm the permanent one.
+			if (folder === Folders.TRASH) {
+				const confirmed = window.confirm("Permanently delete this email? This can't be undone.");
+				if (!confirmed) return;
+			}
 			deleteEmail.mutate({ mailboxId, id: emailId });
 			if (selectedEmailId === emailId) closePanel();
+		}
+	};
+
+	const [emptyingTrash, setEmptyingTrash] = useState(false);
+	const handleEmptyTrash = async () => {
+		if (!mailboxId) return;
+		if (!window.confirm("Permanently delete everything in Trash? This can't be undone.")) return;
+		setEmptyingTrash(true);
+		try {
+			await api.emptyTrash(mailboxId);
+			closePanel();
+		} finally {
+			setEmptyingTrash(false);
+			handleRefresh();
 		}
 	};
 
@@ -304,6 +325,16 @@ export default function EmailListRoute() {
 								{totalCount} conversation{totalCount !== 1 ? "s" : ""}
 							</span>
 						)}
+						{folder === Folders.TRASH && totalCount > 0 && (
+							<Button
+								variant="secondary"
+								size="sm"
+								onClick={handleEmptyTrash}
+								disabled={emptyingTrash}
+							>
+								{emptyingTrash ? "Emptying…" : "Empty Trash"}
+							</Button>
+						)}
 						<Tooltip
 							content={isRefreshing ? "Refreshing..." : "Refresh"}
 							side="bottom"
@@ -331,6 +362,8 @@ export default function EmailListRoute() {
 				<div className="flex-1 overflow-y-auto">
 				{isRefreshing && emails.length === 0 ? (
 					<EmailListSkeleton />
+				) : loadError && emails.length === 0 ? (
+					<ListLoadError error={loadError} onRetry={() => void refetch()} />
 				) : emails.length > 0 ? (
 						<div>
 							{listItems.map((item) => {
