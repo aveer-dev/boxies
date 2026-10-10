@@ -12,87 +12,69 @@ export interface ComposeOptions {
 	originalEmail?: Email | null;
 	/** When editing a draft, this holds the draft email to pre-fill the composer */
 	draftEmail?: Email | null;
+	/** Plain text typed in the quick reply before popping out to the composer */
+	initialBody?: string;
 }
 
+/**
+ * Transient UI state that does not belong in the URL. Which mailbox, folder,
+ * thread, search or settings page is open lives in the route (see
+ * `useMailNavigation`); this store only tracks the compose and agent columns.
+ */
 interface UIState {
-	// Side panel state
-	selectedEmailId: string | null;
 	isComposing: boolean;
-	_previousEmailId: string | null;
-	selectEmail: (id: string | null) => void;
+	composeOptions: ComposeOptions;
 	startCompose: (options?: ComposeOptions) => void;
-	closePanel: () => void;
 	closeCompose: () => void;
 
-	// Compose options
-	composeOptions: ComposeOptions;
-
-	// Mobile sidebar
-	isSidebarOpen: boolean;
-	openSidebar: () => void;
-	closeSidebar: () => void;
-	toggleSidebar: () => void;
-
-	// Agent panel
 	isAgentPanelOpen: boolean;
+	openAgentPanel: () => void;
+	closeAgentPanel: () => void;
 	toggleAgentPanel: () => void;
 
-	// Legacy dialog support (kept for non-split views)
-	isComposeModalOpen: boolean;
-	openComposeModal: (options?: ComposeOptions) => void;
-	closeComposeModal: () => void;
+	/** Prompt to prefill in the agent chat (AI Assist); consumed once. */
+	pendingAgentPrompt: string | null;
+	askAgent: (prompt: string) => void;
+	consumeAgentPrompt: () => string | null;
+
+	/** Close compose + agent columns (mailbox switch). */
+	resetColumns: () => void;
 }
 
-export const useUIStore = create<UIState>((set, get) => ({
-	selectedEmailId: null,
-	isComposing: false,
-	_previousEmailId: null,
-	composeOptions: { mode: "new", originalEmail: null },
-	isComposeModalOpen: false,
-	isSidebarOpen: false,
-	isAgentPanelOpen: true,
+const EMPTY_COMPOSE: ComposeOptions = { mode: "new", originalEmail: null };
 
-	selectEmail: (id) => set({ selectedEmailId: id, isComposing: false }),
+export const useUIStore = create<UIState>((set, get) => ({
+	isComposing: false,
+	composeOptions: EMPTY_COMPOSE,
+	isAgentPanelOpen: false,
+	pendingAgentPrompt: null,
 
 	startCompose: (options) =>
-		set((state) => {
-			const mode = options?.mode || "new";
-			const isReplyOrForward = mode === "reply" || mode === "reply-all" || mode === "forward";
-			return {
-				isComposing: true,
-				_previousEmailId: state.selectedEmailId,
-				// Keep selectedEmailId when replying/forwarding so the thread stays visible
-				selectedEmailId: isReplyOrForward ? state.selectedEmailId : null,
-				composeOptions: options || { mode: "new", originalEmail: null },
-				isSidebarOpen: false,
-			};
+		set({
+			isComposing: true,
+			composeOptions: options || { ...EMPTY_COMPOSE },
 		}),
-
-	closePanel: () => set({ selectedEmailId: null, isComposing: false, _previousEmailId: null, composeOptions: { mode: "new" as const, originalEmail: null } }),
 
 	closeCompose: () =>
-		set((state) => ({
-			isComposing: false,
-			selectedEmailId: state._previousEmailId,
-			_previousEmailId: null,
-			composeOptions: { mode: "new" as const, originalEmail: null },
-		})),
+		set({ isComposing: false, composeOptions: EMPTY_COMPOSE }),
 
-	openSidebar: () => set({ isSidebarOpen: true }),
-	closeSidebar: () => set({ isSidebarOpen: false }),
-	toggleSidebar: () => set({ isSidebarOpen: !get().isSidebarOpen }),
-
+	openAgentPanel: () => set({ isAgentPanelOpen: true }),
+	closeAgentPanel: () => set({ isAgentPanelOpen: false }),
 	toggleAgentPanel: () => set({ isAgentPanelOpen: !get().isAgentPanelOpen }),
 
-	openComposeModal: (options) =>
-		set({
-			composeOptions: options || { mode: "new", originalEmail: null },
-			isComposeModalOpen: true,
-		}),
+	askAgent: (prompt) =>
+		set({ isAgentPanelOpen: true, pendingAgentPrompt: prompt }),
 
-	closeComposeModal: () =>
+	consumeAgentPrompt: () => {
+		const prompt = get().pendingAgentPrompt;
+		if (prompt !== null) set({ pendingAgentPrompt: null });
+		return prompt;
+	},
+
+	resetColumns: () =>
 		set({
-			isComposeModalOpen: false,
-			composeOptions: { mode: "new", originalEmail: null },
+			isComposing: false,
+			composeOptions: EMPTY_COMPOSE,
+			pendingAgentPrompt: null,
 		}),
 }));

@@ -2,7 +2,13 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	useMutation,
+	useQueries,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
+import { Folders } from "shared/folders";
 import api from "~/services/api";
 import type { Folder } from "~/types";
 import { queryKeys } from "./keys";
@@ -15,6 +21,22 @@ export function useFolders(mailboxId: string | undefined) {
 		queryFn: () => api.listFolders(mailboxId!) as Promise<Folder[]>,
 		enabled: !!mailboxId,
 	});
+}
+
+/** Inbox unread count per mailbox (shares the per-mailbox folders cache). */
+export function useInboxUnreadCounts(mailboxIds: string[]) {
+	const results = useQueries({
+		queries: mailboxIds.map((mailboxId) => ({
+			queryKey: queryKeys.folders.list(mailboxId),
+			queryFn: () => api.listFolders(mailboxId) as Promise<Folder[]>,
+		})),
+	});
+	const counts: Record<string, number> = {};
+	mailboxIds.forEach((mailboxId, i) => {
+		const inbox = results[i]?.data?.find((f) => f.id === Folders.INBOX);
+		counts[mailboxId] = inbox?.unreadCount ?? 0;
+	});
+	return counts;
 }
 
 export function useWorkflowPiles(mailboxId: string | undefined) {

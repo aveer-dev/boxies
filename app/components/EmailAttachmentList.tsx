@@ -31,10 +31,11 @@ export default function EmailAttachmentList({
 	return (
 		<div className={className}>
 			{showHeading && (
-				<div className="flex items-center gap-2 mb-2">
-					<PaperclipIcon size={14} className="text-kumo-subtle" />
-					<span className="text-sm font-medium text-kumo-default">
-						{files.length} attachment{files.length !== 1 ? "s" : ""}
+				<div className="flex items-center gap-2 mb-2.5">
+					<PaperclipIcon size={13} className="text-kumo-subtle" />
+					<span className="text-[11px] font-medium uppercase tracking-wider text-kumo-subtle">
+						Attachments ({files.length} file{files.length !== 1 ? "s" : ""} •{" "}
+						{formatBytes(files.reduce((sum, f) => sum + (f.size || 0), 0))})
 					</span>
 				</div>
 			)}
