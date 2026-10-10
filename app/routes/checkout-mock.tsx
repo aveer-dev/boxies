@@ -12,6 +12,18 @@ export function meta() {
 }
 
 export default function CheckoutMockRoute() {
+	// The simulator posts an unsigned webhook; it exists for local dev only.
+	if (!import.meta.env.DEV) {
+		return (
+			<div className="min-h-screen bg-kumo-recessed flex items-center justify-center p-4 text-sm text-kumo-subtle">
+				Checkout simulator is only available in development.
+			</div>
+		);
+	}
+	return <CheckoutMockSimulator />;
+}
+
+function CheckoutMockSimulator() {
 	const [searchParams] = useSearchParams();
 	const navigate = useNavigate();
 	const domain = searchParams.get("domain") || "example.com";

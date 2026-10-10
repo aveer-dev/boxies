@@ -63,6 +63,7 @@ import {
 	resolveAclPrincipalsToAccounts,
 } from "./lib/identity-links";
 import {
+	canAdministerMailboxDomain,
 	registerAdminAndInviteRoutes,
 	resolveCreateGate,
 } from "./routes/admin-invites";
@@ -71,7 +72,7 @@ import { registerDomainDnsRoutes } from "./routes/domain-dns";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
-import { listDomainsForPrincipal } from "./lib/domain-registry";
+import { getDomainMetadata, listDomainsForPrincipal } from "./lib/domain-registry";
 import {
 	issueMobileSessionToken,
 	verifyAppleIdentityToken,
@@ -270,6 +271,23 @@ registerAliasRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
+/**
+ * Operator mail domains (DOMAINS / MAIL_DOMAIN) are open to anyone the create
+ * gate lets through, unless a tenant has registered that domain. Tenant custom
+ * domains need that domain's admin (or a super-admin).
+ */
+async function canCreateMailboxOnDomain(
+	env: Env,
+	principal: RequestPrincipal,
+	mailboxId: string,
+): Promise<boolean> {
+	const domain = mailboxId.split("@")[1]?.toLowerCase();
+	if (!domain) return false;
+	if (await canAdministerMailboxDomain(env, principal, domain)) return true;
+	if (await getDomainMetadata(env.BUCKET, domain)) return false;
+	return mailDomainConfig(env).domains.includes(domain);
+}
+
 app.get("/api/v1/mailboxes", async (c) => {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
 	if (!principal) return c.json({ error: "Forbidden" }, 403);
@@ -301,6 +319,9 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const allowed = allowedMailboxSet((c.env.EMAIL_ADDRESSES ?? []) as string[]);
 	if (allowed.size > 0 && !allowed.has(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
+	}
+	if (!(await canCreateMailboxOnDomain(c.env, principal, email))) {
+		return c.json({ error: "You can only create mailboxes on domains you administer" }, 403);
 	}
 	const key = mailboxMetadataKey(email);
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);

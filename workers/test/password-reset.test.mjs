@@ -9,7 +9,9 @@ import {
 	createPasswordReset,
 	verifyPasswordReset,
 	consumePasswordReset,
+	PASSWORD_RESET_MAX_CODE_ATTEMPTS,
 } from "../lib/password-reset.ts";
+import { decodeJwt } from "jose";
 import {
 	hashPassword,
 	verifyPassword,
@@ -17,6 +19,7 @@ import {
 import {
 	savePlatformUser,
 	loadPlatformUser,
+	passwordSessionIsCurrent,
 } from "../lib/platform-users.ts";
 import { registerAdminAndInviteRoutes } from "../routes/admin-invites.ts";
 import { isPublicAuthPath } from "../lib/auth-paths.ts";
@@ -66,17 +69,34 @@ async function testPasswordResetDirect() {
 	assert.ok(byToken, "Should find record by token");
 	assert.equal(byToken.userId, "user-123");
 
-	// Verify by code
-	const byCode = await verifyPasswordReset(bucket, { code: reset.code });
+	// A code alone (no user) is never enough
+	assert.equal(await verifyPasswordReset(bucket, { code: reset.code }), null);
+	assert.equal(await verifyPasswordReset(bucket, { code: reset.code, userId: "someone-else" }), null);
+
+	// Verify by code for the right user
+	const byCode = await verifyPasswordReset(bucket, { code: reset.code, userId: "user-123" });
 	assert.ok(byCode, "Should find record by code");
 	assert.equal(byCode.userId, "user-123");
 
 	// Consume
 	await consumePasswordReset(bucket, reset);
 	const afterToken = await verifyPasswordReset(bucket, { token: reset.token });
-	const afterCode = await verifyPasswordReset(bucket, { code: reset.code });
+	const afterCode = await verifyPasswordReset(bucket, { code: reset.code, userId: "user-123" });
 	assert.equal(afterToken, null, "Token should be consumed");
 	assert.equal(afterCode, null, "Code should be consumed");
+
+	// Wrong guesses burn the code
+	const capped = await createPasswordReset(bucket, "user-456", "sam@example.com");
+	const wrong = capped.code === "111111" ? "222222" : "111111";
+	for (let i = 0; i < PASSWORD_RESET_MAX_CODE_ATTEMPTS; i++) {
+		assert.equal(await verifyPasswordReset(bucket, { code: wrong, userId: "user-456" }), null);
+	}
+	assert.equal(
+		await verifyPasswordReset(bucket, { code: capped.code, userId: "user-456" }),
+		null,
+		"correct code must fail after too many wrong attempts",
+	);
+	assert.equal(await verifyPasswordReset(bucket, { token: capped.token }), null, "link burned too");
 
 	console.log("testPasswordResetDirect: ok");
 }
@@ -144,11 +164,13 @@ async function testPasswordResetHttpRoutes() {
 	assert.ok(recipients.includes("alex@inboxies.email"));
 	assert.match(sentEmails[0].subject, /Reset your Inboxies password/);
 
+	assert.equal(forgotJson.devResetCode, undefined, "code must never be returned outside dev");
+
 	// Find the generated reset code from bucket
 	let code = "";
 	let token = "";
 	for (const [k, v] of bucket.store.entries()) {
-		if (k.startsWith("platform/password-resets/codes/")) {
+		if (k.startsWith("platform/password-resets/users/")) {
 			const rec = JSON.parse(v);
 			code = rec.code;
 			token = rec.token;
@@ -175,14 +197,14 @@ async function testPasswordResetHttpRoutes() {
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ code: "000000", newPassword: "NewValidPassword456!" }),
+			body: JSON.stringify({ code: code === "000000" ? "999999" : "000000", email: "alex@inboxies.email", newPassword: "NewValidPassword456!" }),
 		},
 		env,
 	);
 	assert.equal(invalidRes.status, 400);
 
-	// 5. Reset with valid code succeeds and updates user's password
-	const resetRes = await app.request(
+	// 4b. A valid code without the email is rejected
+	const noEmailRes = await app.request(
 		"http://localhost/api/v1/auth/password/reset",
 		{
 			method: "POST",
@@ -191,10 +213,49 @@ async function testPasswordResetHttpRoutes() {
 		},
 		env,
 	);
+	assert.equal(noEmailRes.status, 400);
+
+	// Session minted before the reset carries tokenVersion 0
+	const preLogin = await (
+		await app.request(
+			"http://localhost/api/v1/auth/password",
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ email: "alex@inboxies.email", password: "OldPassword123!" }),
+			},
+			env,
+		)
+	).json();
+	assert.equal(decodeJwt(preLogin.token).tv, 0);
+
+	// 5. Reset with valid code succeeds and updates user's password
+	const resetRes = await app.request(
+		"http://localhost/api/v1/auth/password/reset",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ code, email: "alex@inboxies.email", newPassword: "NewValidPassword456!" }),
+		},
+		env,
+	);
 	assert.equal(resetRes.status, 200);
 	const resetJson = await resetRes.json();
 	assert.equal(resetJson.ok, true);
 	assert.ok(resetJson.token, "Must return session token");
+	// The reset bumps tokenVersion, so the earlier session no longer matches
+	const bumped = await loadPlatformUser(bucket, "user-abc");
+	assert.equal(bumped.tokenVersion, 1);
+	assert.equal(decodeJwt(resetJson.token).tv, 1);
+	assert.equal(
+		await passwordSessionIsCurrent(bucket, "user-abc", decodeJwt(preLogin.token).tv),
+		false,
+		"sessions minted before the reset are revoked",
+	);
+	assert.equal(
+		await passwordSessionIsCurrent(bucket, "user-abc", decodeJwt(resetJson.token).tv),
+		true,
+	);
 
 	// 6. Code is now consumed, second attempt fails
 	const reuseRes = await app.request(
@@ -202,7 +263,7 @@ async function testPasswordResetHttpRoutes() {
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ code, newPassword: "AnotherPassword789!" }),
+			body: JSON.stringify({ code, email: "alex@inboxies.email", newPassword: "AnotherPassword789!" }),
 		},
 		env,
 	);

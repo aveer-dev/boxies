@@ -99,6 +99,10 @@ function mockEnv(bucket, sampleEmails = []) {
 
 import { Hono } from "hono";
 
+// These suites drive the in-memory Cloudflare / registrar mocks, which are
+// dev-only (production fails closed without credentials). Opt in explicitly.
+globalThis.__INBOXIES_DEV__ = true;
+
 function harness(env, defaultPrincipal = null) {
 	const parent = new Hono();
 	parent.use("*", async (c, next) => {
@@ -267,6 +271,25 @@ async function runTests() {
 	assert.equal(downloadRes.status, 200);
 	assert.equal(downloadRes.headers.get("Content-Type"), "application/mbox; charset=utf-8");
 	assert.ok(downloadRes.headers.get("Content-Disposition").includes(".mbox"));
+
+	// Another signed-in user can neither read the job nor download the archive.
+	const strangerHeaders = { headers: { "x-test-user": "stranger@other.com" } };
+	const strangerJob = await client.request(`/api/v1/exports/${exportData.exportId}`, strangerHeaders);
+	assert.equal(strangerJob.status, 404);
+	const strangerDownload = await client.request(
+		`/api/v1/exports/${exportData.exportId}/download`,
+		strangerHeaders,
+	);
+	assert.equal(strangerDownload.status, 404);
+
+	// Expired exports are refused and their archive deleted.
+	const jobKey = `exports/jobs/${exportData.exportId}.json`;
+	const storedJob = await (await bucket.get(jobKey)).json();
+	await bucket.put(jobKey, JSON.stringify({ ...storedJob, expiresAt: new Date(Date.now() - 1000).toISOString() }));
+	const expiredRes = await client.request(`/api/v1/exports/${exportData.exportId}/download`);
+	assert.equal(expiredRes.status, 410);
+	assert.equal(await bucket.get(storedJob.downloadKey), null);
+	await bucket.put(jobKey, JSON.stringify(storedJob));
 
 	console.log("✔ Export API & Download tests passed");
 

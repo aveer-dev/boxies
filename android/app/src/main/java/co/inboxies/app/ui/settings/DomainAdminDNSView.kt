@@ -1181,6 +1181,7 @@ private fun AddDomainDialog(
                                             returnUrl = returnUrl,
                                             client = "android",
                                         )
+                                        co.inboxies.app.config.AppConfig.rememberPendingCheckout(res.sessionId)
                                         val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(res.checkoutUrl))
                                         browserIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                         context.startActivity(browserIntent)

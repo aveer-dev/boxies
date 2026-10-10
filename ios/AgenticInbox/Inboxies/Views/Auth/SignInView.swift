@@ -1363,6 +1363,7 @@ private struct EmailLoginScreen: View {
             do {
                 try await auth.resetPassword(
                     code: resetCode.trimmingCharacters(in: .whitespacesAndNewlines),
+                    email: email.trimmingCharacters(in: .whitespacesAndNewlines),
                     newPassword: password
                 )
                 if auth.isAuthenticated {

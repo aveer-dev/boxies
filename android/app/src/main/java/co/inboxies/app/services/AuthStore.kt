@@ -113,12 +113,12 @@ class AuthStore(context: Context) {
         }
     }
 
-    suspend fun resetPassword(token: String? = null, code: String? = null, newPassword: String) {
+    suspend fun resetPassword(token: String? = null, code: String? = null, email: String? = null, newPassword: String) {
         _isBusy.value = true
         _errorMessage.value = null
         try {
             val response = withContext(Dispatchers.IO) {
-                ApiClient.shared.resetPassword(token, code, newPassword)
+                ApiClient.shared.resetPassword(token, code, email, newPassword)
             }
             persist(response.token, response.email)
         } catch (e: Exception) {

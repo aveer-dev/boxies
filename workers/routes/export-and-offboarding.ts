@@ -12,7 +12,7 @@ import {
 	runMailboxExportJob,
 	runDomainExportJob,
 	hasRecentExportForDomain,
-	exportDataKey,
+	type ExportJob,
 } from "../lib/email-exporter";
 import {
 	authorizeDomainAdmin,
@@ -35,6 +35,36 @@ const DecommissionBody = z.object({
 const TransferLockBody = z.object({
 	locked: z.boolean(),
 });
+
+type ExportContext = Context<{ Bindings: Env; Variables: AppVariables }>;
+
+/**
+ * Load an export job the caller may read: the same mailbox ACL / domain admin
+ * check as creating it, and only until it expires. Returns a Response on denial.
+ */
+async function loadAuthorizedExport(
+	c: ExportContext,
+	exportId: string,
+): Promise<ExportJob | Response> {
+	const job = await getExportJob(c.env.BUCKET, exportId);
+	if (!job) return c.json({ error: "Export job not found" }, 404);
+
+	if (job.targetType === "mailbox") {
+		const principal = c.get("principal") as RequestPrincipal | undefined;
+		const auth = await authorizeMailbox(c.env.BUCKET, principal, job.targetId);
+		// Same 404 as a missing job so ids can't be probed.
+		if (!auth.ok) return c.json({ error: "Export job not found" }, 404);
+	} else {
+		const authz = await authorizeDomainAdmin(c, job.targetId);
+		if (authz instanceof Response) return c.json({ error: "Export job not found" }, 404);
+	}
+
+	if (new Date(job.expiresAt).getTime() < Date.now()) {
+		if (job.downloadKey) await c.env.BUCKET.delete(job.downloadKey);
+		return c.json({ error: "Export has expired" }, 410);
+	}
+	return job;
+}
 
 export function registerExportAndOffboardingRoutes(
 	app: Hono<{ Bindings: Env; Variables: AppVariables }>,
@@ -98,13 +128,8 @@ export function registerExportAndOffboardingRoutes(
 	 * Query export job status and progress.
 	 */
 	app.get("/api/v1/exports/:exportId", async (c) => {
-		const exportId = c.req.param("exportId");
-		const job = await getExportJob(c.env.BUCKET, exportId);
-
-		if (!job) {
-			return c.json({ error: "Export job not found" }, 404);
-		}
-
+		const job = await loadAuthorizedExport(c, c.req.param("exportId"));
+		if (job instanceof Response) return job;
 		return c.json(job);
 	});
 
@@ -113,16 +138,15 @@ export function registerExportAndOffboardingRoutes(
 	 */
 	app.get("/api/v1/exports/:exportId/download", async (c) => {
 		const exportId = c.req.param("exportId");
-		const job = await getExportJob(c.env.BUCKET, exportId);
+		const job = await loadAuthorizedExport(c, exportId);
+		if (job instanceof Response) return job;
 
-		const dataKey = job?.downloadKey || exportDataKey(exportId, "mbox");
-		const fileObj = await c.env.BUCKET.get(dataKey);
-
+		const fileObj = job.downloadKey ? await c.env.BUCKET.get(job.downloadKey) : null;
 		if (!fileObj) {
 			return c.json({ error: "Export archive file not found or expired" }, 404);
 		}
 
-		const filename = job?.filename || `inboxies-export-${exportId}.mbox`;
+		const filename = job.filename || `inboxies-export-${exportId}.mbox`;
 
 		return new Response(fileObj.body, {
 			headers: {

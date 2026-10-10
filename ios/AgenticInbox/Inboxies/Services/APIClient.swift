@@ -268,10 +268,12 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func resetPassword(token: String? = nil, code: String? = nil, newPassword: String) async throws -> PasswordLoginResponse {
+    func resetPassword(token: String? = nil, code: String? = nil, email: String? = nil, newPassword: String) async throws -> PasswordLoginResponse {
         var body: [String: Any] = ["newPassword": newPassword]
         if let token, !token.isEmpty { body["token"] = token }
         if let code, !code.isEmpty { body["code"] = code }
+        // The server only checks a 6-digit code against this account's reset.
+        if let email, !email.isEmpty { body["email"] = email }
         return try await request(
             path: "/api/v1/auth/password/reset",
             method: "POST",

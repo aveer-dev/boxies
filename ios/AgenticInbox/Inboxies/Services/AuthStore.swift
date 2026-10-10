@@ -85,12 +85,12 @@ final class AuthStore {
         }
     }
 
-    func resetPassword(token: String? = nil, code: String? = nil, newPassword: String) async throws {
+    func resetPassword(token: String? = nil, code: String? = nil, email: String? = nil, newPassword: String) async throws {
         isBusy = true
         errorMessage = nil
         defer { isBusy = false }
         do {
-            let response = try await APIClient.shared.resetPassword(token: token, code: code, newPassword: newPassword)
+            let response = try await APIClient.shared.resetPassword(token: token, code: code, email: email, newPassword: newPassword)
             persist(token: response.token, email: response.email)
         } catch {
             errorMessage = error.localizedDescription

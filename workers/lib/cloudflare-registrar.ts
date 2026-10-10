@@ -8,6 +8,7 @@
  */
 
 import { CloudflareApiError, type CloudflareClientEnv } from "./cloudflare-client";
+import { isDevRuntime } from "./runtime-env";
 import type { DomainRegistrationInfo } from "./domain-registry";
 
 export interface DomainPricingBreakdown {
@@ -80,8 +81,9 @@ const TLD_WHOLESALE_PRICING: Record<string, number> = {
 
 const STANDARD_RETAIL_PRICE = 20.0;
 
+// Mock only in local dev / tests. In production missing credentials must fail closed.
 function isMockEnv(env: CloudflareClientEnv): boolean {
-	return !env.CF_API_TOKEN || !env.CF_ACCOUNT_ID;
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
 }
 
 // In-memory mock registrar store for dev / test environments

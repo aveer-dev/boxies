@@ -90,6 +90,15 @@ function mockEnv(bucket, extras = {}) {
 
 import { verifyPasswordSessionToken } from "../lib/password-auth.ts";
 import { expandPrincipalWithLinks } from "../lib/identity-links.ts";
+import {
+	domainVerificationChallenge,
+	isDomainVerified,
+	signupClaimant,
+} from "../lib/domain-verification.ts";
+
+// These suites drive the in-memory Cloudflare / registrar mocks, which are
+// dev-only (production fails closed without credentials). Opt in explicitly.
+globalThis.__INBOXIES_DEV__ = true;
 
 function harness(env, defaultPrincipal = null) {
 	const parent = new Hono();
@@ -286,6 +295,76 @@ async function runTests() {
 		assert.equal(resDup.status, 409);
 	}
 	console.log("✔ signup-domain HTTP tests passed");
+
+	// 4b. Production: bring-your-own domains need a TXT proof bound to the claimant
+	{
+		globalThis.__INBOXIES_DEV__ = false;
+		try {
+			const bucket = mockBucket();
+			const env = mockEnv(bucket);
+			const app = harness(env);
+			const origFetch = globalThis.fetch;
+			globalThis.fetch = async (url) => {
+				if (String(url).includes("cloudflare-dns.com/dns-query")) {
+					return { ok: true, json: async () => ({ Status: 0 }) };
+				}
+				throw new Error(`unexpected fetch ${url}`);
+			};
+			try {
+				const res = await app.fetch(
+					new Request("https://inboxies.email/api/v1/auth/signup-domain", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							domain: "someone-elses.com",
+							username: "ceo",
+							password: "securepassword999",
+						}),
+					}),
+				);
+				assert.equal(res.status, 428, "unverified domain must not be provisioned");
+				const body = await res.json();
+				assert.equal(body.code, "domain_verification_required");
+				assert.equal(body.verification.recordName, "_inboxies-verify.someone-elses.com");
+				assert.match(body.verification.recordValue, /^inboxies-verify=[0-9a-f]{32}$/);
+				assert.equal(await bucket.get("platform/domains/someone-elses.com.json"), null);
+			} finally {
+				globalThis.fetch = origFetch;
+			}
+
+			// The proof is bound to the claimant: the owner's published value
+			// does not verify someone else's claim.
+			const secret = env.MOBILE_JWT_SECRET;
+			const owner = await domainVerificationChallenge(
+				secret,
+				"someone-elses.com",
+				await signupClaimant("ceo", "securepassword999"),
+			);
+			const attacker = await domainVerificationChallenge(
+				secret,
+				"someone-elses.com",
+				await signupClaimant("ceo", "attacker-password-1"),
+			);
+			assert.notEqual(owner.recordValue, attacker.recordValue);
+
+			globalThis.fetch = async () => ({
+				ok: true,
+				json: async () => ({
+					Status: 0,
+					Answer: [{ type: 16, data: `"${owner.recordValue}"` }],
+				}),
+			});
+			try {
+				assert.equal(await isDomainVerified(owner), true);
+				assert.equal(await isDomainVerified(attacker), false);
+			} finally {
+				globalThis.fetch = origFetch;
+			}
+		} finally {
+			globalThis.__INBOXIES_DEV__ = true;
+		}
+	}
+	console.log("✔ domain TXT verification tests passed");
 
 	// 5. HTTP: Admin DNS Suite
 	{

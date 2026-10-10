@@ -18,6 +18,7 @@ import {
 } from "./lib/mailbox-acl";
 import { expandPrincipalWithLinks } from "./lib/identity-links";
 import { PASSWORD_SESSION_COOKIE } from "./lib/password-auth";
+import { passwordSessionIsCurrent } from "./lib/platform-users";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import type { Env } from "./types";
 
@@ -155,6 +156,12 @@ app.use("*", async (c, next) => {
 		}
 		try {
 			const claims = await verifyMobileSessionToken(sessionToken, mobileSecret);
+			if (claims.auth === "password" && claims.uid) {
+				// A password reset bumps tokenVersion and revokes older sessions.
+				if (!(await passwordSessionIsCurrent(c.env.BUCKET, claims.uid, claims.tv))) {
+					throw new Error("Password session revoked");
+				}
+			}
 			const principal = await expandPrincipalWithLinks(
 				c.env.BUCKET,
 				principalFromClaims(claims),

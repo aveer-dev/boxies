@@ -37,6 +37,17 @@ import { ensurePrincipalAccount } from "../lib/identity-links";
 import { aclFromOwnerKeys, principalKeys } from "../lib/mailbox-acl";
 import { createInviteRecord, saveInvite, inviteAcceptUrl } from "../lib/invites";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { isDevRuntime } from "../lib/runtime-env";
+import {
+	domainVerificationChallenge,
+	isDomainVerified,
+	verificationRequiredBody,
+} from "../lib/domain-verification";
+
+/** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
+function canSkipDomainVerification(env: Env): boolean {
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
+}
 
 type AppVariables = { principal?: RequestPrincipal };
 
@@ -106,8 +117,8 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
 
 		const isSuper = await isDomainAdmin(c.env, principal);
-		if (!isSuper && principal.kind !== "user") {
-			return c.json({ error: "Forbidden: Only user accounts can administer domains" }, 403);
+		if (!isSuper && principalKeys(principal).length === 0) {
+			return c.json({ error: "Forbidden" }, 403);
 		}
 
 		const parsed = z
@@ -142,6 +153,23 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			);
 		}
 
+		// The connecting account becomes this domain's admin.
+		const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
+		const ownerKey = ensured.ownerKeys[0];
+
+		// Non-super-admins must prove DNS control before we create a zone for them.
+		if (!isSuper && !canSkipDomainVerification(c.env)) {
+			const secret =
+				c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
+			if (!secret) {
+				return c.json({ error: "Server authentication is not configured" }, 500);
+			}
+			const challenge = await domainVerificationChallenge(secret, domain, ownerKey);
+			if (!(await isDomainVerified(challenge))) {
+				return c.json(verificationRequiredBody(domain, challenge), 428);
+			}
+		}
+
 		// Provision Cloudflare Zone & Email Routing
 		let zone;
 		try {
@@ -165,12 +193,16 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			zone.name_servers,
 		);
 
-		const ownerUserId = principal.userId || principal.id;
+		// Password sessions keep the plain user id (checkout/billing look it up);
+		// everyone else is recorded by their durable account key.
+		const ownerUserId = principal.sub?.startsWith("user:")
+			? principal.sub.slice("user:".length)
+			: ownerKey;
 		const domainMetadata: DomainMetadata = {
 			domain,
 			zoneId: zone.id,
 			ownerUserId,
-			adminUserIds: [ownerUserId],
+			adminUserIds: [ownerKey],
 			status: zone.status === "active" ? "active" : "pending_nameservers",
 			nameservers: zone.name_servers,
 			emailRoutingEnabled: true,
