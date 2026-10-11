@@ -37,7 +37,8 @@ import {
 	deleteEmailAttachments,
 	deleteR2Keys,
 } from "../lib/attachments";
-import { aliasMetadataKey, mailboxMetadataKey } from "../lib/mailbox-routing";
+import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import { isAliasUsable, type AliasRow } from "../lib/alias-utils";
 import {
 	FTS_BACKFILL_BATCH_SIZE,
 	FTS_BACKFILL_MIGRATION,
@@ -1096,6 +1097,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		return {
 			...email,
+			...this.#aliasFields(email.alias_id),
 			body,
 			read: !!email.read,
 			starred: !!email.starred,
@@ -1103,6 +1105,33 @@ export class MailboxDO extends DurableObject<Env> {
 			attachments: emailAttachments,
 			auth: parseStoredEmailAuth(email.auth),
 		};
+	}
+
+	/**
+	 * Private email the message arrived on (or was sent from). Clients use
+	 * alias_email as the reply From without loading the alias list.
+	 */
+	#aliasFields(aliasId: string | null | undefined): {
+		alias_email: string | null;
+		alias_active: boolean | null;
+	} {
+		if (!aliasId) return { alias_email: null, alias_active: null };
+		const alias = this.#aliasRow(aliasId);
+		if (!alias) return { alias_email: null, alias_active: false };
+		return { alias_email: alias.alias_email, alias_active: isAliasUsable(alias) };
+	}
+
+	#aliasRow(idOrEmail: string): AliasRow | null {
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id, alias_email, domain, base_domain, label, is_active, paused_action, expires_at, created_at, stats_received, stats_blocked
+				 FROM aliases
+				 WHERE id = ?1 OR alias_email = ?1
+				 LIMIT 1`,
+				idOrEmail.toLowerCase().trim(),
+			),
+		] as unknown as AliasRow[];
+		return rows[0] ?? null;
 	}
 
 	/**
@@ -1142,6 +1171,7 @@ export class MailboxDO extends DurableObject<Env> {
 		return await Promise.all(
 			emailRows.map(async (email) => this.#withDecodedAuth({
 				...email,
+				...this.#aliasFields(email.alias_id),
 				body: await this.#hydrateBody(email.id, email.body, email.snippet),
 				read: !!email.read,
 				starred: !!email.starred,
@@ -1534,22 +1564,20 @@ export class MailboxDO extends DurableObject<Env> {
 			.all();
 		const conversationIds = conversationRows.map((row) => row.id);
 
+		const aliasEmails = [
+			...this.ctx.storage.sql.exec(`SELECT alias_email FROM aliases`),
+		].map((row) => String(row.alias_email));
+
 		const keys = collectMailboxPurgeR2Keys(
 			emailIds,
 			attachmentRows,
 			emailContentKeys,
+			aliasEmails,
 		);
 		await deleteR2Keys(this.env.BUCKET, keys);
 
 		// Wipe tables first; only then clear FTS / alarm so a failed txn
 		// leaves searchable mail + backfill alarm intact.
-		// Private aliases route through R2 records; drop them so a re-created
-		// mailbox at this address doesn't inherit (and receive) the old aliases.
-		const aliasEmails = [
-			...this.ctx.storage.sql.exec(`SELECT alias_email FROM aliases`),
-		].map((row) => String((row as { alias_email: string }).alias_email));
-		await deleteR2Keys(this.env.BUCKET, aliasEmails.map((email) => aliasMetadataKey(email)));
-
 		this.ctx.storage.transactionSync(() => {
 			const sql = this.ctx.storage.sql;
 			sql.exec(`DELETE FROM aliases`);
@@ -2091,51 +2119,37 @@ export class MailboxDO extends DurableObject<Env> {
 
 	// ── Masked Email Aliases ────────────────────────────────────────
 
-	async listAliases() {
+	async listAliases(): Promise<AliasRow[]> {
 		return [
 			...this.ctx.storage.sql.exec(
 				`SELECT id, alias_email, domain, base_domain, label, is_active, paused_action, expires_at, created_at, stats_received, stats_blocked
 				 FROM aliases
 				 ORDER BY created_at DESC`,
 			),
-		] as Array<{
-			id: string;
-			alias_email: string;
-			domain: string;
-			base_domain: string;
-			label: string | null;
-			is_active: number;
-			paused_action: string;
-			expires_at: string | null;
-			created_at: string;
-			stats_received: number;
-			stats_blocked: number;
-		}>;
+		] as unknown as AliasRow[];
 	}
 
-	async getAlias(idOrEmail: string) {
-		const rows = [
+	async getAlias(idOrEmail: string): Promise<AliasRow | null> {
+		return this.#aliasRow(idOrEmail);
+	}
+
+	async countAliases(): Promise<number> {
+		const row = [...this.ctx.storage.sql.exec(`SELECT COUNT(*) AS n FROM aliases`)][0];
+		return Number(row?.n ?? 0);
+	}
+
+	/** First private email seen in a thread (inbound or sent), if any. */
+	async getThreadAliasId(threadId: string): Promise<string | null> {
+		const row = [
 			...this.ctx.storage.sql.exec(
-				`SELECT id, alias_email, domain, base_domain, label, is_active, paused_action, expires_at, created_at, stats_received, stats_blocked
-				 FROM aliases
-				 WHERE id = ?1 OR alias_email = ?1
+				`SELECT alias_id FROM emails
+				 WHERE thread_id = ?1 AND alias_id IS NOT NULL
+				 ORDER BY date ASC
 				 LIMIT 1`,
-				idOrEmail.toLowerCase().trim(),
+				threadId,
 			),
-		] as Array<{
-			id: string;
-			alias_email: string;
-			domain: string;
-			base_domain: string;
-			label: string | null;
-			is_active: number;
-			paused_action: string;
-			expires_at: string | null;
-			created_at: string;
-			stats_received: number;
-			stats_blocked: number;
-		}>;
-		return rows[0] || null;
+		][0];
+		return row?.alias_id ? String(row.alias_id) : null;
 	}
 
 	async createAlias(alias: {
@@ -2936,10 +2950,9 @@ export class MailboxDO extends DurableObject<Env> {
 		const now = new Date().toISOString();
 		const existing = await this.getSenderTriage(sender);
 		const decided_at = existing?.decided_at ?? now;
+		// Null for allowed senders means "no explicit choice" — classify files them.
 		const destination =
-			row.status === "allowed"
-				? row.destination_folder_id ?? Folders.INBOX
-				: null;
+			row.status === "allowed" ? row.destination_folder_id ?? null : null;
 
 		this.db
 			.insert(schema.senderTriage)
@@ -3110,7 +3123,7 @@ export class MailboxDO extends DurableObject<Env> {
 			await this.upsertSenderTriage({
 				sender: seed.sender,
 				status: "allowed",
-				destination_folder_id: seed.destination_folder_id,
+				destination_folder_id: null,
 				display_name: seed.display_name,
 			});
 			seeded += 1;

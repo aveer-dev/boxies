@@ -264,7 +264,12 @@ export interface Email {
 	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
 	delivery_error?: string | null;
 	auth?: EmailAuthSnapshot | null;
+	/** Private email the message arrived on or was sent from. */
 	alias_id?: string | null;
+	/** Detail/thread payloads only. Replies go out from this address. */
+	alias_email?: string | null;
+	/** Alias still active and unexpired; false means replies are refused. */
+	alias_active?: boolean | null;
 	attachments?: Attachment[];
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)

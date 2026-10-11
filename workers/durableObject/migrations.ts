@@ -416,6 +416,20 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Auto-allowed senders (outbound recipients, bootstrap, platform) were
+		// stored with an Inbox destination, which pinned list mail out of
+		// Promotions/Updates. Every explicit choice also writes a
+		// sender_preferences row, so clear destinations without one.
+		name: "25_sender_triage_auto_destination",
+		sql: txn(`
+            UPDATE sender_triage
+               SET destination_folder_id = NULL
+             WHERE status = 'allowed'
+               AND destination_folder_id IS NOT NULL
+               AND sender NOT IN (SELECT address FROM sender_preferences);
+        `),
+	},
+	{
 		// Send rate limit counts this append-only log, not rows in Sent, so deleting
 		// sent mail can't reset it. Seeded from Sent so the window carries over.
 		name: "25_send_log",

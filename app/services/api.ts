@@ -84,6 +84,10 @@ async function request<T>(
 	}
 }
 
+interface RequestOptions {
+	signal?: AbortSignal;
+}
+
 function get<T>(url: string, opts?: { params?: Record<string, string>; responseType?: string; signal?: AbortSignal }) {
 	const query = opts?.params ? `?${new URLSearchParams(opts.params)}` : "";
 	return request<T>(`${url}${query}`, {
@@ -108,8 +112,16 @@ function put<T>(url: string, body?: unknown) {
 	});
 }
 
-function del<T>(url: string) {
-	return request<T>(url, { method: "DELETE" });
+function patch<T>(url: string, body?: unknown, opts?: RequestOptions) {
+	return request<T>(url, {
+		method: "PATCH",
+		signal: opts?.signal,
+		body: body != null ? JSON.stringify(body) : undefined,
+	});
+}
+
+function del<T>(url: string, opts?: RequestOptions) {
+	return request<T>(url, { method: "DELETE", signal: opts?.signal });
 }
 
 // ---------- Typed response shapes ----------
@@ -147,6 +159,9 @@ const api = {
 
     // Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
+	/** Token for the browser extension; the Worker scopes it to private emails. */
+	createExtensionSession: () =>
+		post<{ token: string; expiresAt: string }>("/api/v1/me/extension-session"),
 	getMe: () =>
 		get<{
 			email: string | null;
@@ -326,11 +341,11 @@ const api = {
 			devResetCode?: string;
 			devResetToken?: string;
 		}>("/api/v1/auth/password/forgot", { email }),
+	/** Pass `token` (email link), or `email` + `code` (6-digit code). */
 	resetPassword: (body: {
 		token?: string;
-		code?: string;
-		/** Required with `code`. */
 		email?: string;
+		code?: string;
 		newPassword: string;
 	}) =>
 		post<{
@@ -704,8 +719,8 @@ const api = {
 	getCheckoutStatus: (params: { sessionId?: string; domain?: string }) =>
 		get<CheckoutStatusResponse>("/api/v1/billing/checkout-status", {
 			params: {
-				session_id: params.sessionId,
-				domain: params.domain,
+				...(params.sessionId ? { session_id: params.sessionId } : {}),
+				...(params.domain ? { domain: params.domain } : {}),
 			},
 		}),
 
@@ -748,7 +763,7 @@ const api = {
 			{ locked },
 		),
 
-	// Masked Email Aliases
+	// Private emails (aliases on the mailbox's own domain)
 	listAliases: (mailboxId: string, options?: RequestOptions) =>
 		get<{ aliases: MaskedAlias[] }>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases`,
@@ -758,8 +773,7 @@ const api = {
 	createAlias: (
 		mailboxId: string,
 		body: {
-			baseDomain?: string;
-			label?: string;
+			label?: string | null;
 			expiresAt?: string | null;
 			pausedAction?: "drop" | "reject";
 		},

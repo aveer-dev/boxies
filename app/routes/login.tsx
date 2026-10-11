@@ -130,8 +130,8 @@ export default function PasswordLoginRoute() {
 		setSubmitting(true);
 		try {
 			await api.resetPassword({
-				code: resetCode.trim(),
 				email: email.trim(),
+				code: resetCode.trim(),
 				newPassword,
 			});
 			toastManager.add({

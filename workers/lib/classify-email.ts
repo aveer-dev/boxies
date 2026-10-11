@@ -11,6 +11,9 @@
  *      (and Precedence: list|bulk), then Promotions vs Updates
  *   3. Spoofed personal mail (trusted CF auth, From not aligned) → spam
  *   4. Remaining mail: Workers AI spam vs ham, fail-open to ham
+ *
+ * An AI-only spam verdict can be overridden later for a vouched, authenticated
+ * sender (see overrideAiSpamForVouchedSender).
  */
 
 import { isAuthSpoofed, type EmailAuth } from "./email-auth.ts";
@@ -306,6 +309,25 @@ export async function classifyInboundEmail(
 	if (decided) return decided;
 	if (!ai) return HAM_CLASSIFICATION;
 	return classifySpamVsHam(ai, input);
+}
+
+/** Spam from the AI step alone — not spam headers or a forged From. */
+export function isAiSpam(classification: EmailClassification): boolean {
+	return classification.reason === "ai-spam";
+}
+
+/**
+ * A sender the user vouches for (allowed in Screener or given a purpose box)
+ * overrides an AI spam guess when the mail authenticates as their domain.
+ * Spam headers and forged From stay final.
+ */
+export function overrideAiSpamForVouchedSender(
+	classification: EmailClassification,
+	options: { vouched: boolean; auth?: EmailAuth | null },
+): EmailClassification {
+	if (!isAiSpam(classification)) return classification;
+	if (!options.vouched || options.auth?.aligned !== true) return classification;
+	return { ...HAM_CLASSIFICATION, reason: "ai-spam-overridden" };
 }
 
 /** Rejected envelopes and duplicate Message-IDs must never reach classification. */
