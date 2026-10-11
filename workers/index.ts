@@ -1210,17 +1210,18 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 
 	let destinationFolderId: string | null = null;
 	if (status === "allowed") {
-		destinationFolderId = (
+		const destination: string = (
 			body.destinationFolderId ||
 			existing?.destination_folder_id ||
 			Folders.INBOX
 		).trim();
-		if (!isScreenerDestination(destinationFolderId)) {
+		if (!isScreenerDestination(destination)) {
 			return c.json(
 				{ error: "destinationFolderId must be inbox, promotions, or updates" },
 				400,
 			);
 		}
+		destinationFolderId = destination;
 	}
 
 	const triage = await stub.upsertSenderTriage({
@@ -1772,7 +1773,9 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		}
 	}
 
-	let matchedAliasMeta: StoredAliasMetadata | null = null;
+	// The alias lookup callback records the matched alias here. A holder object
+	// (not a captured `let`) keeps TypeScript from narrowing it to `null` after the await.
+	const aliasMatch: { meta: StoredAliasMetadata | null } = { meta: null };
 	const route = await routeInboundEnvelope(
 		message.to,
 		async (mailboxId) =>
@@ -1782,7 +1785,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			if (!obj) return null;
 			try {
 				const data = (await obj.json()) as StoredAliasMetadata;
-				matchedAliasMeta = data;
+				aliasMatch.meta = data;
 				return data.targetMailboxId || null;
 			} catch {
 				return null;
@@ -1795,6 +1798,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		return;
 	}
 	const mailboxId = route.mailboxId;
+	const matchedAliasMeta = aliasMatch.meta;
 
 	// Check if this inbound email is addressed to a masked alias that is paused or expired
 	if (matchedAliasMeta) {
@@ -2055,7 +2059,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 					settings: automationSettings,
 					classification,
 					headers: message.headers,
-					sendAs: (matchedAliasMeta as StoredAliasMetadata | null)?.aliasEmail ?? null,
+					sendAs: matchedAliasMeta?.aliasEmail ?? null,
 				}).catch((e) =>
 					console.error("Auto-reply failed:", (e as Error).message),
 				),

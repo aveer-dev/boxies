@@ -211,6 +211,13 @@ async function runTests() {
 	await bucket.put("mailboxes/you@acme.com.json", JSON.stringify({ fromName: "You" }));
 	await bucket.put("mailboxes/support@acme.com.json", JSON.stringify({ fromName: "Support" }));
 
+	// hasRecentExportForDomain picks the job with the latest createdAt (ms precision).
+	// Let the clock tick past the mailbox job so the domain job is strictly newer;
+	// on a tie the winner depends on R2 key order and the assertion below flakes.
+	while (Date.now() <= Date.parse(job.createdAt)) {
+		await new Promise((resolve) => setTimeout(resolve, 1));
+	}
+
 	const domainJob = await runDomainExportJob(env, "acme.com");
 	assert.equal(domainJob.status, "completed");
 	assert.equal(domainJob.targetType, "domain");

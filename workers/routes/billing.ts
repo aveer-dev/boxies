@@ -4,7 +4,7 @@
 
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
-import type { Env } from "../types";
+import type { MailboxContext } from "../lib/mailbox";
 import {
 	checkDomainAvailability,
 	registerDomain,
@@ -210,7 +210,7 @@ export async function verifyStripeWebhookSignature(
 	return { valid: false, error: "Signature mismatch" };
 }
 
-export function registerBillingRoutes(app: Hono<{ Bindings: Env }>) {
+export function registerBillingRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * Initiate an annual Stripe Checkout subscription session to purchase and register a domain.
 	 * Transparent fee breakdown:

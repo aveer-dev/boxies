@@ -5,6 +5,7 @@
 import { type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
+import type { MailboxContext } from "../lib/mailbox";
 import {
 	hashPassword,
 	issuePasswordSessionToken,
@@ -114,7 +115,7 @@ function sessionCookieHeader(token: string): string {
 	return `${PASSWORD_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax; Secure`;
 }
 
-export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
+export function registerOnboardingRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * Pre-check domain availability, WHOIS registration, and retail price.
 	 */

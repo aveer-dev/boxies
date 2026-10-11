@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { routeAgentRequest } from "agents";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
@@ -212,7 +212,7 @@ app.use("*", async (c, next) => {
 // MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)
 // Must be before API routes and React Router catch-all
 const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
-function mcpFetch(c: { req: { raw: Request }; env: Env; executionCtx: ExecutionContext; get: (key: "principal") => RequestPrincipal | undefined }) {
+function mcpFetch(c: Context<{ Bindings: Env; Variables: AppVariables }>) {
 	const ctx = c.executionCtx as ExecutionCtxWithProps;
 	ctx.props = { principal: c.get("principal") };
 	return mcpHandler.fetch(c.req.raw, c.env, ctx);

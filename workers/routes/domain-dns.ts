@@ -6,6 +6,7 @@ import { type Context, type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
 import type { RequestPrincipal } from "../lib/mailbox-acl";
+import type { MailboxContext } from "../lib/mailbox";
 import { isDomainAdmin } from "../lib/domain-admin";
 import {
 	getDomainMetadata,
@@ -49,7 +50,8 @@ function canSkipDomainVerification(env: Env): boolean {
 	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
 }
 
-type AppVariables = { principal?: RequestPrincipal };
+/** Invite issued for a team member created by the onboarding setup-users step. */
+type SetupUserInvite = { token: string; inviteUrl: string; inviteeEmail: string };
 
 const DnsRecordBody = z.object({
 	type: z.enum(["A", "AAAA", "CNAME", "TXT", "MX", "NS", "SRV"]),
@@ -68,7 +70,7 @@ export interface AuthorizedDomainContext {
 }
 
 export async function authorizeDomainAdmin(
-	c: Context<{ Bindings: Env; Variables: AppVariables }>,
+	c: Context<MailboxContext>,
 	domainParam: string,
 ): Promise<AuthorizedDomainContext | Response> {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
@@ -95,7 +97,7 @@ export async function authorizeDomainAdmin(
 	return { principal, domainMeta, isSuperAdmin };
 }
 
-export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: AppVariables }>) {
+export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * List all domains administered by the current user.
 	 */
@@ -534,7 +536,7 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 		};
 
 		const inputUsers = body.users || [];
-		const results = [];
+		const results: Array<{ mailboxId: string; name: string; invite: SetupUserInvite | null }> = [];
 		const domain = domainMeta.domain;
 
 		for (const u of inputUsers) {
@@ -565,7 +567,7 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			}
 
 			// If contactEmail provided, generate invite record
-			let inviteData = null;
+			let inviteData: SetupUserInvite | null = null;
 			if (u.contactEmail && u.contactEmail.includes("@")) {
 				const invite = createInviteRecord({
 					mailboxId: canonical,

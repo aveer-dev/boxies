@@ -2911,7 +2911,7 @@ export class MailboxDO extends DurableObject<Env> {
 	} = {}) {
 		const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
 		const offset = Math.max(options.offset ?? 0, 0);
-		const conditions = [];
+		const conditions: SQL[] = [];
 		if (options.status === "allowed" || options.status === "rejected") {
 			conditions.push(eq(schema.senderTriage.status, options.status));
 		}

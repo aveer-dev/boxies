@@ -4,8 +4,8 @@
 
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
-import type { Env } from "../types";
 import type { RequestPrincipal } from "../lib/mailbox-acl";
+import type { MailboxContext } from "../lib/mailbox";
 import { authorizeMailbox } from "../lib/mailbox-acl";
 import {
 	getExportJob,
@@ -27,8 +27,6 @@ import {
 import { disableCatchAllRule } from "../lib/cloudflare-client";
 import { listAllR2Objects } from "../lib/r2-list";
 
-type AppVariables = { principal?: RequestPrincipal };
-
 const DecommissionBody = z.object({
 	confirmDomain: z.string().trim().min(1, "Confirmation domain is required"),
 	skipExportAcknowledged: z.boolean().optional().default(false),
@@ -38,7 +36,7 @@ const TransferLockBody = z.object({
 	locked: z.boolean(),
 });
 
-type ExportContext = Context<{ Bindings: Env; Variables: AppVariables }>;
+type ExportContext = Context<MailboxContext>;
 
 /**
  * Wire shape every client decodes (web, iOS, Android): `id`, a progress object,
@@ -93,7 +91,7 @@ async function loadAuthorizedExport(
 }
 
 export function registerExportAndOffboardingRoutes(
-	app: Hono<{ Bindings: Env; Variables: AppVariables }>,
+	app: Hono<MailboxContext>,
 ) {
 	/**
 	 * Export a single mailbox to an RFC 4155 .mbox archive.

@@ -5,6 +5,7 @@
 import { type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
+import type { MailboxContext } from "../lib/mailbox";
 import {
 	buildMaskedAddress,
 	generateRandomAliasToken,
@@ -61,7 +62,7 @@ const UpdateAliasSchema = z.preprocess(
 	}),
 );
 
-type AliasRow = { is_active: number | boolean } & Record<string, unknown>;
+type AliasRow = { is_active: number | boolean };
 
 /**
  * One response shape for list / create / update: the snake_case rows every
@@ -72,12 +73,12 @@ function toAliasResponse<T extends AliasRow>(row: T, mailboxId: string) {
 	return { ...row, mailbox_id: mailboxId, is_active: Boolean(row.is_active) };
 }
 
-export function registerAliasRoutes(app: Hono<any>) {
+export function registerAliasRoutes(app: Hono<MailboxContext>) {
 	// List all masked aliases for this mailbox
 	app.get("/api/v1/mailboxes/:mailboxId/aliases", async (c) => {
 		const stub = c.var.mailboxStub;
 		const list = await stub.listAliases();
-		return c.json({ aliases: list.map((row: AliasRow) => toAliasResponse(row, c.var.mailboxId)) });
+		return c.json({ aliases: list.map((row) => toAliasResponse(row, c.var.mailboxId)) });
 	});
 
 	// Create a new masked alias on private.<domain>

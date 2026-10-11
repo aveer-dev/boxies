@@ -570,7 +570,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		const tokens = await listInviteTokensForMailbox(c.env.BUCKET, mailboxId);
-		const invites = [];
+		const invites: Array<
+			ReturnType<typeof publicInvitePayload> & { token: string; createdAt: string }
+		> = [];
 		for (const token of tokens) {
 			const invite = await loadInvite(c.env.BUCKET, token);
 			if (!invite) continue;
@@ -884,7 +886,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 					new Set(
 						[user.contactEmail, user.mailboxEmail, user.recoveryEmail, inputEmail]
 							.map((e) => e?.trim())
-							.filter((e): e is string => Boolean(e) && e.includes("@")),
+							.filter((e): e is string => !!e && e.includes("@")),
 					),
 				);
 
