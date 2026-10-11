@@ -305,7 +305,16 @@ function AgentChatConnected({
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const [inputValue, setInputValue] = useState("");
-	const { startCompose } = useUIStore();
+	const { startCompose, pendingAgentPrompt, consumeAgentPrompt } = useUIStore();
+
+	// AI Assist (⌘J) hands over a prompt; prefill it so the user can edit before sending.
+	useEffect(() => {
+		if (!pendingAgentPrompt) return;
+		const prompt = consumeAgentPrompt();
+		if (!prompt) return;
+		setInputValue(prompt);
+		inputRef.current?.focus();
+	}, [pendingAgentPrompt, consumeAgentPrompt]);
 
 	const agent = useAgent({ agent: "EmailAgent", name: mailboxId });
 	const { messages, sendMessage, status, setMessages, stop } =

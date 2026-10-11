@@ -551,15 +551,16 @@ private struct HTMLWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript(
+            // ObjC entry point on purpose: with an iOS 17 target the Swift `Result` overload links
+            // /usr/lib/swift/libswiftWebKit.dylib, which the iOS 18.5 runtime lacks (dyld abort at launch).
+            webView.__evaluateJavaScript(
                 "Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))",
-                in: nil,
+                inFrame: nil,
                 in: EmailWebViewIsolation.heightWorld
-            ) { [weak self] result in
-                switch result {
-                case .success(let value):
+            ) { [weak self] value, error in
+                if error == nil {
                     self?.applyHeight(value)
-                case .failure:
+                } else {
                     DispatchQueue.main.async {
                         self?.isLoading.wrappedValue = false
                     }

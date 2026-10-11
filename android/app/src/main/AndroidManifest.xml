@@ -79,6 +79,14 @@
             </intent-filter>
         </service>
 
+        <!-- Autofill dataset authentication: creates the private email, then fills it. -->
+        <activity
+            android:name=".autofill.PrivateEmailAutofillActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|uiMode"
+            android:theme="@style/Theme.Inboxies.Autofill" />
+
         <service
             android:name=".services.InboxiesAutofillService"
             android:permission="android.permission.BIND_AUTOFILL_SERVICE"

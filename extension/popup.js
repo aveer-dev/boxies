@@ -1,157 +1,143 @@
-// Boxies Masked Email - Popup Controller
+// Inboxies Private Email — popup.
 
-document.addEventListener("DOMContentLoaded", async () => {
-	const tabGenerate = document.getElementById("tabGenerate");
-	const tabSettings = document.getElementById("tabSettings");
-	const sectionGenerate = document.getElementById("sectionGenerate");
-	const sectionSettings = document.getElementById("sectionSettings");
-	const statusDot = document.getElementById("statusDot");
-	const siteHostEl = document.getElementById("siteHost");
-	const btnGenerate = document.getElementById("btnGenerate");
-	const resultBox = document.getElementById("resultBox");
-	const resultEmail = document.getElementById("resultEmail");
-	const btnCopy = document.getElementById("btnCopy");
-	const recentItems = document.getElementById("recentItems");
+const DEFAULT_API_URL = "https://inboxies.email";
+const $ = (id) => document.getElementById(id);
 
-	const cfgApiUrl = document.getElementById("cfgApiUrl");
-	const cfgMailboxId = document.getElementById("cfgMailboxId");
-	const cfgToken = document.getElementById("cfgToken");
-	const btnSaveConfig = document.getElementById("btnSaveConfig");
+function send(message) {
+	return chrome.runtime.sendMessage(message);
+}
 
-	let currentHost = "general";
+function showError(el, text) {
+	el.textContent = text || "";
+	el.hidden = !text;
+}
 
-	// 1. Detect current tab host
+async function copy(text, button) {
+	try {
+		await navigator.clipboard.writeText(text);
+		button.textContent = "Copied";
+		setTimeout(() => (button.textContent = "Copy"), 1200);
+	} catch {
+		button.textContent = "Couldn't copy";
+	}
+}
+
+function renderRecent(items) {
+	const list = $("recent");
+	list.replaceChildren();
+	$("recentEmpty").hidden = items.length > 0;
+	for (const item of items) {
+		const li = document.createElement("li");
+		const text = document.createElement("div");
+		text.className = "email";
+		text.textContent = item.email;
+		if (item.host) {
+			const host = document.createElement("div");
+			host.className = "host";
+			host.textContent = item.host;
+			text.appendChild(host);
+		}
+		const button = document.createElement("button");
+		button.type = "button";
+		button.textContent = "Copy";
+		button.setAttribute("aria-label", `Copy ${item.email}`);
+		button.addEventListener("click", () => copy(item.email, button));
+		li.append(text, button);
+		list.appendChild(li);
+	}
+}
+
+async function activeTabHost() {
 	try {
 		const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-		if (tab && tab.url) {
-			const url = new URL(tab.url);
-			if (url.protocol.startsWith("http")) {
-				currentHost = url.hostname;
-				siteHostEl.textContent = currentHost;
-			}
-		}
-	} catch (e) {
-		siteHostEl.textContent = "any site";
+		const url = tab?.url ? new URL(tab.url) : null;
+		return url && url.protocol.startsWith("http") ? url.hostname : null;
+	} catch {
+		return null;
+	}
+}
+
+async function render() {
+	const status = await send({ action: "STATUS" });
+	$("connected").hidden = !status.connected;
+	$("disconnected").hidden = status.connected;
+
+	if (!status.connected) {
+		$("apiUrl").value = status.apiUrl || DEFAULT_API_URL;
+		if (status.expired) showError($("connectError"), "Your connection expired. Connect again.");
+		return;
 	}
 
-	// 2. Load stored config
-	chrome.storage.sync.get(["apiUrl", "mailboxId", "token"], (cfg) => {
-		if (cfg.apiUrl) cfgApiUrl.value = cfg.apiUrl;
-		if (cfg.mailboxId) cfgMailboxId.value = cfg.mailboxId;
-		if (cfg.token) cfgToken.value = cfg.token;
+	const select = $("mailbox");
+	select.replaceChildren(
+		...status.mailboxes.map((m) => {
+			const option = document.createElement("option");
+			option.value = m;
+			option.textContent = m;
+			option.selected = m === status.mailboxId;
+			return option;
+		}),
+	);
+	$("server").textContent = new URL(status.apiUrl).host;
+	renderRecent(status.recentAliases);
 
-		if (cfg.apiUrl && cfg.mailboxId && cfg.token) {
-			statusDot.classList.add("connected");
-			statusDot.title = "Connected to Boxies";
-		} else {
-			statusDot.classList.remove("connected");
-			statusDot.title = "Not configured — open Settings tab";
-		}
-	});
+	const host = await activeTabHost();
+	$("create").textContent = host ? `Create private email for ${host}` : "Create private email";
+	$("create").dataset.host = host || "";
+}
 
-	// 3. Tab switching
-	tabGenerate.addEventListener("click", () => {
-		tabGenerate.classList.add("active");
-		tabSettings.classList.remove("active");
-		sectionGenerate.classList.add("active");
-		sectionSettings.classList.remove("active");
-	});
-
-	tabSettings.addEventListener("click", () => {
-		tabSettings.classList.add("active");
-		tabGenerate.classList.remove("active");
-		sectionSettings.classList.add("active");
-		sectionGenerate.classList.remove("active");
-	});
-
-	// 4. Save Settings
-	btnSaveConfig.addEventListener("click", () => {
-		const config = {
-			apiUrl: cfgApiUrl.value.trim(),
-			mailboxId: cfgMailboxId.value.trim(),
-			token: cfgToken.value.trim(),
-		};
-
-		chrome.storage.sync.set(config, () => {
-			if (config.apiUrl && config.mailboxId && config.token) {
-				statusDot.classList.add("connected");
-				statusDot.title = "Connected to Boxies";
-			} else {
-				statusDot.classList.remove("connected");
-			}
-			btnSaveConfig.textContent = "Saved!";
-			setTimeout(() => {
-				btnSaveConfig.textContent = "Save Settings";
-				tabGenerate.click();
-			}, 800);
-		});
-	});
-
-	// 5. Generate Alias
-	btnGenerate.addEventListener("click", async () => {
-		btnGenerate.disabled = true;
-		btnGenerate.textContent = "Generating...";
-		resultBox.style.display = "none";
-
-		const response = await chrome.runtime.sendMessage({
-			action: "GENERATE_ALIAS",
-			host: currentHost,
-		});
-
-		btnGenerate.disabled = false;
-		btnGenerate.textContent = "Generate Private Email";
-
-		if (response && response.success && response.email) {
-			resultEmail.textContent = response.email;
-			resultBox.style.display = "flex";
-			loadRecent();
-		} else if (response?.error === "not_configured") {
-			alert("Please configure Boxies API URL and Token in Settings first.");
-			tabSettings.click();
-		} else {
-			alert(`Generation failed: ${response?.error || "Unknown error"}`);
-		}
-	});
-
-	// 6. Copy button
-	btnCopy.addEventListener("click", async () => {
-		await navigator.clipboard.writeText(resultEmail.textContent);
-		btnCopy.textContent = "Copied!";
-		setTimeout(() => {
-			btnCopy.textContent = "Copy";
-		}, 1200);
-	});
-
-	// 7. Load recent aliases
-	function loadRecent() {
-		chrome.storage.local.get(["recentAliases"], (res) => {
-			const aliases = res.recentAliases || [];
-			recentItems.innerHTML = "";
-			if (aliases.length === 0) {
-				recentItems.innerHTML = `<div style="color: #64748b; font-size: 11px;">No aliases generated yet</div>`;
-				return;
-			}
-			for (const item of aliases.slice(0, 5)) {
-				const row = document.createElement("div");
-				row.className = "recent-item";
-				row.innerHTML = `
-					<div>
-						<div class="recent-email">${item.email}</div>
-						<div style="color: #64748b; font-size: 10px;">${item.host}</div>
-					</div>
-					<button class="btn-copy">Copy</button>
-				`;
-				row.querySelector(".btn-copy").addEventListener("click", async (e) => {
-					await navigator.clipboard.writeText(item.email);
-					e.target.textContent = "Copied!";
-					setTimeout(() => {
-						e.target.textContent = "Copy";
-					}, 1200);
-				});
-				recentItems.appendChild(row);
-			}
-		});
+$("connect").addEventListener("click", async () => {
+	showError($("connectError"), "");
+	let origin;
+	try {
+		origin = new URL($("apiUrl").value.trim() || DEFAULT_API_URL).origin;
+	} catch {
+		showError($("connectError"), "Enter your Inboxies server address.");
+		return;
 	}
-
-	loadRecent();
+	// Self-hosted servers need host access; ask while we still have the click.
+	if (origin !== DEFAULT_API_URL) {
+		const granted = await chrome.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
+		if (!granted) {
+			showError($("connectError"), `The extension needs access to ${origin} to create private emails there.`);
+			return;
+		}
+	}
+	const res = await send({ action: "START_PAIR", apiUrl: origin });
+	if (!res?.ok) showError($("connectError"), res?.error || "Couldn't start connecting.");
+	else window.close();
 });
+
+$("mailbox").addEventListener("change", (event) => {
+	send({ action: "SELECT_MAILBOX", mailboxId: event.target.value });
+});
+
+$("create").addEventListener("click", async () => {
+	const button = $("create");
+	const label = button.textContent;
+	button.disabled = true;
+	button.textContent = "Creating…";
+	showError($("createError"), "");
+	const res = await send({ action: "CREATE_ALIAS", host: button.dataset.host || null });
+	button.disabled = false;
+	button.textContent = label;
+	if (res?.ok) {
+		$("resultEmail").textContent = res.email;
+		$("result").hidden = false;
+		copy(res.email, $("copyResult"));
+		render();
+	} else if (res?.error === "session_expired" || res?.error === "not_connected") {
+		render();
+	} else {
+		showError($("createError"), res?.error === "network_error" ? "Couldn't reach Inboxies." : res?.error);
+	}
+});
+
+$("copyResult").addEventListener("click", () => copy($("resultEmail").textContent, $("copyResult")));
+
+$("disconnect").addEventListener("click", async () => {
+	await send({ action: "DISCONNECT" });
+	render();
+});
+
+render();

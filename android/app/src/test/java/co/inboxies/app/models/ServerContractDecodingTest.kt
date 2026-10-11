@@ -3,7 +3,6 @@ package co.inboxies.app.models
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,18 +17,17 @@ class ServerContractDecodingTest {
     }
 
     @Test
-    fun aliasDecodesIntOrBoolIsActiveAndMissingMailboxId() {
+    fun aliasDecodesIntOrBoolIsActiveAndIgnoresMailboxId() {
         val fromInt = json.decodeFromString<MaskedAlias>(
             """{"id":"a1","alias_email":"x@private.example.com","is_active":0}""",
         )
         assertFalse(fromInt.isActive)
-        assertNull(fromInt.mailboxId)
 
         val fromBool = json.decodeFromString<MaskedAlias>(
             """{"id":"a2","mailbox_id":"me@example.com","alias_email":"y@private.example.com","is_active":true}""",
         )
         assertTrue(fromBool.isActive)
-        assertEquals("me@example.com", fromBool.mailboxId)
+        assertEquals("y@private.example.com", fromBool.aliasEmail)
     }
 
     @Test

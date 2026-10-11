@@ -29,8 +29,7 @@ struct ComposeSheetView: View {
     private var form: ComposeFormModel { session.form }
 
     private var fromDisplayName: String {
-        if let name = form.fromName, !name.isEmpty { return name }
-        return form.fromEmail
+        form.fromDisplayName
     }
 
     private var editorMinHeight: CGFloat {
@@ -300,7 +299,19 @@ struct ComposeSheetView: View {
                 .foregroundStyle(AppTheme.muted)
                 .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
 
-            if app.mailboxes.count > 1 {
+            if form.isFromLocked {
+                // Replies in a private email conversation always go out from the alias.
+                HStack(spacing: 4) {
+                    Image(systemName: "shield.lefthalf.filled")
+                        .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
+                    Text(fromDisplayName)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(AppTheme.muted)
+                .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(form.privateEmail.map { "From private email \($0)" } ?? "From private email")
+            } else if app.mailboxes.count > 1 {
                 Menu {
                     Picker("From", selection: fromMailboxBinding) {
                         ForEach(app.mailboxes) { mailbox in
@@ -716,6 +727,8 @@ struct ComposeSheetView: View {
                 let success = await formToRestore.performActualSend()
                 if success {
                     await app.loadEmailsForCurrentTab()
+                } else {
+                    await app.restoreComposeAfterFailedSend(sessionToRestore)
                 }
             },
             rollback: { @MainActor in
