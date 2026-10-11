@@ -1,0 +1,845 @@
+---
+// A ruler on the left edge that sets the site's text size: Rauno Freiberg's
+// fractional slider (rauno.me/craft/fractional-slider) stood on its end. Drag
+// or scroll it, tap a number or the A's, or use the arrow keys; double-click
+// to go back to 100%. Every tick clicks, and buzzes on Android; on iPhone a
+// tap plays the system tick (drags can't, see haptics).
+//
+// On phones there's no room beside the text, and an edge strip would catch
+// thumbs scrolling the page, so the ruler lies flat in a sheet at the bottom
+// of the screen instead, opened by the Aa button in the header (Base.astro).
+//
+// Content scrolling under the edge ruler (the run page's timeline runs edge to
+// edge) is blurred behind it, most at the edge and fading out to the right.
+//
+// The site's type is all rem, so one value sizes it: --type-scale on <html>.
+// The script springs that value frame by frame, and the ruler's position, its
+// filled span and its numbers' colour are worked out from it here in CSS, so
+// Base.astro's pre-paint restore puts the ruler in place too.
+import { TYPE_SCALE } from "../lib/type-scale";
+import ProgressiveBlur from "./ProgressiveBlur.astro";
+
+const { min, max, default: initial, storageKey } = TYPE_SCALE;
+// Pixels between ticks. Every fifth tick is long and numbered.
+const STEP = 8;
+const numbers = Array.from({ length: (max - min) / 5 + 1 }, (_, i) => max - i * 5);
+---
+
+<div
+	id="type-slider"
+	class="type-slider"
+	role="slider"
+	tabindex="0"
+	aria-label="Text size"
+	aria-orientation="vertical"
+	aria-valuemin={min}
+	aria-valuemax={max}
+	aria-valuenow={initial}
+	aria-valuetext={`${initial}%`}
+	data-min={min}
+	data-max={max}
+	data-default={initial}
+	data-step={STEP}
+	data-storage-key={storageKey}
+	style={`--min: ${min}; --max: ${max}; --default: ${initial}; --step: ${STEP}px`}
+>
+	<ProgressiveBlur edge="left" fade="40px" class="type-slider-backdrop" />
+	<!-- Labels, so a tap on iPhone can play a haptic (see the script). -->
+	<label class="type-slider-hit" aria-hidden="true"></label>
+	<div class="type-slider-window" aria-hidden="true">
+		<div class="type-slider-ruler">
+			<div class="type-slider-ticks"></div>
+			<div class="type-slider-ticks is-filled"></div>
+			<div class="type-slider-numbers">
+				{numbers.map((n) => <span class="type-slider-number" style={`--n: ${n}`}>{n}</span>)}
+			</div>
+		</div>
+	</div>
+	<span class="type-slider-dot" aria-hidden="true"></span>
+	<label class="type-slider-glyph is-up" data-nudge="1" aria-hidden="true">A</label>
+	<label class="type-slider-glyph is-down" data-nudge="-1" aria-hidden="true">A</label>
+</div>
+
+<script>
+	type Kind = "tick" | "home" | "edge";
+
+	// How tightly the shown size follows its target (a critically damped
+	// spring, in rad/s): close behind a finger, a little looser behind a wheel's
+	// coarser steps, and gentlest when it eases in to land on a tick.
+	const FOLLOW = { drag: 42, wheel: 26, settle: 17 } as const;
+	// How far past either end, in steps, the ruler can be pulled.
+	const STRETCH = 10;
+	// How far a flick carries: this many seconds of its release speed.
+	const THROW = 0.08;
+
+	function initTypeSlider() {
+		const el = document.querySelector<HTMLElement>(".type-slider");
+		if (!el || el.dataset.ready) return;
+		el.dataset.ready = "true";
+
+		const min = Number(el.dataset.min);
+		const max = Number(el.dataset.max);
+		const home = Number(el.dataset.default);
+		const step = Number(el.dataset.step);
+		const storageKey = el.dataset.storageKey!;
+		const root = document.documentElement;
+		const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+		const hasBeenActive = () => navigator.userActivation?.hasBeenActive ?? true;
+
+		const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi);
+
+		const saved = () => {
+			try {
+				const n = Number(localStorage.getItem(storageKey));
+				return n >= min && n <= max ? Math.round(n) : home;
+			} catch {
+				return home;
+			}
+		};
+
+		// Past either end the ruler gives less the further it's pulled, the way
+		// an iOS scroll view does, and springs back on release.
+		const stretch = (n: number) => {
+			const end = clamp(n, min, max);
+			const over = Math.abs(n - end);
+			return end + Math.sign(n - end) * (1 - 1 / ((over * 0.55) / STRETCH + 1)) * STRETCH;
+		};
+
+		// Every tick clicks. The click is synthesised: a burst of noise that dies
+		// away in a couple of milliseconds, band-passed into a dry tick like a
+		// detent wheel's. An iPhone on silent stays silent, as it should.
+		const sound = (() => {
+			let ctx: AudioContext | undefined;
+			let click: AudioBuffer | undefined;
+			let out: GainNode | undefined;
+			let lastPlayed = 0;
+
+			return {
+				// Browsers only start audio from a click, key press or (on iOS) the
+				// end of a tap, so this runs on each of those.
+				unlock() {
+					if (typeof AudioContext === "undefined" || !hasBeenActive()) return;
+					if (!ctx) {
+						ctx = new AudioContext();
+						const length = Math.round(ctx.sampleRate * 0.03);
+						const decay = ctx.sampleRate * 0.0016;
+						click = ctx.createBuffer(1, length, ctx.sampleRate);
+						const data = click.getChannelData(0);
+						for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.exp(-i / decay);
+						out = ctx.createGain();
+						out.gain.value = 0.9;
+						out.connect(ctx.destination);
+					}
+					if (ctx.state === "suspended") ctx.resume().catch(() => {});
+				},
+				play(value: number, kind: Kind) {
+					if (!ctx || !click || !out || ctx.state !== "running") return;
+					const now = ctx.currentTime;
+					if (now - lastPlayed < 0.012) return;
+					lastPlayed = now;
+					// Bigger things ring lower: the pitch falls as the type grows,
+					// an octave down at twice the size. The ends knock lower still.
+					const rate = (home / value) * (kind === "edge" ? 0.6 : 1);
+					const source = ctx.createBufferSource();
+					source.buffer = click;
+					source.playbackRate.value = rate;
+					const filter = ctx.createBiquadFilter();
+					filter.type = "bandpass";
+					filter.frequency.value = 5000 * rate;
+					filter.Q.value = 1.2;
+					const gain = ctx.createGain();
+					gain.gain.value = kind === "tick" ? 0.7 : 1;
+					source.connect(filter).connect(gain).connect(out);
+					source.start(now);
+				},
+			};
+		})();
+
+		// Ticks buzz on touch devices with a vibration motor the page can reach
+		// (Android). iOS has none, but a tap on a <label> tied to a switch input
+		// plays the system tick, so the ruler and the A's are labels and get a
+		// hidden switch each. It has to be a real tap (iOS 26.5 ignores scripted
+		// clicks), so on iPhone taps tick and drags stay quiet.
+		const haptics = (() => {
+			const touch = matchMedia("(pointer: coarse)");
+			const canVibrate = typeof navigator.vibrate === "function";
+			// Long enough for the slower vibration motors in many Android phones to
+			// spin up; much shorter and they never move.
+			const pulse: Record<Kind, number> = { tick: 12, home: 20, edge: 30 };
+
+			if (touch.matches && !canVibrate) {
+				el.querySelectorAll("label").forEach((label) => {
+					const input = document.createElement("input");
+					input.type = "checkbox";
+					input.setAttribute("switch", "");
+					input.tabIndex = -1;
+					// The label passes its click on to the switch; stop it there so
+					// the label's own listeners don't run twice.
+					input.addEventListener("click", (event) => event.stopPropagation());
+					label.appendChild(input);
+				});
+			}
+
+			return {
+				play(kind: Kind) {
+					if (touch.matches && canVibrate && hasBeenActive()) navigator.vibrate(pulse[kind]);
+				},
+			};
+		})();
+
+		// x is the size on screen, easing toward target; raw is where the input
+		// has put it before the ends' stretch.
+		let x = saved();
+		let velocity = 0;
+		let target = x;
+		let raw = x;
+		let stiffness: number = FOLLOW.settle;
+		let frame = 0;
+		let lastTime = 0;
+		let lastTick = x;
+		let wheelTimer = 0;
+		let calmTimer = 0;
+		let drag: {
+			id: number;
+			flat: boolean;
+			pos: number;
+			start: number;
+			startTime: number;
+			samples: { t: number; pos: number }[];
+		} | null = null;
+
+		// Which way the ruler runs, set in CSS: down the left edge, or flat
+		// across the phone sheet.
+		const isFlat = () => getComputedStyle(el).getPropertyValue("--axis").trim() === "x";
+
+		// A pointer's position along the ruler, measured the way that brings
+		// bigger sizes to the dot: down the edge ruler (its largest sizes are at
+		// the top), or leftward across the flat one (largest at the right).
+		const along = (point: { clientX: number; clientY: number }, flat: boolean) =>
+			flat ? -point.clientX : point.clientY;
+
+		const setAria = (n: number) => {
+			el.setAttribute("aria-valuenow", String(n));
+			el.setAttribute("aria-valuetext", `${n}%`);
+		};
+
+		const render = () => {
+			root.style.setProperty("--type-scale", (x / 100).toFixed(4));
+		};
+
+		// Exact step of a critically damped spring, so any frame rate is stable.
+		const advance = (dt: number) => {
+			if (reducedMotion.matches) {
+				x = target;
+				velocity = 0;
+				return;
+			}
+			const offset = x - target;
+			const c = velocity + stiffness * offset;
+			const decay = Math.exp(-stiffness * dt);
+			x = target + (offset + c * dt) * decay;
+			velocity = (c - stiffness * (offset + c * dt)) * decay;
+		};
+
+		// One click or buzz each time a tick passes the dot.
+		const feedback = () => {
+			const tick = Math.round(clamp(x, min, max));
+			if (tick === lastTick) return;
+			lastTick = tick;
+			const kind: Kind = tick === min || tick === max ? "edge" : tick === home ? "home" : "tick";
+			sound.play(tick, kind);
+			haptics.play(kind);
+		};
+
+		// Once the ruler has landed: remember the size, and let it fade back.
+		const rest = () => {
+			if (drag || wheelTimer) return;
+			const size = Math.round(x);
+			try {
+				if (size === home) localStorage.removeItem(storageKey);
+				else localStorage.setItem(storageKey, String(size));
+			} catch {}
+			if (size === home) root.style.removeProperty("--type-scale");
+			window.clearTimeout(calmTimer);
+			calmTimer = window.setTimeout(() => el.classList.remove("is-active"), 900);
+		};
+
+		const loop = (now: number) => {
+			advance(Math.min(now - lastTime, 50) / 1000);
+			lastTime = now;
+			const landed = Math.abs(x - target) < 0.001 && Math.abs(velocity) < 0.01;
+			if (landed) {
+				x = target;
+				velocity = 0;
+			}
+			render();
+			feedback();
+			if (landed) {
+				frame = 0;
+				rest();
+			} else {
+				frame = requestAnimationFrame(loop);
+			}
+		};
+
+		const wake = () => {
+			el.classList.add("is-active");
+			window.clearTimeout(calmTimer);
+			if (frame) return;
+			lastTime = performance.now();
+			frame = requestAnimationFrame(loop);
+		};
+
+		const settleTo = (n: number) => {
+			target = raw = clamp(Math.round(n), min, max);
+			stiffness = FOLLOW.settle;
+			setAria(target);
+			wake();
+		};
+
+		// Jump straight to a size without easing (a page restored from the
+		// back/forward cache, say, when the size was changed on another page).
+		const jumpTo = (n: number) => {
+			x = target = raw = lastTick = n;
+			velocity = 0;
+			setAria(n);
+			if (n === home) root.style.removeProperty("--type-scale");
+			else render();
+		};
+
+		jumpTo(x);
+
+		// Dragging: the ruler moves with the pointer.
+		el.addEventListener("pointerdown", (event) => {
+			if (event.button !== 0 || drag) return;
+			if ((event.target as Element).closest(".type-slider-glyph")) return;
+			sound.unlock();
+			// Catch the ruler where it is, even mid-flight.
+			raw = target = clamp(x, min, max);
+			stiffness = FOLLOW.drag;
+			const flat = isFlat();
+			const pos = along(event, flat);
+			drag = {
+				id: event.pointerId,
+				flat,
+				pos,
+				start: pos,
+				startTime: event.timeStamp,
+				samples: [{ t: event.timeStamp, pos }],
+			};
+			// A touch is already held by the element it landed on (that keeps
+			// the iPhone tap on its label); hold a mouse here so the drag can
+			// leave the ruler.
+			if (event.pointerType === "mouse") el.setPointerCapture(event.pointerId);
+			wake();
+		});
+
+		el.addEventListener("pointermove", (event) => {
+			if (!drag || event.pointerId !== drag.id) return;
+			const pos = along(event, drag.flat);
+			raw += (pos - drag.pos) / step;
+			drag.pos = pos;
+			drag.samples.push({ t: event.timeStamp, pos });
+			if (drag.samples.length > 8) drag.samples.shift();
+			target = stretch(raw);
+			setAria(Math.round(clamp(target, min, max)));
+			wake();
+		});
+
+		const release = (event: PointerEvent) => {
+			if (!drag || event.pointerId !== drag.id) return;
+			const { flat, start, startTime, samples } = drag;
+			const pos = along(event, flat);
+			drag = null;
+			sound.unlock();
+
+			// A tap picks the size under it: the dot is at the slider's centre.
+			if (event.type === "pointerup" && Math.abs(pos - start) < 4 && event.timeStamp - startTime < 400) {
+				const box = el.getBoundingClientRect();
+				const centre = along({ clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }, flat);
+				settleTo(x + (centre - pos) / step);
+				return;
+			}
+
+			// A flick carries on a little before it lands on the nearest tick.
+			const from = samples.find((s) => event.timeStamp - s.t < 100) ?? samples[samples.length - 1];
+			const seconds = (event.timeStamp - from.t) / 1000;
+			const speed = seconds > 0 ? (pos - from.pos) / step / seconds : 0;
+			settleTo(raw + speed * THROW);
+		};
+		el.addEventListener("pointerup", release);
+		el.addEventListener("pointercancel", release);
+
+		// Scrolling moves the ruler the way it would move a page: rolling down
+		// carries the edge ruler up, toward the smaller sizes, and a sideways
+		// swipe carries the flat one along. Rolling a wheel over the flat one
+		// works as it does on the edge.
+		el.addEventListener(
+			"wheel",
+			(event) => {
+				const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+				const flat = isFlat();
+				if (drag || (sideways && !flat)) return;
+				event.preventDefault();
+				sound.unlock();
+				const unit =
+					event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? innerHeight : 1;
+				const delta = sideways ? event.deltaX : -event.deltaY;
+				if (!wheelTimer) raw = target;
+				raw += clamp(delta * unit, -48, 48) / step;
+				target = stretch(raw);
+				stiffness = FOLLOW.wheel;
+				setAria(Math.round(clamp(target, min, max)));
+				window.clearTimeout(wheelTimer);
+				wheelTimer = window.setTimeout(() => {
+					wheelTimer = 0;
+					settleTo(raw);
+				}, 140);
+				wake();
+			},
+			{ passive: false },
+		);
+
+		el.addEventListener("keydown", (event) => {
+			const now = Math.round(target);
+			const by = event.shiftKey ? 5 : 1;
+			const keys: Record<string, number> = {
+				ArrowUp: now + by,
+				ArrowRight: now + by,
+				ArrowDown: now - by,
+				ArrowLeft: now - by,
+				PageUp: now + 10,
+				PageDown: now - 10,
+				Home: min,
+				End: max,
+			};
+			const next = keys[event.key];
+			if (next === undefined) return;
+			event.preventDefault();
+			sound.unlock();
+			settleTo(next);
+		});
+
+		el.addEventListener("dblclick", (event) => {
+			if (!(event.target as Element).closest(".type-slider-glyph")) settleTo(home);
+		});
+
+		// The A's step to the next numbered tick up or down.
+		el.querySelectorAll<HTMLElement>("[data-nudge]").forEach((glyph) => {
+			const up = glyph.dataset.nudge === "1";
+			glyph.addEventListener("click", () => {
+				sound.unlock();
+				const now = Math.round(target);
+				settleTo(up ? Math.floor(now / 5) * 5 + 5 : Math.ceil(now / 5) * 5 - 5);
+			});
+		});
+
+		// The phone sheet: the header's Aa button opens and closes it, and so
+		// do Escape, a tap anywhere outside it and focus moving on past it.
+		const toggle = document.querySelector<HTMLButtonElement>("[data-type-slider-toggle]");
+		const isOpen = () => el.classList.contains("is-open");
+
+		const setOpen = (open: boolean, refocus = false) => {
+			el.classList.toggle("is-open", open);
+			toggle?.setAttribute("aria-expanded", String(open));
+			el.setAttribute("aria-orientation", isFlat() ? "horizontal" : "vertical");
+			if (open) el.focus({ preventScroll: true });
+			else if (refocus) toggle?.focus();
+		};
+
+		toggle?.addEventListener("click", () => {
+			if (!isOpen()) sound.unlock();
+			setOpen(!isOpen());
+		});
+
+		document.addEventListener(
+			"pointerdown",
+			(event) => {
+				const node = event.target as Node;
+				if (isOpen() && !el.contains(node) && !toggle?.contains(node)) setOpen(false);
+			},
+			true,
+		);
+
+		// Escape works wherever focus is; focus goes back to Aa only if it was in the sheet.
+		document.addEventListener("keydown", (event) => {
+			if (event.key === "Escape" && isOpen()) setOpen(false, el.contains(document.activeElement));
+		});
+
+		el.addEventListener("focusout", (event) => {
+			const to = event.relatedTarget as Node | null;
+			if (isOpen() && to && !el.contains(to) && !toggle?.contains(to)) setOpen(false);
+		});
+
+		// Grown past phone width while open: the ruler is back on the edge.
+		window.addEventListener("resize", () => {
+			if (isOpen() && !isFlat()) setOpen(false);
+		});
+
+		// Changed in another tab: follow along.
+		window.addEventListener("storage", (event) => {
+			if (event.key === storageKey || event.key === null) settleTo(saved());
+		});
+
+		window.addEventListener("pageshow", (event) => {
+			if (event.persisted) jumpTo(saved());
+		});
+	}
+
+	initTypeSlider();
+</script>
+
+<style>
+	@property --reach {
+		syntax: "<length>";
+		inherits: true;
+		initial-value: 0px;
+	}
+
+	.type-slider {
+		/* The size on screen, and where it and 100% sit down the ruler. */
+		--value: calc(var(--type-scale, 1) * 100);
+		--at: calc((var(--max) - var(--value)) * var(--step));
+		--home: calc((var(--max) - var(--default)) * var(--step));
+		/* How far the ruler shows either side of the dot: a short stub at rest
+		   that unfurls when the slider is in use. */
+		--reach: 44px;
+		/* Left edge of the ticks, in line with the header's brand mark. */
+		--x: 24px;
+		/* Tick lengths: every step, and every fifth. */
+		--short: 8px;
+		--long: 14px;
+		--tick: color-mix(in oklab, var(--text-subtle) 45%, transparent);
+		--tick-long: var(--text-subtle);
+
+		position: fixed;
+		z-index: 100;
+		top: 50%;
+		left: 0;
+		width: 76px;
+		height: 300px;
+		margin-top: -150px;
+		outline: none;
+		touch-action: none;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-tap-highlight-color: transparent;
+		transition: --reach 700ms var(--ease-out);
+	}
+
+	.type-slider:hover,
+	.type-slider:focus-visible,
+	.type-slider.is-active {
+		--reach: 118px;
+	}
+
+	/* A progressive blur behind the ruler, heaviest at the edge where the
+	   ticks are. It reaches past the slider into the empty margin (never into
+	   the text column), so it has room to thin out, and it unfurls with the
+	   ruler. Two classes, to win over the component's own fill. */
+	.type-slider .type-slider-backdrop {
+		top: calc(50% - var(--reach) - 66px);
+		left: 0;
+		width: clamp(76px, 50vw - 280px, 160px);
+		height: calc(var(--reach) * 2 + 132px);
+	}
+
+	/* Covers the slider, so a tap anywhere on it lands on a label. */
+	.type-slider-hit {
+		position: absolute;
+		inset: 0;
+	}
+
+	.type-slider-window {
+		position: absolute;
+		inset: 0 auto 0 0;
+		width: 96px;
+		overflow: hidden;
+		pointer-events: none;
+		-webkit-mask-image: linear-gradient(
+			transparent calc(50% - var(--reach)),
+			#000 calc(50% - var(--reach) * 0.45),
+			#000 calc(50% + var(--reach) * 0.45),
+			transparent calc(50% + var(--reach))
+		);
+		mask-image: linear-gradient(
+			transparent calc(50% - var(--reach)),
+			#000 calc(50% - var(--reach) * 0.45),
+			#000 calc(50% + var(--reach) * 0.45),
+			transparent calc(50% + var(--reach))
+		);
+	}
+
+	/* The ruler's top is the largest size; it slides so the current size sits
+	   at the dot. */
+	.type-slider-ruler {
+		position: absolute;
+		top: 50%;
+		left: var(--x);
+		right: 0;
+		transform: translate3d(0, calc(var(--at) * -1), 0);
+		will-change: transform;
+	}
+
+	/* A tick every step and a longer one every fifth, drawn as two repeating
+	   gradients and nudged up half a tick so each is centred on its size. */
+	.type-slider-ticks {
+		position: absolute;
+		top: -0.75px;
+		left: 0;
+		width: var(--long);
+		height: calc((var(--max) - var(--min)) * var(--step) + 1.5px);
+		background:
+			repeating-linear-gradient(var(--tick-long) 0 1.5px, transparent 0 calc(var(--step) * 5)) 0 0 / var(--long) 100% no-repeat,
+			repeating-linear-gradient(var(--tick) 0 1.5px, transparent 0 var(--step)) 0 0 / var(--short) 100% no-repeat;
+	}
+
+	/* The span between 100% and the current size, inked in. */
+	.type-slider-ticks.is-filled {
+		--tick: var(--text-primary);
+		--tick-long: var(--text-primary);
+		clip-path: inset(
+			calc(min(var(--at), var(--home)) - 0.25px) 0 calc(100% - max(var(--at), var(--home)) - 1.75px) 0
+		);
+	}
+
+	.type-slider-numbers {
+		opacity: 0;
+		transform: translateX(-3px);
+		transition:
+			opacity 300ms var(--ease-out),
+			transform 500ms var(--ease-out);
+	}
+
+	.type-slider:hover .type-slider-numbers,
+	.type-slider:focus-visible .type-slider-numbers,
+	.type-slider.is-active .type-slider-numbers {
+		opacity: 1;
+		transform: none;
+	}
+
+	/* Each number inks in as the filled span reaches it, over half a step. */
+	.type-slider-number {
+		--lo: min(var(--value), var(--default));
+		--hi: max(var(--value), var(--default));
+		--in: calc(clamp(0, (var(--n) - var(--lo)) * 2 + 1, 1) * clamp(0, (var(--hi) - var(--n)) * 2 + 1, 1));
+		position: absolute;
+		top: calc((var(--max) - var(--n)) * var(--step));
+		left: calc(var(--long) + 8px);
+		translate: 0 -50%;
+		font-family: var(--font-sans);
+		font-size: 10px;
+		line-height: 12px;
+		letter-spacing: -0.01em;
+		font-variant-numeric: tabular-nums;
+		color: color-mix(in oklab, var(--text-primary) calc(var(--in) * 100%), var(--text-subtle));
+	}
+
+	.type-slider-dot {
+		position: absolute;
+		top: 50%;
+		left: calc(var(--x) - 10px);
+		width: 4px;
+		height: 4px;
+		margin-top: -2px;
+		border-radius: 50%;
+		background: var(--text-primary);
+		pointer-events: none;
+		transition: box-shadow 200ms var(--ease-out);
+	}
+
+	.type-slider:focus-visible .type-slider-dot {
+		box-shadow:
+			0 0 0 3px var(--bg),
+			0 0 0 4.5px var(--text-subtle);
+	}
+
+	/* A larger A above the ruler and a smaller one below; they ride its ends. */
+	.type-slider-glyph {
+		position: absolute;
+		z-index: 1;
+		left: calc(var(--x) + var(--long) / 2 - 14px);
+		display: grid;
+		place-items: center;
+		width: 28px;
+		height: 20px;
+		font-family: var(--font-sans);
+		font-weight: 500;
+		line-height: 1;
+		color: var(--text-subtle);
+		transition: color 160ms var(--ease-out);
+	}
+
+	.type-slider-glyph:hover {
+		color: var(--text-primary);
+	}
+
+	.type-slider-glyph.is-up {
+		top: calc(50% - var(--reach) - 26px);
+		font-size: 12px;
+	}
+
+	.type-slider-glyph.is-down {
+		top: calc(50% + var(--reach) + 6px);
+		font-size: 9px;
+	}
+
+	/* The iPhone haptic switches: there to be clicked by their label, never
+	   seen, focused or hit. */
+	.type-slider :global(input) {
+		position: absolute;
+		visibility: hidden;
+		pointer-events: none;
+	}
+
+	/* Phones: the ruler lies flat in a sheet at the bottom of the screen, in
+	   thumb reach, opened by the Aa button in the header (Base.astro shows it at
+	   this same width). It reads left to right like a number line, as Rauno's
+	   does, so dragging it sideways never fights scrolling the page. */
+	@media (max-width: 711px) {
+		.type-slider {
+			--axis: x;
+			/* The current size's and 100%'s distances from the ruler's left
+			   (smallest) end. */
+			--at: calc((var(--value) - var(--min)) * var(--step));
+			--home: calc((var(--default) - var(--min)) * var(--step));
+
+			top: auto;
+			right: 12px;
+			bottom: calc(12px + env(safe-area-inset-bottom));
+			left: 12px;
+			width: auto;
+			height: 100px;
+			margin: 0;
+			border-radius: 16px;
+			background: var(--bg);
+			box-shadow: var(--card-shadow);
+			/* Shown as a border in forced colours, where shadows are dropped. */
+			outline: 1px solid transparent;
+			visibility: hidden;
+			opacity: 0;
+			transform: translateY(12px) scale(0.98);
+			transition:
+				opacity 200ms var(--ease-out),
+				transform 400ms var(--ease-out),
+				visibility 0s 400ms;
+		}
+
+		.type-slider .type-slider-backdrop {
+			display: none;
+		}
+
+		.type-slider.is-open {
+			visibility: visible;
+			opacity: 1;
+			transform: none;
+			transition:
+				opacity 200ms var(--ease-out),
+				transform 400ms var(--ease-out);
+		}
+
+		.type-slider-window {
+			inset: 0 48px;
+			width: auto;
+			-webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+			mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+		}
+
+		/* The ticks stand on this line, numbers above them, the dot below. */
+		.type-slider-ruler {
+			top: 61px;
+			left: 50%;
+			right: auto;
+			transform: translate3d(calc(var(--at) * -1), 0, 0);
+		}
+
+		.type-slider-ticks {
+			top: auto;
+			bottom: 0;
+			left: -0.75px;
+			width: calc((var(--max) - var(--min)) * var(--step) + 1.5px);
+			height: var(--long);
+			background:
+				repeating-linear-gradient(to right, var(--tick-long) 0 1.5px, transparent 0 calc(var(--step) * 5)) 0 100% / 100% var(--long) no-repeat,
+				repeating-linear-gradient(to right, var(--tick) 0 1.5px, transparent 0 var(--step)) 0 100% / 100% var(--short) no-repeat;
+		}
+
+		.type-slider-ticks.is-filled {
+			clip-path: inset(
+				0 calc(100% - max(var(--at), var(--home)) - 1.75px) 0 calc(min(var(--at), var(--home)) - 0.25px)
+			);
+		}
+
+		.type-slider-numbers {
+			opacity: 1;
+			transform: none;
+		}
+
+		.type-slider-number {
+			top: auto;
+			bottom: calc(var(--long) + 8px);
+			left: calc((var(--n) - var(--min)) * var(--step) + 0.75px);
+			translate: -50% 0;
+		}
+
+		.type-slider-dot {
+			top: 69px;
+			left: 50%;
+			margin: 0 0 0 -2px;
+		}
+
+		/* The smaller A on the left, the larger on the right, level with the
+		   ticks. */
+		.type-slider-glyph.is-down {
+			top: 44px;
+			left: 10px;
+		}
+
+		.type-slider-glyph.is-up {
+			top: 44px;
+			right: 10px;
+			left: auto;
+		}
+	}
+
+	/* Too short for the edge ruler; the phone sheet is short enough to stay. */
+	@media (min-width: 712px) and (max-height: 340px) {
+		.type-slider {
+			display: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.type-slider,
+		.type-slider.is-open,
+		.type-slider-numbers {
+			transition: none;
+		}
+	}
+
+	@media (forced-colors: active) {
+		.type-slider .type-slider-backdrop {
+			display: none;
+		}
+
+		.type-slider {
+			--tick: GrayText;
+			--tick-long: CanvasText;
+		}
+
+		.type-slider-ticks.is-filled {
+			--tick: Highlight;
+			--tick-long: Highlight;
+		}
+
+		.type-slider-dot {
+			background: Highlight;
+		}
+	}
+
+	@media print {
+		.type-slider {
+			display: none;
+		}
+	}
+</style>

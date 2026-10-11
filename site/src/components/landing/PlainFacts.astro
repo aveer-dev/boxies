@@ -1,0 +1,43 @@
+---
+// Plain facts: what's true today, said in the present tense, then the candid
+// "Plainly" note about what Inboxies doesn't do.
+import { asOf } from "../../config";
+import { facts, plainly } from "../../data/principles";
+import { date } from "../../lib/format";
+import { renderInline } from "../../lib/inline";
+import Callout from "../Callout.astro";
+import Row from "../Row.astro";
+import RowList from "../RowList.astro";
+import SectionHead from "../SectionHead.astro";
+---
+
+<section class="section column-container" aria-labelledby="facts">
+	<SectionHead id="facts" title="Plain facts" meta={`true today, as of ${date(asOf)}`} />
+	<RowList as="ul">
+		{
+			facts.map((fact) => (
+				<Row
+					as="li"
+					title={fact.title}
+					href={fact.href}
+					external={!!fact.href && /^https?:\/\//.test(fact.href)}
+					meta={fact.meta}
+					description={fact.body}
+					claim={fact.claim}
+				/>
+			))
+		}
+	</RowList>
+	<div class="facts-callout">
+		{/* "Plainly:" leads the text inline, in ink, like the chapter rows. */}
+		<Callout id={plainly.id} icon="info" claim={plainly.claim}>
+			<strong>{plainly.title}</strong>{" "}<Fragment set:html={renderInline(plainly.body)} />
+		</Callout>
+	</div>
+</section>
+
+<style>
+	.facts-callout {
+		margin-top: 20px;
+	}
+</style>

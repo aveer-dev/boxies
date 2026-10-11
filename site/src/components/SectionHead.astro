@@ -1,0 +1,91 @@
+---
+// A section heading: title on the left, a quiet meta line on the right, over
+// a hairline (the portfolio's run page). The hairline draws itself in as the
+// head scrolls into view, where scroll timelines exist.
+interface Props {
+	title: string;
+	id?: string;
+	meta?: string;
+	metaHref?: string;
+	level?: 2 | 3;
+}
+
+const { title, id, meta, metaHref, level = 2 } = Astro.props;
+const Heading = level === 3 ? "h3" : "h2";
+const hasMeta = !!meta || Astro.slots.has("meta");
+---
+
+<div class="section-head" data-reveal-on-scroll>
+	<Heading id={id} class="section-title">{title}</Heading>
+	{
+		hasMeta && (
+			<div class="section-meta">
+				{meta && (metaHref ? <a class="quiet-link" href={metaHref}>{meta}</a> : meta)}
+				<slot name="meta" />
+			</div>
+		)
+	}
+</div>
+
+<style>
+	.section-head {
+		position: relative;
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 4px 16px;
+		padding-bottom: 12px;
+		margin-bottom: 20px;
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		/* Muted, not the portfolio's subtle: meta lines here carry meaning. */
+		color: var(--text-muted);
+	}
+
+	/* The hairline, drawn as a pseudo-element so it can scale in from the left. */
+	.section-head::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 1px;
+		background: var(--border-subtle);
+		transform-origin: left;
+	}
+
+	.section-title {
+		font-size: 0.75rem;
+		font-weight: 400;
+		line-height: 1rem;
+		color: var(--text-primary);
+	}
+
+	.section-meta {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 6px;
+	}
+
+	/* Longhands on purpose: the CSS minifier folds animation + animation-timeline
+	   into one shorthand, which browsers treat as reset-only and drop. */
+	@supports (animation-timeline: view()) {
+		@media (prefers-reduced-motion: no-preference) {
+			.section-head::after {
+				animation-name: hairline-draw;
+				animation-timing-function: linear;
+				animation-fill-mode: both;
+				animation-timeline: view();
+				animation-range: entry 0% cover 25%;
+			}
+		}
+	}
+
+	@keyframes hairline-draw {
+		from {
+			transform: scaleX(0);
+		}
+	}
+</style>

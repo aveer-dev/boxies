@@ -1,0 +1,97 @@
+---
+// The accent pill at the end of the hero heading: yes → reply → sign-off,
+// twice, then it rests on "yes" (rotating-word.ts). Screen readers get the
+// static "yes" the heading carries after it; the pill itself is hidden from
+// them. Without JS, or with reduced motion, it just says "yes". Hero.astro
+// loads the script, so it isn't rendered inside the heading.
+// src: FSW#the-screener; FSW#ai-email-agent (only drafts, never sends)
+---
+
+<span class="rw" data-rw data-words="yes|reply|sign-off" aria-hidden="true"><span class="rw-word">yes</span></span>
+
+<style>
+	.rw {
+		position: relative;
+		display: inline-block;
+		vertical-align: baseline;
+		box-sizing: content-box;
+		inline-size: var(--rw-w, auto);
+		padding: 0 0.2em 0.04em 0.18em;
+		border-radius: 0.22em;
+		white-space: nowrap;
+		/* not overflow:hidden, which would move an inline-block's baseline */
+		clip-path: inset(0 round 0.22em);
+		background: var(--accent-soft);
+		color: var(--accent);
+		box-shadow: inset 0 0 0 1px var(--accent-line);
+		transition: inline-size var(--spring-duration) var(--spring);
+	}
+
+	.rw::before {
+		content: "";
+		display: inline-block;
+		width: 0.16em;
+		height: 0.16em;
+		margin-right: 0.14em;
+		vertical-align: 0.22em;
+		border-radius: 50%;
+		background: currentColor;
+	}
+
+	.rw.is-beat::before {
+		animation: rw-beat 320ms var(--ease-out);
+	}
+
+	/* The words after the first are made by the script, so they carry no scope. */
+	.rw :global(.rw-word) {
+		display: inline-block;
+	}
+
+	.rw :global(.rw-word[data-state="out"]) {
+		position: absolute;
+		animation: rw-out 180ms var(--ease-in) forwards;
+	}
+
+	.rw :global(.rw-word[data-state="in"]) {
+		animation: rw-in 320ms var(--ease-out) 120ms backwards;
+	}
+
+	@keyframes rw-out {
+		to {
+			opacity: 0;
+			transform: translateY(-0.35em);
+			filter: blur(3px);
+		}
+	}
+
+	@keyframes rw-in {
+		from {
+			opacity: 0;
+			transform: translateY(0.35em);
+			filter: blur(3px);
+		}
+	}
+
+	@keyframes rw-beat {
+		50% {
+			transform: scale(1.4);
+		}
+	}
+
+	/* If reduced motion comes on mid-rotation, the script rests the pill on
+	   "yes"; this makes that last swap a plain cut. */
+	@media (prefers-reduced-motion: reduce) {
+		.rw {
+			transition: none;
+		}
+
+		.rw.is-beat::before,
+		.rw :global(.rw-word[data-state]) {
+			animation: none;
+		}
+
+		.rw :global(.rw-word[data-state="out"]) {
+			visibility: hidden;
+		}
+	}
+</style>

@@ -1,0 +1,64 @@
+---
+// /pricing (§4.2): the plans, how the domain price works, what each plan
+// includes, the limits, billing questions, and a close. One thing is paid
+// today, a domain we register; with flags.domainPurchaseLive off every $20
+// surface goes (the data drops the third plan, its column and its answers,
+// and this page drops "How the price works").
+import ComparisonTable from "../components/ComparisonTable.astro";
+import Faq from "../components/Faq.astro";
+import PageIntro from "../components/PageIntro.astro";
+import Records from "../components/Records.astro";
+import SectionHead from "../components/SectionHead.astro";
+import PlanGrid from "../components/pricing/PlanGrid.astro";
+import PriceBreakdown from "../components/pricing/PriceBreakdown.astro";
+import PriceRule from "../components/pricing/PriceRule.astro";
+import PricingClose from "../components/pricing/PricingClose.astro";
+import SelfHostRow from "../components/pricing/SelfHostRow.astro";
+import { flags } from "../config";
+import { billing } from "../data/faqs";
+import { compare, limits, plans } from "../data/pricing";
+import Base from "../layouts/Base.astro";
+
+// src: PS#1-2
+const description = flags.domainPurchaseLive
+	? "A personal @inboxies.email address and connecting your own domain have no charge today. Registering a new domain through Inboxies is $20 a year when its wholesale price is $15 or less."
+	: "A personal @inboxies.email address and connecting your own domain have no charge today.";
+
+// src: PS#1 ("exactly one paid thing"); PS#2
+const intro = flags.domainPurchaseLive
+	? "You pay for one thing today: a domain we register for you. A personal address, and connecting a domain you already own, have no charge."
+	: "A personal address, and connecting a domain you already own, have no charge today.";
+---
+
+<Base title="Pricing" currentNav="pricing" description={description}>
+	<PageIntro title="Pricing" description={intro} />
+
+	<PlanGrid plans={plans} />
+	<SelfHostRow />
+
+	{
+		flags.domainPurchaseLive && (
+			<section class="section" aria-labelledby="how-pricing-works">
+				<PriceRule />
+				<PriceBreakdown />
+			</section>
+		)
+	}
+
+	<section class="section" aria-labelledby="compare">
+		<SectionHead id="compare" title="What’s included" meta="per plan" />
+		<ComparisonTable mode="plans" caption={compare.caption} columns={compare.columns} groups={compare.groups} footnote={compare.footnote} />
+	</section>
+
+	<section class="section" aria-labelledby="limits">
+		{/* src: PS#4 (hard limits; "Storage quota / AI quota: None in code") */}
+		<SectionHead id="limits" title="Limits" meta="the same on every plan, per mailbox" />
+		<Records rows={limits} />
+	</section>
+
+	<section class="section" aria-labelledby="faq">
+		<Faq id="faq" title="Questions & answers" meta="Billing" items={billing} />
+	</section>
+
+	<PricingClose />
+</Base>

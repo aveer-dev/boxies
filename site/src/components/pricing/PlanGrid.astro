@@ -1,0 +1,43 @@
+---
+// The plans side by side. Three plans break out of the 560px column into a
+// centred 808px row (the site's only non-media breakout); two plans (domain
+// purchase off) sit two-up inside the column.
+//
+// data-reveal-skip: each card rises in on its own (scroll reveal), so the
+// load-time tagger mustn't also animate the grid around them.
+import type { Plan } from "../../data/types";
+import PricingCard from "./PricingCard.astro";
+
+interface Props {
+	plans: Plan[];
+}
+
+const { plans } = Astro.props;
+---
+
+<div class="plan-grid" data-count={plans.length} data-reveal-skip>
+	{plans.map((plan) => <PricingCard plan={plan} />)}
+</div>
+
+<style>
+	.plan-grid {
+		display: grid;
+		gap: 12px;
+		grid-template-columns: 1fr;
+		margin-top: 32px;
+	}
+
+	@media (min-width: 641px) {
+		.plan-grid[data-count="2"] {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	@media (min-width: 880px) {
+		.plan-grid[data-count="3"] {
+			grid-template-columns: repeat(3, 1fr);
+			width: min(808px, 100vw - 48px);
+			margin-left: calc((100% - min(808px, 100vw - 48px)) / 2);
+		}
+	}
+</style>

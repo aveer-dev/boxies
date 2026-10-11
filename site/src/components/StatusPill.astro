@@ -1,0 +1,126 @@
+---
+// A Notion-style status pill. Every status has its own dot shape as well as
+// its own colour, so the colour is never the only signal; screen readers hear
+// "Status:" first.
+import type { Status } from "../data/types";
+
+interface Props {
+	status: Status;
+}
+
+const LABEL: Record<Status, string> = {
+	available: "Available",
+	next: "Next release",
+	review: "In review",
+	progress: "In progress",
+	planned: "Planned",
+	exploring: "Exploring",
+	partly: "Partly",
+	notyet: "Not yet",
+};
+
+const { status } = Astro.props;
+---
+
+<span class="pill" data-status={status}><span class="sr-only">Status: </span>{LABEL[status]}</span>
+
+<style>
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		height: 1.125rem;
+		padding: 0 6px;
+		border-radius: var(--radius-xs);
+		font: 400 0.6875rem/1.125rem var(--font-sans);
+		white-space: nowrap;
+		background: var(--pill-bg);
+		color: var(--pill-fg);
+	}
+
+	.pill::before {
+		content: "";
+		flex: none;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: currentColor;
+	}
+
+	/* ● filled */
+	.pill[data-status="available"] {
+		--pill-bg: var(--pill-available-bg);
+		--pill-fg: var(--pill-available-fg);
+	}
+
+	/* ● with a halo */
+	.pill[data-status="next"] {
+		--pill-bg: var(--pill-next-bg);
+		--pill-fg: var(--pill-next-fg);
+	}
+	.pill[data-status="next"]::before {
+		box-shadow: 0 0 0 2px color-mix(in oklab, currentColor 25%, transparent);
+	}
+
+	/* ◉ ring with a centre */
+	.pill[data-status="review"] {
+		--pill-bg: var(--pill-review-bg);
+		--pill-fg: var(--pill-review-fg);
+	}
+	.pill[data-status="review"]::before {
+		background: radial-gradient(circle, currentColor 0 1.5px, transparent 1.6px);
+		box-shadow: inset 0 0 0 1px currentColor;
+	}
+
+	/* ◐ half filled */
+	.pill[data-status="progress"] {
+		--pill-bg: var(--pill-progress-bg);
+		--pill-fg: var(--pill-progress-fg);
+	}
+	.pill[data-status="progress"]::before {
+		background: conic-gradient(currentColor 0 50%, transparent 0);
+		box-shadow: inset 0 0 0 1px currentColor;
+	}
+
+	/* ○ empty ring */
+	.pill[data-status="planned"] {
+		--pill-bg: var(--pill-planned-bg);
+		--pill-fg: var(--pill-planned-fg);
+	}
+	.pill[data-status="planned"]::before {
+		background: transparent;
+		box-shadow: inset 0 0 0 1px currentColor;
+	}
+
+	/* ◌ dashed ring */
+	.pill[data-status="exploring"] {
+		--pill-bg: var(--pill-exploring-bg);
+		--pill-fg: var(--pill-exploring-fg);
+	}
+	.pill[data-status="exploring"]::before {
+		background: transparent;
+		border: 1px dashed currentColor;
+	}
+
+	/* ◒ bottom half filled */
+	.pill[data-status="partly"] {
+		--pill-bg: var(--pill-partly-bg);
+		--pill-fg: var(--pill-partly-fg);
+	}
+	.pill[data-status="partly"]::before {
+		background: linear-gradient(to top, currentColor 50%, transparent 50%);
+		box-shadow: inset 0 0 0 1px currentColor;
+	}
+
+	/* – a dash, on an outlined pill */
+	.pill[data-status="notyet"] {
+		--pill-bg: var(--pill-notyet-bg);
+		--pill-fg: var(--pill-notyet-fg);
+		box-shadow: inset 0 0 0 1px var(--pill-notyet-ring);
+	}
+	.pill[data-status="notyet"]::before {
+		width: 6px;
+		height: 1.5px;
+		border-radius: 1px;
+	}
+</style>

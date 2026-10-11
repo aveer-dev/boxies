@@ -1,0 +1,19 @@
+---
+// Under the plans: the code is open, and anyone can run their own copy.
+// Copy and source in src/data/pricing.ts (selfHost).
+import { selfHost } from "../../data/pricing";
+import Row from "../Row.astro";
+import RowList from "../RowList.astro";
+---
+
+<div class="self-host">
+	<RowList>
+		<Row title={selfHost.title} href={selfHost.href} external meta={selfHost.meta} description={selfHost.description} />
+	</RowList>
+</div>
+
+<style>
+	.self-host {
+		margin-top: 24px;
+	}
+</style>

@@ -1,0 +1,197 @@
+/*
+ * Design tokens. The portfolio's palette plus what Inboxies adds: the accent,
+ * status pills, phone frame and a mono stack. Each theme block also answers
+ * to [data-scope-theme], so one region (the screenshot strip) can carry a
+ * theme of its own.
+ *
+ * One change to the portfolio's palette: the light --text-muted is a step
+ * darker (#73736f → #6b6b67), so it keeps 4.5:1 on the tinted surfaces it
+ * sits on here (cards, badges, the accent wash), not only on --bg.
+ */
+
+/* Metric-matched fallback so the Inter swap doesn't shift layout (CLS 0). */
+@font-face {
+	font-family: "Inter Fallback";
+	src: local("Arial");
+	size-adjust: 107.4%;
+	ascent-override: 90.2%;
+	descent-override: 22.48%;
+	line-gap-override: 0%;
+}
+
+:root {
+	/* ── portfolio, verbatim ── */
+	--bg: #fcfcfc;
+	--bg-card: #f5f5f3;
+	--bg-card-hover: #efefe9;
+	--bg-badge: #f0f0ed;
+	--text-primary: #171717;
+	--text-muted: #6b6b67;
+	--text-subtle: #92928e;
+	--border-subtle: #eaeae7;
+	--border-card: #e4e4df;
+	--card-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
+	--font-sans: "Inter", "Inter Fallback", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+	color-scheme: light;
+	--cursor: var(--text-primary);
+
+	/* ── Inboxies additions (theme-independent) ── */
+	--mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	--ease-in: cubic-bezier(0.42, 0, 1, 1);                 /* exits only (Notion fade-out) */
+	--ease-standard: cubic-bezier(0.4, 0, 0.2, 1);          /* portfolio footer label */
+	--ease-decel: cubic-bezier(0, 0, 0.2, 1);               /* portfolio footer preview */
+	/* iOS .spring(response: 0.32, dampingFraction: 0.86) = Android 0.86f + StiffnessMediumLow */
+	--spring: linear(0, 0.062, 0.197, 0.355, 0.506, 0.638, 0.745, 0.828, 0.889, 0.933, 0.962, 0.981, 0.993, 1, 1.003, 1.005, 1.005, 1.005, 1.004, 1.003, 1.002, 1.002, 1);
+	--spring-duration: 440ms;
+
+	--fs-hero: clamp(1.25rem, 0.95rem + 1.25vw, 1.75rem);   /* 20px @390 · 25px @768 · 28px ≥1024 */
+	--fs-display: 1.0625rem;  /* 17px: chapter titles, prices, closing heading */
+	--fs-lede: 0.8125rem;     /* 13px: hero subhead only */
+	--fs-title: 0.8125rem;    /* 13px: row titles, page h1s */
+	--fs-body: 0.75rem;       /* 12px */
+	--fs-meta: 0.6875rem;     /* 11px */
+	--fs-micro: 0.625rem;     /* 10px, uppercase +0.18em: changelog month rows only */
+
+	--w-col: 560px;
+	--gutter: 24px;
+	--header-h: 60px;
+
+	--radius-xs: 4px;
+	--radius-sm: 8px;
+	--radius-md: 12px;
+	--radius-lg: 16px;
+	--radius-pill: 999px;
+
+	--tatami-shadow-100: 0px .7px 1.462px 0px #00000004, 0px 3px 9px 0px #00000008;
+	--tatami-shadow-200: 0px .175px 1.041px 0px #00000003, 0px .8px 2.925px 0px #00000005, 0px 2.025px 7.847px 0px #00000007, 0px 4px 18px 0px #0000000a;
+	--tatami-shadow-300: 0px .667px 3.502px 0px #00000002, 0px 2.933px 7.252px 0px #00000004, 0px 7.2px 14.462px 0px #00000005, 0px 13.867px 28.348px 0px #00000006, 0px 23.333px 52.123px 0px #00000008, 0px 36px 89px 0px #0000000a;
+
+	/* ── Inboxies additions (light) ── */
+	--accent: #2659d9;                                      /* AppTheme.uiAccent light */
+	--accent-soft: color-mix(in oklab, var(--accent) 9%, var(--bg));
+	--accent-line: color-mix(in oklab, var(--accent) 28%, var(--bg)); /* decorative rings only */
+	--focus-ring: var(--accent);                            /* ≥5:1 on every surface, both themes */
+	--border-input: #8b8b87;                                /* field edges: ≥3:1 on --bg and --bg-card */
+	--danger: #6b141a;                                      /* deepDarkRed */
+	--btn-bg: var(--text-primary);                          /* the "dark pill" */
+	--btn-ink: var(--bg);
+	--btn-bg-hover: color-mix(in oklab, var(--text-primary) 84%, var(--accent));
+	--shadow-media: var(--tatami-shadow-300);
+	--phone-bezel: #1b1b1d;
+	--phone-edge: rgba(255, 255, 255, 0.06);
+	--phone-screen-bg: #fafafb;                             /* app background, so no flash before media */
+	--glass-bg: color-mix(in srgb, var(--bg) 62%, transparent);
+	--glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.45), 0 4px 12px rgba(0, 0, 0, 0.08);
+	--pill-available-bg: #f0faf2;  --pill-available-fg: #14832b;
+	--pill-next-bg: var(--accent-soft); --pill-next-fg: var(--accent);
+	--pill-review-bg: var(--accent-soft); --pill-review-fg: var(--accent);
+	--pill-progress-bg: #fff5ed;   --pill-progress-fg: #a84a00;
+	--pill-planned-bg: #f6f5f4;    --pill-planned-fg: #615d59;
+	--pill-exploring-bg: #f8f5fc;  --pill-exploring-fg: #7237ae;
+	--pill-partly-bg: #fff5e0;     --pill-partly-fg: #8a5f00;
+	--pill-notyet-bg: transparent; --pill-notyet-fg: var(--text-muted); --pill-notyet-ring: var(--border-card);
+}
+
+/* System dark when no explicit theme (no-JS path). Selector verbatim + Inboxies tokens. */
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--bg: #0d0d0d; --bg-card: #161616; --bg-card-hover: #1f1f1e; --bg-badge: #222220;
+		--text-primary: #ededed; --text-muted: #9e9e9a; --text-subtle: #6e6e69;
+		--border-subtle: #242422; --border-card: #2c2c29;
+		--card-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.08);
+		color-scheme: dark;
+
+		--accent: #598cff;
+		--accent-soft: color-mix(in oklab, var(--accent) 12%, var(--bg));
+		--accent-line: color-mix(in oklab, var(--accent) 32%, var(--bg));
+		--focus-ring: var(--accent);
+		--border-input: #6e6e69;
+		--danger: #e65959;
+		--btn-bg: var(--text-primary); --btn-ink: var(--bg);
+		--btn-bg-hover: color-mix(in oklab, var(--text-primary) 86%, var(--accent));
+		--shadow-media: var(--card-shadow);
+		--phone-bezel: #2a2a2c; --phone-edge: rgba(255, 255, 255, 0.08); --phone-screen-bg: #0d0d0d;
+		--glass-bg: color-mix(in srgb, var(--bg) 62%, transparent); /* re-resolved so a dark scope gets dark glass */
+		--glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 4px 12px rgba(0, 0, 0, 0.4);
+		--pill-available-bg: color-mix(in oklab, #1aae39 16%, var(--bg)); --pill-available-fg: #68ce7e;
+		--pill-next-bg: var(--accent-soft); --pill-next-fg: var(--accent);
+		--pill-review-bg: var(--accent-soft); --pill-review-fg: var(--accent);
+		--pill-progress-bg: color-mix(in oklab, #dd5b00 18%, var(--bg)); --pill-progress-fg: #ffb27a;
+		--pill-planned-bg: var(--bg-badge); --pill-planned-fg: var(--text-muted);
+		--pill-exploring-bg: color-mix(in oklab, #9849e8 18%, var(--bg)); --pill-exploring-fg: #d6b6f6;
+		--pill-partly-bg: color-mix(in oklab, #e89d01 16%, var(--bg)); --pill-partly-fg: #f5cf73;
+		--pill-notyet-bg: transparent; --pill-notyet-fg: var(--text-muted); --pill-notyet-ring: var(--border-card);
+	}
+}
+
+/* Explicit dark, and dark-scoped regions */
+:root[data-theme="dark"], html.dark, [data-scope-theme="dark"] {
+	--bg: #0d0d0d; --bg-card: #161616; --bg-card-hover: #1f1f1e; --bg-badge: #222220;
+	--text-primary: #ededed; --text-muted: #9e9e9a; --text-subtle: #6e6e69;
+	--border-subtle: #242422; --border-card: #2c2c29;
+	--card-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.08);
+	color-scheme: dark;
+
+	--accent: #598cff;
+	--accent-soft: color-mix(in oklab, var(--accent) 12%, var(--bg));
+	--accent-line: color-mix(in oklab, var(--accent) 32%, var(--bg));
+	--focus-ring: var(--accent);
+	--border-input: #6e6e69;
+	--danger: #e65959;
+	--btn-bg: var(--text-primary); --btn-ink: var(--bg);
+	--btn-bg-hover: color-mix(in oklab, var(--text-primary) 86%, var(--accent));
+	--shadow-media: var(--card-shadow);
+	--phone-bezel: #2a2a2c; --phone-edge: rgba(255, 255, 255, 0.08); --phone-screen-bg: #0d0d0d;
+	--glass-bg: color-mix(in srgb, var(--bg) 62%, transparent); /* re-resolved so a dark scope gets dark glass */
+	--glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 4px 12px rgba(0, 0, 0, 0.4);
+	--pill-available-bg: color-mix(in oklab, #1aae39 16%, var(--bg)); --pill-available-fg: #68ce7e;
+	--pill-next-bg: var(--accent-soft); --pill-next-fg: var(--accent);
+	--pill-review-bg: var(--accent-soft); --pill-review-fg: var(--accent);
+	--pill-progress-bg: color-mix(in oklab, #dd5b00 18%, var(--bg)); --pill-progress-fg: #ffb27a;
+	--pill-planned-bg: var(--bg-badge); --pill-planned-fg: var(--text-muted);
+	--pill-exploring-bg: color-mix(in oklab, #9849e8 18%, var(--bg)); --pill-exploring-fg: #d6b6f6;
+	--pill-partly-bg: color-mix(in oklab, #e89d01 16%, var(--bg)); --pill-partly-fg: #f5cf73;
+	--pill-notyet-bg: transparent; --pill-notyet-fg: var(--text-muted); --pill-notyet-ring: var(--border-card);
+}
+
+/* Explicit light, and light-scoped regions. The light colour tokens are
+   repeated so a light scope inside a dark page resets them. */
+:root[data-theme="light"], html.light, [data-scope-theme="light"] {
+	--bg: #fcfcfc;
+	--bg-card: #f5f5f3;
+	--bg-card-hover: #efefe9;
+	--bg-badge: #f0f0ed;
+	--text-primary: #171717;
+	--text-muted: #6b6b67;
+	--text-subtle: #92928e;
+	--border-subtle: #eaeae7;
+	--border-card: #e4e4df;
+	--card-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
+	color-scheme: light;
+
+	--accent: #2659d9;
+	--accent-soft: color-mix(in oklab, var(--accent) 9%, var(--bg));
+	--accent-line: color-mix(in oklab, var(--accent) 28%, var(--bg));
+	--focus-ring: var(--accent);
+	--border-input: #8b8b87;
+	--danger: #6b141a;
+	--btn-bg: var(--text-primary);
+	--btn-ink: var(--bg);
+	--btn-bg-hover: color-mix(in oklab, var(--text-primary) 84%, var(--accent));
+	--shadow-media: var(--tatami-shadow-300);
+	--phone-bezel: #1b1b1d;
+	--phone-edge: rgba(255, 255, 255, 0.06);
+	--phone-screen-bg: #fafafb;
+	--glass-bg: color-mix(in srgb, var(--bg) 62%, transparent);
+	--glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.45), 0 4px 12px rgba(0, 0, 0, 0.08);
+	--pill-available-bg: #f0faf2;  --pill-available-fg: #14832b;
+	--pill-next-bg: var(--accent-soft); --pill-next-fg: var(--accent);
+	--pill-review-bg: var(--accent-soft); --pill-review-fg: var(--accent);
+	--pill-progress-bg: #fff5ed;   --pill-progress-fg: #a84a00;
+	--pill-planned-bg: #f6f5f4;    --pill-planned-fg: #615d59;
+	--pill-exploring-bg: #f8f5fc;  --pill-exploring-fg: #7237ae;
+	--pill-partly-bg: #fff5e0;     --pill-partly-fg: #8a5f00;
+	--pill-notyet-bg: transparent; --pill-notyet-fg: var(--text-muted); --pill-notyet-ring: var(--border-card);
+}

@@ -1,0 +1,263 @@
+---
+// The roadmap as a Notion database: a real table with property columns, rows
+// grouped under labelled headers, and view tabs (All · Available · Coming
+// soon) that are radio buttons filtered by :has(), so they work with no JS.
+// Without :has() every row shows. Counts are worked out here, at build.
+import { GROUP_LABEL } from "../data/roadmap";
+import type { RoadmapGroup, RoadmapRow, Status } from "../data/types";
+import { platformLine } from "../lib/platforms";
+import StatusPill from "./StatusPill.astro";
+import Tag from "./Tag.astro";
+
+interface Props {
+	id: string;
+	caption: string;
+	rows: RoadmapRow[];
+	grouped?: boolean;
+	notes?: boolean;
+	views?: boolean;
+	/** With `views`: the view that starts selected. */
+	view?: "all" | "available" | "soon";
+}
+
+const { id, caption, rows, grouped = false, notes = false, views = false, view = "all" } = Astro.props;
+
+const STATUS_ORDER: Status[] = ["available", "next", "review", "progress", "planned", "exploring", "notyet"];
+
+const n = {
+	all: rows.length,
+	available: rows.filter((r) => r.status === "available").length,
+	soon: rows.filter((r) => r.status !== "available").length,
+};
+
+const summarise = (label: string, list: RoadmapRow[]) => ({
+	label,
+	rows: list,
+	hasAvailable: list.some((r) => r.status === "available"),
+	hasSoon: list.some((r) => r.status !== "available"),
+});
+
+// Grouped: the groups in GROUP_LABEL's order, rows in data order. Ungrouped: one body,
+// by status (available first), then data order (sort is stable).
+const groups = grouped
+	? (Object.keys(GROUP_LABEL) as RoadmapGroup[])
+			.map((g) => summarise(GROUP_LABEL[g], rows.filter((r) => r.group === g)))
+			.filter((g) => g.rows.length > 0)
+	: [summarise("", [...rows].sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status)))];
+---
+
+<div class="db" id={id} data-claim="roadmap" data-reveal-on-scroll>
+	{
+		views && (
+			<fieldset class="db-views">
+				<legend class="sr-only">Show</legend>
+				<input class="sr-only" type="radio" name={`${id}-view`} id={`${id}-v-all`} value="all" checked={view === "all"} />
+				<label for={`${id}-v-all`}>
+					All <span class="db-count">{n.all}</span>
+				</label>
+				<input class="sr-only" type="radio" name={`${id}-view`} id={`${id}-v-available`} value="available" checked={view === "available"} />
+				<label for={`${id}-v-available`}>
+					Available <span class="db-count">{n.available}</span>
+				</label>
+				<input class="sr-only" type="radio" name={`${id}-view`} id={`${id}-v-soon`} value="soon" checked={view === "soon"} />
+				<label for={`${id}-v-soon`}>
+					Coming soon <span class="db-count">{n.soon}</span>
+				</label>
+			</fieldset>
+		)
+	}
+	<table class="db-table">
+		<caption class="sr-only">{caption}</caption>
+		<thead>
+			<tr>
+				<th scope="col"><span class="db-glyph" aria-hidden="true">Aa</span>Name</th>
+				<th scope="col"><span class="db-glyph" aria-hidden="true">◉</span>Status</th>
+				<th scope="col" class="opt"><span class="db-glyph" aria-hidden="true">↗</span>From</th>
+				<th scope="col" class="opt"><span class="db-glyph" aria-hidden="true">⌗</span>Platforms</th>
+			</tr>
+		</thead>
+		{
+			groups.map((g) => (
+				<tbody data-has-available={g.hasAvailable ? "yes" : "no"} data-has-soon={g.hasSoon ? "yes" : "no"}>
+					{grouped && (
+						<tr class="db-group">
+							<th scope="rowgroup" colspan="4">
+								{g.label}
+							</th>
+						</tr>
+					)}
+					{g.rows.map((r) => (
+						<tr data-avail={r.status === "available" ? "yes" : "no"} id={r.anchor}>
+							<th scope="row">
+								<span class="db-name">{r.name}</span>
+								{notes && r.note && <span class="db-note">{r.note}</span>}
+								<span class="db-sub">{[r.lineage, platformLine(r.platforms)].filter(Boolean).join(" · ")}</span>
+							</th>
+							<td>
+								<StatusPill status={r.status} />
+							</td>
+							<td class="opt">{r.lineage ? <Tag label={r.lineage} /> : <span class="db-none">—</span>}</td>
+							<td class="opt db-platforms">{platformLine(r.platforms) || "—"}</td>
+						</tr>
+					))}
+				</tbody>
+			))
+		}
+	</table>
+</div>
+
+<style>
+	.db-views {
+		border: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 10px;
+		margin: 0 0 10px;
+	}
+
+	.db-views label {
+		position: relative;
+		padding-block: 4px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color 150ms var(--ease-out);
+	}
+
+	.db-views label:hover {
+		color: var(--text-primary);
+	}
+
+	.db-views input:checked + label {
+		color: var(--text-primary);
+		text-decoration: underline;
+		text-underline-offset: 4px;
+	}
+
+	.db-views input:focus-visible + label {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 3px;
+		border-radius: 2px;
+	}
+
+	@media (pointer: coarse) {
+		.db-views label::after {
+			content: "";
+			position: absolute;
+			inset: -8px -6px;
+		}
+	}
+
+	/* The counts are information, so muted, not the portfolio's subtle (3:1). */
+	.db-count {
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* The table bleeds 8px past the column on both sides, so group bands and the
+	   row hover get a lip while names and group labels stay on the column edge. */
+	.db-table {
+		width: calc(100% + 16px);
+		margin-inline: -8px;
+		border-collapse: collapse;
+		font-size: var(--fs-body);
+		line-height: 1.125rem;
+	}
+
+	.db-table th,
+	.db-table td {
+		text-align: left;
+		font-weight: 400;
+		padding: 9px 12px 8px 0;
+		border-bottom: 1px solid var(--border-subtle);
+		vertical-align: top;
+	}
+
+	.db-table :is(th, td):first-child {
+		padding-left: 8px;
+	}
+
+	.db-table :is(th, td):last-child {
+		padding-right: 8px;
+	}
+
+	.db-table thead th {
+		padding-top: 0;
+		font-size: var(--fs-meta);
+		color: var(--text-muted);
+		white-space: nowrap;
+	}
+
+	.db-glyph {
+		margin-right: 4px;
+		color: var(--text-subtle);
+	}
+
+	.db-table tbody tr:not(.db-group) {
+		transition: background-color 120ms var(--ease-out);
+	}
+
+	.db-table tbody tr:not(.db-group):hover {
+		background: var(--bg-card);
+	}
+
+	.db-group th {
+		padding: 6px 8px;
+		font-size: var(--fs-meta);
+		color: var(--text-primary);
+		background: var(--bg-card);
+	}
+
+	.db-name {
+		color: var(--text-primary);
+	}
+
+	.db-note {
+		display: block;
+		margin-top: 2px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.db-sub {
+		display: none;
+	}
+
+	.db-platforms {
+		color: var(--text-muted);
+		font-size: var(--fs-meta);
+	}
+
+	.db-none {
+		color: var(--text-subtle);
+	}
+
+	/* The views. Hidden groups take their header row with them. */
+	.db:has(input[value="available"]:checked) tr[data-avail="no"],
+	.db:has(input[value="soon"]:checked) tr[data-avail="yes"],
+	.db:has(input[value="available"]:checked) tbody[data-has-available="no"],
+	.db:has(input[value="soon"]:checked) tbody[data-has-soon="no"] {
+		display: none;
+	}
+
+	@media (max-width: 640px) {
+		.db-table .opt {
+			display: none;
+		}
+
+		.db-sub {
+			display: block;
+			margin-top: 2px;
+			font-size: var(--fs-meta);
+			line-height: 1rem;
+			color: var(--text-muted);
+		}
+
+		/* Nothing to show under the name when there's no lineage and no visible platform. */
+		.db-sub:empty {
+			display: none;
+		}
+	}
+</style>

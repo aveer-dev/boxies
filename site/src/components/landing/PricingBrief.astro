@@ -1,0 +1,15 @@
+---
+// Pricing in brief: what each way in costs today, prices in ink. The yearly
+// domain row only shows while domains can be bought (data/pricing.ts).
+import { brief } from "../../data/pricing";
+import Row from "../Row.astro";
+import RowList from "../RowList.astro";
+import SectionHead from "../SectionHead.astro";
+---
+
+<section class="section column-container" aria-labelledby="pricing">
+	<SectionHead id="pricing" title="Pricing" meta="Compare plans →" metaHref="/pricing" />
+	<RowList>
+		{brief.map((row) => <Row title={row.title} href={row.href} meta={row.meta} metaTone="ink" description={row.description} />)}
+	</RowList>
+</section>

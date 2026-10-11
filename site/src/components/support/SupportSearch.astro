@@ -1,0 +1,150 @@
+---
+// Search over the answers (JS only), and the shortcut chips under it, which
+// are plain links and always shown (§4.4 S2). The filtering is in
+// support-search.ts.
+import Icon from "../Icon.astro";
+
+// Each chip opens one answer; Billing lives on the pricing page.
+const chips = [
+	{ label: "Sign-in", href: "#sign-in" },
+	{ label: "Password reset", href: "#forgot-password" },
+	{ label: "Screener", href: "#screener" },
+	{ label: "Ask AI", href: "#ask-ai" },
+	{ label: "Domains", href: "#connect-domain" },
+	{ label: "Export", href: "#export" },
+	{ label: "Limits", href: "#limits" },
+	{ label: "Billing", href: "/pricing#faq" },
+];
+---
+
+<div class="support-search">
+	<div class="search js-only">
+		<label class="sr-only" for="faq-search">Search answers</label>
+		<div class="search-field">
+			<Icon name="search" class="search-icon" />
+			<input id="faq-search" class="search-input" type="search" autocomplete="off" placeholder="Search answers, e.g. “forgot password”" />
+		</div>
+		<p class="faq-status" role="status" aria-live="polite"></p>
+	</div>
+	<ul class="chips" role="list" aria-label="Common answers">
+		{
+			chips.map((c) => (
+				<li>
+					<a class="chip" href={c.href}>
+						{c.label}
+					</a>
+				</li>
+			))
+		}
+	</ul>
+</div>
+
+<script>
+	import "./support-search";
+</script>
+
+<style>
+	.support-search {
+		margin-top: 32px;
+	}
+
+	/* A grid, so the load reveal lifts the field as one piece instead of
+	   animating the icon's own centring transform. */
+	.search-field {
+		position: relative;
+		display: grid;
+	}
+
+	.search-field :global(.search-icon) {
+		position: absolute;
+		top: 50%;
+		left: 10px;
+		width: 0.75rem;
+		height: 0.75rem;
+		transform: translateY(-50%);
+		color: var(--text-muted);
+		pointer-events: none;
+	}
+
+	.search-input {
+		display: block;
+		width: 100%;
+		height: 2.5rem;
+		padding: 0 10px 0 calc(10px + 0.75rem + 8px);
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: var(--bg-card);
+		/* The same findable edge as the contact form's fields. */
+		box-shadow: inset 0 0 0 1px var(--border-input);
+		color: var(--text-primary);
+		font: 400 0.75rem/1.25rem var(--font-sans);
+		appearance: none;
+	}
+
+	.search-input::placeholder {
+		color: var(--text-muted);
+		opacity: 1;
+	}
+
+	.search-input:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 0;
+	}
+
+	/* Holds its line while empty, so the chips don't jump when a result count appears. */
+	.faq-status {
+		min-height: 1rem;
+		margin-top: 8px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 12px;
+		list-style: none;
+	}
+
+	/* Tag-styled links (the Tag component is a span; these go somewhere). */
+	.chip {
+		display: inline-block;
+		height: 1.125rem;
+		padding: 0 6px;
+		border-radius: 4px;
+		background: var(--bg-badge);
+		color: var(--text-muted);
+		font-size: 0.6875rem;
+		line-height: 1.125rem;
+		white-space: nowrap;
+		transition:
+			color 150ms var(--ease-out),
+			background-color 150ms var(--ease-out),
+			transform 150ms var(--ease-out);
+	}
+
+	.chip:hover {
+		background: var(--bg-card-hover);
+		color: var(--text-primary);
+	}
+
+	/* Fingers need more than an 18px tag: taller chips, a little more space. */
+	@media (pointer: coarse) {
+		.search-input {
+			height: 2.75rem;
+			font-size: max(16px, 0.75rem);
+		}
+
+		.chips {
+			gap: 8px;
+		}
+
+		.chip {
+			height: 1.75rem;
+			padding: 0 10px;
+			line-height: 1.75rem;
+		}
+	}
+</style>

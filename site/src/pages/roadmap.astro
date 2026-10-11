@@ -1,0 +1,79 @@
+---
+// /roadmap (§4.3): what works today, what's coming, how it compares with
+// Gmail and HEY, and what has shipped. The database, Coming next and the
+// comparison describe unbuilt work, so they sit in one data-claim="roadmap"
+// block. The changelog stays outside it and must pass the strict checks.
+import MicroLine from "../components/MicroLine.astro";
+import PageIntro from "../components/PageIntro.astro";
+import RoadmapTable from "../components/RoadmapTable.astro";
+import SectionHead from "../components/SectionHead.astro";
+import Changelog from "../components/roadmap/Changelog.astro";
+import ComingNext from "../components/roadmap/ComingNext.astro";
+import ParityTabs from "../components/roadmap/ParityTabs.astro";
+import StatusLegend from "../components/roadmap/StatusLegend.astro";
+import { asOf } from "../config";
+import { rows } from "../data/roadmap";
+import Base from "../layouts/Base.astro";
+import { date } from "../lib/format";
+
+const jumps = [
+	{ label: "Everything", href: "#database" },
+	{ label: "Coming next", href: "#next" },
+	{ label: "Compared with Gmail and HEY", href: "#compare" },
+	{ label: "Changelog", href: "#changelog" },
+];
+---
+
+<Base
+	title="Roadmap"
+	currentNav="roadmap"
+	description="What works in Inboxies today, what’s coming next, how it compares with Gmail and HEY, and everything that has shipped."
+>
+	{/* src: RM (header: shipped = on main). "Ready to use", not "in the apps":
+	    a first private email screen is in Settings on main but doesn't receive
+	    mail yet (RM#1 (1); PR #46). */}
+	<PageIntro
+		title="Roadmap"
+		description="What works today, what’s coming next, and what we haven’t built. If it isn’t marked Available, it isn’t ready to use yet."
+		meta={`Updated ${date(asOf)}`}
+	>
+		<MicroLine parts={jumps} />
+	</PageIntro>
+
+	<StatusLegend />
+
+	<div data-claim="roadmap">
+		<section class="section" aria-labelledby="database">
+			<SectionHead id="database" title="Everything, in one table" meta={`${rows.length} items`} />
+			{/* The table rises in as one block: Base's tagger doesn't step into
+			    blocks marked [data-reveal-on-scroll]. */}
+			<RoadmapTable id="db-all" caption="Every feature and where it stands" rows={rows} grouped notes views />
+		</section>
+
+		<section class="section" aria-labelledby="next">
+			<ComingNext />
+		</section>
+
+		<section class="section" aria-labelledby="compare">
+			<ParityTabs />
+		</section>
+	</div>
+
+	<section class="section" aria-labelledby="changelog">
+		<Changelog />
+	</section>
+
+	{/* src: PS#7; DS#17 */}
+	<p class="roadmap-foot">
+		Inboxies began as a fork of Cloudflare’s open-source agentic-inbox (Apache-2.0) and has been rebuilt around a personal inbox since.
+	</p>
+</Base>
+
+<style>
+	.roadmap-foot {
+		margin-top: 40px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+</style>

@@ -1,0 +1,424 @@
+---
+// Two tables in one component.
+// - plans: what each plan includes, grouped. On desktop the header sticks
+//   under the fixed site header; on phones the table scrolls sideways with
+//   its first column pinned.
+// - parity: a Gmail or HEY feature, what Inboxies has, and its status. Rows
+//   we haven't planned can fold away under a toggle. It describes unbuilt
+//   work, so the whole block is marked data-claim="roadmap".
+import type { CompareGroup, ParityRow } from "../data/types";
+import StatusPill from "./StatusPill.astro";
+
+type Props =
+	| { mode: "plans"; caption: string; columns: { name: string; price: string }[]; groups: CompareGroup[]; footnote?: string }
+	| {
+			mode: "parity";
+			caption: string;
+			competitor: "Gmail" | "HEY";
+			rows: ParityRow[];
+			condensed?: boolean;
+			collapseNotYet?: boolean;
+	  };
+
+const props = Astro.props;
+
+// "—" in copy (or false) means nothing there; screen readers hear why.
+const isNone = (v: string | boolean | undefined) => v === false || v === "—";
+const hasNote = (note?: string) => !!note && note !== "—";
+
+const parity =
+	props.mode === "parity"
+		? (() => {
+				const collapse = props.collapseNotYet ?? false;
+				return {
+					shown: collapse ? props.rows.filter((r) => r.status !== "notyet") : props.rows,
+					folded: collapse ? props.rows.filter((r) => r.status === "notyet") : [],
+					condensed: props.condensed ?? false,
+					firstHead: props.condensed ? "You know it as" : props.competitor,
+				};
+			})()
+		: null;
+---
+
+{
+	props.mode === "plans" ? (
+		<div class="cmp-wrap" data-mode="plans" data-reveal-on-scroll>
+			<div class="cmp-scroll" tabindex="0" role="region" aria-label={props.caption} data-cmp-scroll data-cursor="plain">
+				<table class="cmp">
+					<caption class="sr-only">{props.caption}</caption>
+					<thead>
+						<tr>
+							<th scope="col">
+								<span class="sr-only">Feature</span>
+							</th>
+							{props.columns.map((c) => (
+								<th scope="col">
+									<span class="cmp-plan">{c.name}</span>
+									<span class="cmp-price">{c.price}</span>
+								</th>
+							))}
+						</tr>
+					</thead>
+					{props.groups.map((g) => (
+						<tbody>
+							<tr class="cmp-group">
+								<th scope="rowgroup" colspan={props.columns.length + 1}>
+									<span class="cmp-group-label">{g.label}</span>
+								</th>
+							</tr>
+							{g.rows.map((r) => (
+								<tr>
+									<th scope="row">{r.label}</th>
+									{r.values.map((v) => (
+										<td>
+											{isNone(v) ? (
+												<span class="cmp-none">
+													<span aria-hidden="true">—</span>
+													<span class="sr-only">Not included</span>
+												</span>
+											) : v === true ? (
+												<span class="cmp-yes">Yes</span>
+											) : (
+												v
+											)}
+										</td>
+									))}
+								</tr>
+							))}
+						</tbody>
+					))}
+				</table>
+			</div>
+			<p class="cmp-hint js-only" aria-hidden="true">Scroll for more →</p>
+			{props.footnote && <p class="cmp-foot">{props.footnote}</p>}
+		</div>
+	) : (
+		parity && (
+			<div class="cmp-wrap" data-mode="parity" data-claim="roadmap" data-reveal-on-scroll>
+				{[parity.shown, parity.folded].map(
+					(rows, part) =>
+						rows.length > 0 &&
+						(() => {
+							const table = (
+								<table class:list={["cmp", { "is-condensed": parity.condensed }]}>
+									<caption class="sr-only">
+										{part === 0 ? props.caption : `${props.caption}: not planned yet`}
+									</caption>
+									<thead>
+										<tr>
+											<th scope="col">{parity.firstHead}</th>
+											<th scope="col">In Inboxies</th>
+											<th scope="col">Status</th>
+											{!parity.condensed && (
+												<th scope="col" class="opt">
+													Notes
+												</th>
+											)}
+										</tr>
+									</thead>
+									<tbody>
+										{rows.map((r) => (
+											<tr>
+												<th scope="row">
+													<span class="cmp-name">{r.theirs}</span>
+													{!parity.condensed && hasNote(r.note) && <span class="cmp-note cmp-note-under">{r.note}</span>}
+												</th>
+												<td class="cmp-ours">
+													{isNone(r.ours) ? (
+														<span class="cmp-none">
+															<span aria-hidden="true">—</span>
+															<span class="sr-only">Not included</span>
+														</span>
+													) : (
+														r.ours
+													)}
+													{parity.condensed && hasNote(r.note) && <span class="cmp-note">{r.note}</span>}
+												</td>
+												<td>
+													<StatusPill status={r.status} />
+												</td>
+												{!parity.condensed && (
+													<td class="opt cmp-notes">
+														{hasNote(r.note) ? (
+															r.note
+														) : (
+															<span class="cmp-none">
+																<span aria-hidden="true">—</span>
+																<span class="sr-only">No notes</span>
+															</span>
+														)}
+													</td>
+												)}
+											</tr>
+										))}
+									</tbody>
+								</table>
+							);
+							return part === 0 ? (
+								table
+							) : (
+								<details class="cmp-more">
+									<summary>
+										<span class="cmp-caret" aria-hidden="true"></span>
+										Show {rows.length} we haven’t planned
+									</summary>
+									{table}
+								</details>
+							);
+						})(),
+				)}
+			</div>
+		)
+	)
+}
+
+<script>
+	// The phone-width "Scroll for more →" hint goes once the table has been
+	// scrolled, or if it fits without scrolling.
+	document.querySelectorAll<HTMLElement>("[data-cmp-scroll]").forEach((scroller) => {
+		const wrap = scroller.parentElement!;
+		scroller.addEventListener("scroll", () => wrap.classList.add("is-scrolled"), { once: true, passive: true });
+		new ResizeObserver(() => wrap.classList.toggle("is-fitting", scroller.scrollWidth <= scroller.clientWidth + 1)).observe(
+			scroller,
+		);
+	});
+</script>
+
+<style>
+	.cmp {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.75rem;
+		line-height: 1.125rem;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.cmp th,
+	.cmp td {
+		padding: 9px 12px 8px 0;
+		border-bottom: 1px solid var(--border-subtle);
+		text-align: left;
+		vertical-align: top;
+		font-weight: 400;
+	}
+
+	.cmp thead th {
+		padding-top: 0;
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		color: var(--text-muted);
+		vertical-align: bottom;
+	}
+
+	.cmp tbody th {
+		color: var(--text-primary);
+	}
+
+	.cmp td {
+		color: var(--text-muted);
+	}
+
+	.cmp-plan {
+		display: block;
+		font-size: 0.75rem;
+		line-height: 1.125rem;
+		color: var(--text-primary);
+	}
+
+	.cmp-price {
+		display: block;
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* .cmp tbody included, or the ink above wins. */
+	.cmp tbody .cmp-group th {
+		padding-top: 20px;
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.cmp-yes {
+		color: var(--text-primary);
+	}
+
+	.cmp-none {
+		color: var(--text-subtle);
+	}
+
+	.cmp-hint,
+	.cmp-foot {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.cmp-hint {
+		margin-top: 8px;
+		text-align: right;
+	}
+
+	.cmp-wrap.is-scrolled .cmp-hint,
+	.cmp-wrap.is-fitting .cmp-hint {
+		display: none;
+	}
+
+	.cmp-foot {
+		margin-top: 12px;
+	}
+
+	/* Plans: the header sticks under the fixed site header, and the plan columns
+	   share what the feature names don't need, so names don't wrap needlessly. */
+	@media (min-width: 768px) {
+		.cmp-scroll {
+			overflow: visible;
+		}
+
+		[data-mode="plans"] .cmp {
+			table-layout: fixed;
+		}
+
+		[data-mode="plans"] thead th:first-child {
+			width: 34%;
+		}
+
+		[data-mode="plans"] thead th {
+			position: sticky;
+			top: var(--header-h);
+			z-index: 1;
+			background: var(--bg);
+			box-shadow: 0 1px 0 var(--border-subtle);
+		}
+
+		.cmp-hint {
+			display: none;
+		}
+	}
+
+	/* Plans on phones: scroll sideways, first column pinned. */
+	@media (max-width: 767px) {
+		.cmp-scroll {
+			overflow-x: auto;
+			overscroll-behavior-x: contain;
+			mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+		}
+
+		[data-mode="plans"] tr:not(.cmp-group) > :first-child {
+			position: sticky;
+			left: 0;
+			z-index: 1;
+			min-width: 9rem;
+			background: var(--bg);
+		}
+
+		/* A group row spans the table, so its label is what stays put. */
+		.cmp-group-label {
+			display: inline-block;
+			position: sticky;
+			left: 0;
+		}
+
+		[data-mode="plans"] thead th:not(:first-child),
+		[data-mode="plans"] td {
+			min-width: 7rem;
+		}
+	}
+
+	.cmp-scroll:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 3px;
+		border-radius: 2px;
+	}
+
+	/* Parity */
+	.cmp-name {
+		display: block;
+	}
+
+	.cmp-note {
+		display: block;
+		margin-top: 2px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* Under the name only once the Notes column is gone (≤640px). */
+	.cmp-note-under {
+		display: none;
+	}
+
+	.cmp-more {
+		margin-top: 12px;
+	}
+
+	.cmp-more > summary {
+		list-style: none;
+		display: inline-flex;
+		gap: 8px;
+		padding: 6px 0;
+		cursor: pointer;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+		transition: color 150ms var(--ease-out);
+	}
+
+	.cmp-more > summary:hover {
+		color: var(--text-primary);
+	}
+
+	.cmp-more > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	/* The FAQ toggle's caret (Faq.astro), one line of this summary tall. */
+	.cmp-caret {
+		flex: none;
+		display: grid;
+		place-items: center;
+		width: 0.75rem;
+		height: 1rem;
+		transition: transform 150ms var(--ease-out);
+	}
+
+	.cmp-caret::before {
+		content: "";
+		border-left: 0.3125rem solid currentColor;
+		border-block: 0.21875rem solid transparent;
+	}
+
+	.cmp-more[open] .cmp-caret {
+		transform: rotate(90deg);
+	}
+
+	.cmp-more[open] > summary {
+		margin-bottom: 8px;
+	}
+
+	.cmp-more > summary:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 3px;
+		border-radius: 2px;
+	}
+
+	@media (pointer: coarse) {
+		.cmp-more > summary {
+			min-height: 44px;
+			align-items: center;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.cmp .opt {
+			display: none;
+		}
+
+		.cmp-note-under {
+			display: block;
+		}
+	}
+</style>

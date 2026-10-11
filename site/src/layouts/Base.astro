@@ -1,0 +1,229 @@
+---
+// The page shell, ported from the portfolio: head and boot scripts, the
+// fixed header and footer, the colophon, and the load-time reveal.
+import inter400 from "@fontsource/inter/files/inter-latin-400-normal.woff2?url";
+import Colophon from "../components/Colophon.astro";
+import Cursor from "../components/Cursor.astro";
+import Footer from "../components/Footer.astro";
+import Header from "../components/Header.astro";
+import TypeSlider from "../components/TypeSlider.astro";
+import { validateContent } from "../data/validate";
+import { TYPE_SCALE } from "../lib/type-scale";
+import "../styles/global.css";
+
+interface Props {
+	title: string;                 // "Home" → <title>Inboxies</title>; else `${title} · Inboxies`
+	description: string;
+	ogTitle?: string;              // defaults to the full title
+	currentNav?: "tour" | "pricing" | "roadmap" | "support";
+	noindex?: boolean;             // 404, /support/sent, /support/unavailable
+	bare?: boolean;                // landing: the page supplies its own .column-container blocks
+	heroPoster?: { light: string; dark: string }; // landing: the hero clip's posters (the LCP), preloaded per theme
+}
+
+const { title, description, ogTitle, currentNav, noindex = false, bare = false, heroPoster } = Astro.props;
+
+// Build-time content checks: a throw here fails the build (§1.7).
+validateContent();
+
+const fullTitle = title === "Home" ? "Inboxies" : `${title} · Inboxies`;
+// Pages build to files (pricing.html), but the canonical URL is the clean path.
+const canonical = new URL(Astro.url.pathname.replace(/\.html$/, "").replace(/\/index$/, "/") || "/", Astro.site);
+
+// Fetch a page while its link is hovered, so the page transition starts the
+// moment it's clicked instead of after the round trip. (Chromium only.)
+// The API and the form's result pages are never prefetched.
+const speculationRules = { prefetch: [{ where: { and: [
+	{ href_matches: "/*" }, { not: { href_matches: "/api/*" } },
+	{ not: { href_matches: "/support/sent" } }, { not: { href_matches: "/support/unavailable" } },
+] }, eagerness: "moderate" }] };
+
+// The home page names the site for search results (the "site name" line).
+const websiteLd = title === "Home" ? { "@context": "https://schema.org", "@type": "WebSite", name: "Inboxies", url: new URL("/", Astro.site).href } : null;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>{fullTitle}</title>
+		<link rel="icon" href="/favicon.ico" sizes="32x32" />
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+		<meta name="description" content={description} />
+		{/* A noindex page names no canonical: the two would be mixed signals (and every unknown URL renders the 404). */}
+		{noindex ? <meta name="robots" content="noindex" /> : <link rel="canonical" href={canonical} />}
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="Inboxies" />
+		<meta property="og:title" content={ogTitle ?? fullTitle} />
+		<meta property="og:description" content={description} />
+		{!noindex && <meta property="og:url" content={canonical} />}
+		<meta property="og:image" content="https://inboxies.co/og.png" />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta property="og:image:alt" content="Inboxies: Email that waits for your yes." />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="theme-color" content="#fcfcfc" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#0d0d0d" media="(prefers-color-scheme: dark)" />
+		<meta name="color-scheme" content="light dark" />
+		<link rel="preload" href={inter400} as="font" type="font/woff2" crossorigin />
+		<script is:inline>
+			(function () {
+				var d = document.documentElement;
+				d.classList.add("js");
+				try {
+					var stored = localStorage.getItem("theme");
+					var sysDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+					var theme = stored === "dark" || stored === "light" ? stored : (sysDark ? "dark" : "light");
+					d.setAttribute("data-theme", theme);
+					if (theme === "dark") d.classList.add("dark"); else d.classList.remove("dark");
+					if (stored && (stored === "dark") !== sysDark) d.classList.add("theme-override");
+				} catch (e) {}
+				// Art-directed <source data-theme-media="dark"> (the hero poster) follow an explicit theme.
+				window.__themeMedia = function (theme, root) {
+					(root || document).querySelectorAll("source[data-theme-media]").forEach(function (s) {
+						s.media = theme ? (s.getAttribute("data-theme-media") === theme ? "all" : "not all") : "(prefers-color-scheme: dark)";
+					});
+				};
+			})();
+		</script>
+		{
+			heroPoster && (
+				<script is:inline define:vars={{ heroPoster }}>
+					// Start the hero poster (the LCP) now, in the theme just chosen and ahead of the
+					// stylesheets. The preload scanner can't see it (its <picture> has a script inside),
+					// and the <picture> picks this same file from the cache when the parser gets there.
+					var d = document.documentElement;
+					var theme = d.getAttribute("data-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+					var link = document.createElement("link");
+					link.rel = "preload";
+					link.as = "image";
+					link.fetchPriority = "high";
+					link.href = theme === "dark" ? heroPoster.dark : heroPoster.light;
+					document.head.appendChild(link);
+				</script>
+			)
+		}
+		<script is:inline define:vars={{ typeScale: TYPE_SCALE }}>
+			// Put back the visitor's text size before the first paint (see TypeSlider).
+			try {
+				var size = Number(localStorage.getItem(typeScale.storageKey));
+				if (size >= typeScale.min && size <= typeScale.max) {
+					document.documentElement.style.setProperty("--type-scale", String(size / 100));
+				}
+			} catch (e) {}
+		</script>
+		<script is:inline type="speculationrules" set:html={JSON.stringify(speculationRules)} />
+		{websiteLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(websiteLd)} />}
+	</head>
+	<body>
+		<a class="skip-link" href="#main">Skip to content</a>
+		<Header currentNav={currentNav} />
+
+		<TypeSlider />
+
+		<main class="page-main" id="main" tabindex="-1">
+			{
+				bare ? (
+					<slot />
+				) : (
+					<div class="column-container" data-reveal-root>
+						<slot />
+					</div>
+				)
+			}
+			<Colophon />
+		</main>
+
+		<script is:inline>
+			// Tag the page's content blocks, top to bottom, so they rise in one
+			// after another (see [data-reveal] in global.css). Runs before the
+			// first paint; anything below the fold is left as is.
+			(function () {
+				var root = document.querySelector("[data-reveal-root]") || document.querySelector(".column-container");
+				if (!root || !matchMedia("(prefers-reduced-motion: no-preference)").matches) return;
+				var index = 0;
+				var done = false;
+				var isBlock = function (el) {
+					var display = getComputedStyle(el).display;
+					return display !== "none" && display !== "contents" && display.indexOf("inline") !== 0;
+				};
+				// Step into stacks of blocks; a line of text, a horizontal row or a
+				// grid rises as one piece.
+				var isStack = function (el) {
+					var style = getComputedStyle(el);
+					if (style.display === "contents") return true;
+					if (!isBlock(el) || style.display.indexOf("grid") !== -1) return false;
+					if (style.display.indexOf("flex") !== -1 && style.flexDirection.indexOf("column") !== 0) return false;
+					for (var c = el.firstElementChild; c; c = c.nextElementSibling) if (isBlock(c)) return true;
+					return false;
+				};
+				var tag = function (el) {
+					if (el.hasAttribute("data-reveal-skip")) return;
+					var style = getComputedStyle(el);
+					// Leave hidden blocks and ones with an animation of their own alone.
+					if (style.display === "none" || style.animationName !== "none") return;
+					if (el.getBoundingClientRect().top > innerHeight) {
+						done = true;
+						return;
+					}
+					el.setAttribute("data-reveal", "");
+					el.style.setProperty("--reveal-delay", 30 + Math.min(index++, 7) * 40 + "ms");
+				};
+				(function walk(el) {
+					for (var c = el.firstElementChild; c && !done; c = c.nextElementSibling) {
+						// Skipped blocks (the hero media, the LCP) aren't walked into either.
+						if (c.hasAttribute("data-reveal-skip")) continue;
+						// A block that reveals on scroll rises as one piece; stepping into it
+						// would animate its parts inside its own animation.
+						if (isStack(c) && !c.hasAttribute("data-reveal-on-scroll")) walk(c);
+						else tag(c);
+					}
+				})(root);
+			})();
+		</script>
+
+		<Footer />
+
+		<Cursor />
+
+		<script>
+			import "../scripts/theme";
+			import "../scripts/transitions";
+			import "../scripts/scroll-reveal";
+			import "../scripts/hash-open";
+		</script>
+	</body>
+</html>
+
+<style>
+	body {
+		min-height: 100vh;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.page-main {
+		flex: 1;
+		width: 100%;
+		padding-top: 162px;
+		padding-bottom: 96px;
+	}
+
+	@media (max-width: 640px) {
+		.page-main {
+			padding-top: 80px;
+			padding-bottom: 48px;
+		}
+	}
+
+	/* Desktop: the fixed header (60px) and footer (56px under two rows) no
+	   longer push the page in, so it makes the same room itself. */
+	@media (min-width: 768px) {
+		.page-main {
+			padding-top: calc(162px + 60px);
+			padding-bottom: calc(96px + 60px + 2.5rem);
+		}
+	}
+</style>

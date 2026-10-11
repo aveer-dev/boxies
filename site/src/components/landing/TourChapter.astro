@@ -1,0 +1,220 @@
+---
+// One stop of the tour: what it's called and where it runs, a headline, a
+// short paragraph, three plain rows and a link to the Support answer. Stacked
+// (phones, short windows, no JS), each chapter shows its own phone. Pinned,
+// the shared phone beside the chapters shows the screen instead, so the
+// chapter keeps a text description of it for screen readers.
+import { clips, stills, type StillName } from "../../data/media";
+import type { TourChapter as Chapter } from "../../data/types";
+import { platformLine } from "../../lib/platforms";
+import PhoneFrame from "../PhoneFrame.astro";
+import AgentStrip from "./AgentStrip.astro";
+import OperatorChips from "./OperatorChips.astro";
+
+interface Props {
+	chapter: Chapter;
+	index: number;
+}
+
+const { chapter: c, index } = Astro.props;
+const platforms = platformLine(c.platforms);
+// What the stage shows for this stop: the clip when there is one, else the still.
+const screen = c.media.clip ? clips[c.media.clip].alt : stills[c.media.still].alt;
+// Two stops weren't captured against the live service: the Ask AI conversation
+// is scripted and Search ran offline over the sample mailbox. The UI is real;
+// a short note under the stop says what was staged.
+const STAGED: Partial<Record<StillName, string>> = {
+	chat: "Sample mailbox; the conversation is staged.",
+	search: "Sample mailbox; the results are simulated offline.",
+};
+const staged = STAGED[c.media.still];
+---
+
+<article class="chapter" id={c.id} data-chapter={index} aria-labelledby={`${c.id}-title`} data-reveal-on-scroll>
+	<div class="chapter-head">
+		<span class="chapter-name"><span class="chapter-num">{c.num}</span> {c.name}{c.lineage && ` · from ${c.lineage}`}</span>
+		{platforms && <span class="chapter-platforms">{platforms}</span>}
+	</div>
+	<h3 class="chapter-title" id={`${c.id}-title`} tabindex="-1">{c.title}</h3>
+	<p class="chapter-body">{c.body}</p>
+	{
+		c.extra && (
+			<div class="chapter-extra">{c.extra === "operators" ? <OperatorChips /> : <AgentStrip />}</div>
+		)
+	}
+	<ul class="chapter-rows">
+		{
+			c.rows.map((r) => {
+				const only = r.platforms ? platformLine(r.platforms) : "";
+				return (
+					<li>
+						<span class="lead">{r.lead}</span> {r.text}
+						{only && <span class="row-platforms"> · {only}</span>}
+					</li>
+				);
+			})
+		}
+	</ul>
+	<a class="quiet-link chapter-more" href={c.supportHref}>More in Support →</a>
+	<div class="chapter-media">
+		<PhoneFrame media={c.media} width="min(280px, 72vw)" group="inline" />
+	</div>
+	{staged && <p class="chapter-staged">{staged}</p>}
+	<p class="tour-sr">{screen}</p>
+</article>
+
+<style>
+	.chapter + .chapter {
+		margin-top: 64px;
+		padding-top: 24px;
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	.chapter-head {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 2px 16px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* Muted like the name beside it (it's content, so not subtle); inks when current. */
+	.chapter-num {
+		font-variant-numeric: tabular-nums;
+		transition: color 240ms var(--ease-out);
+	}
+
+	.chapter.is-active .chapter-num {
+		color: var(--text-primary);
+	}
+
+	.chapter-title {
+		max-width: 28ch;
+		margin-top: 10px;
+		text-wrap: balance;
+		font-size: var(--fs-display);
+		font-weight: 500;
+		line-height: 1.375rem;
+		letter-spacing: -0.015em;
+		color: var(--text-primary);
+	}
+
+	/* Focused by the rail, so keyboard users land on the stop they chose. */
+	.chapter-title:focus {
+		outline: none;
+	}
+
+	.chapter-title:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 3px;
+		border-radius: 2px;
+	}
+
+	/* One measure with the rows below it, at the rows' leading. */
+	.chapter-body {
+		margin-top: 6px;
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+		text-wrap: pretty;
+	}
+
+	.chapter-extra {
+		margin-top: 12px;
+	}
+
+	.chapter-rows {
+		margin-top: 16px;
+		list-style: none;
+	}
+
+	.chapter-rows li {
+		padding: 10px 0 9px;
+		border-top: 1px solid var(--border-subtle);
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.chapter-rows li:last-child {
+		border-bottom: 1px solid var(--border-subtle);
+	}
+
+	.lead {
+		color: var(--text-primary);
+	}
+
+	.row-platforms {
+		font-size: var(--fs-meta);
+	}
+
+	.chapter-more {
+		display: inline-block;
+		align-self: flex-start;
+		margin-top: 12px;
+	}
+
+	.chapter-media {
+		margin-top: 24px;
+	}
+
+	.chapter-staged {
+		margin-top: 12px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.tour-sr {
+		display: none;
+	}
+
+	@media (max-width: 640px) {
+		.chapter + .chapter {
+			margin-top: 56px;
+		}
+	}
+
+	/* Pinned: each chapter is a tall, centred stop; the stage phone shows the screen. */
+	@media (min-width: 1024px) and (min-height: 680px) {
+		:global(html.js) .chapter {
+			min-height: 70svh;
+			display: flex;
+			flex-direction: column;
+			justify-content: center;
+			padding-block: 12svh;
+		}
+
+		/* The stacked rule's 24px top padding outranks padding-block above, so reset it here. */
+		:global(html.js) .chapter + .chapter {
+			margin-top: 0;
+			padding-top: 12svh;
+			border-top: 0;
+		}
+
+		/* Hidden, so the lazy images inside never load. */
+		:global(html.js) .chapter-media {
+			display: none;
+		}
+
+		:global(html.js) .tour-sr {
+			display: block;
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			margin: -1px;
+			overflow: hidden;
+			clip: rect(0 0 0 0);
+			white-space: nowrap;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.chapter-num {
+			transition: none;
+		}
+	}
+</style>

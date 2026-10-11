@@ -1,0 +1,118 @@
+---
+// "Where the $20 goes": one worked example, a .com at its wholesale price.
+// The two lines are the split the pricing code computes (the platform share
+// is whatever's left of $20), and they sum to the total. A real table, so a
+// screen reader hears each line with its amount. Only rendered while domains
+// can be bought (the page checks flags.domainPurchaseLive).
+// Copy and sources in src/data/pricing.ts (breakdown).
+import { breakdown } from "../../data/pricing";
+import SectionHead from "../SectionHead.astro";
+---
+
+<div class="breakdown">
+	<SectionHead title="Where the $20 goes" meta="a worked example" level={3} />
+	<table class="bd">
+		<caption class="sr-only">Where the $20 goes: a worked example</caption>
+		<tbody>
+			{
+				breakdown.lines.map((line) => (
+					<tr>
+						<th scope="row">
+							<span class="bd-label">{line.label}</span>
+							{line.detail && <span class="bd-detail">{line.detail}</span>}
+						</th>
+						<td class="bd-amount">{line.amount}</td>
+					</tr>
+				))
+			}
+		</tbody>
+		<tfoot>
+			<tr class="bd-total">
+				<th scope="row">{breakdown.total.label}</th>
+				<td class="bd-amount">{breakdown.total.amount}</td>
+			</tr>
+		</tfoot>
+	</table>
+	<p class="bd-note">{breakdown.note}</p>
+</div>
+
+<style>
+	.breakdown {
+		margin-top: 40px;
+	}
+
+	/* The head's hairline is the table's top rule: one line, not two. */
+	.breakdown > :global(.section-head) {
+		margin-bottom: 0;
+	}
+
+	/* Separate borders, so the total's darker rule isn't lost to the hairline above it. */
+	.bd {
+		width: 100%;
+		border-collapse: separate;
+		border-spacing: 0;
+	}
+
+	.bd th,
+	.bd td {
+		padding: 9px 0;
+		border-top: 1px solid var(--border-subtle);
+		text-align: left;
+		vertical-align: baseline;
+		font-weight: 400;
+	}
+
+	.bd th {
+		padding-right: 16px;
+	}
+
+	.bd tbody tr:first-child > * {
+		border-top: 0;
+	}
+
+	.bd tbody tr:last-child > * {
+		padding-bottom: 10px;
+	}
+
+	.bd-label {
+		display: block;
+		font-size: var(--fs-body);
+		line-height: 1.125rem;
+		color: var(--text-primary);
+	}
+
+	.bd-detail {
+		display: block;
+		margin-top: 2px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* .bd-scoped so it outranks the `.bd td` reset above. */
+	.bd .bd-amount {
+		text-align: right;
+		white-space: nowrap;
+		font-size: var(--fs-title);
+		line-height: 1.125rem;
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.bd .bd-total > * {
+		padding-top: 10px;
+		border-top-color: color-mix(in oklab, var(--text-primary) 20%, transparent);
+		font-size: var(--fs-display);
+		line-height: 1.375rem;
+		font-weight: 500;
+		letter-spacing: -0.015em;
+		color: var(--text-primary);
+	}
+
+	.bd-note {
+		margin-top: 12px;
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+</style>

@@ -1,0 +1,336 @@
+---
+// The portfolio header: brand on the left, a "·" separated menu on the right,
+// fixed over a progressive blur on desktop.
+import { NAV } from "../config";
+import PlaneGlyph from "./PlaneGlyph.astro";
+import ProgressiveBlur from "./ProgressiveBlur.astro";
+
+interface Props {
+	currentNav?: "tour" | "pricing" | "roadmap" | "support";
+}
+
+const { currentNav } = Astro.props;
+---
+
+<header class="site-header">
+	<ProgressiveBlur edge="top" class="header-blur" />
+	<div class="header-inner">
+		<a href="/" class="brand" aria-label="Inboxies home"><PlaneGlyph class="brand-glyph" /><span>inboxies</span></a>
+		<nav class="nav-links" aria-label="Site Navigation">
+			{
+				NAV.map((item) => {
+					const isActive = currentNav === item.id;
+					const external = "external" in item && item.external;
+					// Each separator rides after its item, so an item hidden at a
+					// breakpoint takes its dot with it.
+					return (
+						<span class="nav-entry" data-hide={"hideBelow" in item ? item.hideBelow : undefined}>
+							<a
+								href={item.href}
+								class:list={["nav-item", { active: isActive }]}
+								aria-current={isActive ? "page" : undefined}
+							>
+								{item.label}
+								{external && <span class="nav-arrow" aria-hidden="true">↗</span>}
+							</a>
+							<span class="nav-dot" aria-hidden="true">·</span>
+						</span>
+					);
+				})
+			}
+			<!-- Phones only: opens the text-size sheet (see TypeSlider). -->
+			<button
+				class="type-toggle"
+				type="button"
+				aria-label="Text size"
+				title="Text size"
+				aria-controls="type-slider"
+				aria-expanded="false"
+				data-type-slider-toggle
+			>
+				Aa
+			</button>
+			<span class="nav-dot type-toggle-dot" aria-hidden="true">·</span>
+			<button
+				id="theme-toggle"
+				class="theme-toggle"
+				type="button"
+				aria-label="Toggle theme"
+				title="Toggle dark/light theme"
+			>
+				<svg class="theme-icon sun-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<circle cx="12" cy="12" r="5"></circle>
+					<line x1="12" y1="1" x2="12" y2="3"></line>
+					<line x1="12" y1="21" x2="12" y2="23"></line>
+					<line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+					<line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+					<line x1="1" y1="12" x2="3" y2="12"></line>
+					<line x1="21" y1="12" x2="23" y2="12"></line>
+					<line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+					<line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+				</svg>
+				<svg class="theme-icon moon-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+				</svg>
+			</button>
+		</nav>
+	</div>
+</header>
+
+<style>
+	/* Grows past 60px only when large text wraps the nav onto two lines. */
+	.site-header {
+		width: 100%;
+		min-height: 60px;
+		display: flex;
+		align-items: center;
+		padding: 12px 24px;
+		background-color: var(--bg);
+	}
+
+	/* Desktop: the header holds still over the page, which blurs away beneath
+	   it (the footer does the same at the bottom). */
+	.header-blur {
+		display: none;
+	}
+
+	@media (min-width: 768px) {
+		.site-header {
+			position: fixed;
+			z-index: 30;
+			top: 0;
+			left: 0;
+			background-color: transparent;
+		}
+
+		.header-blur {
+			display: block;
+			bottom: -24px;
+		}
+
+		/* Keeps anchors and focused elements clear of the header and footer. */
+		:global(html) {
+			scroll-padding-top: 96px;
+			scroll-padding-bottom: calc(124px + 2.5rem);
+		}
+	}
+
+	.header-inner {
+		position: relative;
+		width: 100%;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 16px;
+	}
+
+	.brand {
+		flex-shrink: 0;
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		font-weight: 400;
+		line-height: 1rem;
+		color: var(--text-subtle);
+		text-decoration: none;
+		letter-spacing: -0.01em;
+		transition: color 150ms var(--ease-out);
+	}
+
+	.brand:hover {
+		color: var(--text-primary);
+	}
+
+	/* Wraps rather than overflowing at large text sizes on phones, so the Aa
+	   and theme buttons stay on screen. */
+	.nav-links {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		align-items: center;
+		gap: 4px 8px;
+	}
+
+	.nav-item {
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		font-weight: 400;
+		line-height: 1rem;
+		color: var(--text-muted);
+		text-decoration: none;
+		transition: color 150ms var(--ease-out);
+	}
+
+	.nav-item:hover {
+		color: var(--text-primary);
+	}
+
+	/* The current page, marked the way a chosen tab is (ink, underlined), not the
+	   portfolio's subtle grey, which is under 4.5:1. */
+	.nav-item.active {
+		color: var(--text-primary);
+		text-decoration: underline;
+		text-underline-offset: 4px;
+	}
+
+	.nav-dot {
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		font-weight: 400;
+		line-height: 1rem;
+		color: var(--text-subtle);
+		user-select: none;
+	}
+
+	.theme-toggle {
+		background: none;
+		border: none;
+		padding: 2px;
+		margin: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color 150ms var(--ease-out), transform 150ms var(--ease-out);
+		line-height: 1;
+		border-radius: 4px;
+	}
+
+	.theme-toggle:hover {
+		color: var(--text-primary);
+	}
+
+	.theme-toggle:active {
+		transform: scale(0.92);
+	}
+
+	/* Opens the text-size sheet on phones; the width matches TypeSlider's. */
+	.type-toggle,
+	.type-toggle-dot {
+		display: none;
+	}
+
+	/* Up to the width where the column's margin is narrower than the edge ruler (76px). */
+	@media (max-width: 711px) {
+		.type-toggle {
+			display: inline-flex;
+		}
+
+		.type-toggle-dot {
+			display: inline;
+		}
+	}
+
+	.type-toggle {
+		align-items: center;
+		padding: 0 2px;
+		border: none;
+		border-radius: 4px;
+		background: none;
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		font-weight: 500;
+		line-height: 1rem;
+		letter-spacing: -0.01em;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color 150ms var(--ease-out), transform 150ms var(--ease-out);
+	}
+
+	.type-toggle:hover,
+	.type-toggle[aria-expanded="true"] {
+		color: var(--text-primary);
+	}
+
+	.type-toggle:active {
+		transform: scale(0.92);
+	}
+
+	/* Sized with the nav text, so it follows the text-size slider. */
+	.theme-icon {
+		width: 0.8125rem;
+		height: 0.8125rem;
+	}
+
+	.sun-icon {
+		display: none;
+	}
+
+	.moon-icon {
+		display: block;
+	}
+
+	:global([data-theme="dark"]) .sun-icon,
+	:global(html.dark) .sun-icon {
+		display: block;
+	}
+
+	:global([data-theme="dark"]) .moon-icon,
+	:global(html.dark) .moon-icon {
+		display: none;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:global(:root:not([data-theme="light"])) .sun-icon {
+			display: block;
+		}
+		:global(:root:not([data-theme="light"])) .moon-icon {
+			display: none;
+		}
+	}
+
+	/* ── Inboxies additions ── */
+
+	.brand {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+
+	.brand-glyph {
+		width: 0.8125rem;
+		height: 0.8125rem;
+	}
+
+	.nav-entry {
+		display: contents;
+	}
+
+	@media (max-width: 480px) {
+		.nav-entry[data-hide="481"] {
+			display: none;
+		}
+	}
+
+	@media (max-width: 400px) {
+		.nav-entry[data-hide="401"] {
+			display: none;
+		}
+	}
+
+	/* The portfolio's product arrow, beside an item that leaves for the app. */
+	.nav-arrow {
+		margin-left: 2px;
+		font-size: 0.5rem;
+		line-height: 1rem;
+		color: var(--text-subtle);
+		user-select: none;
+	}
+
+	/* Thumb-sized hit areas without moving anything. */
+	@media (pointer: coarse) {
+		.nav-item,
+		.type-toggle,
+		.theme-toggle {
+			position: relative;
+		}
+
+		.nav-item::after,
+		.type-toggle::after,
+		.theme-toggle::after {
+			content: "";
+			position: absolute;
+			inset: -12px -6px;
+		}
+	}
+</style>

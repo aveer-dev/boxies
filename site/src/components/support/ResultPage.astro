@@ -1,0 +1,82 @@
+---
+// Where the contact form lands without JS: /support/sent and
+// /support/unavailable. The 404's layout (one heading, a line, small links),
+// kept out of search results and prefetching.
+import Base from "../../layouts/Base.astro";
+
+interface Props {
+	title: string;
+	description: string;
+	heading: string;
+	line: string;
+}
+
+const { title, description, heading, line } = Astro.props;
+---
+
+<Base title={title} description={description} currentNav="support" noindex>
+	<div class="result">
+		<h1 class="heading">{heading}</h1>
+		<p class="description">{line}</p>
+		{
+			Astro.slots.has("default") && (
+				<div class="actions">
+					<slot />
+				</div>
+			)
+		}
+		<p class="links">
+			<a href="/support" class="back-link">← Back to Support</a>
+		</p>
+	</div>
+</Base>
+
+<style>
+	.result {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.heading {
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		font-weight: 500;
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.description {
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px;
+		margin-top: 8px;
+	}
+
+	.links {
+		margin-top: 8px;
+		font-size: 0.6875rem;
+	}
+
+	/* Muted rather than the portfolio's subtle, as on the 404: it's the page's way on. */
+	.back-link {
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		transition: color 150ms var(--ease-out);
+	}
+
+	.back-link:hover {
+		color: var(--text-primary);
+	}
+</style>

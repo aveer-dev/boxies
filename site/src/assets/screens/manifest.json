@@ -1,0 +1,194 @@
+{
+  "stills": [
+    {
+      "name": "inbox",
+      "light": "inbox-light.png",
+      "dark": "inbox-dark.png",
+      "whatItShows": "Inbox home: New and Seen sections, first-time-sender banner, Reply Later / Ask AI / Compose bar.",
+      "alt": "Inboxies inbox showing 3 unread. Under New: Jordan Hale, Quarterly planning notes; Morgan Lee, Dinner on Saturday?; Sam Chen, Design review tomorrow, marked Draft. Under Seen: Alex Rivera, Re: Invoice for September, tagged Needs reply. A banner reads 1 first-time sender to screen, above a bottom bar with a Reply Later count of 2, an Ask AI field and a Compose button."
+    },
+    {
+      "name": "detail",
+      "light": "detail-light.png",
+      "dark": "detail-dark.png",
+      "whatItShows": "Thread view of Jordan Hale's three-message 'Quarterly planning notes' conversation.",
+      "alt": "Email thread titled Quarterly planning notes, labeled Inbox, Unread and 3 messages. Jordan Hale's latest message asks to move Thursday's sync to 9:30 AM and lists a 30-minute agenda: Q4 priorities, hiring, and the launch checklist. Delete, archive, reply and more buttons sit at the bottom."
+    },
+    {
+      "name": "chat",
+      "light": "chat-light.png",
+      "dark": "chat-dark.png",
+      "whatItShows": "Ask AI conversation that finds replies due this week and drafts one.",
+      "alt": "Ask AI conversation titled Replies due this week. Asked what needs a reply this week, the assistant searched the mailbox and lists three threads: a contract review from Pat Legal due Friday, a September invoice from Alex Rivera, and a design review from Sam Chen. After the reply Yes, start with Pat, it shows a drafted reply to Pat saved in Drafts."
+    },
+    {
+      "name": "search",
+      "light": "search-light.png",
+      "dark": "search-dark.png",
+      "whatItShows": "Search with an in:inbox operator, highlighted matches and an Ask AI shortcut.",
+      "alt": "Search for in:inbox review with the keyboard open. An Ask AI button offers to ask about the same query. Two results match, with the word review in bold: Sam Chen, Design review tomorrow, a draft; and Pat Legal, Can you review the contract?, tagged Needs reply."
+    },
+    {
+      "name": "screener",
+      "light": "screener-light.png",
+      "dark": "screener-dark.png",
+      "whatItShows": "First-time sender opened from the Screener, with Accept and Decline.",
+      "alt": "Message from first-time sender Dana Whitfield titled Guest spot on Small Studio Talks?. A note above it says to approve where their mail should go, or screen them out privately, with an Accept button that has a destination menu and a Decline button."
+    },
+    {
+      "name": "screener-list",
+      "light": "screener-list-light.png",
+      "dark": "screener-list-dark.png",
+      "whatItShows": "Screener folder with inline Accept / Decline on the waiting sender.",
+      "alt": "Screener folder with 1 unread: Dana Whitfield's invitation to guest on the Small Studio Talks podcast, with Accept and Decline buttons right in the list."
+    },
+    {
+      "name": "reply-later",
+      "light": "reply-later-light.png",
+      "dark": "reply-later-dark.png",
+      "whatItShows": "Reply Later list of threads set aside to answer.",
+      "alt": "Reply Later list with 2 to reply: Alex Rivera, Re: Invoice for September; and Pat Legal, Can you review the contract?."
+    },
+    {
+      "name": "compose",
+      "light": "compose-light.png",
+      "dark": "compose-dark.png",
+      "whatItShows": "Reply composer with a short typed answer to Jordan.",
+      "alt": "Reply composer for Re: Quarterly planning notes, addressed to Jordan Hale, with the text: 9:30 works for me. I'll bring the hiring numbers so we can close that one out. Robin. The quoted original message is collapsed below."
+    },
+    {
+      "name": "compose-minimized",
+      "light": "compose-minimized-light.png",
+      "dark": "compose-minimized-dark.png",
+      "whatItShows": "Draft minimized into a dock above the inbox.",
+      "alt": "Inbox with the reply draft Re: Quarterly planning notes minimized into a dock at the bottom of the screen, so the list stays usable while the draft waits."
+    },
+    {
+      "name": "action-menu",
+      "light": "action-menu-light.png",
+      "dark": "action-menu-dark.png",
+      "whatItShows": "Compose button expanded into a stack of folder and action shortcuts.",
+      "alt": "Shortcut stack opened from the Compose button over a blurred inbox, listing Settings, Trash, Archive, Drafts, Sent, Updates, Promotions, Screener, Inbox and Compose, each with an icon."
+    },
+    {
+      "name": "welcome",
+      "light": "welcome-light.png",
+      "dark": "welcome-dark.png",
+      "whatItShows": "First-launch welcome screen.",
+      "alt": "Welcome screen with a paper-plane logo, the Inboxies name, the headline Your Personal email app, and a round button to continue."
+    },
+    {
+      "name": "get-started",
+      "light": "get-started-light.png",
+      "dark": "get-started-dark.png",
+      "whatItShows": "Setup choice between a personal @inboxies.email address and a custom domain.",
+      "alt": "Welcome to Inboxies setup sheet asking how to set up email. Two options: Personal Address, an instant @inboxies.email address with no setup; and Custom Domain, with setup automated through Cloudflare DNS."
+    },
+    {
+      "name": "domain-admin",
+      "light": "domain-admin-light.png",
+      "dark": "domain-admin-dark.png",
+      "whatItShows": "Domain admin: DNS configuration, create email, and the domain's mailboxes.",
+      "alt": "Admin screen with DNS and Domain Configuration and a Create email button, followed by the domain's mailboxes: you@inboxies.email claimed by Robin Ellis, ops@inboxies.email claimed by Ops, and pending@inboxies.email."
+    },
+    {
+      "name": "sign-in-methods",
+      "light": "sign-in-methods-light.png",
+      "dark": "sign-in-methods-dark.png",
+      "whatItShows": "Account sign-in methods: connected methods, change password, link a device.",
+      "alt": "Sign-in methods screen. Connected: you@inboxies.email for this session, and a password. Below are a note about connecting on this device, a Change password form with current, new and confirm fields and an Update password button, and a Link another device section."
+    }
+  ],
+  "clips": [
+    {
+      "name": "inbox-open",
+      "light": {
+        "mp4": "/media/inbox-open.mp4",
+        "webm": "/media/inbox-open.webm",
+        "poster": "/media/inbox-open.jpg"
+      },
+      "dark": {
+        "mp4": "/media/inbox-open-dark.mp4",
+        "webm": "/media/inbox-open-dark.webm",
+        "poster": "/media/inbox-open-dark.jpg"
+      },
+      "durationSec": 8.5,
+      "width": 590,
+      "height": 1282,
+      "whatItShows": "Open a thread from the inbox, scroll it, swipe it away; the thread moves to Seen.",
+      "alt": "In the inbox, Jordan Hale's Quarterly planning notes is tapped and opens as a sheet. The message scrolls to show the proposed agenda, then the sheet is swiped down and the inbox returns with the thread now under Seen.",
+      "darkDurationSec": 8.3
+    },
+    {
+      "name": "ask-ai",
+      "light": {
+        "mp4": "/media/ask-ai.mp4",
+        "webm": "/media/ask-ai.webm",
+        "poster": "/media/ask-ai.jpg"
+      },
+      "dark": {
+        "mp4": "/media/ask-ai-dark.mp4",
+        "webm": "/media/ask-ai-dark.webm",
+        "poster": "/media/ask-ai-dark.jpg"
+      },
+      "durationSec": 10.47,
+      "width": 590,
+      "height": 1282,
+      "whatItShows": "Ask AI from the inbox: pick a suggested prompt and watch the answer stream in.",
+      "alt": "Ask AI is tapped from the inbox and opens a sheet of suggested prompts. Choosing What needs my reply this week? shows the assistant searching the mailbox, then it lists three threads waiting on a reply: Pat Legal's contract, Alex Rivera's invoice and Sam Chen's design review.",
+      "darkDurationSec": 9.77
+    },
+    {
+      "name": "screener-flow",
+      "light": {
+        "mp4": "/media/screener-flow.mp4",
+        "webm": "/media/screener-flow.webm",
+        "poster": "/media/screener-flow.jpg"
+      },
+      "dark": {
+        "mp4": "/media/screener-flow-dark.mp4",
+        "webm": "/media/screener-flow-dark.webm",
+        "poster": "/media/screener-flow-dark.jpg"
+      },
+      "durationSec": 9.67,
+      "width": 590,
+      "height": 1282,
+      "whatItShows": "Screen a first-time sender into the Inbox, then jump back to the Inbox from the compose shortcuts.",
+      "alt": "The 1 first-time sender to screen banner is tapped, opening the Screener with Dana Whitfield's message. From the Accept menu, Inbox is chosen and the Screener empties. The Compose shortcut stack is opened and Inbox is chosen; Dana Whitfield's message now appears under New.",
+      "darkDurationSec": 9.33
+    },
+    {
+      "name": "compose-dock",
+      "light": {
+        "mp4": "/media/compose-dock.mp4",
+        "webm": "/media/compose-dock.webm",
+        "poster": "/media/compose-dock.jpg"
+      },
+      "dark": {
+        "mp4": "/media/compose-dock-dark.mp4",
+        "webm": "/media/compose-dock-dark.webm",
+        "poster": "/media/compose-dock-dark.jpg"
+      },
+      "durationSec": 10.4,
+      "width": 590,
+      "height": 1282,
+      "whatItShows": "Start a new message, type a subject, swipe it into the dock, then reopen it.",
+      "alt": "Compose is held to open a new message, and the subject Running 10 min late is typed. The sheet is swiped down into a dock above the inbox, then tapped to reopen the draft with the subject still in place.",
+      "darkDurationSec": 10.63
+    },
+    {
+      "name": "reply-later",
+      "light": {
+        "mp4": "/media/reply-later.mp4",
+        "webm": "/media/reply-later.webm",
+        "poster": "/media/reply-later.jpg"
+      },
+      "dark": null,
+      "durationSec": 8.0,
+      "width": 590,
+      "height": 1282,
+      "whatItShows": "Open Reply Later, read a saved thread, and return to the list.",
+      "alt": "The Reply Later button opens a list of 2 threads to reply to. Pat Legal's Can you review the contract? is opened, showing the request for sign-off by Friday, then closed to return to the list."
+    }
+  ]
+}

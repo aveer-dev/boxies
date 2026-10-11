@@ -1,0 +1,29 @@
+---
+// A small grey label, like a Notion property tag ("HEY", "Gmail").
+interface Props {
+	label: string;
+	mono?: boolean;
+}
+
+const { label, mono = false } = Astro.props;
+---
+
+<span class:list={["tag", { "tag-mono": mono }]}>{label}</span>
+
+<style>
+	.tag {
+		display: inline-block;
+		height: 1.125rem;
+		padding: 0 6px;
+		border-radius: 4px;
+		background: var(--bg-badge);
+		color: var(--text-muted);
+		font-size: 0.6875rem;
+		line-height: 1.125rem;
+		white-space: nowrap;
+	}
+
+	.tag-mono {
+		font-family: var(--mono);
+	}
+</style>

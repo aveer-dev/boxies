@@ -1,0 +1,63 @@
+---
+// What each status pill means, in the order a feature moves through them.
+// Every pill keeps its own dot shape here, so the key teaches the shapes too.
+// src: RM (status mapping: main = Available; merged to dev = Next release; open PR = In review); CT#5.1
+import type { Status } from "../../data/types";
+import StatusPill from "../StatusPill.astro";
+
+const LEGEND: { status: Status; meaning: string }[] = [
+	// "Works today", not "in the apps": the MCP server is Available on
+	// self-hosted installs only, and its note says so.
+	{ status: "available", meaning: "Works today, on the platforms listed. The note says if there’s a limit." },
+	{ status: "next", meaning: "Finished, and arriving in the next release." },
+	{ status: "review", meaning: "Built, and being reviewed before it ships." },
+	{ status: "progress", meaning: "Being built now, or built and not switched on yet." },
+	{ status: "planned", meaning: "On the list, not started." },
+	{ status: "exploring", meaning: "An idea we’re weighing. It may change or never ship." },
+	{ status: "partly", meaning: "Comparisons only: some of it works today, and the note says what." },
+	{ status: "notyet", meaning: "Not built, and not planned right now." },
+];
+---
+
+<dl class="legend">
+	{
+		LEGEND.map((item) => (
+			<div class="legend-row">
+				<dt>
+					<StatusPill status={item.status} />
+				</dt>
+				<dd>{item.meaning}</dd>
+			</div>
+		))
+	}
+</dl>
+
+<style>
+	.legend {
+		margin-top: 32px;
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	.legend-row {
+		display: grid;
+		grid-template-columns: 7.5rem 1fr;
+		gap: 12px;
+		/* Not baseline: a pill's baseline is its dot's bottom edge (the dot is
+		   its first flex item), which sits the label low. The pill is centred on
+		   the first 20px line instead, and stays there when the text wraps. */
+		align-items: start;
+		padding: 8px 0 7px;
+		border-bottom: 1px solid var(--border-subtle);
+	}
+
+	.legend dt {
+		display: flex;
+		padding-top: 1px;
+	}
+
+	.legend dd {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+</style>

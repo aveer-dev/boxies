@@ -1,0 +1,229 @@
+---
+// A CSS iPhone 17 Pro frame around real screens: a still in both themes, or
+// a clip over its poster. Several MediaRefs stack as layers (the tour stage,
+// where tour.ts swaps the active one). The Dynamic Island is always drawn,
+// because the clips have it baked in and the stills don't.
+import type { MediaRef } from "../data/types";
+import Clip from "./Clip.astro";
+import Icon from "./Icon.astro";
+import ThemeImage from "./ThemeImage.astro";
+
+interface Props {
+	media: MediaRef | MediaRef[]; // an array renders stacked layers (the tour stage)
+	width?: string; // sets --phone-w inline; omit to inherit --phone-w from an ancestor (fallback 280px)
+	sizes?: string;
+	bezel?: boolean; // false = bare screen (the strip)
+	priority?: boolean; // hero only: art-directed poster, eager, fetchpriority=high
+	group?: "hero" | "tour" | "inline";
+	autoplay?: "inview" | "manual"; // the tour stage is "manual": tour.ts drives it
+	caption?: string;
+	captionVisible?: boolean;
+	layersHidden?: boolean; // tour stage: each chapter describes its screen instead
+	class?: string;
+}
+
+const {
+	media,
+	width,
+	sizes = "300px",
+	bezel = true,
+	priority = false,
+	group = "inline",
+	autoplay = "inview",
+	caption,
+	captionVisible = false,
+	layersHidden = false,
+	class: className,
+} = Astro.props;
+
+const refs = Array.isArray(media) ? media : [media];
+const hasClip = refs.some((m) => m.clip);
+---
+
+<figure
+	class:list={["phone", className]}
+	style={width ? `--phone-w: ${width}` : undefined}
+	data-bezel={bezel ? "true" : "false"}
+	data-phone
+>
+	<div class="phone-body">
+		<div class="phone-screen">
+			<div class="phone-layers" aria-hidden={layersHidden ? "true" : undefined}>
+				{
+					refs.map((m, i) => (
+						<div class:list={["phone-layer", { "is-active": i === 0 }]} data-layer={i}>
+							{m.clip ? (
+								<Clip clip={m.clip} sizes={sizes} priority={priority && i === 0} group={group} autoplay={autoplay} />
+							) : (
+								<ThemeImage still={m.still} sizes={sizes} />
+							)}
+						</div>
+					))
+				}
+			</div>
+			<span class="phone-island" aria-hidden="true"></span>
+		</div>
+		{/* On the frame's corner, outside the screen, so it never covers the app's own controls. */}
+		{
+			hasClip && (
+				<button class="clip-toggle" type="button" aria-label="Pause clips" aria-pressed="false" data-clip-toggle hidden>
+					<Icon name="pause" class="i-pause" />
+					<Icon name="play" class="i-play" />
+				</button>
+			)
+		}
+	</div>
+	{caption && <figcaption class:list={["phone-caption", { "sr-only": !captionVisible }]}>{caption}</figcaption>}
+</figure>
+
+<script>
+	import "../scripts/clips";
+</script>
+
+<style>
+	/* --phone-w is never declared here, so an ancestor (or a page-group rule on .phone) can set it. */
+	.phone {
+		--bezel: calc(var(--phone-w, 280px) * 0.034);
+		--screen-w: calc(var(--phone-w, 280px) - 2 * var(--bezel));
+		--screen-r: calc(var(--screen-w) * 0.137);
+		width: var(--phone-w, 280px);
+		margin: 0;
+		flex: none;
+	}
+
+	.phone-body {
+		position: relative;
+		padding: var(--bezel);
+		border-radius: calc(var(--screen-r) + var(--bezel));
+		background: var(--phone-bezel);
+		box-shadow:
+			inset 0 0 0 1px var(--phone-edge),
+			0 0 0 1px var(--border-card),
+			var(--shadow-media);
+	}
+
+	.phone-screen {
+		position: relative;
+		aspect-ratio: 1206 / 2622;
+		border-radius: var(--screen-r);
+		overflow: hidden;
+		background: var(--phone-screen-bg);
+		isolation: isolate;
+	}
+
+	.phone[data-bezel="false"] .phone-body {
+		padding: 0;
+		background: none;
+		box-shadow: none;
+		border-radius: var(--screen-r);
+	}
+
+	.phone[data-bezel="false"] .phone-screen {
+		box-shadow:
+			0 0 0 1px var(--border-card),
+			var(--shadow-media);
+	}
+
+	.phone-layers,
+	.phone-layer {
+		position: absolute;
+		inset: 0;
+	}
+
+	/* Tuned against inbox-open frame 1, so a still and a clip line up. */
+	.phone-island {
+		position: absolute;
+		z-index: 3;
+		top: 1.26%;
+		left: 50%;
+		width: 31.1%;
+		height: 4.23%;
+		transform: translateX(-50%);
+		border-radius: 999px;
+		background: #000;
+	}
+
+	/* Centred on the frame's bottom-right corner: the rounded edge curves away
+	   from it, so it sits just off the bezel, clear of the screen. Shown on
+	   touch screens, and on hover or focus with a mouse. */
+	.clip-toggle {
+		position: absolute;
+		z-index: 4;
+		right: -14px;
+		bottom: -14px;
+		width: 28px;
+		height: 28px;
+		display: grid;
+		place-items: center;
+		border: 0;
+		border-radius: 50%;
+		padding: 0;
+		color: var(--text-primary);
+		background: var(--bg);
+		box-shadow:
+			0 0 0 1px var(--border-card),
+			0 2px 6px rgba(0, 0, 0, 0.08);
+		opacity: 0;
+		transition:
+			opacity 160ms var(--ease-out),
+			transform 150ms var(--ease-out);
+		cursor: pointer;
+	}
+
+	/* display: grid would otherwise win over [hidden]; without JS nothing plays, so no button. */
+	.clip-toggle[hidden] {
+		display: none;
+	}
+
+	.clip-toggle :global(svg) {
+		width: 10px;
+		height: 10px;
+	}
+
+	.clip-toggle :global(.i-play),
+	.clip-toggle[aria-pressed="true"] :global(.i-pause) {
+		display: none;
+	}
+
+	.clip-toggle[aria-pressed="true"] :global(.i-play) {
+		display: block;
+	}
+
+	.phone:hover .clip-toggle,
+	.phone:focus-within .clip-toggle,
+	.clip-toggle[aria-pressed="true"],
+	.clip-toggle.is-forced {
+		opacity: 1;
+	}
+
+	@media (hover: none), (pointer: coarse) {
+		.clip-toggle {
+			opacity: 1;
+		}
+
+		/* A 44px target without a bigger disc. */
+		.clip-toggle::after {
+			content: "";
+			position: absolute;
+			inset: -8px;
+		}
+	}
+
+	.clip-toggle:active {
+		transform: scale(0.92);
+	}
+
+	.clip-toggle:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 2px;
+		border-radius: 50%;
+	}
+
+	.phone-caption {
+		margin-top: 14px;
+		text-align: center;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+</style>

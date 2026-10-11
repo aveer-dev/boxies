@@ -1,0 +1,29 @@
+---
+// Gmail and HEY, feature by feature, one tab each. Rows we haven't planned
+// fold away under "Show n we haven’t planned". Rows and sources in
+// src/data/parity.ts (gmail, hey).
+// src: RM#2-3; WEB#2.1, WEB#3 (Gmail and HEY names)
+import { gmail, hey } from "../../data/parity";
+import ComparisonTable from "../ComparisonTable.astro";
+import Tabs from "../Tabs.astro";
+
+const TABS = [
+	{ id: "gmail", label: "Gmail" },
+	{ id: "hey", label: "HEY" },
+];
+---
+
+<Tabs id="parity" title="Compared with Gmail and HEY" titleId="compare" label="Compare with" tabs={TABS}>
+	<ComparisonTable slot="gmail" mode="parity" caption="Gmail features in Inboxies" competitor="Gmail" rows={gmail} collapseNotYet />
+	<ComparisonTable slot="hey" mode="parity" caption="HEY features in Inboxies" competitor="HEY" rows={hey} collapseNotYet />
+</Tabs>
+<p class="trademarks">Gmail and HEY are trademarks of their owners. Names are used only to compare features.</p>
+
+<style>
+	.trademarks {
+		margin-top: 16px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+</style>

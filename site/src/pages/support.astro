@@ -1,0 +1,124 @@
+---
+// /support (§4.4): intro, search and chips, topics, every answer group, then
+// the contact form and the other ways to reach us. Answers come from
+// faqs.ts; the counts beside them are computed, never typed.
+// src: PS#6 (support address); FC#4.12 (Support & feedback in the iPhone app)
+import Faq from "../components/Faq.astro";
+import PageIntro from "../components/PageIntro.astro";
+import ContactForm from "../components/support/ContactForm.astro";
+import OtherWays from "../components/support/OtherWays.astro";
+import SupportSearch from "../components/support/SupportSearch.astro";
+import TopicList from "../components/support/TopicList.astro";
+import { IOS_STATUS, SUPPORT_EMAIL } from "../config";
+import { supportGroups } from "../data/faqs";
+import Base from "../layouts/Base.astro";
+
+const answers = (n: number) => `${n} answer${n === 1 ? "" : "s"}`;
+const groups = supportGroups
+	.map((g) => ({ ...g, items: g.items.filter((item) => !item.hidden) }))
+	.filter((g) => g.items.length > 0);
+---
+
+<Base
+	title="Support"
+	currentNav="support"
+	description="Answers about the Screener, Ask AI, custom domains, sign-in and your data, and a way to reach us."
+>
+	<PageIntro
+		title="Support"
+		description="Answers to common questions, sorted by topic. If yours isn’t here, write to us: the form is at the bottom of this page."
+	>
+		<p class="email-line">
+			<a class="inline-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+			<span class="dot js-only" aria-hidden="true">·</span>
+			<button type="button" class="copy-button js-only" data-copy={SUPPORT_EMAIL}>Copy</button>
+		</p>
+		{
+			IOS_STATUS !== "hidden" && (
+				<p class="apps-line">In the iPhone app, Settings → Support & feedback → Contact Support opens an email already addressed to us.</p>
+			)
+		}
+	</PageIntro>
+
+	<SupportSearch />
+
+	<TopicList />
+
+	<div data-faq-scope>
+		{
+			groups.map((g) => (
+				<div class="section faq-group" data-faq-section>
+					<Faq id={g.id} title={g.title} meta={answers(g.items.length)} items={g.items} />
+				</div>
+			))
+		}
+	</div>
+
+	<ContactForm />
+
+	<OtherWays />
+</Base>
+
+<script>
+	import "../components/support/copy";
+</script>
+
+<style>
+	/* 10px under the description: the intro's own 6px gap plus 4px. */
+	.email-line {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 6px;
+		margin-top: 4px;
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+	}
+
+	.dot {
+		font-size: var(--fs-meta);
+		color: var(--text-subtle);
+	}
+
+	.copy-button {
+		position: relative;
+		padding: 0;
+		border: 0;
+		background: none;
+		font: 400 0.6875rem/1rem var(--font-sans);
+		color: var(--text-muted);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		cursor: pointer;
+		transition:
+			color 150ms var(--ease-out),
+			transform 150ms var(--ease-out);
+	}
+
+	.copy-button:hover {
+		color: var(--text-primary);
+	}
+
+	.apps-line {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* While a search runs, answers open and close at once: it's a filter, not an animation. */
+	:global([data-faq-scope][data-searching] .toggle::details-content) {
+		transition: none !important;
+	}
+
+	.faq-group[hidden] {
+		display: none;
+	}
+
+	@media (pointer: coarse) {
+		.copy-button::after {
+			content: "";
+			position: absolute;
+			inset: -12px -6px;
+		}
+	}
+</style>
