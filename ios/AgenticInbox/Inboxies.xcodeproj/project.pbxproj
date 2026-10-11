@@ -80,6 +80,16 @@
 		C4E1A7B20000000000000001 /* Services/PaymentCallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4E1A7B20000000000000002 /* Services/PaymentCallback.swift */; };
 		F3A1B2C3D4E5478990ABCD12 /* Services/EmailHTMLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3A1B2C3D4E5478990ABCD11 /* Services/EmailHTMLSanitizer.swift */; };
 		F3A1B2C3D4E5478990ABCD15 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = F3A1B2C3D4E5478990ABCD14 /* SwiftSoup */; };
+		31D83063D8E95F71CD4951EB /* Services/KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0D9B6B7D9AE28CEEB72EE4 /* Services/KeychainStore.swift */; };
+		BBFC8696A0FA592D09D4F51C /* Views/Settings/SettingsFormChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9522346F762DE656E8EE75C /* Views/Settings/SettingsFormChrome.swift */; };
+		3C2812747D63E17960CBDF6F /* CredentialProviderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B278051337DD943C7F1188D /* CredentialProviderViewController.swift */; };
+		C3BBDE619135670F481F1F9F /* PrivateEmailAutofillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71013B45990F6047C0706748 /* PrivateEmailAutofillView.swift */; };
+		4D427688E4DDF31021EE51D7 /* AutofillAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E86BE20D00BEFC7DFE3B690F /* AutofillAPI.swift */; };
+		1318176166D12D684A4450E9 /* Services/KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0D9B6B7D9AE28CEEB72EE4 /* Services/KeychainStore.swift */; };
+		D51DFFC967CEB7CB62454599 /* Views/Settings/SettingsFormChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9522346F762DE656E8EE75C /* Views/Settings/SettingsFormChrome.swift */; };
+		5F3C67D95AF29E4DEFDB6143 /* Config/AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21CCC0BA3ECA48D3ACAAD064 /* Config/AppConfig.swift */; };
+		7DAA9E430A82777117FA1DEC /* Theme/AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28CDA4BA87F547B6A4A0DD65 /* Theme/AppTheme.swift */; };
+		54F652A93B3FC6C3B0C1B8F1 /* InboxiesCredentialProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 62A7FC7C48ECE6C90B22317F /* InboxiesCredentialProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,7 +100,28 @@
 			remoteGlobalIDString = 33113F54BEEF49AE94810DA3;
 			remoteInfo = Inboxies;
 		};
+		9EA390EEF80872506BB756B7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9BB052F9A81F42B8830069B2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6827CF63E8E8891AC0F22749;
+			remoteInfo = InboxiesCredentialProvider;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F020E6A548A488485BF1E831 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				54F652A93B3FC6C3B0C1B8F1 /* InboxiesCredentialProvider.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		010262344D5842BD893A671C /* Services/AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/AppModel.swift; sourceTree = "<group>"; };
@@ -169,6 +200,14 @@
 		F444315A11E44D83826E7D65 /* Inboxies.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Inboxies.entitlements; sourceTree = "<group>"; };
 		F5D715022CEE90FF4B7CB680 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		FAA619084E624222B919A7C4 /* Views/Email/EmailListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/EmailListView.swift; sourceTree = "<group>"; };
+		2D0D9B6B7D9AE28CEEB72EE4 /* Services/KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/KeychainStore.swift; sourceTree = "<group>"; };
+		A9522346F762DE656E8EE75C /* Views/Settings/SettingsFormChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SettingsFormChrome.swift; sourceTree = "<group>"; };
+		2B278051337DD943C7F1188D /* CredentialProviderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialProviderViewController.swift; sourceTree = "<group>"; };
+		71013B45990F6047C0706748 /* PrivateEmailAutofillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailAutofillView.swift; sourceTree = "<group>"; };
+		E86BE20D00BEFC7DFE3B690F /* AutofillAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutofillAPI.swift; sourceTree = "<group>"; };
+		66F93BF93D87C815A598DE74 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		662B661F0C3E3BDC42021360 /* InboxiesCredentialProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = InboxiesCredentialProvider.entitlements; sourceTree = "<group>"; };
+		62A7FC7C48ECE6C90B22317F /* InboxiesCredentialProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = InboxiesCredentialProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,6 +224,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				6A4FFDA2D831BC533741DCBB /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2E89DFB51BE497FEA28EFFAD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -230,6 +276,7 @@
 				D3E3E6419B804E808C731975 /* Inboxies */,
 				C44B4DF80ADE4AD9902FB46E /* Products */,
 				F24F23120DFA7EA0D45CDA9A /* Frameworks */,
+				3985995D6A93C02A5F72D071 /* InboxiesCredentialProvider */,
 				DD084C1ACAE67FBAE3D9B1C2 /* InboxiesTests */,
 			);
 			sourceTree = "<group>";
@@ -239,6 +286,7 @@
 			children = (
 				84F2F99145F3443BBB8E283E /* Inboxies.app */,
 				A742CF9796739FF61FB6E1C8 /* InboxiesTests.xctest */,
+				62A7FC7C48ECE6C90B22317F /* InboxiesCredentialProvider.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -254,6 +302,7 @@
 				2153D18D975F436E94786CB2 /* Services/AgentChatClient.swift */,
 				010262344D5842BD893A671C /* Services/AppModel.swift */,
 				43432D294A6A4E8886288B5C /* Services/AuthStore.swift */,
+				2D0D9B6B7D9AE28CEEB72EE4 /* Services/KeychainStore.swift */,
 				09C42367266B46FF855AE6E5 /* Services/ComposeFormModel.swift */,
 				F3A1B2C3D4E5478990ABCD11 /* Services/EmailHTMLSanitizer.swift */,
 				A1B2C3D4E5F6478990SRCH00 /* Services/SearchQueryParser.swift */,
@@ -291,6 +340,7 @@
 				24A1B2C3D4E5478990ABCD08 /* Views/Home/InboxDigestView.swift */,
 				E3F4A5B6C7D8478990ABCD05 /* Views/Home/ComposeActionListOverlay.swift */,
 				A1B2C3D4E5F6478990ABCD03 /* Views/Settings/SettingsSheetView.swift */,
+				A9522346F762DE656E8EE75C /* Views/Settings/SettingsFormChrome.swift */,
 				A1B2C3D4E5F6478990ABCD04 /* Views/Settings/AgentPromptSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD05 /* Views/Settings/SwipeSettingsView.swift */,
 				A1B2C3D4E5F6478990ABCD07 /* Views/Settings/ForwardingSettingsView.swift */,
@@ -337,6 +387,18 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		3985995D6A93C02A5F72D071 /* InboxiesCredentialProvider */ = {
+			isa = PBXGroup;
+			children = (
+				2B278051337DD943C7F1188D /* CredentialProviderViewController.swift */,
+				71013B45990F6047C0706748 /* PrivateEmailAutofillView.swift */,
+				E86BE20D00BEFC7DFE3B690F /* AutofillAPI.swift */,
+				66F93BF93D87C815A598DE74 /* Info.plist */,
+				662B661F0C3E3BDC42021360 /* InboxiesCredentialProvider.entitlements */,
+			);
+			path = InboxiesCredentialProvider;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -365,10 +427,12 @@
 				AE98C3E856454DF7A38B7272 /* Sources */,
 				5D87004AA269404390A77014 /* Frameworks */,
 				D374C1C3D321457888E81CB3 /* Resources */,
+				F020E6A548A488485BF1E831 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				12C5E1CA8166949A2437A185 /* PBXTargetDependency */,
 			);
 			name = Inboxies;
 			packageProductDependencies = (
@@ -377,6 +441,23 @@
 			productName = Inboxies;
 			productReference = 84F2F99145F3443BBB8E283E /* Inboxies.app */;
 			productType = "com.apple.product-type.application";
+		};
+		6827CF63E8E8891AC0F22749 /* InboxiesCredentialProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 650F289D4DAAB7541A402F64 /* Build configuration list for PBXNativeTarget "InboxiesCredentialProvider" */;
+			buildPhases = (
+				33786B96287514B2FDCBBC98 /* Sources */,
+				2E89DFB51BE497FEA28EFFAD /* Frameworks */,
+				664A40AA503D74F419EF76CC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = InboxiesCredentialProvider;
+			productName = InboxiesCredentialProvider;
+			productReference = 62A7FC7C48ECE6C90B22317F /* InboxiesCredentialProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -406,6 +487,7 @@
 			targets = (
 				33113F54BEEF49AE94810DA3 /* Inboxies */,
 				0C7DB852B10DCFB89463193F /* InboxiesTests */,
+				6827CF63E8E8891AC0F22749 /* InboxiesCredentialProvider */,
 			);
 		};
 /* End PBXProject section */
@@ -428,6 +510,13 @@
 				F017B0034567890123456783 /* Fonts/Inter-SemiBold.ttf in Resources */,
 				F017B0044567890123456784 /* Fonts/Inter-Bold.ttf in Resources */,
 				F017B0054567890123456785 /* Fonts/Inter-Italic.ttf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		664A40AA503D74F419EF76CC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -455,6 +544,7 @@
 				12FD0B712C114D8F82E0825F /* Services/AgentChatClient.swift in Sources */,
 				2EC70370129F423785536DB2 /* Services/AppModel.swift in Sources */,
 				340C18C527B44FD1B96E612C /* Services/AuthStore.swift in Sources */,
+				31D83063D8E95F71CD4951EB /* Services/KeychainStore.swift in Sources */,
 				7E8CC069F60B4F6283899600 /* Services/ComposeFormModel.swift in Sources */,
 				F3A1B2C3D4E5478990ABCD12 /* Services/EmailHTMLSanitizer.swift in Sources */,
 				A1B2C3D4E5F6478990SRCH01 /* Services/SearchQueryParser.swift in Sources */,
@@ -494,6 +584,7 @@
 				B1C2D3E4F5A6478990ABCD01 /* Services/SwipeActionPreferences.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD02 /* Services/EmailActionExecutor.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD03 /* Views/Settings/SettingsSheetView.swift in Sources */,
+				BBFC8696A0FA592D09D4F51C /* Views/Settings/SettingsFormChrome.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD04 /* Views/Settings/AgentPromptSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD05 /* Views/Settings/SwipeSettingsView.swift in Sources */,
 				B1C2D3E4F5A6478990ABCD07 /* Views/Settings/ForwardingSettingsView.swift in Sources */,
@@ -513,6 +604,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		33786B96287514B2FDCBBC98 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3C2812747D63E17960CBDF6F /* CredentialProviderViewController.swift in Sources */,
+				C3BBDE619135670F481F1F9F /* PrivateEmailAutofillView.swift in Sources */,
+				4D427688E4DDF31021EE51D7 /* AutofillAPI.swift in Sources */,
+				1318176166D12D684A4450E9 /* Services/KeychainStore.swift in Sources */,
+				D51DFFC967CEB7CB62454599 /* Views/Settings/SettingsFormChrome.swift in Sources */,
+				5F3C67D95AF29E4DEFDB6143 /* Config/AppConfig.swift in Sources */,
+				7DAA9E430A82777117FA1DEC /* Theme/AppTheme.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -521,6 +626,11 @@
 			name = Inboxies;
 			target = 33113F54BEEF49AE94810DA3 /* Inboxies */;
 			targetProxy = 0D393C70AFB84715E2CFD55E /* PBXContainerItemProxy */;
+		};
+		12C5E1CA8166949A2437A185 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6827CF63E8E8891AC0F22749 /* InboxiesCredentialProvider */;
+			targetProxy = 9EA390EEF80872506BB756B7 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -735,6 +845,66 @@
 			};
 			name = Debug;
 		};
+		EAA4BC6C5DF92C7FEA7D83BA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = InboxiesCredentialProvider/InboxiesCredentialProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InboxiesCredentialProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.inboxies.app.CredentialProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		71AABE9EF948B816C2D76702 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = InboxiesCredentialProvider/InboxiesCredentialProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = InboxiesCredentialProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = co.inboxies.app.CredentialProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -761,6 +931,15 @@
 			buildConfigurations = (
 				B419B607DC8C5727F9FBCDB8 /* Release */,
 				D7AA0C13AC3F02FC81E84807 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		650F289D4DAAB7541A402F64 /* Build configuration list for PBXNativeTarget "InboxiesCredentialProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EAA4BC6C5DF92C7FEA7D83BA /* Debug */,
+				71AABE9EF948B816C2D76702 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

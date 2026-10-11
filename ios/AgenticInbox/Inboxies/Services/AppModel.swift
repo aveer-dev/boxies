@@ -6,7 +6,17 @@ import Observation
 @MainActor
 final class AppModel {
     var mailboxes: [Mailbox] = []
-    var selectedMailboxId: String?
+    var selectedMailboxId: String? {
+        didSet {
+            guard selectedMailboxId != oldValue else { return }
+            // Private email AutoFill creates addresses for the mailbox last open here.
+            if let selectedMailboxId {
+                KeychainStore.write(KeychainStore.autofillMailboxIdKey, value: selectedMailboxId)
+            } else {
+                KeychainStore.delete(KeychainStore.autofillMailboxIdKey)
+            }
+        }
+    }
     var folders: [Folder] = []
     var selectedTab: HomeTab = .folder("inbox")
     var emails: [Email] = []

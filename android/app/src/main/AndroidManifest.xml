@@ -91,6 +91,14 @@
                 android:resource="@xml/autofill_service_config" />
         </service>
 
+        <activity
+            android:name=".ui.autofill.PrivateEmailAutofillActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Inboxies.Autofill"
+            android:windowSoftInputMode="adjustResize" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

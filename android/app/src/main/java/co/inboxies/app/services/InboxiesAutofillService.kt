@@ -1,11 +1,12 @@
 package co.inboxies.app.services
 
+import android.app.PendingIntent
 import android.app.assist.AssistStructure
+import android.content.pm.PackageManager
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
 import android.service.autofill.FillCallback
-import android.service.autofill.FillContext
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
 import android.service.autofill.SaveCallback
@@ -13,13 +14,16 @@ import android.service.autofill.SaveRequest
 import android.text.InputType
 import android.view.View
 import android.view.autofill.AutofillId
-import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
+import co.inboxies.app.InboxiesApplication
 import co.inboxies.app.R
-import java.security.SecureRandom
+import co.inboxies.app.ui.autofill.PrivateEmailAutofillActivity
+import java.util.regex.Pattern
 
 /**
- * System Autofill Service providing native "Private Email" inline suggestions across Android apps and Chrome.
+ * Offers "Private email" on email fields in other apps and Chrome. Picking it opens
+ * [PrivateEmailAutofillActivity], which creates a real address on the server and
+ * returns it as the dataset to fill.
  */
 class InboxiesAutofillService : AutofillService() {
 
@@ -28,88 +32,136 @@ class InboxiesAutofillService : AutofillService() {
         cancellationSignal: CancellationSignal,
         callback: FillCallback,
     ) {
-        val structure = request.fillContexts.lastOrNull()?.structure ?: run {
+        val structure = request.fillContexts.lastOrNull()?.structure
+        val signedIn = (application as InboxiesApplication).authStore.isAuthenticated
+        // Nothing to offer signed out, or inside Inboxies' own forms.
+        if (structure == null || !signedIn || structure.activityComponent.packageName == packageName) {
             callback.onSuccess(null)
             return
         }
 
-        val emailNodeIds = mutableListOf<AutofillId>()
-        findEmailFields(structure, emailNodeIds)
-
-        if (emailNodeIds.isEmpty()) {
+        val match = EmailFieldMatch()
+        for (i in 0 until structure.windowNodeCount) {
+            structure.getWindowNodeAt(i).rootViewNode?.let { match.scan(it) }
+        }
+        val fieldId = match.fieldId ?: run {
             callback.onSuccess(null)
             return
         }
 
-        val targetId = emailNodeIds.first()
-        val generatedEmail = generateRandomAlias()
-
+        val label = match.webDomain?.removePrefix("www.")
+            ?: appLabel(structure.activityComponent.packageName)
         val presentation = RemoteViews(packageName, R.layout.autofill_inline_suggestion).apply {
-            setTextViewText(R.id.autofill_title, "Generate Private Email")
-            setTextViewText(R.id.autofill_subtitle, generatedEmail)
+            setTextViewText(R.id.autofill_title, "Private email")
+            setTextViewText(R.id.autofill_subtitle, "Create a new address for $label")
         }
+        val authentication = PendingIntent.getActivity(
+            this,
+            fieldId.hashCode(),
+            PrivateEmailAutofillActivity.intent(this, fieldId, label),
+            // Mutable: the system adds the assist structure to the intent.
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_MUTABLE,
+        ).intentSender
 
+        // No value until the address exists. The match-all filter keeps the offer
+        // visible while the user types; a null value would otherwise fail any filter.
+        @Suppress("DEPRECATION") // Field/Presentations need a value; an auth dataset has none yet.
         val dataset = Dataset.Builder(presentation)
-            .setValue(targetId, AutofillValue.forText(generatedEmail))
+            .setValue(fieldId, null, MATCH_ANY_TEXT, presentation)
+            .setAuthentication(authentication)
             .build()
-
-        val response = FillResponse.Builder()
-            .addDataset(dataset)
-            .build()
-
-        callback.onSuccess(response)
+        callback.onSuccess(FillResponse.Builder().addDataset(dataset).build())
     }
 
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
         callback.onSuccess()
     }
 
-    private fun findEmailFields(
-        structure: AssistStructure,
-        results: MutableList<AutofillId>,
-    ) {
-        val windowNodes = structure.run {
-            (0 until windowNodeCount).map { getWindowNodeAt(it) }
-        }
-        for (windowNode in windowNodes) {
-            val root = windowNode.rootViewNode ?: continue
-            traverseNode(root, results)
-        }
+    private companion object {
+        val MATCH_ANY_TEXT: Pattern = Pattern.compile(".*", Pattern.DOTALL)
     }
 
-    private fun traverseNode(
-        node: AssistStructure.ViewNode,
-        results: MutableList<AutofillId>,
-    ) {
+    private fun appLabel(packageName: String): String = try {
+        val info = packageManager.getApplicationInfo(packageName, 0)
+        packageManager.getApplicationLabel(info).toString()
+    } catch (_: PackageManager.NameNotFoundException) {
+        // Android 11+ package visibility hides most apps; don't ask for QUERY_ALL_PACKAGES.
+        readableAppName(packageName)
+    }
+}
+
+/** First email field in the structure, and the web domain it sits on (Chrome / WebView). */
+private class EmailFieldMatch {
+    var fieldId: AutofillId? = null
+        private set
+    var webDomain: String? = null
+        private set
+
+    fun scan(node: AssistStructure.ViewNode, domain: String? = null) {
+        if (fieldId != null) return
+        val nodeDomain = node.webDomain?.takeIf { it.isNotBlank() } ?: domain
         val id = node.autofillId
-        val hints = node.autofillHints
-        val hintText = node.hint?.toString()?.lowercase().orEmpty()
-        val idEntry = node.idEntry?.lowercase().orEmpty()
-        val inputType = node.inputType
-
-        val isEmailField = (hints != null && hints.any { it.equals(View.AUTOFILL_HINT_EMAIL_ADDRESS, ignoreCase = true) }) ||
-            (inputType and InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS) != 0 ||
-            (inputType and InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS) != 0 ||
-            hintText.contains("email") ||
-            idEntry.contains("email")
-
-        if (id != null && isEmailField) {
-            results.add(id)
+        if (id != null && isEmailField(node)) {
+            fieldId = id
+            webDomain = nodeDomain
+            return
         }
-
         for (i in 0 until node.childCount) {
-            val child = node.getChildAt(i) ?: continue
-            traverseNode(child, results)
+            node.getChildAt(i)?.let { scan(it, nodeDomain) }
         }
     }
 
-    private fun generateRandomAlias(): String {
-        val chars = "abcdefghjkmnpqrstuvwxyz23456789"
-        val random = SecureRandom()
-        val token = StringBuilder(10)
-        for (i in 0 until 10) {
-            token.append(chars[random.nextInt(chars.length)])
+    private fun isEmailField(node: AssistStructure.ViewNode): Boolean = looksLikeEmailField(
+        autofillType = node.autofillType,
+        autofillHints = node.autofillHints?.toList(),
+        inputType = node.inputType,
+        htmlAttributes = node.htmlInfo?.attributes?.map { it.first to it.second },
+        hint = node.hint,
+        idEntry = node.idEntry,
+    )
+}
+
+/** Email-field test on plain values, so it runs in JVM unit tests. */
+internal fun looksLikeEmailField(
+    autofillType: Int,
+    autofillHints: List<String>?,
+    inputType: Int,
+    htmlAttributes: List<Pair<String?, String?>>?,
+    hint: String?,
+    idEntry: String?,
+): Boolean {
+    if (autofillType != View.AUTOFILL_TYPE_TEXT) return false
+    if (autofillHints?.any { it.contains("email", ignoreCase = true) } == true) return true
+
+    if (inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_TEXT) {
+        when (inputType and InputType.TYPE_MASK_VARIATION) {
+            InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS -> return true
+            InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD -> return false
         }
-        return "$token@private.inboxies.app"
     }
+
+    // Web forms: <input type="email"> or autocomplete="email".
+    htmlAttributes?.forEach { (rawName, rawValue) ->
+        val name = rawName?.lowercase()
+        val value = rawValue?.lowercase().orEmpty()
+        if (name == "type" && value == "password") return false
+        if (name == "type" && value == "email") return true
+        if (name == "autocomplete" && value.split(' ').contains("email")) return true
+    }
+
+    val hintText = hint?.lowercase().orEmpty()
+    val id = idEntry?.lowercase().orEmpty()
+    return "email" in hintText || "e-mail" in hintText || "email" in id
+}
+
+private val genericPackageSegments = setOf("com", "org", "net", "io", "co", "www", "app", "apps", "android", "mobile", "google")
+
+/** `com.google.android.contacts` → `Contacts`, `com.instagram.android` → `Instagram`. */
+internal fun readableAppName(packageName: String): String {
+    val name = packageName.split('.').lastOrNull { it.isNotBlank() && it.lowercase() !in genericPackageSegments }
+        ?: return packageName
+    return name.replaceFirstChar { it.uppercase() }
 }

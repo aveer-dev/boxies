@@ -156,7 +156,16 @@ class AuthStore(context: Context) {
         prefs.edit {
             remove(TOKEN_KEY)
             remove(EMAIL_KEY)
+            remove(AUTOFILL_MAILBOX_KEY)
         }
+    }
+
+    /** Mailbox Private email AutoFill creates addresses for by default (iOS keeps it in the shared Keychain). */
+    fun autofillMailboxId(): String? = prefs.getString(AUTOFILL_MAILBOX_KEY, null)
+
+    fun rememberAutofillMailbox(mailboxId: String) {
+        if (prefs.getString(AUTOFILL_MAILBOX_KEY, null) == mailboxId) return
+        prefs.edit { putString(AUTOFILL_MAILBOX_KEY, mailboxId) }
     }
 
     fun clearError() {
@@ -184,5 +193,6 @@ class AuthStore(context: Context) {
     companion object {
         private const val TOKEN_KEY = "mobileSessionToken"
         private const val EMAIL_KEY = "mobileUserEmail"
+        private const val AUTOFILL_MAILBOX_KEY = "autofillMailboxId"
     }
 }

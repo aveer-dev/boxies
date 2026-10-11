@@ -11,6 +11,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -100,6 +102,11 @@ class MainActivity : ComponentActivity() {
                             },
                         )
                     } else {
+                        val selectedMailboxId by model.selectedMailboxId.collectAsState()
+                        // Private email AutoFill creates addresses for the mailbox last open here.
+                        LaunchedEffect(selectedMailboxId) {
+                            selectedMailboxId?.let(auth::rememberAutofillMailbox)
+                        }
                         RootView(
                             auth = auth,
                             appModel = model,

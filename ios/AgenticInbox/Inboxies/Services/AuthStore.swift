@@ -1,4 +1,3 @@
-import Security
 import Foundation
 import Observation
 
@@ -109,6 +108,8 @@ final class AuthStore {
         APIClient.shared.authToken = nil
         guard persistsSession else { return }
         KeychainStore.delete(tokenKey)
+        KeychainStore.delete(KeychainStore.apiBaseKey)
+        KeychainStore.delete(KeychainStore.autofillMailboxIdKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
     }
 
@@ -119,58 +120,10 @@ final class AuthStore {
         APIClient.shared.authToken = token
         guard persistsSession else { return }
         KeychainStore.write(tokenKey, value: token)
+        // The AutoFill extension calls the server this token belongs to.
+        KeychainStore.write(KeychainStore.apiBaseKey, value: AppConfig.apiBaseURL.absoluteString)
         if let email {
             UserDefaults.standard.set(email, forKey: emailKey)
         }
-    }
-}
-
-enum KeychainStore {
-    static let sessionTokenKey = "mobileSessionToken"
-
-    /// Readable after the first unlock so background push sync works while the
-    /// device is locked.
-    private static let accessibility = kSecAttrAccessibleAfterFirstUnlock
-
-    static func write(_ key: String, value: String) {
-        let data = Data(value.utf8)
-        let match: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(match as CFDictionary)
-        var add = match
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = accessibility
-        SecItemAdd(add as CFDictionary, nil)
-    }
-
-    static func read(_ key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess,
-              let attributes = item as? [String: Any],
-              let data = attributes[kSecValueData as String] as? Data,
-              let value = String(data: data, encoding: .utf8) else { return nil }
-        // Items saved by older builds used the default (WhenUnlocked) class; re-save once.
-        if (attributes[kSecAttrAccessible as String] as? String) != (accessibility as String) {
-            write(key, value: value)
-        }
-        return value
-    }
-
-    static func delete(_ key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 }

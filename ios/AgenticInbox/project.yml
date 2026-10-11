@@ -23,6 +23,8 @@ targets:
       - path: Inboxies
     dependencies:
       - package: SwiftSoup
+      - target: InboxiesCredentialProvider
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app
@@ -38,6 +40,27 @@ targets:
         SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: false
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: false
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  InboxiesCredentialProvider:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: InboxiesCredentialProvider
+      # Shared with the app: session Keychain, API origin, theme tokens, settings form rows.
+      - path: Inboxies/Services/KeychainStore.swift
+      - path: Inboxies/Config/AppConfig.swift
+      - path: Inboxies/Theme/AppTheme.swift
+      - path: Inboxies/Views/Settings/SettingsFormChrome.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app.CredentialProvider
+        INFOPLIST_FILE: InboxiesCredentialProvider/Info.plist
+        CODE_SIGN_ENTITLEMENTS: InboxiesCredentialProvider/InboxiesCredentialProvider.entitlements
+        GENERATE_INFOPLIST_FILE: false
+        APPLICATION_EXTENSION_API_ONLY: true
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: "1.0"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        SUPPORTS_MACCATALYST: false
   InboxiesTests:
     type: bundle.unit-test
     platform: iOS
