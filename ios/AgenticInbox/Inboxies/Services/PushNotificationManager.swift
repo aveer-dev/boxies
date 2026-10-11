@@ -82,6 +82,30 @@ final class PushNotificationManager {
         }
     }
 
+    /// Sign-out: stop pushes for every mailbox this device registered. Fire-and-forget;
+    /// `sessionToken` keeps the requests authed after the local session is cleared.
+    func unregisterAll(mailboxIds: [String], sessionToken: String?) {
+        Task {
+            await unregisterAllAndWait(mailboxIds: mailboxIds, sessionToken: sessionToken)
+        }
+    }
+
+    func unregisterAllAndWait(mailboxIds: [String], sessionToken: String?) async {
+        activeMailboxId = nil
+        guard let token = deviceToken, !mailboxIds.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for mailboxId in Set(mailboxIds) {
+                group.addTask {
+                    try? await APIClient.shared.unregisterDeviceToken(
+                        mailboxId: mailboxId,
+                        token: token,
+                        sessionToken: sessionToken
+                    )
+                }
+            }
+        }
+    }
+
     func handleNotificationTap(userInfo: [AnyHashable: Any]) {
         guard let mailboxId = userInfo["mailboxId"] as? String, !mailboxId.isEmpty,
               let emailId = userInfo["emailId"] as? String, !emailId.isEmpty else {

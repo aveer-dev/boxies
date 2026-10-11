@@ -28,6 +28,7 @@
     },
     "noImplicitAny": false,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true
   }
 }

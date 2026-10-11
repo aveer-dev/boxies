@@ -91,11 +91,38 @@ export function htmlToPlainText(html: string): string {
 	return (div.textContent || div.innerText || "").trim();
 }
 
+/** Remove non-content blocks whose text would otherwise leak into plain text. */
+function dropNonContent(html: string): string {
+	return html
+		.replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, "")
+		.replace(/<!--[\s\S]*?-->/g, "");
+}
+
 /**
- * Strip all HTML tags from a string.
+ * Single-line plain text for previews: no tags, no CSS, entities decoded.
  */
 export function stripHtml(html: string): string {
-	return html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+	return decodeHtmlEntities(dropNonContent(html).replace(/<[^>]*>/g, " "))
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/**
+ * Plain text that keeps paragraph and line breaks, for quoting a message in a
+ * reply or forward (works without a DOM, unlike htmlToPlainText).
+ */
+export function htmlToQuotedText(html: string): string {
+	const withBreaks = dropNonContent(html)
+		.replace(/<br\s*\/?>/gi, "\n")
+		.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n")
+		.replace(/<li[^>]*>/gi, "• ")
+		.replace(/<[^>]*>/g, "");
+	return decodeHtmlEntities(withBreaks)
+		.split("\n")
+		.map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
 }
 
 function decodeHtmlEntities(text: string): string {
@@ -193,7 +220,7 @@ export function buildQuotedReplyBlock(
 	// The original HTML renders safely in the sandboxed iframe, but quoted
 	// reply blocks are injected into the compose editor where raw HTML would
 	// execute. Convert to escaped plain text instead.
-	const bodyToQuote = escapeHtml(stripHtml(body)).replace(/\n/g, "<br>");
+	const bodyToQuote = escapeHtml(htmlToQuotedText(body)).replace(/\n/g, "<br>");
 
 	return `<br><blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;">On ${formattedDate}, ${escapedSender} wrote:<br><br>${bodyToQuote}</blockquote>`;
 }

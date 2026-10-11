@@ -9,6 +9,7 @@ import android.graphics.drawable.Icon
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
+import android.service.autofill.Field
 import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
@@ -28,6 +29,7 @@ import co.inboxies.app.R
 import co.inboxies.app.autofill.AutofillFieldInfo
 import co.inboxies.app.autofill.EmailFieldMatcher
 import co.inboxies.app.autofill.PrivateEmailAutofillActivity
+import java.util.regex.Pattern
 
 /**
  * Offers "Create private email" on email fields in other apps and Chrome.
@@ -97,8 +99,11 @@ class InboxiesAutofillService : AutofillService() {
             PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_CANCEL_CURRENT,
         )
 
+        // A field with no value fails the default text filter, so the offer would vanish
+        // as soon as the field has text; match anything to keep it while typing.
+        val field = Field.Builder().setFilter(MATCH_ANY_TEXT).build()
         val dataset = Dataset.Builder(presentations)
-            .apply { targets.forEach { setField(it, null) } }
+            .apply { targets.forEach { setField(it, field) } }
             .setAuthentication(authentication.intentSender)
             .build()
 
@@ -190,5 +195,6 @@ class InboxiesAutofillService : AutofillService() {
     private companion object {
         const val TAG = "InboxiesAutofill"
         const val REQUEST_CODE_ATTRIBUTION = 0x1A11
+        val MATCH_ANY_TEXT: Pattern = Pattern.compile(".*", Pattern.DOTALL)
     }
 }

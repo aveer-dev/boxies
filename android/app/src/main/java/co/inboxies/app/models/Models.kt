@@ -1,5 +1,6 @@
 package co.inboxies.app.models
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -8,6 +9,7 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonNames
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonDecoder
@@ -833,12 +835,14 @@ data class DraftSaveResponse(
     val resolvedId: String get() = id ?: draftId ?: ""
 }
 
+/** Registry rows are camelCase on the Worker; snake_case still decodes for older builds. */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AgentConversation(
     val id: String,
     val title: String = "",
-    @SerialName("created_at") val createdAt: String = "",
-    @SerialName("updated_at") val updatedAt: String = "",
+    @JsonNames("created_at") val createdAt: String = "",
+    @JsonNames("updated_at") val updatedAt: String = "",
     val lastMessagePreview: String? = null,
 )
 
@@ -1155,13 +1159,19 @@ data class DomainPricingLineItem(
 
 @Serializable
 data class DomainPricingBreakdown(
-    val domainWholesaleUsd: Double,
-    val platformFeeUsd: Double,
-    val totalAnnualUsd: Double,
+    /** Registrar fee the user pays for the domain (preferred over [domainWholesaleUsd]). */
+    val domainFeeUsd: Double? = null,
+    val domainWholesaleUsd: Double? = null,
+    val platformFeeUsd: Double = 0.0,
+    val totalAnnualUsd: Double = 0.0,
     val currency: String = "usd",
+    val billingInterval: String? = null,
     val interval: String = "year",
     val lineItems: List<DomainPricingLineItem> = emptyList(),
-)
+) {
+    val domainUsd: Double? get() = domainFeeUsd ?: domainWholesaleUsd
+    val resolvedInterval: String get() = billingInterval ?: interval
+}
 
 @Serializable
 data class DomainAvailabilityResponse(
@@ -1196,7 +1206,8 @@ data class ExportJobProgress(
 
 @Serializable
 data class ExportJob(
-    val id: String,
+    val id: String = "",
+    val exportId: String? = null,
     val domain: String? = null,
     val mailboxId: String? = null,
     val status: String = "pending",
@@ -1207,7 +1218,9 @@ data class ExportJob(
     val expiresAt: String? = null,
     val createdAt: String? = null,
     val error: String? = null,
-)
+) {
+    val resolvedId: String get() = id.ifEmpty { exportId.orEmpty() }
+}
 
 @Serializable
 data class DecommissionLastExport(
@@ -1246,7 +1259,7 @@ data class DomainEppCodeResponse(
 
 @Serializable
 data class DomainTransferLockResponse(
-    val success: Boolean,
+    val success: Boolean = true,
     val domain: String,
     val locked: Boolean,
 )
@@ -1331,5 +1344,14 @@ data class CreateAliasResponse(
     val alias: MaskedAlias,
 )
 
+@Serializable
+data class DeleteAccountResponse(
+    val ok: Boolean = false,
+    val deletedMailboxes: List<String> = emptyList(),
+    val leftMailboxes: List<String> = emptyList(),
+)
 
-
+@Serializable
+data class EmptyTrashResponse(
+    val deleted: Int = 0,
+)

@@ -5,8 +5,10 @@
 import { Button, Input, useKumoToastManager } from "@cloudflare/kumo";
 import { ArrowLeftIcon, EyeIcon, EyeSlashIcon } from "@phosphor-icons/react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useSearchParams } from "react-router";
 import { OnboardingFlow } from "~/components/OnboardingFlow";
+import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
 
 export function meta() {
@@ -17,6 +19,16 @@ type LoginStep = "email" | "password" | "forgot" | "reset";
 
 export default function PasswordLoginRoute() {
 	const navigate = useNavigate();
+	const [searchParams] = useSearchParams();
+	// Where to land after signing in (set by the Worker's signed-out redirect).
+	// Same-origin paths only, so this can't be used as an open redirect.
+	const nextParam = searchParams.get("next") || "/";
+	const afterSignIn = nextParam.startsWith("/") && !nextParam.startsWith("//") ? nextParam : "/";
+	const { data: config } = useQuery({
+		queryKey: queryKeys.config,
+		queryFn: () => api.getConfig(),
+		staleTime: Infinity,
+	});
 	const toastManager = useKumoToastManager();
 	const [step, setStep] = useState<LoginStep>("email");
 	const [email, setEmail] = useState("");
@@ -69,7 +81,7 @@ export default function PasswordLoginRoute() {
 		setSubmitting(true);
 		try {
 			await api.passwordLogin(email.trim(), password);
-			navigate("/");
+			navigate(afterSignIn);
 		} catch (err: unknown) {
 			toastManager.add({
 				title: err instanceof Error ? err.message : "Sign in failed",
@@ -138,7 +150,7 @@ export default function PasswordLoginRoute() {
 				title: "Password reset successfully",
 				variant: "success",
 			});
-			navigate("/");
+			navigate(afterSignIn);
 		} catch (err: unknown) {
 			toastManager.add({
 				title: err instanceof Error ? err.message : "Password reset failed",
@@ -420,8 +432,8 @@ export default function PasswordLoginRoute() {
 				<OnboardingFlow
 					isOpen={showOnboarding}
 					onClose={() => setShowOnboarding(false)}
-					onSuccess={() => navigate("/")}
-					mailDomain="inboxies.email"
+					onSuccess={() => navigate(afterSignIn)}
+					mailDomain={config?.mailDomain || "inboxies.email"}
 				/>
 			</div>
 		</div>

@@ -74,6 +74,7 @@
 		C08F4C03E2FD7A5DEB6A55CB /* PrivateEmailRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74FC3A9EFF9C884E623775CF /* PrivateEmailRequestView.swift */; };
 		C5B92128F6B87965073E2E64 /* EmailActionExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D367BF95650BA4DB33A884 /* EmailActionExecutor.swift */; };
 		C5E8225C2C880AC6DD2D44E8 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723EAC1668DC9825FED81F4A /* AuthStore.swift */; };
+		C4E1A7B20000000000000001 /* PaymentCallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4E1A7B20000000000000002 /* PaymentCallback.swift */; };
 		C739D111D71A04159CBC722D /* ComposeFormatChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DC837F339566A42E1C94BC /* ComposeFormatChrome.swift */; };
 		D1A18F95D1ED4AF08CF9EC6E /* ThemeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 686F4132F3FED4973E6530FA /* ThemeController.swift */; };
 		D5566197F7B08166FD48F399 /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6B151B4351CA838E67E2C95C /* Inter-SemiBold.ttf */; };
@@ -91,6 +92,7 @@
 		FBA191135B4D172A08F34424 /* DomainAdminSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F56EB81F290A128A71EC93C /* DomainAdminSettingsView.swift */; };
 		FFCDD7CFD3A77A3C7BB29D37 /* SearchQueryParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */; };
 		7E2F4A6C8B0D1E3F5A7C9B2D /* WebKitLinkageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C3E5F70B2D4F6E8A9C1B3D /* WebKitLinkageTests.swift */; };
+		C4E1A7B20000000000000003 /* ClientContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4E1A7B20000000000000004 /* ClientContractTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -158,12 +160,14 @@
 		6B151B4351CA838E67E2C95C /* Inter-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-SemiBold.ttf"; sourceTree = "<group>"; };
 		6E93684EE128A37309AE0A94 /* ComposeRichTextEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeRichTextEditor.swift; sourceTree = "<group>"; };
 		723EAC1668DC9825FED81F4A /* AuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStore.swift; sourceTree = "<group>"; };
+		C4E1A7B20000000000000002 /* PaymentCallback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaymentCallback.swift; sourceTree = "<group>"; };
 		74FC3A9EFF9C884E623775CF /* PrivateEmailRequestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailRequestView.swift; sourceTree = "<group>"; };
 		75A1EA00A322BC72F5FC673D /* LiquidGlass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlass.swift; sourceTree = "<group>"; };
 		76573DB9DE17A066E6E6FDD9 /* FiltersSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FiltersSettingsView.swift; sourceTree = "<group>"; };
 		789C13DE076FDF45C432F26B /* SettingsSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSheetView.swift; sourceTree = "<group>"; };
 		7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchQueryParserTests.swift; sourceTree = "<group>"; };
 		A1C3E5F70B2D4F6E8A9C1B3D /* WebKitLinkageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebKitLinkageTests.swift; sourceTree = "<group>"; };
+		C4E1A7B20000000000000004 /* ClientContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientContractTests.swift; sourceTree = "<group>"; };
 		7DA1E3393B9B60E61F888638 /* MarkdownContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownContentView.swift; sourceTree = "<group>"; };
 		7F56EB81F290A128A71EC93C /* DomainAdminSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainAdminSettingsView.swift; sourceTree = "<group>"; };
 		7FB6663712D0C7C547997049 /* InboxDigestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxDigestView.swift; sourceTree = "<group>"; };
@@ -239,6 +243,7 @@
 				0A458C487170DA657BC2E771 /* APIClient.swift */,
 				4D03BF25CB75DAA494A700AA /* AppModel.swift */,
 				723EAC1668DC9825FED81F4A /* AuthStore.swift */,
+				C4E1A7B20000000000000002 /* PaymentCallback.swift */,
 				2F5E3708A0F74752B1E1E925 /* ComposeFormModel.swift */,
 				C97C8E32E058FDC6AE3A2A3F /* DatabaseService.swift */,
 				0A95037271E59C93C4B34508 /* DeliveryStatus.swift */,
@@ -406,6 +411,7 @@
 			children = (
 				7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */,
 				A1C3E5F70B2D4F6E8A9C1B3D /* WebKitLinkageTests.swift */,
+				C4E1A7B20000000000000004 /* ClientContractTests.swift */,
 			);
 			path = InboxiesTests;
 			sourceTree = "<group>";
@@ -618,6 +624,7 @@
 				784F348B65D6F07146508A52 /* AppTheme.swift in Sources */,
 				69F21D5C6787D7D539D546AD /* AttachmentListView.swift in Sources */,
 				C5E8225C2C880AC6DD2D44E8 /* AuthStore.swift in Sources */,
+				C4E1A7B20000000000000001 /* PaymentCallback.swift in Sources */,
 				70FD6A8944FFB04CF64D387B /* AutoReplySettingsView.swift in Sources */,
 				AD5A72B5AFFB651EACFC1EB2 /* ChatSheetView.swift in Sources */,
 				9FD1E22569C1571649608A34 /* ComposeActionListOverlay.swift in Sources */,
@@ -680,6 +687,7 @@
 			files = (
 				FFCDD7CFD3A77A3C7BB29D37 /* SearchQueryParserTests.swift in Sources */,
 				7E2F4A6C8B0D1E3F5A7C9B2D /* WebKitLinkageTests.swift in Sources */,
+				C4E1A7B20000000000000003 /* ClientContractTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

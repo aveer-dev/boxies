@@ -29,8 +29,12 @@ data class PushDeepLink(
 
 class PushNotificationManager private constructor(private val appContext: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val prefs get() = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private var activeMailboxId: String? = null
-    private var deviceToken: String? = null
+    /** Persisted so sign-out / account deletion can unregister after a cold start. */
+    private var deviceToken: String? = prefs.getString(KEY_DEVICE_TOKEN, null)
+    /** Mailboxes this device token was registered for in this process. */
+    private val registeredMailboxIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val _pendingDeepLink = MutableStateFlow<PushDeepLink?>(null)
     val pendingDeepLink: StateFlow<PushDeepLink?> = _pendingDeepLink.asStateFlow()
 
@@ -54,14 +58,32 @@ class PushNotificationManager private constructor(private val appContext: Contex
         fetchAndRegisterToken(mailboxId)
     }
 
-    fun isNotificationsEnabled(): Boolean =
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_PUSH_ENABLED, true)
+    fun isNotificationsEnabled(): Boolean = prefs.getBoolean(KEY_PUSH_ENABLED, true)
+
+    /** What Settings should show: the user's preference *and* the OS permission. */
+    fun isEffectivelyEnabled(): Boolean = isNotificationsEnabled() && hasNotificationPermission()
 
     fun setNotificationsEnabled(enabled: Boolean) {
-        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putBoolean(KEY_PUSH_ENABLED, enabled)
-        }
+        prefs.edit { putBoolean(KEY_PUSH_ENABLED, enabled) }
+    }
+
+    /**
+     * Ask once after sign-in (POST_NOTIFICATIONS is a runtime permission on API 33+).
+     * After a denial, Settings → Notifications is the only re-entry point.
+     */
+    fun shouldPromptForPermission(): Boolean =
+        BuildConfig.HAS_GOOGLE_SERVICES &&
+            isNotificationsEnabled() &&
+            !hasNotificationPermission() &&
+            !prefs.getBoolean(KEY_PERMISSION_PROMPTED, false)
+
+    fun markPermissionPrompted() {
+        prefs.edit { putBoolean(KEY_PERMISSION_PROMPTED, true) }
+    }
+
+    fun onPermissionResult(granted: Boolean, mailboxId: String?) {
+        setNotificationsEnabled(granted)
+        if (granted) mailboxId?.let { requestPermissionAndRegister(it) }
     }
 
     fun hasNotificationPermission(): Boolean {
@@ -74,14 +96,30 @@ class PushNotificationManager private constructor(private val appContext: Contex
 
     fun handleTokenReceived(token: String) {
         deviceToken = token
+        prefs.edit { putString(KEY_DEVICE_TOKEN, token) }
         activeMailboxId?.let { syncTokenWithServer(it, token) }
     }
 
     fun unregisterToken(mailboxId: String) {
         val token = deviceToken ?: return
+        registeredMailboxIds.remove(mailboxId)
         scope.launch {
             runCatching { ApiClient.shared.unregisterDeviceToken(mailboxId, token) }
         }
+    }
+
+    /**
+     * Drop this device's token from every mailbox before the session token goes away
+     * (sign-out / account deletion). Must run while the Bearer token is still valid.
+     */
+    suspend fun unregisterAll(mailboxIds: Collection<String>) {
+        val token = deviceToken ?: return
+        val targets = (mailboxIds + registeredMailboxIds).toSet()
+        for (id in targets) {
+            runCatching { ApiClient.shared.unregisterDeviceToken(id, token) }
+        }
+        registeredMailboxIds.clear()
+        activeMailboxId = null
     }
 
     private fun fetchAndRegisterToken(mailboxId: String) {
@@ -113,6 +151,7 @@ class PushNotificationManager private constructor(private val appContext: Contex
     private fun syncTokenWithServer(mailboxId: String, token: String) {
         scope.launch {
             runCatching { ApiClient.shared.registerDeviceToken(mailboxId, token) }
+                .onSuccess { registeredMailboxIds.add(mailboxId) }
         }
     }
 
@@ -146,6 +185,8 @@ class PushNotificationManager private constructor(private val appContext: Contex
         const val CHANNEL_ID = "inboxies_mail"
         private const val PREFS_NAME = "inboxies_prefs"
         private const val KEY_PUSH_ENABLED = "push_notifications_enabled"
+        private const val KEY_PERMISSION_PROMPTED = "push_permission_prompted"
+        private const val KEY_DEVICE_TOKEN = "push_device_token"
 
         lateinit var shared: PushNotificationManager
             private set

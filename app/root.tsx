@@ -24,6 +24,7 @@ import {
 } from "react-router";
 import { ApiError } from "~/services/api";
 import "./index.css";
+import { signOut } from "~/lib/sign-out";
 
 function makeQueryClient() {
 	return new QueryClient({
@@ -179,9 +180,7 @@ export function ErrorBoundary({ error }: { error: unknown }) {
 						</Button>
 						<Button
 							variant="secondary"
-							onClick={() => {
-								window.location.href = "/cdn-cgi/access/logout";
-							}}
+							onClick={() => void signOut()}
 						>
 							Log out
 						</Button>

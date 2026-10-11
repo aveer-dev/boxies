@@ -6,6 +6,7 @@ import { type Context, type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
 import type { RequestPrincipal } from "../lib/mailbox-acl";
+import type { MailboxContext } from "../lib/mailbox";
 import { isDomainAdmin } from "../lib/domain-admin";
 import {
 	getDomainMetadata,
@@ -38,8 +39,20 @@ import { ensurePrincipalAccount } from "../lib/identity-links";
 import { aclFromOwnerKeys, principalKeys } from "../lib/mailbox-acl";
 import { createInviteRecord, saveInvite, inviteAcceptUrl } from "../lib/invites";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { isDevRuntime } from "../lib/dev-runtime";
+import {
+	domainVerificationChallenge,
+	isDomainVerified,
+	verificationRequiredBody,
+} from "../lib/domain-verification";
 
-type AppVariables = { principal?: RequestPrincipal };
+/** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
+function canSkipDomainVerification(env: Env): boolean {
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
+}
+
+/** Invite issued for a team member created by the onboarding setup-users step. */
+type SetupUserInvite = { token: string; inviteUrl: string; inviteeEmail: string };
 
 const DnsRecordBody = z.object({
 	type: z.enum(["A", "AAAA", "CNAME", "TXT", "MX", "NS", "SRV"]),
@@ -58,7 +71,7 @@ export interface AuthorizedDomainContext {
 }
 
 export async function authorizeDomainAdmin(
-	c: Context<{ Bindings: Env; Variables: AppVariables }>,
+	c: Context<MailboxContext>,
 	domainParam: string,
 ): Promise<AuthorizedDomainContext | Response> {
 	const principal = c.get("principal") as RequestPrincipal | undefined;
@@ -85,7 +98,7 @@ export async function authorizeDomainAdmin(
 	return { principal, domainMeta, isSuperAdmin };
 }
 
-export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: AppVariables }>) {
+export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * List all domains administered by the current user.
 	 */
@@ -107,8 +120,8 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
 
 		const isSuper = await isDomainAdmin(c.env, principal);
-		if (!isSuper && principal.kind !== "user") {
-			return c.json({ error: "Forbidden: Only user accounts can administer domains" }, 403);
+		if (!isSuper && principalKeys(principal).length === 0) {
+			return c.json({ error: "Forbidden" }, 403);
 		}
 
 		const parsed = z
@@ -143,6 +156,23 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			);
 		}
 
+		// The connecting account becomes this domain's admin.
+		const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
+		const ownerKey = ensured.ownerKeys[0];
+
+		// Non-super-admins must prove DNS control before we create a zone for them.
+		if (!isSuper && !canSkipDomainVerification(c.env)) {
+			const secret =
+				c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
+			if (!secret) {
+				return c.json({ error: "Server authentication is not configured" }, 500);
+			}
+			const challenge = await domainVerificationChallenge(secret, domain, ownerKey);
+			if (!(await isDomainVerified(challenge))) {
+				return c.json(verificationRequiredBody(domain, challenge), 428);
+			}
+		}
+
 		// Provision Cloudflare Zone & Email Routing
 		let zone;
 		try {
@@ -166,12 +196,16 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			zone.name_servers,
 		);
 
-		const ownerUserId = principal.userId || principal.id;
+		// Password sessions keep the plain user id (checkout/billing look it up);
+		// everyone else is recorded by their durable account key.
+		const ownerUserId = principal.sub?.startsWith("user:")
+			? principal.sub.slice("user:".length)
+			: ownerKey;
 		const domainMetadata: DomainMetadata = {
 			domain,
 			zoneId: zone.id,
 			ownerUserId,
-			adminUserIds: [ownerUserId],
+			adminUserIds: [ownerKey],
 			status: zone.status === "active" ? "active" : "pending_nameservers",
 			nameservers: zone.name_servers,
 			emailRoutingEnabled: true,
@@ -507,7 +541,7 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 		const results: Array<{
 			mailboxId: string;
 			name: string;
-			invite: { token: string; inviteUrl: string; inviteeEmail: string } | null;
+			invite: SetupUserInvite | null;
 			error?: string;
 		}> = [];
 		const domain = domainMeta.domain;
@@ -549,7 +583,7 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			}
 
 			// If contactEmail provided, generate invite record
-			let inviteData: { token: string; inviteUrl: string; inviteeEmail: string } | null = null;
+			let inviteData: SetupUserInvite | null = null;
 			if (u.contactEmail && u.contactEmail.includes("@")) {
 				const invite = createInviteRecord({
 					mailboxId: canonical,

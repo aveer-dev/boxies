@@ -21,6 +21,18 @@ export function loader() {
 }
 
 export default function CheckoutMockRoute() {
+	// The simulator posts an unsigned webhook; it exists for local dev only.
+	if (!import.meta.env.DEV) {
+		return (
+			<div className="min-h-screen bg-kumo-recessed flex items-center justify-center p-4 text-sm text-kumo-subtle">
+				Checkout simulator is only available in development.
+			</div>
+		);
+	}
+	return <CheckoutMockSimulator />;
+}
+
+function CheckoutMockSimulator() {
 	const [searchParams] = useSearchParams();
 	const navigate = useNavigate();
 	const domain = searchParams.get("domain") || "example.com";
@@ -135,7 +147,7 @@ export default function CheckoutMockRoute() {
 					>
 						{completing ? (
 							<span className="flex items-center gap-2">
-								<Loader size="xs" /> Simulating payment...
+								<Loader size="sm" /> Simulating payment...
 							</span>
 						) : (
 							`Pay $${total.toFixed(2)} & Subscribe`

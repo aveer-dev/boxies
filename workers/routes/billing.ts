@@ -5,6 +5,7 @@
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
+import type { MailboxContext } from "../lib/mailbox";
 import {
 	checkDomainAvailability,
 	registerDomain,
@@ -89,11 +90,36 @@ export interface BillingSessionRecord {
 	createdAt: string;
 	updatedAt: string;
 	error?: string;
+	/** Set once checkout-return has handed out the owner session; never mint twice. */
+	tokenIssuedAt?: string;
+	/** Registrar result, kept so a webhook retry never pays for the domain twice. */
+	registration?: Awaited<ReturnType<typeof registerDomain>>;
 }
 
 export function billingSessionKey(sessionId: string): string {
 	return `billing/sessions/${sessionId}.json`;
 }
+
+export function billingEventKey(eventId: string): string {
+	return `billing/events/${eventId}.json`;
+}
+
+async function loadBillingSession(
+	bucket: R2Bucket,
+	sessionId: string,
+): Promise<BillingSessionRecord | null> {
+	if (!sessionId) return null;
+	const obj = await bucket.get(billingSessionKey(sessionId));
+	if (!obj) return null;
+	try {
+		return (await obj.json()) as BillingSessionRecord;
+	} catch {
+		return null;
+	}
+}
+
+/** Stripe statuses that mean the customer actually owes nothing more. */
+const SETTLED_PAYMENT_STATUSES = new Set(["paid", "no_payment_required"]);
 
 function readCookie(header: string | undefined, name: string): string | undefined {
 	if (!header) return undefined;
@@ -203,7 +229,7 @@ function isMockCheckoutPath(pathname: string): boolean {
 	return /^\/checkout\/mock(?:[/.]|$)/i.test(decoded);
 }
 
-export function registerBillingRoutes(app: Hono<{ Bindings: Env }>) {
+export function registerBillingRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * The mock checkout page simulates payment by posting an unsigned webhook event,
 	 * so it only exists in local dev. Runs ahead of the React Router catch-all.
@@ -410,25 +436,33 @@ export function registerBillingRoutes(app: Hono<{ Bindings: Env }>) {
 		const userAgent = c.req.header("user-agent") || "";
 		const isMobile = clientQuery === "ios" || clientQuery === "android" || /iPhone|iPad|iPod|Android/i.test(userAgent);
 
-		// Resolve or mint session token if user was created
+		// Mint the owner session only for the paid checkout this browser just completed:
+		// the Stripe session id is the secret, it must be provisioned for this domain,
+		// and the token is handed out exactly once.
 		let token: string | undefined;
 		let mailboxId: string | undefined;
 
-		if (domain) {
-			const meta = await getDomainMetadata(c.env.BUCKET, domain);
-			if (meta && meta.ownerUserId) {
-				const owner = await loadPlatformUser(c.env.BUCKET, meta.ownerUserId);
-				if (owner && owner.mailboxEmail) {
-					mailboxId = owner.mailboxEmail;
-					const secret = c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
-					if (secret) {
-						const session = await issuePasswordSessionToken(secret, {
-							userId: owner.id,
-							email: owner.mailboxEmail,
-						});
-						token = session.token;
-					}
-				}
+		const record = await loadBillingSession(c.env.BUCKET, sessionId);
+		if (
+			record &&
+			domain &&
+			record.domain === domain &&
+			record.status === "ready" &&
+			!record.tokenIssuedAt &&
+			record.ownerUserId
+		) {
+			const owner = await loadPlatformUser(c.env.BUCKET, record.ownerUserId);
+			const secret = c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
+			if (owner && owner.mailboxEmail && secret) {
+				record.tokenIssuedAt = new Date().toISOString();
+				record.updatedAt = record.tokenIssuedAt;
+				await c.env.BUCKET.put(billingSessionKey(record.sessionId), JSON.stringify(record));
+				mailboxId = owner.mailboxEmail;
+				const session = await issuePasswordSessionToken(secret, {
+					userId: owner.id,
+					email: owner.mailboxEmail,
+				});
+				token = session.token;
 			}
 		}
 
@@ -521,7 +555,7 @@ window.location.href = ${JSON.stringify(deepLink)};
 					status: "ready",
 					domain: targetDomain,
 					ownerUserId: meta.ownerUserId,
-					pricing: sessionRecord?.pricing ?? computeDomainPricing(10.44),
+					pricing: computeDomainPricing(sessionRecord?.pricing?.domainFeeUsd ?? 10.44),
 					mailboxId: sessionRecord?.mailboxId,
 				});
 			}
@@ -531,7 +565,8 @@ window.location.href = ${JSON.stringify(deepLink)};
 			return c.json({
 				status: sessionRecord.status,
 				domain: sessionRecord.domain,
-				pricing: sessionRecord.pricing,
+				// Recompute so records saved before the client field names existed still decode.
+				pricing: computeDomainPricing(sessionRecord.pricing.domainFeeUsd),
 				mailboxId: sessionRecord.mailboxId,
 			});
 		}
@@ -586,6 +621,17 @@ window.location.href = ${JSON.stringify(deepLink)};
 			return c.json({ error: "Missing session object" }, 400);
 		}
 
+		// Never provision for an unpaid session (mock checkout in dev has no payment_status).
+		if (!SETTLED_PAYMENT_STATUSES.has(session.payment_status) && !(isDevRuntime() && !webhookSecret)) {
+			return c.json({ received: true, ignored: true, reason: "payment_not_settled" });
+		}
+
+		// Stripe retries deliveries; skip events that already provisioned.
+		const eventId = typeof event.id === "string" ? event.id : "";
+		if (eventId && (await c.env.BUCKET.head(billingEventKey(eventId)))) {
+			return c.json({ received: true, duplicate: true });
+		}
+
 		const domain = (session.metadata?.domain || "").toLowerCase().trim();
 		if (!domain) {
 			return c.json({ error: "No domain metadata in checkout session" }, 400);
@@ -605,13 +651,23 @@ window.location.href = ${JSON.stringify(deepLink)};
 			return c.json({ received: true, domain, status: "already_provisioned" });
 		}
 
-		// 2. Register domain via Cloudflare Registrar
-		let registrationResult;
-		try {
-			registrationResult = await registerDomain(c.env, domain);
-		} catch (regErr: unknown) {
-			const msg = regErr instanceof Error ? regErr.message : "Registrar registration failed";
-			return c.json({ error: `Registrar error: ${msg}` }, 502);
+		// 2. Register domain via Cloudflare Registrar. A retry after a later step failed
+		// reuses the recorded registration instead of buying the domain again.
+		const sessionRecord = session.id ? await loadBillingSession(c.env.BUCKET, session.id) : null;
+		let registrationResult = sessionRecord?.registration;
+		if (!registrationResult) {
+			try {
+				registrationResult = await registerDomain(c.env, domain);
+			} catch (regErr: unknown) {
+				const msg = regErr instanceof Error ? regErr.message : "Registrar registration failed";
+				return c.json({ error: `Registrar error: ${msg}` }, 502);
+			}
+			if (sessionRecord) {
+				sessionRecord.registration = registrationResult;
+				sessionRecord.status = "provisioning";
+				sessionRecord.updatedAt = new Date().toISOString();
+				await c.env.BUCKET.put(billingSessionKey(sessionRecord.sessionId), JSON.stringify(sessionRecord));
+			}
 		}
 
 		// 3. Provision Cloudflare Zone & Email Routing
@@ -696,16 +752,20 @@ window.location.href = ${JSON.stringify(deepLink)};
 
 		// 6. Update session record in R2 if session ID is known
 		if (session.id) {
-			const sKey = billingSessionKey(session.id);
-			const currentRec = await c.env.BUCKET.get(sKey);
-			if (currentRec) {
-				const rec = (await currentRec.json()) as BillingSessionRecord;
+			const rec = await loadBillingSession(c.env.BUCKET, session.id);
+			if (rec) {
 				rec.status = "ready";
 				rec.mailboxId = primaryCanonical;
 				rec.ownerUserId = ownerUserId;
 				rec.updatedAt = new Date().toISOString();
-				await c.env.BUCKET.put(sKey, JSON.stringify(rec));
+				await c.env.BUCKET.put(billingSessionKey(session.id), JSON.stringify(rec));
 			}
+		}
+		if (eventId) {
+			await c.env.BUCKET.put(
+				billingEventKey(eventId),
+				JSON.stringify({ eventId, domain, processedAt: new Date().toISOString() }),
+			);
 		}
 
 		return c.json({

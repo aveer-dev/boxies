@@ -79,7 +79,7 @@ await storeEmailContent(bucket, emailId, {
 	rawMime: rawBytes,
 });
 const snippet = computeSnippet(html);
-assert.equal(snippet, html.slice(0, 300));
+assert.equal(snippet, "Hello from the wire — longer than a tweet but under the row cap.");
 assert.ok(bucket.store.has(emailBodyKey(emailId)));
 assert.ok(bucket.store.has(emailRawKey(emailId)));
 

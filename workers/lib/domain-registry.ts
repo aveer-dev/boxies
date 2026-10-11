@@ -4,6 +4,7 @@
 
 import { principalKeys, type RequestPrincipal } from "./mailbox-acl";
 import { aliasMetadataKey, canonicalMailboxId, mailboxMetadataKey } from "./mailbox-routing";
+import { listAllR2Objects } from "./r2-list";
 import { isPrivateAliasMeta, type AnyAliasMetadata } from "./alias-utils";
 
 /** The address already belongs to a mailbox or a private email. */
@@ -106,7 +107,7 @@ export async function deleteDomainMetadata(
 export async function listAllRegisteredDomains(
 	bucket: R2Bucket,
 ): Promise<DomainMetadata[]> {
-	const listed = await bucket.list({ prefix: DOMAINS_PREFIX });
+	const listed = { objects: await listAllR2Objects(bucket, DOMAINS_PREFIX) };
 	const results: DomainMetadata[] = [];
 
 	for (const object of listed.objects) {

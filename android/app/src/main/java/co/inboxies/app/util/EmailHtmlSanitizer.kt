@@ -13,8 +13,24 @@ import org.jsoup.safety.Safelist
  * HTML profile, forbid `<style>` tags, keep `target` on links.
  */
 object EmailHtmlSanitizer {
+    /** Opted-in policy ("Load images"): matches web EmailIframe once the reader allows remote images. */
     const val CONTENT_SECURITY_POLICY =
         "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'"
+
+    /**
+     * Default policy: remote images (tracking pixels) stay blocked until the reader
+     * opts in. Inline `cid:` parts are already rewritten to `data:` before render.
+     */
+    const val BLOCKED_REMOTE_IMAGES_POLICY =
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'unsafe-inline'"
+
+    private val remoteImageRegex = Regex(
+        """(?:\bsrc|\bbackground)\s*=\s*["']?\s*https?:|url\(\s*(?:["']|&quot;)?\s*https?:""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** True when sanitized HTML references http(s) images the default policy would block. */
+    fun hasRemoteImages(html: String): Boolean = remoteImageRegex.containsMatchIn(html)
 
     const val OPAQUE_ORIGIN = "https://inboxies.invalid/"
 

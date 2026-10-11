@@ -546,7 +546,9 @@ export function AdminDnsSuite({
 							<div className="w-full sm:w-48">
 								<Select
 									value={selectedDomain}
-									onChange={(val) => setSelectedDomain(String(val))}
+									onValueChange={(val) => {
+										if (val) setSelectedDomain(String(val));
+									}}
 								>
 									{availableDomains.map((d) => (
 										<Select.Option key={d} value={d}>
@@ -921,7 +923,9 @@ export function AdminDnsSuite({
 								</label>
 								<Select
 									value={recordType}
-									onChange={(val) => setRecordType(val as RecordType)}
+									onValueChange={(val) => {
+										if (val) setRecordType(val as RecordType);
+									}}
 								>
 									{RECORD_TYPES.map((t) => (
 										<Select.Option key={t} value={t}>
@@ -937,7 +941,9 @@ export function AdminDnsSuite({
 								</label>
 								<Select
 									value={String(recordTtl)}
-									onChange={(val) => setRecordTtl(Number(val))}
+									onValueChange={(val) => {
+										if (val) setRecordTtl(Number(val));
+									}}
 								>
 									{TTL_OPTIONS.map((opt) => (
 										<Select.Option key={opt.value} value={String(opt.value)}>
@@ -1155,7 +1161,7 @@ export function AdminDnsSuite({
 								<div className="rounded-xl border border-kumo-line bg-kumo-base p-4 space-y-3">
 									<div className="flex items-center justify-between text-xs text-kumo-default font-medium">
 										<span className="flex items-center gap-2">
-											<Loader size="xs" /> Processing mailboxes...
+											<Loader size="sm" /> Processing mailboxes...
 										</span>
 										<span>{exportJob.progress?.percent ?? 0}%</span>
 									</div>
@@ -1510,7 +1516,7 @@ export function AdminDnsSuite({
 													${(newDomainAvailability.pricing?.totalAnnualUsd ?? newDomainAvailability.retailPriceUsd ?? 20).toFixed(2)} USD / year
 												</div>
 												<div className="text-[11px] text-kumo-subtle">
-													Domain wholesale (${(newDomainAvailability.pricing?.domainWholesaleUsd ?? 10.46).toFixed(2)}) + Platform, AI & Cloud Suite (${(newDomainAvailability.pricing?.platformFeeUsd ?? 9.54).toFixed(2)})
+													Domain wholesale (${(newDomainAvailability.pricing?.domainFeeUsd ?? 10.44).toFixed(2)}) + Platform, AI & Cloud Suite (${(newDomainAvailability.pricing?.platformFeeUsd ?? 9.56).toFixed(2)})
 												</div>
 											</div>
 											<div className="flex gap-2">

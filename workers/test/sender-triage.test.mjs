@@ -57,7 +57,8 @@ const allowed = (sender, destination_folder_id = null) => ({
 	assert.equal(result.triageAction, "unknown");
 	assert.equal(result.skipPush, true);
 	assert.equal(result.skipAutoDraft, true);
-	assert.equal(result.skipForward, true);
+	// Forwarding still applies to Screener mail (the forwarder drops spam/spoofs).
+	assert.equal(result.skipForward, false);
 	assert.equal(result.skipAutoReply, true);
 }
 

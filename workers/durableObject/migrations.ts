@@ -429,5 +429,31 @@ export const mailboxMigrations: Migration[] = [
                AND sender NOT IN (SELECT address FROM sender_preferences);
         `),
 	},
+	{
+		// Send rate limit counts this append-only log, not rows in Sent, so deleting
+		// sent mail can't reset it. Seeded from Sent so the window carries over.
+		name: "25_send_log",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS send_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sent_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_send_log_sent_at ON send_log(sent_at);
+            INSERT INTO send_log (sent_at)
+                SELECT date FROM emails
+                 WHERE folder_id = 'sent' AND date >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day');
+        `),
+	},
+	{
+		// Who wrote a draft: 'agent' drafts may be replaced by the agent; user drafts never.
+		name: "26_email_source",
+		sql: txn(`ALTER TABLE emails ADD COLUMN source TEXT;`),
+	},
+	{
+		// Principal keys of whoever registered a push token, so removing someone
+		// from the mailbox ACL also stops their notifications.
+		name: "27_device_token_owner",
+		sql: txn(`ALTER TABLE device_tokens ADD COLUMN owner_keys TEXT;`),
+	},
 ];
 

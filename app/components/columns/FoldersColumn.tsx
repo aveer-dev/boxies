@@ -124,6 +124,11 @@ export default function FoldersColumn() {
 		createFolder.mutate(
 			{ mailboxId, name },
 			{
+				onSuccess: () => {
+					setNewTagName("");
+					setIsCreateOpen(false);
+				},
+				// Keep the dialog open with the name so the user can fix it.
 				onError: (err) =>
 					toastManager.add({
 						title: err instanceof Error ? err.message : "Failed to create tag",
@@ -131,8 +136,6 @@ export default function FoldersColumn() {
 					}),
 			},
 		);
-		setNewTagName("");
-		setIsCreateOpen(false);
 	};
 
 	return (

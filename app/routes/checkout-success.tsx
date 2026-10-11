@@ -131,7 +131,7 @@ export default function CheckoutSuccessRoute() {
 						</>
 					) : (
 						<>
-							<Loader size="xs" />
+							<Loader size="sm" />
 							<span className="text-kumo-subtle font-medium">
 								Finalizing Anycast DNS records and mailbox staging...
 							</span>

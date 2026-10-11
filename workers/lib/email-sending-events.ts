@@ -192,7 +192,7 @@ export type DeliveryStub = {
 	) => Promise<unknown>;
 };
 
-export type ResolveDeliveryStub = (sender: string) => DeliveryStub;
+export type ResolveDeliveryStub = (sender: string) => DeliveryStub | Promise<DeliveryStub>;
 
 /**
  * Apply one Email Sending event body. Returns whether the message should be
@@ -220,7 +220,7 @@ export async function applyEmailSendingEvent(
 
 	let stub: DeliveryStub;
 	try {
-		stub = resolveStub(sender);
+		stub = await resolveStub(sender);
 	} catch (error) {
 		// Invalid / unknown sender cannot be fixed by retry — ack to avoid poison loops.
 		console.warn(

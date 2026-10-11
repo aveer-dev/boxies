@@ -14,6 +14,7 @@ import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
 import { formatQuotedDate } from "../../shared/dates";
 import { canonicalMailboxId } from "./mailbox-routing";
+import { listAllR2Objects } from "./r2-list";
 
 // ── DO Stub ────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ export function getMailboxStub(
 export async function listMailboxes(
 	bucket: R2Bucket,
 ): Promise<{ id: string; email: string }[]> {
-	const list = await bucket.list({ prefix: "mailboxes/" });
+	const list = { objects: await listAllR2Objects(bucket, "mailboxes/") };
 	return list.objects.map((obj) => {
 		const id = obj.key.replace("mailboxes/", "").replace(".json", "");
 		return { id, email: id };
@@ -112,7 +113,13 @@ export function buildReferencesChain(original: EmailFull): {
 	references: string[];
 	threadId: string;
 } {
-	const originalMsgId = original.message_id || original.id;
+	// Cloudflare Email Service generates the on-the-wire Message-ID (it can't be set),
+	// so for mail we sent, reference the provider id recipients actually saw.
+	const providerId = (original as { provider_message_id?: string | null }).provider_message_id;
+	const originalMsgId =
+		(original.folder_id === "sent" && providerId ? providerId.replace(/^<|>$/g, "") : null) ||
+		original.message_id ||
+		original.id;
 	let existingRefs: string[] = [];
 	if (original.email_references) {
 		try {

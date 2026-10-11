@@ -20,6 +20,7 @@ import ColumnPane from "~/components/columns/ColumnPane";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import PrivateEmailLogo from "~/components/PrivateEmailLogo";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
+import { signOut } from "~/lib/sign-out";
 
 // Placeholder shown in the textarea when no custom prompt is set.
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
@@ -108,11 +109,9 @@ function SettingsContent() {
 							<Button
 								variant="secondary"
 								size="sm"
-								onClick={() => {
-									window.location.href = "/cdn-cgi/access/logout";
-								}}
+								onClick={() => void signOut()}
 							>
-								Log out of Cloudflare Access
+								Log out
 							</Button>
 						</div>
 					</div>

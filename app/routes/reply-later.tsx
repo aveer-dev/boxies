@@ -13,6 +13,7 @@ import { useParams } from "react-router";
 import { formatParticipants } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components/columns/ListParts";
+import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
@@ -39,9 +40,12 @@ export default function ReplyLaterRoute() {
 		() => ({ reply_later: "true", page: String(page), limit: String(PAGE_SIZE) }),
 		[page],
 	);
-	const { data: emailData, isFetching: isRefreshing } = useEmails(mailboxId, params, {
-		refetchInterval: 30_000,
-	});
+	const {
+		data: emailData,
+		isFetching: isRefreshing,
+		error: loadError,
+		refetch,
+	} = useEmails(mailboxId, params, { refetchInterval: 30_000 });
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
 
@@ -114,6 +118,8 @@ export default function ReplyLaterRoute() {
 				)}
 				{isRefreshing && emails.length === 0 ? (
 					<ThreadListSkeleton />
+				) : loadError && emails.length === 0 ? (
+					<ListLoadError error={loadError} onRetry={() => void refetch()} />
 				) : emails.length === 0 ? (
 					<ListEmptyState
 						icon={<ClockCounterClockwiseIcon size={40} weight="thin" className="text-kumo-subtle" />}

@@ -24,6 +24,7 @@ final class AuthStore {
         }
         token = KeychainStore.read(tokenKey)
         userEmail = UserDefaults.standard.string(forKey: emailKey)
+        APIClient.shared.authToken = token
     }
 
     func signInWithApple(identityToken: String, email: String?) async {
@@ -109,6 +110,7 @@ final class AuthStore {
     func signOut() {
         token = nil
         userEmail = nil
+        APIClient.shared.authToken = nil
         guard persistsSession else { return }
         KeychainStore.delete(tokenKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
@@ -118,6 +120,8 @@ final class AuthStore {
     private func persist(token: String, email: String?) {
         self.token = token
         self.userEmail = email
+        // Set before any view reacts to `token`, so follow-up calls in the same flow are authed.
+        APIClient.shared.authToken = token
         guard persistsSession else { return }
         KeychainStore.write(tokenKey, value: token)
         if let email {

@@ -69,6 +69,7 @@ function mockEnv(bucket, extras = {}) {
 				return {
 					id,
 					reviveMailbox: async () => {},
+					pruneDeviceTokensToAcl: async () => 0,
 					getFolders: async () => [],
 					getEmails: async () => [],
 					countEmails: async () => 0,

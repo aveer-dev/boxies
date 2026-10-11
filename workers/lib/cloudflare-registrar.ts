@@ -8,6 +8,7 @@
  */
 
 import { CloudflareApiError, type CloudflareClientEnv } from "./cloudflare-client";
+import { isDevRuntime } from "./dev-runtime";
 import type { DomainRegistrationInfo } from "./domain-registry";
 
 export interface DomainPricingBreakdown {
@@ -20,6 +21,10 @@ export interface DomainPricingBreakdown {
 		domain: string;
 		aiAndPlatform: string[];
 	};
+	/** Same as domainFeeUsd / billingInterval: the names the iOS & Android models decode. */
+	domainWholesaleUsd: number;
+	interval: "year";
+	lineItems: { name: string; description: string; amountUsd: number }[];
 }
 
 export interface DomainAvailabilityResult {
@@ -80,8 +85,9 @@ const TLD_WHOLESALE_PRICING: Record<string, number> = {
 
 const STANDARD_RETAIL_PRICE = 20.0;
 
+// Mock only in local dev / tests. In production missing credentials must fail closed.
 function isMockEnv(env: CloudflareClientEnv): boolean {
-	return !env.CF_API_TOKEN || !env.CF_ACCOUNT_ID;
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
 }
 
 // In-memory mock registrar store for dev / test environments
@@ -115,10 +121,24 @@ export function computeDomainPricing(wholesalePrice: number): DomainPricingBreak
 
 	return {
 		domainFeeUsd: domainFee,
+		domainWholesaleUsd: domainFee,
 		platformFeeUsd,
 		totalAnnualUsd,
 		billingInterval: "year",
+		interval: "year",
 		currency: "USD",
+		lineItems: [
+			{
+				name: "Domain registration",
+				description: "1-year registration at the wholesale ICANN price via Cloudflare Registrar",
+				amountUsd: domainFee,
+			},
+			{
+				name: "Inboxies platform, AI & infrastructure",
+				description: "AI email agent, sync, storage, DNS and email security",
+				amountUsd: platformFeeUsd,
+			},
+		],
 		features: {
 			domain: "1-year domain registration & wholesale ICANN fee via Cloudflare Registrar",
 			aiAndPlatform: [

@@ -33,6 +33,7 @@ struct DomainAdminDNSView: View {
                     Text(errorMessage)
                         .font(.inter(size: 13))
                         .foregroundStyle(AppTheme.deepDarkRed)
+                        .textSelection(.enabled)
                 }
             }
 
@@ -486,6 +487,7 @@ struct AddDnsRecordSheet: View {
                         Text(errorMessage)
                             .font(.inter(size: 13))
                             .foregroundStyle(AppTheme.deepDarkRed)
+                            .textSelection(.enabled)
                     }
                 }
 
@@ -592,6 +594,7 @@ struct AddDomainSheet: View {
                         Text(errorMessage)
                             .font(.inter(size: 13))
                             .foregroundStyle(AppTheme.deepDarkRed)
+                            .textSelection(.enabled)
                     }
                 }
 
@@ -801,6 +804,9 @@ struct DomainExportSheet: View {
     @State private var isStarting = false
     @State private var errorMessage: String?
     @State private var pollingTask: Task<Void, Never>?
+    @State private var isDownloading = false
+    @State private var downloadedArchive: ExportArchiveFile?
+    @State private var sharingArchive: ExportArchiveFile?
 
     var body: some View {
         NavigationStack {
@@ -810,6 +816,7 @@ struct DomainExportSheet: View {
                         Text(errorMessage)
                             .font(.inter(size: 13))
                             .foregroundStyle(AppTheme.deepDarkRed)
+                            .textSelection(.enabled)
                     }
                 }
 
@@ -878,18 +885,28 @@ struct DomainExportSheet: View {
                                         .foregroundStyle(AppTheme.ink)
                                 }
                             }
-                            if let downloadUrl = APIClient.shared.exportDownloadURL(jobId: job.id), let url = URL(string: downloadUrl) {
-                                Link(destination: url) {
-                                    HStack {
-                                        Spacer()
-                                        Label("Download .mbox Archive", systemImage: "arrow.down.circle.fill")
-                                            .font(.inter(size: 15, weight: .semibold))
-                                            .foregroundStyle(AppTheme.accent)
-                                        Spacer()
+                            // The download route needs the bearer token, so fetch it here
+                            // and hand the file to the share sheet (Files, AirDrop, Mail).
+                            Button {
+                                Task { await downloadArchive(jobId: job.id) }
+                            } label: {
+                                HStack {
+                                    Spacer()
+                                    if isDownloading {
+                                        ProgressView()
+                                    } else {
+                                        Label(
+                                            downloadedArchive == nil ? "Download .mbox Archive" : "Share .mbox Archive",
+                                            systemImage: downloadedArchive == nil ? "arrow.down.circle.fill" : "square.and.arrow.up"
+                                        )
+                                        .font(.inter(size: 15, weight: .semibold))
+                                        .foregroundStyle(AppTheme.accent)
                                     }
+                                    Spacer()
                                 }
-                                .padding(.vertical, 4)
                             }
+                            .disabled(isDownloading)
+                            .padding(.vertical, 4)
                             Text("Archives are retained securely in Cloudflare R2 for 7 days.")
                                 .font(.inter(size: 11))
                                 .foregroundStyle(AppTheme.muted)
@@ -936,6 +953,29 @@ struct DomainExportSheet: View {
             .onDisappear {
                 pollingTask?.cancel()
             }
+            .sheet(item: $sharingArchive) { archive in
+                ExportArchiveShareSheet(fileURL: archive.url)
+                    .presentationDetents([.medium, .large])
+                    .ignoresSafeArea()
+            }
+        }
+    }
+
+    private func downloadArchive(jobId: String) async {
+        if let downloadedArchive, FileManager.default.fileExists(atPath: downloadedArchive.url.path) {
+            sharingArchive = downloadedArchive
+            return
+        }
+        isDownloading = true
+        errorMessage = nil
+        defer { isDownloading = false }
+        do {
+            let url = try await APIClient.shared.downloadExport(jobId: jobId)
+            let archive = ExportArchiveFile(url: url)
+            downloadedArchive = archive
+            sharingArchive = archive
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -994,6 +1034,23 @@ struct DomainExportSheet: View {
     }
 }
 
+/// A downloaded export archive on disk, identifiable for `.sheet(item:)`.
+struct ExportArchiveFile: Identifiable, Equatable {
+    let url: URL
+    var id: URL { url }
+}
+
+/// System share sheet for a local file (Save to Files, AirDrop, Mail…).
+private struct ExportArchiveShareSheet: UIViewControllerRepresentable {
+    let fileURL: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 /// Sheet for moving DNS away from Cloudflare, backing up data, and decommissioning domain.
 struct DomainOffboardSheet: View {
     let domain: String
@@ -1028,6 +1085,7 @@ struct DomainOffboardSheet: View {
                         Text(errorMessage)
                             .font(.inter(size: 13))
                             .foregroundStyle(AppTheme.deepDarkRed)
+                            .textSelection(.enabled)
                     }
                 }
                 if let statusMessage {

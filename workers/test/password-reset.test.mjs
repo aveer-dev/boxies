@@ -13,6 +13,7 @@ import {
 	PASSWORD_RESET_MAX_CODE_ATTEMPTS,
 	PASSWORD_RESET_MAX_ISSUES_PER_WINDOW,
 } from "../lib/password-reset.ts";
+import { decodeJwt } from "jose";
 import {
 	hashPassword,
 	verifyPassword,
@@ -20,6 +21,7 @@ import {
 import {
 	savePlatformUser,
 	loadPlatformUser,
+	passwordSessionIsCurrent,
 } from "../lib/platform-users.ts";
 import { registerAdminAndInviteRoutes } from "../routes/admin-invites.ts";
 import { isPublicAuthPath } from "../lib/auth-paths.ts";
@@ -397,6 +399,43 @@ async function testHttpPerIpRateLimit() {
 	console.log("testHttpPerIpRateLimit: ok");
 }
 
+async function testResetRevokesEarlierSessions() {
+	// Without EMAIL the code is still never handed to the caller outside dev.
+	const noEmail = await setupHttp({ EMAIL: undefined });
+	const forgotRes = await postJson(noEmail.app, noEmail.env, "/api/v1/auth/password/forgot", {
+		email: "alex@inboxies.email",
+	});
+	assert.equal((await forgotRes.json()).devResetCode, undefined, "code must never be returned outside dev");
+
+	const { app, env, bucket, forgot, reset } = await setupHttp();
+	const { code } = await forgot("alex@inboxies.email");
+
+	// Session minted before the reset carries tokenVersion 0
+	const preLogin = await (
+		await postJson(app, env, "/api/v1/auth/password", {
+			email: "alex@inboxies.email",
+			password: "OldPassword123!",
+		})
+	).json();
+	assert.equal(decodeJwt(preLogin.token).tv, 0);
+
+	const resetRes = await reset({ email: "alex@inboxies.email", code, newPassword: "NewValidPassword456!" });
+	assert.equal(resetRes.status, 200);
+	const resetJson = await resetRes.json();
+
+	// The reset bumps tokenVersion, so the earlier session no longer matches
+	assert.equal((await loadPlatformUser(bucket, "user-abc")).tokenVersion, 1);
+	assert.equal(decodeJwt(resetJson.token).tv, 1);
+	assert.equal(
+		await passwordSessionIsCurrent(bucket, "user-abc", decodeJwt(preLogin.token).tv),
+		false,
+		"sessions minted before the reset are revoked",
+	);
+	assert.equal(await passwordSessionIsCurrent(bucket, "user-abc", decodeJwt(resetJson.token).tv), true);
+
+	console.log("testResetRevokesEarlierSessions: ok");
+}
+
 async function main() {
 	assert.equal(isPublicAuthPath("/api/v1/auth/password/forgot"), true, "forgot endpoint must bypass auth");
 	assert.equal(isPublicAuthPath("/api/v1/auth/password/reset"), true, "reset endpoint must bypass auth");
@@ -409,6 +448,7 @@ async function main() {
 	await testPasswordResetHttpRoutes();
 	await testHttpAttemptLimitAndTokenPath();
 	await testHttpPerIpRateLimit();
+	await testResetRevokesEarlierSessions();
 	console.log("All password reset tests passed!");
 }
 

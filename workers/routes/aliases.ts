@@ -4,6 +4,8 @@
 
 import { type Hono } from "hono";
 import { z } from "zod";
+import type { Env } from "../types";
+import type { MailboxContext } from "../lib/mailbox";
 import {
 	buildPrivateAddress,
 	generateRandomAliasToken,
@@ -14,18 +16,60 @@ import {
 } from "../lib/alias-utils";
 import { isAddressTaken } from "../lib/mailbox-routing";
 
-const CreateAliasSchema = z.object({
-	label: z.string().trim().max(100).optional().nullable(),
-	expiresAt: z.string().datetime().optional().nullable(),
-	pausedAction: z.enum(["drop", "reject"]).default("drop"),
-});
+/**
+ * Shipped iOS / Android builds send snake_case (`is_active`, `paused_action`,
+ * `expires_in_seconds`) while web sends camelCase; zod would silently drop the
+ * unknown keys. Fold both spellings into the camelCase schema fields.
+ */
+function normalizeAliasBody(raw: unknown): unknown {
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+	const body = raw as Record<string, unknown>;
+	const pick = (camel: string, snake: string) =>
+		body[camel] !== undefined ? body[camel] : body[snake];
+	const out: Record<string, unknown> = {
+		label: body.label,
+		isActive: pick("isActive", "is_active"),
+		pausedAction: pick("pausedAction", "paused_action"),
+		expiresAt: pick("expiresAt", "expires_at"),
+	};
+	const ttl = pick("expiresInSeconds", "expires_in_seconds");
+	if (out.expiresAt === undefined && ttl !== undefined) {
+		out.expiresAt =
+			ttl === null || Number(ttl) <= 0
+				? null
+				: new Date(Date.now() + Number(ttl) * 1000).toISOString();
+	}
+	for (const key of Object.keys(out)) if (out[key] === undefined) delete out[key];
+	return out;
+}
 
-const UpdateAliasSchema = z.object({
-	label: z.string().trim().max(100).optional().nullable(),
-	isActive: z.boolean().optional(),
-	pausedAction: z.enum(["drop", "reject"]).optional(),
-	expiresAt: z.string().datetime().optional().nullable(),
-});
+const CreateAliasSchema = z.preprocess(
+	normalizeAliasBody,
+	z.object({
+		label: z.string().trim().max(100).optional().nullable(),
+		expiresAt: z.string().datetime().optional().nullable(),
+		pausedAction: z.enum(["drop", "reject"]).default("drop"),
+	}),
+);
+
+const UpdateAliasSchema = z.preprocess(
+	normalizeAliasBody,
+	z.object({
+		label: z.string().trim().max(100).optional().nullable(),
+		isActive: z.union([z.boolean(), z.number().transform((n) => n !== 0)]).optional(),
+		pausedAction: z.enum(["drop", "reject"]).optional(),
+		expiresAt: z.string().datetime().optional().nullable(),
+	}),
+);
+
+/**
+ * One response shape for list / create / update: the snake_case rows every
+ * client decodes, plus `mailbox_id`, with `is_active` as a real boolean
+ * (Android can't decode 1/0 as Boolean).
+ */
+function toAliasResponse<T extends { is_active: number | boolean }>(row: T, mailboxId: string) {
+	return { ...row, mailbox_id: mailboxId, is_active: Boolean(row.is_active) };
+}
 
 const MAX_TOKEN_ATTEMPTS = 5;
 
@@ -51,12 +95,12 @@ async function putRoutingRecord(bucket: R2Bucket, meta: StoredAliasMetadata) {
 	});
 }
 
-export function registerAliasRoutes(app: Hono<any>) {
+export function registerAliasRoutes(app: Hono<MailboxContext>) {
 	// List all private emails for this mailbox
 	app.get("/api/v1/mailboxes/:mailboxId/aliases", async (c) => {
 		const stub = c.var.mailboxStub;
 		const list = await stub.listAliases();
-		return c.json({ aliases: list });
+		return c.json({ aliases: list.map((row) => toAliasResponse(row, c.var.mailboxId)) });
 	});
 
 	// Create a private email on the apex of the mailbox's own domain.
@@ -116,7 +160,8 @@ export function registerAliasRoutes(app: Hono<any>) {
 		await putRoutingRecord(c.env.BUCKET, routingRecord(row, mailboxId));
 		try {
 			const created = await stub.createAlias(row);
-			return c.json({ alias: created }, 201);
+			if (!created) throw new Error("Failed to create alias");
+			return c.json({ alias: toAliasResponse(created, mailboxId) }, 201);
 		} catch (err) {
 			await c.env.BUCKET.delete(aliasMetadataKey(row.alias_email));
 			throw err;
@@ -154,7 +199,7 @@ export function registerAliasRoutes(app: Hono<any>) {
 		}
 
 		await putRoutingRecord(c.env.BUCKET, routingRecord(updated, mailboxId));
-		return c.json({ alias: updated });
+		return c.json({ alias: toAliasResponse(updated, mailboxId) });
 	});
 
 	// Delete a private email; mail to it bounces from then on.

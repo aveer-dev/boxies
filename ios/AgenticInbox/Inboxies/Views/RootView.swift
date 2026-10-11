@@ -99,11 +99,30 @@ struct RootView: View {
         .onOpenURL { url in
             if let token = Self.inviteToken(from: url) {
                 pendingInviteToken = token
-            } else if url.scheme == "inboxies" && (url.host == "onboarding" || url.host == "domain-ready") {
+                return
+            }
+            switch PaymentCallback.parse(url) {
+            case .domainReady:
                 Task {
                     await app.refreshMailboxes(showLoading: true)
                 }
+            case .cancelled:
+                app.showToast("Checkout cancelled. Your domain was not purchased.")
+            case .unrecognized:
+                if url.scheme == "inboxies" && url.host == "onboarding" {
+                    Task {
+                        await app.refreshMailboxes(showLoading: true)
+                    }
+                }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .inboxiesSessionExpired)) { note in
+            // Ignore a late rejection of a session the user already replaced.
+            guard let rejected = note.userInfo?["token"] as? String,
+                  rejected == auth.token else { return }
+            app.reset()
+            auth.signOut()
+            auth.errorMessage = APIError.sessionExpired.errorDescription
         }
         .onAppear {
             if let stored = UserDefaults.standard.string(forKey: "pendingInviteToken") {
@@ -250,8 +269,8 @@ struct InviteAcceptView: View {
                 password: password,
                 displayName: displayName.isEmpty ? nil : displayName
             )
+            // RootView's `.task(id: auth.token)` bootstraps the new session.
             auth.applySession(token: result.token, email: result.mailboxId)
-            await app.bootstrap(authToken: result.token)
             onDone()
         } catch {
             formError = error.localizedDescription
@@ -408,8 +427,7 @@ struct MailboxOnboardingView: View {
             HStack {
                 if auth.isAuthenticated && onDismiss == nil {
                     Button("Sign out", role: .destructive) {
-                        app.reset()
-                        auth.signOut()
+                        app.signOut(auth: auth)
                     }
                     .foregroundStyle(.red)
                 } else {
@@ -467,8 +485,7 @@ struct MailboxOnboardingView: View {
 
             if auth.isAuthenticated && onDismiss == nil {
                 Button("Sign out", role: .destructive) {
-                    app.reset()
-                    auth.signOut()
+                    app.signOut(auth: auth)
                 }
                 .foregroundStyle(.red)
             } else {
@@ -807,6 +824,7 @@ struct MailboxOnboardingView: View {
                                 Text(errorMessage)
                                     .font(.inter(size: 13))
                                     .foregroundStyle(AppTheme.deepDarkRed)
+                                    .textSelection(.enabled)
                             }
                             .padding(.vertical, 4)
                         }
@@ -1019,6 +1037,7 @@ struct MailboxOnboardingView: View {
                             Text(errorMessage)
                                 .font(.inter(size: 13))
                                 .foregroundStyle(AppTheme.deepDarkRed)
+                                .textSelection(.enabled)
                         }
                         .padding(.vertical, 4)
                     }
@@ -1840,8 +1859,8 @@ struct MailboxOnboardingView: View {
                     displayName: personalName.isEmpty ? nil : personalName,
                     backupEmail: personalBackupEmail.isEmpty ? nil : personalBackupEmail
                 )
+                // RootView's `.task(id: auth.token)` bootstraps the new session.
                 auth.applySession(token: res.token, email: res.mailbox.email)
-                await app.bootstrap(authToken: res.token)
                 onDismiss?()
             } else {
                 let fullEmail = "\(personalUsername)@\(app.mailDomain)"
@@ -1904,7 +1923,7 @@ struct MailboxOnboardingView: View {
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "inboxies") { callbackUrl, error in
                 DispatchQueue.main.async {
                     if let callbackUrl = callbackUrl {
-                        handlePaymentComplete(callbackUrl: callbackUrl)
+                        handlePaymentCallback(callbackUrl)
                     } else if let error = error {
                         let nsError = error as NSError
                         if nsError.code != ASWebAuthenticationSessionError.canceledLogin.rawValue {
@@ -1922,20 +1941,30 @@ struct MailboxOnboardingView: View {
         }
     }
 
-    private func handlePaymentComplete(callbackUrl: URL) {
+    /// Only `domain-ready` advances; a cancelled checkout leaves the buyer on this step.
+    private func handlePaymentCallback(_ callbackUrl: URL) {
+        switch PaymentCallback.parse(callbackUrl) {
+        case .domainReady(let domain, _, let token, _):
+            handlePaymentComplete(domain: domain, token: token)
+        case .cancelled:
+            errorMessage = "Checkout was cancelled, so the domain was not purchased. You can try again."
+        case .unrecognized:
+            errorMessage = "Checkout returned an unexpected response. If you were charged, contact support."
+        }
+    }
+
+    private func handlePaymentComplete(domain domainFromUrl: String?, token: String?) {
+        errorMessage = nil
         isPaymentSyncing = true
         Task {
-            let components = URLComponents(url: callbackUrl, resolvingAgainstBaseURL: false)
-            let token = components?.queryItems?.first(where: { $0.name == "token" })?.value
-            let domainFromUrl = components?.queryItems?.first(where: { $0.name == "domain" })?.value
             let targetDomain = domainFromUrl ?? customDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
             if let token = token, !token.isEmpty {
                 createdAuthToken = token
                 let username = customUsername.isEmpty ? "admin" : customUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 let email = "\(username)@\(targetDomain)"
+                // RootView's `.task(id: auth.token)` bootstraps the new session.
                 auth.applySession(token: token, email: email)
-                await app.bootstrap(authToken: token)
             }
 
             _ = try? await APIClient.shared.fixDomainEmailDns(domain: targetDomain)
@@ -1960,8 +1989,8 @@ struct MailboxOnboardingView: View {
                 backupEmail: customBackupEmail.isEmpty ? nil : customBackupEmail
             )
             createdAuthToken = res.token
+            // RootView's `.task(id: auth.token)` bootstraps the new session.
             auth.applySession(token: res.token, email: res.mailbox.email)
-            await app.bootstrap(authToken: res.token)
             if !res.domain.nameservers.isEmpty {
                 activeNameservers = res.domain.nameservers
             }

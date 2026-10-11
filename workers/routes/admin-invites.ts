@@ -54,7 +54,6 @@ import {
 	redeemIdentityLinkCode,
 	resolveAclPrincipalsToAccounts,
 	updatePasswordHashForSessionAccount,
-	upsertIdentityLink,
 } from "../lib/identity-links";
 import { verifyAppleIdentityToken } from "../lib/apple-auth";
 import { verifyGoogleIdentityToken } from "../lib/google-auth";
@@ -77,7 +76,6 @@ import {
 	verifyPassword,
 } from "../lib/password-auth";
 import {
-	aclKeysForPlatformUser,
 	findUserIdByLoginEmail,
 	loadPlatformUser,
 	principalFromPlatformUser,
@@ -290,7 +288,7 @@ function adminMailboxRow(
 	};
 }
 
-async function canAdministerMailboxDomain(
+export async function canAdministerMailboxDomain(
 	env: Env,
 	principal: RequestPrincipal | null | undefined,
 	domainOrMailboxId: string,
@@ -495,6 +493,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 		);
 		const next = { ...settings, acl: resolved };
 		await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
+		// Previous owners/members stop getting this mailbox's push notifications.
+		const transferStub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(mailboxId));
+		await (transferStub as any).pruneDeviceTokensToAcl([...resolved.owners, ...resolved.members]);
 		await appendAdminAudit(c.env.BUCKET, {
 			actorKeys: principalKeys(principal),
 			action: "mailbox.transfer_acl",
@@ -565,7 +566,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		const tokens = await listInviteTokensForMailbox(c.env.BUCKET, mailboxId);
-		const invites = [];
+		const invites: Array<
+			ReturnType<typeof publicInvitePayload> & { token: string; createdAt: string }
+		> = [];
 		for (const token of tokens) {
 			const invite = await loadInvite(c.env.BUCKET, token);
 			if (!invite) continue;
@@ -825,6 +828,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const session = await issuePasswordSessionToken(mobileSecret, {
 			userId: user.id,
 			email: user.mailboxEmail ?? user.contactEmail,
+			tokenVersion: user.tokenVersion,
 		});
 		c.header(
 			"Set-Cookie",
@@ -884,9 +888,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 				// Deliver to all associated emails (personal recovery email and mailbox email)
 				const targetEmails = Array.from(
 					new Set(
-						[user.contactEmail, user.mailboxEmail, inputEmail]
+						[user.contactEmail, user.mailboxEmail, user.recoveryEmail, inputEmail]
 							.map((e) => e?.trim())
-							.filter((e): e is string => Boolean(e) && e.includes("@")),
+							.filter((e): e is string => !!e && e.includes("@")),
 					),
 				);
 
@@ -918,11 +922,11 @@ export function registerAdminAndInviteRoutes(app: App) {
 			console.warn(`[PasswordReset] No account found in R2 for login: ${login}`);
 		}
 
-		const isDev = isDevRuntime() || !c.env.EMAIL;
+		// Never hand the code to the caller outside local dev, even when EMAIL is unset.
 		return c.json({
 			ok: true,
 			message: "If an account exists with this email, reset instructions have been sent.",
-			...(isDev && devResetCode ? { devResetCode, devResetToken } : {}),
+			...(isDevRuntime() && devResetCode ? { devResetCode, devResetToken } : {}),
 		});
 	});
 
@@ -981,6 +985,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		const newHash = await hashPassword(newPassword);
 		user.passwordHash = newHash;
+		// Revoke every session minted before the reset.
+		user.tokenVersion = (user.tokenVersion ?? 0) + 1;
 		user.updatedAt = new Date().toISOString();
 		await savePlatformUser(c.env.BUCKET, user);
 
@@ -989,6 +995,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const session = await issuePasswordSessionToken(mobileSecret, {
 			userId: user.id,
 			email: user.mailboxEmail ?? user.contactEmail,
+			tokenVersion: user.tokenVersion,
 		});
 		c.header(
 			"Set-Cookie",
@@ -1007,45 +1014,14 @@ export function registerAdminAndInviteRoutes(app: App) {
 		});
 	});
 
-	app.post("/api/v1/auth/link-provider", async (c) => {
-		const principal = c.get("principal");
-		if (!principal?.sub?.startsWith("user:")) {
-			return c.json(
-				{ error: "Only password accounts can link providers from this endpoint" },
-				403,
-			);
-		}
-		const userId = principal.sub.slice("user:".length);
-		const body = z
-			.object({
-				provider: z.enum(["apple", "google"]),
-				sub: z.string().min(1),
-			})
-			.parse(await c.req.json());
-		const user = await loadPlatformUser(c.env.BUCKET, userId);
-		if (!user) return c.json({ error: "User not found" }, 404);
-		if (!user.linkedSubs.includes(body.sub)) {
-			user.linkedSubs = [...user.linkedSubs, body.sub];
-			user.updatedAt = new Date().toISOString();
-			await savePlatformUser(c.env.BUCKET, user);
-		}
-		const emails = [
-			user.mailboxEmail,
-			user.contactEmail,
-		].filter((e): e is string => Boolean(e));
-		await upsertIdentityLink(c.env.BUCKET, {
-			sub: body.sub,
-			provider: body.provider,
-			emails,
-			linkedByKeys: [`user:${userId}`],
-			extraPrincipals: [`user:${userId}`, ...emails.map((e) => `email:${e}`)],
-		});
-		return c.json({
-			userId: user.id,
-			linkedSubs: user.linkedSubs,
-			keys: aclKeysForPlatformUser(user),
-		});
-	});
+	// Retired: it linked whatever `sub` the caller typed. Linking now requires a
+	// freshly verified IdP token via POST /api/v1/me/identities/attach.
+	app.post("/api/v1/auth/link-provider", (c) =>
+		c.json(
+			{ error: "Use POST /api/v1/me/identities/attach with a verified identity token" },
+			410,
+		),
+	);
 
 	/**
 	 * List linked sign-in methods for the current identity account.
@@ -1074,6 +1050,10 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const principal = c.get("principal");
 		if (!principal || principalKeys(principal).length === 0) {
 			return c.json({ error: "Unauthorized" }, 401);
+		}
+		// Every account's email is directory data: Domain Admins only.
+		if (!(await isDomainAdmin(c.env, principal))) {
+			return c.json([]);
 		}
 		const accounts = await listAllIdentityAccounts(c.env.BUCKET);
 		const mbs = await listMailboxes(c.env.BUCKET);
@@ -1210,6 +1190,10 @@ export function registerAdminAndInviteRoutes(app: App) {
 				{
 					passwordHash,
 					loginEmail: body.data.loginEmail,
+					isOwnedMailbox: async (login) => {
+						const settings = await loadMailboxSettingsRaw(c.env.BUCKET, login);
+						return settings !== null && canManageAcl(settings, principal);
+					},
 				},
 			);
 			c.set("principal", result.expanded);
@@ -1234,6 +1218,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 				err instanceof Error ? err.message : "Could not attach identity";
 			if (message === "Unauthorized") {
 				return c.json({ error: message }, 401);
+			}
+			if (message.startsWith("Password login must be")) {
+				return c.json({ error: message }, 403);
 			}
 			if (
 				message.includes("already has a password") ||

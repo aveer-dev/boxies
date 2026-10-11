@@ -109,16 +109,12 @@ final class RealTimeStreamClient: @unchecked Sendable {
 
         while !Task.isCancelled {
             do {
-                guard var components = URLComponents(url: AppConfig.apiBaseURL, resolvingAgainstBaseURL: false) else { return }
-                let cleanPath = "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/events"
-                let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                components.path = basePath.isEmpty ? cleanPath : "/\(basePath)\(cleanPath)"
-                guard let url = components.url else { return }
+                guard let url = APIClient.makeURL(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/events") else { return }
 
                 var request = URLRequest(url: url)
                 request.timeoutInterval = 120
                 request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                if let token = APIClient.shared.authTokenProvider() {
+                if let token = APIClient.shared.authToken {
                     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 }
 

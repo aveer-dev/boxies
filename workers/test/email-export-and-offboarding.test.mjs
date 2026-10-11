@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { app as apiApp } from "../index.ts";
+import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
 import {
 	formatAsctime,
 	fromQuote,
@@ -99,6 +100,10 @@ function mockEnv(bucket, sampleEmails = []) {
 }
 
 import { Hono } from "hono";
+
+// These suites drive the in-memory Cloudflare / registrar mocks, which are
+// dev-only (production fails closed without credentials). Opt in explicitly.
+setDevRuntimeForTesting(true);
 
 function harness(env, defaultPrincipal = null) {
 	const parent = new Hono();
@@ -212,6 +217,13 @@ async function runTests() {
 	await bucket.put("mailboxes/you@acme.com.json", JSON.stringify({ fromName: "You" }));
 	await bucket.put("mailboxes/support@acme.com.json", JSON.stringify({ fromName: "Support" }));
 
+	// hasRecentExportForDomain picks the job with the latest createdAt (ms precision).
+	// Let the clock tick past the mailbox job so the domain job is strictly newer;
+	// on a tie the winner depends on R2 key order and the assertion below flakes.
+	while (Date.now() <= Date.parse(job.createdAt)) {
+		await new Promise((resolve) => setTimeout(resolve, 1));
+	}
+
 	const domainJob = await runDomainExportJob(env, "acme.com");
 	assert.equal(domainJob.status, "completed");
 	assert.equal(domainJob.targetType, "domain");
@@ -299,6 +311,24 @@ async function runTests() {
 	assert.equal(downloadRes.headers.get("Content-Type"), "application/mbox; charset=utf-8");
 	assert.ok(downloadRes.headers.get("Content-Disposition").includes(".mbox"));
 
+	// Another signed-in user can neither read the job nor download the archive.
+	const strangerHeaders = { headers: { "x-test-user": "stranger@other.com" } };
+	const strangerJob = await client.request(`/api/v1/exports/${exportData.exportId}`, strangerHeaders);
+	assert.equal(strangerJob.status, 404);
+	const strangerDownload = await client.request(
+		`/api/v1/exports/${exportData.exportId}/download`,
+		strangerHeaders,
+	);
+	assert.equal(strangerDownload.status, 404);
+
+	// Expired exports are refused and their archive deleted.
+	const jobKey = `exports/jobs/${exportData.exportId}.json`;
+	const storedJob = await (await bucket.get(jobKey)).json();
+	await bucket.put(jobKey, JSON.stringify({ ...storedJob, expiresAt: new Date(Date.now() - 1000).toISOString() }));
+	const expiredRes = await client.request(`/api/v1/exports/${exportData.exportId}/download`);
+	assert.equal(expiredRes.status, 410);
+	assert.equal(await bucket.get(storedJob.downloadKey), null);
+	await bucket.put(jobKey, JSON.stringify(storedJob));
 	// Domain admin can read the domain export job status
 	const domainJobRes = await client.request(`/api/v1/exports/${exportData.exportId}`);
 	assert.equal(domainJobRes.status, 200);

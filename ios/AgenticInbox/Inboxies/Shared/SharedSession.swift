@@ -64,24 +64,34 @@ enum KeychainStore {
         return group
     }()
 
+    /// Readable after the first unlock so background push sync works while the
+    /// device is locked.
+    private static let accessibility = kSecAttrAccessibleAfterFirstUnlock
+
     static func write(_ key: String, value: String) {
         var query = baseQuery(key, group: accessGroup)
         SecItemDelete(query as CFDictionary)
         query[kSecValueData as String] = Data(value.utf8)
+        query[kSecAttrAccessible as String] = accessibility
         let status = SecItemAdd(query as CFDictionary, nil)
         if status == errSecMissingEntitlement, accessGroup != nil {
             var fallback = baseQuery(key, group: nil)
             SecItemDelete(fallback as CFDictionary)
             fallback[kSecValueData as String] = Data(value.utf8)
+            fallback[kSecAttrAccessible as String] = accessibility
             SecItemAdd(fallback as CFDictionary, nil)
         }
     }
 
     static func read(_ key: String) -> String? {
-        if let accessGroup, let value = readData(baseQuery(key, group: accessGroup)) {
-            return String(data: value, encoding: .utf8)
+        let item = accessGroup.flatMap { readItem(baseQuery(key, group: $0)) }
+            ?? readItem(baseQuery(key, group: nil))
+        guard let item, let value = String(data: item.data, encoding: .utf8) else { return nil }
+        // Items saved by older builds used the default (WhenUnlocked) class; re-save once.
+        if item.accessible != (accessibility as String) {
+            write(key, value: value)
         }
-        return readData(baseQuery(key, group: nil)).flatMap { String(data: $0, encoding: .utf8) }
+        return value
     }
 
     /// Without an access group this removes the item from every group the caller can see.
@@ -108,6 +118,7 @@ enum KeychainStore {
 
         var shared = baseQuery(key, group: accessGroup)
         shared[kSecValueData as String] = data
+        shared[kSecAttrAccessible as String] = accessibility
         let status = SecItemAdd(shared as CFDictionary, nil)
         guard status == errSecSuccess || status == errSecDuplicateItem else { return }
         SecItemDelete(baseQuery(key, group: legacyGroup) as CFDictionary)
@@ -122,6 +133,18 @@ enum KeychainStore {
             query[kSecAttrAccessGroup as String] = group
         }
         return query
+    }
+
+    private static func readItem(_ base: [String: Any]) -> (data: Data, accessible: String?)? {
+        var query = base
+        query[kSecReturnData as String] = true
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let attributes = item as? [String: Any],
+              let data = attributes[kSecValueData as String] as? Data else { return nil }
+        return (data, attributes[kSecAttrAccessible as String] as? String)
     }
 
     private static func readData(_ base: [String: Any]) -> Data? {

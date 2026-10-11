@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { routeAgentRequest } from "agents";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
@@ -18,6 +18,7 @@ import {
 } from "./lib/mailbox-acl";
 import { expandPrincipalWithLinks } from "./lib/identity-links";
 import { PASSWORD_SESSION_COOKIE } from "./lib/password-auth";
+import { passwordSessionIsCurrent } from "./lib/platform-users";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import type { Env } from "./types";
 
@@ -155,6 +156,12 @@ app.use("*", async (c, next) => {
 		}
 		try {
 			const claims = await verifyMobileSessionToken(sessionToken, mobileSecret);
+			if (claims.auth === "password" && claims.uid) {
+				// A password reset bumps tokenVersion and revokes older sessions.
+				if (!(await passwordSessionIsCurrent(c.env.BUCKET, claims.uid, claims.tv))) {
+					throw new Error("Password session revoked");
+				}
+			}
 			if (claims.scope && !isPathAllowedForTokenScope(claims.scope, c.req.method, pathname)) {
 				return c.text("This session can only manage private emails", 403);
 			}
@@ -177,6 +184,20 @@ app.use("*", async (c, next) => {
 		return next();
 	}
 
+	// A signed-out browser opening an app page gets the sign-in screen, not raw
+	// 403/500 text. API, agent and MCP callers still get the error below.
+	const wantsHtml = (c.req.header("accept") || "").includes("text/html");
+	const isAppPage =
+		c.req.method === "GET" &&
+		!pathname.startsWith("/api/") &&
+		!pathname.startsWith("/agents/") &&
+		!pathname.startsWith("/mcp");
+	if (wantsHtml && isAppPage) {
+		const url = new URL(c.req.url);
+		const next = `${url.pathname}${url.search}`;
+		return c.redirect(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`, 302);
+	}
+
 	// Fail closed: require Access config message if neither token present
 	if (!POLICY_AUD || !TEAM_DOMAIN) {
 		return c.text(
@@ -194,7 +215,7 @@ app.use("*", async (c, next) => {
 // MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)
 // Must be before API routes and React Router catch-all
 const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
-function mcpFetch(c: { req: { raw: Request }; env: Env; executionCtx: ExecutionContext; get: (key: "principal") => RequestPrincipal | undefined }) {
+function mcpFetch(c: Context<{ Bindings: Env; Variables: AppVariables }>) {
 	const ctx = c.executionCtx as ExecutionCtxWithProps;
 	ctx.props = { principal: c.get("principal") };
 	return mcpHandler.fetch(c.req.raw, c.env, ctx);

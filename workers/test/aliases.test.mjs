@@ -386,7 +386,8 @@ test("aliases HTTP endpoints CRUD operations", async () => {
 	);
 	assert.equal(res3.status, 200);
 	const updated = (await res3.json()).alias;
-	assert.equal(updated.is_active, 0);
+	assert.equal(updated.is_active, false, "responses carry a boolean is_active");
+	assert.equal(updated.mailbox_id, mailboxId);
 	assert.equal(updated.paused_action, "reject");
 	assert.equal(updated.expires_at, expiresAt);
 	assert.equal(updated.label, null);
@@ -396,6 +397,24 @@ test("aliases HTTP endpoints CRUD operations", async () => {
 	assert.equal(r2Updated.isActive, false);
 	assert.equal(r2Updated.pausedAction, "reject");
 	assert.equal(r2Updated.expiresAt, expiresAt);
+
+	// 3b. Shipped iOS / Android builds send snake_case; it must not be dropped.
+	const res3b = await testApp.request(
+		`${base}/${alias.id}`,
+		{
+			method: "PATCH",
+			headers,
+			body: JSON.stringify({ is_active: true, paused_action: "drop", expires_in_seconds: 3600 }),
+		},
+		env,
+	);
+	assert.equal(res3b.status, 200);
+	const resumed = (await res3b.json()).alias;
+	assert.equal(resumed.is_active, true);
+	assert.equal(resumed.paused_action, "drop");
+	assert.ok(resumed.expires_at, "expires_in_seconds becomes an expiry");
+	const r2Resumed = await (await bucket.get(aliasMetadataKey(alias.alias_email))).json();
+	assert.equal(r2Resumed.isActive, true);
 
 	// 4. Cap
 	aliasCountOverride = MAX_ALIASES_PER_MAILBOX;

@@ -5,6 +5,7 @@
 import { type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
+import type { MailboxContext } from "../lib/mailbox";
 import {
 	hashPassword,
 	issuePasswordSessionToken,
@@ -41,6 +42,13 @@ import {
 } from "../lib/domain-registry";
 import { checkDomainAvailability, computeDomainPricing } from "../lib/cloudflare-registrar";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { isDevRuntime } from "../lib/dev-runtime";
+import {
+	domainVerificationChallenge,
+	isDomainVerified,
+	signupClaimant,
+	verificationRequiredBody,
+} from "../lib/domain-verification";
 
 const SignupPersonalBody = z.object({
 	username: z
@@ -94,8 +102,13 @@ function defaultMailboxSettings(name: string) {
 function sessionSecret(env: Env): string {
 	return (
 		env.MOBILE_JWT_SECRET ||
-		(import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "")
+		(isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "")
 	);
+}
+
+/** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
+function canSkipDomainVerification(env: Env): boolean {
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
 }
 
 function sessionCookieHeader(token: string): string {
@@ -103,7 +116,7 @@ function sessionCookieHeader(token: string): string {
 	return `${PASSWORD_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax; Secure`;
 }
 
-export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
+export function registerOnboardingRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * Pre-check domain availability, WHOIS registration, and retail price.
 	 */
@@ -189,7 +202,8 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		const passwordHash = await hashPassword(password);
 		const user: PlatformUser = {
 			id: userId,
-			contactEmail: backupEmail || canonical,
+			contactEmail: canonical,
+			...(backupEmail ? { recoveryEmail: backupEmail } : {}),
 			mailboxEmail: canonical,
 			passwordHash,
 			linkedSubs: [],
@@ -276,6 +290,19 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 			);
 		}
 
+		// Bring-your-own domains must prove DNS control before we create a zone
+		// (purchased domains are provisioned by the paid Stripe webhook instead).
+		if (!canSkipDomainVerification(c.env)) {
+			const challenge = await domainVerificationChallenge(
+				secret,
+				domain,
+				await signupClaimant(username, password),
+			);
+			if (!(await isDomainVerified(challenge))) {
+				return c.json(verificationRequiredBody(domain, challenge), 428);
+			}
+		}
+
 		// 1. Provision Cloudflare Zone & Email Routing
 		let zone;
 		try {
@@ -295,7 +322,8 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		const passwordHash = await hashPassword(password);
 		const user: PlatformUser = {
 			id: userId,
-			contactEmail: backupEmail || canonical,
+			contactEmail: canonical,
+			...(backupEmail ? { recoveryEmail: backupEmail } : {}),
 			mailboxEmail: canonical,
 			passwordHash,
 			linkedSubs: [],

@@ -84,12 +84,18 @@ async function request<T>(
 	}
 }
 
-interface RequestOptions {
-	signal?: AbortSignal;
-}
+/** Per-call options; `signal` lets TanStack Query cancel in-flight requests. */
+type RequestOptions = { signal?: AbortSignal };
 
-function get<T>(url: string, opts?: { params?: Record<string, string>; responseType?: string; signal?: AbortSignal }) {
-	const query = opts?.params ? `?${new URLSearchParams(opts.params)}` : "";
+function get<T>(
+	url: string,
+	opts?: { params?: Record<string, string | undefined>; responseType?: string } & RequestOptions,
+) {
+	// Drop undefined params instead of sending the string "undefined".
+	const params = Object.fromEntries(
+		Object.entries(opts?.params ?? {}).filter((entry): entry is [string, string] => entry[1] !== undefined),
+	);
+	const query = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
 	return request<T>(`${url}${query}`, {
 		method: "GET",
 		signal: opts?.signal,
@@ -97,7 +103,7 @@ function get<T>(url: string, opts?: { params?: Record<string, string>; responseT
 	});
 }
 
-function post<T>(url: string, body?: unknown, opts?: { signal?: AbortSignal }) {
+function post<T>(url: string, body?: unknown, opts?: RequestOptions) {
 	return request<T>(url, {
 		method: "POST",
 		signal: opts?.signal,
@@ -105,9 +111,10 @@ function post<T>(url: string, body?: unknown, opts?: { signal?: AbortSignal }) {
 	});
 }
 
-function put<T>(url: string, body?: unknown) {
+function put<T>(url: string, body?: unknown, opts?: RequestOptions) {
 	return request<T>(url, {
 		method: "PUT",
+		signal: opts?.signal,
 		body: body != null ? JSON.stringify(body) : undefined,
 	});
 }
@@ -379,8 +386,11 @@ const api = {
 		get<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, { signal: opts?.signal }),
 	updateEmail: (mailboxId: string, id: string, data: unknown) =>
 		put<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, data),
+	/** Moves to Trash; permanent when the email is already in Trash or Drafts. */
 	deleteEmail: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`),
+	emptyTrash: (mailboxId: string) =>
+		post<{ deleted: number }>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/folders/trash/empty`),
 	moveEmail: (
 		mailboxId: string,
 		id: string,

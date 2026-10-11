@@ -32,6 +32,7 @@ import ColumnMenu from "~/components/columns/ColumnMenu";
 import ColumnPane from "~/components/columns/ColumnPane";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components/columns/ListParts";
+import { ListLoadError } from "~/components/ListLoadError";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
 import { searchPath, useMailNavigation } from "~/hooks/useMailNavigation";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -45,6 +46,7 @@ import {
 } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
+import api from "~/services/api";
 import type { Email } from "~/types";
 
 const PAGE_SIZE = 25;
@@ -142,9 +144,12 @@ export default function EmailListRoute() {
 		() => ({ folder, page: String(page), limit: String(PAGE_SIZE) }),
 		[folder, page],
 	);
-	const { data: emailData, isFetching: isRefreshing } = useEmails(mailboxId, params, {
-		refetchInterval: 30_000,
-	});
+	const {
+		data: emailData,
+		isFetching: isRefreshing,
+		error: loadError,
+		refetch,
+	} = useEmails(mailboxId, params, { refetchInterval: 30_000 });
 
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
@@ -192,9 +197,28 @@ export default function EmailListRoute() {
 	};
 
 	const handleDelete = (email: Email) => {
-		if (!window.confirm("Are you sure you want to delete this email?")) return;
+		// Outside Trash, delete just moves to Trash (restorable); only confirm the permanent one.
+		if (
+			folder === Folders.TRASH &&
+			!window.confirm("Permanently delete this email? This can't be undone.")
+		) {
+			return;
+		}
 		deleteEmail.mutate({ mailboxId, id: email.id });
 		if (emailId === email.id) closeEmail();
+	};
+
+	const [emptyingTrash, setEmptyingTrash] = useState(false);
+	const handleEmptyTrash = async () => {
+		if (!window.confirm("Permanently delete everything in Trash? This can't be undone.")) return;
+		setEmptyingTrash(true);
+		try {
+			await api.emptyTrash(mailboxId);
+			closeEmail();
+		} finally {
+			setEmptyingTrash(false);
+			handleRefresh();
+		}
 	};
 
 	const handleMarkAllRead = () => {
@@ -245,6 +269,18 @@ export default function EmailListRoute() {
 						>
 							<ChecksIcon size={15} />
 						</button>
+						{folder === Folders.TRASH && totalCount > 0 && (
+							<button
+								type="button"
+								onClick={handleEmptyTrash}
+								disabled={emptyingTrash}
+								className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint disabled:opacity-60"
+								aria-label="Empty Trash"
+								title="Empty Trash"
+							>
+								<TrashIcon size={15} />
+							</button>
+						)}
 						<ColumnMenu
 							label="Filter"
 							heading={`Filter ${folderName}`}
@@ -260,6 +296,8 @@ export default function EmailListRoute() {
 			>
 				{isRefreshing && emails.length === 0 ? (
 					<ThreadListSkeleton />
+				) : loadError && emails.length === 0 ? (
+					<ListLoadError error={loadError} onRetry={() => void refetch()} />
 				) : emails.length === 0 ? (
 					<ListEmptyState
 						{...emptyState}

@@ -34,6 +34,8 @@ export interface MobileSessionClaims extends JWTPayload {
 	auth: MobileAuthProvider;
 	/** Present on password sessions. */
 	uid?: string;
+	/** Password sessions: PlatformUser.tokenVersion at mint time. */
+	tv?: number;
 	/** Present on browser-extension sessions: private emails only. */
 	scope?: SessionTokenScope;
 }
@@ -121,6 +123,7 @@ export async function verifyMobileSessionToken(
 		email: typeof payload.email === "string" ? payload.email : undefined,
 		auth,
 		uid: typeof payload.uid === "string" ? payload.uid : undefined,
+		tv: typeof payload.tv === "number" ? payload.tv : undefined,
 		scope,
 	};
 }

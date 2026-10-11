@@ -8,6 +8,8 @@
  * and provides simulated/mock responses in development / testing environments.
  */
 
+import { isDevRuntime } from "./dev-runtime";
+
 export interface CloudflareZone {
 	id: string;
 	name: string;
@@ -83,8 +85,9 @@ const CF_API_BASE = "https://api.cloudflare.com/client/v4";
 const mockZones = new Map<string, CloudflareZone>();
 const mockDnsRecords = new Map<string, CloudflareDnsRecord[]>();
 
+// Mock only in local dev / tests. In production missing credentials must fail closed.
 function isMockEnv(env: CloudflareClientEnv): boolean {
-	return !env.CF_API_TOKEN || !env.CF_ACCOUNT_ID;
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
 }
 
 async function cfRequest<T>(
@@ -264,6 +267,30 @@ export async function createCatchAllWorkerRule(
 				enabled: true,
 				matchers: [{ type: "all" }],
 				actions: [{ type: "worker", value: [targetWorker] }],
+			}),
+		},
+	);
+}
+
+/**
+ * Stop delivering a zone's mail to this Worker: the catch-all is switched to a
+ * disabled drop rule (used when a domain is decommissioned).
+ */
+export async function disableCatchAllRule(
+	env: CloudflareClientEnv,
+	zoneId: string,
+): Promise<void> {
+	if (isMockEnv(env)) return;
+	await cfRequest<unknown>(
+		env,
+		`/zones/${encodeURIComponent(zoneId)}/email/routing/rules/catch_all`,
+		{
+			method: "PUT",
+			body: JSON.stringify({
+				name: "Inboxies Catch-All (decommissioned)",
+				enabled: false,
+				matchers: [{ type: "all" }],
+				actions: [{ type: "drop" }],
 			}),
 		},
 	);

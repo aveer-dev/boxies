@@ -192,12 +192,14 @@ export async function toolDraftReply(
 			in_reply_to: params.originalEmailId,
 			email_references: null,
 			thread_id: threadId,
+			source: "agent",
 		},
 		[],
 	);
 	await stub.deleteSiblingDrafts(draftId, {
 		threadId,
 		inReplyTo: params.originalEmailId,
+		onlySource: "agent",
 	});
 
 	return {
@@ -272,12 +274,14 @@ export async function toolDraftEmail(
 			in_reply_to: params.in_reply_to || null,
 			email_references: null,
 			thread_id: resolvedThreadId,
+			source: "agent",
 		},
 		[],
 	);
 	await stub.deleteSiblingDrafts(draftId, {
 		threadId: resolvedThreadId,
 		inReplyTo: params.in_reply_to,
+		onlySource: "agent",
 	});
 
 	return {
@@ -402,11 +406,14 @@ export async function toolDeleteEmail(
 	emailId: string,
 ) {
 	const stub = getMailboxStub(env, mailboxId);
-	const result = await stub.deleteEmail(emailId);
+	// Same as the app: moves to Trash, permanent only from Trash / Drafts.
+	const result = await (stub as unknown as {
+		trashOrDeleteEmail: (id: string) => Promise<"trashed" | "deleted" | null>;
+	}).trashOrDeleteEmail(emailId);
 	if (result === null) {
 		return { error: "Email not found", emailId };
 	}
-	return { status: "deleted", emailId };
+	return { status: result, emailId };
 }
 
 // ── send_reply ─────────────────────────────────────────────────────
