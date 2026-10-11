@@ -5,6 +5,7 @@
  */
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import {
 	createPasswordReset,
@@ -25,6 +26,7 @@ import {
 } from "../lib/platform-users.ts";
 import { registerAdminAndInviteRoutes } from "../routes/admin-invites.ts";
 import { isPublicAuthPath } from "../lib/auth-paths.ts";
+import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
 
 function mockBucket(initial = {}, { readLatency = false } = {}) {
 	const store = new Map(
@@ -436,6 +438,76 @@ async function testResetRevokesEarlierSessions() {
 	console.log("testResetRevokesEarlierSessions: ok");
 }
 
+/** Runs `fn` with every console method captured; returns what was printed. */
+async function captureConsole(fn) {
+	const methods = ["log", "info", "warn", "error", "debug"];
+	const originals = methods.map((m) => console[m]);
+	const lines = [];
+	for (const m of methods) {
+		console[m] = (...args) => lines.push(args.map(String).join(" "));
+	}
+	try {
+		await fn();
+	} finally {
+		methods.forEach((m, i) => (console[m] = originals[i]));
+	}
+	return lines;
+}
+
+/** Reads the issued link token and brute-forces the code from its stored hash. */
+function issuedResetSecrets(bucket, userId) {
+	const tokenKey = [...bucket.store.keys()].find((k) =>
+		k.startsWith("platform/password-resets/tokens/"),
+	);
+	const token = tokenKey.slice("platform/password-resets/tokens/".length, -".json".length);
+	const { codeHash } = JSON.parse(bucket.store.get(`platform/password-resets/codes/${userId}.json`));
+	for (let n = 100000; n < 1000000; n++) {
+		if (createHash("sha256").update(`${userId}:${n}`).digest("hex") === codeHash) {
+			return { code: String(n), token };
+		}
+	}
+	assert.fail("could not recover the issued reset code");
+}
+
+async function testForgotWithoutEmailBindingNeverLogsSecrets() {
+	const forgotWithoutEmail = async (dev) => {
+		setDevRuntimeForTesting(dev);
+		try {
+			const { app, env, bucket } = await setupHttp({ EMAIL: undefined });
+			let json;
+			const lines = await captureConsole(async () => {
+				const res = await postJson(app, env, "/api/v1/auth/password/forgot", {
+					email: "alex@inboxies.email",
+				});
+				assert.equal(res.status, 200);
+				json = await res.json();
+			});
+			return { lines, json, ...issuedResetSecrets(bucket, "user-abc") };
+		} finally {
+			setDevRuntimeForTesting(undefined);
+		}
+	};
+
+	// Production: Workers logs must never carry a live code or link token.
+	const prod = await forgotWithoutEmail(false);
+	assert.equal(prod.json.devResetCode, undefined);
+	for (const line of prod.lines) {
+		assert.ok(!line.includes(prod.code), `reset code leaked to logs: ${line}`);
+		assert.ok(!line.includes(prod.token), `reset token leaked to logs: ${line}`);
+	}
+	assert.ok(
+		prod.lines.some((l) => l.includes("EMAIL binding not configured")),
+		"production still warns that the reset email was not sent",
+	);
+
+	// Local dev keeps the convenience log (and proves the capture sees it).
+	const dev = await forgotWithoutEmail(true);
+	assert.equal(dev.json.devResetCode, dev.code);
+	assert.ok(dev.lines.some((l) => l.includes(dev.code) && l.includes(dev.token)));
+
+	console.log("testForgotWithoutEmailBindingNeverLogsSecrets: ok");
+}
+
 async function main() {
 	assert.equal(isPublicAuthPath("/api/v1/auth/password/forgot"), true, "forgot endpoint must bypass auth");
 	assert.equal(isPublicAuthPath("/api/v1/auth/password/reset"), true, "reset endpoint must bypass auth");
@@ -449,6 +521,7 @@ async function main() {
 	await testHttpAttemptLimitAndTokenPath();
 	await testHttpPerIpRateLimit();
 	await testResetRevokesEarlierSessions();
+	await testForgotWithoutEmailBindingNeverLogsSecrets();
 	console.log("All password reset tests passed!");
 }
 

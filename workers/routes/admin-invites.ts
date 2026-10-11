@@ -912,10 +912,13 @@ export function registerAdminAndInviteRoutes(app: App) {
 							);
 						}
 					}
-				} else {
+				} else if (isDevRuntime()) {
 					console.log(
 						`[Dev] Password reset for ${targetEmails.join(", ")}: Code=${reset.code} Token=${reset.token}`,
 					);
+				} else {
+					// Workers logs are readable by anyone with dashboard access: never log the code or token.
+					console.warn("[PasswordReset] EMAIL binding not configured; reset email not sent");
 				}
 			}
 		} else {
