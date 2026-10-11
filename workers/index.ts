@@ -92,6 +92,8 @@ import { isAliasExpired, type StoredAliasMetadata } from "./lib/alias-utils";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
+	isAiSpam,
+	overrideAiSpamForVouchedSender,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldFallbackToInbox,
@@ -121,6 +123,7 @@ import {
 import {
 	allowOutboundRecipients,
 	isScreenerDestination,
+	isVouchedSender,
 	normalizeTriageSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
@@ -1761,7 +1764,7 @@ async function receiveEmail(
 		normalizeDisplayName(parsedEmail.from?.name) ??
 		senderNameFromRawHeaders(fromHeaders);
 
-	const classification = await classifyInboundEmail(
+	let classification = await classifyInboundEmail(
 		{
 			headers: storedHeaders,
 			subject: parsedEmail.subject,
@@ -1827,9 +1830,21 @@ async function receiveEmail(
 		? await (stub as any).getSenderTriage(triageSender)
 		: null;
 	const purposePref =
-		classification.folderId === Folders.SPAM
+		classification.folderId === Folders.SPAM && !isAiSpam(classification)
 			? null
 			: await stub.getSenderPreference(fromAddress);
+	// People you've emailed, accepted, or sorted can't be junked by the AI
+	// guess alone. Everything below files, notifies, and drafts on this verdict.
+	const vouchedClassification = overrideAiSpamForVouchedSender(classification, {
+		vouched: isVouchedSender(triageRow, purposePref?.folderId),
+		auth,
+	});
+	if (vouchedClassification !== classification) {
+		console.log(
+			`Vouched sender ${fromAddress} overrode AI spam verdict for ${mailboxId}`,
+		);
+		classification = vouchedClassification;
+	}
 	const triageDecision = resolveInboundFolder({
 		classification,
 		triage: triageRow,
