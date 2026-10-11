@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { getAgentByName, routeAgentRequest } from "agents";
+import { routeAgentRequest } from "agents";
 import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
 import { createRequestHandler } from "react-router";
@@ -51,7 +51,7 @@ function getAccessUrls(teamDomain: string) {
 	return { issuer, certsUrl };
 }
 
-import { isPublicAuthPath } from "./lib/auth-paths";
+import { isPathAllowedForTokenScope, isPublicAuthPath } from "./lib/auth-paths";
 
 export { isPublicAuthPath };
 
@@ -162,6 +162,9 @@ app.use("*", async (c, next) => {
 					throw new Error("Password session revoked");
 				}
 			}
+			if (claims.scope && !isPathAllowedForTokenScope(claims.scope, c.req.method, pathname)) {
+				return c.text("This session can only manage private emails", 403);
+			}
 			const principal = await expandPrincipalWithLinks(
 				c.env.BUCKET,
 				principalFromClaims(claims),
@@ -240,7 +243,7 @@ export default {
 		ctx: ExecutionContext,
 	) {
 		try {
-			await receiveEmail(message, env, ctx, getAgentByName);
+			await receiveEmail(message, env, ctx);
 		} catch (e) {
 			console.error("Failed to process incoming email:", (e as Error).message, (e as Error).stack);
 			// Re-throw so Cloudflare's email routing can retry delivery or bounce the message.

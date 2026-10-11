@@ -3,8 +3,4 @@
     <color name="ic_launcher_background">#FFFFFF</color>
     <color name="splash_background">#FAFAFB</color>
     <color name="splash_icon_color">#1F1F24</color>
-    <color name="private_email_plane_color">#000000</color>
-    <color name="private_email_shield_stroke">#000000</color>
-    <color name="private_email_shield_dark">#000000</color>
-    <color name="private_email_shield_light">#FFFFFF</color>
 </resources>

@@ -3,7 +3,21 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { principalKeys, type RequestPrincipal } from "./mailbox-acl";
-import { aliasMetadataKey, canonicalMailboxId } from "./mailbox-routing";
+import { aliasMetadataKey, canonicalMailboxId, mailboxMetadataKey } from "./mailbox-routing";
+import { isPrivateAliasMeta, type AnyAliasMetadata } from "./alias-utils";
+
+/** The address already belongs to a mailbox or a private email. */
+export class AddressInUseError extends Error {}
+
+async function readAliasRecord(bucket: R2Bucket, aliasEmail: string): Promise<AnyAliasMetadata | null> {
+	const obj = await bucket.get(aliasMetadataKey(aliasEmail));
+	if (!obj) return null;
+	try {
+		return (await obj.json()) as AnyAliasMetadata;
+	} catch {
+		return null;
+	}
+}
 
 export interface DomainRegistrationInfo {
 	provider: "cloudflare_registrar" | "external";
@@ -173,6 +187,12 @@ export async function saveEmailAlias(
 	if (!meta) {
 		throw new Error(`Domain '${normalizedDomain}' not found`);
 	}
+	if (await bucket.head(mailboxMetadataKey(aliasEmail))) {
+		throw new AddressInUseError(`${aliasEmail} is already a mailbox`);
+	}
+	if (isPrivateAliasMeta(await readAliasRecord(bucket, aliasEmail))) {
+		throw new AddressInUseError(`${aliasEmail} is in use by a private email`);
+	}
 
 	const aliasRecord: DomainAlias = {
 		aliasLocal: cleanLocal,
@@ -220,8 +240,10 @@ export async function deleteEmailAlias(
 		throw new Error(`Domain '${normalizedDomain}' not found`);
 	}
 
-	// 1. Delete O(1) lookup record
-	await bucket.delete(aliasMetadataKey(aliasEmail));
+	// 1. Delete O(1) lookup record — never a private email sharing the prefix.
+	if (!isPrivateAliasMeta(await readAliasRecord(bucket, aliasEmail))) {
+		await bucket.delete(aliasMetadataKey(aliasEmail));
+	}
 
 	// 2. Remove from DomainMetadata
 	if (meta.aliases) {

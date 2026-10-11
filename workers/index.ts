@@ -40,10 +40,10 @@ import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
 } from "../shared/agent-conversations";
+import { getEmailAgent, purgeEmailAgents } from "./lib/email-agent";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
-import { triggerAutoDraft, type AgentResolver } from "./lib/auto-draft";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -85,11 +85,22 @@ import {
 	aliasMetadataKey,
 	allowedMailboxSet,
 	canonicalMailboxId,
+	isAddressTaken,
 	isDuplicateInbound,
 	mailboxMetadataKey,
 	routeInboundEnvelope,
 } from "./lib/mailbox-routing";
-import { isAliasExpired, type StoredAliasMetadata } from "./lib/alias-utils";
+import {
+	autoReplySender,
+	isAliasExpired,
+	isPrivateAliasMeta,
+	type AnyAliasMetadata,
+} from "./lib/alias-utils";
+import {
+	findThreadAliasId,
+	resolveOutboundSender,
+	type AliasSenderStub,
+} from "./lib/alias-sender";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
@@ -266,6 +277,28 @@ app.get("/api/v1/me", async (c) => {
 	});
 });
 
+/**
+ * Mint a browser-extension session for the signed-in user. The token is
+ * scoped to private emails (see isPathAllowedForTokenScope), so a leaked
+ * extension token can create aliases but never read or send mail.
+ */
+app.post("/api/v1/me/extension-session", async (c) => {
+	const principal = c.get("principal") as RequestPrincipal | undefined;
+	if (!principal?.email && !principal?.sub) return c.json({ error: "Unauthorized" }, 401);
+	const mobileSecret =
+		c.env.MOBILE_JWT_SECRET || (import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
+	if (!mobileSecret) {
+		return c.json({ error: "Mobile auth is not configured. Set MOBILE_JWT_SECRET." }, 500);
+	}
+	const session = await issueMobileSessionToken(mobileSecret, {
+		sub: principal.sub || `email:${principal.email}`,
+		email: principal.email,
+		auth: "extension",
+		scope: "aliases",
+	});
+	return c.json({ token: session.token, expiresAt: session.expiresAt });
+});
+
 registerAdminAndInviteRoutes(app);
 registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);
@@ -329,6 +362,9 @@ app.post("/api/v1/mailboxes", async (c) => {
 	}
 	const key = mailboxMetadataKey(email);
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
+	if (await isAddressTaken(c.env.BUCKET, email)) {
+		return c.json({ error: "Address is already in use" }, 409);
+	}
 	const defaultSettings = {
 		fromName: name,
 		forwarding: { enabled: false, email: "" },
@@ -424,32 +460,7 @@ app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 	// Purge DO + R2 and remove metadata inside the DO RPC (closes inbound HEAD).
 	const stub = getMailboxStub(c.env, mailboxId);
 	const { conversationIds } = await stub.purgeMailbox(mailboxId);
-	const agentNames = new Set<string>([
-		mailboxId, // legacy single-chat EmailAgent name
-		...conversationIds.map((id) => agentInstanceName(mailboxId, id)),
-	]);
-	for (const name of agentNames) {
-		try {
-			const agentStub = c.env.EMAIL_AGENT.get(c.env.EMAIL_AGENT.idFromName(name));
-			// Prefer RPC; fall back to HTTP for agent stubs that only expose fetch.
-			const purgable = agentStub as {
-				purge?: () => Promise<unknown>;
-				fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
-			};
-			if (typeof purgable.purge === "function") {
-				await purgable.purge();
-			} else {
-				await purgable.fetch(new Request("https://agents/purge", { method: "POST" }));
-			}
-		} catch (e) {
-			// Best-effort: conversation ids are already captured; chat storage
-			// orphans are lower impact than blocking mailbox delete.
-			console.error(
-				`EmailAgent purge failed for ${name}:`,
-				(e as Error).message,
-			);
-		}
-	}
+	await purgeEmailAgents(c.env, mailboxId, conversationIds);
 
 	return c.body(null, 204);
 });
@@ -508,21 +519,42 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const mailboxId = c.var.mailboxId;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
+	const { to, cc, bcc, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
 
 	const stub = c.var.mailboxStub;
-	const candidateFrom = (typeof from === "string" ? from : from?.email)?.toLowerCase();
-	let allowedSenders: string[] | undefined;
-	if (candidateFrom && candidateFrom !== mailboxId.toLowerCase()) {
-		const alias = await (stub as any).getAlias(candidateFrom);
-		if (alias && alias.is_active) {
-			allowedSenders = [candidateFrom];
+
+	let resolvedThreadId = thread_id;
+	if (!resolvedThreadId && (in_reply_to || (references && references.length > 0))) {
+		const refs: string[] = [];
+		if (in_reply_to) refs.push(in_reply_to);
+		if (references) {
+			for (let i = references.length - 1; i >= 0; i--) {
+				if (references[i] && !refs.includes(references[i])) refs.push(references[i]);
+			}
 		}
+		resolvedThreadId = (await (stub as any).findThreadIdByReferences(refs)) || null;
 	}
+
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const sender = await resolveOutboundSender({
+		stub: aliasStub,
+		mailboxId,
+		requestedFrom: body.from,
+		threadAliasId: await findThreadAliasId(aliasStub, { threadId: resolvedThreadId }),
+	});
+	if (!sender.ok) {
+		return c.json({ error: sender.error, ...(sender.code ? { code: sender.code } : {}) }, sender.status);
+	}
+	const from = sender.from;
 
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId, allowedSenders));
+		({ toStr, fromEmail, fromDomain } = validateSender(
+			to,
+			from,
+			mailboxId,
+			sender.aliasId ? [sender.fromEmail] : undefined,
+		));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
@@ -539,17 +571,6 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	}
 	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
-	let resolvedThreadId = thread_id;
-	if (!resolvedThreadId && (in_reply_to || (references && references.length > 0))) {
-		const refs: string[] = [];
-		if (in_reply_to) refs.push(in_reply_to);
-		if (references) {
-			for (let i = references.length - 1; i >= 0; i--) {
-				if (references[i] && !refs.includes(references[i])) refs.push(references[i]);
-			}
-		}
-		resolvedThreadId = (await (stub as any).findThreadIdByReferences(refs)) || null;
-	}
 	if (!resolvedThreadId) {
 		resolvedThreadId = messageId;
 	}
@@ -564,6 +585,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
 		thread_id: resolvedThreadId, message_id: outgoingMessageId,
 		delivery_status: "queued", delivery_error: null,
+		alias_id: sender.aliasId,
 		raw_headers: JSON.stringify([
 			{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 			{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -633,16 +655,24 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 		}
 	}
 
+	// A reply draft in a private-email thread carries the alias, so clients
+	// reopening it show the alias as From (the send path enforces it anyway).
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const draftAliasId = await findThreadAliasId(aliasStub, { threadId: resolvedThreadId });
+	const draftAlias = draftAliasId ? await aliasStub.getAlias(draftAliasId) : null;
+
 	const messageId = crypto.randomUUID();
 	if (!resolvedThreadId) {
 		resolvedThreadId = messageId;
 	}
 
 	await stub.createEmail(Folders.DRAFT, {
-		id: messageId, subject: draftFields.subject, sender: mailboxId.toLowerCase(),
+		id: messageId, subject: draftFields.subject,
+		sender: (draftAlias?.alias_email ?? mailboxId).toLowerCase(),
 		recipient: draftFields.recipient, cc: draftFields.cc, bcc: draftFields.bcc,
 		date: now, body, in_reply_to: in_reply_to || null, email_references: null,
 		thread_id: resolvedThreadId,
+		alias_id: draftAlias?.id ?? null,
 	}, []);
 	await stub.deleteSiblingDrafts(messageId, {
 		threadId: resolvedThreadId,
@@ -1513,11 +1543,17 @@ async function sendInboundAutoReply(options: {
 	settings: MailboxAutomationSettings;
 	classification: EmailClassification;
 	headers: HeaderSource;
+	/** Address the reply comes from (a domain alias); defaults to mailboxId. */
+	replyFrom?: string;
+	/** Retry from here if sending from replyFrom fails. */
+	replyFallback?: string | null;
 }): Promise<void> {
 	const {
 		env, stub, mailboxId, sender, fromName, subject, originalMessageId,
 		threadId, settings, classification, headers,
 	} = options;
+	const replyFrom = (options.replyFrom || mailboxId).toLowerCase();
+	const replyFallback = options.replyFallback?.toLowerCase() || null;
 	const decision = shouldAutoReply({
 		enabled: Boolean(settings.autoReply?.enabled),
 		message: settings.autoReply?.message,
@@ -1533,7 +1569,7 @@ async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const fromDomain = mailboxId.split("@")[1];
+	const fromDomain = replyFrom.split("@")[1];
 	if (!fromDomain) {
 		console.error(`Skipping auto-reply for ${mailboxId}: invalid mailbox`);
 		return;
@@ -1562,7 +1598,7 @@ async function sendInboundAutoReply(options: {
 			existingXLoop: (headerMapFromSource(headers).get("x-loop") ?? []).join(", "),
 		}),
 	);
-	const from = fromName ? { email: mailboxId, name: fromName } : mailboxId;
+	const fromField = (address: string) => (fromName ? { email: address, name: fromName } : address);
 
 	try {
 		assertOutboundMessageSize({ html, text });
@@ -1582,17 +1618,31 @@ async function sendInboundAutoReply(options: {
 		throw e;
 	}
 
-	let providerMessageId: string;
-	try {
-		const result = await sendEmail(env.EMAIL, {
+	const sendFrom = (address: string) =>
+		sendEmail(env.EMAIL, {
 			to: sender,
-			from,
+			from: fromField(address),
 			subject: replySubject,
 			text,
 			html,
 			headers: autoHeaders,
 		});
-		providerMessageId = result.messageId;
+
+	let providerMessageId: string;
+	let sentFrom = replyFrom;
+	try {
+		try {
+			providerMessageId = (await sendFrom(replyFrom)).messageId;
+		} catch (aliasError) {
+			// A domain alias may live on a domain that can't send yet.
+			if (!replyFallback || replyFallback === replyFrom) throw aliasError;
+			console.warn(
+				`Auto-reply from ${replyFrom} failed, retrying from ${replyFallback}:`,
+				(aliasError as Error).message,
+			);
+			sentFrom = replyFallback;
+			providerMessageId = (await sendFrom(replyFallback)).messageId;
+		}
 	} catch (e) {
 		console.error(`Auto-reply send failed for ${mailboxId}:`, (e as Error).message);
 		try {
@@ -1606,14 +1656,14 @@ async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const fromHeader = fromName ? `${fromName} <${mailboxId}>` : mailboxId;
+	const fromHeader = fromName ? `${fromName} <${sentFrom}>` : sentFrom;
 	try {
 		await stub.createEmail(
 			Folders.SENT,
 			{
 				id: messageId,
 				subject: replySubject,
-				sender: mailboxId,
+				sender: sentFrom,
 				sender_name: fromName || null,
 				recipient: sender,
 				cc: null,
@@ -1645,16 +1695,12 @@ async function sendInboundAutoReply(options: {
 			(e as Error).message,
 		);
 	}
-	console.log(`Sent auto-reply from ${mailboxId} to ${sender}`);
+	console.log(`Sent auto-reply from ${sentFrom} to ${sender}`);
 }
 
-async function receiveEmail(
-	message: ForwardableEmailMessage,
-	env: Env,
-	ctx: ExecutionContext,
-	getAgent: AgentResolver,
-) {
-	let matchedAliasMeta: StoredAliasMetadata | null = null;
+async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+	// Holder object: TS does not track assignments made inside the callback.
+	const aliasMatch: { meta: AnyAliasMetadata | null } = { meta: null };
 	const route = await routeInboundEnvelope(
 		message.to,
 		async (mailboxId) =>
@@ -1663,8 +1709,8 @@ async function receiveEmail(
 			const obj = await env.BUCKET.get(aliasMetadataKey(aliasEmail));
 			if (!obj) return null;
 			try {
-				const data = (await obj.json()) as StoredAliasMetadata;
-				matchedAliasMeta = data;
+				const data = (await obj.json()) as AnyAliasMetadata;
+				aliasMatch.meta = data;
 				return data.targetMailboxId || null;
 			} catch {
 				return null;
@@ -1677,16 +1723,18 @@ async function receiveEmail(
 		return;
 	}
 	const mailboxId = route.mailboxId;
+	const routedAliasMeta = route.resolvedViaAlias ? aliasMatch.meta : null;
+	const privateAlias = isPrivateAliasMeta(routedAliasMeta) ? routedAliasMeta : null;
 
-	// Check if this inbound email is addressed to a masked alias that is paused or expired
-	if (matchedAliasMeta) {
-		const isExpired = isAliasExpired(matchedAliasMeta.expiresAt);
-		const isPaused = matchedAliasMeta.isActive === false;
+	// Paused or expired private email: count it, then drop or bounce.
+	if (privateAlias) {
+		const isExpired = isAliasExpired(privateAlias.expiresAt);
+		const isPaused = privateAlias.isActive === false;
 		if (isPaused || isExpired) {
-			console.log(`Masked alias ${matchedAliasMeta.aliasEmail} is ${isExpired ? "expired" : "paused"}`);
+			console.log(`Private email ${privateAlias.aliasEmail} is ${isExpired ? "expired" : "paused"}`);
 			const targetStub = getMailboxStub(env, mailboxId);
-			await (targetStub as any).recordAliasInbound(matchedAliasMeta.aliasEmail, true);
-			if (matchedAliasMeta.pausedAction === "reject") {
+			await (targetStub as any).recordAliasInbound(privateAlias.aliasEmail, true);
+			if (privateAlias.pausedAction === "reject") {
 				message.setReject(isExpired ? "Address expired" : "Address paused");
 			}
 			return;
@@ -1817,7 +1865,7 @@ async function receiveEmail(
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 		auth: serializeEmailAuth(auth),
-		alias_id: matchedAliasMeta?.aliasId || null,
+		alias_id: privateAlias?.aliasId || null,
 	};
 
 	const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -1886,8 +1934,8 @@ async function receiveEmail(
 	let filedFolder: string = targetFolder;
 	try {
 		await stub.createEmail(targetFolder, inboundEmail, attachmentData);
-		if (matchedAliasMeta) {
-			await (stub as any).recordAliasInbound(matchedAliasMeta.aliasEmail, false);
+		if (privateAlias) {
+			await (stub as any).recordAliasInbound(privateAlias.aliasEmail, false);
 		}
 	} catch (e) {
 		if ((e as Error).message === "Mailbox has been deleted") {
@@ -1935,7 +1983,9 @@ async function receiveEmail(
 				forwardToOverride: filterHit?.forwardTo,
 			});
 		}
-		if (!triageDecision.skipAutoReply) {
+		// Private emails never auto-reply; domain aliases reply as themselves.
+		const replyPlan = autoReplySender(routedAliasMeta, mailboxId);
+		if (!triageDecision.skipAutoReply && !replyPlan.skip) {
 			ctx.waitUntil(
 				sendInboundAutoReply({
 					env,
@@ -1949,6 +1999,8 @@ async function receiveEmail(
 					settings: automationSettings,
 					classification,
 					headers: message.headers,
+					replyFrom: replyPlan.from,
+					replyFallback: replyPlan.fallback,
 				}).catch((e) =>
 					console.error("Auto-reply failed:", (e as Error).message),
 				),
@@ -1970,18 +2022,17 @@ async function receiveEmail(
 		ctx.waitUntil(
 			(async () => {
 				await stub.ensureAutoAgentConversation();
-				await triggerAutoDraft(
-					env.EMAIL_AGENT,
+				const agent = await getEmailAgent(
+					env,
 					agentInstanceName(mailboxId, AUTO_CONVERSATION_ID),
-					{
-						mailboxId,
-						emailId: messageId,
-						sender: (parsedEmail.from?.address || "").toLowerCase(),
-						subject: parsedEmail.subject || "",
-						threadId,
-					},
-					getAgent,
 				);
+				await agent.handleNewEmail({
+					mailboxId,
+					emailId: messageId,
+					sender: (parsedEmail.from?.address || "").toLowerCase(),
+					subject: parsedEmail.subject || "",
+					threadId,
+				});
 			})().catch((e) =>
 				console.error("Auto-draft trigger failed:", (e as Error).message),
 			),

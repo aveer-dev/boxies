@@ -49,6 +49,11 @@ export interface EmailMetadata {
 	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
 	delivery_error?: string | null;
 	auth?: EmailAuthSnapshot | null;
+	/** Private email the message arrived on or was sent from. */
+	alias_id?: string | null;
+	alias_email?: string | null;
+	/** Alias still active and unexpired (null when not an alias message). */
+	alias_active?: boolean | null;
 }
 
 export interface EmailFull extends EmailMetadata {

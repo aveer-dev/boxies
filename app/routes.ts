@@ -17,6 +17,7 @@ export default [
 	route("invite/:token", "routes/invite.tsx"),
 	route("login", "routes/login.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
+	route("extension/connect", "routes/extension-connect.tsx"),
 	// Miller columns: each child route renders its own column(s); an optional
 	// trailing :emailId opens the reader beside the list.
 	route("mailbox/:mailboxId", "routes/mailbox.tsx", [

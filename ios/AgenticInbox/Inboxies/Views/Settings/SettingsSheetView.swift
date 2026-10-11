@@ -278,16 +278,6 @@ struct SettingsSheetView: View {
         .tint(AppTheme.accent)
     }
 
-    private func settingsLabel(_ title: String, systemImage: String) -> some View {
-        Label {
-            Text(title)
-                .foregroundStyle(AppTheme.ink)
-        } icon: {
-            Image(systemName: systemImage)
-                .foregroundStyle(AppTheme.ink)
-        }
-    }
-
     private func settingsNavRow(
         _ title: String,
         systemImage: String,

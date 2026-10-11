@@ -61,6 +61,7 @@ import type { MailboxContext } from "../lib/mailbox";
 import {
 	allowedMailboxSet,
 	canonicalMailboxId,
+	isAddressTaken,
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
 import { normalizeEmailAddress } from "../lib/mail-automations";
@@ -87,7 +88,7 @@ import {
 	consumePasswordReset,
 	type PasswordResetRecord,
 } from "../lib/password-reset";
-import { agentInstanceName } from "../../shared/agent-conversations";
+import { purgeEmailAgents } from "../lib/email-agent";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 import { isDevRuntime } from "../lib/dev-runtime";
 import type { Env } from "../types";
@@ -371,6 +372,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (await c.env.BUCKET.head(key)) {
 			return c.json({ error: "Mailbox already exists" }, 409);
 		}
+		if (await isAddressTaken(c.env.BUCKET, email)) {
+			return c.json({ error: "Address is already in use" }, 409);
+		}
 		const name = body.name || email.split("@")[0] || email;
 		const assignTo = body.assignTo ?? "self";
 		const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
@@ -510,33 +514,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		const stub = getMailboxStub(c.env, mailboxId);
 		const { conversationIds } = await stub.purgeMailbox(mailboxId);
-		const agentNames = new Set<string>([
-			mailboxId,
-			...conversationIds.map((id) => agentInstanceName(mailboxId, id)),
-		]);
-		for (const name of agentNames) {
-			try {
-				const agentStub = c.env.EMAIL_AGENT.get(
-					c.env.EMAIL_AGENT.idFromName(name),
-				);
-				const purgable = agentStub as {
-					purge?: () => Promise<unknown>;
-					fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
-				};
-				if (typeof purgable.purge === "function") {
-					await purgable.purge();
-				} else {
-					await purgable.fetch(
-						new Request("https://agents/purge", { method: "POST" }),
-					);
-				}
-			} catch (e) {
-				console.error(
-					`EmailAgent purge failed for ${name}:`,
-					(e as Error).message,
-				);
-			}
-		}
+		await purgeEmailAgents(c.env, mailboxId, conversationIds);
 		await appendAdminAudit(c.env.BUCKET, {
 			actorKeys: principalKeys(principal),
 			action: "mailbox.delete",

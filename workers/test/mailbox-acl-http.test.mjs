@@ -52,7 +52,10 @@ function mockBucket(initial = {}) {
 	};
 }
 
-function mockEnv(bucket, { emailAddresses = [], purgeCalls = [] } = {}) {
+function mockEnv(
+	bucket,
+	{ emailAddresses = [], purgeCalls = [], agentPurges = [], conversationIds = [] } = {},
+) {
 	return {
 		BUCKET: bucket,
 		EMAIL_ADDRESSES: emailAddresses,
@@ -70,7 +73,7 @@ function mockEnv(bucket, { emailAddresses = [], purgeCalls = [] } = {}) {
 					countEmails: async () => 0,
 					purgeMailbox: async (mailboxId) => {
 						purgeCalls.push(mailboxId);
-						return { conversationIds: [] };
+						return { conversationIds };
 					},
 				};
 			},
@@ -79,8 +82,12 @@ function mockEnv(bucket, { emailAddresses = [], purgeCalls = [] } = {}) {
 			idFromName(name) {
 				return name;
 			},
-			get() {
-				return { purge: async () => {} };
+			get(id) {
+				return {
+					purge: async () => {
+						agentPurges.push(id);
+					},
+				};
 			},
 		},
 	};
@@ -340,6 +347,7 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 
 {
 	const purgeCalls = [];
+	const agentPurges = [];
 	const bucket = mockBucket({
 		[mailboxMetadataKey("shared@inboxies.email")]: {
 			acl: {
@@ -348,7 +356,11 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 			},
 		},
 	});
-	const env = mockEnv(bucket, { purgeCalls });
+	const env = mockEnv(bucket, {
+		purgeCalls,
+		agentPurges,
+		conversationIds: ["auto", "c1"],
+	});
 
 	const memberDelete = await jsonRequest(apiApp, env, {
 		method: "DELETE",
@@ -365,6 +377,12 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	});
 	assert.equal(ownerDelete.status, 204);
 	assert.deepEqual(purgeCalls, ["shared@inboxies.email"]);
+	// Legacy single-chat name plus every conversation, via getAgentByName.
+	assert.deepEqual(agentPurges, [
+		"shared@inboxies.email",
+		"shared@inboxies.email::auto",
+		"shared@inboxies.email::c1",
+	]);
 }
 
 {

@@ -1,4 +1,3 @@
-import Security
 import Foundation
 import Observation
 
@@ -6,7 +5,7 @@ import Observation
 @Observable
 @MainActor
 final class AuthStore {
-    private let tokenKey = "mobileSessionToken"
+    private let tokenKey = SharedSession.tokenKey
     private let emailKey = "mobileUserEmail"
 
     var token: String?
@@ -15,9 +14,14 @@ final class AuthStore {
     var isBusy = false
     var errorMessage: String?
     /// Preview hosts keep session in memory so Canvas cannot wipe the real Keychain.
-    var persistsSession = true
+    var persistsSession: Bool
 
-    init() {
+    init(persistsSession: Bool = true) {
+        self.persistsSession = persistsSession
+        // The token moved to the shared keychain group the AutoFill extension reads.
+        if persistsSession {
+            KeychainStore.migrateToSharedGroup(tokenKey)
+        }
         token = KeychainStore.read(tokenKey)
         userEmail = UserDefaults.standard.string(forKey: emailKey)
     }
@@ -108,6 +112,7 @@ final class AuthStore {
         guard persistsSession else { return }
         KeychainStore.delete(tokenKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
+        SharedSession.clear()
     }
 
     private func persist(token: String, email: String?) {
@@ -118,39 +123,5 @@ final class AuthStore {
         if let email {
             UserDefaults.standard.set(email, forKey: emailKey)
         }
-    }
-}
-
-enum KeychainStore {
-    static func write(_ key: String, value: String) {
-        let data = Data(value.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecValueData as String: data,
-        ]
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
-    }
-
-    static func read(_ key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func delete(_ key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 }

@@ -1,16 +1,26 @@
 package co.inboxies.app.models
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import co.inboxies.app.util.DeliveryStatus
+import co.inboxies.app.utils.DateUtils
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -428,7 +438,12 @@ data class Email(
     @SerialName("delivery_error") val deliveryError: String? = null,
     /** Inbox New vs Seen (`new` | `seen`); derived from read state when absent. */
     @SerialName("list_section") val listSection: String? = null,
+    /** Private email this thread is bound to. List rows carry only the id. */
     @SerialName("alias_id") val aliasId: String? = null,
+    /** Detail / thread / reply-draft payloads: the private address replies go out from. */
+    @SerialName("alias_email") val aliasEmail: String? = null,
+    /** Alias still active and unexpired; `null` when not a private-email thread. */
+    @SerialName("alias_active") val aliasActive: Boolean? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -1256,20 +1271,55 @@ data class DomainAliasesResponse(
     val aliases: List<DomainAliasItem> = emptyList(),
 )
 
+/**
+ * SQLite stores booleans as INTEGER, so the Worker sends `0` / `1`. Also accepts
+ * `true` / `false` so a future boolean payload keeps decoding.
+ */
+object IntAsBooleanSerializer : KSerializer<Boolean> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("co.inboxies.app.IntAsBoolean", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean {
+        val jsonDecoder = decoder as? JsonDecoder ?: return decoder.decodeBoolean()
+        val primitive = jsonDecoder.decodeJsonElement() as? JsonPrimitive ?: return false
+        primitive.booleanOrNull?.let { return it }
+        primitive.longOrNull?.let { return it != 0L }
+        return false
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean) {
+        encoder.encodeBoolean(value)
+    }
+}
+
+/** Private email row from `/api/v1/mailboxes/:id/aliases` (snake_case, `is_active` 0/1). */
 @Serializable
 data class MaskedAlias(
     val id: String,
-    @SerialName("mailbox_id") val mailboxId: String,
     @SerialName("alias_email") val aliasEmail: String,
+    val domain: String? = null,
+    @SerialName("base_domain") val baseDomain: String? = null,
     val label: String? = null,
-    val notes: String? = null,
+    @Serializable(with = IntAsBooleanSerializer::class)
     @SerialName("is_active") val isActive: Boolean = true,
+    /** `drop` (silently discard) or `reject` (SMTP bounce) while paused. */
+    @SerialName("paused_action") val pausedAction: String = PAUSED_DROP,
     @SerialName("expires_at") val expiresAt: String? = null,
-    @SerialName("paused_action") val pausedAction: String = "drop",
-    @SerialName("forwarded_count") val forwardedCount: Int = 0,
     @SerialName("created_at") val createdAt: String? = null,
-    @SerialName("updated_at") val updatedAt: String? = null,
-)
+    @SerialName("stats_received") val statsReceived: Int = 0,
+    @SerialName("stats_blocked") val statsBlocked: Int = 0,
+) {
+    val expiresAtInstant: Instant?
+        get() = expiresAt?.let { DateUtils.parseIso(it) }
+
+    fun isExpired(now: Instant = Instant.now()): Boolean =
+        expiresAtInstant?.let { !it.isAfter(now) } == true
+
+    companion object {
+        const val PAUSED_DROP = "drop"
+        const val PAUSED_REJECT = "reject"
+    }
+}
 
 @Serializable
 data class AliasesResponse(
@@ -1280,23 +1330,6 @@ data class AliasesResponse(
 data class CreateAliasResponse(
     val alias: MaskedAlias,
 )
-
-@Serializable
-data class CreateAliasRequest(
-    val label: String? = null,
-    val notes: String? = null,
-    @SerialName("expires_in_seconds") val expiresInSeconds: Int? = null,
-    @SerialName("paused_action") val pausedAction: String = "drop",
-)
-
-@Serializable
-data class UpdateAliasRequest(
-    val label: String? = null,
-    val notes: String? = null,
-    @SerialName("is_active") val isActive: Boolean? = null,
-    @SerialName("paused_action") val pausedAction: String? = null,
-)
-
 
 
 

@@ -148,7 +148,8 @@ object DateUtils {
         }
     }
 
-    private fun parseIso(value: String): Instant? {
+    /** ISO-8601 instant, or SQLite `yyyy-MM-dd HH:mm:ss` (UTC). */
+    fun parseIso(value: String): Instant? {
         if (value.isEmpty()) return null
         return try {
             Instant.parse(value)
