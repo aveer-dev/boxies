@@ -9,8 +9,13 @@ import {
 	applyInboxFilters,
 	parseInboxFilters,
 } from "../lib/inbox-filters.ts";
-import { shouldAutoDraft, shouldSendPush } from "../lib/classify-email.ts";
 import {
+	overrideAiSpamForVouchedSender,
+	shouldAutoDraft,
+	shouldSendPush,
+} from "../lib/classify-email.ts";
+import {
+	isVouchedSender,
 	normalizeTriageSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
@@ -22,7 +27,7 @@ const newsletter = { class: "bulk", folderId: "promotions", reason: "bulk-list-h
 const receipt = { class: "bulk", folderId: "updates", reason: "bulk-transactional" };
 
 function inboundPipeline({
-	classification,
+	classification: rawClassification,
 	triage,
 	rawSettings = {},
 	sender,
@@ -34,6 +39,10 @@ function inboundPipeline({
 		sender,
 		subject,
 		headers: [],
+		auth,
+	});
+	const classification = overrideAiSpamForVouchedSender(rawClassification, {
+		vouched: isVouchedSender(triage, preferenceFolderId),
 		auth,
 	});
 	const decision = resolveInboundFolder({
@@ -190,6 +199,67 @@ function inboundPipeline({
 		sender: "spoof@example.com",
 	});
 	assert.equal(r.folderId, "spam");
+}
+
+// AI spam guess on someone you emailed: still reaches the Inbox and notifies
+// (osato@ → emmanuel@ landed in Spam on 2026-10-09 before this).
+{
+	const aiSpam = { class: "spam", folderId: "spam", reason: "ai-spam" };
+	const authed = {
+		spoofed: false,
+		source: "authentication-results",
+		aligned: true,
+		headerFrom: "osato@inboxies.email",
+		envelopeFrom: "bounces@cf-bounce.inboxies.email",
+	};
+	const emailedThem = {
+		sender: "osato@inboxies.email",
+		status: "allowed",
+		destination_folder_id: null,
+		decided_at: "t",
+		updated_at: "t",
+	};
+
+	const r = inboundPipeline({
+		classification: aiSpam,
+		triage: emailedThem,
+		sender: "osato@inboxies.email",
+		auth: authed,
+	});
+	assert.equal(r.folderId, "inbox");
+	assert.equal(r.triageAction, "allowed");
+	assert.equal(r.push, true);
+	assert.equal(r.autoDraft, true);
+
+	// Purpose box still applies once the guess is overridden.
+	const sorted = inboundPipeline({
+		classification: aiSpam,
+		triage: emailedThem,
+		sender: "osato@inboxies.email",
+		auth: authed,
+		preferenceFolderId: "updates",
+	});
+	assert.equal(sorted.folderId, "updates");
+
+	// Same guess, unknown sender → stays in Spam.
+	const stranger = inboundPipeline({
+		classification: aiSpam,
+		triage: null,
+		sender: "stranger@example.com",
+		auth: { ...authed, headerFrom: "stranger@example.com" },
+	});
+	assert.equal(stranger.folderId, "spam");
+	assert.equal(stranger.push, false);
+
+	// Allowed address but mail doesn't authenticate as them → stays in Spam.
+	const unproven = inboundPipeline({
+		classification: aiSpam,
+		triage: emailedThem,
+		sender: "osato@inboxies.email",
+		auth: null,
+	});
+	assert.equal(unproven.folderId, "spam");
+	assert.equal(unproven.push, false);
 }
 
 // Angle-bracket From normalizes for triage PK

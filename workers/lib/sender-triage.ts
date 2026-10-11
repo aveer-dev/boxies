@@ -174,6 +174,19 @@ export function resolveInboundFolder(
 	};
 }
 
+/**
+ * The user has vouched for this sender: allowed in Screener (accepted, or
+ * auto-allowed because you emailed them) or given a purpose box. Rejected
+ * senders never count.
+ */
+export function isVouchedSender(
+	triage: SenderTriageRow | null,
+	preferenceFolderId?: string | null,
+): boolean {
+	if (triage?.status === "rejected") return false;
+	return triage?.status === "allowed" || Boolean(preferenceFolderId?.trim());
+}
+
 /** Normalize a From address for triage PK lookup. */
 export function normalizeTriageSender(
 	sender: string | null | undefined,

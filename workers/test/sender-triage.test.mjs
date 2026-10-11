@@ -8,6 +8,7 @@ import {
 	allowOutboundRecipients,
 	buildBootstrapAllowSeeds,
 	isScreenerDestination,
+	isVouchedSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
 	screenerSettingsError,
@@ -291,5 +292,20 @@ assert.equal(
 	const wide = aggregateRecentRecipients(rows, { limit: 500, hardCap: 500 });
 	assert.equal(wide.length, 80);
 }
+
+// ── Vouched senders (may override an AI spam guess) ───────────────
+
+assert.equal(isVouchedSender(allowed("friend@example.com")), true);
+assert.equal(isVouchedSender(allowed("friend@example.com", "promotions")), true);
+assert.equal(isVouchedSender(null, "updates"), true);
+assert.equal(isVouchedSender(null, "  "), false);
+assert.equal(isVouchedSender(null, null), false);
+assert.equal(
+	isVouchedSender(
+		{ ...allowed("nope@example.com"), status: "rejected" },
+		"inbox",
+	),
+	false,
+);
 
 console.log("sender-triage.test.mjs: ok");
