@@ -296,58 +296,21 @@ export class EmailAgent extends AIChatAgent<any> {
 	}
 
 	/**
-	 * Handle HTTP requests to the agent DO. Intercepts /onNewEmail
-	 * before passing to the default AIChatAgent handler.
-	 */
-	async onRequest(request: Request): Promise<Response> {
-		const url = new URL(request.url);
-		if (url.pathname === "/onNewEmail" && request.method === "POST") {
-			try {
-				const emailData = await request.json() as {
-					mailboxId: string;
-					emailId: string;
-					sender: string;
-					subject: string;
-					threadId: string;
-				};
-				const result = await this.handleNewEmail(emailData);
-				return new Response(JSON.stringify(result), {
-					headers: { "Content-Type": "application/json" },
-				});
-			} catch (e) {
-				console.error("onNewEmail handler failed:", (e as Error).message);
-				return new Response(
-					JSON.stringify({ error: (e as Error).message }),
-					{ status: 500, headers: { "Content-Type": "application/json" } },
-				);
-			}
-		}
-		if (url.pathname === "/purge" && request.method === "POST") {
-			const result = await this.purge();
-			return new Response(JSON.stringify(result), {
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-		return super.onRequest(request);
-	}
-
-	/**
 	 * Clear persisted chat history when the owning mailbox is deleted.
-	 * No platform DO destroy API — wipe storage so recreate starts empty.
+	 * SDK `destroy()` wipes storage and then resets the live instance; a bare
+	 * `storage.deleteAll()` left it running against dropped chat tables, so a
+	 * recreated mailbox hit "no such table" until eviction.
+	 * Worker RPC via `purgeEmailAgents` (workers/lib/email-agent.ts).
 	 */
 	async purge(): Promise<{ status: string }> {
-		try {
-			await this.persistMessages([]);
-		} catch (e) {
-			console.error("EmailAgent persistMessages([]) failed:", (e as Error).message);
-		}
-		await this.ctx.storage.deleteAll();
+		await this.destroy();
 		return { status: "purged" };
 	}
 
 	/**
 	 * Called when a new email arrives. Reads it, loads the thread,
 	 * drafts a response, and saves it to the Drafts folder.
+	 * Worker RPC from `receiveEmail` via `getEmailAgent` (workers/lib/email-agent.ts).
 	 */
 	async handleNewEmail(emailData: {
 		mailboxId: string;

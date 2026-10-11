@@ -28,6 +28,7 @@ import { disableCatchAllRule } from "../lib/cloudflare-client";
 import { listAllR2Objects } from "../lib/r2-list";
 
 type AppVariables = { principal?: RequestPrincipal };
+type AppContext = Context<{ Bindings: Env; Variables: AppVariables }>;
 
 const DecommissionBody = z.object({
 	confirmDomain: z.string().trim().min(1, "Confirmation domain is required"),
@@ -38,8 +39,6 @@ const TransferLockBody = z.object({
 	locked: z.boolean(),
 });
 
-type ExportContext = Context<{ Bindings: Env; Variables: AppVariables }>;
-
 /**
  * Wire shape every client decodes (web, iOS, Android): `id`, a progress object,
  * and the target as `domain` / `mailboxId`. `exportId` is kept for older callers.
@@ -48,6 +47,8 @@ function toExportResponse(job: ExportJob) {
 	return {
 		id: job.id,
 		exportId: job.id,
+		targetType: job.targetType,
+		targetId: job.targetId,
 		...(job.targetType === "domain" ? { domain: job.targetId } : { mailboxId: job.targetId }),
 		status: job.status,
 		progress: {
@@ -65,31 +66,37 @@ function toExportResponse(job: ExportJob) {
 }
 
 /**
- * Load an export job the caller may read: the same mailbox ACL / domain admin
- * check as creating it, and only until it expires. Returns a Response on denial.
+ * Load an export job only if the caller may access its target: mailbox
+ * exports require mailbox ACL access, domain exports require domain admin.
+ * Returns null for both missing and unauthorized jobs so callers answer 404
+ * either way and export ids can't be probed.
  */
-async function loadAuthorizedExport(
-	c: ExportContext,
+async function loadAuthorizedExportJob(
+	c: AppContext,
 	exportId: string,
-): Promise<ExportJob | Response> {
+): Promise<ExportJob | null> {
 	const job = await getExportJob(c.env.BUCKET, exportId);
-	if (!job) return c.json({ error: "Export job not found" }, 404);
+	if (!job) return null;
 
 	if (job.targetType === "mailbox") {
 		const principal = c.get("principal") as RequestPrincipal | undefined;
 		const auth = await authorizeMailbox(c.env.BUCKET, principal, job.targetId);
-		// Same 404 as a missing job so ids can't be probed.
-		if (!auth.ok) return c.json({ error: "Export job not found" }, 404);
-	} else {
-		const authz = await authorizeDomainAdmin(c, job.targetId);
-		if (authz instanceof Response) return c.json({ error: "Export job not found" }, 404);
+		return auth.ok ? job : null;
 	}
 
-	if (new Date(job.expiresAt).getTime() < Date.now()) {
-		if (job.downloadKey) await c.env.BUCKET.delete(job.downloadKey);
-		return c.json({ error: "Export has expired" }, 410);
+	if (job.targetType === "domain") {
+		const authz = await authorizeDomainAdmin(c, job.targetId);
+		return authz instanceof Response ? null : job;
 	}
-	return job;
+
+	return null;
+}
+
+/** Expired exports are gone: drop the archive and answer 410. Null while still valid. */
+async function expiredExportResponse(c: AppContext, job: ExportJob): Promise<Response | null> {
+	if (new Date(job.expiresAt).getTime() >= Date.now()) return null;
+	if (job.downloadKey) await c.env.BUCKET.delete(job.downloadKey);
+	return c.json({ error: "Export has expired" }, 410);
 }
 
 export function registerExportAndOffboardingRoutes(
@@ -138,8 +145,14 @@ export function registerExportAndOffboardingRoutes(
 	 * Query export job status and progress.
 	 */
 	app.get("/api/v1/exports/:exportId", async (c) => {
-		const job = await loadAuthorizedExport(c, c.req.param("exportId"));
-		if (job instanceof Response) return job;
+		const job = await loadAuthorizedExportJob(c, c.req.param("exportId"));
+
+		if (!job) {
+			return c.json({ error: "Export job not found" }, 404);
+		}
+		const expired = await expiredExportResponse(c, job);
+		if (expired) return expired;
+
 		return c.json(toExportResponse(job));
 	});
 
@@ -148,11 +161,17 @@ export function registerExportAndOffboardingRoutes(
 	 */
 	app.get("/api/v1/exports/:exportId/download", async (c) => {
 		const exportId = c.req.param("exportId");
-		const job = await loadAuthorizedExport(c, exportId);
-		if (job instanceof Response) return job;
+		const job = await loadAuthorizedExportJob(c, exportId);
+		if (job) {
+			const expired = await expiredExportResponse(c, job);
+			if (expired) return expired;
+		}
 
-		const fileObj = job.downloadKey ? await c.env.BUCKET.get(job.downloadKey) : null;
-		if (!fileObj) {
+		// Only serve archives referenced by job metadata the caller is
+		// authorized for — never guess the R2 key from the id alone.
+		const fileObj = job?.downloadKey ? await c.env.BUCKET.get(job.downloadKey) : null;
+
+		if (!job || !fileObj) {
 			return c.json({ error: "Export archive file not found or expired" }, 404);
 		}
 

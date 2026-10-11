@@ -4,6 +4,7 @@ import android.app.Application
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
+import co.inboxies.app.services.AutofillMailboxPreference
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.SwipeActionPreferences
 
@@ -24,5 +25,6 @@ class InboxiesApplication : Application() {
         authStore = AuthStore(this)
         PushNotificationManager.init(this)
         SwipeActionPreferences.init(this)
+        AutofillMailboxPreference.init(this)
     }
 }

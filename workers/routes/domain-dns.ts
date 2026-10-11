@@ -14,6 +14,7 @@ import {
 	isPrincipalAdminForDomain,
 	saveEmailAlias,
 	deleteEmailAlias,
+	AddressInUseError,
 	listEmailAliases,
 	type DomainMetadata,
 	type DomainAlias,
@@ -32,12 +33,12 @@ import {
 	auditEmailHealth,
 	type NewDnsRecord,
 } from "../lib/cloudflare-client";
-import { canonicalMailboxId, mailboxMetadataKey } from "../lib/mailbox-routing";
+import { canonicalMailboxId, isAddressTaken, mailboxMetadataKey } from "../lib/mailbox-routing";
 import { ensurePrincipalAccount } from "../lib/identity-links";
 import { aclFromOwnerKeys, principalKeys } from "../lib/mailbox-acl";
 import { createInviteRecord, saveInvite, inviteAcceptUrl } from "../lib/invites";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
-import { isDevRuntime } from "../lib/runtime-env";
+import { isDevRuntime } from "../lib/dev-runtime";
 import {
 	domainVerificationChallenge,
 	isDomainVerified,
@@ -466,6 +467,7 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			);
 			return c.json({ success: true, alias }, 201);
 		} catch (err: unknown) {
+			if (err instanceof AddressInUseError) return c.json({ error: err.message }, 409);
 			const msg = err instanceof Error ? err.message : "Failed to create email alias";
 			return c.json({ error: msg }, 500);
 		}
@@ -534,7 +536,12 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 		};
 
 		const inputUsers = body.users || [];
-		const results = [];
+		const results: Array<{
+			mailboxId: string;
+			name: string;
+			invite: { token: string; inviteUrl: string; inviteeEmail: string } | null;
+			error?: string;
+		}> = [];
 		const domain = domainMeta.domain;
 
 		for (const u of inputUsers) {
@@ -546,6 +553,15 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 
 			const key = mailboxMetadataKey(canonical);
 			const exists = await c.env.BUCKET.head(key);
+			if (!exists && (await isAddressTaken(c.env.BUCKET, canonical))) {
+				results.push({
+					mailboxId: canonical,
+					name: u.fullName || username,
+					invite: null,
+					error: "Address is already in use by an alias",
+				});
+				continue;
+			}
 			if (!exists) {
 				const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
 				const acl = aclFromOwnerKeys(ensured.ownerKeys);
@@ -565,7 +581,7 @@ export function registerDomainDnsRoutes(app: Hono<{ Bindings: Env; Variables: Ap
 			}
 
 			// If contactEmail provided, generate invite record
-			let inviteData = null;
+			let inviteData: { token: string; inviteUrl: string; inviteeEmail: string } | null = null;
 			if (u.contactEmail && u.contactEmail.includes("@")) {
 				const invite = createInviteRecord({
 					mailboxId: canonical,

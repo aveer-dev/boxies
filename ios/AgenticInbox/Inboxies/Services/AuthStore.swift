@@ -5,7 +5,7 @@ import Observation
 @Observable
 @MainActor
 final class AuthStore {
-    private let tokenKey = KeychainStore.sessionTokenKey
+    private let tokenKey = SharedSession.tokenKey
     private let emailKey = "mobileUserEmail"
 
     var token: String?
@@ -14,9 +14,14 @@ final class AuthStore {
     var isBusy = false
     var errorMessage: String?
     /// Preview hosts keep session in memory so Canvas cannot wipe the real Keychain.
-    var persistsSession = true
+    var persistsSession: Bool
 
-    init() {
+    init(persistsSession: Bool = true) {
+        self.persistsSession = persistsSession
+        // The token moved to the shared keychain group the AutoFill extension reads.
+        if persistsSession {
+            KeychainStore.migrateToSharedGroup(tokenKey)
+        }
         token = KeychainStore.read(tokenKey)
         userEmail = UserDefaults.standard.string(forKey: emailKey)
         APIClient.shared.authToken = token
@@ -85,12 +90,12 @@ final class AuthStore {
         }
     }
 
-    func resetPassword(token: String? = nil, code: String? = nil, email: String? = nil, newPassword: String) async throws {
+    func resetPassword(token: String? = nil, email: String? = nil, code: String? = nil, newPassword: String) async throws {
         isBusy = true
         errorMessage = nil
         defer { isBusy = false }
         do {
-            let response = try await APIClient.shared.resetPassword(token: token, code: code, email: email, newPassword: newPassword)
+            let response = try await APIClient.shared.resetPassword(token: token, email: email, code: code, newPassword: newPassword)
             persist(token: response.token, email: response.email)
         } catch {
             errorMessage = error.localizedDescription
@@ -108,9 +113,8 @@ final class AuthStore {
         APIClient.shared.authToken = nil
         guard persistsSession else { return }
         KeychainStore.delete(tokenKey)
-        KeychainStore.delete(KeychainStore.apiBaseKey)
-        KeychainStore.delete(KeychainStore.autofillMailboxIdKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
+        SharedSession.clear()
     }
 
     private func persist(token: String, email: String?) {
@@ -120,8 +124,6 @@ final class AuthStore {
         APIClient.shared.authToken = token
         guard persistsSession else { return }
         KeychainStore.write(tokenKey, value: token)
-        // The AutoFill extension calls the server this token belongs to.
-        KeychainStore.write(KeychainStore.apiBaseKey, value: AppConfig.apiBaseURL.absoluteString)
         if let email {
             UserDefaults.standard.set(email, forKey: emailKey)
         }

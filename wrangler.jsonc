@@ -48,6 +48,18 @@
     "ai": {
         "binding": "AI",
     },
+    // Per-IP throttle on 6-digit password reset code guesses.
+    // namespace_id must be unique among rate limiters in the Cloudflare account.
+    "ratelimits": [
+        {
+            "name": "PASSWORD_RESET_LIMITER",
+            "namespace_id": "1001",
+            "simple": {
+                "limit": 10,
+                "period": 60,
+            },
+        },
+    ],
     "queues": {
         "consumers": [
             {

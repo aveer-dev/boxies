@@ -2,18 +2,21 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Loader, Pagination, Tooltip } from "@cloudflare/kumo";
-import { ArrowLeftIcon, MagnifyingGlassIcon, PaperclipIcon } from "@phosphor-icons/react";
+import { Loader } from "@cloudflare/kumo";
+import { MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
-import { Folders, getFolderDisplayName } from "shared/folders";
-import MailboxSplitView from "~/components/MailboxSplitView";
-import { formatListDate, getSnippetText, hasFileAttachment } from "~/lib/utils";
-import { isAuthSpoofed } from "~/lib/email-auth";
+import { useParams, useSearchParams } from "react-router";
+import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { displaySenderName } from "shared/sender";
+import ColumnPane from "~/components/columns/ColumnPane";
+import { ListEmptyState, ListPagination } from "~/components/columns/ListParts";
+import ReaderColumn from "~/components/columns/ReaderColumn";
+import ThreadRow, { ThreadChip } from "~/components/columns/ThreadRow";
+import { useMailNavigation } from "~/hooks/useMailNavigation";
+import { getSnippetText } from "~/lib/utils";
 import { useUpdateEmail } from "~/queries/emails";
-import { useSearchEmails, SEARCH_PAGE_SIZE } from "~/queries/search";
-import { useUIStore } from "~/hooks/useUIStore";
+import { useFolders } from "~/queries/folders";
+import { SEARCH_PAGE_SIZE, useSearchEmails } from "~/queries/search";
 import type { Email } from "~/types";
 
 function highlightTerms(text: string, query: string): React.ReactNode {
@@ -28,90 +31,106 @@ function highlightTerms(text: string, query: string): React.ReactNode {
 		// Use case-insensitive string comparison instead of regex.test() with g flag,
 		// which has stateful lastIndex causing alternating true/false results.
 		const lowerEscaped = escaped.toLowerCase();
-		return parts.map((part, i) => part.toLowerCase() === lowerEscaped ? <mark key={i} className="bg-kumo-warning-muted text-kumo-default rounded-sm px-0.5">{part}</mark> : part);
+		return parts.map((part, i) => part.toLowerCase() === lowerEscaped ? <mark key={i} className="bg-kumo-warning-tint text-kumo-default rounded-sm px-0.5">{part}</mark> : part);
 	} catch { return text; }
 }
 
+/** Column 3 for `/search?q=` (+ the reader for `:emailId`). */
 export default function SearchResultsRoute() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
 	const [searchParams] = useSearchParams();
-	const navigate = useNavigate();
-	const { selectedEmailId, isComposing, selectEmail, closePanel } = useUIStore();
+	const { emailId, openEmail, closeSearch } = useMailNavigation();
 	const updateEmail = useUpdateEmail();
+	const { data: folders = [] } = useFolders(mailboxId);
 	const urlQuery = searchParams.get("q") || "";
 	const [page, setPage] = useState(1);
-	const searchKey = useMemo(
-		() => `${mailboxId ?? ""}::${urlQuery}`,
-		[mailboxId, urlQuery],
-	);
+	const searchKey = useMemo(() => `${mailboxId}::${urlQuery}`, [mailboxId, urlQuery]);
 	const prevSearchKeyRef = useRef(searchKey);
 	const searchChanged = prevSearchKeyRef.current !== searchKey;
 	const currentPage = searchChanged ? 1 : page;
 
 	useEffect(() => {
-		if (!searchChanged) {
-			return;
-		}
-
+		if (!searchChanged) return;
 		prevSearchKeyRef.current = searchKey;
 		setPage(1);
-		closePanel();
-	}, [closePanel, searchChanged, searchKey]);
+	}, [searchChanged, searchKey]);
 
-	const { data: searchData, isLoading } = useSearchEmails(
-		mailboxId,
-		urlQuery,
-		currentPage,
-	);
+	const { data: searchData, isLoading } = useSearchEmails(mailboxId, urlQuery, currentPage);
 	const results = searchData?.results ?? [];
 	const totalCount = searchData?.totalCount ?? 0;
-	const isPanelOpen = selectedEmailId !== null || isComposing;
 
-	const handleRowClick = (email: Email) => { selectEmail(email.id); if (!email.read && email.folder_id !== Folders.DRAFT && mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { read: true } }); };
-	const folderDisplayName = (name: string | null | undefined): string => {
-		if (!name) return "";
-		return getFolderDisplayName(name);
-	};
 	const isUnread = (email: Email) => !email.read && email.folder_id !== Folders.DRAFT;
+	const handleOpen = (email: Email) => {
+		openEmail(email.id);
+		if (isUnread(email)) updateEmail.mutate({ mailboxId, id: email.id, data: { read: true } });
+	};
+	// Results carry folder_id plus folder_name (a display name). System folders
+	// show their name; custom folders show as #tags.
+	const folderLabel = (email: Email) => {
+		const name = (email as Email & { folder_name?: string }).folder_name;
+		const id = email.folder_id;
+		if (!id) return name ?? null;
+		if ((SYSTEM_FOLDER_IDS as readonly string[]).includes(id)) return getFolderDisplayName(id);
+		const tag = folders.find((f) => f.id === id)?.name ?? name ?? id;
+		return `#${tag.replace(/^#/, "")}`;
+	};
 
 	return (
-		<MailboxSplitView
-			selectedEmailId={selectedEmailId}
-			isComposing={isComposing}
-		>
-			<>
-				<div className="flex items-center gap-2 px-4 py-3.5 border-b border-kumo-line shrink-0 md:px-5">
-					<Tooltip content="Back to inbox" side="bottom" asChild><Button variant="ghost" shape="square" size="sm" icon={<ArrowLeftIcon size={18} />} onClick={() => navigate(`/mailbox/${mailboxId}/emails/inbox`)} aria-label="Back to inbox" /></Tooltip>
-					<div className="min-w-0 flex-1"><h1 className="text-lg font-semibold text-kumo-default truncate">Search Results</h1>{!isLoading && <span className="text-sm text-kumo-subtle">{totalCount} result{totalCount !== 1 ? "s" : ""}{urlQuery ? ` for "${urlQuery}"` : ""}</span>}</div>
-				</div>
-				<div className="flex-1 overflow-y-auto">
-					{isLoading ? <div className="flex justify-center py-16"><Loader size="lg" /></div> : results.length === 0 ? (
-						<div className="flex flex-col items-center justify-center py-24 px-6 text-center">
-							<div className="mb-4"><MagnifyingGlassIcon size={48} weight="thin" className="text-kumo-subtle" /></div>
-							<h3 className="text-base font-semibold text-kumo-default mb-1.5">No results found</h3>
-							<p className="text-sm text-kumo-subtle max-w-xs">{urlQuery ? `Nothing matched "${urlQuery}". Try different keywords or check your spelling.` : "Enter a search term to find emails by subject, sender, or content."}</p>
-							{urlQuery && <p className="text-xs text-kumo-subtle mt-3 max-w-sm">Tip: Use operators like <code className="bg-kumo-tint px-1 rounded">from:name</code>, <code className="bg-kumo-tint px-1 rounded">is:unread</code>, <code className="bg-kumo-tint px-1 rounded">has:attachment</code>, <code className="bg-kumo-tint px-1 rounded">before:2025-01-01</code></p>}
-						</div>
-					) : (
-						<div>{results.map((email) => {
-							const isSelected = selectedEmailId === email.id;
-							const snippet = getSnippetText(email.snippet, 120);
-							const folderName = (email as Email & { folder_name?: string }).folder_name;
+		<>
+			<ColumnPane
+				id="list"
+				title={
+					<h2 className="text-xs font-medium text-kumo-subtle truncate">
+						Search{urlQuery ? <> · <span className="text-kumo-default">{urlQuery}</span></> : null}
+					</h2>
+				}
+				counter={isLoading ? undefined : totalCount}
+				widthClassName="md:w-[400px]"
+				onClose={closeSearch}
+				closeLabel="Close search"
+			>
+				{isLoading ? (
+					<div className="flex justify-center py-16">
+						<Loader size="lg" />
+					</div>
+				) : results.length === 0 ? (
+					<ListEmptyState
+						icon={<MagnifyingGlassIcon size={40} weight="thin" className="text-kumo-subtle" />}
+						title="No results found"
+						description={
+							urlQuery
+								? `Nothing matched "${urlQuery}". Try different keywords, or operators like from:name, is:unread, has:attachment, before:2025-01-01.`
+								: "Search from the bar below to find emails by subject, sender, or content."
+						}
+					/>
+				) : (
+					<>
+						{results.map((email) => {
+							const label = folderLabel(email);
 							return (
-								<div key={email.id} role="button" tabIndex={0} onClick={() => handleRowClick(email)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleRowClick(email); } }} className={`group flex items-center gap-3 w-full text-left cursor-pointer transition-colors border-b border-kumo-line px-4 py-2.5 md:px-5 md:py-3 ${isPanelOpen ? "md:px-4 md:py-2.5" : ""} ${isSelected ? "bg-kumo-tint" : "hover:bg-kumo-tint"}`}>
-									<div className="w-2.5 shrink-0 flex justify-center">{isUnread(email) && <div className="h-2 w-2 rounded-full bg-kumo-brand" />}</div>
-									<div className="min-w-0 flex-1">
-										<div className="flex items-center gap-2"><span className={`truncate text-sm ${isUnread(email) ? "font-semibold text-kumo-default" : "text-kumo-strong"}`}>{highlightTerms(displaySenderName(email), urlQuery)}</span>{folderName && <Badge variant="outline">{folderDisplayName(folderName)}</Badge>}{isAuthSpoofed(email) && <span className="shrink-0 text-xs text-kumo-destructive font-medium">Spoofed</span>}<span className="text-sm text-kumo-subtle shrink-0 ml-auto flex items-center gap-1.5">{hasFileAttachment(email) && <PaperclipIcon size={12} className="shrink-0" aria-label="Has attachment" />}{formatListDate(email.date)}</span></div>
-										<div className={`truncate text-sm mt-0.5 ${isUnread(email) ? "font-medium text-kumo-default" : "text-kumo-subtle"}`}>{highlightTerms(email.subject, urlQuery)}</div>
-										{snippet && <div className="truncate text-xs text-kumo-subtle mt-0.5">{highlightTerms(snippet, urlQuery)}</div>}
-									</div>
-								</div>
+								<ThreadRow
+									key={email.id}
+									email={email}
+									isSelected={emailId === email.id}
+									isUnread={isUnread(email)}
+									onOpen={() => handleOpen(email)}
+									sender={highlightTerms(displaySenderName(email), urlQuery)}
+									subject={highlightTerms(email.subject || "(no subject)", urlQuery)}
+									snippet={highlightTerms(getSnippetText(email.snippet, 120), urlQuery)}
+									chips={label ? <ThreadChip>{label}</ThreadChip> : undefined}
+								/>
 							);
-						})}</div>
-					)}
-				</div>
-				{totalCount > SEARCH_PAGE_SIZE && <div className="flex justify-center py-3 border-t border-kumo-line shrink-0"><Pagination page={currentPage} setPage={setPage} perPage={SEARCH_PAGE_SIZE} totalCount={totalCount} /></div>}
-			</>
-		</MailboxSplitView>
+						})}
+						<ListPagination
+							page={currentPage}
+							setPage={setPage}
+							perPage={SEARCH_PAGE_SIZE}
+							totalCount={totalCount}
+						/>
+					</>
+				)}
+			</ColumnPane>
+			{emailId && <ReaderColumn emailId={emailId} />}
+		</>
 	);
 }

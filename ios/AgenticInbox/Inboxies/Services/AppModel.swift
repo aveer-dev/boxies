@@ -8,13 +8,7 @@ final class AppModel {
     var mailboxes: [Mailbox] = []
     var selectedMailboxId: String? {
         didSet {
-            guard selectedMailboxId != oldValue else { return }
-            // Private email AutoFill creates addresses for the mailbox last open here.
-            if let selectedMailboxId {
-                KeychainStore.write(KeychainStore.autofillMailboxIdKey, value: selectedMailboxId)
-            } else {
-                KeychainStore.delete(KeychainStore.autofillMailboxIdKey)
-            }
+            if selectedMailboxId != oldValue { publishSharedSession() }
         }
     }
     var folders: [Folder] = []
@@ -81,6 +75,12 @@ final class AppModel {
 
     var selectedMailbox: Mailbox? {
         mailboxes.first { $0.id == selectedMailboxId }
+    }
+
+    /// Mirrors the active mailbox for the AutoFill extension. Previews never write.
+    private func publishSharedSession() {
+        guard persistsPreferences, !isDebugPreview else { return }
+        SharedSession.publish(mailboxId: selectedMailboxId, apiBaseURL: AppConfig.apiBaseURL)
     }
 
     func updateSwipePreferences(_ transform: (inout SwipeActionPreferences) -> Void) {
@@ -910,8 +910,9 @@ final class AppModel {
 
     /// Prefer the latest message from someone else; fall back to latest non-draft.
     var actionSourceEmail: Email? {
+        // Your replies in a private email thread are sent from the alias.
         let selfAddresses = Set(
-            [selectedMailbox?.email, selectedMailbox?.id]
+            ([selectedMailbox?.email, selectedMailbox?.id] + threadEmails.map(\.aliasEmail))
                 .compactMap { $0?.lowercased() }
                 .filter { !$0.isEmpty }
         )
@@ -1402,6 +1403,16 @@ final class AppModel {
     func closeCompose() {
         composeSession?.form.cancelAutoSave()
         composeSession = nil
+    }
+
+    /// Send runs after compose closed (undo window), so a failure would vanish.
+    /// Show the server's reason (e.g. a paused private email) and dock the message.
+    func restoreComposeAfterFailedSend(_ session: ComposeSession) {
+        let reason = session.form.errorMessage ?? "Couldn’t send message"
+        showToast(reason, isError: true, duration: 5)
+        guard composeSession == nil else { return }
+        composeSession = session
+        minimizeCompose()
     }
 
     func openChatSession(existingId: String? = nil, resumeActive: Bool = true, forceNew: Bool = false) {

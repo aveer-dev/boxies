@@ -41,8 +41,7 @@ enum PreviewSupport {
 
     @MainActor
     static func authStore() -> AuthStore {
-        let store = AuthStore()
-        store.persistsSession = false
+        let store = AuthStore(persistsSession: false)
         store.token = "preview-token"
         store.userEmail = "you@inboxies.email"
         return store

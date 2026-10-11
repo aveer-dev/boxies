@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Twin of SF Symbol "square.stack" at 18pt medium: front square with two narrowing peeks above.
+     Viewport is 1 unit = 1dp at 22dp so it matches the SF glyph's optical size. Tinted by Icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="22"
+    android:viewportHeight="22">
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.4"
+        android:strokeLineJoin="round"
+        android:pathData="M6.7,6.5 H15.3 A2.7,2.7 0 0 1 18,9.2 V17.8 A2.7,2.7 0 0 1 15.3,20.5 H6.7 A2.7,2.7 0 0 1 4,17.8 V9.2 A2.7,2.7 0 0 1 6.7,6.5 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M5.9,3.75 H16.1" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M7.6,1.4 H14.4" />
+</vector>

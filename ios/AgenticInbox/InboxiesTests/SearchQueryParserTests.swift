@@ -113,3 +113,68 @@ final class SharingSettingsViewTests: XCTestCase {
         XCTAssertFalse(SharingSettingsView.isUserAccountKey("user:usr-5678"))
     }
 }
+
+final class SharedSessionTests: XCTestCase {
+    /// A token saved before the shared keychain group existed moves into it,
+    /// and the copy in the app's own group is removed.
+    func testKeychainMigrationMovesLegacyItemIntoSharedGroup() throws {
+        let shared = try XCTUnwrap(KeychainStore.accessGroup, "KeychainAccessGroup was not expanded in this build")
+        let prefix = String(shared.dropLast("co.inboxies.shared".count))
+        let legacyGroup = prefix + "co.inboxies.app"
+        let key = "test-migration-\(UUID().uuidString)"
+        defer { KeychainStore.delete(key) }
+
+        let legacy: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecAttrAccessGroup as String: legacyGroup,
+            kSecValueData as String: Data("legacy-token".utf8),
+        ]
+        let status = SecItemAdd(legacy as CFDictionary, nil)
+        try XCTSkipIf(status == errSecMissingEntitlement, "Keychain access groups are unavailable on this host")
+        XCTAssertEqual(status, errSecSuccess)
+
+        KeychainStore.migrateToSharedGroup(key)
+
+        XCTAssertEqual(stored(key, group: shared), "legacy-token")
+        XCTAssertNil(stored(key, group: legacyGroup))
+        XCTAssertEqual(KeychainStore.read(key), "legacy-token")
+    }
+
+    func testPublishMirrorsMailboxAndOnlyNonDefaultAPIOrigin() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: SharedSession.appGroupId))
+        let savedMailbox = defaults.object(forKey: "activeMailboxId")
+        let savedOrigin = defaults.object(forKey: "apiBaseURL")
+        defer {
+            defaults.set(savedMailbox, forKey: "activeMailboxId")
+            defaults.set(savedOrigin, forKey: "apiBaseURL")
+        }
+
+        SharedSession.publish(mailboxId: "me@inboxies.email", apiBaseURL: AppConfig.defaultAPIBaseURL)
+        XCTAssertEqual(SharedSession.activeMailboxId, "me@inboxies.email")
+        XCTAssertNil(defaults.string(forKey: "apiBaseURL"))
+        XCTAssertEqual(SharedSession.apiBaseURL, AppConfig.defaultAPIBaseURL)
+
+        let staging = URL(string: "https://staging.inboxies.email")!
+        SharedSession.publish(mailboxId: "me@inboxies.email", apiBaseURL: staging)
+        XCTAssertEqual(SharedSession.apiBaseURL, staging)
+
+        SharedSession.clear()
+        XCTAssertNil(SharedSession.activeMailboxId)
+        XCTAssertEqual(SharedSession.apiBaseURL, AppConfig.defaultAPIBaseURL)
+    }
+
+    private func stored(_ key: String, group: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecAttrAccessGroup as String: group,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
