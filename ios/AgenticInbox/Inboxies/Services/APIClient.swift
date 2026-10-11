@@ -268,12 +268,12 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func resetPassword(token: String? = nil, code: String? = nil, email: String? = nil, newPassword: String) async throws -> PasswordLoginResponse {
+    /// Pass `token` (email link), or `email` + `code` (6-digit code).
+    func resetPassword(token: String? = nil, email: String? = nil, code: String? = nil, newPassword: String) async throws -> PasswordLoginResponse {
         var body: [String: Any] = ["newPassword": newPassword]
         if let token, !token.isEmpty { body["token"] = token }
-        if let code, !code.isEmpty { body["code"] = code }
-        // The server only checks a 6-digit code against this account's reset.
         if let email, !email.isEmpty { body["email"] = email }
+        if let code, !code.isEmpty { body["code"] = code }
         return try await request(
             path: "/api/v1/auth/password/reset",
             method: "POST",
@@ -916,7 +916,7 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    // MARK: - Masked Email Aliases
+    // MARK: - Private Emails
 
     func listAliases(mailboxId: String) async throws -> [MaskedAlias] {
         let response: AliasesResponse = try await request(
@@ -925,21 +925,19 @@ final class APIClient: @unchecked Sendable {
         return response.aliases
     }
 
+    /// The server picks the address. Body keys are camelCase; the Worker's
+    /// schema silently drops anything else.
     func createAlias(
         mailboxId: String,
         label: String? = nil,
-        notes: String? = nil,
-        expiresInSeconds: Int? = nil,
-        expiresAt: String? = nil,
+        expiresAt: Date? = nil,
         pausedAction: String = "drop"
     ) async throws -> MaskedAlias {
         var body: [String: Any] = [
-            "paused_action": pausedAction
+            "pausedAction": pausedAction
         ]
         if let label, !label.isEmpty { body["label"] = label }
-        if let notes, !notes.isEmpty { body["notes"] = notes }
-        if let expiresInSeconds { body["expires_in_seconds"] = expiresInSeconds }
-        if let expiresAt { body["expires_at"] = expiresAt }
+        if let expiresAt { body["expiresAt"] = AliasExpiry.at(expiresAt).apiValue }
 
         let response: CreateAliasResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/aliases",
@@ -949,21 +947,22 @@ final class APIClient: @unchecked Sendable {
         return response.alias
     }
 
+    /// Nil arguments are left unchanged. An empty `label` clears it (JSON null).
     func updateAlias(
         mailboxId: String,
         aliasId: String,
         isActive: Bool? = nil,
         label: String? = nil,
-        notes: String? = nil,
         pausedAction: String? = nil,
-        expiresAt: String? = nil
+        expiry: AliasExpiry? = nil
     ) async throws -> MaskedAlias {
         var body: [String: Any] = [:]
-        if let isActive { body["is_active"] = isActive }
-        if let label { body["label"] = label }
-        if let notes { body["notes"] = notes }
-        if let pausedAction { body["paused_action"] = pausedAction }
-        if let expiresAt { body["expires_at"] = expiresAt }
+        if let isActive { body["isActive"] = isActive }
+        if let label {
+            body["label"] = label.isEmpty ? NSNull() as Any : label as Any
+        }
+        if let pausedAction { body["pausedAction"] = pausedAction }
+        if let expiry { body["expiresAt"] = expiry.apiValue }
 
         let response: CreateAliasResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/aliases/\(aliasId.urlPathEncoded)",

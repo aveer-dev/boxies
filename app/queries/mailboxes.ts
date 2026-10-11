@@ -2,7 +2,12 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	useMutation,
+	useQueries,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import api from "~/services/api";
 import type { Mailbox } from "~/types";
 import { queryKeys } from "./keys";
@@ -22,6 +27,21 @@ export function useMailbox(mailboxId: string | undefined) {
 		queryFn: () => api.getMailbox(mailboxId!) as Promise<Mailbox>,
 		enabled: !!mailboxId,
 	});
+}
+
+/** Mailbox details (with settings.fromName) for several mailboxes at once. */
+export function useMailboxDetails(mailboxIds: string[]) {
+	const results = useQueries({
+		queries: mailboxIds.map((mailboxId) => ({
+			queryKey: queryKeys.mailboxes.detail(mailboxId),
+			queryFn: () => api.getMailbox(mailboxId) as Promise<Mailbox>,
+		})),
+	});
+	const details: Record<string, Mailbox | undefined> = {};
+	mailboxIds.forEach((mailboxId, i) => {
+		details[mailboxId] = results[i]?.data;
+	});
+	return details;
 }
 
 export function useCreateMailbox() {

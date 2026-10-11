@@ -36,7 +36,11 @@ import {
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { allowOutboundRecipients } from "./sender-triage";
-import { resolveAliasFrom } from "./alias-utils";
+import {
+	findThreadAliasId,
+	resolveOutboundSender,
+	type AliasSenderStub,
+} from "./alias-sender";
 import type { Env } from "../types";
 
 // ── Type casts for DO methods not on the base stub type ────────────
@@ -440,16 +444,26 @@ export async function toolSendReply(
 		return { error: "Original email not found" };
 	}
 
-	const rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
-	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 	const { originalMsgId, references, threadId } = buildReferencesChain(originalEmail);
-	// Replies to mail received on a private alias must not reveal the primary address.
-	const { from: resolvedFrom } = await resolveAliasFrom(stub as any, {
+
+	// Agent replies follow the same private-email binding as the API.
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const sender = await resolveOutboundSender({
+		stub: aliasStub,
 		mailboxId,
-		originalAliasId: (originalEmail as { alias_id?: string | null }).alias_id,
+		requestedFrom: mailboxId,
+		threadAliasId: await findThreadAliasId(aliasStub, {
+			aliasId: originalEmail.alias_id ?? null,
+			threadId,
+		}),
 	});
-	const senderEmail = (typeof resolvedFrom === "string" ? resolvedFrom : resolvedFrom.email).toLowerCase();
-	const fromDomain = senderEmail.split("@")[1];
+	if (!sender.ok) return { error: sender.error };
+	const fromAddress = sender.fromEmail;
+
+	let rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
+	if (sender.aliasId) rewrittenTo = rewriteSelfReplyTo(rewrittenTo, originalEmail, fromAddress);
+	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
+	const fromDomain = fromAddress.split("@")[1];
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
@@ -476,7 +490,7 @@ export async function toolSendReply(
 	try {
 		const result = await sendEmail(env.EMAIL, {
 			to,
-			from: senderEmail,
+			from: fromAddress,
 			subject: params.subject,
 			html: fullBodyHtml,
 			headers: buildThreadingHeaders(originalMsgId, references),
@@ -493,7 +507,7 @@ export async function toolSendReply(
 		{
 			id: messageId,
 			subject: params.subject,
-			sender: senderEmail,
+			sender: fromAddress.toLowerCase(),
 			recipient: to.toLowerCase(),
 			date: new Date().toISOString(),
 			body: fullBodyHtml,
@@ -505,6 +519,7 @@ export async function toolSendReply(
 			provider_message_id: providerMessageId,
 			delivery_status: "accepted",
 			delivery_error: null,
+			alias_id: sender.aliasId,
 		},
 		[],
 	);

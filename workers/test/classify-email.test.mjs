@@ -9,6 +9,8 @@ import {
 	classifyFromHeaders,
 	classifyInboundEmail,
 	firstClassifierToken,
+	isAiSpam,
+	overrideAiSpamForVouchedSender,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldFallbackToInbox,
@@ -577,6 +579,74 @@ async function classifyMime(raw, ai) {
 		reason: "auth-spoofed",
 	});
 	assert.equal(shouldAutoDraft(result, { spoofed: true }), false);
+}
+
+// ── AI spam yields to vouched, authenticated senders ──────────────
+
+{
+	const aiSpam = { class: "spam", folderId: Folders.SPAM, reason: "ai-spam" };
+	const authed = {
+		spoofed: false,
+		source: "authentication-results",
+		aligned: true,
+		headerFrom: "osato@inboxies.email",
+		envelopeFrom: "bounces@cf-bounce.inboxies.email",
+	};
+	const unverified = { ...authed, aligned: null, source: "none" };
+	const forged = { ...authed, aligned: false, spoofed: true };
+
+	assert.equal(isAiSpam(aiSpam), true);
+	assert.equal(
+		isAiSpam({ class: "spam", folderId: Folders.SPAM, reason: "spam-headers" }),
+		false,
+	);
+
+	const overridden = overrideAiSpamForVouchedSender(aiSpam, {
+		vouched: true,
+		auth: authed,
+	});
+	assert.deepEqual(overridden, {
+		class: "ham",
+		folderId: Folders.INBOX,
+		reason: "ai-spam-overridden",
+	});
+	assert.equal(shouldSendPush(overridden), true);
+	assert.equal(shouldAutoDraft(overridden, authed), true);
+
+	// Stranger: the AI verdict stands.
+	assert.equal(
+		overrideAiSpamForVouchedSender(aiSpam, { vouched: false, auth: authed }),
+		aiSpam,
+	);
+	// No trusted auth verdict, or a forged From: can't prove it's them.
+	assert.equal(
+		overrideAiSpamForVouchedSender(aiSpam, { vouched: true, auth: unverified }),
+		aiSpam,
+	);
+	assert.equal(
+		overrideAiSpamForVouchedSender(aiSpam, { vouched: true, auth: forged }),
+		aiSpam,
+	);
+	assert.equal(
+		overrideAiSpamForVouchedSender(aiSpam, { vouched: true, auth: null }),
+		aiSpam,
+	);
+
+	// Hard spam signals stay final even for vouched, authenticated senders.
+	for (const reason of ["spam-headers", "auth-spoofed"]) {
+		const hard = { class: "spam", folderId: Folders.SPAM, reason };
+		assert.equal(
+			overrideAiSpamForVouchedSender(hard, { vouched: true, auth: authed }),
+			hard,
+		);
+	}
+
+	// Non-spam passes through untouched.
+	const ham = { class: "ham", folderId: Folders.INBOX, reason: "ai-ham" };
+	assert.equal(
+		overrideAiSpamForVouchedSender(ham, { vouched: true, auth: authed }),
+		ham,
+	);
 }
 
 console.log("classify-email tests passed");

@@ -8,6 +8,7 @@ import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import ComposeBodyChrome from "./compose/ComposeBodyChrome";
+import PrivateEmailLogo from "./PrivateEmailLogo";
 
 export default function ComposePanel() {
 	const { mailboxId, folder } = useParams<{
@@ -37,17 +38,17 @@ export default function ComposePanel() {
 		isSending,
 		saveStatus,
 		formTitle,
+		aliasEmail,
 		handleSaveDraft,
 		handleDiscard,
 		handleSend,
 		closeCompose,
-		closePanel,
 	} = useComposeForm(mailboxId, folder);
 
 	return (
 		<div className="flex flex-col h-full bg-kumo-base">
-			<div className="flex items-center justify-between px-4 py-3 border-b border-kumo-line shrink-0 md:px-6">
-				<h2 className="text-base font-semibold text-kumo-default">
+			<div className="flex items-center justify-between h-11 px-4 border-b border-kumo-line shrink-0">
+				<h2 className="text-sm font-semibold text-kumo-default">
 					{formTitle}
 				</h2>
 				<div className="flex items-center gap-1">
@@ -64,13 +65,22 @@ export default function ComposePanel() {
 			</div>
 
 			<form
-				onSubmit={(e) => handleSend(e, closePanel)}
+				onSubmit={(e) => handleSend(e, closeCompose)}
 				className="flex flex-col flex-1 min-h-0 overflow-y-auto"
 			>
 				<div className="p-4 md:p-6 space-y-4">
 					{error && <Banner variant="error" text={error} />}
 
 					<div className="space-y-3">
+						{aliasEmail && (
+							<div className="flex items-center gap-2">
+								<span className="text-sm font-medium text-kumo-subtle w-14 shrink-0">From</span>
+								<span className="flex items-center gap-1.5 min-w-0 text-sm text-kumo-default" title="Replies in this conversation always come from your private email">
+									<PrivateEmailLogo size={16} className="shrink-0" />
+									<span className="truncate">{aliasEmail}</span>
+								</span>
+							</div>
+						)}
 						<div className="flex items-start gap-2">
 							<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0 pt-1">
 								To
@@ -156,7 +166,7 @@ export default function ComposePanel() {
 				</div>
 
 				{/* Footer actions */}
-				<div className="mt-auto px-4 py-3 border-t border-kumo-line bg-kumo-fill/30 shrink-0 md:px-6">
+				<div className="mt-auto px-4 pt-3 pb-20 border-t border-kumo-line bg-kumo-fill/30 shrink-0 md:px-6">
 					<div className="flex items-center justify-between">
 						<div className="flex items-center gap-3">
 							<Button type="button" variant="ghost" size="sm" onClick={() => handleDiscard(closeCompose)} disabled={isSending}>
