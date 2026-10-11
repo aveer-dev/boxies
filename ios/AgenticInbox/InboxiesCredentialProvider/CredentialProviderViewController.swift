@@ -1,78 +1,78 @@
 import AuthenticationServices
-import CoreText
 import SwiftUI
+import UIKit
 
-/// Private email AutoFill. The user confirms a label and mailbox, the server
-/// creates a real forwarding address, and the system fills it in.
+/// AutoFill entry point: creates a private email through the Inboxies API.
+/// iOS 18+ inserts it into the focused field; the password-list flow copies it.
 final class CredentialProviderViewController: ASCredentialProviderViewController {
-    private enum Request {
-        /// A password form: the address goes in the username field.
-        case credential
-        /// iOS 18+: AutoFill → Inboxies from a text field's edit menu.
-        case text
-    }
+    private let model = PrivateEmailRequest()
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        Self.registerInterFromContainingApp
+        // Registers the bundled Inter fonts (no UIAppFonts here) and Inter nav chrome.
+        AppTheme.configureGlobalAppearance()
         view.backgroundColor = AppTheme.uiBackground
-    }
 
-    override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
-        present(.credential, suggestedLabel: serviceIdentifiers.first.map(Self.siteName))
-    }
+        model.onInsert = { [weak self] text in self?.insert(text) }
+        model.onCancel = { [weak self] in self?.cancel() }
 
-    @available(iOS 18.0, *)
-    override func prepareInterfaceForUserChoosingTextToInsert() {
-        present(.text, suggestedLabel: nil)
-    }
-
-    private func present(_ request: Request, suggestedLabel: String?) {
-        let model = PrivateEmailAutofillModel(
-            suggestedLabel: suggestedLabel,
-            complete: { [weak self] address in self?.finish(request, address: address) },
-            cancel: { [weak self] in self?.cancel() }
-        )
-        let host = UIHostingController(rootView: PrivateEmailAutofillView(model: model))
+        let host = UIHostingController(rootView: PrivateEmailRequestView(model: model))
+        host.view.backgroundColor = .clear
         addChild(host)
-        host.view.frame = view.bounds
-        host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        host.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         host.didMove(toParent: self)
     }
 
-    private func finish(_ request: Request, address: String) {
-        switch request {
-        case .credential:
-            // Inboxies only supplies the address; there is no password to fill.
-            let credential = ASPasswordCredential(user: address, password: "")
-            extensionContext.completeRequest(withSelectedCredential: credential, completionHandler: nil)
-        case .text:
-            if #available(iOS 18.0, *) {
-                extensionContext.completeRequest(withTextToInsert: address, completionHandler: nil)
-            }
+    /// Password-list flow (from the QuickType bar). There is no text-insertion
+    /// path here and an empty-password credential is not allowed, so the new
+    /// address is copied to the pasteboard and the request is cancelled on Done.
+    override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        model.configure(mode: .copyToPasteboard, host: Self.host(from: serviceIdentifiers))
+    }
+
+    /// iOS 18+: AutoFill → Inboxies from a text field's edit menu.
+    @available(iOS 18.0, *)
+    override func prepareInterfaceForUserChoosingTextToInsert() {
+        model.configure(mode: .insertText, host: nil)
+    }
+
+    private func insert(_ text: String) {
+        if #available(iOS 18.0, *) {
+            extensionContext.completeRequest(withTextToInsert: text, completionHandler: nil)
+        } else {
+            cancel()
         }
     }
 
     private func cancel() {
-        let error = NSError(domain: ASExtensionErrorDomain, code: ASExtensionError.userCanceled.rawValue)
-        extensionContext.cancelRequest(withError: error)
+        extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
     }
 
-    /// `example.com` for both `example.com` and `https://www.example.com/signup`.
-    private static func siteName(_ identifier: ASCredentialServiceIdentifier) -> String {
-        let raw = identifier.identifier
-        let host = identifier.type == .URL ? (URL(string: raw)?.host ?? raw) : raw
-        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-    }
-
-    /// The extension ships no font files. It registers the Inter files bundled in
-    /// Inboxies.app, two levels up from `PlugIns/InboxiesCredentialProvider.appex`.
-    private static let registerInterFromContainingApp: Void = {
-        let appBundle = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-        for name in ["Inter-Regular", "Inter-Medium", "Inter-SemiBold", "Inter-Bold", "Inter-Italic"] {
-            let url = appBundle.appendingPathComponent("\(name).ttf")
-            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    /// First service identifier as a bare host (`https://www.shop.com/signup` → `shop.com`).
+    private static func host(from identifiers: [ASCredentialServiceIdentifier]) -> String? {
+        for identifier in identifiers {
+            let raw = identifier.identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { continue }
+            var host: String
+            switch identifier.type {
+            case .URL:
+                host = URL(string: raw)?.host ?? raw
+            default:
+                host = raw
+            }
+            host = host.lowercased()
+            if host.hasPrefix("www.") {
+                host.removeFirst(4)
+            }
+            if !host.isEmpty { return host }
         }
-    }()
+        return nil
+    }
 }

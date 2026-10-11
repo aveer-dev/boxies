@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { app as apiApp } from "../index.ts";
+import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
 import {
 	formatAsctime,
 	fromQuote,
@@ -13,6 +14,7 @@ import {
 	runMailboxExportJob,
 	runDomainExportJob,
 	hasRecentExportForDomain,
+	exportDataKey,
 } from "../lib/email-exporter.ts";
 import {
 	saveDomainMetadata,
@@ -101,7 +103,7 @@ import { Hono } from "hono";
 
 // These suites drive the in-memory Cloudflare / registrar mocks, which are
 // dev-only (production fails closed without credentials). Opt in explicitly.
-globalThis.__INBOXIES_DEV__ = true;
+setDevRuntimeForTesting(true);
 
 function harness(env, defaultPrincipal = null) {
 	const parent = new Hono();
@@ -207,6 +209,10 @@ async function runTests() {
 	const storedMbox = await bucket.get(job.downloadKey);
 	assert.ok(storedMbox, "MBOX file must exist in R2");
 
+	const mailboxOnlyCheck = await hasRecentExportForDomain(bucket, "acme.com");
+	assert.equal(mailboxOnlyCheck.hasExport, false, "A single-mailbox export must not count as a domain backup");
+	assert.equal(mailboxOnlyCheck.lastExport, undefined);
+
 	// Setup multiple mailboxes for acme.com domain
 	await bucket.put("mailboxes/you@acme.com.json", JSON.stringify({ fromName: "You" }));
 	await bucket.put("mailboxes/support@acme.com.json", JSON.stringify({ fromName: "Support" }));
@@ -226,6 +232,32 @@ async function runTests() {
 	const recentCheck = await hasRecentExportForDomain(bucket, "acme.com");
 	assert.equal(recentCheck.hasExport, true, "Should report recent export exists");
 	assert.equal(recentCheck.lastExport?.id, domainJob.id);
+
+	// Same-millisecond domain jobs are broken deterministically by id.
+	const tieBucket = mockBucket();
+	const tieCreatedAt = "2026-10-01T12:00:00.000Z";
+	const tieExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+	const tieJob = (id, targetType, targetId) => ({
+		id,
+		targetType,
+		targetId,
+		status: "completed",
+		progress: 100,
+		totalEmails: 0,
+		processedEmails: 0,
+		createdAt: tieCreatedAt,
+		expiresAt: tieExpiresAt,
+	});
+	for (const job of [
+		tieJob("exp_mbx_1791000000000_ffffffff", "mailbox", "you@acme.com"),
+		tieJob("exp_dom_1791000000000_aaaaaaaa", "domain", "acme.com"),
+		tieJob("exp_dom_1791000000000_bbbbbbbb", "domain", "acme.com"),
+		tieJob("exp_dom_1791000000000_zzzzzzzz", "domain", "notacme.com"),
+	]) {
+		await tieBucket.put(`exports/jobs/${job.id}.json`, JSON.stringify(job));
+	}
+	const tieCheck = await hasRecentExportForDomain(tieBucket, "acme.com");
+	assert.equal(tieCheck.lastExport?.id, "exp_dom_1791000000000_bbbbbbbb");
 
 	console.log("✔ Mailbox & Domain export execution tests passed");
 
@@ -297,6 +329,84 @@ async function runTests() {
 	assert.equal(expiredRes.status, 410);
 	assert.equal(await bucket.get(storedJob.downloadKey), null);
 	await bucket.put(jobKey, JSON.stringify(storedJob));
+	// Domain admin can read the domain export job status
+	const domainJobRes = await client.request(`/api/v1/exports/${exportData.exportId}`);
+	assert.equal(domainJobRes.status, 200);
+	const domainJobData = await domainJobRes.json();
+	assert.equal(domainJobData.id, exportData.exportId);
+	assert.equal(domainJobData.targetType, "domain");
+
+	// Unrelated user gets 404 (not 403) for domain export status and download
+	const outsider = { "x-test-user": "mallory@evil.example" };
+	const outsiderDomainJobRes = await client.request(
+		`/api/v1/exports/${exportData.exportId}`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderDomainJobRes.status, 404, "Outsider must not read domain export status");
+	const outsiderDomainDownloadRes = await client.request(
+		`/api/v1/exports/${exportData.exportId}/download`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderDomainDownloadRes.status, 404, "Outsider must not download domain export");
+
+	// Mailbox export: owner can read status and download
+	await bucket.put(
+		"mailboxes/you@acme.com.json",
+		JSON.stringify({ fromName: "You", acl: { owners: ["email:you@acme.com"], members: [] } }),
+	);
+	const owner = { "x-test-user": "you@acme.com" };
+	const mailboxExportRes = await client.request(
+		"/api/v1/mailboxes/you@acme.com/export",
+		{ method: "POST", headers: owner },
+	);
+	assert.equal(mailboxExportRes.status, 200);
+	const mailboxExport = await mailboxExportRes.json();
+	assert.equal(mailboxExport.status, "completed");
+
+	const ownerJobRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}`,
+		{ headers: owner },
+	);
+	assert.equal(ownerJobRes.status, 200);
+	const ownerJobData = await ownerJobRes.json();
+	assert.equal(ownerJobData.targetType, "mailbox");
+	assert.equal(ownerJobData.targetId, "you@acme.com");
+
+	const ownerDownloadRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}/download`,
+		{ headers: owner },
+	);
+	assert.equal(ownerDownloadRes.status, 200);
+	assert.equal(ownerDownloadRes.headers.get("Content-Type"), "application/mbox; charset=utf-8");
+	assert.ok((await ownerDownloadRes.text()).includes("From bob@example.com "));
+
+	// Unrelated user gets 404 for mailbox export status and download
+	const outsiderMailboxJobRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderMailboxJobRes.status, 404, "Outsider must not read mailbox export status");
+	const outsiderMailboxDownloadRes = await client.request(
+		`/api/v1/exports/${mailboxExport.exportId}/download`,
+		{ headers: outsider },
+	);
+	assert.equal(outsiderMailboxDownloadRes.status, 404, "Outsider must not download mailbox export");
+
+	// Unauthenticated callers get 404 too
+	const anonymous = harness(env);
+	assert.equal((await anonymous.request(`/api/v1/exports/${exportData.exportId}`)).status, 404);
+	assert.equal(
+		(await anonymous.request(`/api/v1/exports/${mailboxExport.exportId}/download`)).status,
+		404,
+	);
+
+	// Unknown job ids are 404
+	assert.equal((await client.request("/api/v1/exports/exp_mbx_0_missing")).status, 404);
+
+	// An archive with no job metadata is never served (no exportDataKey fallback)
+	await bucket.put(exportDataKey("exp_mbx_0_orphan1"), "From x@example.com Thu Jan  1 00:00:00 1970\r\n\r\n");
+	const orphanRes = await client.request("/api/v1/exports/exp_mbx_0_orphan1/download");
+	assert.equal(orphanRes.status, 404, "Archives without job metadata must not be downloadable");
 
 	console.log("✔ Export API & Download tests passed");
 
@@ -396,6 +506,94 @@ async function runTests() {
 	assert.equal(lockData.locked, false);
 
 	console.log("✔ Decommission & EPP endpoint tests passed");
+
+	// ---------------------------------------------------------
+	// 6. Export matching: look-alike domains & mailbox-only exports
+	// ---------------------------------------------------------
+	console.log("\n6. Testing export matching for look-alike domains & mailbox-only exports...");
+
+	const isoBucket = mockBucket();
+	const isoEnv = mockEnv(isoBucket, sampleEmails);
+	const isoClient = harness(isoEnv, adminPrincipal);
+
+	await saveDomainMetadata(isoBucket, {
+		domain: "acme.com",
+		zoneId: "zone-acme-iso",
+		ownerUserId: "admin-user",
+		adminUserIds: ["admin-user"],
+		status: "active",
+		nameservers: ["ns1.cloudflare.com"],
+		emailRoutingEnabled: true,
+		createdAt: new Date().toISOString(),
+		updatedAt: new Date().toISOString(),
+	});
+
+	const completedJob = (id, targetType, targetId, createdAt) => ({
+		id,
+		targetType,
+		targetId,
+		status: "completed",
+		progress: 100,
+		totalEmails: 42,
+		processedEmails: 42,
+		downloadKey: `exports/data/${id}.mbox`,
+		downloadUrl: `/api/v1/exports/${id}/download`,
+		filename: `${id}.mbox`,
+		createdAt,
+		completedAt: createdAt,
+		expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+	});
+	const putJob = (j) => isoBucket.put(`exports/jobs/${j.id}.json`, JSON.stringify(j));
+
+	// Another tenant's domain export, plus mailbox exports on both domains.
+	const later = new Date(Date.now() + 60 * 1000).toISOString();
+	await putJob(completedJob("exp_dom_notacme", "domain", "notacme.com", later));
+	await putJob(completedJob("exp_mbx_notacme", "mailbox", "you@notacme.com", later));
+	await putJob(completedJob("exp_mbx_acme", "mailbox", "you@acme.com", later));
+
+	const lookalikeCheck = await hasRecentExportForDomain(isoBucket, "acme.com");
+	assert.equal(lookalikeCheck.hasExport, false, "Look-alike suffix and mailbox exports must not count for acme.com");
+	assert.equal(lookalikeCheck.lastExport, undefined);
+
+	const lookalikePreflight = await isoClient.request(
+		"/api/v1/admin/domains/acme.com/decommission-preflight",
+		{ method: "POST" },
+	);
+	assert.equal(lookalikePreflight.status, 200);
+	const lookalikePreflightData = await lookalikePreflight.json();
+	assert.equal(lookalikePreflightData.hasRecentExport, false);
+	assert.equal(lookalikePreflightData.lastExport, null, "Preflight must not leak another tenant's export");
+
+	const lookalikeDecomm = await isoClient.request(
+		"/api/v1/admin/domains/acme.com/decommission",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ confirmDomain: "acme.com", skipExportAcknowledged: false }),
+		},
+	);
+	assert.equal(lookalikeDecomm.status, 400, "Foreign or mailbox-only exports must not satisfy the safeguard");
+	assert.equal((await lookalikeDecomm.json()).requiresExportOrSkip, true);
+	assert.equal((await getDomainMetadata(isoBucket, "acme.com")).status, "active");
+
+	// The domain's own export is picked even though the other jobs are newer.
+	await isoBucket.put("mailboxes/you@acme.com.json", JSON.stringify({ fromName: "You" }));
+	const ownDomainJob = await runDomainExportJob(isoEnv, "acme.com");
+
+	const ownCheck = await hasRecentExportForDomain(isoBucket, "ACME.com ");
+	assert.equal(ownCheck.hasExport, true);
+	assert.equal(ownCheck.lastExport?.id, ownDomainJob.id);
+
+	const ownPreflight = await isoClient.request(
+		"/api/v1/admin/domains/acme.com/decommission-preflight",
+		{ method: "POST" },
+	);
+	const ownPreflightData = await ownPreflight.json();
+	assert.equal(ownPreflightData.hasRecentExport, true);
+	assert.equal(ownPreflightData.lastExport?.id, ownDomainJob.id);
+	assert.equal(ownPreflightData.lastExport?.downloadUrl, ownDomainJob.downloadUrl);
+
+	console.log("✔ Export matching tests passed");
 
 	console.log("\n=========================================");
 	console.log("ALL EMAIL EXPORT & OFFBOARDING TESTS PASSED!");

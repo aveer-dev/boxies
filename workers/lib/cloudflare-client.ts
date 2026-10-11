@@ -8,7 +8,7 @@
  * and provides simulated/mock responses in development / testing environments.
  */
 
-import { isDevRuntime } from "./runtime-env";
+import { isDevRuntime } from "./dev-runtime";
 
 export interface CloudflareZone {
 	id: string;

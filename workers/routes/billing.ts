@@ -4,6 +4,7 @@
 
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
+import type { Env } from "../types";
 import type { MailboxContext } from "../lib/mailbox";
 import {
 	checkDomainAvailability,
@@ -46,7 +47,7 @@ import {
 import { ensurePrincipalAccount } from "../lib/identity-links";
 import { aclFromOwnerKeys } from "../lib/mailbox-acl";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
-import { isDevRuntime } from "../lib/runtime-env";
+import { isDevRuntime } from "../lib/dev-runtime";
 
 const CreateDomainCheckoutBody = z.object({
 	domain: z
@@ -210,7 +211,36 @@ export async function verifyStripeWebhookSignature(
 	return { valid: false, error: "Signature mismatch" };
 }
 
+/** The value `.dev.vars.example` ships with; never a usable signing secret. */
+const STRIPE_WEBHOOK_SECRET_PLACEHOLDER = "whsec_...";
+
+function configuredStripeWebhookSecret(env: Env): string | undefined {
+	const secret = env.STRIPE_WEBHOOK_SECRET;
+	if (!secret || secret === STRIPE_WEBHOOK_SECRET_PLACEHOLDER) return undefined;
+	return secret;
+}
+
+/** `/checkout/mock` and its React Router `.data` / nested variants, however the path is cased or encoded. */
+function isMockCheckoutPath(pathname: string): boolean {
+	let decoded = pathname;
+	try {
+		decoded = decodeURIComponent(pathname);
+	} catch {}
+	return /^\/checkout\/mock(?:[/.]|$)/i.test(decoded);
+}
+
 export function registerBillingRoutes(app: Hono<MailboxContext>) {
+	/**
+	 * The mock checkout page simulates payment by posting an unsigned webhook event,
+	 * so it only exists in local dev. Runs ahead of the React Router catch-all.
+	 */
+	app.use("*", async (c, next) => {
+		if (!isDevRuntime() && isMockCheckoutPath(new URL(c.req.url).pathname)) {
+			return c.text("Not Found", 404);
+		}
+		await next();
+	});
+
 	/**
 	 * Initiate an annual Stripe Checkout subscription session to purchase and register a domain.
 	 * Transparent fee breakdown:
@@ -361,10 +391,11 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 			});
 		}
 
-		// Without live Stripe credentials only local dev may fall back to the mock checkout.
+		// Without live Stripe credentials only local dev gets the /checkout/mock simulator
 		if (!isDevRuntime()) {
-			return c.json({ error: "Billing is not configured" }, 503);
+			return c.json({ error: "Domain checkout is not configured" }, 503);
 		}
+
 		const mockSessionId = `mock_cs_${domain.replace(/[^a-z0-9]/gi, "_")}_${Date.now()}`;
 		const mockUrl = `${appBase}/checkout/mock?session_id=${mockSessionId}&domain=${encodeURIComponent(domain)}${clientParam}`;
 
@@ -553,22 +584,20 @@ window.location.href = ${JSON.stringify(deepLink)};
 	app.post("/api/v1/billing/stripe-webhook", async (c) => {
 		const rawBody = await c.req.text();
 		const sigHeader = c.req.header("stripe-signature") || "";
+		const webhookSecret = configuredStripeWebhookSecret(c.env);
 
-		// Every event must be signed. Only local dev (mock checkout) may skip verification.
-		const webhookSecret = c.env.STRIPE_WEBHOOK_SECRET;
-		const secretConfigured = Boolean(webhookSecret) && webhookSecret !== "whsec_...";
-		if (secretConfigured) {
-			const verifyRes = await verifyStripeWebhookSignature(
-				rawBody,
-				sigHeader,
-				webhookSecret as string,
-			);
+		// Fulfillment buys domains, so unsigned events are only accepted from the local
+		// /checkout/mock simulator. A real secret is always enforced, dev included.
+		if (webhookSecret) {
+			const verifyRes = await verifyStripeWebhookSignature(rawBody, sigHeader, webhookSecret);
 			if (!verifyRes.valid) {
 				return c.json({ error: `Webhook verification failed: ${verifyRes.error}` }, 400);
 			}
 		} else if (!isDevRuntime()) {
-			console.error("Stripe webhook rejected: STRIPE_WEBHOOK_SECRET is not configured");
-			return c.json({ error: "Webhook verification is not configured" }, 500);
+			return c.json({ error: "Stripe webhook secret is not configured" }, 503);
+		} else if (sigHeader) {
+			// A signed delivery (e.g. `stripe listen`) can't be checked without the secret
+			return c.json({ error: "Webhook verification failed: STRIPE_WEBHOOK_SECRET is not set" }, 400);
 		}
 
 		let event: any;
@@ -593,7 +622,7 @@ window.location.href = ${JSON.stringify(deepLink)};
 		}
 
 		// Never provision for an unpaid session (mock checkout in dev has no payment_status).
-		if (!SETTLED_PAYMENT_STATUSES.has(session.payment_status) && !(isDevRuntime() && !secretConfigured)) {
+		if (!SETTLED_PAYMENT_STATUSES.has(session.payment_status) && !(isDevRuntime() && !webhookSecret)) {
 			return c.json({ received: true, ignored: true, reason: "payment_not_settled" });
 		}
 

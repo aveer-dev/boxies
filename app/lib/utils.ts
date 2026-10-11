@@ -52,13 +52,30 @@ export function toEmailListValue(addresses: string[]): string | string[] | undef
 }
 
 /**
+ * DOMPurify needs a real DOM. During SSR (workerd) its default export is an
+ * inert factory with no `sanitize`, so HTML helpers must take a DOM-free path
+ * there. Browsers always take the sanitising path.
+ */
+function canSanitizeHtml(): boolean {
+	return typeof window !== "undefined" && DOMPurify.isSupported;
+}
+
+/**
  * Convert HTML content to plain text.
- * Uses DOM APIs in the browser. During server render (compose is rendered by
- * the mailbox layout) there is no DOM, so fall back to the regex converter
- * instead of crashing the whole page.
+ * Uses DOM APIs in the browser; on the server it falls back to tag stripping
+ * (the result is plain text either way, never HTML).
  */
 export function htmlToPlainText(html: string): string {
-	if (typeof document === "undefined") return htmlToQuotedText(html);
+	if (!canSanitizeHtml()) {
+		return decodeHtmlEntities(
+			html
+				.replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, "")
+				.replace(/<br\s*\/?>/gi, "\n")
+				.replace(/<\/p>/gi, "\n\n")
+				.replace(/<\/div>/gi, "\n")
+				.replace(/<[^>]*>/g, ""),
+		).trim();
+	}
 	// Sanitize with DOMPurify before DOM parsing to prevent XSS during innerHTML assignment.
 	// DOMPurify strips all dangerous content (scripts, event handlers, etc.)
 	// while preserving structural HTML for text extraction.
@@ -174,11 +191,11 @@ export function getSignatureBlock(settings?: {
 		// Sanitize HTML signatures with DOMPurify to allow safe formatting
 		// (bold, italic, links, etc.) while stripping scripts and event handlers.
 		// Text signatures are HTML-escaped since they have no formatting.
-		// DOMPurify needs a DOM; on the server, fall back to escaped plain text.
+		// Without DOMPurify (SSR) an HTML signature degrades to escaped text.
 		const content = sig.html
-			? typeof document === "undefined"
-				? escapeHtml(htmlToQuotedText(sig.html)).replace(/\n/g, "<br>")
-				: DOMPurify.sanitize(sig.html)
+			? canSanitizeHtml()
+				? DOMPurify.sanitize(sig.html)
+				: escapeHtml(htmlToPlainText(sig.html)).replace(/\n/g, "<br>")
 			: escapeHtml(sig.text || "");
 		return `${COMPOSE_SIGNATURE_SPACER}<div style="border-top: 1px solid #ccc; margin-top: 16px; padding-top: 12px;">${content}</div>`;
 	}

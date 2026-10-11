@@ -11,6 +11,12 @@ import type { Email } from "~/types";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
 import { isAuthSpoofed } from "~/lib/email-auth";
 
+function senderInitials(name: string): string {
+	const words = name.replace(/[<>"]/g, "").trim().split(/[\s@._-]+/).filter(Boolean);
+	const letters = words.slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join("");
+	return letters || "?";
+}
+
 interface SingleMessageViewProps {
 	email: Email;
 	mailboxId?: string;
@@ -31,8 +37,8 @@ export default function SingleMessageView({
 			<div className="px-4 py-4 border-b border-kumo-line md:px-6">
 				<div className="flex items-center justify-between gap-3">
 					<div className="flex items-center gap-2.5 min-w-0">
-						<div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-kumo-fill text-xs font-bold text-kumo-default">
-							{senderName.charAt(0).toUpperCase()}
+						<div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-kumo-contrast text-sm font-semibold text-kumo-inverse">
+							{senderInitials(senderName)}
 						</div>
 						<div className="min-w-0">
 							<div className="text-sm font-medium text-kumo-default truncate">
@@ -54,12 +60,19 @@ export default function SingleMessageView({
 				</div>
 			</div>
 
-			{(email.alias_id || email.recipient?.includes("@private.")) && (
-				<div className="mx-4 mt-3 md:mx-6 flex items-center gap-2 rounded-md border border-sky-500/20 bg-sky-950/20 px-3 py-2 text-xs text-sky-300">
-					<ShieldCheckIcon size={16} className="text-sky-400 shrink-0" />
-					<span>
-						Received via private email: <strong className="font-mono font-medium text-sky-200">{email.recipient}</strong>
-					</span>
+			{email.alias_id && (
+				<div className="mx-4 mt-3 md:mx-6 flex items-center gap-2 rounded-md border border-kumo-line bg-kumo-tint px-3 py-2 text-xs text-kumo-default" role="status">
+					<ShieldCheckIcon size={16} className="text-kumo-brand shrink-0" aria-hidden />
+					{email.alias_email ? (
+						<span className="min-w-0 break-all">
+							Private email <strong className="font-medium">{email.alias_email}</strong>
+							{email.alias_active === false && (
+								<span className="text-kumo-subtle"> · paused, resume it to reply</span>
+							)}
+						</span>
+					) : (
+						<span>Sent to a private email that has since been deleted.</span>
+					)}
 				</div>
 			)}
 
@@ -95,7 +108,7 @@ export default function SingleMessageView({
 				emailId={email.id}
 				attachments={email.attachments}
 				onPreviewImage={onPreviewImage}
-				className="px-4 py-3 border-t border-kumo-line shrink-0 md:px-6"
+				className="px-4 py-4 border-t border-kumo-line shrink-0 md:px-6"
 				showHeading
 			/>
 		</div>

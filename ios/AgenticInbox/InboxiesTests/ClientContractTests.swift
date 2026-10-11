@@ -78,7 +78,7 @@ final class ClientContractTests: XCTestCase {
         let alias = try decode(MaskedAlias.self, """
         {"id":"al_1","mailbox_id":"me@x.com","alias_email":"k3j@alias.x.com","is_active":false,"paused_action":"reject"}
         """)
-        XCTAssertEqual(alias.mailboxId, "me@x.com")
+        XCTAssertEqual(alias.aliasEmail, "k3j@alias.x.com")
         XCTAssertFalse(alias.isActive)
         XCTAssertEqual(alias.pausedAction, "reject")
     }

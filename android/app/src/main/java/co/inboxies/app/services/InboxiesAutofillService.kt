@@ -1,29 +1,42 @@
 package co.inboxies.app.services
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.assist.AssistStructure
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.drawable.Icon
 import android.os.CancellationSignal
 import android.service.autofill.AutofillService
 import android.service.autofill.Dataset
+import android.service.autofill.Field
 import android.service.autofill.FillCallback
 import android.service.autofill.FillRequest
 import android.service.autofill.FillResponse
+import android.service.autofill.InlinePresentation
+import android.service.autofill.Presentations
 import android.service.autofill.SaveCallback
 import android.service.autofill.SaveRequest
-import android.text.InputType
+import android.util.Log
 import android.view.View
 import android.view.autofill.AutofillId
 import android.widget.RemoteViews
+import androidx.autofill.inline.UiVersions
+import androidx.autofill.inline.v1.InlineSuggestionUi
 import co.inboxies.app.InboxiesApplication
+import co.inboxies.app.MainActivity
 import co.inboxies.app.R
-import co.inboxies.app.ui.autofill.PrivateEmailAutofillActivity
+import co.inboxies.app.autofill.AutofillFieldInfo
+import co.inboxies.app.autofill.EmailFieldMatcher
+import co.inboxies.app.autofill.PrivateEmailAutofillActivity
 import java.util.regex.Pattern
 
 /**
- * Offers "Private email" on email fields in other apps and Chrome. Picking it opens
- * [PrivateEmailAutofillActivity], which creates a real address on the server and
- * returns it as the dataset to fill.
+ * Offers "Create private email" on email fields in other apps and Chrome.
+ *
+ * Fill requests stay offline: the suggestion is a locked dataset whose authentication
+ * intent opens [PrivateEmailAutofillActivity], which creates the alias through the API
+ * and hands the filled dataset back. Addresses are never generated on the device.
  */
 class InboxiesAutofillService : AutofillService() {
 
@@ -32,136 +45,156 @@ class InboxiesAutofillService : AutofillService() {
         cancellationSignal: CancellationSignal,
         callback: FillCallback,
     ) {
-        val structure = request.fillContexts.lastOrNull()?.structure
-        val signedIn = (application as InboxiesApplication).authStore.isAuthenticated
-        // Nothing to offer signed out, or inside Inboxies' own forms.
-        if (structure == null || !signedIn || structure.activityComponent.packageName == packageName) {
-            callback.onSuccess(null)
-            return
+        val response = try {
+            buildResponse(request)
+        } catch (e: Exception) {
+            Log.w(TAG, "Autofill request failed", e)
+            null
         }
-
-        val match = EmailFieldMatch()
-        for (i in 0 until structure.windowNodeCount) {
-            structure.getWindowNodeAt(i).rootViewNode?.let { match.scan(it) }
-        }
-        val fieldId = match.fieldId ?: run {
-            callback.onSuccess(null)
-            return
-        }
-
-        val label = match.webDomain?.removePrefix("www.")
-            ?: appLabel(structure.activityComponent.packageName)
-        val presentation = RemoteViews(packageName, R.layout.autofill_inline_suggestion).apply {
-            setTextViewText(R.id.autofill_title, "Private email")
-            setTextViewText(R.id.autofill_subtitle, "Create a new address for $label")
-        }
-        val authentication = PendingIntent.getActivity(
-            this,
-            fieldId.hashCode(),
-            PrivateEmailAutofillActivity.intent(this, fieldId, label),
-            // Mutable: the system adds the assist structure to the intent.
-            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_MUTABLE,
-        ).intentSender
-
-        // No value until the address exists. The match-all filter keeps the offer
-        // visible while the user types; a null value would otherwise fail any filter.
-        @Suppress("DEPRECATION") // Field/Presentations need a value; an auth dataset has none yet.
-        val dataset = Dataset.Builder(presentation)
-            .setValue(fieldId, null, MATCH_ANY_TEXT, presentation)
-            .setAuthentication(authentication)
-            .build()
-        callback.onSuccess(FillResponse.Builder().addDataset(dataset).build())
+        callback.onSuccess(response)
     }
 
+    /** Nothing to save: private emails are created on fill, and no SaveInfo is requested. */
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
         callback.onSuccess()
     }
 
-    private companion object {
-        val MATCH_ANY_TEXT: Pattern = Pattern.compile(".*", Pattern.DOTALL)
+    private fun buildResponse(request: FillRequest): FillResponse? {
+        val structure = request.fillContexts.lastOrNull()?.structure ?: return null
+        val requestingPackage = structure.activityComponent?.packageName
+        if (requestingPackage == packageName) return null
+
+        val fields = scan(structure)
+        val targets = EmailFieldMatcher.emailTargets(fields.map { it.id to it.info })
+        if (targets.isEmpty()) return null
+
+        val primaryDomain = fields.firstOrNull { it.id == targets.first() }?.webDomain
+        val label = EmailFieldMatcher.aliasLabel(
+            webDomain = primaryDomain,
+            appLabel = requestingPackage?.let { appLabel(it) ?: it },
+        )
+        val signedIn = !(application as InboxiesApplication).authStore.currentToken().isNullOrEmpty()
+
+        val title = getString(if (signedIn) R.string.autofill_create_title else R.string.autofill_sign_in_title)
+        val subtitle = when {
+            !signedIn -> getString(R.string.autofill_sign_in_subtitle)
+            label != null -> getString(R.string.autofill_create_subtitle, label)
+            else -> getString(R.string.autofill_create_subtitle_default)
+        }
+
+        val menu = RemoteViews(packageName, R.layout.autofill_dataset_item).apply {
+            setTextViewText(R.id.autofill_title, title)
+            setTextViewText(R.id.autofill_subtitle, subtitle)
+        }
+        val presentations = Presentations.Builder()
+            .setMenuPresentation(menu)
+            .apply { inlinePresentation(request, title, subtitle)?.let { setInlinePresentation(it) } }
+            .build()
+
+        // FLAG_MUTABLE: the platform adds the assist structure / client state extras.
+        val authentication = PendingIntent.getActivity(
+            this,
+            request.id,
+            PrivateEmailAutofillActivity.intent(this, targets, label),
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_CANCEL_CURRENT,
+        )
+
+        // A field with no value fails the default text filter, so the offer would vanish
+        // as soon as the field has text; match anything to keep it while typing.
+        val field = Field.Builder().setFilter(MATCH_ANY_TEXT).build()
+        val dataset = Dataset.Builder(presentations)
+            .apply { targets.forEach { setField(it, field) } }
+            .setAuthentication(authentication.intentSender)
+            .build()
+
+        return FillResponse.Builder()
+            .addDataset(dataset)
+            .build()
     }
 
-    private fun appLabel(packageName: String): String = try {
-        val info = packageManager.getApplicationInfo(packageName, 0)
+    /**
+     * Keyboard chip, when the IME asked for inline suggestions and speaks UI version 1.
+     * `getSlice()` is the documented way to hand the content to [InlinePresentation]; lint
+     * flags it only because it's declared on a library-restricted base class.
+     */
+    @SuppressLint("RestrictedApi")
+    private fun inlinePresentation(
+        request: FillRequest,
+        title: String,
+        subtitle: String,
+    ): InlinePresentation? {
+        val inlineRequest = request.inlineSuggestionsRequest ?: return null
+        if (inlineRequest.maxSuggestionCount < 1) return null
+        val spec = inlineRequest.inlinePresentationSpecs.firstOrNull() ?: return null
+        if (UiVersions.INLINE_UI_VERSION_1 !in UiVersions.getVersions(spec.style)) return null
+
+        // Long-pressing the chip opens Inboxies.
+        val attribution = PendingIntent.getActivity(
+            this,
+            REQUEST_CODE_ATTRIBUTION,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val content = InlineSuggestionUi.newContentBuilder(attribution)
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setStartIcon(Icon.createWithResource(this, R.drawable.ic_inboxies_logo))
+            .setContentDescription(getString(R.string.autofill_content_description))
+            .build()
+        return InlinePresentation(content.slice, spec, false)
+    }
+
+    private data class ScannedField(
+        val id: AutofillId,
+        val info: AutofillFieldInfo,
+        val webDomain: String?,
+    )
+
+    private fun scan(structure: AssistStructure): List<ScannedField> {
+        val fields = mutableListOf<ScannedField>()
+        for (index in 0 until structure.windowNodeCount) {
+            val root = structure.getWindowNodeAt(index).rootViewNode ?: continue
+            collect(root, inheritedDomain = null, into = fields)
+        }
+        return fields
+    }
+
+    private fun collect(
+        node: AssistStructure.ViewNode,
+        inheritedDomain: String?,
+        into: MutableList<ScannedField>,
+    ) {
+        // Chrome sets the domain on the page's root node; inputs inherit it.
+        val domain = node.webDomain?.takeIf { it.isNotBlank() } ?: inheritedDomain
+        node.autofillId?.let { id ->
+            into += ScannedField(id = id, info = describe(node), webDomain = domain)
+        }
+        for (child in 0 until node.childCount) {
+            collect(node.getChildAt(child), domain, into)
+        }
+    }
+
+    private fun describe(node: AssistStructure.ViewNode) = AutofillFieldInfo(
+        autofillHints = node.autofillHints?.toList().orEmpty(),
+        htmlType = node.htmlInfo?.attributes
+            ?.firstOrNull { it.first.equals("type", ignoreCase = true) }
+            ?.second,
+        inputType = node.inputType,
+        isFocused = node.isFocused,
+        isVisible = node.visibility == View.VISIBLE,
+    )
+
+    /** Null when the package isn't visible to us (Android 11+ package visibility). */
+    private fun appLabel(packageName: String): String? = try {
+        val info = packageManager.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
         packageManager.getApplicationLabel(info).toString()
     } catch (_: PackageManager.NameNotFoundException) {
-        // Android 11+ package visibility hides most apps; don't ask for QUERY_ALL_PACKAGES.
-        readableAppName(packageName)
-    }
-}
-
-/** First email field in the structure, and the web domain it sits on (Chrome / WebView). */
-private class EmailFieldMatch {
-    var fieldId: AutofillId? = null
-        private set
-    var webDomain: String? = null
-        private set
-
-    fun scan(node: AssistStructure.ViewNode, domain: String? = null) {
-        if (fieldId != null) return
-        val nodeDomain = node.webDomain?.takeIf { it.isNotBlank() } ?: domain
-        val id = node.autofillId
-        if (id != null && isEmailField(node)) {
-            fieldId = id
-            webDomain = nodeDomain
-            return
-        }
-        for (i in 0 until node.childCount) {
-            node.getChildAt(i)?.let { scan(it, nodeDomain) }
-        }
+        null
     }
 
-    private fun isEmailField(node: AssistStructure.ViewNode): Boolean = looksLikeEmailField(
-        autofillType = node.autofillType,
-        autofillHints = node.autofillHints?.toList(),
-        inputType = node.inputType,
-        htmlAttributes = node.htmlInfo?.attributes?.map { it.first to it.second },
-        hint = node.hint,
-        idEntry = node.idEntry,
-    )
-}
-
-/** Email-field test on plain values, so it runs in JVM unit tests. */
-internal fun looksLikeEmailField(
-    autofillType: Int,
-    autofillHints: List<String>?,
-    inputType: Int,
-    htmlAttributes: List<Pair<String?, String?>>?,
-    hint: String?,
-    idEntry: String?,
-): Boolean {
-    if (autofillType != View.AUTOFILL_TYPE_TEXT) return false
-    if (autofillHints?.any { it.contains("email", ignoreCase = true) } == true) return true
-
-    if (inputType and InputType.TYPE_MASK_CLASS == InputType.TYPE_CLASS_TEXT) {
-        when (inputType and InputType.TYPE_MASK_VARIATION) {
-            InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
-            InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS -> return true
-            InputType.TYPE_TEXT_VARIATION_PASSWORD,
-            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
-            InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD -> return false
-        }
+    private companion object {
+        const val TAG = "InboxiesAutofill"
+        const val REQUEST_CODE_ATTRIBUTION = 0x1A11
+        val MATCH_ANY_TEXT: Pattern = Pattern.compile(".*", Pattern.DOTALL)
     }
-
-    // Web forms: <input type="email"> or autocomplete="email".
-    htmlAttributes?.forEach { (rawName, rawValue) ->
-        val name = rawName?.lowercase()
-        val value = rawValue?.lowercase().orEmpty()
-        if (name == "type" && value == "password") return false
-        if (name == "type" && value == "email") return true
-        if (name == "autocomplete" && value.split(' ').contains("email")) return true
-    }
-
-    val hintText = hint?.lowercase().orEmpty()
-    val id = idEntry?.lowercase().orEmpty()
-    return "email" in hintText || "e-mail" in hintText || "email" in id
-}
-
-private val genericPackageSegments = setOf("com", "org", "net", "io", "co", "www", "app", "apps", "android", "mobile", "google")
-
-/** `com.google.android.contacts` → `Contacts`, `com.instagram.android` → `Instagram`. */
-internal fun readableAppName(packageName: String): String {
-    val name = packageName.split('.').lastOrNull { it.isNotBlank() && it.lowercase() !in genericPackageSegments }
-        ?: return packageName
-    return name.replaceFirstChar { it.uppercase() }
 }

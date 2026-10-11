@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 import { app as apiApp } from "../index.ts";
+import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
 import { principalFromClaims } from "../lib/mailbox-acl.ts";
 import { auditEmailHealth } from "../lib/cloudflare-client.ts";
 import {
@@ -98,7 +99,7 @@ import {
 
 // These suites drive the in-memory Cloudflare / registrar mocks, which are
 // dev-only (production fails closed without credentials). Opt in explicitly.
-globalThis.__INBOXIES_DEV__ = true;
+setDevRuntimeForTesting(true);
 
 function harness(env, defaultPrincipal = null) {
 	const parent = new Hono();
@@ -298,7 +299,7 @@ async function runTests() {
 
 	// 4b. Production: bring-your-own domains need a TXT proof bound to the claimant
 	{
-		globalThis.__INBOXIES_DEV__ = false;
+		setDevRuntimeForTesting(false);
 		try {
 			const bucket = mockBucket();
 			const env = mockEnv(bucket);
@@ -361,7 +362,7 @@ async function runTests() {
 				globalThis.fetch = origFetch;
 			}
 		} finally {
-			globalThis.__INBOXIES_DEV__ = true;
+			setDevRuntimeForTesting(true);
 		}
 	}
 	console.log("✔ domain TXT verification tests passed");

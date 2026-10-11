@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Autofill dropdown row (menu presentation). Rendered by the system, so it follows the
+     device theme via theme attributes rather than the in-app palette. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -14,8 +16,9 @@
         android:id="@+id/autofill_icon"
         android:layout_width="24dp"
         android:layout_height="24dp"
-        android:src="@drawable/ic_private_email_logo"
-        android:contentDescription="Private email" />
+        android:src="@drawable/ic_inboxies_logo"
+        android:tint="?android:attr/textColorPrimary"
+        android:importantForAccessibility="no" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -28,7 +31,7 @@
             android:id="@+id/autofill_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Generate Private Email"
+            android:text="@string/autofill_create_title"
             android:textSize="14sp"
             android:textStyle="bold"
             android:textColor="?android:attr/textColorPrimary" />
@@ -37,7 +40,7 @@
             android:id="@+id/autofill_subtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Inboxies Private Address"
+            android:text="@string/autofill_create_subtitle_default"
             android:textSize="12sp"
             android:textColor="?android:attr/textColorSecondary" />
     </LinearLayout>

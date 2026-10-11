@@ -20,6 +20,7 @@ import {
 } from "../lib/platform-users";
 import {
 	canonicalMailboxId,
+	isAddressTaken,
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
 import { mailDomainConfig } from "../lib/mail-domain";
@@ -41,7 +42,7 @@ import {
 } from "../lib/domain-registry";
 import { checkDomainAvailability, computeDomainPricing } from "../lib/cloudflare-registrar";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
-import { isDevRuntime } from "../lib/runtime-env";
+import { isDevRuntime } from "../lib/dev-runtime";
 import {
 	domainVerificationChallenge,
 	isDomainVerified,
@@ -179,8 +180,7 @@ export function registerOnboardingRoutes(app: Hono<MailboxContext>) {
 		if (!canonical) return c.json({ error: "Invalid email address" }, 400);
 
 		// Check if mailbox already exists in R2
-		const metaKey = mailboxMetadataKey(canonical);
-		if (await c.env.BUCKET.head(metaKey)) {
+		if (await isAddressTaken(c.env.BUCKET, canonical)) {
 			return c.json({ error: "This username is already taken" }, 409);
 		}
 
@@ -219,7 +219,7 @@ export function registerOnboardingRoutes(app: Hono<MailboxContext>) {
 			...defaultMailboxSettings(displayName || username),
 			acl: aclFromOwnerKeys(ensured.ownerKeys),
 		};
-		await c.env.BUCKET.put(metaKey, JSON.stringify(settings));
+		await c.env.BUCKET.put(mailboxMetadataKey(canonical), JSON.stringify(settings));
 
 		// Revive Durable Object for immediate mailbox access
 		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
