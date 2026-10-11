@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { routeAgentRequest } from "agents";
+import { getAgentByName, routeAgentRequest } from "agents";
 import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
 import { createRequestHandler } from "react-router";
@@ -233,7 +233,7 @@ export default {
 		ctx: ExecutionContext,
 	) {
 		try {
-			await receiveEmail(message, env, ctx);
+			await receiveEmail(message, env, ctx, getAgentByName);
 		} catch (e) {
 			console.error("Failed to process incoming email:", (e as Error).message, (e as Error).stack);
 			// Re-throw so Cloudflare's email routing can retry delivery or bounce the message.

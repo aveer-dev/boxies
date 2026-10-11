@@ -43,6 +43,7 @@ import {
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
+import { triggerAutoDraft, type AgentResolver } from "./lib/auto-draft";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -1623,7 +1624,12 @@ async function sendInboundAutoReply(options: {
 	console.log(`Sent auto-reply from ${mailboxId} to ${sender}`);
 }
 
-async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+async function receiveEmail(
+	message: ForwardableEmailMessage,
+	env: Env,
+	ctx: ExecutionContext,
+	getAgent: AgentResolver,
+) {
 	let matchedAliasMeta: StoredAliasMetadata | null = null;
 	const route = await routeInboundEnvelope(
 		message.to,
@@ -1928,22 +1934,17 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		ctx.waitUntil(
 			(async () => {
 				await stub.ensureAutoAgentConversation();
-				const agentName = agentInstanceName(mailboxId, AUTO_CONVERSATION_ID);
-				const agentStub = env.EMAIL_AGENT.get(
-					env.EMAIL_AGENT.idFromName(agentName),
-				);
-				await agentStub.fetch(
-					new Request("https://agents/onNewEmail", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							mailboxId,
-							emailId: messageId,
-							sender: (parsedEmail.from?.address || "").toLowerCase(),
-							subject: parsedEmail.subject || "",
-							threadId,
-						}),
-					}),
+				await triggerAutoDraft(
+					env.EMAIL_AGENT,
+					agentInstanceName(mailboxId, AUTO_CONVERSATION_ID),
+					{
+						mailboxId,
+						emailId: messageId,
+						sender: (parsedEmail.from?.address || "").toLowerCase(),
+						subject: parsedEmail.subject || "",
+						threadId,
+					},
+					getAgent,
 				);
 			})().catch((e) =>
 				console.error("Auto-draft trigger failed:", (e as Error).message),
