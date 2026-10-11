@@ -415,5 +415,19 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_emails_alias_id ON emails(alias_id);
         `),
 	},
+	{
+		// Auto-allowed senders (outbound recipients, bootstrap, platform) were
+		// stored with an Inbox destination, which pinned list mail out of
+		// Promotions/Updates. Every explicit choice also writes a
+		// sender_preferences row, so clear destinations without one.
+		name: "25_sender_triage_auto_destination",
+		sql: txn(`
+            UPDATE sender_triage
+               SET destination_folder_id = NULL
+             WHERE status = 'allowed'
+               AND destination_folder_id IS NOT NULL
+               AND sender NOT IN (SELECT address FROM sender_preferences);
+        `),
+	},
 ];
 

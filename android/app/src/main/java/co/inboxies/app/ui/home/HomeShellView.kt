@@ -1277,6 +1277,7 @@ private fun BottomBar(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val view = LocalView.current
+    var composePressed by remember { mutableStateOf(false) }
 
     val showReplyLater = replyLaterCount > 0 || isReplyLaterTab
 
@@ -1396,6 +1397,7 @@ private fun BottomBar(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var triggeredCompose = false
+                        composePressed = true
 
                         val pressJob = scope.launch {
                             delay(HomeChromeMetrics.composeLongPressMs)
@@ -1422,12 +1424,13 @@ private fun BottomBar(
                             }
                         } finally {
                             pressJob.cancel()
+                            composePressed = false
                         }
                     }
                 },
             contentAlignment = Alignment.BottomCenter,
         ) {
-            ComposeStackButton(isExpanded = showComposeActions)
+            ComposeStackButton(isExpanded = showComposeActions, isPressed = composePressed)
         }
     }
 }

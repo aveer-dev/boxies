@@ -5,7 +5,9 @@
  */
 
 import assert from "node:assert/strict";
+import { Hono } from "hono";
 import { app as apiApp } from "../index.ts";
+import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
 import {
 	checkDomainAvailability,
 	registerDomain,
@@ -94,6 +96,50 @@ function mockEnv(bucket, extras = {}) {
 		},
 		...extras,
 	};
+}
+
+async function stripeSignatureHeader(rawBody, secret, ts = Math.floor(Date.now() / 1000)) {
+	const key = await crypto.subtle.importKey(
+		"raw",
+		new TextEncoder().encode(secret),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
+	const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${ts}.${rawBody}`));
+	const hex = Array.from(new Uint8Array(sig))
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+	return `t=${ts},v1=${hex}`;
+}
+
+function postWebhook(rawBody, env, headers = {}) {
+	return apiApp.request(
+		"/api/v1/billing/stripe-webhook",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json", ...headers },
+			body: rawBody,
+		},
+		env,
+	);
+}
+
+/** Mirrors workers/app.ts: API routes mounted ahead of the React Router catch-all. */
+function workerShell() {
+	const shell = new Hono();
+	shell.route("/", apiApp);
+	shell.all("*", (c) => c.text("react-router"));
+	return shell;
+}
+
+async function withDevRuntime(fn) {
+	setDevRuntimeForTesting(true);
+	try {
+		return await fn();
+	} finally {
+		setDevRuntimeForTesting(undefined);
+	}
 }
 
 async function runTests() {
@@ -339,21 +385,33 @@ async function runTests() {
 	);
 	assert.equal(unavailRes.status, 400);
 
-	// Mock session creation (without Stripe key)
-	const checkoutRes = await apiApp.request(
+	// Without a Stripe key, production refuses rather than handing out the dev-only mock checkout
+	const mockCheckoutBody = JSON.stringify({
+		domain: "my-novel-company.com",
+		username: "founder",
+		displayName: "Alex Founder",
+		password: "SuperSecretPassword123!",
+		client: "ios",
+	});
+	const prodNoStripeRes = await apiApp.request(
 		"/api/v1/billing/create-domain-checkout",
-		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				domain: "my-novel-company.com",
-				username: "founder",
-				displayName: "Alex Founder",
-				password: "SuperSecretPassword123!",
-				client: "ios",
-			}),
-		},
+		{ method: "POST", headers: { "Content-Type": "application/json" }, body: mockCheckoutBody },
 		env,
+	);
+	assert.equal(prodNoStripeRes.status, 503, "Production without STRIPE_SECRET_KEY must not create mock sessions");
+	assert.equal(
+		[...bucket.store.keys()].some((key) => key.startsWith("billing/sessions/mock_cs_")),
+		false,
+		"No mock session record should be written in production",
+	);
+
+	// Mock session creation (without Stripe key) in local dev
+	const checkoutRes = await withDevRuntime(() =>
+		apiApp.request(
+			"/api/v1/billing/create-domain-checkout",
+			{ method: "POST", headers: { "Content-Type": "application/json" }, body: mockCheckoutBody },
+			env,
+		),
 	);
 	assert.equal(checkoutRes.status, 200);
 	const checkoutData = await checkoutRes.json();
@@ -542,6 +600,21 @@ async function runTests() {
 		.map((b) => b.toString(16).padStart(2, "0"))
 		.join("");
 
+	// Production without a usable secret fails closed, signed or not
+	for (const [label, misconfiguredEnv] of [
+		["missing secret", env],
+		["placeholder secret", mockEnv(bucket, { STRIPE_WEBHOOK_SECRET: "whsec_..." })],
+	]) {
+		const unsignedRes = await postWebhook(rawWebhookBody, misconfiguredEnv);
+		assert.equal(unsignedRes.status, 503, `Prod + ${label}: unsigned event must be rejected`);
+		assert.match((await unsignedRes.json()).error, /not configured/);
+
+		const forgedRes = await postWebhook(rawWebhookBody, misconfiguredEnv, {
+			"stripe-signature": await stripeSignatureHeader(rawWebhookBody, "whsec_attacker_chosen"),
+		});
+		assert.equal(forgedRes.status, 503, `Prod + ${label}: self-signed event must be rejected`);
+	}
+
 	// 1. Rejected on invalid signature
 	const rejectRes = await apiApp.request(
 		"/api/v1/billing/stripe-webhook",
@@ -556,6 +629,24 @@ async function runTests() {
 		secureEnv,
 	);
 	assert.equal(rejectRes.status, 400);
+
+	const unsignedProdRes = await postWebhook(rawWebhookBody, secureEnv);
+	assert.equal(unsignedProdRes.status, 400, "Prod + secret: missing stripe-signature must be rejected");
+
+	const wrongSecretRes = await postWebhook(rawWebhookBody, secureEnv, {
+		"stripe-signature": await stripeSignatureHeader(rawWebhookBody, "whsec_some_other_secret"),
+	});
+	assert.equal(wrongSecretRes.status, 400, "Prod + secret: signature from another secret must be rejected");
+
+	// A configured secret is enforced in local dev too
+	const devUnsignedWithSecretRes = await withDevRuntime(() => postWebhook(rawWebhookBody, secureEnv));
+	assert.equal(devUnsignedWithSecretRes.status, 400, "Dev + secret: unsigned event must be rejected");
+
+	assert.equal(
+		await getDomainMetadata(bucket, "my-novel-company.com"),
+		null,
+		"Rejected webhooks must not provision the domain",
+	);
 
 	// 2. Accepted on valid signature
 	const webhookRes = await apiApp.request(
@@ -603,6 +694,90 @@ async function runTests() {
 	assert.equal(readyStatus.domain, "my-novel-company.com");
 
 	console.log("✔ Stripe webhook fulfillment & HMAC verification tests passed");
+
+	// ---------------------------------------------------------
+	// 6. Dev-only /checkout/mock simulator
+	// ---------------------------------------------------------
+	console.log("\n6. Testing dev-only /checkout/mock flow...");
+
+	const shell = workerShell();
+
+	// Unreachable in production, including React Router data requests and path spelling variants
+	for (const path of [
+		"/checkout/mock?session_id=mock_cs_x&domain=x.com",
+		"/checkout/mock/",
+		"/checkout/mock.data",
+		"/Checkout/MOCK",
+		"/checkout/%6Dock",
+	]) {
+		const res = await shell.request(path, {}, env);
+		assert.equal(res.status, 404, `Prod: ${path} must be unreachable`);
+	}
+	const successPageRes = await shell.request("/checkout/success?domain=x.com", {}, env);
+	assert.equal(await successPageRes.text(), "react-router", "Guard must not catch other checkout pages");
+
+	// Dev without a secret still rejects a signature it cannot check
+	const unknownSigHeader = await stripeSignatureHeader(rawWebhookBody, "whsec_unknown");
+	const devSignedNoSecretRes = await withDevRuntime(() =>
+		postWebhook(rawWebhookBody, env, { "stripe-signature": unknownSigHeader }),
+	);
+	assert.equal(devSignedNoSecretRes.status, 400, "Dev + no secret: signed delivery must be rejected");
+
+	// End-to-end mock purchase in local dev (placeholder secret from .dev.vars.example)
+	const devEnv = mockEnv(bucket, { STRIPE_WEBHOOK_SECRET: "whsec_..." });
+	await withDevRuntime(async () => {
+		const devCheckoutRes = await apiApp.request(
+			"/api/v1/billing/create-domain-checkout",
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ domain: "dev-mock-purchase.com", client: "android" }),
+			},
+			devEnv,
+		);
+		assert.equal(devCheckoutRes.status, 200);
+		const devCheckout = await devCheckoutRes.json();
+		assert.equal(devCheckout.mock, true);
+		const mockPage = new URL(devCheckout.checkoutUrl);
+		assert.equal(mockPage.pathname, "/checkout/mock");
+
+		const mockPageRes = await shell.request(`${mockPage.pathname}${mockPage.search}`, {}, devEnv);
+		assert.equal(mockPageRes.status, 200);
+		assert.equal(await mockPageRes.text(), "react-router", "Dev: /checkout/mock falls through to the SPA");
+
+		// Same unsigned event app/routes/checkout-mock.tsx posts
+		const mockEventRes = await postWebhook(
+			JSON.stringify({
+				type: "checkout.session.completed",
+				data: {
+					object: {
+						id: devCheckout.sessionId,
+						metadata: {
+							domain: "dev-mock-purchase.com",
+							username: "admin",
+							displayName: "Admin",
+							totalAnnualUsd: "20.00",
+							domainFeeUsd: "10.44",
+							platformFeeUsd: "9.56",
+						},
+					},
+				},
+			}),
+			devEnv,
+		);
+		assert.equal(mockEventRes.status, 200, "Dev: unsigned mock event is accepted");
+		assert.equal((await mockEventRes.json()).status, "provisioned");
+
+		const devStatusRes = await apiApp.request(
+			`/api/v1/billing/checkout-status?session_id=${encodeURIComponent(devCheckout.sessionId)}`,
+			{},
+			devEnv,
+		);
+		assert.equal((await devStatusRes.json()).status, "ready");
+	});
+	assert.equal((await getDomainMetadata(bucket, "dev-mock-purchase.com"))?.status, "active");
+
+	console.log("✔ Dev-only /checkout/mock flow tests passed");
 
 	console.log("\n=========================================");
 	console.log("ALL REGISTRAR & BILLING TESTS PASSED!");

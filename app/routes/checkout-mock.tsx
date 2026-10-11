@@ -11,6 +11,15 @@ export function meta() {
 	return [{ title: "Mock Stripe Checkout — Inboxies" }];
 }
 
+// Posts unsigned webhook events, which the worker only accepts in local dev.
+// A server loader also makes client-side navigations hit the worker's 404.
+export function loader() {
+	if (!import.meta.env.DEV) {
+		throw new Response("Not Found", { status: 404 });
+	}
+	return null;
+}
+
 export default function CheckoutMockRoute() {
 	const [searchParams] = useSearchParams();
 	const navigate = useNavigate();

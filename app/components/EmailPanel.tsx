@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, useKumoToastManager } from "@cloudflare/kumo";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
 import { rewriteSelfReplyTo } from "shared/reply-recipients";
@@ -32,8 +32,27 @@ function EmailPanelSkeleton() {
 	);
 }
 
-export default function EmailPanel({ emailId }: { emailId: string }) {
-	const { mailboxId, folder } = useParams<{ mailboxId: string; folder: string }>();
+export default function EmailPanel({
+	emailId,
+	mailboxId: propMailboxId,
+	folder: propFolder,
+	onClose,
+	chips,
+	renderFooter,
+}: {
+	emailId: string;
+	mailboxId?: string;
+	folder?: string;
+	/** Close the reader (back / delete / move / triage done). */
+	onClose: () => void;
+	/** Folder / tag chips above the subject. */
+	chips?: ReactNode;
+	/** Docked under the thread; receives the message a reply should answer. */
+	renderFooter?: (replyTarget: Email) => ReactNode;
+}) {
+	const params = useParams<{ mailboxId: string; folder: string }>();
+	const mailboxId = propMailboxId || params.mailboxId;
+	const folder = propFolder || params.folder;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: threadRepliesRaw } = useThreadReplies(mailboxId, email?.thread_id) as {
 		data?: Email[];
@@ -47,7 +66,8 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const { data: currentMailbox } = useMailbox(mailboxId) as {
 		data?: Mailbox;
 	};
-	const { closePanel, startCompose } = useUIStore();
+	const { startCompose } = useUIStore();
+	const closePanel = onClose;
 	const toastManager = useKumoToastManager();
 	const [isSending, setIsSending] = useState(false);
 	const [sourceViewEmail, setSourceViewEmail] = useState<Email | null>(null);
@@ -244,6 +264,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				subject={email.subject}
 				messageCount={allMessages.length}
 				showThreadCount={hasThread}
+				chips={chips}
 			/>
 
 			<div className="flex-1 overflow-y-auto">
@@ -281,6 +302,9 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 					/>
 				)}
 			</div>
+
+			{renderFooter && lastReceivedMessage && !isDraftFolder && email.folder_id !== Folders.DRAFT &&
+				renderFooter(lastReceivedMessage)}
 
 			<EmailPanelDialogs
 				sourceViewEmail={sourceViewEmail}

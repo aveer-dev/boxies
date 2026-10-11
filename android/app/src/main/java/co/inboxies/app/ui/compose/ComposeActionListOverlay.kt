@@ -162,7 +162,7 @@ private fun View.impactHaptic() {
 }
 
 @Composable
-private fun rememberReduceMotion(): Boolean {
+internal fun rememberReduceMotion(): Boolean {
     val context = LocalContext.current
     return remember(context) {
         runCatching {
