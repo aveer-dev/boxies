@@ -8,7 +8,7 @@
  */
 
 import { CloudflareApiError, type CloudflareClientEnv } from "./cloudflare-client";
-import { isDevRuntime } from "./runtime-env";
+import { isDevRuntime } from "./dev-runtime";
 import type { DomainRegistrationInfo } from "./domain-registry";
 
 export interface DomainPricingBreakdown {

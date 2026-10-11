@@ -40,7 +40,7 @@ import {
 } from "../lib/domain-registry";
 import { checkDomainAvailability, computeDomainPricing } from "../lib/cloudflare-registrar";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
-import { isDevRuntime } from "../lib/runtime-env";
+import { isDevRuntime } from "../lib/dev-runtime";
 import {
 	domainVerificationChallenge,
 	isDomainVerified,

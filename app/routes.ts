@@ -17,19 +17,22 @@ export default [
 	route("invite/:token", "routes/invite.tsx"),
 	route("login", "routes/login.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
+	// Miller columns: each child route renders its own column(s); an optional
+	// trailing :emailId opens the reader beside the list.
 	route("mailbox/:mailboxId", "routes/mailbox.tsx", [
 		index("routes/mailbox-index.tsx"),
-		route("emails/:folder", "routes/email-list.tsx"),
-		route("reply-later", "routes/reply-later.tsx"),
-		route("settings", "routes/settings.tsx"),
-		route("settings/forwarding", "routes/settings-forwarding.tsx"),
-		route("settings/auto-reply", "routes/settings-auto-reply.tsx"),
-		route("settings/filters", "routes/settings-filters.tsx"),
-		route("settings/senders", "routes/settings-senders.tsx"),
-		route("settings/sharing", "routes/settings-sharing.tsx"),
-		route("settings/sign-in", "routes/settings-sign-in.tsx"),
-		route("settings/aliases", "routes/settings-aliases.tsx"),
-		route("search", "routes/search-results.tsx"),
+		route("emails/:folder/:emailId?", "routes/email-list.tsx"),
+		route("reply-later/:emailId?", "routes/reply-later.tsx"),
+		route("search/:emailId?", "routes/search-results.tsx"),
+		route("settings", "routes/settings.tsx", [
+			route("forwarding", "routes/settings-forwarding.tsx"),
+			route("auto-reply", "routes/settings-auto-reply.tsx"),
+			route("filters", "routes/settings-filters.tsx"),
+			route("senders", "routes/settings-senders.tsx"),
+			route("sharing", "routes/settings-sharing.tsx"),
+			route("sign-in", "routes/settings-sign-in.tsx"),
+			route("aliases", "routes/settings-aliases.tsx"),
+		]),
 	]),
 	route("*", "routes/not-found.tsx"),
 ] satisfies RouteConfig;

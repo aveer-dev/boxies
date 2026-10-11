@@ -33,6 +33,7 @@ import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "
 import { mailboxIdFromAgentName } from "../../shared/agent-conversations";
 import type { Env } from "../types";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import { NEW_EMAIL_PATH } from "../lib/auto-draft";
 
 // AI SDK v6 changed tool() overloads significantly. We define tools as plain
 // objects matching the Tool type to avoid overload resolution issues.
@@ -301,7 +302,7 @@ export class EmailAgent extends AIChatAgent<any> {
 	 */
 	async onRequest(request: Request): Promise<Response> {
 		const url = new URL(request.url);
-		if (url.pathname === "/onNewEmail" && request.method === "POST") {
+		if (url.pathname === NEW_EMAIL_PATH && request.method === "POST") {
 			try {
 				const emailData = await request.json() as {
 					mailboxId: string;

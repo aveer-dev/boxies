@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { app as apiApp } from "../index.ts";
+import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
 import {
 	formatAsctime,
 	fromQuote,
@@ -101,7 +102,7 @@ import { Hono } from "hono";
 
 // These suites drive the in-memory Cloudflare / registrar mocks, which are
 // dev-only (production fails closed without credentials). Opt in explicitly.
-globalThis.__INBOXIES_DEV__ = true;
+setDevRuntimeForTesting(true);
 
 function harness(env, defaultPrincipal = null) {
 	const parent = new Hono();

@@ -2779,10 +2779,9 @@ export class MailboxDO extends DurableObject<Env> {
 		const now = new Date().toISOString();
 		const existing = await this.getSenderTriage(sender);
 		const decided_at = existing?.decided_at ?? now;
+		// Null for allowed senders means "no explicit choice" — classify files them.
 		const destination =
-			row.status === "allowed"
-				? row.destination_folder_id ?? Folders.INBOX
-				: null;
+			row.status === "allowed" ? row.destination_folder_id ?? null : null;
 
 		this.db
 			.insert(schema.senderTriage)
@@ -2953,7 +2952,7 @@ export class MailboxDO extends DurableObject<Env> {
 			await this.upsertSenderTriage({
 				sender: seed.sender,
 				status: "allowed",
-				destination_folder_id: seed.destination_folder_id,
+				destination_folder_id: null,
 				display_name: seed.display_name,
 			});
 			seeded += 1;

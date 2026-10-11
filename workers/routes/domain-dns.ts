@@ -37,7 +37,7 @@ import { ensurePrincipalAccount } from "../lib/identity-links";
 import { aclFromOwnerKeys, principalKeys } from "../lib/mailbox-acl";
 import { createInviteRecord, saveInvite, inviteAcceptUrl } from "../lib/invites";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
-import { isDevRuntime } from "../lib/runtime-env";
+import { isDevRuntime } from "../lib/dev-runtime";
 import {
 	domainVerificationChallenge,
 	isDomainVerified,

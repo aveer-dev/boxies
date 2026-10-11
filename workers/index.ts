@@ -43,6 +43,7 @@ import {
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
+import { triggerAutoDraft, type AgentResolver } from "./lib/auto-draft";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
@@ -92,6 +93,8 @@ import { isAliasExpired, type StoredAliasMetadata } from "./lib/alias-utils";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
+	isAiSpam,
+	overrideAiSpamForVouchedSender,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldFallbackToInbox,
@@ -121,6 +124,7 @@ import {
 import {
 	allowOutboundRecipients,
 	isScreenerDestination,
+	isVouchedSender,
 	normalizeTriageSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
@@ -820,6 +824,18 @@ app.delete(
 		if (!address) return c.json({ error: "Invalid sender address" }, 400);
 		const deleted = await c.var.mailboxStub.deleteSenderPreference(address);
 		if (!deleted) return c.json({ error: "Not found" }, 404);
+
+		// Removing a sender's purpose box hands them back to automatic sorting.
+		const stub = c.var.mailboxStub as any;
+		const triage = await stub.getSenderTriage?.(address);
+		if (triage?.status === "allowed" && triage.destination_folder_id) {
+			await stub.upsertSenderTriage({
+				sender: address,
+				status: "allowed",
+				destination_folder_id: null,
+				display_name: triage.display_name ?? null,
+			});
+		}
 		return c.body(null, 204);
 	},
 );
@@ -1083,14 +1099,13 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 		return c.json({ error: "status must be allowed or rejected" }, 400);
 	}
 
+	// Allowed without a chosen destination stays null → classify files it.
 	let destinationFolderId: string | null = null;
 	if (status === "allowed") {
-		destinationFolderId = (
-			body.destinationFolderId ||
-			existing?.destination_folder_id ||
-			Folders.INBOX
-		).trim();
-		if (!isScreenerDestination(destinationFolderId)) {
+		destinationFolderId =
+			(body.destinationFolderId || existing?.destination_folder_id || "").trim() ||
+			null;
+		if (destinationFolderId && !isScreenerDestination(destinationFolderId)) {
 			return c.json(
 				{ error: "destinationFolderId must be inbox, promotions, or updates" },
 				400,
@@ -1119,7 +1134,9 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 	let moved = { moved: 0, ids: [] as string[] };
 	if (body.refileQueued) {
 		const toFolder =
-			status === "rejected" ? Folders.SCREENED_OUT : destinationFolderId!;
+			status === "rejected"
+				? Folders.SCREENED_OUT
+				: destinationFolderId ?? Folders.INBOX;
 		moved = await stub.refileSenderInFolder(sender, Folders.SCREENER, toFolder);
 		if (status === "allowed") {
 			const fromOut = await stub.refileSenderInFolder(
@@ -1631,7 +1648,12 @@ async function sendInboundAutoReply(options: {
 	console.log(`Sent auto-reply from ${mailboxId} to ${sender}`);
 }
 
-async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+async function receiveEmail(
+	message: ForwardableEmailMessage,
+	env: Env,
+	ctx: ExecutionContext,
+	getAgent: AgentResolver,
+) {
 	let matchedAliasMeta: StoredAliasMetadata | null = null;
 	const route = await routeInboundEnvelope(
 		message.to,
@@ -1763,7 +1785,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		normalizeDisplayName(parsedEmail.from?.name) ??
 		senderNameFromRawHeaders(fromHeaders);
 
-	const classification = await classifyInboundEmail(
+	let classification = await classifyInboundEmail(
 		{
 			headers: storedHeaders,
 			subject: parsedEmail.subject,
@@ -1829,9 +1851,21 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		? await (stub as any).getSenderTriage(triageSender)
 		: null;
 	const purposePref =
-		classification.folderId === Folders.SPAM
+		classification.folderId === Folders.SPAM && !isAiSpam(classification)
 			? null
 			: await stub.getSenderPreference(fromAddress);
+	// People you've emailed, accepted, or sorted can't be junked by the AI
+	// guess alone. Everything below files, notifies, and drafts on this verdict.
+	const vouchedClassification = overrideAiSpamForVouchedSender(classification, {
+		vouched: isVouchedSender(triageRow, purposePref?.folderId),
+		auth,
+	});
+	if (vouchedClassification !== classification) {
+		console.log(
+			`Vouched sender ${fromAddress} overrode AI spam verdict for ${mailboxId}`,
+		);
+		classification = vouchedClassification;
+	}
 	const triageDecision = resolveInboundFolder({
 		classification,
 		triage: triageRow,
@@ -1936,22 +1970,17 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		ctx.waitUntil(
 			(async () => {
 				await stub.ensureAutoAgentConversation();
-				const agentName = agentInstanceName(mailboxId, AUTO_CONVERSATION_ID);
-				const agentStub = env.EMAIL_AGENT.get(
-					env.EMAIL_AGENT.idFromName(agentName),
-				);
-				await agentStub.fetch(
-					new Request("https://agents/onNewEmail", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							mailboxId,
-							emailId: messageId,
-							sender: (parsedEmail.from?.address || "").toLowerCase(),
-							subject: parsedEmail.subject || "",
-							threadId,
-						}),
-					}),
+				await triggerAutoDraft(
+					env.EMAIL_AGENT,
+					agentInstanceName(mailboxId, AUTO_CONVERSATION_ID),
+					{
+						mailboxId,
+						emailId: messageId,
+						sender: (parsedEmail.from?.address || "").toLowerCase(),
+						subject: parsedEmail.subject || "",
+						threadId,
+					},
+					getAgent,
 				);
 			})().catch((e) =>
 				console.error("Auto-draft trigger failed:", (e as Error).message),

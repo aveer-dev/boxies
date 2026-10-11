@@ -34,6 +34,7 @@
 		68066B2A693771174713A76D /* Theme/ThemeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83789FCF63FC898B0F7F36D3 /* Theme/ThemeController.swift */; };
 		6A4FFDA2D831BC533741DCBB /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F5D715022CEE90FF4B7CB680 /* Foundation.framework */; };
 		6AE0059EAD914AD79D02011F /* Views/Email/EmailActionsSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6B6D0BA36EC4EE7BEC367D7 /* Views/Email/EmailActionsSheet.swift */; };
+		7E2F4A6C8B0D1E3F5A7C9B2D /* WebKitLinkageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C3E5F70B2D4F6E8A9C1B3D /* WebKitLinkageTests.swift */; };
 		7E8CC069F60B4F6283899600 /* Services/ComposeFormModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09C42367266B46FF855AE6E5 /* Services/ComposeFormModel.swift */; };
 		83101517849E451C9A64357A /* Views/Auth/SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7BDA4C7494146D8B2557D10 /* Views/Auth/SignInView.swift */; };
 		A11CE7012345678901234567 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A11CE7022345678901234567 /* Assets.xcassets */; };
@@ -129,6 +130,7 @@
 		A1B2C3D4E5F6478990ABCD1A /* Views/Settings/SignInMethodsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Settings/SignInMethodsSettingsView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990DLVR00 /* Services/DeliveryStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/DeliveryStatus.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6478990SRCH00 /* Services/SearchQueryParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/SearchQueryParser.swift; sourceTree = "<group>"; };
+		A1C3E5F70B2D4F6E8A9C1B3D /* WebKitLinkageTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WebKitLinkageTests.swift; sourceTree = "<group>"; };
 		A2D50AE4A35F064918C6153F /* Views/Settings/ThemeSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Views/Settings/ThemeSettingsView.swift; sourceTree = "<group>"; };
 		A6B6D0BA36EC4EE7BEC367D7 /* Views/Email/EmailActionsSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Email/EmailActionsSheet.swift; sourceTree = "<group>"; };
 		A742CF9796739FF61FB6E1C8 /* InboxiesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = InboxiesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -319,6 +321,7 @@
 			isa = PBXGroup;
 			children = (
 				B993BD164ECE844C8F497E29 /* SearchQueryParserTests.swift */,
+				A1C3E5F70B2D4F6E8A9C1B3D /* WebKitLinkageTests.swift */,
 			);
 			path = InboxiesTests;
 			sourceTree = "<group>";
@@ -433,6 +436,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3678C00ABE92E13F67C2AF29 /* SearchQueryParserTests.swift in Sources */,
+				7E2F4A6C8B0D1E3F5A7C9B2D /* WebKitLinkageTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
