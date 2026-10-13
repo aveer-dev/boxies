@@ -19,7 +19,7 @@ if (!iosStatus) throw new Error("check-claims: couldn't read IOS_STATUS from src
 // Only inside `export const flags = { … }`, so NAV's `external: true` isn't read as a flag.
 const flagBlock = config.match(/export const flags = \{([\s\S]*?)\}/)?.[1] ?? "";
 const flags = Object.fromEntries([...flagBlock.matchAll(/(\w+): (true|false),/g)].map((m) => [m[1], m[2] === "true"]));
-for (const name of ["webAppPublic", "privateEmailShipped", "domainPurchaseLive", "androidPublic"]) {
+for (const name of ["webAppPublic", "privateEmailShipped", "autoDraftsFromDayOne", "iosAutofillInBeta", "chromeExtensionPublic", "domainPurchaseLive", "androidPublic"]) {
 	if (!(name in flags)) throw new Error(`check-claims: couldn't read flags.${name} from src/config.ts`);
 }
 // The web app's origin and the one path visitors may be sent to (sign-up and sign-in share it).
@@ -46,13 +46,26 @@ const bannedFull = [
 	// A claim of end-to-end encryption. The candid answers say mail "isn’t
 	// end-to-end encrypted"; a negation right before it is allowed.
 	/(?<!\b(?:isn[’']t|is not|not|aren[’']t|never)\s)end-to-end encrypted/i,
-	// Automatic sorting (D2). With the Screener on, which it always is, mail
-	// from a sender goes where you accepted them; nothing sorts it for you.
-	/\bsort(?:s|ed|ing)?\s+(?:itself|themselves|automatically)\b/i,
-	/\bautomatic(?:ally)?\s+sort/i,
-	/\bauto-?sort/i,
-	// "Sorting … runs on Workers AI": the model only checks for spam.
+	// Sorting into Promotions and Updates is header rules (classify-email.ts),
+	// and only for senders you haven't placed; a choice or a filter wins
+	// (dev 31c58c6). Workers AI only checks for spam, so no "AI sorting".
 	/\bsort\w*\b[^.]{0,60}\bWorkers AI\b|\bWorkers AI\b[^.]{0,60}\bsort/i,
+	/\b(?:AI|smart)[- ]?sort/i,
+	// Mail waiting in the Screener is forwarded on dev (cb0b217, unknown →
+	// skipForward false); only screened-out mail and spam aren't.
+	/\bScreener\b[^.]{0,120}\bnever\b[^.]{0,60}\bforwarded\b/i,
+	// Deleting mail moves it to Trash first, MCP included (tools.ts
+	// toolDeleteEmail); only a delete from Trash or Drafts is final.
+	/\bpermanently delet\w*\s+(?:mail|emails?)\b/i,
+	// Remote images wait for Load images on every client (061e0ea, eda481f).
+	/remote images load/i,
+	// ⌘K only focuses search on the web (FloatingDock.tsx); there are no commands.
+	/command (?:bar|palette)/i,
+	/⌘K bar/,
+	// Account deletion is in the apps (eda481f), and connecting a domain you
+	// own needs a TXT record you add yourself (ca531c6).
+	/delet\w* (?:the|your) account[^.]{0,60}isn[’']t in the apps/i,
+	/without the DNS homework/i,
 ];
 
 // Only inside a data-claim wrapper (roadmap or negated).
@@ -64,12 +77,12 @@ const bannedPlain = [
 	/\bset aside\b/i,
 	/schedul(ed|e) send/i,
 	/hide my email/i,
-	/automatic draft/i,
-	/autofill/i,
 ];
 
 // Only inside data-claim="roadmap" ("negated" doesn't exempt these).
-const bannedOutsideRoadmap = [];
+// Gmail-style j and k and the ? list aren't built, though the welcome
+// emails still promise them (welcome-emails.ts).
+const bannedOutsideRoadmap = [/\bj and k\b/i, /\? (?:overlay|list)\b/i];
 
 if (iosStatus !== "appstore") bannedFull.push(/App Store/);
 if (!flags.androidPublic) {
@@ -80,9 +93,17 @@ if (!flags.domainPurchaseLive) bannedFull.push(/\$20\b/);
 // While the web app isn't public (D1), "Web" leaves every platform and
 // availability line. Capitalised only: prose about the web app may stay.
 if (!flags.webAppPublic) bannedFull.push(/\bWeb\b(?! Store)/, /web app at inboxies\.email/i);
-// Private email: allowed in plain copy once it's on main; until then only
-// roadmap copy may name it.
+// Private email: allowed in plain copy once it's on dev (the site ships with
+// dev); until then only roadmap copy may name it.
 if (!flags.privateEmailShipped) bannedOutsideRoadmap.push(/private (email|address)/i);
+// Drafts as mail arrives: plain copy may say so once they run on new
+// mailboxes (PR #49, on dev).
+if (!flags.autoDraftsFromDayOne) bannedPlain.push(/automatic draft/i);
+// AutoFill: plain copy may name it once someone can use it (a TestFlight
+// build carries the extension, or Android is public).
+if (!flags.iosAutofillInBeta && !flags.androidPublic) bannedPlain.push(/autofill/i);
+// The Chrome extension only loads unpacked until it's in the Chrome Web Store.
+if (!flags.chromeExtensionPublic) bannedOutsideRoadmap.push(/\bChrome extension\b/i, /Chrome Web Store/i, /add to Chrome/i);
 
 // ── Text extraction ──
 const DROP = "script, style, template, noscript[data-ignore]";

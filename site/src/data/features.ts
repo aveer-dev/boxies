@@ -11,9 +11,9 @@ const rows: Feature[] = [
 		title: "Promotions and Updates",
 		href: "/support#sorting",
 		platforms: ["ios", "android", "web"],
-		description: "Accept a sender into Inbox, Promotions or Updates, and their mail goes there from then on. Spam goes to Spam, caught by its headers, sender checks or a Workers AI model.",
+		description: "Accept a sender into Inbox, Promotions or Updates, and their mail goes there from then on. Mail from people you’ve emailed is sorted by its headers: list mail to Promotions, or to Updates for receipts and alerts, and the rest to Inbox. Spam goes to Spam, caught by its headers, sender checks or a Workers AI model.",
 		status: "available",
-		src: "FSW#the-screener (accept into Inbox, Promotions or Updates); FSW#smart-sorting (spam only); D2: sender-triage.ts resolveInboundFolder ignores the classifier's folder while the Screener is on",
+		src: "FSW#the-screener (accept into Inbox, Promotions or Updates); dev 31c58c6 (PR #56): sender-triage.ts resolveInboundFolder uses the classifier's folder for allowed senders with no chosen destination (emailed, bootstrap, welcome); approve stores one (index.ts sender-triage/approve); classify-email.ts classifyFromHeaders (List-*/Precedence → Promotions, Auto-Submitted or receipt words → Updates; Workers AI is spam vs ham only)",
 	},
 	{
 		id: "senders",
@@ -66,9 +66,9 @@ const rows: Feature[] = [
 		title: "Notifications that open the email",
 		href: "/support#notifications",
 		platforms: ["ios", "android"],
-		description: "See who wrote and a preview, then tap to land on that exact email. The Screener and Spam stay silent.",
+		description: "See who wrote and a preview, then tap to land on that exact email. The Screener, Spam and mail a filter files away stay silent.",
 		status: "available",
-		src: "FC#4.10; FSW#supporting-features (push)",
+		src: "FC#4.10; FSW#supporting-features (push); dev cb0b217 sender-triage.ts (filedAway → skipPush)",
 	},
 	{
 		id: "offline",
@@ -88,13 +88,22 @@ const rows: Feature[] = [
 		src: "FSW#supporting-features (real-time sync); FC#4.10",
 	},
 	{
+		id: "web-columns",
+		title: "Columns on the web",
+		href: "/support#shortcuts",
+		platforms: ["web"],
+		description: "Mailboxes, folders, the list and the message open side by side, and every view has its own link. Reply from the box under a message, press C to write or ⌘K to search. On a phone, each column gets its own screen.",
+		status: "available",
+		src: "dev 87720b1/4545317 (PR #53, on dev via 6ebc554 11 Oct): routes.ts (emails/:folder/:emailId?, nested settings), mailbox.tsx (Accounts/Folders/list/reader columns), QuickReplyBar.tsx, FloatingDock.tsx (C, ⌘K focuses search); ColumnCanvas.tsx (snap-x on phones)",
+	},
+	{
 		id: "mailboxes",
 		title: "Many mailboxes, one sign-in",
 		href: "/support#mailboxes",
 		platforms: ["ios", "android", "web"],
 		description: "Keep several addresses under one account and switch between them. Share a mailbox with owners and members, without sharing a password.",
 		status: "available",
-		src: "FSW#shared-mailboxes; FC#4.1 (avatar menu on iPhone); home.tsx (Mailboxes page on the web)",
+		src: "FSW#shared-mailboxes; FC#4.1 (avatar menu on iPhone); home.tsx (Mailboxes page on the web); dev AccountsColumn.tsx (mailbox column on the web)",
 	},
 	{
 		id: "delivery",
@@ -109,9 +118,9 @@ const rows: Feature[] = [
 		title: "Safe HTML",
 		href: "/support#html",
 		platforms: ["ios", "android", "web"],
-		description: "Email HTML is cleaned, scripts never run, and messages render in a sandbox. You can view any message’s headers.",
+		description: "Email HTML is cleaned, scripts never run, and messages render in a sandbox. Remote images wait until you choose Load images, and you can view any message’s headers.",
 		status: "available",
-		src: "FSW#supporting-features (safe HTML); FC#4.5; EmailPanelDialogs.tsx and EmailActionsSheet.swift (headers only, no raw MIME)",
+		src: "FSW#supporting-features (safe HTML); FC#4.5; EmailPanelDialogs.tsx and EmailActionsSheet.swift (headers only, no raw MIME); dev 061e0ea EmailIframe.tsx, eda481f EmailHTMLSanitizer.swift / EmailBodyView.kt (remote images blocked until Load images)",
 	},
 	{
 		id: "sign-in",
@@ -126,17 +135,36 @@ const rows: Feature[] = [
 	},
 ];
 
-// Joins the list once private email reaches main (the landing callout and
-// the roadmap's "Next release" go at the same time).
+// Joins the list once private email is on dev (the landing callout and the
+// roadmap's "Next release" go at the same time). Chrome stays off the
+// platform line until the extension is listed (platforms.ts).
 const privateEmail: Feature = {
 	id: "private-email",
 	title: "Private email",
 	href: "/support#private-email",
 	platforms: ["ios", "android", "web", "chrome"],
-	description: "A fresh address for every sign-up form. Reply from it, pause it, or let it expire, and your real address stays yours.",
+	description: flags.iosAutofillInBeta
+		? "A random address for every sign-up form, delivered to your mailbox. Replies go out from it, so your real address stays yours. Pause it, let it expire or delete it, and on iPhone, AutoFill makes one right in the form."
+		: "A random address for every sign-up form, delivered to your mailbox. Replies go out from it, so your real address stays yours. Pause it, let it expire or delete it.",
 	status: "available",
-	src: "RM#1 (1); FC#7",
+	src: "PR #46 on dev 8 Oct: fc74b93 (aliases.ts create/patch/delete; alias-utils.ts random token, cap 1,000; alias-sender.ts replies from the alias); fc8e2b2 settings-aliases.tsx (web); AliasesSettingsView.swift / .kt; d5df670 (AutoFill, gated on iosAutofillInBeta)",
+};
+
+// Joins the list once auto-drafts run on new mailboxes (PR #49, on dev). Avoids
+// the words "automatic draft", which check:claims gates on the same flag.
+const autoDrafts: Feature = {
+	id: "auto-drafts",
+	title: "Draft replies, ready when you are",
+	href: "/support#ai-reads",
+	platforms: ["ios", "android", "web"],
+	description: "When personal mail arrives from someone you’ve let in, the assistant writes a reply into Drafts for you to edit or send. It skips the Screener, Spam, bulk and spoofed mail, and checks each message for prompt injection first.",
+	status: "available",
+	src: "dev b7895d9 (PR #49, dev 9 Oct): email-agent.ts getAgentByName, so the auto conversation runs on brand-new mailboxes; index.ts auto-draft gate (ham, not Screener, not filed away, not spoofed); agent/index.ts handleNewEmail (injection scan of subject, body and thread)",
 };
 
 // A row whose platforms are all hidden (say, web-only while the web app isn't public) drops out.
-export const moreFeatures: Feature[] = (flags.privateEmailShipped ? [...rows, privateEmail] : rows).filter((f) => onSomePublicPlatform(f.platforms));
+export const moreFeatures: Feature[] = [
+	...rows,
+	...(flags.privateEmailShipped ? [privateEmail] : []),
+	...(flags.autoDraftsFromDayOne ? [autoDrafts] : []),
+].filter((f) => onSomePublicPlatform(f.platforms));

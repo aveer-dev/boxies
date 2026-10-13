@@ -29,8 +29,8 @@ export const facts: Principle[] = [
 	{
 		id: "delete",
 		title: "Deleting is permanent",
-		body: "Deleting a mailbox erases its messages, attachments, raw files and assistant history. It can’t be undone. An .mbox export made earlier isn’t deleted with it.",
-		src: "FSW#supporting-features (purgeMailbox); PS#5 (deleting a mailbox); durableObject purgeMailbox leaves exports/data/* in R2 (email-exporter.ts)",
+		body: "Deleting a mailbox erases its messages, attachments, raw files and assistant history, and you can delete your whole account from the iPhone app. Neither can be undone. An .mbox export made earlier isn’t deleted with it.",
+		src: "FSW#supporting-features (purgeMailbox); PS#5 (deleting a mailbox); durableObject purgeMailbox leaves exports/data/* in R2 (email-exporter.ts); dev eda481f (Settings → Account → Delete account; DELETE /api/v1/me)",
 	},
 ];
 
@@ -39,9 +39,9 @@ export const facts: Principle[] = [
 export const plainly: CalloutCopy = {
 	id: "plainly",
 	title: "Plainly:",
-	body: "Inboxies doesn’t add end-to-end encryption. Cloudflare encrypts stored mail at rest, and the service that runs Inboxies can technically read it, as with most hosted email. Remote images load by default, so a sender’s tracking pixel can still fire. [More in Support](/support#encryption)",
+	body: "Inboxies doesn’t add end-to-end encryption. Cloudflare encrypts stored mail at rest, and the service that runs Inboxies can technically read it, as with most hosted email. Remote images stay hidden until you choose Load images; once you do, a sender’s tracking pixel can fire. [More in Support](/support#encryption)",
 	claim: "negated",
-	src: "PS#5 (privacy of mail at rest); RM#3 (spy-pixel blocking not built)",
+	src: "PS#5 (privacy of mail at rest); dev 061e0ea EmailIframe.tsx, eda481f EmailHTMLSanitizer.swift / EmailBodyView.kt (remote images opt-in per message)",
 	ownerConfirm: "approve candid wording",
 };
 

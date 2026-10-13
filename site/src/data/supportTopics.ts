@@ -49,7 +49,7 @@ export const topics: SupportTopic[] = [
 		title: "Account and sign-in",
 		href: "#account-topic",
 		group: "account-topic",
-		description: "Passwords, Apple sign-in and other devices.",
+		description: "Passwords, Apple sign-in, other devices and deleting your account.",
 		src: "CT#2.3 (support topics)",
 	},
 	{

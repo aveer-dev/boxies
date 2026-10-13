@@ -18,13 +18,15 @@ export const X_URL: string | null = "https://x.com/inboxies_app"; // [OWNER: han
 
 export const flags = {
   webAppPublic: true,          // false while signed-out visitors can't reach inboxies.email/login (Access): drops "Web" from platform and availability lines, and the CTAs become the iPhone beta
-  privateEmailShipped: false,  // flip when PR #46 (dev) reaches main
-  autoDraftsFromDayOne: false, // flip when PR #49 (merged to dev) reaches main
-  domainPurchaseLive: true,    // false hides every $20 surface (Stripe + Registrar + webhook secrets live?)
+  privateEmailShipped: true,   // on dev since PR #46 (8 Oct): Settings → Private email on the web, iPhone and Android, addresses that receive mail
+  autoDraftsFromDayOne: true,  // on dev since PR #49 (9 Oct): auto-drafts run from a new mailbox's first email
+  iosAutofillInBeta: false,    // true once a TestFlight build carries the InboxiesCredentialProvider extension (App Group + AutoFill on both App IDs, d5df670)
+  chromeExtensionPublic: false, // true once the extension is listed in the Chrome Web Store; until then it only loads unpacked from extension/
+  domainPurchaseLive: true,    // false hides every $20 surface; needs STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and Registrar credentials in prod (dev now fails closed without them)
   androidPublic: false,        // true adds Android to platform lines, sign-in copy, apps answer
 } as const;
 
-export const asOf = "2026-10-09"; // shown as "Updated 9 Oct 2026"; build warns when > 45 days old
+export const asOf = "2026-10-11"; // shown as "Updated 11 Oct 2026"; build warns when > 45 days old
 
 export const NAV = [
   { id: "tour",    label: "Tour",    href: "/#tour",     hideBelow: 481 }, // hidden ≤480px

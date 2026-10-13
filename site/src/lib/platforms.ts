@@ -9,7 +9,10 @@ const ORDER: Platform[] = ["ios", "android", "web", "chrome", "mcp"];
 
 /** Whether visitors can get this platform today. */
 export const isPublic = (p: Platform) =>
-	(p !== "android" || flags.androidPublic) && (p !== "ios" || IOS_STATUS !== "hidden") && (p !== "web" || flags.webAppPublic);
+	(p !== "android" || flags.androidPublic) &&
+	(p !== "ios" || IOS_STATUS !== "hidden") &&
+	(p !== "web" || flags.webAppPublic) &&
+	(p !== "chrome" || flags.chromeExtensionPublic);
 
 export const visiblePlatforms = (ps: Platform[]) => ORDER.filter((p) => ps.includes(p) && isPublic(p));
 

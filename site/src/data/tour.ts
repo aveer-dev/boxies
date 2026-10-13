@@ -17,13 +17,13 @@ const allChapters: TourChapter[] = [
 		rows: [
 			{
 				lead: "Quiet by design.",
-				text: "Mail in the Screener never sends a notification, never gets an assistant draft, and is never forwarded or auto-replied to.",
-				src: "FSW#the-screener",
+				text: "Mail in the Screener never sends a notification, never gets an assistant draft and never gets your auto-reply. If you forward your mail, a copy still goes out.",
+				src: "FSW#the-screener; dev cb0b217 sender-triage.ts resolveInboundFolder (unknown: skipPush/skipAutoDraft/skipAutoReply true, skipForward false)",
 			},
 			{
 				lead: "People you write to are already in.",
-				text: "Anyone you’ve emailed is approved automatically, and so are senders already in your mail.",
-				src: "FSW#the-screener (allow-list seeded from Sent and existing mail)",
+				text: "Anyone you’ve emailed is approved automatically, and so are senders already in your mail. Their mail is sorted for you: list mail to Promotions or Updates, the rest to Inbox.",
+				src: "FSW#the-screener (allow-list seeded from Sent and existing mail); dev 31c58c6 (those seeds carry no destination, so classify-email.ts files them; migration 25)",
 			},
 			{
 				lead: "On from the first email.",
@@ -44,7 +44,7 @@ const allChapters: TourChapter[] = [
 		platforms: ["ios", "android", "web"],
 		title: "What you owe a reply gets its own pile.",
 		body: flags.webAppPublic
-			? "Mark a thread Reply Later from its actions and it joins a pile with a live count: in the bar at the bottom of the screen on iPhone, in the sidebar on the web. Send your reply and it leaves the pile on its own."
+			? "Mark a thread Reply Later from its actions and it joins a pile with a live count: in the bar at the bottom of the screen on iPhone, and under Workflow in the folder column on the web. Send your reply and it leaves the pile on its own."
 			: "Mark a thread Reply Later from its actions and it joins a pile with a live count in the bar at the bottom of the screen. Send your reply and it leaves the pile on its own.",
 		rows: [
 			{
@@ -67,7 +67,7 @@ const allChapters: TourChapter[] = [
 		supportHref: "/support#reply-later",
 		railLabel: "Reply Later",
 		media: { still: "reply-later", clip: "reply-later" },
-		src: "J (OS headline graft); FC#4.3 (marked from the actions sheet; bottom pill with count); FSW#reply-later; Sidebar.tsx (replyLaterCount on the web)",
+		src: "J (OS headline graft); FC#4.3 (marked from the actions sheet; bottom pill with count); FSW#reply-later; dev FoldersColumn.tsx (Workflow → Reply Later with count; Sidebar.tsx removed in 87720b1)",
 	},
 	{
 		id: "tour-ask-ai",
@@ -90,8 +90,8 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "Your own AI tools, too.",
-				text: "On a self-hosted install, connect Claude Code, Cursor or another MCP client. It acts with your access, including sending and permanently deleting mail, so only connect tools you trust.",
-				src: "FSW#mcp-server (send_reply, send_email, delete_email tools); D3: /mcp needs Access or a session token, and inboxies.email offers no way to get one (app.ts, MCPPanel.tsx); BRIEF (disclose plainly)",
+				text: "On a self-hosted install, connect Claude Code, Cursor or another MCP client. It acts with your access, including sending and deleting mail, so only connect tools you trust.",
+				src: "FSW#mcp-server (send_reply, send_email, delete_email tools); dev tools.ts toolDeleteEmail (to Trash first, permanent only from Trash or Drafts); D3: /mcp needs Access or a session token, and inboxies.email offers no way to get one (app.ts, MCPPanel.tsx, unchanged on dev); BRIEF (disclose plainly)",
 			},
 		],
 		supportHref: "/support#ask-ai",
@@ -166,10 +166,10 @@ const allChapters: TourChapter[] = [
 		num: "06",
 		name: "Your domain",
 		platforms: ["ios", "android", "web"],
-		title: "Your own name, without the DNS homework.",
+		title: "Your own name, with the records written for you.",
 		body: flags.domainPurchaseLive
-			? "Connect a domain you own, or register a new one in the app. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off."
-			: "Connect a domain you own. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off.",
+			? "Connect a domain you own with one TXT record and a nameserver switch, or register a new one in the app. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off."
+			: "Connect a domain you own with one TXT record and a nameserver switch. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off.",
 		rows: [
 			{
 				lead: "Bring the team.",
@@ -191,8 +191,8 @@ const allChapters: TourChapter[] = [
 		railLabel: "Domains",
 		media: { still: "domain-admin" },
 		src: flags.domainPurchaseLive
-			? "J (OS headline graft); FSW#custom-domains; FSW#buy-a-domain; onboarding.ts (records written at zone creation; health check runs on demand)"
-			: "J (OS headline graft); FSW#custom-domains; onboarding.ts (records written at zone creation; health check runs on demand)",
+			? "J (OS headline graft); FSW#custom-domains; FSW#buy-a-domain; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains; registered ones skip it)"
+			: "J (OS headline graft); FSW#custom-domains; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains)",
 	},
 ];
 

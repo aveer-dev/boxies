@@ -154,7 +154,7 @@ export function validateContent(): void {
 		previous = e.date;
 	}
 
-	// 5. Until private email is on main, only roadmap-claimed copy may name it.
+	// 5. Until private email is on dev, only roadmap-claimed copy may name it.
 	if (!flags.privateEmailShipped) {
 		const banned = /private (email|address)/i;
 		const allFaqs: Faq[] = [...faqs.billing, ...faqs.supportGroups.flatMap((g) => g.items)];
@@ -166,6 +166,24 @@ export function validateContent(): void {
 		for (const [label, entry] of scanned) {
 			const hit = strings(entry).find((s) => banned.test(s));
 			if (hit) errors.push(`${label}: mentions private email before it ships: "${hit.slice(0, 60)}…"`);
+		}
+	}
+
+	// 5b. Until the Chrome extension is listed in the Chrome Web Store, only
+	// roadmap-claimed copy may name it (check:claims holds the built pages to
+	// the same rule).
+	if (!flags.chromeExtensionPublic) {
+		const banned = /\bChrome extension\b|Chrome Web Store/i;
+		const allFaqs: Faq[] = [...faqs.billing, ...faqs.supportGroups.flatMap((g) => g.items)];
+		const scanned: [string, unknown][] = [
+			...features.moreFeatures.map((f): [string, unknown] => [`features.moreFeatures[${f.id}]`, f]),
+			...tour.chapters.map((c): [string, unknown] => [`tour.chapters[${c.id}]`, c]),
+			...changelog.entries.map((e): [string, unknown] => [`changelog[${e.date} ${e.title}]`, e]),
+			...allFaqs.filter((f) => f.claim !== "roadmap").map((f): [string, unknown] => [`faqs[${f.id}]`, f]),
+		];
+		for (const [label, entry] of scanned) {
+			const hit = strings(entry).find((s) => banned.test(s));
+			if (hit) errors.push(`${label}: mentions the Chrome extension before it's listed: "${hit.slice(0, 60)}…"`);
 		}
 	}
 

@@ -1,15 +1,92 @@
-// What has shipped, newest first (§4.3 R5). Only what's on main: this list
-// sits outside the roadmap's data-claim wrapper, so check:claims holds it to
-// the strict rules.
+// What has shipped, newest first (§4.3 R5). Only what's on dev, the branch
+// the site ships with; dates are when a change reached dev (GitHub's merge
+// time, UTC). This list sits outside the roadmap's data-claim wrapper, so
+// check:claims holds it to the strict rules.
 //
-// Left out on purpose: "Private email (v1)" from 5 Oct (its screen is on
-// main, but its addresses don't receive mail; the working version is Next
-// release), the hidden "For you" digest from 11 Sep (that entry is "Dark
+// Left out on purpose: "Private email (v1)" from 5 Oct (superseded by the
+// working version on 8 Oct), iPhone AutoFill and the Chrome extension until
+// people can install them, internal fixes (Stripe webhook signing, CI, type
+// errors), the hidden "For you" digest from 11 Sep (that entry is "Dark
 // mode"), and the 20 Aug deploy fix.
 import { flags } from "../config";
 import type { ChangeEntry } from "./types";
 
+const appsLine = flags.androidPublic ? "in the iPhone and Android apps" : "in the iPhone app";
+
 export const entries: ChangeEntry[] = [
+	{
+		date: "2026-10-11",
+		title: "Columns on the web",
+		description:
+			"The web app puts your mailboxes, folders, the list and the message side by side, and every view has its own link, so back, reload and bookmarks work. Reply from the box under a message, press C to write, ⌘K to search and ⌘J to ask the assistant. On a phone, each column gets its own screen.",
+		src: "PR #53 (87720b1, 4545317; main 10 Oct), on dev via 6ebc554 \"Merge main into dev\" 11 Oct; FloatingDock.tsx, QuickReplyBar.tsx, ColumnCanvas.tsx",
+	},
+	{
+		date: "2026-10-11",
+		title: "Remote images wait for you",
+		description: `Images from a sender’s servers stay hidden until you choose Load images on that message, in the web app and ${appsLine}. Until then, a tracking pixel can’t report that you opened it.`,
+		src: "PR #54 (061e0ea, web EmailIframe.tsx) and PR #59 (eda481f, EmailHTMLSanitizer.swift, EmailBodyView.kt), on dev via #51 → #63 (1df8f99) 11 Oct",
+	},
+	{
+		date: "2026-10-11",
+		title: "Delete your account",
+		description: `Settings → Account → Delete account ${appsLine} removes your account and its sign-in methods. Mailboxes where you’re the only owner are erased; from mailboxes with other owners, you’re removed.`,
+		src: "PR #59 (eda481f) + PR #52 (cb0b217: DELETE /api/v1/me), on dev 11 Oct; SettingsSheetView.swift / .kt",
+	},
+	{
+		date: "2026-10-11",
+		title: "Sorting for people you know",
+		description:
+			"Mail from people you’ve emailed, and from senders already in your mail, is sorted into Inbox, Promotions or Updates by its headers again. Senders you accept still go where you chose, and the AI spam check alone no longer sends their verified mail to Spam.",
+		src: "PR #56 (31c58c6, main 10 Oct) and PR #64 (d19cd72, main 11 Oct), both on dev via 6ebc554 \"Merge main into dev\" 11 Oct",
+	},
+	{
+		date: "2026-10-11",
+		title: "Trash, filters and forwarding",
+		description:
+			"Deleting mail moves it to Trash first, and the web app can empty Trash. Mail a filter files away no longer notifies you or gets a draft, mail in the Screener is forwarded if you forward your mail, and the assistant’s drafts never replace yours. Only a mailbox’s owners can change its forwarding, auto-reply, filters and AI prompt.",
+		src: "PR #52 (cb0b217): trashOrDeleteEmail + POST /folders/trash/empty (email-list.tsx Empty Trash); sender-triage.ts (filedAway skips; unknown skipForward false); tools.ts drafts source agent; index.ts ownerOnlyKeys; on dev 11 Oct",
+	},
+	{
+		date: "2026-10-11",
+		title: "Exports and moving a domain",
+		description:
+			"Only a domain’s admins can download its .mbox export, and the download is kept for 7 days. Move DNS / Offboard stops mail for the domain, and first asks for a recent export of the whole domain.",
+		src: "PR #47 (4811793, f11c872; dev 8 Oct), PR #48 (d024650; dev 9 Oct), ca531c6 (expiry) and cb0b217 (catch-all disabled on offboarding), dev 11 Oct; dated by the last part to land",
+	},
+	{
+		date: "2026-10-11",
+		title: "Safer password resets and domain setup",
+		description:
+			"A reset code works only with the email it was sent to and stops after five wrong tries, and a reset signs you out everywhere else you used your old password. Connecting a domain you own starts with a TXT record that shows it’s yours.",
+		src: "PR #57 (a85c07e, main 10 Oct → dev via 6ebc554 11 Oct); PR #51 (ca531c6: domain-verification.ts, tokenVersion bump), dev 11 Oct",
+	},
+	{
+		date: "2026-10-11",
+		title: "A clearer stack button",
+		description: "The button that opens your folders shows a stack instead of a pencil, and springs back when you press it. The iPhone beta opens on iOS 18.5 again.",
+		src: "PR #55 (fe7e1e2, main 10 Oct) and PR #61 (a0739ed, main 11 Oct), on dev via 6ebc554 11 Oct",
+	},
+	...(flags.autoDraftsFromDayOne
+		? [
+				{
+					date: "2026-10-09",
+					title: "Draft replies from the first email",
+					description: "The assistant now prepares draft replies on brand-new mailboxes too, from their first email. They wait in Drafts until you send them.",
+					src: "PR #49 (b7895d9) merged to dev 2026-10-09T00:14Z; ba5d920 (PR #60) is the same fix on main",
+				},
+			]
+		: []),
+	...(flags.privateEmailShipped
+		? [
+				{
+					date: "2026-10-08",
+					title: "Private email",
+					description: `Make a random address for every sign-up in Settings → Private email, ${flags.webAppPublic ? `on the web and ${appsLine}` : appsLine}. Mail to it reaches your mailbox, replies go out from it, and you can pause it, let it expire or delete it, up to 1,000 per mailbox.`,
+					src: "PR #46 merged to dev 2026-10-08T03:35Z (454dd4f): fc74b93 worker, fc8e2b2 web, e9236be iOS, 2ef2e82 Android",
+				},
+			]
+		: []),
 	{
 		date: "2026-10-04",
 		title: "Sign up on your own",
@@ -75,8 +152,8 @@ export const entries: ChangeEntry[] = [
 	{
 		date: "2026-09-13",
 		title: "Promotions, Updates and Spam",
-		description: `${flags.androidPublic ? "The Android app, and " : ""}Promotions, Updates and Spam folders, plus-addressing, forwarding and auto-reply.`,
-		src: "RM#4 (#6–#10); D2 (no sorting claim: since the Screener, senders are filed where you accept them)",
+		description: `${flags.androidPublic ? "The Android app, and " : ""}Mail sorted into Promotions, Updates and Spam, plus-addressing, forwarding and auto-reply.`,
+		src: "RM#4 (#6–#10: header and AI classifier); dev 31c58c6 (sorting applies again to senders without a chosen destination)",
 	},
 	{
 		date: "2026-09-11",

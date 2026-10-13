@@ -20,7 +20,7 @@ const shown = (rows: Row[]): ParityRow[] => rows.filter((r) => !r.webOnly || fla
 const customDomainNote = flags.domainPurchaseLive ? "Connect one, or register one." : "Connect one you own.";
 
 export const gmail: ParityRow[] = shown([
-	{ competitor: "gmail", theirs: "Categories and tabs", ours: "Inbox · Promotions · Updates · Spam", status: "partly", note: "You choose Inbox, Promotions or Updates per sender; no automatic tabs.", src: `${GMAIL}; D2 (sender-triage.ts: the sender's destination, not the classifier, files mail while the Screener is on)` },
+	{ competitor: "gmail", theirs: "Categories and tabs", ours: "Inbox · Promotions · Updates · Spam", status: "partly", note: "List mail from people you’ve emailed is sorted by its headers; senders you accept go where you choose. No Social or Forums.", src: `${GMAIL}; dev 31c58c6 (classifier files allowed senders without a chosen destination; header rules, not AI)` },
 	{ competitor: "gmail", theirs: "Filters", ours: "Filters", status: "available", note: "Sender, list or subject; move, forward or skip the assistant’s draft.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Search operators", ours: "Search", status: "available", note: "Plus full-text search of message bodies.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Vacation responder", ours: "Auto-reply", status: "available", note: "Once per sender a day. No start or end dates.", src: GMAIL },
@@ -31,15 +31,15 @@ export const gmail: ParityRow[] = shown([
 	{ competitor: "gmail", theirs: "Spam protection", ours: "Spam and spoof warnings", status: "available", note: "Spam headers, a Workers AI check, and SPF, DKIM and DMARC.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Delegation", ours: "Sharing · Invites · Domain Admin", status: "available", note: "Owners and members per mailbox.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Custom domain", ours: "Custom domains", status: "available", note: customDomainNote, src: GMAIL },
-	{ competitor: "gmail", theirs: "Labels", ours: "Folders and stars", status: "partly", note: "One folder per email; tags are being explored.", src: GMAIL },
+	{ competitor: "gmail", theirs: "Labels", ours: "Folders and stars", status: "partly", note: "One folder per email (the web app shows yours as #tags); more than one per email is being explored.", src: `${GMAIL}; dev FoldersColumn.tsx` },
 	{ competitor: "gmail", theirs: "Undo send", ours: "Undo", status: "partly", note: "iPhone only, a few seconds. Delete, archive and move have a five-second undo in the iPhone app.", src: GMAIL },
-	{ competitor: "gmail", theirs: "Send as", ours: "From picker", status: "partly", note: "Choose which of your mailboxes to send from on iPhone. Private addresses arrive next release.", src: GMAIL },
-	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: "Drafts replies when you ask; no suggestions as you type.", src: GMAIL },
+	{ competitor: "gmail", theirs: "Send as", ours: "From picker", status: "partly", note: flags.privateEmailShipped ? "Choose which of your mailboxes to send from on iPhone. A reply to mail sent to a private address goes out from that address." : "Choose which of your mailboxes to send from on iPhone. Private addresses arrive next release.", src: `${GMAIL}; dev alias-sender.ts (replies in a private-email thread go out from the alias); ComposeFormModel.swift (From locked for those replies)` },
+	{ competitor: "gmail", theirs: "Help me write", ours: "Ask AI", status: "partly", note: flags.autoDraftsFromDayOne ? "Drafts replies when you ask, and as personal mail arrives; no suggestions as you type." : "Drafts replies when you ask; no suggestions as you type.", src: `${GMAIL}; dev index.ts auto-draft gate (PR #49)` },
 	{ competitor: "gmail", theirs: "Priority Inbox", ours: "New and Seen", status: "partly", note: "New sits above Seen.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Offline", ours: "Local copy", status: "partly", note: flags.webAppPublic ? "iPhone only; the web needs a connection." : "In the iPhone app.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Attachments", ours: "Attachments", status: "partly", note: "5 MiB per message; no large-file links.", src: GMAIL },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins; a one-mailbox export is planned.", src: GMAIL },
-	{ competitor: "gmail", theirs: "Keyboard shortcuts", ours: "—", status: "planned", note: "For the web.", src: GMAIL },
+	{ competitor: "gmail", theirs: "Keyboard shortcuts", ours: "A few, on the web", status: "partly", note: "C, ⌘K, ⌘J, [ and ], Esc. No j and k or ? list yet.", webOnly: true, src: `${GMAIL}; dev FloatingDock.tsx, ColumnCanvas.tsx, QuickReplyBar.tsx` },
 	{ competitor: "gmail", theirs: "Schedule send", ours: "—", status: "exploring", src: GMAIL },
 	// Collapsed under "Show 4 we haven’t planned"
 	{ competitor: "gmail", theirs: "Snooze", ours: "—", status: "notyet", note: "Reply Later is a pile, not a timer.", src: GMAIL },
@@ -60,8 +60,8 @@ export const hey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "Workflows", ours: "Reply Later pile", status: "partly", note: "One pile so far.", src: HEY },
 	{ competitor: "hey", theirs: "Bundles", ours: "“For you” topics", status: "progress", note: "Grouped by topic, not by sender; built, not switched on yet.", src: HEY, ownerConfirm: "tease the “For you” brief publicly" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", note: "Next to Reply Later.", src: HEY },
-	// Collapsed under "Show 7 we haven’t planned"
-	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "—", status: "notyet", note: "Remote images load by default.", src: HEY },
+	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Every remote image waits until you load it; trackers aren’t picked out.", src: `${HEY}; dev 061e0ea EmailIframe.tsx; eda481f EmailHTMLSanitizer.swift, EmailBodyView.kt` },
+	// Collapsed under "Show 6 we haven’t planned"
 	{ competitor: "hey", theirs: "Clips", ours: "—", status: "notyet", src: HEY },
 	{ competitor: "hey", theirs: "Notes", ours: "—", status: "notyet", src: HEY },
 	{ competitor: "hey", theirs: "Rename subjects", ours: "—", status: "notyet", src: HEY },
@@ -72,16 +72,16 @@ export const hey: ParityRow[] = shown([
 
 // Landing summary rows (columns: You know it as · In Inboxies · Status; the
 // note sits under "In Inboxies").
-export const landingGmail: ParityRow[] = [
-	{ competitor: "gmail", theirs: "Inbox categories", ours: "Inbox · Promotions · Updates", status: "partly", note: "You choose per sender.", landing: true, src: "RM#2; D2" },
+export const landingGmail: ParityRow[] = shown([
+	{ competitor: "gmail", theirs: "Inbox categories", ours: "Inbox · Promotions · Updates", status: "partly", note: "Sorted by headers, or per sender.", landing: true, src: "RM#2; dev 31c58c6" },
 	{ competitor: "gmail", theirs: "Filters", ours: "Filters", status: "available", landing: true, src: "RM#2" },
 	{ competitor: "gmail", theirs: "Search operators", ours: "Search", status: "available", landing: true, src: "RM#2" },
 	{ competitor: "gmail", theirs: "Labels", ours: "Folders and stars", status: "partly", note: "One folder per email.", landing: true, src: "RM#2" },
 	{ competitor: "gmail", theirs: "Undo send", ours: "Undo", status: "partly", note: "iPhone only.", landing: true, src: "RM#2" },
 	{ competitor: "gmail", theirs: "Snooze", ours: "Reply Later", status: "notyet", note: "Reply Later is a pile, not a timer.", landing: true, src: "RM#2" },
-	{ competitor: "gmail", theirs: "Keyboard shortcuts", ours: "—", status: "planned", note: "For the web.", landing: true, src: "RM#2" },
+	{ competitor: "gmail", theirs: "Keyboard shortcuts", ours: "A few, on the web", status: "partly", note: "No j and k yet.", landing: true, webOnly: true, src: "RM#2; dev FloatingDock.tsx, ColumnCanvas.tsx" },
 	{ competitor: "gmail", theirs: "Takeout", ours: ".mbox export", status: "partly", note: "Whole domains, by domain admins.", landing: true, src: "RM#2" },
-];
+]);
 
 export const landingHey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "The Screener", ours: "Screener", status: "available", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
@@ -91,5 +91,5 @@ export const landingHey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Paper Trail", ours: "Updates", status: "partly", note: "A plain list.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
-	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "—", status: "notyet", note: "Remote images load by default.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
+	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Remote images wait until you load them.", landing: true, src: "RM#3; WEB#2.1 (HEY names); dev 061e0ea, eda481f" },
 ]);

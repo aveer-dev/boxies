@@ -24,15 +24,15 @@ export const billing: Faq[] = visible([
 		group: "billing",
 		q: "Is the personal address really free?",
 		a: ["There’s no payment step and no card, and no charge for it today. You get you@inboxies.email with the Screener, Reply Later, Promotions and Updates, and Ask AI."],
-		src: "PS#2; D2 (no automatic sorting claim)",
+		src: "PS#2",
 		ownerConfirm: "long-term free",
 	},
 	{
 		id: "free-domain",
 		group: "billing",
 		q: "Is connecting my own domain free?",
-		a: ["There’s no charge for it today. You point your domain’s nameservers at a Cloudflare zone that Inboxies runs, Inboxies writes the email records, and you keep renewing the domain with your registrar."],
-		src: "PS#2; PS#5 (DNS setup); cloudflare-client.ts createZone (zone in the operator's account)",
+		a: ["There’s no charge for it today. You add one TXT record to show the domain is yours, point its nameservers at a Cloudflare zone that Inboxies runs, Inboxies writes the email records, and you keep renewing the domain with your registrar."],
+		src: "PS#2; PS#5 (DNS setup); cloudflare-client.ts createZone (zone in the operator's account); dev ca531c6 domain-verification.ts, onboarding.ts (428 until the TXT is found)",
 		ownerConfirm: "BYO domain stays free",
 	},
 	{
@@ -161,8 +161,8 @@ const gettingStarted: Faq[] = [
 		group: "getting-started",
 		q: "Why are there three emails in my new mailbox?",
 		claim: "roadmap",
-		a: ["Every new mailbox starts with three short guides. They come from welcome@, agent@ and security@ on your own domain, and they’re automated, so don’t reply to them. A few things the guides mention, like web keyboard shortcuts and an export button in Settings, aren’t built yet; they’re on the [roadmap](/roadmap)."],
-		src: "PS#5 (other support facts); RM#5 (welcome-email overclaims); welcome-emails.ts (senders); onboarding.ts (those usernames aren't reserved)",
+		a: ["Every new mailbox starts with three short guides. They come from welcome@, agent@ and security@ on your own domain, and they’re automated, so don’t reply to them. Some of what they describe isn’t there yet: most of the web keyboard shortcuts they list (C to compose and ⌘K to search work today), a signature editor in web Settings, an export button in Settings, and connecting an AI tool over MCP, which works only on self-hosted installs. The shortcuts, the signature editor and the export button are on the [roadmap](/roadmap)."],
+		src: "PS#5 (other support facts); RM#5 (welcome-email overclaims); dev welcome-emails.ts (shortcut table and ? overlay, Settings → Email Signature, Settings → Export Mailbox, /mcp; only change on dev is destination_folder_id null); FloatingDock.tsx (C, ⌘K); onboarding.ts (those usernames aren't reserved)",
 	},
 	{
 		id: "not-imap",
@@ -178,15 +178,15 @@ const sorting: Faq[] = [
 		id: "screener",
 		group: "sorting-topic",
 		q: "How does the Screener work?",
-		a: ["Mail from a first-time sender goes to the Screener, not your Inbox. Accept the sender and choose where their mail goes: Inbox, Promotions or Updates. Decline, and their mail is filed in Screened out. Screened mail never notifies you, never gets an assistant draft, and is never forwarded or auto-replied to. The sender isn’t told."],
-		src: "FSW#the-screener; FC#4.3 (\"screen them out privately\")",
+		a: ["Mail from a first-time sender goes to the Screener, not your Inbox. Accept the sender and choose where their mail goes: Inbox, Promotions or Updates. Decline, and their mail is filed in Screened out. Mail in the Screener never notifies you, never gets an assistant draft and never gets your auto-reply, but if you forward your mail, a copy still goes out. Mail you’ve screened out is never forwarded or auto-replied to. The sender isn’t told."],
+		src: "FSW#the-screener; FC#4.3 (\"screen them out privately\"); dev cb0b217 sender-triage.ts resolveInboundFolder (unknown: skipPush/skipAutoDraft/skipAutoReply, skipForward false; rejected: skips forwarding too)",
 	},
 	{
 		id: "screener-skip",
 		group: "sorting-topic",
 		q: "Who skips the Screener?",
-		a: ["Anyone you’ve emailed, and senders already in your mail when the Screener started. Filters can’t let a new sender skip it."],
-		src: "FSW#the-screener; FSW#filters (\"filters cannot bypass the Screener\")",
+		a: ["Anyone you’ve emailed, and senders already in your mail when the Screener started. Until you choose a place for one of them, their mail is sorted by its headers ([how](#sorting)). Filters can’t let a new sender skip it."],
+		src: "FSW#the-screener; FSW#filters (\"filters cannot bypass the Screener\"); dev 31c58c6 sender-triage.ts allowOutboundRecipients / buildBootstrapAllowSeeds (no destination), migration 25_sender_triage_auto_destination",
 	},
 	{
 		id: "screener-off",
@@ -206,22 +206,22 @@ const sorting: Faq[] = [
 		id: "sorting",
 		group: "sorting-topic",
 		q: "How does Inboxies decide where an email goes?",
-		a: ["In this order: spam, then senders you’ve screened out, then the Screener for anyone new, then your filters, then the sender’s destination. That’s the place you chose when you accepted them or in Settings → Senders, and Inbox if you didn’t choose. Spam is mail with spam headers, personal mail that fails sender checks, or mail a Workers AI model flags. If that model can’t be reached, the mail is treated as not spam, so nothing is lost."],
-		src: "D2: sender-triage.ts resolveInboundFolder (spam → rejected → unknown → filter → sender preference → triage destination, Inbox by default; classifier folder used only with the Screener off); classify-email.ts (spam headers, spoof check, Llama spam/ham, fail-open to ham)",
+		a: ["In this order: spam, then senders you’ve screened out, then the Screener for anyone new, then your filters, then the place you chose for the sender, when you accepted them or in Settings → Senders. If you never chose one, as with people you’ve emailed, the email is sorted by its headers: mailing-list mail goes to Promotions, or to Updates when it’s a receipt, an alert or an automatic reply, and everything else goes to Inbox. Spam is mail with spam headers, personal mail that fails sender checks, or mail a Workers AI model flags. The model alone can’t send mail to Spam from someone you’ve accepted, emailed or given a place, as long as it passes their domain’s SPF, DKIM or DMARC check. If the model can’t be reached, the mail is treated as not spam, so nothing is lost."],
+		src: "dev sender-triage.ts resolveInboundFolder (spam → rejected → unknown → filter → sender preference → explicit destination → classifier folder → Inbox; 31c58c6, PR #56); classify-email.ts (spam headers; Auto-Submitted / List-* / Precedence → Updates or Promotions; spoof check; Llama spam/ham; fail-open to ham); d19cd72 (PR #64): overrideAiSpamForVouchedSender (reason ai-spam only, auth.aligned), isVouchedSender",
 	},
 	{
 		id: "senders",
 		group: "sorting-topic",
 		q: "How do I always send a sender somewhere?",
-		a: ["Move one of their emails to Inbox, Promotions or Updates and choose “Yes, for this sender”. Their earlier mail moves too. To change or remove these choices, go to Settings → Senders."],
-		src: "FSW#sender-destinations; FC#4.3",
+		a: ["Move one of their emails to Inbox, Promotions or Updates and choose “Yes, for this sender”. Their earlier mail moves too. To change or remove these choices, go to Settings → Senders. Remove one, and that sender’s new mail is sorted by its headers again."],
+		src: "FSW#sender-destinations; FC#4.3; dev 31c58c6 index.ts DELETE sender-preferences clears the triage destination; settings-senders.tsx (\"future mail uses the default sorter again\")",
 	},
 	{
 		id: "filters",
 		group: "sorting-topic",
 		q: "How do filters work?",
-		a: ["Each mailbox can have up to 50 rules. A rule matches a sender (an exact address, an @domain or part of an address), a mailing list, or words in the subject. It can then move the email to a folder, forward it, or tell the assistant not to draft a reply. The first matching rule wins. A spoofed sender never matches a sender rule."],
-		src: "FSW#filters; PS#4",
+		a: ["Each mailbox can have up to 50 rules, set by its owners. A rule matches a sender (an exact address, an @domain or part of an address), a mailing list, or words in the subject. It can then move the email to a folder, forward it, or tell the assistant not to draft a reply. Mail a rule moves anywhere other than Inbox, Promotions or Updates doesn’t notify you or get a draft. The first matching rule wins. A spoofed sender never matches a sender rule."],
+		src: "FSW#filters; PS#4; dev cb0b217: sender-triage.ts (filedAway → skipPush, skipAutoDraft); index.ts ownerOnlyKeys (forwarding, autoReply, filters, agentSystemPrompt → 403 for members)",
 	},
 	{
 		id: "spoofed",
@@ -272,6 +272,18 @@ const everyday: Faq[] = [
 		src: "FSW#search; FC#4.7; durableObject searchEmails (to: matches recipient, cc and bcc addresses)",
 	},
 	{
+		// Names unbuilt shortcuts and uses "keyboard shortcuts", so it sits in the roadmap wrapper.
+		id: "shortcuts",
+		group: "everyday-topic",
+		q: "Are there keyboard shortcuts on the web?",
+		claim: "roadmap",
+		hidden: !flags.webAppPublic,
+		a: [
+			"A few. The web app opens your mailboxes, folders, the list and the message as columns side by side. C starts a new message, ⌘K jumps to search, [ and ] move between columns, and Esc closes the right-most one. In an open message, ⌘J asks the assistant to draft a reply, ⌘↵ sends the quick reply and ⇧⌘O moves it into the full composer. On Windows and Linux, use Ctrl for ⌘. Gmail-style j and k, r for reply and a ? list aren’t built yet; they’re on the [roadmap](/roadmap).",
+		],
+		src: "dev 87720b1 (#53): FloatingDock.tsx (C, ⌘K; metaKey || ctrlKey), ColumnCanvas.tsx ([ ], Esc → closeDeepest), QuickReplyBar.tsx (⌘J, ⌘↵, ⇧⌘O); RM#1 (6)",
+	},
+	{
 		id: "compose",
 		group: "everyday-topic",
 		q: "Can I put a draft aside while I check something?",
@@ -288,9 +300,9 @@ const everyday: Faq[] = [
 			(flags.androidPublic
 				? "In the iPhone and Android apps, delete, archive and move wait about five seconds for Undo. On iPhone you can also shake to undo, and sending gets a short undo window."
 				: "In the iPhone app, delete, archive and move wait about five seconds for Undo, and you can shake to undo. Sending gets a short undo window too.") +
-				(flags.webAppPublic ? " The web app has no undo." : ""),
+				(flags.webAppPublic ? " The web app has no undo, but Delete there moves mail to Trash, so you can move it back." : ""),
 		],
-		src: "FC#4.4; RM#2 (undo send iOS only); J (no undo on web)",
+		src: "FC#4.4; RM#2 (undo send iOS only); J (no undo on web); dev email-list.tsx (outside Trash, delete moves to Trash); cb0b217 trashOrDeleteEmail",
 	},
 	{
 		id: "swipes",
@@ -303,18 +315,20 @@ const everyday: Faq[] = [
 		id: "notifications",
 		group: "everyday-topic",
 		q: "Which emails send notifications?",
-		a: ["Notifications show the sender, the subject and a preview, and tapping one opens that email. Mail held in the Screener or sent to Spam never notifies you. You can turn notifications off in Settings."],
-		src: "FC#4.10; FSW#supporting-features (push)",
+		a: ["Notifications show the sender, the subject and a preview, and tapping one opens that email. Mail held in the Screener, sent to Spam, or moved by a filter somewhere other than Inbox, Promotions or Updates never notifies you. You can turn notifications off in Settings."],
+		src: "FC#4.10; FSW#supporting-features (push); dev cb0b217 sender-triage.ts (skipPush: filedAway)",
 	},
 	{
 		id: "forwarding",
 		group: "everyday-topic",
 		q: "How do forwarding and auto-reply work?",
 		a: [
-			"Settings → Forwarding sends a copy of every incoming email to another address, and keeps the original. Filters can forward only some mail. The address has to be verified in Cloudflare Email Routing first: on inboxies.email, write to support and we’ll add it, then Cloudflare emails it a link to confirm. On a self-hosted install, add it in your own Cloudflare account. Until the address is verified, nothing is forwarded to it. Spam is never forwarded.",
-			"Settings → Auto-reply sends your away message at most once per sender every 24 hours, and never to mailing lists, bulk mail, no-reply addresses or other auto-replies.",
+			"Settings → Forwarding sends a copy of every incoming email to another address, and keeps the original. That includes mail waiting in the Screener, but not spam or mail you’ve screened out. Filters can forward only some mail. The address has to be verified in Cloudflare Email Routing first: on inboxies.email, write to support and we’ll add it, then Cloudflare emails it a link to confirm. On a self-hosted install, add it in your own Cloudflare account. Until the address is verified, nothing is forwarded to it.",
+			"Settings → Auto-reply sends your away message at most once per sender every 24 hours, and never to mailing lists, bulk mail, no-reply addresses, other auto-replies or anyone still in the Screener. Mail sent to hello@ or another address on your domain gets its reply from that address" +
+				(flags.privateEmailShipped ? ", and mail sent to a private email address gets none." : ".") +
+				" Only a mailbox’s owners can change forwarding, auto-reply and filters.",
 		],
-		src: "FSW#supporting-features (forwarding, vacation auto-reply); D3: index.ts applyInboundForward (message.forward needs a verified Email Routing destination; failures only logged); settings-forwarding.tsx; mail-automations.ts shouldForward (no spam)",
+		src: "FSW#supporting-features (forwarding, vacation auto-reply); D3: index.ts applyInboundForward (message.forward needs a verified Email Routing destination; failures only logged; unchanged on dev); settings-forwarding.tsx; mail-automations.ts shouldForward (no spam); dev sender-triage.ts (unknown: skipForward false, skipAutoReply true; rejected: both skipped); alias-utils.ts autoReplySender (domain aliases reply as themselves; private emails never); index.ts ownerOnlyKeys",
 		ownerConfirm: "support adds forwarding destinations to the Cloudflare account by hand",
 	},
 	{
@@ -338,15 +352,15 @@ const ai: Faq[] = [
 		id: "ask-ai",
 		group: "ai-topic",
 		q: "What can Ask AI do?",
-		a: ["It can search your mail, read threads, summarise, draft replies and new emails, mark mail read, and move it to a folder. It shows each step as it works. In the iPhone app you can keep several conversations" + (flags.webAppPublic ? "; the web app has one." : ".")],
-		src: "FSW#ai-email-agent; FC#4.8; FSW#caveats (5: one chat on web)",
+		a: ["It can search your mail, read threads, summarise, draft replies and new emails, mark mail read, and move it to a folder. It shows each step as it works. In the iPhone app you can keep several conversations" + (flags.webAppPublic ? "; the web app has one, and ⌘J in an open message asks it to draft a reply." : ".")],
+		src: "FSW#ai-email-agent; FC#4.8; FSW#caveats (5: one chat on web); dev QuickReplyBar.tsx (⌘J / AI Assist prefills a reply request)",
 	},
 	{
 		id: "ai-sending",
 		group: "ai-topic",
 		q: "Can the assistant send email for me?",
-		a: ["No. Ask AI saves drafts, and sending is always your tap. One exception, and it’s your choice: on a self-hosted install, an outside AI tool you connect over MCP acts with your access, including sending and permanently deleting mail. Only connect tools you trust."],
-		src: "FSW#ai-email-agent (\"only drafts and never sends\"); FSW#mcp-server (send_reply, send_email, delete_email); D3 (MCP self-hosted only)",
+		a: ["No. Ask AI saves drafts, and sending is always your tap. One exception, and it’s your choice: on a self-hosted install, an outside AI tool you connect over MCP acts with your access, including sending and deleting mail. Only connect tools you trust."],
+		src: "FSW#ai-email-agent (\"only drafts and never sends\"); FSW#mcp-server (send_reply, send_email, delete_email); D3 (MCP self-hosted only; MCPPanel.tsx and /mcp auth unchanged on dev); dev tools.ts toolDeleteEmail (to Trash first, cb0b217)",
 	},
 	{
 		id: "ai-reads",
@@ -355,11 +369,11 @@ const ai: Faq[] = [
 		a: [
 			"Personal mail that its headers don’t already settle is checked for spam by a small model, which reads the sender, the subject and the first 2,000 characters. The assistant reads your mail when you ask it something in Ask AI. " +
 				(flags.autoDraftsFromDayOne
-					? "When personal mail arrives, it may also read it to prepare a draft reply for you to review."
+					? "When personal mail arrives from a sender you’ve let in, it also reads that email and its thread to prepare a draft reply for you to review."
 					: "On some mailboxes it may also read new personal mail to prepare a draft reply for you to review; that doesn’t run on brand-new mailboxes yet."),
-			"It never drafts for mail in the Screener, Spam, bulk mail or spoofed senders, or for senders a filter tells it to skip, and a message is checked for prompt injection before any such draft is made. You can’t switch the assistant off for a mailbox yet.",
+			"It never drafts for mail in the Screener, Spam, bulk mail or spoofed senders, or for mail a filter files away or tells it to skip. Before any such draft, the message, its subject and the rest of the thread are checked for prompt injection. A new draft only replaces the assistant’s own earlier draft, never one you wrote. You can’t switch the assistant off for a mailbox yet.",
 		],
-		src: "PS#5 (AI data handling: 2,000 chars; auto-draft on ham); classify-email.ts (model only when classifyFromHeaders returns null; spam vs ham only); FSW#auto-drafted-replies (skips; injection scan); FSW#caveats (2: PR #49); J (gate auto-draft wording)",
+		src: "PS#5 (AI data handling: 2,000 chars; auto-draft on ham); classify-email.ts (model only when classifyFromHeaders returns null; spam vs ham only); FSW#auto-drafted-replies (skips; injection scan); dev b7895d9/PR #49 (auto-drafts on new mailboxes); cb0b217 (agent/index.ts subject + thread scan; tools.ts draft source agent, deleteSiblingDrafts onlySource agent; sender-triage.ts filedAway skip); J (gate auto-draft wording)",
 	},
 	{
 		id: "ai-models",
@@ -373,22 +387,22 @@ const ai: Faq[] = [
 		id: "ai-off",
 		group: "ai-topic",
 		q: "Can I turn the AI off?",
-		a: ["There’s no off switch per mailbox yet. To stop drafts for particular senders, lists or subjects, add a filter with “Skip auto-draft”."],
-		src: "PS#5 (\"no per-user switch to turn AI off\"); FSW#filters; settings-filters.tsx (label “Skip auto-draft”)",
+		a: ["There’s no off switch per mailbox yet. To stop drafts for particular senders, lists or subjects, add a filter with “Skip auto-draft”, or one that moves their mail out of Inbox, Promotions and Updates."],
+		src: "PS#5 (\"no per-user switch to turn AI off\"); FSW#filters; settings-filters.tsx (label “Skip auto-draft”); dev sender-triage.ts (skipAutoDraft || filedAway); no auto-draft setting in dev app/, ios/, android/",
 	},
 	{
 		id: "ai-prompt",
 		group: "ai-topic",
 		q: "Can I change how it writes?",
-		a: ["Yes. Settings → AI prompt sets the instructions for each mailbox: tone, sign-off, what to leave alone. Reset to default puts it back."],
-		src: "FC#4.8",
+		a: ["Yes. A mailbox’s owners set its instructions in Settings → AI prompt: tone, sign-off, what to leave alone. Reset to default puts it back."],
+		src: "FC#4.8; dev cb0b217 index.ts ownerOnlyKeys (agentSystemPrompt)",
 	},
 	{
 		id: "mcp",
 		group: "ai-topic",
 		q: "Can I use my mailbox from Claude Code or Cursor?",
-		a: ["On a self-hosted install, yes. Inboxies has an MCP server with 13 tools for listing, reading, searching, drafting, sending, moving, marking and permanently deleting mail, and it uses the same permissions you have. The MCP panel in the web app shows the server address. On inboxies.email there’s no way to give an outside tool access yet; [scoped keys](/roadmap) for that are being explored."],
-		src: "FSW#mcp-server; mcp/index.ts (13 tools incl. delete_email); D3: MCPPanel.tsx (server URL only); app.ts (/mcp needs Access or a session token)",
+		a: ["On a self-hosted install, yes. Inboxies has an MCP server with 13 tools for listing, reading, searching, drafting, sending, moving, marking and deleting mail, and it uses the same permissions you have. Deleting moves mail to Trash first, as in the apps. The MCP panel in the web app shows the server address. On inboxies.email there’s no way to give an outside tool access yet; [scoped keys](/roadmap) for that are being explored."],
+		src: "FSW#mcp-server; dev mcp/index.ts (13 tools incl. delete_email); dev tools.ts toolDeleteEmail → trashOrDeleteEmail (cb0b217); D3: MCPPanel.tsx (server URL only, unchanged on dev); app.ts (/mcp needs Access or a session token)",
 	},
 ];
 
@@ -398,9 +412,9 @@ const domains: Faq[] = [
 		group: "domains-topic",
 		q: "How do I connect a domain I already own?",
 		a: [
-			`Start setup ${flags.webAppPublic ? "on the web or in the app" : "in the app"}, choose Custom Domain, then “I already own it”. You’ll get two Cloudflare nameservers to set at your registrar, which moves the domain’s DNS to a Cloudflare zone that Inboxies runs. Inboxies writes the MX, SPF and DMARC records into that zone right away, and they take effect once the nameservers switch. Admin → DNS checks MX, SPF, DKIM and DMARC whenever you open it, and Fix Email DNS repairs anything that drifts.`,
+			`Start setup ${flags.webAppPublic ? "on the web or in the app" : "in the app"}, choose Custom Domain, then “I already own it”. First, show the domain is yours: Inboxies gives you a TXT record named _inboxies-verify.yourdomain to add where your DNS lives today, and you continue once it’s published. Then you’ll get two Cloudflare nameservers to set at your registrar, which moves the domain’s DNS to a Cloudflare zone that Inboxies runs. Inboxies writes the MX, SPF and DMARC records into that zone right away, and they take effect once the nameservers switch. Admin → DNS checks MX, SPF, DKIM and DMARC whenever you open it, and Fix Email DNS repairs anything that drifts.`,
 		],
-		src: "PS#5 (DNS setup); FSW#custom-domains; FC#4.1; onboarding.ts (createZone then ensureFullEmailDns at once; no scheduled check); cloudflare-client.ts createZone (operator's account)",
+		src: "PS#5 (DNS setup); FSW#custom-domains; FC#4.1; onboarding.ts (createZone then ensureFullEmailDns at once; no scheduled check); cloudflare-client.ts createZone (operator's account); dev ca531c6 domain-verification.ts (_inboxies-verify TXT), onboarding.ts / domain-dns.ts (428 until found)",
 	},
 	{
 		id: "dns-records",
@@ -413,9 +427,9 @@ const domains: Faq[] = [
 		id: "register-domain",
 		group: "domains-topic",
 		q: "How does registering a new domain work?",
-		a: ["Choose Custom Domain and search for a name to see whether it’s free and what it costs per year. Pay through Stripe, and the domain is registered through Cloudflare Registrar with WHOIS privacy. Its email records and your first mailbox are set up once checkout completes."],
+		a: ["Choose Custom Domain and search for a name to see whether it’s free and what it costs per year. Pay through Stripe, and the domain is registered through Cloudflare Registrar with WHOIS privacy. Its email records and your first mailbox are set up once Stripe confirms the payment."],
 		hidden: !flags.domainPurchaseLive,
-		src: "FSW#buy-a-domain; PS#3",
+		src: "FSW#buy-a-domain; PS#3; dev billing.ts (fulfils only on paid / no_payment_required, deduplicated; 272d53b, ca531c6)",
 	},
 	{
 		id: "teams",
@@ -428,8 +442,8 @@ const domains: Faq[] = [
 		id: "sharing",
 		group: "domains-topic",
 		q: "Can more than one person use a mailbox?",
-		a: ["Yes. Each mailbox has owners, who manage access, and members, who use it. Add people from the mailbox’s Sharing settings. Nobody shares a password."],
-		src: "FSW#shared-mailboxes",
+		a: ["Yes. Each mailbox has owners, who manage access, forwarding, auto-reply, filters and the AI prompt, and members, who use it. Add people from the mailbox’s Sharing settings. Nobody shares a password."],
+		src: "FSW#shared-mailboxes; dev cb0b217 index.ts ownerOnlyKeys",
 	},
 	{
 		id: "aliases",
@@ -465,12 +479,13 @@ const account: Faq[] = [
 		src: "FC#4.1; PS#4 (device-link code 15 min); MEDIA (sign-in-methods still)",
 	},
 	{
-		// Launch blocker until reset-code throttling is merged (§10 Q21); the copy stays.
+		// Codes are bound to the account, capped at 5 tries and 5 issues an hour,
+		// and a reset revokes older password sessions (a85c07e, ca531c6).
 		id: "forgot-password",
 		group: "account-topic",
 		q: "I forgot my password.",
-		a: ["Choose Forgot password? on the sign-in screen. We email a 6-digit code and a link, both valid for an hour, to your backup email and your mailbox. Set a backup email: if you’re locked out, the copy sent to your Inboxies mailbox won’t help. Accounts that only use Apple sign-in have no password to reset."],
-		src: "PS#5 (password reset)",
+		a: ["Choose Forgot password? on the sign-in screen and enter your email. We send a 6-digit code and a link, both valid for an hour, to your backup email and your mailbox. Enter the code with that same email, or open the link. Five wrong tries cancel a code, so ask for a new one. Resetting your password signs you out everywhere else you signed in with it. Set a backup email: if you’re locked out, the copy sent to your Inboxies mailbox won’t help. Accounts that only use Apple sign-in have no password to reset."],
+		src: "PS#5 (password reset); dev password-reset.ts (1 h, 5 attempts, 5 issues per window); admin-invites.ts (email required with the code; tokenVersion bump revokes password sessions); app.ts passwordSessionIsCurrent",
 	},
 	{
 		id: "mailboxes",
@@ -478,17 +493,20 @@ const account: Faq[] = [
 		q: "Can I have more than one mailbox?",
 		a: [
 			"Yes. In the iPhone app, tap your avatar and choose Add another email. Switch between mailboxes from the same menu, and choose which one you’re writing from in compose." +
-				(flags.webAppPublic ? " On the web, pick a mailbox from the Mailboxes page." : ""),
+				(flags.webAppPublic ? " On the web, switch from the first column on the left, or from the Mailboxes page." : ""),
 		],
-		src: "FC#4.1; HomeShellView.swift (Add another email); home.tsx (Mailboxes page; no From picker in web compose)",
+		src: "FC#4.1; HomeShellView.swift (Add another email); home.tsx (Mailboxes page; no From picker in web compose); dev AccountsColumn.tsx (mailbox column)",
 	},
 	{
 		id: "delete",
 		group: "account-topic",
 		q: "How do I delete a mailbox or my account?",
-		a: [`Owners can delete a mailbox in Settings → Delete email in the iPhone app${flags.webAppPublic ? ", or from the mailbox list on the web" : ""}. It’s permanent: messages, attachments and assistant history are erased. Deleting the account you sign in with isn’t in the apps yet; write to ${MAIL_US} and we’ll help.`],
-		src: "PS#5 (deleting a mailbox; no \"delete my account\")",
-		ownerConfirm: "REQUIRED — manual account deletion",
+		a: [
+			`Owners can delete a mailbox in Settings → Delete email in the iPhone app${flags.webAppPublic ? ", or from the mailbox list on the web" : ""}. It’s permanent: messages, attachments and assistant history are erased.`,
+			`To delete your account, go to Settings → Account → Delete account in the iPhone app${flags.androidPublic ? " or the Android app" : ""}. Mailboxes where you’re the only owner are erased with all their mail, even for people you shared them with. From mailboxes that have other owners, you’re just removed. Your sign-in methods go too, and it can’t be undone.${flags.webAppPublic ? " The web app doesn’t have this yet." : ""}${flags.domainPurchaseLive ? ` Deleting your account doesn’t stop a domain’s yearly bill; write to ${MAIL_US} for that.` : ""}`,
+		],
+		src: "PS#5 (deleting a mailbox); dev eda481f + cb0b217: index.ts DELETE /api/v1/me (sole owner → purgeMailboxAndAgents; else removed from the ACL; deleteIdentityAccountData; no Stripe call); SettingsSheetView.swift / .kt (Account → Delete account); no web caller",
+		ownerConfirm: "what happens to a registered domain's subscription and registration when its owner deletes their account",
 	},
 ];
 
@@ -522,42 +540,51 @@ const data: Faq[] = [
 		id: "tracking",
 		group: "data-topic",
 		q: "Does Inboxies block tracking pixels?",
-		a: ["No. Remote images load by default, so a sender’s tracking pixel can still report that you opened a message. Inboxies doesn’t send read receipts."],
-		src: "RM#3 (spy-pixel blocking not-planned-yet; read receipts)",
+		a: ["It holds back remote images, which is where tracking pixels live. In every message they stay hidden until you choose Load images, so a sender can’t tell you opened the message before then. Once you load them, they can. Inboxies doesn’t send read receipts."],
+		src: "dev 061e0ea EmailIframe.tsx (CSP img-src blocks remote until Load images; a new message starts blocked); eda481f EmailHTMLSanitizer.swift remoteImagesBlockedPolicy, EmailBodyView.kt allowRemoteImages; RM#3 (read receipts)",
 	},
 	{
 		id: "export",
 		group: "data-topic",
 		q: "How do I export my mail?",
 		claim: "roadmap",
-		a: ["Domain admins can export every mailbox on a domain from Admin → Export (.mbox). The file opens in Apple Mail, Thunderbird and other mail apps. A one-tap export for a single mailbox, a personal address included, is planned."],
-		src: "PS#5 (exporting mail); RM#1 (7); J (no \"7 days\")",
+		a: ["Domain admins can export every mailbox on a domain from Admin → Export (.mbox). Only that domain’s admins can download it, and the download is kept for 7 days. The file opens in Apple Mail, Thunderbird and other mail apps. A one-tap export for a single mailbox, a personal address included, is planned."],
+		src: "PS#5 (exporting mail); RM#1 (7); dev export-and-offboarding.ts loadAuthorizedExportJob + 410 after expiresAt (d024650, ca531c6); email-exporter.ts SEVEN_DAYS_MS; exportMailbox has no caller in any client",
 	},
 	{
 		id: "leave",
 		group: "data-topic",
 		q: "How do I move my domain somewhere else?",
-		a: [`Export your mail first. For a domain Inboxies registered, go to Admin → your domain, unlock it for transfer and reveal the transfer (EPP) code for your new registrar. For a domain you connected, change its nameservers at your registrar. For billing, write to ${MAIL_US}.`],
-		src: "PS#5 (leaving / offboarding)",
+		a: [`Export your mail first, from Admin → Export. Then choose Move DNS / Offboard in Admin: Inboxies stops taking mail for the domain, and it asks for a whole-domain export from the past 7 days unless you choose to skip it. For a domain Inboxies registered, unlock it for transfer and reveal the transfer (EPP) code for your new registrar. For a domain you connected, change its nameservers at your registrar. For billing, write to ${MAIL_US}.`],
+		src: "PS#5 (leaving / offboarding); dev export-and-offboarding.ts (recent-export guard unless skipExportAcknowledged; disableCatchAllRule; unlock + EPP); email-exporter.ts hasRecentExportForDomain (domain-wide, 7 days); AdminDnsSuite.tsx / DomainAdminDNSView.swift (Move DNS / Offboard); 4811793 (#47), cb0b217",
 	},
 	{
 		id: "delete-data",
 		group: "data-topic",
 		q: "What happens when I delete a mailbox?",
-		a: ["Its database, stored messages, raw files, attachments and assistant chat history are erased. This can’t be undone. An .mbox export made earlier isn’t deleted with it."],
-		src: "FSW#supporting-features (purgeMailbox); durableObject purgeMailbox leaves exports/data/* in R2 (email-exporter.ts)",
+		a: [
+			`Its database, stored messages, raw files, attachments and assistant chat history are erased${flags.privateEmailShipped ? ", and its private email addresses stop working" : ""}. This can’t be undone. An .mbox export made earlier isn’t deleted with it, though its download stops working after 7 days.`,
+		],
+		src: "FSW#supporting-features (purgeMailbox); durableObject purgeMailbox leaves exports/data/* in R2 (email-exporter.ts); dev cb0b217 purgeMailbox removes the mailbox's aliases and their routes; export expiry (export-and-offboarding.ts 410)",
 	},
 	{
 		id: "private-email",
 		group: "data-topic",
 		q: "Can I hide my real address when I sign up for things?",
-		claim: "roadmap",
+		// Shipped, it's plain copy: no AutoFill or Chrome extension until each can be installed.
+		claim: flags.privateEmailShipped ? undefined : "roadmap",
 		a: [
 			flags.privateEmailShipped
-				? "Yes. Settings → Private email creates a fresh address that delivers to this mailbox. Replies from it go out as that address, and you can pause it, set it to expire, or delete it. AutoFill on iPhone and the Chrome extension create them right where you type."
+				? "Yes. Settings → Private email makes a random address on your mailbox’s domain that delivers to this mailbox. Give it a label so you know which site has it. When you reply to mail sent to it, the reply goes out from that address, so the site never sees your real one. A site’s first email still waits in the Screener like any new sender, and your auto-reply never answers from a private address. Pause one (its mail is dropped quietly or bounced, your choice), set it to expire, or delete it. Up to 1,000 per mailbox." +
+					(flags.iosAutofillInBeta
+						? " On iPhone, turn on Inboxies in Settings → General → AutoFill & Passwords. Then choose AutoFill → Inboxies in a sign-up form to make one and fill it in, or on iOS 17 pick Inboxies from the passwords bar and paste the address it copies."
+						: "") +
+					(flags.androidPublic && flags.iosAutofillInBeta ? " On Android, choose Inboxies as your autofill service and it offers one in email fields." : "") +
+					(flags.chromeExtensionPublic ? " In Chrome, the Inboxies extension puts a Private email button next to sign-up email fields." : "") +
+					(!flags.iosAutofillInBeta || !flags.chromeExtensionPublic ? " Making one right inside a sign-up form is [on the way](/roadmap#next-private-email-autofill)." : "")
 				: "Not yet. You may already see Private email in Settings, but addresses made there don’t receive mail yet, so don’t use them for sign-ups. The working version arrives in the next release: a fresh address for each sign-up, which you can reply from without revealing your own, then pause or delete. AutoFill on iPhone and a Chrome extension follow after it.",
 		],
-		src: "RM#1 (1); FC#7; main: settings/aliases (web), SettingsSheetView.swift (Private email row); alias-utils.ts (token@private.<domain>, not delivered on main per PR #46)",
+		src: "PR #46 on dev: fc74b93 (apex aliases on the mailbox's domain, cap 1,000, alias-sender.ts replies from the alias, pausedAction drop|reject, autoReplySender skips private emails); index.ts resolveInboundFolder (no Screener bypass); settings-aliases.tsx (label, expiry, pause); AliasesSettingsView.swift:76 (AutoFill & Passwords path); d5df670, c0d5002, 1afa7e3 (AutoFill and extension, behind iosAutofillInBeta / chromeExtensionPublic)",
 	},
 	{
 		id: "limits",
@@ -575,10 +602,11 @@ const data: Faq[] = [
 					["Password", "10 to 200 characters"],
 					["Username", "2 to 50 characters: letters, numbers, . _ -"],
 					["Staying signed in", "30 days"],
+					["Password reset code", "1 hour and 5 tries; up to 5 codes an hour"],
 				],
 			},
 		],
-		src: "PS#4",
+		src: "PS#4; dev password-reset.ts (1 h TTL, 5 attempts, 5 issues per window)",
 	},
 ];
 
@@ -620,7 +648,7 @@ const selfHosting: Faq[] = [
 
 /**
  * The support page, in order. `id` is the group's anchor (its SectionHead id);
- * the answer count is `items.length` (5 · 8 · 10 · 7 · 6 · 5 · 9 · 3 with the
+ * the answer count is `items.length` (5 · 8 · 11 · 7 · 6 · 5 · 9 · 3 with the
  * default flags), never typed.
  */
 export const supportGroups: FaqGroup[] = [

@@ -56,7 +56,7 @@ export const stills: Record<StillName, { alt: string }> = {
 		alt: "The Inbox on iPhone with a draft, “Re: Quarterly planning notes”, docked at the bottom of the screen.",
 	},
 	"action-menu": {
-		alt: "The compose button’s menu on iPhone, over a blurred Inbox: Settings, Trash, Archive, Drafts, Sent, Updates, Promotions, Screener, Inbox and Compose.",
+		alt: "The corner button’s menu on iPhone, over a blurred Inbox: Settings, Trash, Archive, Drafts, Sent, Updates, Promotions, Screener, Inbox and Compose.",
 	},
 	welcome: {
 		alt: "The Inboxies welcome screen on iPhone: “Your Personal email app” and a round button to continue.",

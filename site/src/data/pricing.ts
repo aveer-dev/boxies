@@ -53,14 +53,14 @@ const allPlans: Plan[] = [
 		cta: signUp("Connect a domain", "secondary"),
 		leadIn: "Everything in Personal, and:",
 		includes: [
-			"you@yourdomain, after a nameserver switch",
+			"you@yourdomain, after a TXT check and a nameserver switch",
 			"MX, SPF and DMARC written for you",
 			"Email DNS health check and one-click fix",
 			"Team mailboxes, invites and aliases",
 			"Whole-domain .mbox export",
 		],
 		footnote: "Your domain’s DNS moves to a Cloudflare zone that Inboxies runs for you. You keep renewing the domain with your registrar.",
-		src: "PS#2 (no charge in code; full zone move); PS#5 (DNS setup); FSW#custom-domains; FSW#domain-admin-console; FSW#domain-aliases; FSW#leave-anytime; cloudflare-client.ts createZone (zone in the operator's account)",
+		src: "PS#2 (no charge in code; full zone move); PS#5 (DNS setup); dev ca531c6 (TXT proof before the zone); FSW#custom-domains; FSW#domain-admin-console; FSW#domain-aliases; FSW#leave-anytime; cloudflare-client.ts createZone (zone in the operator's account)",
 		ownerConfirm: "connecting your own domain stays free",
 	},
 	{
@@ -126,7 +126,7 @@ export const breakdown: PriceBreakdown = {
 	total: { label: "Per year", amount: "$20.00", src: "PS#1" },
 	note: "Example: a .com with a wholesale price of $10.44. The two lines always add up to $20 when the wholesale price is $15 or less, so the platform share changes with the domain. Above $15, the platform share is a flat $10. Stripe checkout shows the exact split for your domain.",
 	src: "PS#1 (tests assert .com 20.00 = 10.44 + 9.56; platform share = 20 − domain fee; flat $10 above $15)",
-	ownerConfirm: "fix OnboardingFlow.tsx:935 ($10.46 display bug) before launch, §10 Q15",
+	ownerConfirm: "native fallbacks still say 10.46 when the API sends no price (RootView.swift:1262, MailboxOnboardingView.kt:1259); the web reads domainFeeUsd on dev",
 };
 
 // "What's included". `true` renders "Yes", `false` renders "—" (read as "Not
@@ -140,7 +140,7 @@ const compareGroups: CompareGroup[] = [
 		rows: [
 			{ label: "Address", values: ["you@inboxies.email", "you@yourdomain", "you@yourdomain"], src: "PS#2" },
 			{ label: "Screener, New and Seen, Reply Later", values: [true, true, true], src: "FSW#headline-features" },
-			{ label: "Promotions, Updates and Spam", values: [true, true, true], src: "FSW#smart-sorting; D2 (folders; senders filed where you accept them)" },
+			{ label: "Promotions, Updates and Spam", values: [true, true, true], src: "FSW#smart-sorting; dev 31c58c6 (header sorting for senders without a chosen destination; accepted senders filed where you chose)" },
 			{ label: "Search operators", values: [true, true, true], src: "FSW#search" },
 			{ label: "Filters", values: ["50", "50", "50"], src: "PS#4" },
 			{ label: "Auto-reply", values: [true, true, true], src: "FSW#supporting-features (vacation auto-reply)" },
@@ -150,12 +150,18 @@ const compareGroups: CompareGroup[] = [
 				src: "FSW#supporting-features; RM#2; D3 (destination must be verified in Email Routing; no in-app verification)",
 				ownerConfirm: "support adds forwarding destinations by hand",
 			},
+			...(flags.privateEmailShipped
+				? [{ label: "Private email addresses", values: ["1,000", "1,000", "1,000"], src: "dev fc74b93 (MAX_ALIASES_PER_MAILBOX = 1000; on the mailbox's own domain, so @inboxies.email on Personal)" }]
+				: []),
 		],
 	},
 	{
 		label: "Assistant",
 		rows: [
 			{ label: "Ask AI", values: [true, true, true], src: "FSW#ai-email-agent" },
+			...(flags.autoDraftsFromDayOne
+				? [{ label: "Draft replies as mail arrives", values: [true, true, true], src: "PR #49 / b7895d9 on dev; index.ts auto-draft gate (no plan check)" }]
+				: []),
 			{ label: "MCP for your own AI tools", values: ["Self-host only", "Self-host only", "Self-host only"], src: "FSW#mcp-server; D3 (no way to connect a client to inboxies.email)" },
 		],
 	},
