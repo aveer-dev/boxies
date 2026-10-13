@@ -197,6 +197,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMailbox` | Inbox New/Seen |
 | `-previewScreener` | Screener + detail |
 | `-previewReplyLater` | Reply Later pile |
+| `-previewSpam` | Spam folder + detail open (Not Spam action) |
 
 ## Hard don'ts
 

@@ -135,6 +135,15 @@ data class EmailActionAvailability(val email: Email) {
     val showsDelete: Boolean get() = true
 
     val showsReplyActions: Boolean get() = !email.isDraft
+
+    /** Report Spam: received mail that isn't already in Spam. */
+    val showsReportSpam: Boolean
+        get() = !email.isDraft && !isInSpam && email.folderId != "sent" && email.folderId != "draft"
+
+    /** Not Spam: anything in Spam. */
+    val showsNotSpam: Boolean get() = isInSpam
+
+    private val isInSpam: Boolean get() = email.folderId == "spam"
 }
 
 data class SwipeActionPreferences(

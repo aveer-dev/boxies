@@ -16,6 +16,7 @@ import {
 	type ScreenerDestinationId,
 } from "../../shared/folders.ts";
 import { normalizeEmailAddress } from "./mail-automations.ts";
+import { canonicalMailboxId } from "./mailbox-routing.ts";
 import type { InboxFilterHit } from "./inbox-filters.ts";
 
 export type SenderTriageStatus = "allowed" | "rejected";
@@ -100,7 +101,7 @@ export function screenerSettingsError(raw: unknown): string | null {
  *
  * Order: spam → rejected → unknown(screener) → allowed:
  *   filter folder → purpose preference → explicit triage destination → classify.
- * When screener is disabled: filter → preference → classify.
+ * When screener is disabled: spam → rejected (to Spam) → filter → preference → classify.
  */
 export function resolveInboundFolder(
 	input: ResolveInboundFolderInput,
@@ -120,6 +121,19 @@ export function resolveInboundFolder(
 			skipAutoReply: true,
 			skipForward: false,
 			triageAction: "spam",
+		};
+	}
+
+	// A rejected sender (declined in Screener, or reported as spam) stays out
+	// even with Screener off; there, Spam is where it lands.
+	if (triage?.status === "rejected" && !screenerEnabled) {
+		return {
+			folderId: Folders.SPAM,
+			skipAutoDraft: true,
+			skipPush: true,
+			skipAutoReply: true,
+			skipForward: true,
+			triageAction: "rejected",
 		};
 	}
 
@@ -312,4 +326,38 @@ export async function allowOutboundRecipients(
 		}
 	}
 	return upserted;
+}
+
+/** What moving a message teaches the mailbox about its sender. */
+export type SenderLesson =
+	/** Report spam: reject the sender and drop their purpose-box default. */
+	| { kind: "reject"; sender: string }
+	/** Not spam: allow the sender; file future mail to `destination` when it's a purpose box. */
+	| { kind: "allow"; sender: string; destination: ScreenerDestinationId | null }
+	/** Moved between boxes: make the destination the sender's default box. */
+	| { kind: "preference"; sender: string; destination: string }
+	| { kind: "none" };
+
+/**
+ * The sender lesson for a user moving one message from `fromFolderId` to
+ * `toFolderId` with "remember this sender" on. Your own address is never
+ * judged (a sent copy or a note to self can land in Spam).
+ */
+export function senderLessonForMove(input: {
+	sender: string | null | undefined;
+	mailboxId: string;
+	fromFolderId: string | null | undefined;
+	toFolderId: string;
+}): SenderLesson {
+	const sender = normalizeTriageSender(input.sender);
+	if (!sender || canonicalMailboxId(sender) === canonicalMailboxId(input.mailboxId)) return { kind: "none" };
+	if (input.toFolderId === Folders.SPAM) return { kind: "reject", sender };
+	if (input.fromFolderId === Folders.SPAM) {
+		return {
+			kind: "allow",
+			sender,
+			destination: isScreenerDestination(input.toFolderId) ? input.toFolderId : null,
+		};
+	}
+	return { kind: "preference", sender, destination: input.toFolderId };
 }

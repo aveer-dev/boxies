@@ -58,7 +58,9 @@ object PreviewSupport {
             Folder(id = FolderIds.UPDATES, name = "Updates", unreadCount = 0),
             Folder(id = FolderIds.SENT, name = "Sent", unreadCount = 0),
             Folder(id = FolderIds.ARCHIVE, name = "Archive", unreadCount = 0),
+            Folder(id = FolderIds.SPAM, name = "Spam", unreadCount = 1),
             Folder(id = FolderIds.SCREENED_OUT, name = "Screened out", unreadCount = 0),
+            Folder(id = FolderIds.TRASH, name = "Trash", unreadCount = 0),
         )
         val allEmails = emails(you)
         DatabaseService.shared.upsertMailboxes(listOf(mailbox))
@@ -90,6 +92,20 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.SCREENER),
                     selectedEmail = null,
                     threadEmails = emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.Spam -> {
+                val spam = allEmails.filter { it.folderId == FolderIds.SPAM }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = spam,
+                    selectedTab = HomeTab.Folder(FolderIds.SPAM),
+                    selectedEmail = spam.firstOrNull(),
+                    threadEmails = spam.take(1),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
@@ -254,6 +270,20 @@ object PreviewSupport {
             body = "<p>Hi — we'd love to show you Acme. No pressure.</p>",
             snippet = "Hi — we'd love to show you Acme. No pressure.",
             folderName = "Screener",
+        ),
+        Email(
+            id = "preview-spam-1",
+            folderId = FolderIds.SPAM,
+            subject = "You've won a $500 gift card",
+            sender = "prizes@winner.example",
+            senderName = "Rewards Center",
+            recipient = you,
+            date = "2026-09-20T07:15:00.000Z",
+            read = false,
+            starred = false,
+            body = "<p>Claim your reward before it expires.</p>",
+            snippet = "Claim your reward before it expires.",
+            folderName = "Spam",
         ),
         Email(
             id = "preview-rl-2",

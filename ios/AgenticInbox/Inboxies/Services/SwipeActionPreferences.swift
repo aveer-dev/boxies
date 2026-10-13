@@ -253,6 +253,16 @@ struct EmailActionAvailability {
         !email.isDraft
     }
 
+    /// Report Spam: received mail that isn't already in Spam.
+    var showsReportSpam: Bool {
+        !email.isDraft && !isInSpam && email.folderId != "sent" && email.folderId != "draft"
+    }
+
+    /// Not Spam: anything in Spam.
+    var showsNotSpam: Bool { isInSpam }
+
+    private var isInSpam: Bool { email.folderId == "spam" }
+
     private var isInArchive: Bool {
         EmailFolderContext.kind(for: email, fallbackFolderId: nil) == .archive
     }

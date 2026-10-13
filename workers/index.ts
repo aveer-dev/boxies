@@ -141,6 +141,7 @@ import {
 	allowOutboundRecipients,
 	isScreenerDestination,
 	isVouchedSender,
+	senderLessonForMove,
 	normalizeTriageSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
@@ -818,6 +819,15 @@ app.post("/api/v1/mailboxes/:mailboxId/folders/trash/empty", async (c: AppContex
 	return c.json({ deleted });
 });
 
+/**
+ * Move a message. With `setSenderPreference`, the move also teaches the
+ * mailbox about the sender:
+ * - into Spam ("Report spam"): the sender is rejected (future mail is
+ *   screened out) and loses any purpose-box default;
+ * - out of Spam ("Not spam"): the sender is allowed, filed to the
+ *   destination when it's a purpose box;
+ * - between purpose boxes: the sender's default box changes.
+ */
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
 	const body = (await c.req.json()) as {
 		folderId: string;
@@ -827,6 +837,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	const emailId = c.req.param("id")!;
 	const stub = c.var.mailboxStub;
 
+	const before = setSenderPreference ? await stub.getEmail(emailId) : null;
 	const success = await stub.moveEmail(emailId, folderId);
 	if (!success) return c.json({ error: "Email or destination folder not found" }, 400);
 
@@ -834,13 +845,48 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 		return c.json({ status: "moved" });
 	}
 
-	const email = await stub.getEmail(emailId);
-	if (!email?.sender) {
-		return c.json({ status: "moved" });
+	const lesson = senderLessonForMove({
+		sender: before?.sender,
+		mailboxId: c.var.mailboxId,
+		fromFolderId: before?.folder_id,
+		toFolderId: folderId,
+	});
+	if (lesson.kind === "none") return c.json({ status: "moved" });
+	const { sender } = lesson;
+	const displayName = before?.sender_name ?? null;
+
+	if (lesson.kind === "reject") {
+		const triage = await stub.upsertSenderTriage({
+			sender,
+			status: "rejected",
+			destination_folder_id: null,
+			display_name: displayName,
+		});
+		await stub.deleteSenderPreference(sender);
+		return c.json({ status: "moved", senderStatus: "rejected", triage });
+	}
+
+	if (lesson.kind === "allow") {
+		const triage = await stub.upsertSenderTriage({
+			sender,
+			status: "allowed",
+			destination_folder_id: lesson.destination,
+			display_name: displayName,
+		});
+		if (lesson.destination) {
+			await stub.upsertSenderPreference({
+				address: sender,
+				folderId: lesson.destination,
+				displayName,
+				source: "user",
+				refile: false,
+			});
+		}
+		return c.json({ status: "moved", senderStatus: "allowed", triage });
 	}
 
 	const upsertError = senderPreferenceUpsertError({
-		address: email.sender,
+		address: sender,
 		folderId,
 	});
 	if (upsertError) {
@@ -849,23 +895,20 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	}
 
 	const result = await stub.upsertSenderPreference({
-		address: email.sender,
+		address: sender,
 		folderId,
-		displayName: email.sender_name ?? null,
+		displayName,
 		source: "user",
 		refile: true,
 	});
-	const triageSender = normalizeTriageSender(email.sender);
-	if (triageSender) {
-		const triage = await (stub as any).getSenderTriage?.(triageSender);
-		if (triage?.status === "allowed") {
-			await (stub as any).upsertSenderTriage({
-				sender: triageSender,
-				status: "allowed",
-				destination_folder_id: folderId,
-				display_name: email.sender_name ?? triage.display_name ?? null,
-			});
-		}
+	const triage = await stub.getSenderTriage(sender);
+	if (triage?.status === "allowed") {
+		await stub.upsertSenderTriage({
+			sender,
+			status: "allowed",
+			destination_folder_id: folderId,
+			display_name: displayName ?? triage.display_name ?? null,
+		});
 	}
 	return c.json({
 		status: "moved",
