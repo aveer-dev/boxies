@@ -21,12 +21,8 @@ import {
 } from "../lib/tools";
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
-import { listMailboxes } from "../lib/email-helpers";
-import {
-	authorizeMailbox,
-	filterMailboxesForPrincipal,
-	type RequestPrincipal,
-} from "../lib/mailbox-acl";
+import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "../auth/authz";
+import type { RequestPrincipal } from "../auth/principal";
 
 /** Wrap a plain result object into MCP content format. */
 function mcpText(result: unknown) {
@@ -85,11 +81,8 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 			mailboxId: string,
 		): Promise<{ denied: ReturnType<typeof mcpError> } | { mailboxId: string }> => {
 			const principal = this.props?.principal;
-			const authz = await authorizeMailbox(env.BUCKET, principal, mailboxId);
+			const authz = await authorizeMailboxAccess(authDb(env.AUTH_DB), principal?.userId, mailboxId);
 			if (!authz.ok) {
-				if (authz.status === 404) {
-					return { denied: mcpError(`Mailbox "${mailboxId}" not found. Use list_mailboxes to see available mailboxes.`) };
-				}
 				if (authz.status === 400) {
 					return { denied: mcpError(`Invalid mailbox "${mailboxId}".`) };
 				}
@@ -108,13 +101,8 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 				if (!principal) {
 					return mcpError("Not authenticated");
 				}
-				const all = await listMailboxes(env.BUCKET);
-				const result = await filterMailboxesForPrincipal(
-					env.BUCKET,
-					all,
-					principal,
-				);
-				return mcpText(result);
+				const rows = await listMailboxesForUser(authDb(env.AUTH_DB), principal.userId);
+				return mcpText(rows.map(({ mailboxId, role }) => ({ id: mailboxId, email: mailboxId, role })));
 			},
 		);
 

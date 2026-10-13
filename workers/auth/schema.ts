@@ -62,8 +62,19 @@ export const session = sqliteTable(
 		userId: text("user_id")
 			.notNull()
 			.references(() => user.id, { onDelete: "cascade" }),
+		/**
+		 * Null for a full app session. "aliases" for browser-extension and
+		 * AutoFill tokens, which may only list mailboxes and manage private
+		 * emails (see `lib/auth-paths.ts`).
+		 */
+		scope: text("scope"),
+		/** Name shown in the session list ("Browser extension", "iPhone AutoFill"). */
+		label: text("label"),
 	},
-	(t) => [index("session_user_id_idx").on(t.userId)],
+	(t) => [
+		index("session_user_id_idx").on(t.userId),
+		index("session_expires_at_idx").on(t.expiresAt),
+	],
 );
 
 export const account = sqliteTable(
@@ -198,6 +209,9 @@ export const invite = sqliteTable(
 		acceptedBy: text("accepted_by").references(() => user.id, { onDelete: "set null" }),
 		acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
 		revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+		/** Invite emails sent so far and when the last went out (resend throttle). */
+		emailCount: integer("email_count").notNull().default(1),
+		lastEmailedAt: integer("last_emailed_at", { mode: "timestamp_ms" }),
 		createdAt: createdAt(),
 	},
 	(t) => [index("invite_mailbox_id_idx").on(t.mailboxId)],

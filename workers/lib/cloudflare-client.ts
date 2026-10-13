@@ -202,6 +202,18 @@ export async function getZone(
 }
 
 /**
+ * Delete a zone we created (a domain claim that was never completed).
+ */
+export async function deleteZone(env: CloudflareClientEnv, zoneId: string): Promise<void> {
+	if (isMockEnv(env)) {
+		mockZones.delete(zoneId);
+		mockDnsRecords.delete(zoneId);
+		return;
+	}
+	await cfRequest<unknown>(env, `/zones/${encodeURIComponent(zoneId)}`, { method: "DELETE" });
+}
+
+/**
  * Enable Cloudflare Email Routing on a zone.
  */
 export async function enableEmailRouting(

@@ -2770,24 +2770,34 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
-	 * Drop push tokens registered by principals no longer on the ACL. Tokens from
-	 * before owners were recorded are kept; apps re-register on launch.
+	 * Drop push tokens whose registering user is no longer a member. Owner keys
+	 * are `user:<id>` plus `session:<id>` (see `auth/principal.ts`). Tokens
+	 * registered before the auth cutover carry old-style keys and are dropped
+	 * too; apps register again after signing in.
 	 */
-	async pruneDeviceTokensToAcl(aclKeys: string[]): Promise<number> {
-		const allowed = new Set(aclKeys);
+	async pruneDeviceTokensToMembers(userIds: string[]): Promise<number> {
+		const allowed = new Set(userIds.map((id) => `user:${id}`));
+		return this.#deleteDeviceTokensWhere((keys) => !keys.some((k) => allowed.has(k)));
+	}
+
+	/** Drop push tokens registered under `key` (a session that ended, or a user who left). */
+	async removeDeviceTokensWithKey(key: string): Promise<number> {
+		return this.#deleteDeviceTokensWhere((keys) => keys.includes(key));
+	}
+
+	#deleteDeviceTokensWhere(shouldDelete: (ownerKeys: string[]) => boolean): number {
 		let removed = 0;
 		const rows = [
 			...this.ctx.storage.sql.exec(`SELECT token, owner_keys FROM device_tokens`),
 		] as { token: string; owner_keys: string | null }[];
 		for (const row of rows) {
-			if (!row.owner_keys) continue;
 			let keys: string[] = [];
 			try {
-				keys = JSON.parse(row.owner_keys) as string[];
+				keys = row.owner_keys ? (JSON.parse(row.owner_keys) as string[]) : [];
 			} catch {
-				continue;
+				keys = [];
 			}
-			if (!keys.some((k) => allowed.has(k))) {
+			if (shouldDelete(keys)) {
 				this.ctx.storage.sql.exec(`DELETE FROM device_tokens WHERE token = ?`, row.token);
 				removed++;
 			}

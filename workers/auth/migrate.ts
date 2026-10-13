@@ -30,6 +30,8 @@ type LegacyPlatformUser = {
 	id: string;
 	contactEmail?: string;
 	mailboxEmail?: string;
+	/** Typed at sign-up, never verified. */
+	recoveryEmail?: string;
 	passwordHash: string;
 	linkedSubs?: string[];
 	createdAt?: string;
@@ -82,6 +84,7 @@ export type MigrationReport = {
 		domains: number;
 		domainAdmins: number;
 		invites: number;
+		recoveryEmails: number;
 	};
 	issues: MigrationIssue[];
 };
@@ -278,6 +281,15 @@ export async function migrateAuthFromR2(
 		addProvider(id, sub, provider, "legacy link");
 	}
 
+	// Recovery emails were typed at sign-up and never verified: they carry
+	// over unverified, and password resets wait until the user confirms one.
+	const recoveryEmails = new Map<string, string>();
+	for (const [pid, pu] of platformUsers) {
+		const userId = userByPlatformUser.get(pid);
+		const email = normalizeEmail(pu.recoveryEmail);
+		if (userId && email && !recoveryEmails.has(userId)) recoveryEmails.set(userId, email);
+	}
+
 	// Emails are unique. Verified (mailbox login) emails claim first; anyone
 	// left without one gets a placeholder and a report line.
 	const emailOwner = new Map<string, string>();
@@ -413,6 +425,7 @@ export async function migrateAuthFromR2(
 			domains: domains.length,
 			domainAdmins: domainAdmins.size,
 			invites: invites.length,
+			recoveryEmails: recoveryEmails.size,
 		},
 		issues,
 	};
@@ -460,6 +473,9 @@ export async function migrateAuthFromR2(
 		...domains.map((d) => db.insert(schema.domain).values(d).onConflictDoNothing()),
 		...rows(domainAdmins.values()).map((a) => db.insert(schema.domainAdmin).values(a).onConflictDoNothing()),
 		...invites.map((i) => db.insert(schema.invite).values(i).onConflictDoNothing()),
+		...rows(recoveryEmails).map(([userId, email]) =>
+			db.insert(schema.recoveryEmail).values({ userId, email, verifiedAt: null }).onConflictDoNothing(),
+		),
 	];
 	// D1 batches run as one transaction each; keep them small.
 	for (let i = 0; i < statements.length; i += 50) {

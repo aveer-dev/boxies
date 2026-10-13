@@ -26,26 +26,19 @@ import {
 	saveDomainMetadata,
 	type DomainMetadata,
 } from "../lib/domain-registry";
+import { eq } from "drizzle-orm";
+import { hashPassword } from "../lib/password-auth";
+import { canonicalMailboxId } from "../lib/mailbox-routing";
+import { authDb } from "../auth/authz";
 import {
-	hashPassword,
-	issuePasswordSessionToken,
-	verifyPasswordSessionToken,
-	passwordSessionCookieHeader,
-	PASSWORD_SESSION_COOKIE,
-} from "../lib/password-auth";
-import {
-	findUserIdByLoginEmail,
-	savePlatformUser,
-	loadPlatformUser,
-	principalFromPlatformUser,
-	type PlatformUser,
-} from "../lib/platform-users";
-import {
-	canonicalMailboxId,
-	mailboxMetadataKey,
-} from "../lib/mailbox-routing";
-import { ensurePrincipalAccount } from "../lib/identity-links";
-import { aclFromOwnerKeys } from "../lib/mailbox-acl";
+	initializeMailboxStorage,
+	isMailboxAddressTaken,
+	isUniqueViolation,
+	mailboxRowStatements,
+} from "../auth/mailboxes";
+import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
+import * as schema from "../auth/schema";
+import { createSessionForUser, findUserByEmail, findUserById, sessionCookieHeader } from "../auth/users";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 import { isDevRuntime } from "../lib/dev-runtime";
 
@@ -121,21 +114,6 @@ async function loadBillingSession(
 /** Stripe statuses that mean the customer actually owes nothing more. */
 const SETTLED_PAYMENT_STATUSES = new Set(["paid", "no_payment_required"]);
 
-function readCookie(header: string | undefined, name: string): string | undefined {
-	if (!header) return undefined;
-	for (const part of header.split(";")) {
-		const trimmed = part.trim();
-		const eq = trimmed.indexOf("=");
-		if (eq === -1) continue;
-		if (trimmed.slice(0, eq) !== name) continue;
-		try {
-			return decodeURIComponent(trimmed.slice(eq + 1));
-		} catch {
-			return trimmed.slice(eq + 1);
-		}
-	}
-	return undefined;
-}
 
 function timingSafeEqual(a: string, b: string): boolean {
 	if (a.length !== b.length) return false;
@@ -259,6 +237,7 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 
 		const { domain: rawDomain, username, password, displayName, client, returnUrl } = parsed.data;
 		const domain = rawDomain.toLowerCase();
+		if (await isRateLimited(c.env, "checkout", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
 
 		// 1. Verify not already registered inside Inboxies
 		const existingDomain = await getDomainMetadata(c.env.BUCKET, domain);
@@ -280,19 +259,8 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 
 		const pricing = computeDomainPricing(avail.wholesalePriceUsd);
 
-		// 3. Resolve caller identity if already logged in (e.g. from Admin DNS suite)
-		let callerUserId: string | undefined;
-		const authHeader = c.req.header("authorization");
-		const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
-		const cookieSession = readCookie(c.req.header("cookie"), PASSWORD_SESSION_COOKIE);
-		const sessionToken = bearer || cookieSession;
-		const secret = c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
-		if (sessionToken && secret) {
-			try {
-				const claims = await verifyPasswordSessionToken(sessionToken, secret);
-				callerUserId = claims.uid;
-			} catch {}
-		}
+		// 3. A signed-in caller (e.g. from the Admin DNS suite) owns the purchase.
+		const callerUserId = c.get("principal")?.userId;
 
 		const appBase = c.env.APP_BASE_URL || "https://inboxies.email";
 		const clientParam = client ? `&client=${encodeURIComponent(client)}` : "";
@@ -441,6 +409,7 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 		// and the token is handed out exactly once.
 		let token: string | undefined;
 		let mailboxId: string | undefined;
+		let sessionCookie: string | undefined;
 
 		const record = await loadBillingSession(c.env.BUCKET, sessionId);
 		if (
@@ -449,20 +418,20 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 			record.domain === domain &&
 			record.status === "ready" &&
 			!record.tokenIssuedAt &&
-			record.ownerUserId
+			record.ownerUserId &&
+			record.mailboxId
 		) {
-			const owner = await loadPlatformUser(c.env.BUCKET, record.ownerUserId);
-			const secret = c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
-			if (owner && owner.mailboxEmail && secret) {
+			const db = authDb(c.env.AUTH_DB);
+			const owner = await findUserById(db, record.ownerUserId);
+			// Only the account this checkout created (its login is the new mailbox).
+			if (owner && owner.email === record.mailboxId) {
 				record.tokenIssuedAt = new Date().toISOString();
 				record.updatedAt = record.tokenIssuedAt;
 				await c.env.BUCKET.put(billingSessionKey(record.sessionId), JSON.stringify(record));
-				mailboxId = owner.mailboxEmail;
-				const session = await issuePasswordSessionToken(secret, {
-					userId: owner.id,
-					email: owner.mailboxEmail,
-				});
+				mailboxId = record.mailboxId;
+				const session = await createSessionForUser(c.env, owner.id, { headers: c.req.raw.headers });
 				token = session.token;
+				sessionCookie = await sessionCookieHeader(c.env, session);
 			}
 		}
 
@@ -497,11 +466,7 @@ window.location.href = ${JSON.stringify(deepLink)};
 		const headers: Record<string, string> = {
 			Location: `/checkout/success?session_id=${encodeURIComponent(sessionId)}&domain=${encodeURIComponent(domain)}`,
 		};
-		if (token) {
-			headers["Set-Cookie"] = passwordSessionCookieHeader(token, {
-				secure: !isDevRuntime(),
-			});
-		}
+		if (sessionCookie) headers["Set-Cookie"] = sessionCookie;
 		return new Response(null, {
 			status: 302,
 			headers,
@@ -680,57 +645,57 @@ window.location.href = ${JSON.stringify(deepLink)};
 		}
 
 		// 4. Provision primary admin user & mailbox if credentials provided
-		let ownerUserId = metadataOwnerUserId || "registrar_owner";
+		const db = authDb(c.env.AUTH_DB);
+		const callerOwner = metadataOwnerUserId ? await findUserById(db, metadataOwnerUserId) : undefined;
+		let ownerUserId: string | null = callerOwner?.id ?? null;
 		let primaryCanonical: string | undefined;
 
-		if (username && passwordHash) {
-			const fullEmail = `${username}@${domain}`;
-			const canonical = canonicalMailboxId(fullEmail);
-			if (canonical) {
-				primaryCanonical = canonical;
-				const existingUser = await findUserIdByLoginEmail(c.env.BUCKET, canonical);
-				if (!existingUser) {
-					ownerUserId = crypto.randomUUID();
-					const user: PlatformUser = {
-						id: ownerUserId,
-						contactEmail: canonical,
-						mailboxEmail: canonical,
-						passwordHash,
-						linkedSubs: [],
-						createdAt: new Date().toISOString(),
-						updatedAt: new Date().toISOString(),
-					};
-					await savePlatformUser(c.env.BUCKET, user);
-
-					const principal = principalFromPlatformUser(user);
-					const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-
-					const metaKey = mailboxMetadataKey(canonical);
-					const settings = {
-						fromName: displayName || username,
-						forwarding: { enabled: false, email: "" },
-						signature: { enabled: false, text: "" },
-						autoReply: { enabled: false, subject: "", message: "" },
-						screener: { enabled: true },
-						acl: aclFromOwnerKeys(ensured.ownerKeys),
-					};
-					await c.env.BUCKET.put(metaKey, JSON.stringify(settings));
-
-					// Revive Durable Object stub
-					const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
-					await stub.reviveMailbox();
-					await stub.getFolders();
-					await seedWelcomeEmailsForMailbox(c.env, canonical, canonical.split("@")[0]);
+		if (!ownerUserId && username && passwordHash) {
+			const canonical = canonicalMailboxId(`${username}@${domain}`);
+			if (canonical && !(await findUserByEmail(db, canonical)) && !(await isMailboxAddressTaken(c.env, db, canonical))) {
+				const userId = crypto.randomUUID();
+				try {
+					await db.batch([
+						db.insert(schema.user).values({
+							id: userId,
+							email: canonical,
+							name: displayName || username,
+							emailVerified: true,
+						}),
+						// Hashed at checkout; never stored in plain text.
+						db.insert(schema.account).values({
+							id: `credential_${userId}`,
+							accountId: userId,
+							providerId: "credential",
+							userId,
+							password: passwordHash,
+						}),
+						...mailboxRowStatements(db, canonical, userId),
+					] as unknown as Parameters<typeof db.batch>[0]);
+					await initializeMailboxStorage(c.env, canonical, { name: displayName || username });
+					ownerUserId = userId;
+					primaryCanonical = canonical;
+				} catch (e) {
+					if (!isUniqueViolation(e)) throw e;
 				}
 			}
 		}
+
+		// Ownership row (a retry finds it already there).
+		await db
+			.insert(schema.domain)
+			.values({ domain, ownerUserId, status: "active", verifiedAt: new Date() })
+			.onConflictDoUpdate({
+				target: schema.domain.domain,
+				set: { status: "active", ...(ownerUserId ? { ownerUserId } : {}) },
+			});
 
 		// 5. Persist Domain Metadata in R2
 		const domainMetadata: DomainMetadata = {
 			domain,
 			zoneId: zone.id,
-			ownerUserId,
-			adminUserIds: [ownerUserId],
+			ownerUserId: ownerUserId ?? "registrar_owner",
+			adminUserIds: ownerUserId ? [ownerUserId] : [],
 			status: "active",
 			nameservers: zone.name_servers,
 			emailRoutingEnabled: true,
@@ -755,7 +720,7 @@ window.location.href = ${JSON.stringify(deepLink)};
 			if (rec) {
 				rec.status = "ready";
 				rec.mailboxId = primaryCanonical;
-				rec.ownerUserId = ownerUserId;
+				rec.ownerUserId = ownerUserId ?? undefined;
 				rec.updatedAt = new Date().toISOString();
 				await c.env.BUCKET.put(billingSessionKey(session.id), JSON.stringify(rec));
 			}

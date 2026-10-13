@@ -2,7 +2,6 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { principalKeys, type RequestPrincipal } from "./mailbox-acl";
 import { aliasMetadataKey, canonicalMailboxId, mailboxMetadataKey } from "./mailbox-routing";
 import { listAllR2Objects } from "./r2-list";
 import { isPrivateAliasMeta, type AnyAliasMetadata } from "./alias-utils";
@@ -123,51 +122,6 @@ export async function listAllRegisteredDomains(
 	}
 
 	return results;
-}
-
-/**
- * Check if the given principal has administrative rights over the domain.
- */
-export function isPrincipalAdminForDomain(
-	domainMetadata: DomainMetadata,
-	principal: RequestPrincipal | null | undefined,
-	isSuperAdmin = false,
-): boolean {
-	if (isSuperAdmin) return true;
-	if (!principal) return false;
-
-	const keys = principalKeys(principal);
-	const ownerKey = `user:${domainMetadata.ownerUserId}`;
-
-	if (keys.includes(ownerKey)) return true;
-
-	// Check if any principal key matches adminUserIds
-	for (const adminId of domainMetadata.adminUserIds) {
-		const adminKey = adminId.includes(":") ? adminId : `user:${adminId}`;
-		if (keys.includes(adminKey)) return true;
-	}
-
-	// Check direct email match against domain admin list
-	if (principal.email && domainMetadata.adminUserIds.includes(principal.email.toLowerCase())) {
-		return true;
-	}
-
-	return false;
-}
-
-/**
- * List all domains that the given principal is authorized to administer.
- */
-export async function listDomainsForPrincipal(
-	bucket: R2Bucket,
-	principal: RequestPrincipal | null | undefined,
-	isSuperAdmin = false,
-): Promise<DomainMetadata[]> {
-	const all = await listAllRegisteredDomains(bucket);
-	if (isSuperAdmin) return all;
-	if (!principal) return [];
-
-	return all.filter((meta) => isPrincipalAdminForDomain(meta, principal, isSuperAdmin));
 }
 
 /**

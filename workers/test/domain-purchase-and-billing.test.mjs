@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { Hono } from "hono";
 import { app as apiApp } from "../index.ts";
 import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
+import { createTestD1 } from "./d1-shim.mjs";
 import {
 	checkDomainAvailability,
 	registerDomain,
@@ -62,14 +63,20 @@ function mockBucket(initial = {}) {
 	};
 }
 
+// One AUTH_DB per bucket: the envs built over a bucket share its state.
+const authDbs = new WeakMap();
+function authDbFor(bucket) {
+	if (!authDbs.has(bucket)) authDbs.set(bucket, createTestD1());
+	return authDbs.get(bucket);
+}
+
 function mockEnv(bucket, extras = {}) {
 	return {
 		BUCKET: bucket,
 		EMAIL_ADDRESSES: [],
 		DOMAINS: "inboxies.email",
-		DOMAIN_ADMINS: "superadmin@example.com",
-		MAILBOX_CREATE_POLICY: "admin_only",
-		MOBILE_JWT_SECRET: "test-mobile-jwt-secret-billing-99",
+		AUTH_DB: authDbFor(bucket),
+		BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789abcdef",
 		APP_BASE_URL: "https://inboxies.email",
 		WORKER_NAME: "agentic-inbox",
 		EMAIL: {
@@ -688,6 +695,22 @@ async function runTests() {
 	// Verify Admin Mailbox was provisioned in R2
 	const mailboxMeta = await bucket.get("mailboxes/founder@my-novel-company.com.json");
 	assert.ok(mailboxMeta, "Mailbox settings should be stored in R2");
+	assert.equal((await mailboxMeta.json()).acl, undefined, "no ACL in R2 settings");
+
+	// Ownership is AUTH_DB rows: a user whose login is the new mailbox, owning it and the domain.
+	{
+		const d1 = authDbFor(bucket);
+		const owner = await d1.prepare("select id, email, email_verified from user where email = ?").bind("founder@my-novel-company.com").first();
+		assert.ok(owner, "webhook created the owner user");
+		assert.equal(owner.email_verified, 1);
+		const credential = await d1.prepare("select password from account where user_id = ? and provider_id = 'credential'").bind(owner.id).first("password");
+		assert.equal(credential, "mock-pw-hash-99", "the checkout's password hash is the credential");
+		const member = await d1.prepare("select role from mailbox_member where mailbox_id = ? and user_id = ?").bind("founder@my-novel-company.com", owner.id).first("role");
+		assert.equal(member, "owner");
+		const domainRow = await d1.prepare("select owner_user_id, status from domain where domain = ?").bind("my-novel-company.com").first();
+		assert.equal(domainRow.owner_user_id, owner.id);
+		assert.equal(domainRow.status, "active");
+	}
 
 	// Verify status endpoint now reports ready
 	const readyStatusRes = await apiApp.request(

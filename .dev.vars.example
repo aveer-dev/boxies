@@ -1,14 +1,23 @@
-# Cloudflare Access (required in production). TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
-POLICY_AUD=your-access-policy-audience-tag
-TEAM_DOMAIN=https://your-team.cloudflareaccess.com
+# Better Auth (users and sessions in AUTH_DB). 32+ random bytes, e.g. `openssl rand -base64 32`.
+BETTER_AUTH_SECRET=dev-better-auth-secret-change-me-0123456789
+APP_BASE_URL=http://localhost:5173
+
+# Cloudflare Access: operators only, on /ops/*. Unset leaves /ops closed.
+# TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
+# POLICY_AUD=your-access-policy-audience-tag
+# TEAM_DOMAIN=https://your-team.cloudflareaccess.com
 
 # iOS Sign in with Apple (optional locally; required for production mobile auth)
 # APPLE_CLIENT_ID is the iOS app bundle identifier (aud claim on Apple identity tokens).
 APPLE_CLIENT_ID=com.example.AgenticInbox
 # Android Sign in with Google — OAuth Web client ID (aud on Google ID tokens).
 # GOOGLE_CLIENT_ID=123456789-abcdef.apps.googleusercontent.com
-# HS256 secret used to mint/verify mobile session JWTs after Apple/Google Sign In.
-MOBILE_JWT_SECRET=dev-mobile-jwt-secret-change-me
+# Extra Google client ids (iOS, Android) accepted alongside GOOGLE_CLIENT_ID, comma-separated.
+# GOOGLE_EXTRA_CLIENT_IDS=
+# Sign in with Apple key, to revoke Apple tokens on account deletion (App Store requirement).
+# APPLE_TEAM_ID=ABCDE12345
+# APPLE_SIGNIN_KEY_ID=KEYID12345
+# APPLE_SIGNIN_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 # Firebase service-account JSON (single line) for FCM HTTP v1 Android push.
 # FCM_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
 
@@ -25,5 +34,3 @@ MOBILE_JWT_SECRET=dev-mobile-jwt-secret-change-me
 # STRIPE_SECRET_KEY=sk_test_...
 # STRIPE_WEBHOOK_SECRET: Webhook secret (whsec_...) for verifying checkout.session.completed webhooks.
 # STRIPE_WEBHOOK_SECRET=whsec_...
-# APP_BASE_URL: Public site origin for checkout return redirects (defaults to https://inboxies.email).
-# APP_BASE_URL=https://inboxies.email

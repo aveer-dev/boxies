@@ -22,7 +22,7 @@ export function isPathAllowedForTokenScope(
 	return (verb === "GET" || verb === "POST") && MAILBOX_ALIASES_PATH.test(pathname);
 }
 
-/** Public API + SPA paths that must work without Access / Bearer (token-gated later). */
+/** API and SPA paths that work signed out (they still see the session when there is one). */
 export function isPublicAuthPath(pathname: string): boolean {
 	if (
 		pathname === "/api/v1/auth/apple" ||
@@ -30,6 +30,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/auth/dev" ||
 		pathname === "/api/v1/auth/password" ||
 		pathname === "/api/v1/auth/password/logout" ||
+		pathname === "/api/v1/auth/logout" ||
 		pathname === "/api/v1/auth/password/forgot" ||
 		pathname === "/api/v1/auth/password/reset" ||
 		pathname === "/api/v1/auth/signup-personal" ||
