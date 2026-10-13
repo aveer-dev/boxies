@@ -28,6 +28,9 @@ export type MailboxInvite = {
 	status: InviteStatus;
 	acceptedAt?: string;
 	acceptedUserId?: string;
+	/** Invite emails sent so far, and when the last one went out (resend throttle). */
+	emailCount?: number;
+	lastEmailedAt?: string;
 };
 
 const DEFAULT_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
@@ -83,7 +86,24 @@ export function parseInvite(raw: unknown): MailboxInvite | null {
 			typeof raw.acceptedAt === "string" ? raw.acceptedAt : undefined,
 		acceptedUserId:
 			typeof raw.acceptedUserId === "string" ? raw.acceptedUserId : undefined,
+		emailCount: typeof raw.emailCount === "number" ? raw.emailCount : undefined,
+		lastEmailedAt: typeof raw.lastEmailedAt === "string" ? raw.lastEmailedAt : undefined,
 	};
+}
+
+export const MAX_INVITE_EMAILS = 5;
+export const INVITE_RESEND_COOLDOWN_MS = 5 * 60 * 1000;
+
+/** Why another invite email can't be sent yet, or null when it can. */
+export function inviteResendBlocked(invite: MailboxInvite, now = Date.now()): string | null {
+	if ((invite.emailCount ?? 1) >= MAX_INVITE_EMAILS) {
+		return "This invite has been emailed too many times; revoke it and invite again";
+	}
+	const last = invite.lastEmailedAt ? Date.parse(invite.lastEmailedAt) : Date.parse(invite.createdAt);
+	if (Number.isFinite(last) && now - last < INVITE_RESEND_COOLDOWN_MS) {
+		return "Wait a few minutes before resending this invite";
+	}
+	return null;
 }
 
 export function generateInviteToken(): string {

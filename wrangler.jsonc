@@ -59,6 +59,15 @@
                 "period": 60,
             },
         },
+        // Per-inviter cap on invite emails (they go out from our noreply address).
+        {
+            "name": "INVITE_LIMITER",
+            "namespace_id": "1002",
+            "simple": {
+                "limit": 10,
+                "period": 60,
+            },
+        },
     ],
     "queues": {
         "consumers": [

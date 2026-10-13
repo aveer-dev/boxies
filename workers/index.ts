@@ -91,6 +91,7 @@ import {
 	allowedMailboxSet,
 	canonicalMailboxId,
 	isAddressTaken,
+	isReservedLocalPart,
 	isDuplicateInbound,
 	mailboxMetadataKey,
 	routeInboundEnvelope,
@@ -102,9 +103,11 @@ import {
 	type AnyAliasMetadata,
 } from "./lib/alias-utils";
 import {
+	findInboundThreadId,
 	findThreadAliasId,
 	resolveOutboundSender,
 	type AliasSenderStub,
+	type InboundThreadStub,
 } from "./lib/alias-sender";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
@@ -441,6 +444,15 @@ app.post("/api/v1/mailboxes", async (c) => {
 	if (!(await canCreateMailboxOnDomain(c.env, principal, email))) {
 		return c.json({ error: "You can only create mailboxes on domains you administer" }, 403);
 	}
+	// Role addresses on the shared platform domain are reserved for operators.
+	const [localPart, domain] = email.split("@");
+	if (
+		mailDomainConfig(c.env).domains.includes(domain) &&
+		isReservedLocalPart(localPart) &&
+		!(await isDomainAdmin(c.env, principal))
+	) {
+		return c.json({ error: "That address is reserved" }, 400);
+	}
 	const key = mailboxMetadataKey(email);
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
 	if (await isAddressTaken(c.env.BUCKET, email)) {
@@ -662,40 +674,47 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	}
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
-	const rateLimitError = await (stub as any).checkSendRateLimit();
-	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
+	// Validate before reserving a send slot, so a refused message is free.
 	try {
 		assertOutboundMessageSize({ html, text, attachments });
 	} catch (e) {
 		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
 		throw e;
 	}
-	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+	const rateLimitError = await (stub as any).checkSendRateLimit();
+	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
 
 	if (!resolvedThreadId) {
 		resolvedThreadId = messageId;
 	}
 
-	await stub.createEmail(Folders.SENT, {
-		id: messageId, subject, sender: fromEmail,
-		sender_name: displayNameFromAddressField(from),
-		recipient: toStr,
-		cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
-		bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
-		date: new Date().toISOString(), body: html || text || "",
-		in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
-		thread_id: resolvedThreadId, message_id: outgoingMessageId,
-		delivery_status: "queued", delivery_error: null,
-		alias_id: sender.aliasId,
-		raw_headers: JSON.stringify([
-			{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
-			{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
-			...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
-			...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
-			{ key: "subject", value: subject }, { key: "date", value: new Date().toISOString() },
-			{ key: "message-id", value: `<${outgoingMessageId}>` },
-		]),
-	}, attachmentData);
+	try {
+		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+		await stub.createEmail(Folders.SENT, {
+			id: messageId, subject, sender: fromEmail,
+			sender_name: displayNameFromAddressField(from),
+			recipient: toStr,
+			cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
+			bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
+			date: new Date().toISOString(), body: html || text || "",
+			in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
+			thread_id: resolvedThreadId, message_id: outgoingMessageId,
+			delivery_status: "queued", delivery_error: null,
+			alias_id: sender.aliasId,
+			raw_headers: JSON.stringify([
+				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
+				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
+				...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
+				...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
+				{ key: "subject", value: subject }, { key: "date", value: new Date().toISOString() },
+				{ key: "message-id", value: `<${outgoingMessageId}>` },
+			]),
+		}, attachmentData);
+	} catch (e) {
+		// Not accepted, so it shouldn't count against the send quota.
+		await (stub as any).releaseSendSlot().catch(() => {});
+		throw e;
+	}
 
 	// Screener-lite: people you email bypass the review queue on reply.
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
@@ -1581,6 +1600,7 @@ type AutomationStub = {
 	claimAutoReply: (sender: string) => Promise<boolean>;
 	releaseAutoReply: (sender: string) => Promise<void>;
 	checkSendRateLimit: () => Promise<string | null>;
+	releaseSendSlot: () => Promise<void>;
 	createEmail: (
 		folder: string,
 		email: Record<string, unknown>,
@@ -1656,7 +1676,7 @@ async function applyInboundForward(options: {
 	}
 }
 
-async function sendInboundAutoReply(options: {
+export async function sendInboundAutoReply(options: {
 	env: Env;
 	stub: AutomationStub;
 	mailboxId: string;
@@ -1700,15 +1720,18 @@ async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const rateLimitError = await stub.checkSendRateLimit();
-	if (rateLimitError) {
-		console.log(`Skipping auto-reply for ${mailboxId}: ${rateLimitError}`);
-		return;
-	}
-
+	// Claim the once-per-sender window before touching the send quota, so
+	// inbound mail that gets no reply never costs the user a send.
 	const claimed = await stub.claimAutoReply(sender);
 	if (!claimed) {
 		console.log(`Skipping auto-reply for ${mailboxId}: already sent to ${sender} in 24h`);
+		return;
+	}
+
+	const rateLimitError = await stub.checkSendRateLimit();
+	if (rateLimitError) {
+		console.log(`Skipping auto-reply for ${mailboxId}: ${rateLimitError}`);
+		await stub.releaseAutoReply(sender).catch(() => {});
 		return;
 	}
 
@@ -1730,6 +1753,7 @@ async function sendInboundAutoReply(options: {
 	} catch (e) {
 		if (e instanceof OutboundSizeError) {
 			console.error(`Skipping auto-reply for ${mailboxId}: ${e.message}`);
+			await stub.releaseSendSlot().catch(() => {});
 			try {
 				await stub.releaseAutoReply(sender);
 			} catch (releaseError) {
@@ -1939,17 +1963,12 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		}
 	}
 
-	let threadId: string | null = null;
-	if (candidateReferences.length > 0) {
-		threadId = await (stub as any).findThreadIdByReferences(candidateReferences);
-	}
-
-	if (!threadId) {
-		threadId = await (stub as any).findThreadBySubject(
-			parsedEmail.subject || "",
-			parsedEmail.from?.address || undefined,
-		);
-	}
+	let threadId = await findInboundThreadId(stub as unknown as InboundThreadStub, {
+		references: candidateReferences,
+		subject: parsedEmail.subject || "",
+		from: parsedEmail.from?.address || undefined,
+		aliasId: privateAlias?.aliasId ?? null,
+	});
 
 	if (!threadId) {
 		threadId = messageId;

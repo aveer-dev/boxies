@@ -554,7 +554,6 @@ window.location.href = ${JSON.stringify(deepLink)};
 				return c.json({
 					status: "ready",
 					domain: targetDomain,
-					ownerUserId: meta.ownerUserId,
 					pricing: computeDomainPricing(sessionRecord?.pricing?.domainFeeUsd ?? 10.44),
 					mailboxId: sessionRecord?.mailboxId,
 				});
