@@ -17,7 +17,8 @@ import {
 	type RequestPrincipal,
 } from "./lib/mailbox-acl";
 import { expandPrincipalWithLinks } from "./lib/identity-links";
-import { canonicalMailboxId } from "./lib/mailbox-routing";
+import { strictMailboxId } from "./lib/mailbox-routing";
+import { AUTH_BASE_PATH, createAuth, isBetterAuthEnabled } from "./auth";
 import { PASSWORD_SESSION_COOKIE } from "./lib/password-auth";
 import { passwordSessionIsCurrent } from "./lib/platform-users";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
@@ -106,6 +107,13 @@ type ExecutionCtxWithProps = ExecutionContext & {
 
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
+
+// Better Auth (AUTH_DB). Registered before the legacy auth middleware so it
+// handles its own sessions. Dark until BETTER_AUTH_ENABLED=true at cutover.
+app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => {
+	if (!isBetterAuthEnabled(c.env)) return c.json({ error: "Not found" }, 404);
+	return createAuth(c.env).handler(c.req.raw);
+});
 
 // Auth middleware: Cloudflare Access (web) OR mobile Bearer JWT OR password session cookie.
 // Auth bootstrap + invite endpoints are public. DEV still attaches a principal so ACL is exercised.
@@ -232,7 +240,7 @@ app.all("/agents/*", async (c) => {
 	const mailboxId = mailboxIdFromAgentsUrl(c.req.url);
 	// The agent's tools act on this raw string, so it must already be the
 	// canonical id that gets authorized: no %-escapes, +tags or <brackets>.
-	if (!mailboxId || mailboxId.includes("%") || canonicalMailboxId(mailboxId) !== mailboxId) {
+	if (!mailboxId || strictMailboxId(mailboxId) !== mailboxId) {
 		return c.json({ error: "Forbidden" }, 403);
 	}
 	const authz = await authorizeMailbox(c.env.BUCKET, c.get("principal"), mailboxId);
