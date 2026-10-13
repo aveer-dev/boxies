@@ -20,11 +20,10 @@
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { bearer, emailOTP } from "better-auth/plugins";
+import { bearer } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/d1";
 import { hashPassword, verifyPassword } from "../lib/password-auth";
 import type { Env } from "../types";
-import { sendAuthEmail } from "./mail";
 import * as schema from "./schema";
 
 export const AUTH_BASE_PATH = "/api/auth";
@@ -49,6 +48,9 @@ function socialProviders(env: Env) {
 		providers.google = {
 			clientId: googleClientIds,
 			clientSecret: env.GOOGLE_CLIENT_SECRET ?? "",
+			// Users come from onboarding or the migration, never from a bare
+			// Google sign-in (that would let anyone pre-claim an email).
+			disableImplicitSignUp: true,
 		};
 	}
 	if (env.APPLE_CLIENT_ID) {
@@ -57,6 +59,7 @@ function socialProviders(env: Env) {
 			clientSecret: env.APPLE_CLIENT_SECRET ?? "",
 			// Native iOS ID tokens carry the bundle id as their audience.
 			appBundleIdentifier: env.APPLE_APP_BUNDLE_ID ?? env.APPLE_CLIENT_ID,
+			disableImplicitSignUp: true,
 		};
 	}
 	return providers;
@@ -114,20 +117,9 @@ export function createAuth(env: Env): Auth {
 			expiresIn: 30 * DAY_SECONDS,
 			updateAge: DAY_SECONDS,
 		},
-		plugins: [
-			bearer(),
-			emailOTP({
-				disableSignUp: true,
-				otpLength: 6,
-				expiresIn: 10 * 60,
-				sendVerificationOTP: async ({ email, otp, type }) => {
-					await sendAuthEmail(env, {
-						to: email,
-						subject: type === "forget-password" ? "Your Inboxies reset code" : "Your Inboxies code",
-						text: `Your code is ${otp}. It expires in 10 minutes. If you didn't ask for it, ignore this email.`,
-					});
-				},
-			}),
-		],
+		// No emailOTP yet: its reset and sign-in routes mail codes to
+		// user.email, which may be a shared mailbox. It returns in R2 wired to
+		// verified recovery emails only.
+		plugins: [bearer()],
 	});
 }

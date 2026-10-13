@@ -63,6 +63,19 @@ const bucket = pagedBucket({
 		providers: { "access-ops": "access" },
 		primaryEmail: "ops@acme.com",
 	},
+	// Plain Apple and Google sign-ins: the legacy store recorded them as "access".
+	"platform/identity/accounts/acct-frank.json": {
+		id: "acct-frank",
+		principals: ["email:frank@icloud.com", "sub:001234.0123456789abcdef0123456789abcdef.0123"],
+		providers: { "001234.0123456789abcdef0123456789abcdef.0123": "access" },
+		primaryEmail: "frank@icloud.com",
+	},
+	"platform/identity/accounts/acct-gina.json": {
+		id: "acct-gina",
+		principals: ["email:gina@gmail.com", "sub:112233445566778899001"],
+		providers: { "112233445566778899001": "access" },
+		primaryEmail: "gina@gmail.com",
+	},
 	// Legacy Google link with no account.
 	"platform/identity-links/by-sub/google.carol.json": {
 		sub: "google.carol",
@@ -103,6 +116,13 @@ const bucket = pagedBucket({
 		status: "active",
 		createdAt: "2026-09-01T00:00:00Z",
 	},
+	// Connected through the admin route, which stores account keys.
+	"platform/domains/connected.io.json": {
+		domain: "connected.io",
+		ownerUserId: "account:acct-ada",
+		adminUserIds: ["account:acct-ada", "account:acct-gina"],
+		status: "pending_nameservers",
+	},
 	"platform/domains/bought.com.json": {
 		domain: "bought.com",
 		ownerUserId: "registrar_owner",
@@ -141,11 +161,11 @@ const row = async (sql) => ({ ...(await d1.prepare(sql).first()) });
 const dry = await migrateAuthFromR2(bucket, d1, { dryRun: true, now: NOW });
 assert.equal(dry.dryRun, true);
 assert.equal(await count("user"), 0);
-assert.equal(dry.counts.users, 6, "ada, ops, bob, mallory, solo, carol");
+assert.equal(dry.counts.users, 8, "ada, ops, bob, mallory, solo, carol, frank, gina");
 assert.equal(dry.counts.credentialAccounts, 4, "ada, bob, mallory, solo");
-assert.equal(dry.counts.providerAccounts, 2, "apple.ada, google.carol");
+assert.equal(dry.counts.providerAccounts, 4, "apple.ada, google.carol, frank (apple), gina (google)");
 assert.equal(dry.counts.mailboxes, 4);
-assert.equal(dry.counts.domains, 2);
+assert.equal(dry.counts.domains, 3);
 assert.equal(dry.counts.invites, 1, "expired invites are not copied");
 
 const kinds = (kind) => dry.issues.filter((i) => i.kind === kind).map((i) => i.detail).join("\n");
@@ -159,7 +179,7 @@ assert.match(kinds("unresolved domain admin"), /ops@acme\.com/);
 // ── Real run ──────────────────────────────────────────────────────
 const real = await migrateAuthFromR2(bucket, d1, { dryRun: false, now: NOW });
 assert.deepEqual(real.counts, dry.counts);
-assert.equal(await count("user"), 6);
+assert.equal(await count("user"), 8);
 
 const db = authDb(d1);
 assert.deepEqual(await listMailboxesForUser(db, "acct-ada"), [
@@ -175,6 +195,13 @@ assert.equal(await count("mailbox_member where mailbox_id = 'orphan@inboxies.ema
 assert.equal(await isDomainAdmin(db, "acct-ada", "acme.com"), true, "owner via platform user id");
 assert.equal(await isDomainAdmin(db, "pu-bob", "acme.com"), true);
 assert.equal(await isDomainAdmin(db, "acct-ops", "acme.com"), false);
+assert.equal(await isDomainAdmin(db, "acct-ada", "connected.io"), true, "account: owner refs resolve");
+assert.equal(await isDomainAdmin(db, "acct-gina", "connected.io"), true, "account: admin refs resolve");
+
+const provider = (sub) => d1.prepare("select provider_id from account where account_id = ?").bind(sub).first("provider_id");
+assert.equal(await provider("001234.0123456789abcdef0123456789abcdef.0123"), "apple", "Apple sub recorded as access still migrates");
+assert.equal(await provider("112233445566778899001"), "google", "Google sub recorded as access still migrates");
+assert.equal(await provider("access-ops"), null, "real Access subs are dropped");
 const bought = await row("select owner_user_id, status, verified_at from domain where domain = 'bought.com'");
 assert.deepEqual(bought, { owner_user_id: null, status: "pending", verified_at: null });
 
@@ -189,11 +216,13 @@ const invite = await d1.prepare("select token_hash, created_by from invite").fir
 assert.notEqual(invite.token_hash, "tok-live", "tokens are stored hashed");
 assert.equal(invite.created_by, "acct-ada");
 
-// ── Re-running changes nothing ────────────────────────────────────
-await migrateAuthFromR2(bucket, d1, { dryRun: false, now: NOW });
-assert.equal(await count("user"), 6);
-assert.equal(await count("account"), 6);
-assert.equal(await count("mailbox_member"), 5);
+// ── Applying twice is refused (it would keep stale rows) ──────────
+await assert.rejects(
+	() => migrateAuthFromR2(bucket, d1, { dryRun: false, now: NOW }),
+	/already has 8 users/,
+);
+const again = await migrateAuthFromR2(bucket, d1, { dryRun: true, now: NOW });
+assert.deepEqual(again.counts, real.counts, "dry runs still work on a populated DB");
 
 // ── A migrated password signs in through Better Auth ──────────────
 {

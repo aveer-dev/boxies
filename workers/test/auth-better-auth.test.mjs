@@ -85,6 +85,12 @@ assert.equal(session?.user?.email, "ada@inboxies.email");
 	assert.equal(rows, 1, "no user was created");
 }
 
+// No email-OTP routes: they would mail codes to user.email (maybe a shared mailbox).
+for (const path of ["/email-otp/send-verification-otp", "/email-otp/request-password-reset", "/sign-in/email-otp"]) {
+	const res = await call(path, { method: "POST", body: { email: "ada@inboxies.email", type: "sign-in" } });
+	assert.equal(res.status, 404, `${path} is not mounted`);
+}
+
 // Signing out deletes the session row, so the same token stops working.
 {
 	const out = await call("/sign-out", { method: "POST", token });
@@ -93,6 +99,14 @@ assert.equal(session?.user?.email, "ada@inboxies.email");
 	assert.equal(after, null, "revoked token has no session");
 	const remaining = await d1.prepare("select count(*) as n from session").first("n");
 	assert.equal(remaining, 0);
+}
+
+// Apple/Google sign-in never creates users (they come from onboarding or migration).
+{
+	const social = createAuth({ ...env, GOOGLE_CLIENT_ID: "web.apps.googleusercontent.com", APPLE_CLIENT_ID: "co.inboxies.app" });
+	assert.equal(social.options.socialProviders.google.disableImplicitSignUp, true);
+	assert.equal(social.options.socialProviders.apple.disableImplicitSignUp, true);
+	assert.equal(social.options.account.accountLinking.disableImplicitLinking, true);
 }
 
 console.log("auth-better-auth: ok");
