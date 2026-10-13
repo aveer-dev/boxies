@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.LocalAuthStore
+import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.AuthStore
@@ -56,6 +57,18 @@ fun RootView(
         if (!isShowingSplash) return@LaunchedEffect
         delay(800)
         isShowingSplash = false
+    }
+
+    // An expired or revoked session signs out instead of looking like
+    // "no mailboxes" (the Worker answers 403 for it). Ignore late rejections
+    // of a token the user already replaced.
+    LaunchedEffect(Unit) {
+        ApiClient.shared.sessionExpired.collect { rejected ->
+            if (rejected == auth.token.value) {
+                appModel.reset()
+                auth.signOutExpired()
+            }
+        }
     }
 
     LaunchedEffect(token) {

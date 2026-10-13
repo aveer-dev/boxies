@@ -418,6 +418,116 @@ async function jsonRequest(app, env, { method = "GET", path, principal, body } =
 	assert.equal(secondAccept.status, 409);
 }
 
+// ── Reserved role addresses on the shared domain ──────────────────
+
+{
+	const env = mockEnv(mockBucket(), { MAILBOX_CREATE_POLICY: "open" });
+	const create = (principal, email) =>
+		jsonRequest(apiApp, env, { method: "POST", path: "/api/v1/mailboxes", principal, body: { email, name: "x" } });
+	assert.equal((await create(eve, "postmaster@inboxies.email")).status, 400, "reserved for users");
+	assert.equal((await create(eve, "eve.mail@inboxies.email")).status, 201);
+	assert.equal((await create(admin, "postmaster@inboxies.email")).status, 201, "operators may create it");
+}
+
+// ── Invite emails: no markup from the inviter, no resend flood ────
+
+{
+	const sent = [];
+	const env = mockEnv(mockBucket(), {
+		EMAIL: { send: async (msg) => (sent.push(msg), { messageId: `m-${sent.length}` }) },
+	});
+	const created = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/mailboxes",
+		principal: admin,
+		body: {
+			email: "lure@inboxies.email",
+			assignTo: { inviteEmail: "target@gmail.com", inviteeName: '<a href="https://evil.example">Your account is locked</a>' },
+		},
+	});
+	assert.equal(created.status, 201);
+	const html = String(sent.at(-1)?.html ?? "");
+	assert.ok(html.length > 0);
+	assert.equal(html.includes('<a href="https://evil.example">'), false, "inviter-supplied name is escaped");
+	assert.ok(html.includes("&lt;a href="));
+
+	const resend = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: `/api/v1/admin/invites/${created.json.invite.token}/resend`,
+		principal: admin,
+	});
+	assert.equal(resend.status, 429, "an invite can't be re-sent right away");
+}
+
+// ── Reset codes never go to a mailbox other people can read ───────
+
+{
+	const bucket = mockBucket();
+	const sent = [];
+	const env = mockEnv(bucket, {
+		EMAIL: { send: async (msg) => (sent.push(msg), { messageId: `m-${sent.length}` }) },
+	});
+	const created = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/mailboxes",
+		principal: admin,
+		body: { email: "team@inboxies.email", assignTo: { inviteEmail: "owner@gmail.com", role: "owner" } },
+	});
+	const ownerAccept = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: `/api/v1/invites/${created.json.invite.token}/accept`,
+		body: { password: "owner-password-1" },
+	});
+	assert.equal(ownerAccept.status, 200);
+	const recipients = (path) =>
+		sent.filter((m) => /reset/i.test(m.subject ?? "")).flatMap((m) => [m.to].flat()).map(String);
+
+	// The admin who created the mailbox still holds it, so it's shared already.
+	await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password/forgot",
+		body: { email: "team@inboxies.email" },
+	});
+	assert.equal(recipients().includes("team@inboxies.email"), false, "the admin could read it");
+
+	// Once the owner is the only one with access, the mailbox may get the code.
+	const key = mailboxMetadataKey("team@inboxies.email");
+	const settings = JSON.parse(bucket.store.get(key));
+	settings.acl = { owners: [`account:${ownerAccept.json.accountId}`], members: [] };
+	bucket.store.set(key, JSON.stringify(settings));
+	await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password/forgot",
+		body: { email: "team@inboxies.email" },
+	});
+	assert.ok(recipients().includes("team@inboxies.email"));
+
+	// Once a member can read the mailbox, the owner's reset code must not land there.
+	const memberInvite = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/admin/invites",
+		principal: admin,
+		body: { mailboxId: "team@inboxies.email", inviteEmail: "member@gmail.com", role: "member" },
+	});
+	await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: `/api/v1/invites/${memberInvite.json.token}/accept`,
+		body: { password: "member-password-1" },
+	});
+	sent.length = 0;
+	const forgot = await jsonRequest(apiApp, env, {
+		method: "POST",
+		path: "/api/v1/auth/password/forgot",
+		body: { email: "team@inboxies.email" },
+	});
+	assert.equal(forgot.status, 200);
+	assert.equal(
+		recipients().includes("team@inboxies.email"),
+		false,
+		"a shared mailbox never receives the owner's reset code",
+	);
+}
+
 // ── Accepting your own invite must not grant the invitee's identity ──
 
 {

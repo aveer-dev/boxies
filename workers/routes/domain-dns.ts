@@ -36,7 +36,7 @@ import {
 } from "../lib/cloudflare-client";
 import { canonicalMailboxId, isAddressTaken, mailboxMetadataKey } from "../lib/mailbox-routing";
 import { ensurePrincipalAccount } from "../lib/identity-links";
-import { aclFromOwnerKeys, principalKeys } from "../lib/mailbox-acl";
+import { aclFromOwnerKeys, authorizeMailbox, principalKeys } from "../lib/mailbox-acl";
 import { createInviteRecord, saveInvite, inviteAcceptUrl } from "../lib/invites";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
 import { isDevRuntime } from "../lib/dev-runtime";
@@ -440,6 +440,24 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * Create an email alias for a custom domain.
 	 */
+	/**
+	 * A domain alias delivers outside mail into `target`, so it may only point
+	 * at a mailbox on the same domain or one the admin can already open.
+	 * Otherwise anyone who adds a domain could route mail into strangers'
+	 * mailboxes.
+	 */
+	const aliasTargetAllowed = async (
+		c: Context<MailboxContext>,
+		domain: string,
+		target: string,
+	): Promise<string | null> => {
+		const mailboxId = canonicalMailboxId(target);
+		if (!mailboxId) return null;
+		if (mailboxId.endsWith(`@${domain.toLowerCase()}`)) return mailboxId;
+		const access = await authorizeMailbox(c.env.BUCKET, c.get("principal"), mailboxId);
+		return access.ok ? access.mailboxId : null;
+	};
+
 	app.post("/api/v1/admin/domains/:domain/aliases", async (c) => {
 		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
 		if (authz instanceof Response) return authz;
@@ -459,13 +477,17 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 		if (!targetMailboxId) {
 			return c.json({ error: "Target mailbox is required" }, 400);
 		}
+		const allowedTarget = await aliasTargetAllowed(c, domainMeta.domain, targetMailboxId);
+		if (!allowedTarget) {
+			return c.json({ error: "Aliases can only deliver to mailboxes on this domain or ones you can access" }, 403);
+		}
 
 		try {
 			const alias = await saveEmailAlias(
 				c.env.BUCKET,
 				domainMeta.domain,
 				aliasLocal,
-				targetMailboxId,
+				allowedTarget,
 			);
 			return c.json({ success: true, alias }, 201);
 		} catch (err: unknown) {
@@ -512,9 +534,10 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 		for (const item of inputAliases) {
 			const local = (item.aliasLocal || "").trim().toLowerCase().replace(/^@+/, "");
 			const target = (item.targetMailboxId || "").trim();
-			if (local && target && /^[a-zA-Z0-9._-]+$/.test(local)) {
+			const allowedTarget = target ? await aliasTargetAllowed(c, domainMeta.domain, target) : null;
+			if (local && allowedTarget && /^[a-zA-Z0-9._-]+$/.test(local)) {
 				try {
-					const record = await saveEmailAlias(c.env.BUCKET, domainMeta.domain, local, target);
+					const record = await saveEmailAlias(c.env.BUCKET, domainMeta.domain, local, allowedTarget);
 					created.push(record);
 				} catch {
 					// continue with next

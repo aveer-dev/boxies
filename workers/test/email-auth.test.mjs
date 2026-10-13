@@ -469,4 +469,63 @@ const CF_BLOG_ARC =
 	assert.equal(auth.spoofed, true);
 }
 
+// ── Forgery via merged or mixed headers ──────────────────────────
+{
+	// workerd's Headers.get joins duplicates with ", ". A forged
+	// "cloudflare.net; dmarc=pass" lower in the message must not merge into ours.
+	const FORGED_CF_PASS = CF_PASS.replace("mx.cloudflare.net", "fake.cloudflare.net");
+	const joinedOnly = {
+		get(name) {
+			return name.toLowerCase() === "authentication-results" ? `${CF_FAIL}, ${FORGED_CF_PASS}` : null;
+		},
+	};
+	const auth = parseAuthSignals({
+		envelopeHeaders: joinedOnly,
+		headerFrom: "PayPal <service@paypal.com>",
+		envelopeFrom: "spoof@evil.example",
+	});
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.spoofed, true, "a joined forged pass can't flip our fail");
+}
+
+{
+	// If we can't tell which results header our hop wrote, the stricter wins.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Authentication-Results", `i=1; ${CF_FAIL}`],
+			["Authentication-Results", CF_PASS],
+		),
+		headerFrom: "PayPal <service@paypal.com>",
+		envelopeFrom: "spoof@evil.example",
+	});
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.spoofed, true);
+}
+
+{
+	// A DMARC pass for some other domain doesn't vouch for the From shown.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=pass header.d=evil.example; spf=pass smtp.mailfrom=x@evil.example; dmarc=pass header.from=evil.example",
+		]),
+		headerFrom: "PayPal <service@paypal.com>",
+		envelopeFrom: "x@evil.example",
+	});
+	assert.equal(auth.aligned, false);
+	assert.equal(auth.spoofed, true);
+}
+
+{
+	// With delivery headers present, the sender's own MIME headers are never consulted.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(["Subject", "hi"]),
+		mimeHeaders: [{ key: "authentication-results", value: CF_PASS }],
+		headerFrom: "PayPal <service@paypal.com>",
+		envelopeFrom: "spoof@evil.example",
+	});
+	assert.equal(auth.source, "none");
+	assert.notEqual(auth.aligned, true);
+}
+
 console.log("email-auth tests passed");
