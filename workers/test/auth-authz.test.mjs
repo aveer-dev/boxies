@@ -42,6 +42,7 @@ await db.insert(schema.domain).values([
 	{ domain: "pending.com", ownerUserId: "eve", status: "pending" },
 ]);
 await db.insert(schema.domainAdmin).values([{ domain: "acme.com", userId: "bob" }]);
+await db.insert(schema.domain).values({ domain: "gone.com", ownerUserId: "ada", status: "decommissioned" });
 
 // ── Roles ─────────────────────────────────────────────────────────
 assert.equal(await mailboxRole(db, "ada", "team@acme.com"), "owner");
@@ -88,6 +89,7 @@ assert.equal(await isDomainAdmin(db, "bob", "ACME.com"), true, "listed admin");
 assert.equal(await isDomainAdmin(db, "eve", "acme.com"), false);
 assert.equal(await isDomainAdmin(db, "ada", "cme.com"), false, "no suffix matching");
 assert.equal(await isDomainAdmin(db, "eve", "pending.com"), true, "pending domains can be managed");
+assert.equal(await isDomainAdmin(db, "ada", "gone.com"), false, "decommissioned domains grant nothing");
 
 // ── Creating mailboxes ────────────────────────────────────────────
 const platformDomains = ["inboxies.email"];
@@ -113,8 +115,10 @@ const platformDomains = ["inboxies.email"];
 	assert.equal(foreign.status, 403, "no mailboxes on someone else's domain");
 	const asAdmin = await canCreateMailbox(db, { userId: "bob", address: "ceo@acme.com", platformDomains });
 	assert.equal(asAdmin.ok, true);
-	const unverified = await canCreateMailbox(db, { userId: "eve", address: "me@pending.com", platformDomains });
-	assert.equal(unverified.status, 403, "pending domains can't get mailboxes yet");
+	const byo = await canCreateMailbox(db, { userId: "eve", address: "me@pending.com", platformDomains });
+	assert.equal(byo.ok, true, "a claimed bring-your-own domain is usable while its nameservers are pending");
+	const notAdmin = await canCreateMailbox(db, { userId: "ada", address: "me@pending.com", platformDomains });
+	assert.equal(notAdmin.status, 403);
 }
 
 // ── Integrity ─────────────────────────────────────────────────────

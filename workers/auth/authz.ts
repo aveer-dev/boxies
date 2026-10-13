@@ -10,7 +10,7 @@
  * is a single indexed query; no R2 reads, no email comparisons.
  */
 
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import { isReservedLocalPart, strictMailboxId } from "../lib/mailbox-routing";
 import * as schema from "./schema";
@@ -86,7 +86,10 @@ export async function listMailboxesForUser(
 		.all();
 }
 
-/** Owner or listed admin of `domain` (any status, so pending domains can be verified). */
+/**
+ * Owner or listed admin of `domain`. Pending domains count (they still need
+ * setting up); decommissioned ones grant nothing.
+ */
 export async function isDomainAdmin(
 	db: AuthDb,
 	userId: string,
@@ -103,6 +106,7 @@ export async function isDomainAdmin(
 		.where(
 			and(
 				eq(schema.domain.domain, d),
+				ne(schema.domain.status, "decommissioned"),
 				or(eq(schema.domain.ownerUserId, userId), eq(schema.domainAdmin.userId, userId)),
 			),
 		)
@@ -116,7 +120,10 @@ export type CreateMailboxCheck =
 
 /**
  * Whether `userId` may create `address`: a non-reserved name on a platform
- * domain, or any name on an active domain the user administers.
+ * domain, or any name on a domain the user administers. Bring-your-own
+ * domains stay `pending` until their nameservers move, but ownership was
+ * already proven by the DNS TXT check at claim time, so pending is enough.
+ * Aliases live in R2, so callers also check for alias collisions.
  */
 export async function canCreateMailbox(
 	db: AuthDb,
@@ -143,12 +150,7 @@ export async function canCreateMailbox(
 		return { ok: true, mailboxId, domain: domainName };
 	}
 
-	const row = await db
-		.select({ status: schema.domain.status })
-		.from(schema.domain)
-		.where(eq(schema.domain.domain, domainName))
-		.get();
-	if (row?.status === "active" && (await isDomainAdmin(db, opts.userId, domainName))) {
+	if (await isDomainAdmin(db, opts.userId, domainName)) {
 		return { ok: true, mailboxId, domain: domainName };
 	}
 	return { ok: false, status: 403, error: "You can't create addresses on that domain" };

@@ -89,6 +89,22 @@ export type MigrationReport = {
 const PLACEHOLDER_EMAIL_DOMAIN = "no-email.invalid";
 const SOCIAL_PROVIDERS = new Set(["apple", "google"]);
 
+// The legacy store records every non-password session sub as "access"
+// (providersFromPrincipal), even for plain Apple/Google sign-ins, so the
+// recorded provider can't be trusted. Apple and Google subs have
+// recognisable shapes; Access subs are UUIDs.
+const APPLE_SUB = /^\d{6}\.[0-9a-f]{32}\.\d{4}$/;
+const GOOGLE_SUB = /^\d{10,30}$/;
+
+/** The real sign-in provider for `sub`, given what legacy data recorded. */
+export function inferProvider(sub: string, ...recorded: Array<string | undefined>): string | undefined {
+	const social = recorded.find((p) => p && SOCIAL_PROVIDERS.has(p));
+	if (social) return social;
+	if (APPLE_SUB.test(sub)) return "apple";
+	if (GOOGLE_SUB.test(sub)) return "google";
+	return recorded.find(Boolean);
+}
+
 async function listKeys(bucket: Bucketish, prefix: string): Promise<string[]> {
 	const keys: string[] = [];
 	let cursor: string | undefined;
@@ -220,11 +236,11 @@ export async function migrateAuthFromR2(
 		for (const key of principals) {
 			if (!key.startsWith("sub:") || key.startsWith("sub:user:")) continue;
 			const sub = key.slice("sub:".length);
-			addProvider(id, sub, account.providers?.[sub], `account ${id}`);
+			addProvider(id, sub, inferProvider(sub, account.providers?.[sub], subLinks.get(sub)?.provider), `account ${id}`);
 		}
 		for (const pu of sorted) {
 			for (const sub of pu.linkedSubs ?? []) {
-				if (!userBySub.has(sub)) addProvider(id, sub, account.providers?.[sub] ?? subLinks.get(sub)?.provider, `password user ${pu.id}`);
+				if (!userBySub.has(sub)) addProvider(id, sub, inferProvider(sub, account.providers?.[sub], subLinks.get(sub)?.provider), `password user ${pu.id}`);
 			}
 		}
 	}
@@ -241,24 +257,25 @@ export async function migrateAuthFromR2(
 			createdAt: toDate(pu.createdAt, now),
 		});
 		for (const sub of pu.linkedSubs ?? []) {
-			if (!userBySub.has(sub)) addProvider(id, sub, subLinks.get(sub)?.provider, `password user ${id}`);
+			if (!userBySub.has(sub)) addProvider(id, sub, inferProvider(sub, subLinks.get(sub)?.provider), `password user ${id}`);
 		}
 	}
 
 	// Legacy Apple/Google links that predate accounts.
 	for (const [sub, link] of [...subLinks].sort(([a], [b]) => a.localeCompare(b))) {
 		if (userBySub.has(sub)) continue;
+		const provider = inferProvider(sub, link.provider);
 		if (link.accountId && users.has(link.accountId)) {
-			addProvider(link.accountId, sub, link.provider, "legacy link");
+			addProvider(link.accountId, sub, provider, "legacy link");
 			continue;
 		}
-		if (!SOCIAL_PROVIDERS.has(link.provider)) {
-			issue("sign-in dropped", `${link.provider} sign-in ${sub} (legacy link) has no Apple/Google equivalent`);
+		if (!provider || !SOCIAL_PROVIDERS.has(provider)) {
+			issue("sign-in dropped", `${provider ?? "unknown"} sign-in ${sub} (legacy link) has no Apple/Google equivalent`);
 			continue;
 		}
-		const id = `legacy_${link.provider}_${sub}`;
+		const id = `legacy_${provider}_${sub}`;
 		users.set(id, { id, email: normalizeEmail(link.emails?.[0]), emailVerified: false, createdAt: now });
-		addProvider(id, sub, link.provider, "legacy link");
+		addProvider(id, sub, provider, "legacy link");
 	}
 
 	// Emails are unique. Verified (mailbox login) emails claim first; anyone
@@ -334,8 +351,16 @@ export async function migrateAuthFromR2(
 	for (const [, meta] of await loadRecords<LegacyDomain>(bucket, ["platform/domains/"])) {
 		const name = meta.domain?.trim().toLowerCase();
 		if (!name) continue;
+		// Refs are bare user/account ids, raw emails, or prefixed keys
+		// (`account:<id>` from the admin connect-domain route).
 		const resolveDomainUser = (ref: string | null | undefined) =>
-			!ref ? null : ref.includes("@") ? resolveKey(`email:${ref}`) : (resolveKey(`user:${ref}`) ?? resolveKey(`account:${ref}`));
+			!ref
+				? null
+				: /^(account|user|sub|email):/.test(ref)
+					? resolveKey(ref)
+					: ref.includes("@")
+						? resolveKey(`email:${ref}`)
+						: (resolveKey(`user:${ref}`) ?? resolveKey(`account:${ref}`));
 		const owner = resolveDomainUser(meta.ownerUserId);
 		if (!owner) issue("domain without owner", `${name}: owner ${meta.ownerUserId ?? "(none)"} matches no migrated user`);
 		const status = meta.status === "active" ? "active" : meta.status === "offboarding" ? "decommissioned" : "pending";
@@ -394,6 +419,13 @@ export async function migrateAuthFromR2(
 	if (opts.dryRun) return report;
 
 	const db: DrizzleD1Database<typeof schema> = drizzle(d1, { schema });
+	// Inserts ignore conflicts, so applying over existing rows would keep
+	// stale passwords and memberships. The real run is into an empty DB, at
+	// cutover; dry runs can be repeated any time.
+	const existingUsers = await d1.prepare("select count(*) as n from user").first<number>("n");
+	if (existingUsers) {
+		throw new Error(`AUTH_DB already has ${existingUsers} users; apply only into an empty database`);
+	}
 	const rows = <T>(items: Iterable<T>) => [...items];
 	const statements = [
 		...rows(users.values()).map((u) =>
