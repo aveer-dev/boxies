@@ -34,9 +34,9 @@ export function ListEmptyState({
 	action?: ReactNode;
 }) {
 	return (
-		<div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+		<div className="flex flex-col items-center justify-center py-20 px-6 text-center animate-reveal">
 			<div className="mb-3">{icon}</div>
-			<h3 className="text-sm font-semibold text-kumo-default mb-1">{title}</h3>
+			<h3 className="text-sm font-medium text-kumo-default mb-1">{title}</h3>
 			<p className="text-[13px] text-kumo-subtle max-w-xs mb-4">{description}</p>
 			{action}
 		</div>

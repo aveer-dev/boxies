@@ -4,7 +4,11 @@
 
 import { CaretLeftIcon, XIcon } from "@phosphor-icons/react";
 import type { MouseEvent, ReactNode } from "react";
+import ScrollArea from "~/components/ScrollArea";
 import { useColumnFocus } from "~/hooks/useColumnFocus";
+
+/** Matches `--dock-h`: the band at the bottom the dock floats over. */
+const DOCK_CLEARANCE = 88;
 
 export interface ColumnHeaderProps {
 	title?: ReactNode;
@@ -36,7 +40,7 @@ export function ColumnHeader({
 	isRoot = false,
 }: ColumnHeaderProps) {
 	return (
-		<header className="h-11 pl-2 pr-2 md:pl-4 border-b border-kumo-line flex items-center justify-between gap-2 shrink-0 bg-kumo-base">
+		<header className="h-11 pl-2 pr-2 md:pl-4 border-b border-kumo-line flex items-center justify-between gap-2 shrink-0 bg-kumo-base/90 backdrop-blur-md">
 			<div className="flex items-center gap-1.5 min-w-0">
 				{!isRoot && (
 					<button
@@ -50,12 +54,17 @@ export function ColumnHeader({
 				)}
 				<div className={`min-w-0 flex items-center gap-1.5 ${isRoot ? "pl-2 md:pl-0" : ""}`}>
 					{typeof title === "string" ? (
-						<h2 className="text-xs font-medium text-kumo-subtle truncate">{title}</h2>
+						<h2 className="text-xs font-medium text-kumo-subtle truncate transition-colors duration-200 group-data-[active=true]/column:text-kumo-default">
+							{title}
+						</h2>
 					) : (
 						title
 					)}
 					{counter !== undefined && counter !== null && counter !== 0 && (
-						<span className="shrink-0 min-w-4 px-1 rounded border border-kumo-line text-[10px] leading-4 text-center text-kumo-subtle tabular-nums">
+						<span
+							key={String(counter)}
+							className="shrink-0 min-w-4 px-1.5 rounded-full bg-[var(--bg-badge)] text-[10px] leading-4 text-center text-kumo-subtle tabular-nums animate-pop"
+						>
 							{counter}
 						</span>
 					)}
@@ -67,7 +76,7 @@ export function ColumnHeader({
 					<button
 						type="button"
 						onClick={onClose}
-						className="hidden md:inline-flex p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint transition-colors"
+						className="hidden md:inline-flex p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
 						aria-label={closeLabel}
 						title={`${closeLabel} (Esc)`}
 					>
@@ -90,6 +99,13 @@ export interface ColumnPaneProps extends ColumnHeaderProps {
 	hideHeader?: boolean;
 	/** False when the content manages its own scrolling (reader, compose). */
 	scrollBody?: boolean;
+	/**
+	 * When this changes (a different message, settings page, compose target)
+	 * the canvas scrolls the column into view, as it does for a new column.
+	 */
+	revealKey?: string | number;
+	/** Takes the free width (reader, settings page); hides the empty room. */
+	grow?: boolean;
 	children: ReactNode;
 	className?: string;
 	bodyClassName?: string;
@@ -100,30 +116,44 @@ export default function ColumnPane({
 	widthClassName = "md:w-[300px]",
 	hideHeader = false,
 	scrollBody = true,
+	revealKey,
+	grow = false,
 	children,
 	className = "",
 	bodyClassName = "",
 	...header
 }: ColumnPaneProps) {
 	const setActiveColumn = useColumnFocus((s) => s.setActiveColumn);
+	const isActive = useColumnFocus((s) => s.activeColumnId === id);
 	const label = typeof header.title === "string" ? header.title : id;
 
 	return (
 		<section
 			id={`column-${id}`}
 			data-column-id={id}
+			data-reveal-key={revealKey ?? ""}
+			data-active={isActive}
+			data-grow={grow || undefined}
 			// Capture phase: runs before child handlers, so a click that opens the
 			// next column doesn't get its focus stolen back by this one.
 			onPointerDownCapture={() => setActiveColumn(id)}
-			className={`h-full w-screen shrink-0 snap-start flex flex-col min-w-0 border-r border-kumo-line bg-kumo-base ${widthClassName} ${className}`}
+			className={`group/column column-enter h-full w-screen shrink-0 snap-start flex flex-col min-w-0 border-r border-kumo-line bg-kumo-base ${widthClassName} ${className}`}
 			aria-label={`${label} column`}
 		>
 			{!hideHeader && <ColumnHeader {...header} />}
-			<div
-				className={`flex-1 min-h-0 ${scrollBody ? "overflow-y-auto overscroll-y-contain pb-20" : "flex flex-col overflow-hidden"} ${bodyClassName}`}
-			>
-				{children}
-			</div>
+			{scrollBody ? (
+				<ScrollArea
+					className="flex-1"
+					contentClassName={`pb-[var(--dock-h)] ${bodyClassName}`}
+					trackInsetBottom={DOCK_CLEARANCE}
+				>
+					{children}
+				</ScrollArea>
+			) : (
+				<div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${bodyClassName}`}>
+					{children}
+				</div>
+			)}
 		</section>
 	);
 }

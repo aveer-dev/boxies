@@ -245,6 +245,7 @@ export default function EmailListRoute() {
 		<>
 			<ColumnPane
 				id="list"
+				revealKey={`${mailboxId}/${folder}`}
 				title={folderName}
 				counter={unreadCount || undefined}
 				widthClassName="md:w-[400px]"
@@ -316,7 +317,7 @@ export default function EmailListRoute() {
 					/>
 				) : (
 					<>
-						{listItems.map((item) => {
+						{listItems.map((item, index) => {
 							if (item.type === "section") {
 								return (
 									<div
@@ -344,6 +345,7 @@ export default function EmailListRoute() {
 							return (
 								<ThreadRow
 									key={email.id}
+									index={index}
 									email={email}
 									isSelected={emailId === email.id}
 									isUnread={unread}

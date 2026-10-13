@@ -3,7 +3,7 @@
  *
  * Seeds its own mailbox through the local API + `/cdn-cgi/handler/email`, then
  * walks the columns: folder → thread (URL) → reload → Back, Screener triage,
- * quick reply send, Pop Out, AI Assist, search, settings sub-page, Esc,
+ * quick reply send, Pop Out, AI Assist, search, settings panels, Esc,
  * Reply Later, and the phone layout.
  *
  * Requires local `pnpm run dev` (DEV auth) on :5173.
@@ -144,14 +144,26 @@ try {
 	await page.waitForSelector("#column-list mark");
 	step("dock search → results column with highlights");
 
-	// Settings → sub-page opens in the next column.
+	// Settings opens at the far right without replacing the results; a
+	// sub-page opens beside it. Esc unwinds sub-page → settings.
 	await page.getByRole("button", { name: "Settings" }).click();
-	await page.waitForURL(/\/settings$/);
-	await page.locator("#column-settings a[href$='/settings/forwarding']").click();
+	await page.waitForSelector("#column-settings");
+	await page.locator("#column-settings [data-settings-page='forwarding']").click();
 	await page.waitForSelector("#column-settings-page");
-	assert.deepEqual(await columns(), ["accounts", "folders", "settings", "settings-page"]);
+	assert.match(page.url(), /\/search\?q=vector/);
+	assert.deepEqual(await columns(), ["accounts", "folders", "list", "settings", "settings-page"]);
 	await shot("03-settings");
-	step("settings + sub-page columns");
+	await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());
+	await page.keyboard.press("Escape");
+	await page.waitForFunction(() => !document.querySelector("#column-settings-page"));
+	await page.keyboard.press("Escape");
+	await page.waitForFunction(() => !document.querySelector("#column-settings"));
+	assert.deepEqual(await columns(), ["accounts", "folders", "list"]);
+	// Old settings links still open the panel.
+	await page.goto(`${BASE}${MB}/settings/filters`, { waitUntil: "networkidle" });
+	await page.waitForURL(/\/emails\/inbox$/);
+	await page.waitForSelector("#column-settings-page");
+	step("settings + sub-page panels beside the list");
 
 	// Reply Later: Focus & Reply opens reader + reply compose.
 	await page.goto(`${BASE}${MB}/emails/inbox`, { waitUntil: "networkidle" });

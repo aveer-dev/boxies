@@ -5,10 +5,10 @@
 import { Button, Input, Loader, Switch, useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
-export default function ForwardingSettingsRoute() {
+export default function ForwardingSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);

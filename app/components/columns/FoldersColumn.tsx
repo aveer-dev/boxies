@@ -18,13 +18,14 @@ import {
 	WarningIcon,
 } from "@phosphor-icons/react";
 import { type ReactNode, useMemo, useState } from "react";
-import { NavLink, useParams } from "react-router";
+import { NavLink, useLocation, useParams } from "react-router";
 import {
 	FOLDER_DISPLAY_NAMES,
 	Folders,
 	SYSTEM_FOLDER_IDS,
 } from "shared/folders";
 import { folderPath, mailboxPath } from "~/hooks/useMailNavigation";
+import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
 import { useCreateFolder, useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
@@ -64,17 +65,19 @@ function FolderRow({
 		<NavLink
 			to={to}
 			className={({ isActive }) =>
-				`flex items-center gap-2.5 rounded-md px-2 py-1 text-sm transition-colors ${
+				`group/folder relative flex items-center gap-2.5 rounded-md px-2 py-1 text-sm transition-colors duration-150 ${
 					isActive
-						? "bg-kumo-fill text-kumo-default"
-						: `${muted ? "text-kumo-subtle" : "text-kumo-strong"} hover:bg-kumo-tint`
+						? "text-kumo-default"
+						: `${muted ? "text-kumo-subtle" : "text-kumo-strong"} hover:bg-kumo-tint hover:text-kumo-default`
 				}`
 			}
 		>
-			<span className="shrink-0 w-4 flex justify-center text-kumo-subtle">{icon}</span>
+			<span className="shrink-0 w-4 flex justify-center text-kumo-subtle transition-colors group-hover/folder:text-kumo-default group-aria-[current=page]/folder:text-kumo-default">
+				{icon}
+			</span>
 			<span className="truncate flex-1">{label}</span>
 			{count != null && count > 0 && (
-				<span className="shrink-0 text-xs text-kumo-subtle tabular-nums">
+				<span key={count} className="shrink-0 text-xs text-kumo-subtle tabular-nums animate-reveal">
 					{formatCount(count)}
 				</span>
 			)}
@@ -103,6 +106,8 @@ export default function FoldersColumn() {
 	const toastManager = useKumoToastManager();
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [newTagName, setNewTagName] = useState("");
+	const { pathname } = useLocation();
+	const { railRef, markRef } = useSlidingHighlight<HTMLDivElement>(pathname);
 
 	const unreadById = useMemo(
 		() => Object.fromEntries(folders.map((f) => [f.id, f.unreadCount])),
@@ -140,59 +145,62 @@ export default function FoldersColumn() {
 
 	return (
 		<ColumnPane id="folders" title={displayName} bodyClassName="px-2 pt-1.5">
-			<nav aria-label="Folders" className="space-y-px">
-				{SYSTEM_FOLDER_IDS.map((id) => (
-					<FolderRow
-						key={id}
-						to={folderPath(mailboxId, id)}
-						icon={FOLDER_ICONS[id]}
-						label={FOLDER_DISPLAY_NAMES[id] ?? id}
-						count={unreadById[id]}
-					/>
-				))}
-			</nav>
-
-			<SectionLabel>Workflow</SectionLabel>
-			<FolderRow
-				to={`${mailboxPath(mailboxId)}/reply-later`}
-				icon={<ClockCounterClockwiseIcon size={16} />}
-				label="Reply Later"
-				count={replyLaterCount}
-			/>
-
-			<SectionLabel
-				action={
-					<button
-						type="button"
-						onClick={() => setIsCreateOpen(true)}
-						className="p-0.5 rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
-						aria-label="Create tag"
-						title="Create tag"
-					>
-						<PlusIcon size={12} />
-					</button>
-				}
-			>
-				{displayName} tags
-			</SectionLabel>
-			<nav aria-label="Tags" className="space-y-px">
-				{tags.length === 0 ? (
-					<p className="px-2 py-1 text-xs text-kumo-subtle">
-						No tags yet. Tags are folders you create.
-					</p>
-				) : (
-					tags.map((tag) => (
+			<div ref={railRef} className="relative">
+				<span ref={markRef} aria-hidden className={slidingMarkClass} />
+				<nav aria-label="Folders" className="space-y-px">
+					{SYSTEM_FOLDER_IDS.map((id) => (
 						<FolderRow
-							key={tag.id}
-							to={folderPath(mailboxId, tag.id)}
-							icon={<span className="text-xs">#</span>}
-							label={tag.name.replace(/^#/, "")}
-							count={tag.unreadCount}
-							muted={!tag.unreadCount}
+							key={id}
+							to={folderPath(mailboxId, id)}
+							icon={FOLDER_ICONS[id]}
+							label={FOLDER_DISPLAY_NAMES[id] ?? id}
+							count={unreadById[id]}
 						/>
-					))
-				)}
-			</nav>
+					))}
+				</nav>
+
+				<SectionLabel>Workflow</SectionLabel>
+				<FolderRow
+					to={`${mailboxPath(mailboxId)}/reply-later`}
+					icon={<ClockCounterClockwiseIcon size={16} />}
+					label="Reply Later"
+					count={replyLaterCount}
+				/>
+
+				<SectionLabel
+					action={
+						<button
+							type="button"
+							onClick={() => setIsCreateOpen(true)}
+							className="p-0.5 rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint hover:rotate-90 transition-[color,background-color,rotate] duration-200"
+							aria-label="Create tag"
+							title="Create tag"
+						>
+							<PlusIcon size={12} />
+						</button>
+					}
+				>
+					{displayName} tags
+				</SectionLabel>
+				<nav aria-label="Tags" className="space-y-px">
+					{tags.length === 0 ? (
+						<p className="px-2 py-1 text-xs text-kumo-subtle">
+							No tags yet. Tags are folders you create.
+						</p>
+					) : (
+						tags.map((tag) => (
+							<FolderRow
+								key={tag.id}
+								to={folderPath(mailboxId, tag.id)}
+								icon={<span className="text-xs">#</span>}
+								label={tag.name.replace(/^#/, "")}
+								count={tag.unreadCount}
+								muted={!tag.unreadCount}
+							/>
+						))
+					)}
+				</nav>
+			</div>
 
 			<Dialog.Root open={isCreateOpen} onOpenChange={setIsCreateOpen}>
 				<Dialog size="sm" className="p-6">

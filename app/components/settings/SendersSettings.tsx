@@ -11,14 +11,14 @@ import {
 	PURPOSE_FOLDER_IDS,
 	type PurposeFolderId,
 } from "shared/folders";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import {
 	useDeleteSenderPreference,
 	useSenderPreferences,
 	useUpsertSenderPreference,
 } from "~/queries/sender-preferences";
 
-export default function SendersSettingsRoute() {
+export default function SendersSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const [query, setQuery] = useState("");

@@ -73,7 +73,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
     }
 
     return (
-        <div className={`group/thread-msg ${containerClassName}`}>
+        <div className={`group/thread-msg animate-reveal ${containerClassName}`}>
             <div className="px-4 py-4 md:px-6">
                 <div className="flex items-center justify-between gap-3 mb-3">
                     <div className="flex items-center gap-2.5 min-w-0">

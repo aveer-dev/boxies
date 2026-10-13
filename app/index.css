@@ -4,6 +4,72 @@
 
 @theme {
   --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+  /* Referenced by a few components but never defined by Kumo. */
+  --color-kumo-accent: var(--accent);
+  --color-kumo-ring: var(--accent);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-spring: var(--spring);
+  --animate-reveal: reveal 420ms var(--ease-out) both;
+  --animate-pop: pop 360ms var(--spring) both;
+  --animate-menu-in: menu-in 160ms var(--ease-out) both;
+  --animate-bar-in: bar-in 320ms var(--spring) both;
+}
+
+/*
+ * Brand layer: the inboxies.co palette and motion (site/src/styles/tokens.css),
+ * mapped onto Kumo's tokens so every Kumo component and `*-kumo-*` utility
+ * follows it. Unlayered, so it wins over Kumo's @layer base values.
+ */
+:root {
+  --bg: #fcfcfc;
+  --bg-card: #f5f5f3;
+  --bg-card-hover: #efefe9;
+  --bg-badge: #f0f0ed;
+  --text-primary: #171717;
+  --text-strong: #3f3f3c;
+  --text-muted: #6b6b67;
+  --text-subtle: #92928e;
+  --border-subtle: #eaeae7;
+  --border-card: #e4e4df;
+  --accent: #2659d9;
+  --accent-soft: color-mix(in oklab, var(--accent) 9%, var(--bg));
+  --glass-bg: color-mix(in srgb, var(--bg) 72%, transparent);
+  --glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.06);
+  --scroll-thumb: color-mix(in srgb, var(--text-primary) 22%, transparent);
+  --shadow-menu: 0px .175px 1.041px 0px #00000003, 0px .8px 2.925px 0px #00000005, 0px 2.025px 7.847px 0px #00000007, 0px 4px 18px 0px #0000000a, 0 0 0 1px rgba(0, 0, 0, 0.06);
+
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  /* iOS .spring(response: 0.32, dampingFraction: 0.86) = Android 0.86f + StiffnessMediumLow */
+  --spring: linear(0, 0.062, 0.197, 0.355, 0.506, 0.638, 0.745, 0.828, 0.889, 0.933, 0.962, 0.981, 0.993, 1, 1.003, 1.005, 1.005, 1.005, 1.004, 1.003, 1.002, 1.002, 1);
+  /* Bottom band the dock floats over; scroll bodies pad past it. */
+  --dock-h: 88px;
+
+  --color-kumo-canvas: var(--bg);
+  --color-kumo-base: var(--bg);
+  --color-kumo-elevated: var(--bg);
+  --color-kumo-control: #ffffff;
+  --color-kumo-recessed: var(--bg-card);
+  --color-kumo-tint: var(--bg-card);
+  --color-kumo-overlay: var(--bg-card);
+  --color-kumo-fill: var(--bg-card-hover);
+  --color-kumo-fill-hover: var(--bg-badge);
+  --color-kumo-interact: var(--border-card);
+  --color-kumo-line: var(--border-subtle);
+  --color-kumo-hairline: var(--border-subtle);
+  --color-kumo-contrast: var(--text-primary);
+  --color-kumo-brand: var(--accent);
+  --color-kumo-brand-hover: color-mix(in oklab, var(--accent) 86%, #000);
+  --color-kumo-info-tint: var(--accent-soft);
+
+  --text-color-kumo-default: var(--text-primary);
+  --text-color-kumo-strong: var(--text-strong);
+  --text-color-kumo-subtle: var(--text-muted);
+  --text-color-kumo-inactive: var(--text-subtle);
+  --text-color-kumo-placeholder: var(--text-subtle);
+  --text-color-kumo-inverse: var(--bg);
+  --text-color-kumo-brand: var(--accent);
+  --text-color-kumo-link: var(--accent);
+  --text-color-kumo-info: var(--accent);
 }
 
 html,
@@ -15,6 +81,55 @@ textarea {
   margin: 0;
   font-family: var(--font-sans);
   font-size-adjust: from-font;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-kerning: normal;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+@layer base {
+  /* Focus: the accent ring, as on the site. */
+  :where(a, button, [role="button"], summary):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Press feedback (site: a/button:active scale). Menu items and rows only tint. */
+  :where(button, a):not(:disabled):not([role="menuitem"]) {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform, translate, scale, rotate;
+    transition-duration: 150ms;
+    transition-timing-function: var(--ease-out);
+  }
+  :where(button, a):not(:disabled):not([role="menuitem"]):active {
+    transform: scale(0.97);
+  }
+
+  /*
+   * Scrollbars: the columns hide theirs and draw a thumb in the gutter
+   * (ScrollArea). Anything else that scrolls gets a thin, quiet bar.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border-radius: 999px;
+  }
 }
 
 /* TipTap list styles */
@@ -37,6 +152,8 @@ textarea {
   margin-bottom: 0.25em;
 }
 
+/* ── Motion ── */
+
 @keyframes composeFormatIn {
   from {
     opacity: 0;
@@ -46,4 +163,81 @@ textarea {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* The site's block reveal: rise, unblur, fade in. */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(4px);
+  }
+}
+
+/* A column arriving from the right. */
+@keyframes column-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+    filter: blur(4px);
+  }
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.18);
+  }
+}
+
+@keyframes bar-in {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .column-enter > * {
+    animation: column-in 420ms var(--ease-out) both;
+  }
+  .row-enter {
+    animation: row-in 320ms var(--ease-out) calc(min(var(--i, 0), 12) * 16ms) both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 1ms !important;
+  }
+}
+
+/* With a growing column (reader, settings page) open, the empty room steps aside. */
+.column-canvas:has(> [data-grow]) > .column-filler {
+  display: none;
+}
+
+/* Toasts ride above the dock and its blur, not underneath them. */
+[role="region"][aria-label="Notifications"] {
+  z-index: 60;
+  bottom: calc(var(--dock-h) + 4px);
 }

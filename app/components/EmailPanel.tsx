@@ -8,6 +8,7 @@ import { useParams } from "react-router";
 import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
 import { rewriteSelfReplyTo } from "shared/reply-recipients";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
+import ScrollArea from "~/components/ScrollArea";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
 import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
 import ScreenerTriageBar from "~/components/email-panel/ScreenerTriageBar";
@@ -267,7 +268,8 @@ export default function EmailPanel({
 				chips={chips}
 			/>
 
-			<div className="flex-1 overflow-y-auto">
+			{/* A single message fills the reader and its body scrolls itself. */}
+			<ScrollArea className="flex-1" contentClassName={`animate-reveal ${hasThread ? "" : "h-full"}`}>
 				{hasThread ? (
 					allMessages.map((msg, idx) => {
 						const isDraft = draftMessageIds.has(msg.id);
@@ -301,7 +303,7 @@ export default function EmailPanel({
 						}
 					/>
 				)}
-			</div>
+			</ScrollArea>
 
 			{renderFooter && lastReceivedMessage && !isDraftFolder && email.folder_id !== Folders.DRAFT &&
 				renderFooter(lastReceivedMessage)}

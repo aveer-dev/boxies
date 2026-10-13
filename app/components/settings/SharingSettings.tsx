@@ -7,7 +7,7 @@ import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import api from "~/services/api";
 import type { MailboxAcl } from "~/types";
@@ -55,7 +55,7 @@ function toEmailKey(raw: string): string | null {
 	return trimmed.includes("@") ? `email:${trimmed}` : null;
 }
 
-export default function SharingSettingsRoute() {
+export default function SharingSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);

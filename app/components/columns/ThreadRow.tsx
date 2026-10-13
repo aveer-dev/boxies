@@ -8,7 +8,7 @@ import {
 	PaperclipIcon,
 	StarIcon,
 } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 import { formatListDate } from "shared/dates";
 import { isAuthSpoofed } from "~/lib/email-auth";
 import { getNonInlineAttachments, hasFileAttachment } from "~/lib/utils";
@@ -16,7 +16,7 @@ import type { Email } from "~/types";
 
 export function ThreadChip({ children }: { children: ReactNode }) {
 	return (
-		<span className="inline-flex items-center max-w-[160px] truncate rounded border border-kumo-line px-1.5 py-px text-[11px] text-kumo-strong">
+		<span className="inline-flex items-center max-w-[160px] truncate rounded-full bg-[var(--bg-badge)] px-2 py-px text-[11px] text-kumo-strong shadow-[inset_0_0_0_1px_var(--border-subtle)] transition-colors hover:bg-[var(--bg-card-hover)]">
 			{children}
 		</span>
 	);
@@ -39,6 +39,7 @@ export default function ThreadRow({
 	leading,
 	onToggleStar,
 	hoverActions,
+	index = 0,
 }: {
 	email: Email;
 	isSelected: boolean;
@@ -51,6 +52,8 @@ export default function ThreadRow({
 	leading?: ReactNode;
 	onToggleStar?: () => void;
 	hoverActions?: ReactNode;
+	/** Position in the list: staggers the entrance of the first rows. */
+	index?: number;
 }) {
 	const fileCount = getNonInlineAttachments(email.attachments).length;
 	const hasFiles = hasFileAttachment(email);
@@ -70,14 +73,21 @@ export default function ThreadRow({
 					onOpen();
 				}
 			}}
-			className={`group relative flex gap-2.5 px-3 py-3.5 border-b border-kumo-line cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kumo-brand ${
+			style={{ "--i": index } as CSSProperties}
+			className={`row-enter group relative flex gap-2.5 px-3 py-3.5 border-b border-kumo-line cursor-pointer transition-colors duration-150 active:bg-kumo-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-kumo-brand ${
 				isSelected ? "bg-kumo-tint" : "hover:bg-kumo-tint"
 			}`}
 		>
-			{isSelected && <span className="absolute inset-y-0 left-0 w-0.5 bg-kumo-contrast" />}
+			{isSelected && (
+				<span className="absolute inset-y-0 left-0 w-0.5 bg-kumo-contrast origin-center animate-bar-in" />
+			)}
 
 			<div className="w-1.5 shrink-0 pt-[7px]">
-				{isUnread && <span className="block h-1.5 w-1.5 rounded-full bg-kumo-contrast" />}
+				<span
+					className={`block h-1.5 w-1.5 rounded-full bg-kumo-contrast transition-[opacity,scale] duration-300 ease-[var(--spring)] ${
+						isUnread ? "opacity-100 scale-100" : "opacity-0 scale-0"
+					}`}
+				/>
 			</div>
 
 			<div className="min-w-0 flex-1">
@@ -106,20 +116,27 @@ export default function ThreadRow({
 							</span>
 						</Tooltip>
 					)}
-					<span className="ml-auto shrink-0 pl-2 text-xs text-kumo-subtle tabular-nums group-hover:hidden group-focus-within:hidden">
-						{formatListDate(email.date)}
-					</span>
-					<span className="ml-auto hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
-						{onToggleStar && (
-							<StarToggle starred={email.starred} onToggle={onToggleStar} />
-						)}
-						{hoverActions}
-					</span>
-					{email.starred && onToggleStar && (
-						<span className="shrink-0 -my-1 group-hover:hidden group-focus-within:hidden">
-							<StarToggle starred onToggle={onToggleStar} />
+					{/* Date (and star) crossfade to the row's actions on hover / focus. */}
+					<span className="relative ml-auto shrink-0 flex items-center pl-2">
+						<span className="flex items-center transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0">
+							<span className="text-xs text-kumo-subtle tabular-nums">
+								{formatListDate(email.date)}
+							</span>
+							{email.starred && onToggleStar && (
+								<span className="-my-1">
+									<StarToggle starred onToggle={onToggleStar} />
+								</span>
+							)}
 						</span>
-					)}
+						<span
+							className={`absolute right-0 top-1/2 -translate-y-1/2 flex items-center pl-3 opacity-0 translate-x-1 pointer-events-none transition-[opacity,translate] duration-200 ease-[var(--ease-out)] group-hover:opacity-100 group-hover:translate-x-0 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:translate-x-0 group-focus-within:pointer-events-auto bg-[linear-gradient(to_right,transparent,var(--color-kumo-tint)_12px)]`}
+						>
+							{onToggleStar && (
+								<StarToggle starred={email.starred} onToggle={onToggleStar} />
+							)}
+							{hoverActions}
+						</span>
+					</span>
 				</div>
 				<div
 					className={`mt-0.5 truncate text-sm ${isUnread ? "font-medium text-kumo-default" : "text-kumo-strong"}`}
@@ -146,21 +163,25 @@ export default function ThreadRow({
 }
 
 function StarToggle({ starred, onToggle }: { starred: boolean; onToggle: () => void }) {
+	// Pops only when the user stars, not when a starred row first renders.
+	const [pops, setPops] = useState(0);
 	return (
 		<button
 			type="button"
 			className="p-1 rounded-md hover:bg-kumo-fill"
 			onClick={(e) => {
 				e.stopPropagation();
+				if (!starred) setPops((n) => n + 1);
 				onToggle();
 			}}
 			aria-label={starred ? "Unstar" : "Star"}
 			aria-pressed={starred}
 		>
 			<StarIcon
+				key={pops}
 				size={14}
 				weight={starred ? "fill" : "regular"}
-				className={starred ? "text-kumo-warning" : "text-kumo-subtle"}
+				className={`${starred ? "text-kumo-warning" : "text-kumo-subtle"} ${pops ? "animate-pop" : ""}`}
 			/>
 		</button>
 	);

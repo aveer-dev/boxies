@@ -13,7 +13,7 @@ import {
 import { useState } from "react";
 import { useParams } from "react-router";
 import PrivateEmailLogo from "~/components/PrivateEmailLogo";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import {
 	useAliases,
 	useCreateAlias,
@@ -274,7 +274,7 @@ function AliasListItem({ mailboxId, alias }: { mailboxId: string; alias: MaskedA
 	);
 }
 
-export default function AliasesSettingsRoute() {
+export default function AliasesSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: aliases = [], isLoading, isError, error, refetch } = useAliases(mailboxId);

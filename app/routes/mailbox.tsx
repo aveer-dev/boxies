@@ -9,6 +9,7 @@ import ColumnCanvas from "~/components/columns/ColumnCanvas";
 import FloatingDock from "~/components/columns/FloatingDock";
 import FoldersColumn from "~/components/columns/FoldersColumn";
 import { AgentColumn, ComposeColumn } from "~/components/columns/PlatformColumns";
+import SettingsColumns from "~/components/settings/SettingsColumns";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useMailbox } from "~/queries/mailboxes";
@@ -16,16 +17,17 @@ import { ApiError } from "~/services/api";
 
 /**
  * Horizontal Miller columns:
- *   [Inboxies] [Folders & tags] [<Outlet/>: list → reader | settings → page] [Compose] [Agent]
- * plus the floating dock. Which list/reader/settings columns show is decided
- * by the child route; compose and agent are transient UI state.
+ *   [Inboxies] [Folders & tags] [<Outlet/>: list → reader] [panels…]
+ * plus the floating dock. Which list/reader columns show is decided by the
+ * child route. Panels (compose, agent, settings → page) are transient UI
+ * state: each opens at the far right, beside whatever is already open.
  */
 export default function MailboxRoute() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const navigate = useNavigate();
 	const mailboxQuery = useMailbox(mailboxId);
 	useMailboxEvents(mailboxId);
-	const { isComposing, isAgentPanelOpen, resetColumns } = useUIStore();
+	const { panels, resetColumns } = useUIStore();
 	const prevMailboxIdRef = useRef<string | undefined>(undefined);
 
 	// Switching mailbox drops a compose that belongs to the previous one.
@@ -49,8 +51,16 @@ export default function MailboxRoute() {
 				<AccountsColumn />
 				<FoldersColumn />
 				<Outlet />
-				{isComposing && <ComposeColumn />}
-				{isAgentPanelOpen && <AgentColumn />}
+				{panels.map((panel) =>
+					panel === "compose" ? (
+						<ComposeColumn key="compose" />
+					) : panel === "agent" ? (
+						<AgentColumn key="agent" />
+					) : (
+						// Remount per mailbox so its forms reload.
+						<SettingsColumns key={`settings-${mailboxId}`} />
+					),
+				)}
 			</ColumnCanvas>
 			<FloatingDock />
 		</>

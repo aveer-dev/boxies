@@ -4,6 +4,7 @@
 
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { scrollerFor } from "~/lib/scroll-axis";
 
 interface EmailIframeProps {
 	body: string;
@@ -46,6 +47,17 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 			if (!autoSize) return;
 			// Only accept messages from our own iframe
 			if (event.source !== iframeRef.current?.contentWindow) return;
+			// A mostly-vertical wheel that drifted sideways: scroll the reader, not the canvas.
+			if (
+				event.data &&
+				typeof event.data === "object" &&
+				event.data.__emailIframeWheel &&
+				typeof event.data.dy === "number"
+			) {
+				const scroller = scrollerFor(iframeRef.current, "y");
+				if (scroller) scroller.scrollTop += event.data.dy;
+				return;
+			}
 			if (
 				event.data &&
 				typeof event.data === "object" &&
@@ -105,6 +117,18 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 			<\/script>`
 			: "";
 
+		// Mostly-vertical wheels that drift sideways must not pan the app's
+		// columns. An auto-sized body doesn't scroll, so it hands the vertical
+		// part to the app; a filling one scrolls itself by it.
+		const wheelScript = `<script>
+			document.addEventListener("wheel", function (e) {
+				if (e.ctrlKey || !e.deltaX || Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
+				e.preventDefault();
+				var dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+				${autoSize ? 'parent.postMessage({ __emailIframeWheel: true, dy: dy }, "*");' : "window.scrollBy(0, dy);"}
+			}, { passive: false });
+		<\/script>`;
+
 		// Use srcdoc so the iframe is truly sandboxed (no same-origin access).
 		// We can't use doc.write() because that requires allow-same-origin.
 		iframe.srcdoc = `<!DOCTYPE html>
@@ -118,7 +142,11 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 html {
 	background: #ffffff;
 	color-scheme: light;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(23, 23, 23, 0.22) transparent;
 }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: rgba(23, 23, 23, 0.22); border-radius: 999px; }
 body {
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	font-size: 14px;
@@ -156,7 +184,7 @@ h1, h2, h3 { margin: 8px 0 4px; }
 ul, ol { padding-left: 20px; margin: 4px 0; }
 </style>
 </head>
-<body>${cleanBody}${heightScript}</body>
+<body>${cleanBody}${heightScript}${wheelScript}</body>
 </html>`;
 	}, [body, autoSize, allowRemoteImages]);
 
