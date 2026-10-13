@@ -210,13 +210,17 @@ export async function passwordSessionIsCurrent(
 	return Boolean(user) && (user?.tokenVersion ?? 0) === (tokenVersion ?? 0);
 }
 
+/**
+ * Only the mailbox login is an identity. `contactEmail` was never verified
+ * (invite and signup forms accept any address), so it stays contact info.
+ */
 export function principalFromPlatformUser(
 	user: PlatformUser,
 ): RequestPrincipal {
 	return {
 		email: user.mailboxEmail
 			? (canonicalMailboxId(user.mailboxEmail) ?? user.mailboxEmail)
-			: (normalizeEmailAddress(user.contactEmail) ?? undefined),
+			: undefined,
 		sub: `user:${user.id}`,
 	};
 }
