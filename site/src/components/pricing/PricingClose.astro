@@ -1,0 +1,42 @@
+---
+// The end of /pricing, in the 404's rhythm: a short heading, one line, and
+// the call to action with a way to ask first.
+// src: PS#6 (support address); PS#2 (personal address, no charge today)
+import { SUPPORT_EMAIL } from "../../config";
+import Cta from "../Cta.astro";
+---
+
+<section class="close section--air" aria-labelledby="still-deciding" data-reveal-on-scroll>
+	<h2 class="close-heading" id="still-deciding">Still deciding?</h2>
+	<p class="close-line">
+		Start with a personal address and add a domain later. Questions about a domain or a bill go to <a class="inline-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
+	</p>
+	<div class="close-cta">
+		<Cta secondary={{ label: "Contact support →", href: "/support#contact" }} />
+	</div>
+</section>
+
+<style>
+	.close {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.close-heading {
+		font-size: var(--fs-title);
+		font-weight: 500;
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.close-line {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.close-cta {
+		margin-top: 8px;
+	}
+</style>

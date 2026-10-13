@@ -1,0 +1,39 @@
+---
+// The topics at the top of /support (§4.4 S3): one row per answer group, with
+// its answer count worked out from faqs.ts, so the number can never disagree
+// with the page. Hidden while a search is running.
+import Row from "../Row.astro";
+import RowList from "../RowList.astro";
+import { supportGroups } from "../../data/faqs";
+import { topics } from "../../data/supportTopics";
+
+const count = (group: string) => {
+	const found = supportGroups.find((g) => g.id === group);
+	if (!found) throw new Error(`TopicList: no answer group "${group}"`);
+	return found.items.filter((item) => !item.hidden).length;
+};
+
+// Billing ("on Pricing") and Contact ("—") carry their own meta.
+const meta = (topic: (typeof topics)[number]) => {
+	if (topic.meta) return topic.meta;
+	const n = topic.group ? count(topic.group) : 0;
+	return `${n} answer${n === 1 ? "" : "s"}`;
+};
+---
+
+<nav class="topics" aria-label="Topics" data-support-topics>
+	<RowList as="ul">
+		{topics.map((topic) => <Row as="li" title={topic.title} href={topic.href} meta={meta(topic)} description={topic.description} />)}
+	</RowList>
+</nav>
+
+<style>
+	/* Closer to the search than a full section gap: it's the same index. */
+	.topics {
+		margin-top: 40px;
+	}
+
+	.topics[hidden] {
+		display: none;
+	}
+</style>

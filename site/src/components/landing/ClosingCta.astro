@@ -1,0 +1,63 @@
+---
+// The last word before the colophon, in the portfolio's 404 rhythm: a
+// heading, one line, the call to action and (beside a web CTA) the iPhone beta link.
+import { secondaryIosCta } from "../../config";
+import Cta from "../Cta.astro";
+import MicroLine from "../MicroLine.astro";
+
+const ios = secondaryIosCta(); // null when the main CTA is already the iPhone beta
+---
+
+<section class="closing column-container" aria-labelledby="closing-title" data-reveal-on-scroll>
+	<h2 class="closing-title" id="closing-title">Start with a free address.</h2>
+	{/* src: FSW#the-screener (on by default); PS#2 */}
+	<p class="closing-line">
+		The Screener is on from the first email, and there’s no charge for a personal address today. Bring your own domain whenever you’re ready.
+	</p>
+	<div class="closing-cta"><Cta secondary={{ label: "Questions? Ask us →", href: "/support#contact" }} /></div>
+	{/* src: FC#8.5 (TestFlight, no store listing) */}
+	{
+		ios && (
+			<div class="closing-micro">
+				<MicroLine parts={[{ label: ios.label, href: ios.href, external: ios.external }]} />
+			</div>
+		)
+	}
+</section>
+
+<style>
+	.closing {
+		margin-top: 120px;
+	}
+
+	.closing-title {
+		font-size: var(--fs-display);
+		text-wrap: balance;
+		font-weight: 500;
+		line-height: 1.375rem;
+		letter-spacing: -0.015em;
+		color: var(--text-primary);
+	}
+
+	.closing-line {
+		margin-top: 12px;
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+		text-wrap: pretty;
+	}
+
+	.closing-cta {
+		margin-top: 20px;
+	}
+
+	.closing-micro {
+		margin-top: 12px;
+	}
+
+	@media (max-width: 640px) {
+		.closing {
+			margin-top: 80px;
+		}
+	}
+</style>

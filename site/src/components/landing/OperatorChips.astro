@@ -1,0 +1,65 @@
+---
+// The search operators as small mono chips (chapter 04). Each chip says what
+// it does in a tooltip on hover or focus, and in text for screen readers.
+// src: FSW#search; FC#4.7 (SearchQueryParser, YYYY-MM-DD)
+import { operatorExample, operators } from "../../data/tour";
+---
+
+<div class="ops-wrap">
+	<ul class="ops" aria-label="Search operators">
+		{
+			operators.map((o) => (
+				<li>
+					{/* One line: any whitespace inside the chip would show as padding. */}
+					<code tabindex="0" data-tip={o.meaning}>{o.op}<span class="sr-only"> — {o.meaning}</span></code>
+				</li>
+			))
+		}
+	</ul>
+	<p class="ops-example">{operatorExample.label} <code>{operatorExample.query}</code></p>
+</div>
+
+<script>
+	import "../../scripts/tip";
+</script>
+
+<style>
+	.ops {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		list-style: none;
+	}
+
+	/* Flex, so each item is the chip's height rather than the body's 24px line. */
+	.ops li {
+		display: flex;
+	}
+
+	.ops code {
+		display: inline-block;
+		height: 1.125rem;
+		padding: 0 6px;
+		border-radius: var(--radius-xs);
+		background: var(--bg-badge);
+		color: var(--text-primary);
+		font-family: var(--mono);
+		font-size: 0.6875rem;
+		line-height: 1.125rem;
+		white-space: nowrap;
+		cursor: default;
+	}
+
+	.ops code:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 2px;
+	}
+
+	.ops-example {
+		margin-top: 8px;
+		font-size: var(--fs-meta);
+		line-height: 1.125rem;
+		color: var(--text-muted);
+		overflow-wrap: anywhere;
+	}
+</style>

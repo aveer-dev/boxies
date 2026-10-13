@@ -1,0 +1,36 @@
+---
+// A run of Rows between two hairlines (the portfolio's product list). As a
+// list, the rows sit in a <ul> so the hairlines stay outside it.
+interface Props {
+	as?: "div" | "ul";
+}
+
+const { as = "div" } = Astro.props;
+---
+
+<div class="row-list">
+	<hr class="divider" />
+	{
+		as === "ul" ? (
+			<ul class="row-items" role="list">
+				<slot />
+			</ul>
+		) : (
+			<slot />
+		)
+	}
+	<hr class="divider" />
+</div>
+
+<style>
+	.row-list {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.row-items {
+		display: flex;
+		flex-direction: column;
+		list-style: none;
+	}
+</style>

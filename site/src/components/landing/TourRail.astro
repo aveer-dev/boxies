@@ -1,0 +1,99 @@
+---
+// The tour's stops, under the pinned phone: one small button per chapter,
+// the current one in ink with an accent underline (the portfolio's year tabs).
+// tour.ts marks the current stop and scrolls to a chapter when its button is
+// pressed.
+import type { TourChapter } from "../../data/types";
+
+interface Props {
+	chapters: TourChapter[];
+}
+
+const { chapters } = Astro.props;
+---
+
+<nav class="tour-rail" aria-label="Tour stops">
+	<ol class="rail-stops">
+		{
+			chapters.map((c, i) => (
+				<li>
+					<button type="button" data-goto={i} aria-controls={c.id}>{c.railLabel}</button>
+					{i < chapters.length - 1 && <span class="dot" aria-hidden="true">·</span>}
+				</li>
+			))
+		}
+	</ol>
+</nav>
+
+<style>
+	.tour-rail {
+		max-width: 100%;
+	}
+
+	.rail-stops {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 2px 0;
+		list-style: none;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+	}
+
+	.rail-stops li {
+		display: inline-flex;
+		align-items: baseline;
+	}
+
+	.rail-stops button {
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		color: var(--text-muted);
+		text-decoration: underline;
+		text-decoration-color: transparent;
+		text-underline-offset: 4px;
+		cursor: pointer;
+		/* The stage stops 128px above the bottom, but the page's scroll padding
+		   for the footer is 124px + 2.5rem. Without this, tabbing to a stop
+		   "reveals" a button that's already on screen by scrolling the page,
+		   and the tour jumps ahead a chapter. */
+		scroll-margin-bottom: calc(128px - 124px - 2.5rem);
+		transition:
+			color 150ms var(--ease-out),
+			text-decoration-color 150ms var(--ease-out);
+	}
+
+	.rail-stops button:hover {
+		color: var(--text-primary);
+	}
+
+	.rail-stops button[aria-current="step"] {
+		color: var(--text-primary);
+		text-decoration-color: var(--accent);
+	}
+
+	.dot {
+		margin: 0 6px;
+		color: var(--text-subtle);
+	}
+
+	@media (pointer: coarse) {
+		.rail-stops button {
+			position: relative;
+		}
+
+		.rail-stops button::after {
+			content: "";
+			position: absolute;
+			inset: -12px -6px;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.rail-stops button {
+			transition: none;
+		}
+	}
+</style>

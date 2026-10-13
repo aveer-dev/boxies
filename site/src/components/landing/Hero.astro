@@ -1,0 +1,109 @@
+---
+// The landing's opening: the app icon, the heading with its rotating pill, the
+// three waits in one paragraph, the call to action, and the real app playing in
+// a phone. The phone is the LCP, so it's left out of the load reveal.
+import { secondaryIosCta } from "../../config";
+import AppIcon from "../AppIcon.astro";
+import Cta from "../Cta.astro";
+import MicroLine from "../MicroLine.astro";
+import PhoneFrame from "../PhoneFrame.astro";
+import RotatingWord from "./RotatingWord.astro";
+
+// src: PS#2; FC#8.5 (TestFlight, no store listing)
+const ios = secondaryIosCta(); // null when the main CTA is already the iPhone beta
+const micro = [
+	"No charge for a personal address today",
+	"Or bring your own domain",
+	...(ios ? [{ label: ios.label, href: ios.href, external: ios.external }] : []),
+];
+---
+
+<div class="column-container hero" data-reveal-root>
+	<div class="hero-icon"><AppIcon size={40} /></div>
+	{/* src: FSW#the-screener; FSW#ai-email-agent (only drafts, never sends). No trailing period, so nothing after the pill can shift. */}
+	<h1 class="hero-title">Email that waits for your <RotatingWord /><span class="sr-only">yes</span></h1>
+	{/* src: FSW#the-screener; FSW#reply-later; FSW#ai-email-agent ("The agent only drafts and never sends") */}
+	{/* Explicit spaces: HTML compression drops the line breaks between the sentences. */}
+	<p class="hero-lede">
+		<span data-k="yes">New senders wait in the Screener.</span>{" "}
+		<span data-k="reply">Replies you owe wait in Reply Later.</span>{" "}
+		<span data-k="sign-off">The assistant’s drafts wait until you press send.</span>
+	</p>
+	{/* src: PS#2 (personal tier: no billing code path); BRIEF */}
+	<div class="hero-cta"><Cta secondary={{ label: "See how it works ↓", href: "#tour" }} /></div>
+	<div class="hero-micro"><MicroLine parts={micro} /></div>
+	<div class="hero-media" data-reveal-skip>
+		<PhoneFrame media={{ still: "inbox", clip: "inbox-open" }} priority group="hero" sizes="300px" />
+		{/* src: FC#6 (DEBUG preview fixture mailbox) */}
+		<p class="hero-caption">The real app, with a sample mailbox.</p>
+	</div>
+</div>
+
+<script>
+	import "./rotating-word";
+</script>
+
+<style>
+	.hero-icon {
+		margin-bottom: 20px;
+	}
+
+	.hero-title {
+		font-size: var(--fs-hero);
+		line-height: 1.15;
+		font-weight: 500;
+		letter-spacing: -0.025em;
+		color: var(--text-primary);
+		text-wrap: balance;
+	}
+
+	.hero-lede {
+		margin-top: 12px;
+		max-width: 34rem;
+		font-size: var(--fs-lede);
+		line-height: 1.375rem;
+		color: var(--text-muted);
+	}
+
+	.hero-lede [data-k] {
+		transition: color 240ms var(--ease-out);
+	}
+
+	.hero-lede [data-k].is-inked {
+		color: var(--text-primary);
+	}
+
+	.hero-cta {
+		margin-top: 24px;
+	}
+
+	.hero-micro {
+		margin-top: 14px;
+	}
+
+	.hero-media {
+		--phone-w: clamp(240px, 16vw + 70px, 300px);
+		margin-top: 48px;
+	}
+
+	.hero-caption {
+		margin-top: 14px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* The caption sits beside the phone, level with its top, so it's above the fold. */
+	@media (min-width: 641px) {
+		.hero-media {
+			display: grid;
+			grid-template-columns: var(--phone-w) 1fr;
+			gap: 24px;
+			align-items: start;
+		}
+
+		.hero-caption {
+			margin-top: 0;
+		}
+	}
+</style>

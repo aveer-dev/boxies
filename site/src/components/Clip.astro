@@ -1,0 +1,134 @@
+---
+// A screen recording over its poster. The <video> renders with no sources and
+// no autoplay: nothing downloads until scripts/clips.ts decides to play it
+// (in view, motion and data allowed, in the page's theme). A clip with no
+// dark encode never plays in the dark theme; its dark still shows instead.
+//
+// priority (the hero): one art-directed <picture>, eager and high priority,
+// so exactly one poster downloads for the visitor's theme. Otherwise: two
+// lazy twins, CSS showing the one that matches the theme.
+import { getImage, Picture } from "astro:assets";
+import { clips, getStill, stills, type ClipName } from "../data/media";
+
+interface Props {
+	clip: ClipName;
+	sizes: string;
+	priority?: boolean;
+	group: "hero" | "tour" | "inline";
+	autoplay?: "inview" | "manual";
+}
+
+const { clip, sizes, priority = false, group, autoplay = "inview" } = Astro.props;
+const c = clips[clip];
+
+// The hero's dark poster when the clip has no dark encode: its dark still at 640w.
+const darkStill640 =
+	priority && !c.dark ? (await getImage({ src: getStill(c.still, "dark"), width: 640, format: "webp" })).src : undefined;
+---
+
+{
+	priority ? (
+		<picture class="media-fill">
+			{c.dark ? (
+				<source data-theme-media="dark" media="(prefers-color-scheme: dark)" srcset={`/media/${clip}-dark.jpg`} />
+			) : (
+				<source data-theme-media="dark" media="(prefers-color-scheme: dark)" type="image/webp" srcset={darkStill640} />
+			)}
+			{/* The light poster is a <source> too, not the <img>'s src. Chrome's preload scanner
+			    picks up again after the script below and would fetch a bare <img src> on its own,
+			    so dark visitors downloaded both posters. The src is an inline 1×1 GIF (HTML wants
+			    one) that never shows: a <source> always matches, so the picture's choice is the
+			    only fetch. */}
+			<source srcset={`/media/${clip}.jpg`} />
+			{/* A stored theme overrides the system one. This runs before the <img> is parsed, so the right poster is the only one picked. */}
+			<script is:inline>
+				(function (d, p) {
+					try {
+						if (localStorage.getItem("theme") && window.__themeMedia) window.__themeMedia(d.dataset.theme, p);
+					} catch (e) {}
+				})(document.documentElement, document.currentScript.parentElement);
+			</script>
+			<img
+				src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+				alt={c.alt}
+				width="590"
+				height="1282"
+				loading="eager"
+				fetchpriority="high"
+				decoding="async"
+			/>
+		</picture>
+	) : (
+		<>
+			<div class="tw-light media-fill">
+				<img src={`/media/${clip}.jpg`} alt={c.alt} width="590" height="1282" loading="lazy" decoding="async" />
+			</div>
+			{c.dark ? (
+				<div class="tw-dark media-fill">
+					<img src={`/media/${clip}-dark.jpg`} alt={c.alt} width="590" height="1282" loading="lazy" decoding="async" />
+				</div>
+			) : (
+				<div class="tw-dark media-fill">
+					<Picture
+						src={getStill(c.still, "dark")}
+						alt={stills[c.still].alt}
+						formats={["avif", "webp"]}
+						fallbackFormat="webp"
+						width={960}
+						widths={[320, 640, 960]}
+						sizes={sizes}
+						loading="lazy"
+						decoding="async"
+					/>
+				</div>
+			)}
+		</>
+	)
+}
+<video
+	class="clip-video"
+	data-clip={clip}
+	data-light={`/media/${clip}`}
+	data-dark={c.dark ? `/media/${clip}-dark` : undefined}
+	data-group={group}
+	data-autoplay={autoplay}
+	muted
+	playsinline
+	loop
+	preload="none"
+	disablepictureinpicture
+	disableRemotePlayback
+	aria-hidden="true"
+	tabindex="-1"></video>
+
+<style>
+	.media-fill {
+		position: absolute;
+		inset: 0;
+	}
+
+	.media-fill img,
+	.media-fill :global(picture),
+	.media-fill :global(img) {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	/* Fades in over the poster once it's actually playing (clips.ts sets .is-playing on the layer). */
+	.clip-video {
+		position: absolute;
+		inset: 0;
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		opacity: 0;
+		transition: opacity 200ms var(--ease-out);
+	}
+
+	:global(.phone-layer.is-playing) .clip-video {
+		opacity: 1;
+	}
+</style>

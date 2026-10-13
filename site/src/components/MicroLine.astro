@@ -1,0 +1,50 @@
+---
+// One line of small facts joined by "·" (the portfolio's run legend). Each
+// separator rides with the part before it, so a wrapped line never starts
+// with one.
+type Part = string | { label: string; href: string; external?: boolean };
+
+interface Props {
+	parts: Part[];
+	tone?: "muted" | "subtle";
+	class?: string;
+}
+
+const { parts, tone = "muted", class: className } = Astro.props;
+---
+
+<p class:list={["micro", className]} data-tone={tone}>
+	{
+		parts.map((part, i) => (
+			<span>
+				{typeof part === "string" ? (
+					part
+				) : (
+					<a class="quiet-link" href={part.href}>
+						{part.label}{part.external && <>&#8288;<span class="arrow-out" aria-hidden="true">↗</span></>}
+					</a>
+				)}
+				{i < parts.length - 1 && <span class="dot" aria-hidden="true">·</span>}
+			</span>
+		))
+	}
+</p>
+
+<style>
+	.micro {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 6px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.micro[data-tone="subtle"] {
+		color: var(--text-subtle);
+	}
+
+	.dot {
+		margin-left: 6px;
+	}
+</style>

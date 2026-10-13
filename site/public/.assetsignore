@@ -1,0 +1,5 @@
+_worker.js
+_routes.json
+# Image originals the build emits but no page uses: every still ships as AVIF/WebP.
+# check-budget fails if a built page ever references one.
+_astro/*.png

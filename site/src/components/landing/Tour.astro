@@ -1,0 +1,131 @@
+---
+// The tour: six stops through the app. On a wide, tall enough window (and
+// with JS) the chapters scroll past a pinned phone that cross-dissolves to
+// each chapter's screen, with a rail of stops under it (tour.ts). Everywhere
+// else the chapters stack in the column, each with its own phone.
+// src: MEDIA (screens from the iPhone app, with a sample mailbox)
+import { flags } from "../../config";
+import { chapters } from "../../data/tour";
+import PhoneFrame from "../PhoneFrame.astro";
+import SectionHead from "../SectionHead.astro";
+import TourChapter from "./TourChapter.astro";
+import TourRail from "./TourRail.astro";
+---
+
+<section id="tour" class="section--air tour" aria-labelledby="tour-title">
+	<div class="column-container">
+		<SectionHead id="tour-title" title="A short tour" meta="Six stops" />
+	</div>
+	<div class="tour-grid column-container">
+		{/* Before the chapters in the DOM, so keyboard users meet the rail first. */}
+		<div class="tour-stage">
+			<PhoneFrame media={chapters.map((c) => c.media)} group="tour" autoplay="manual" layersHidden sizes="300px" />
+			<TourRail chapters={chapters} />
+		</div>
+		<div class="tour-chapters">
+			{chapters.map((chapter, index) => <TourChapter chapter={chapter} index={index} />)}
+		</div>
+	</div>
+	<div class="column-container">
+		{/* src: FSW#the-screener (web, iOS, Android); FSW#reply-later; FSW#ai-email-agent */}
+		<p class="tour-foot">
+			Screens from the iPhone app, with a sample mailbox.{flags.webAppPublic && " The web app has the same Screener, Reply Later and assistant."}
+		</p>
+	</div>
+</section>
+
+<script>
+	import "./tour";
+</script>
+
+<style>
+	.tour-stage {
+		display: none;
+	}
+
+	.tour-foot {
+		margin-top: 24px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	@media (min-width: 1024px) and (min-height: 680px) {
+		/* The text keeps the column's left edge; the phone takes the right gutter. */
+		:global(html.js) .tour-grid {
+			width: auto;
+			max-width: none;
+			margin: 0;
+			display: grid;
+			grid-template-columns: minmax(0, 560px) minmax(240px, 1fr);
+			column-gap: 48px;
+			padding-inline: calc((100% - 560px) / 2) 24px;
+		}
+
+		:global(html.js) .tour-chapters {
+			grid-column: 1;
+			grid-row: 1;
+		}
+
+		/* 128px clears the footer's strong blur. */
+		:global(html.js) .tour-stage {
+			grid-column: 2;
+			grid-row: 1;
+			align-self: start;
+			position: sticky;
+			top: calc(var(--header-h) + 24px);
+			height: calc(100svh - var(--header-h) - 24px - 128px);
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			justify-content: center;
+			gap: 16px;
+			container-type: inline-size;
+		}
+
+		/* The phone's height follows the window: ≈193px wide at 680px tall, 300px from ≈900px. */
+		:global(html.js) .tour-stage :global(.phone) {
+			--phone-w: min(300px, 100cqi, calc((100svh - 276px) * 0.4775));
+		}
+	}
+
+	/* The stage's screens: one shows, the rest wait out of sight. The incoming
+	   one rises (or drops) 10px in the scroll direction as it sharpens. */
+	.tour-stage :global(.phone-layer) {
+		opacity: 0;
+		filter: blur(6px);
+		transform: translateY(calc(var(--dir, 1) * 10px)) scale(0.985);
+		transition:
+			opacity 200ms var(--ease-in),
+			filter 200ms var(--ease-in);
+	}
+
+	.tour-stage :global(.phone-layer.is-active) {
+		z-index: 1;
+		opacity: 1;
+		filter: none;
+		transform: none;
+		transition:
+			opacity 440ms var(--ease-out),
+			filter 440ms var(--ease-out),
+			transform var(--spring-duration) var(--spring);
+	}
+
+	/* The outgoing screen fades where it is; it only moves aside once it's gone. */
+	.tour-stage :global(.phone-layer.is-leaving) {
+		transform: none;
+	}
+
+	.tour-stage[data-dir="up"] {
+		--dir: -1;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.tour-stage :global(.phone-layer),
+		.tour-stage :global(.phone-layer.is-active) {
+			transition: none;
+			filter: none;
+			transform: none;
+		}
+	}
+</style>

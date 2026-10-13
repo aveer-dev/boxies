@@ -1,0 +1,78 @@
+---
+// Label and value pairs on hairline rows (the run page's records). On very
+// narrow screens the value drops under its label.
+import type { RecordRow } from "../data/types";
+import { renderInline } from "../lib/inline";
+
+interface Props {
+	rows: RecordRow[];
+	mono?: boolean;
+}
+
+const { rows, mono = false } = Astro.props;
+---
+
+<ul class:list={["records", { "is-mono": mono }]}>
+	{
+		rows.map((r) => (
+			<li>
+				<span class="record-label">{r.label}</span>
+				<span class="record-value" set:html={renderInline(r.value)} />
+			</li>
+		))
+	}
+</ul>
+
+<style>
+	.records {
+		list-style: none;
+		border-top: 1px solid var(--border-subtle);
+		/* Lets a long value cap its width against the list, not the page. */
+		container-type: inline-size;
+	}
+
+	.records li {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		gap: 16px;
+		align-items: baseline;
+		padding: 9px 0;
+		border-bottom: 1px solid var(--border-subtle);
+		font-size: 0.75rem;
+		line-height: 1.125rem;
+	}
+
+	.record-label {
+		color: var(--text-muted);
+	}
+
+	/* A long value wraps (right-aligned) rather than squeezing its label to a word a line. */
+	.record-value {
+		max-width: 62cqi;
+		text-align: right;
+		font-size: 0.75rem;
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.is-mono .record-value {
+		font-family: var(--mono);
+	}
+
+	@media (max-width: 360px) {
+		.records li {
+			grid-template-columns: 1fr;
+			gap: 2px;
+		}
+
+		.record-label {
+			font-size: var(--fs-meta);
+			line-height: 1rem;
+		}
+
+		.record-value {
+			max-width: none;
+			text-align: left;
+		}
+	}
+</style>

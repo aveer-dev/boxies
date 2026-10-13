@@ -1,0 +1,191 @@
+---
+// Questions as Notion toggle blocks: native <details>, so they open with no
+// JS. A link to an answer's id opens and flashes it (scripts/hash-open.ts).
+// Answers are blocks of markdown-lite copy: paragraphs, lists, operator
+// tables and records.
+import type { Block, Faq as FaqItem } from "../data/types";
+import { renderInline } from "../lib/inline";
+import Records from "./Records.astro";
+import SectionHead from "./SectionHead.astro";
+
+interface Props {
+	id?: string;
+	title?: string;
+	meta?: string;
+	items: FaqItem[];
+	level?: 2 | 3;
+}
+
+const { id, title, meta, items, level = 2 } = Astro.props;
+const visible = items.filter((item) => !item.hidden);
+
+const records = (b: Extract<Block, { records: unknown }>, src: string) =>
+	b.records.map(([label, value]) => ({ label, value, src }));
+---
+
+{title && <SectionHead id={id} title={title} meta={meta} level={level} />}
+<div class="faq" data-faq-group={id}>
+	{
+		visible.map((item) => (
+			<details class="toggle" id={item.id} data-faq data-claim={item.claim}>
+				<summary>
+					<span class="toggle-caret" aria-hidden="true"></span>
+					<span class="toggle-q">{item.q}</span>
+				</summary>
+				<div class="toggle-body">
+					{item.a.map((b) =>
+						typeof b === "string" ? (
+							<p set:html={renderInline(b)} />
+						) : "list" in b ? (
+							<ul>
+								{b.list.map((li) => (
+									<li set:html={renderInline(li)} />
+								))}
+							</ul>
+						) : "table" in b ? (
+							<table class="op-table">
+								<tbody>
+									{b.table.map(([op, meaning]) => (
+										<tr>
+											<th scope="row"><code>{op}</code></th>
+											<td set:html={renderInline(meaning)} />
+										</tr>
+									))}
+								</tbody>
+							</table>
+						) : (
+							<Records rows={records(b, item.src)} mono />
+						),
+					)}
+				</div>
+			</details>
+		))
+	}
+</div>
+
+<style>
+	.toggle {
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	.faq > .toggle:last-child {
+		border-bottom: 1px solid var(--border-subtle);
+	}
+
+	.toggle > summary {
+		list-style: none;
+		display: flex;
+		gap: 8px;
+		padding: 14px 0 13px;
+		cursor: pointer;
+		font-size: var(--fs-title);
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.toggle > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	/* A fixed box one line tall, with the ▸ drawn in CSS: a text glyph's width and
+	   weight would depend on the font. The answer lines up with the question. */
+	.toggle-caret {
+		flex: none;
+		display: grid;
+		place-items: center;
+		width: 0.75rem;
+		height: 1.25rem;
+		color: var(--text-muted);
+		transition:
+			transform 150ms var(--ease-out),
+			color 150ms var(--ease-out);
+	}
+
+	.toggle-caret::before {
+		content: "";
+		border-left: 0.3125rem solid currentColor;
+		border-block: 0.21875rem solid transparent;
+	}
+
+	.toggle > summary:hover .toggle-caret {
+		color: var(--text-primary);
+	}
+
+	.toggle[open] .toggle-caret {
+		transform: rotate(90deg);
+	}
+
+	.toggle-body {
+		padding: 0 0 16px calc(0.75rem + 8px);
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+		overflow-wrap: anywhere;
+	}
+
+	.toggle-body > :global(* + *) {
+		margin-top: 8px;
+	}
+
+	.toggle-body ul {
+		padding-left: 1rem;
+	}
+
+	/* Search operators and what they do. */
+	.op-table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+
+	.op-table th,
+	.op-table td {
+		padding: 5px 12px 4px 0;
+		border-bottom: 1px solid var(--border-subtle);
+		text-align: left;
+		vertical-align: baseline;
+		font-weight: 400;
+	}
+
+	.op-table td {
+		font-size: 0.75rem;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	@media (pointer: coarse) {
+		.toggle > summary {
+			min-height: 44px;
+			align-items: center;
+		}
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		@supports (interpolate-size: allow-keywords) {
+			.toggle {
+				interpolate-size: allow-keywords;
+			}
+
+			.toggle::details-content {
+				block-size: 0;
+				overflow: clip;
+				transition:
+					block-size 300ms var(--ease-standard),
+					content-visibility 300ms allow-discrete;
+			}
+
+			.toggle[open]::details-content {
+				block-size: auto;
+			}
+		}
+
+		.toggle.is-flash > summary {
+			animation: toggle-flash 900ms var(--ease-out);
+		}
+	}
+
+	@keyframes toggle-flash {
+		from {
+			background: var(--bg-card);
+		}
+	}
+</style>

@@ -1,0 +1,29 @@
+---
+// "Coming next, in detail": a paragraph for each thing on its way, with its
+// status. Copy and sources in src/data/roadmap.ts (comingNext).
+//
+// Row ids carry a "next-" prefix: the database table above keeps the bare
+// #private-email for its own row, and one page can't have that id twice.
+// Everything here describes unbuilt work, hence data-claim="roadmap" (the
+// page wraps it too; this keeps the list honest wherever it's used). The
+// head sits inside the wrapper so the list follows it directly and its
+// hairline stands in for the list's top rule.
+import { comingNext } from "../../data/roadmap";
+import Row from "../Row.astro";
+import RowList from "../RowList.astro";
+import SectionHead from "../SectionHead.astro";
+import StatusPill from "../StatusPill.astro";
+---
+
+<div data-claim="roadmap">
+	<SectionHead id="next" title="Coming next, in detail" />
+	<RowList as="ul">
+		{
+			comingNext.map((item) => (
+				<Row as="li" id={`next-${item.id}`} title={item.title} description={item.body}>
+					<StatusPill slot="meta" status={item.status} />
+				</Row>
+			))
+		}
+	</RowList>
+</div>

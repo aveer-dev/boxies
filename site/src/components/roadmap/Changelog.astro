@@ -1,0 +1,75 @@
+---
+// What has shipped, newest first, in the portfolio's list rows (title left,
+// date right, one line under), with a small month row over each month.
+// Only what's on dev. This sits outside the roadmap's data-claim wrapper on
+// purpose, so check:claims holds every line here to the strict rules.
+// Entries and sources in src/data/changelog.ts.
+import { entries } from "../../data/changelog";
+import type { ChangeEntry } from "../../data/types";
+import { day, month } from "../../lib/format";
+import Row from "../Row.astro";
+import RowList from "../RowList.astro";
+import SectionHead from "../SectionHead.astro";
+
+// Newest first whatever order the data is in; the sort is stable, so entries
+// on the same day keep their data order.
+const sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
+
+// One block per calendar month. The month is written "October" and set in
+// capitals by CSS, so screen readers say the word rather than spell it.
+const months: { key: string; label: string; entries: ChangeEntry[] }[] = [];
+for (const entry of sorted) {
+	const key = entry.date.slice(0, 7);
+	const last = months.at(-1);
+	if (last && last.key === key) {
+		last.entries.push(entry);
+	} else {
+		const name = month(entry.date);
+		months.push({ key, label: name.charAt(0) + name.slice(1).toLowerCase(), entries: [entry] });
+	}
+}
+
+// "2026" today; a span once the log crosses a new year.
+const years = [...new Set(sorted.map((e) => e.date.slice(0, 4)))];
+const yearMeta = years.length > 1 ? `${years.at(-1)}–${years[0]}` : years[0];
+---
+
+<SectionHead id="changelog" title="Changelog" meta={yearMeta} />
+<RowList>
+	{
+		months.map((m) => (
+			<Fragment>
+				<h3 class="cl-month" data-reveal-on-scroll>
+					{m.label}
+				</h3>
+				{m.entries.map((entry) => (
+					<Row title={entry.title} description={entry.description}>
+						<time slot="meta" class="cl-date" datetime={entry.date}>
+							{day(entry.date)}
+						</time>
+					</Row>
+				))}
+			</Fragment>
+		))
+	}
+</RowList>
+
+<style>
+	/* Months and dates carry meaning, so muted ink (AA), not the subtle one. */
+	.cl-month {
+		padding: 20px 0 4px;
+		font-size: var(--fs-micro);
+		font-weight: 400;
+		line-height: 0.75rem;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+
+	.cl-date {
+		font-size: var(--fs-meta);
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+</style>

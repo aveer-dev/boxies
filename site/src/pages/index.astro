@@ -1,0 +1,54 @@
+---
+// The landing: the hero, the pinned tour, more screens, the rest of what
+// works today, how it compares with Gmail and HEY, plain facts, what's next,
+// how it's built, pricing in brief and the closing call to action. Tables and
+// lists take turns, so no two tables meet.
+import ScreenStrip from "../components/ScreenStrip.astro";
+import BuiltOn from "../components/landing/BuiltOn.astro";
+import ClosingCta from "../components/landing/ClosingCta.astro";
+import Hero from "../components/landing/Hero.astro";
+import MoreFeatures from "../components/landing/MoreFeatures.astro";
+import ParitySummary from "../components/landing/ParitySummary.astro";
+import PlainFacts from "../components/landing/PlainFacts.astro";
+import PricingBrief from "../components/landing/PricingBrief.astro";
+import TodayAndNext from "../components/landing/TodayAndNext.astro";
+import Tour from "../components/landing/Tour.astro";
+import { clipFiles, type StillName } from "../data/media";
+import Base from "../layouts/Base.astro";
+
+// The hero clip (Hero.astro plays "inbox-open"): Base preloads the poster for the visitor's theme.
+const heroPoster = { light: clipFiles("inbox-open", "light")!.poster, dark: clipFiles("inbox-open", "dark")!.poster };
+
+// src: FSW#the-screener; FSW#reply-later; FSW#ai-email-agent; PS#2
+const description =
+	"Calm email on Cloudflare. New senders wait in a Screener, replies you owe wait in Reply Later, and the assistant’s drafts wait until you press send. Start with an @inboxies.email address or your own domain.";
+
+// More screens, both themes: the ones the hero and the tour don't show.
+// src: MEDIA (stills, both themes); FC#4.2 (compose-stack menu); FC#4.1 (get started chooser; sign-in methods)
+const screens: { still: StillName; caption: [string, string] }[] = [
+	{ still: "detail", caption: ["Reading", "a thread with its agenda, and nothing else"] },
+	{ still: "compose", caption: ["Replying", "formatting and attachments from the bar"] },
+	{ still: "screener", caption: ["New sender", "approve where their mail goes, or screen them out"] },
+	{ still: "action-menu", caption: ["Getting around", "every folder, one tap from the button in the corner"] },
+	{ still: "get-started", caption: ["Getting started", "a personal address, or your own domain"] },
+	{ still: "sign-in-methods", caption: ["Sign-in methods", "change your password, or link another device"] },
+];
+---
+
+<Base title="Home" bare description={description} ogTitle="Inboxies · Email that waits for your yes." heroPoster={heroPoster}>
+	<Hero />
+	<Tour />
+	<ScreenStrip
+		id="screens"
+		title="More screens"
+		frames={screens}
+		note="Drag, scroll or use the arrow keys. Light · Dark changes only these screens."
+	/>
+	<MoreFeatures />
+	<ParitySummary />
+	<PlainFacts />
+	<TodayAndNext />
+	<BuiltOn />
+	<PricingBrief />
+	<ClosingCta />
+</Base>

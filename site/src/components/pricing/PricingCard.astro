@@ -1,0 +1,126 @@
+---
+// One plan as a quiet card: who it's for, the price, one button, then what's
+// in it. Only Personal carries the badge and the dark pill (the data decides).
+// Copy and sources live in src/data/pricing.ts.
+import type { Plan } from "../../data/types";
+import Button from "../Button.astro";
+
+interface Props {
+	plan: Plan;
+}
+
+const { plan } = Astro.props;
+---
+
+<article class="plan" data-reveal-on-scroll aria-labelledby={`plan-${plan.id}`}>
+	<header class="plan-head">
+		<h2 class="plan-name" id={`plan-${plan.id}`}>{plan.name}</h2>
+		{plan.badge && <span class="plan-badge">{plan.badge}</span>}
+	</header>
+	<p class="plan-audience">{plan.audience}</p>
+	<p class="plan-price"><span class="plan-amount">{plan.price}</span> <span class="plan-unit">{plan.unit}</span></p>
+	{/* No ↗: the same app button as the landing's (the header's Sign in carries it). */}
+	<Button href={plan.cta.href} variant={plan.cta.variant} class="plan-cta">{plan.cta.label}</Button>
+	<hr class="divider" />
+	{plan.leadIn && <p class="plan-lead">{plan.leadIn}</p>}
+	{/* role="list": Safari drops list semantics once the bullets are gone. */}
+	<ul class="plan-list" role="list">{plan.includes.map((i) => <li>{i}</li>)}</ul>
+	<p class="plan-foot">{plan.footnote}</p>
+</article>
+
+<style>
+	.plan {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding: 20px;
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+		box-shadow: inset 0 0 0 1px var(--border-card);
+	}
+
+	.plan-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+	}
+
+	.plan-name {
+		font-size: var(--fs-title);
+		line-height: 1.25rem;
+		font-weight: 400;
+		color: var(--text-primary);
+	}
+
+	.plan-badge {
+		padding: 0 6px;
+		border-radius: var(--radius-xs);
+		background: var(--accent-soft);
+		color: var(--accent);
+		font-size: var(--fs-meta);
+		line-height: 1.125rem;
+		white-space: nowrap;
+	}
+
+	.plan-audience,
+	.plan-unit,
+	.plan-lead,
+	.plan-foot {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* Amount and unit share a baseline; the unit wraps under on a narrow card. */
+	.plan-price {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 6px;
+	}
+
+	.plan-amount {
+		font-size: var(--fs-display);
+		line-height: 1.375rem;
+		font-weight: 500;
+		letter-spacing: -0.015em;
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* The button is Button.astro's element, so it sits outside this scope. */
+	.plan :global(.plan-cta) {
+		width: 100%;
+	}
+
+	.plan-list {
+		list-style: none;
+		display: grid;
+		gap: 4px;
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.plan-list li {
+		position: relative;
+		padding-left: 12px;
+	}
+
+	.plan-list li::before {
+		content: "";
+		position: absolute;
+		left: 0;
+		top: 0.5rem;
+		width: 4px;
+		height: 4px;
+		border-radius: 50%;
+		background: var(--text-subtle);
+	}
+
+	.plan-foot {
+		margin-top: auto;
+		padding-top: 6px;
+	}
+</style>

@@ -1,0 +1,35 @@
+---
+// One labelled input for the contact form: label, input, a help line and an
+// error line, both tied to the input with aria-describedby. Styled by
+// ContactForm, which owns every field's look.
+interface Props {
+	id: string;
+	name: string;
+	label: string;
+	type?: "text" | "email";
+	required?: boolean;
+	maxlength?: number;
+	autocomplete?: string;
+	help?: string;
+}
+
+const { id, name, label, type = "text", required = false, maxlength, autocomplete, help } = Astro.props;
+const helpId = `${id}-help`;
+const errId = `${id}-err`;
+---
+
+<div class="field">
+	<label for={id}>{label}</label>
+	<input
+		id={id}
+		name={name}
+		type={type}
+		required={required}
+		maxlength={maxlength}
+		autocomplete={autocomplete}
+		spellcheck={type === "email" ? "false" : undefined}
+		aria-describedby={help ? `${helpId} ${errId}` : errId}
+	/>
+	{help && <p class="help" id={helpId}>{help}</p>}
+	<p class="err" id={errId} hidden></p>
+</div>

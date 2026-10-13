@@ -1,0 +1,139 @@
+---
+// Tabs (the run page's year tabs): a row of small text tabs, in the section
+// head's meta when there's a title. Without JS the tabs never show and every
+// panel stacks under its own heading.
+import SectionHead from "./SectionHead.astro";
+
+interface Props {
+	id: string;
+	label: string;
+	tabs: { id: string; label: string }[];
+	title?: string;
+	titleId?: string;
+}
+
+const { id, label, tabs, title, titleId } = Astro.props;
+// One named slot per tab, rendered up front so the panels can be built in a loop.
+const panels = await Promise.all(tabs.map((t) => (Astro.slots.has(t.id) ? Astro.slots.render(t.id) : "")));
+---
+
+<div class="tabs">
+	{
+		title ? (
+			<SectionHead id={titleId} title={title}>
+				<div slot="meta" class="tablist js-only" role="tablist" aria-label={label} data-tabs>
+					{tabs.map((t, i) => (
+						<button
+							type="button"
+							role="tab"
+							id={`${id}-tab-${t.id}`}
+							aria-controls={`${id}-panel-${t.id}`}
+							aria-selected={i === 0 ? "true" : "false"}
+							tabindex={i === 0 ? 0 : -1}
+						>
+							{t.label}
+						</button>
+					))}
+				</div>
+			</SectionHead>
+		) : (
+			<div class="tablist js-only" role="tablist" aria-label={label} data-tabs>
+				{tabs.map((t, i) => (
+					<button
+						type="button"
+						role="tab"
+						id={`${id}-tab-${t.id}`}
+						aria-controls={`${id}-panel-${t.id}`}
+						aria-selected={i === 0 ? "true" : "false"}
+						tabindex={i === 0 ? 0 : -1}
+					>
+						{t.label}
+					</button>
+				))}
+			</div>
+		)
+	}
+	<slot name="intro" />
+	{
+		tabs.map((t, i) => (
+			<div
+				role="tabpanel"
+				id={`${id}-panel-${t.id}`}
+				aria-labelledby={`${id}-tab-${t.id}`}
+				tabindex="0"
+				data-tab-panel
+				data-cursor="plain"
+				data-initial={i === 0 ? undefined : "hidden"}
+			>
+				<h3 class="tab-fallback no-js-only">{t.label}</h3>
+				<Fragment set:html={panels[i]} />
+			</div>
+		))
+	}
+</div>
+
+<script>
+	import "../scripts/tabs";
+</script>
+
+<style>
+	.tablist {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0 10px;
+	}
+
+	.tablist button {
+		padding: 0;
+		border: none;
+		background: none;
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		/* Muted rather than the run page's subtle: a tab name is a label. */
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color 150ms var(--ease-out);
+	}
+
+	.tablist button:hover,
+	.tablist button[aria-selected="true"] {
+		color: var(--text-primary);
+	}
+
+	.tablist button[aria-selected="true"] {
+		text-decoration: underline;
+		text-underline-offset: 4px;
+	}
+
+	@media (pointer: coarse) {
+		.tablist button {
+			position: relative;
+		}
+
+		.tablist button::after {
+			content: "";
+			position: absolute;
+			inset: -12px -6px;
+		}
+	}
+
+	/* Before tabs.ts runs, only the first panel shows, so nothing flashes. */
+	:global(html.js) [data-tab-panel][data-initial="hidden"] {
+		display: none;
+	}
+
+	[data-tab-panel]:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 3px;
+		border-radius: 2px;
+	}
+
+	.tab-fallback {
+		margin: 24px 0 8px;
+		font-size: 0.75rem;
+		font-weight: 400;
+		line-height: 1rem;
+		color: var(--text-primary);
+	}
+</style>
