@@ -48,6 +48,16 @@
     "ai": {
         "binding": "AI",
     },
+    // Identity and permissions (Better Auth + workers/auth/schema.ts).
+    // Apply schema changes with `pnpm auth:migrate:local` / `pnpm auth:migrate:remote`.
+    "d1_databases": [
+        {
+            "binding": "AUTH_DB",
+            "database_name": "inboxies-auth",
+            "database_id": "eba8651c-9e75-4615-be6d-90d39fd9438a",
+            "migrations_dir": "migrations/auth",
+        },
+    ],
     // Per-IP throttle on 6-digit password reset code guesses.
     // namespace_id must be unique among rate limiters in the Cloudflare account.
     "ratelimits": [
