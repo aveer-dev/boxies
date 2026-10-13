@@ -149,6 +149,31 @@ export default function EmailPanel({
 		}
 		runMove(folderId, false);
 	};
+	const isOwnMessage =
+		Boolean(currentMailbox?.email) &&
+		email.sender?.toLowerCase() === currentMailbox?.email?.toLowerCase();
+	// Same rules as iOS/Android: received mail can be reported; anything in
+	// Spam can be rescued; your own messages, drafts and Sent are never judged.
+	const spamAction: "report" | "not-spam" | null = isOwnMessage
+		? null
+		: email.folder_id === Folders.SPAM
+			? "not-spam"
+			: isDraftFolder || email.folder_id === Folders.DRAFT || email.folder_id === Folders.SENT
+				? null
+				: "report";
+	const handleSpamAction = () => {
+		if (!mailboxId || !spamAction) return;
+		const folderId = spamAction === "report" ? Folders.SPAM : Folders.INBOX;
+		moveEmailMut.mutate(
+			{ mailboxId, id: email.id, folderId, setSenderPreference: true },
+			{
+				onSuccess: () => {
+					toastManager.add({ title: spamAction === "report" ? "Reported as spam" : "Moved to Inbox" });
+					closePanel();
+				},
+			},
+		);
+	};
 	const handleDelete = () => { if (mailboxId) { if (!window.confirm("Are you sure you want to delete this email?")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
 
 	const handleEditDraft = (draftMsg?: Email) => {
@@ -247,6 +272,8 @@ export default function EmailPanel({
 					}
 				}}
 				onMove={handleMove}
+				spamAction={spamAction}
+				onSpamAction={handleSpamAction}
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
 			/>

@@ -18,8 +18,10 @@ import {
 	FolderSimpleIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
+	ShieldCheckIcon,
 	StarIcon,
 	TrashIcon,
+	WarningIcon,
 	XIcon,
 } from "@phosphor-icons/react";
 import type { Folder, Email } from "~/types";
@@ -41,6 +43,9 @@ interface EmailPanelToolbarProps {
 	onToggleReplyLater: () => void;
 	onToggleRead: () => void;
 	onMove: (folderId: string) => void;
+	/** "report" outside Spam, "not-spam" inside it; null hides the button. */
+	spamAction?: "report" | "not-spam" | null;
+	onSpamAction?: () => void;
 	onViewSource: () => void;
 	onDelete: () => void;
 }
@@ -60,6 +65,8 @@ export default function EmailPanelToolbar({
 	onToggleReplyLater,
 	onToggleRead,
 	onMove,
+	spamAction,
+	onSpamAction,
 	onViewSource,
 	onDelete,
 }: EmailPanelToolbarProps) {
@@ -133,6 +140,19 @@ export default function EmailPanelToolbar({
 				onClick={onToggleRead}
 			/>
 			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
+
+			{spamAction && onSpamAction && (
+				<Tooltip content={spamAction === "report" ? "Report spam" : "Not spam"} side="bottom" asChild>
+					<Button
+						variant="ghost"
+						shape="square"
+						size="sm"
+						icon={spamAction === "report" ? <WarningIcon size={18} /> : <ShieldCheckIcon size={18} />}
+						onClick={onSpamAction}
+						aria-label={spamAction === "report" ? "Report spam" : "Not spam"}
+					/>
+				</Tooltip>
+			)}
 
 			<div className="ml-auto flex items-center gap-0.5">
 				<IconButton label="View source" icon={CodeIcon} size="md" onClick={onViewSource} />
