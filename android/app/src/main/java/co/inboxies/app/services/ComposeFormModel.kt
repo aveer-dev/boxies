@@ -1,5 +1,6 @@
 package co.inboxies.app.services
 
+import android.util.Log
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.Email
@@ -23,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 class ComposeSession(
     val form: ComposeFormModel,
@@ -352,8 +354,8 @@ class ComposeFormModel(
     /**
      * POST /drafts (mirrors iOS ComposeFormModel.performSaveDraft). Sends `draft_id`
      * once the server has assigned one so repeat saves update in place. Callers show
-     * the "Draft saved" toast only for explicit saves; returns false on failure with
-     * [errorMessage] set.
+     * the "Draft saved" toast only for explicit saves; returns false on failure. Never
+     * writes [errorMessage]: that inline slot is for send/validation errors.
      */
     suspend fun saveDraft(explicit: Boolean = true): Boolean {
         cancelAutoSave()
@@ -373,7 +375,6 @@ class ComposeFormModel(
 
         isSavingDraft = true
         saveStatus = DraftSaveStatus.Saving
-        errorMessage = null
         try {
             val payload = buildJsonObject {
                 put("body", outgoingHtml())
@@ -400,8 +401,10 @@ class ComposeFormModel(
                 onDraftSaved?.invoke(resolved, threadId, originalEmailId, subject, outgoingHtml(), toJoined())
             }
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            errorMessage = e.message ?: "Failed to save draft"
+            Log.w("ComposeFormModel", "saveDraft failed", e)
             return false
         } finally {
             isSavingDraft = false
