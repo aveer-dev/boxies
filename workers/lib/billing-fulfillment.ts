@@ -1,0 +1,615 @@
+// Copyright (c) 2026 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
+/**
+ * What happens after Stripe says a domain checkout was paid (or wasn't), and
+ * over the life of the subscription that pays for the domain.
+ *
+ * Fulfillment runs from webhooks, which Stripe retries until we answer 2xx.
+ * Every step either records its result on the checkout record or is safe to
+ * repeat, so a retry picks up where the last attempt stopped:
+ *
+ *   claim the domain → register it (once) → zone + DNS (looked up by name
+ *   first) → owner account (adopted on retry) → ownership row + metadata
+ *   → record ready → release the claim
+ *
+ * When the domain can never be ours (someone else registered it, or another
+ * buyer already holds it), the subscription is cancelled and the payment
+ * refunded instead of keeping the money.
+ */
+
+import { and, eq } from "drizzle-orm";
+import type { Env } from "../types";
+import { authDb, type AuthDb } from "../auth/authz";
+import {
+	initializeMailboxStorage,
+	isMailboxAddressTaken,
+	isUniqueViolation,
+	mailboxRowStatements,
+} from "../auth/mailboxes";
+import * as schema from "../auth/schema";
+import { findUserByEmail, findUserById } from "../auth/users";
+import { CloudflareApiError, ensureFullEmailDns, ensureZone } from "./cloudflare-client";
+import {
+	computeDomainPricing,
+	getOwnedRegistration,
+	registerDomain,
+	setDomainAutoRenew,
+	type DomainPricingBreakdown,
+} from "./cloudflare-registrar";
+import {
+	getDomainMetadata,
+	saveDomainMetadata,
+	type DomainBillingInfo,
+	type DomainMetadata,
+} from "./domain-registry";
+import {
+	claimForSession,
+	endProvisioningLease,
+	getReservation,
+	PROVISIONING_LEASE_MS,
+	releaseForSession,
+} from "./domain-reservations";
+import { canonicalMailboxId } from "./mailbox-routing";
+import {
+	canCallStripeFor,
+	cancelSubscription,
+	refundCheckoutPayment,
+	stripeId,
+	stripeRequest,
+	type StripeCheckoutSession,
+} from "./stripe";
+
+export type BillingSessionStatus =
+	| "pending"
+	| "awaiting_payment"
+	| "provisioning"
+	| "ready"
+	| "failed"
+	| "refunded"
+	| "canceled";
+
+export interface BillingSessionRecord {
+	sessionId: string;
+	domain: string;
+	status: BillingSessionStatus;
+	pricing: DomainPricingBreakdown;
+	username?: string;
+	displayName?: string;
+	mailboxId?: string;
+	/** The signed-in buyer at checkout, then the account fulfillment created. */
+	ownerUserId?: string;
+	client?: string;
+	createdAt: string;
+	updatedAt: string;
+	error?: string;
+	/** Set once checkout-return has handed out the owner session; never mint twice. */
+	tokenIssuedAt?: string;
+	/** Registrar result, kept so a webhook retry never pays for the domain twice. */
+	registration?: Awaited<ReturnType<typeof registerDomain>>;
+	/**
+	 * Hash of the password picked at checkout. Server-side only: never sent to
+	 * Stripe, and deleted once the account exists or the checkout ends.
+	 */
+	passwordHash?: string;
+	/** The owner's mailbox storage is seeded; a retry must not seed it again. */
+	mailboxInitializedAt?: string;
+	zoneId?: string;
+	/** Why this checkout can never be fulfilled; its payment is refunded. */
+	terminalError?: string;
+	refundIds?: string[];
+}
+
+export function billingSessionKey(sessionId: string): string {
+	return `billing/sessions/${sessionId}.json`;
+}
+
+export function billingEventKey(eventId: string): string {
+	return `billing/events/${eventId}.json`;
+}
+
+/** Stripe customer → the domain its subscription pays for (one customer per checkout). */
+export function billingCustomerKey(customerId: string): string {
+	return `billing/customers/${customerId}.json`;
+}
+
+export async function loadBillingSession(
+	bucket: R2Bucket,
+	sessionId: string,
+): Promise<BillingSessionRecord | null> {
+	if (!sessionId) return null;
+	const obj = await bucket.get(billingSessionKey(sessionId));
+	if (!obj) return null;
+	try {
+		return (await obj.json()) as BillingSessionRecord;
+	} catch {
+		return null;
+	}
+}
+
+export async function saveBillingSession(bucket: R2Bucket, record: BillingSessionRecord): Promise<void> {
+	record.updatedAt = new Date().toISOString();
+	await bucket.put(billingSessionKey(record.sessionId), JSON.stringify(record));
+}
+
+/** A webhook's answer. Anything but 2xx makes Stripe deliver the event again later. */
+export interface WebhookOutcome {
+	status: 200 | 400 | 409 | 502;
+	body: Record<string, unknown>;
+}
+
+/** Fulfillment can never succeed for this checkout; refund it. */
+class TerminalFulfillmentError extends Error {}
+
+const DOMAIN_TAKEN_MESSAGE = "This domain was registered by someone else before your payment completed.";
+const DOMAIN_HELD_MESSAGE = "Someone else is already buying this domain.";
+
+function checkoutDomain(session: StripeCheckoutSession): string {
+	return (session.metadata?.domain || "").toLowerCase().trim();
+}
+
+function recordFromSession(session: StripeCheckoutSession, domain: string): BillingSessionRecord {
+	const now = new Date().toISOString();
+	return {
+		sessionId: session.id,
+		domain,
+		status: "pending",
+		pricing: computeDomainPricing(parseFloat(session.metadata?.domainFeeUsd || "10.44")),
+		username: session.metadata?.username?.toLowerCase().trim() || undefined,
+		displayName: session.metadata?.displayName || session.metadata?.username,
+		ownerUserId: session.metadata?.ownerUserId,
+		client: session.metadata?.client,
+		createdAt: now,
+		updatedAt: now,
+	};
+}
+
+async function loadRecordFor(
+	env: Env,
+	session: StripeCheckoutSession,
+	domain: string,
+): Promise<BillingSessionRecord | WebhookOutcome> {
+	const record = await loadBillingSession(env.BUCKET, session.id);
+	if (record && record.domain !== domain) {
+		return { status: 400, body: { error: "Checkout session does not match its domain" } };
+	}
+	return record ?? recordFromSession(session, domain);
+}
+
+function isOutcome(value: unknown): value is WebhookOutcome {
+	return typeof value === "object" && value !== null && "body" in value && "status" in value;
+}
+
+/**
+ * A registrar answer that won't change on retry: the name is taken or can't be
+ * registered. Auth, billing and throttling problems on our side are retried.
+ */
+function isTerminalRegistrarError(e: unknown): boolean {
+	return (
+		e instanceof CloudflareApiError &&
+		e.status >= 400 &&
+		e.status < 500 &&
+		![401, 402, 403, 408, 429].includes(e.status)
+	);
+}
+
+/** Paid (card, or a delayed method that has now settled): buy and set up the domain. */
+export async function fulfillPaidCheckout(env: Env, session: StripeCheckoutSession): Promise<WebhookOutcome> {
+	const domain = checkoutDomain(session);
+	if (!domain) return { status: 400, body: { error: "No domain metadata in checkout session" } };
+
+	const loaded = await loadRecordFor(env, session, domain);
+	if (isOutcome(loaded)) return loaded;
+	const record = loaded;
+	if (record.status === "ready") {
+		return { status: 200, body: { received: true, domain, status: "already_provisioned" } };
+	}
+	if (record.status === "refunded") {
+		return { status: 200, body: { received: true, domain, status: "refunded" } };
+	}
+
+	const db = authDb(env.AUTH_DB);
+	if (record.terminalError) return refundAndFail(env, db, session, record, record.terminalError);
+
+	const existing = await getDomainMetadata(env.BUCKET, domain);
+	if (existing && existing.billing?.checkoutSessionId !== session.id) {
+		return refundAndFail(env, db, session, record, DOMAIN_TAKEN_MESSAGE);
+	}
+
+	const leaseEnd = new Date(Date.now() + PROVISIONING_LEASE_MS);
+	if (!(await claimForSession(db, domain, session.id, "provisioning", leaseEnd))) {
+		const holder = await getReservation(db, domain);
+		if (holder?.sessionId === session.id) {
+			return { status: 409, body: { error: "Provisioning is already in progress" } };
+		}
+		return refundAndFail(env, db, session, record, DOMAIN_HELD_MESSAGE);
+	}
+
+	try {
+		return await provision(env, db, session, record, domain, existing);
+	} catch (e) {
+		await endProvisioningLease(db, domain, session.id).catch(() => {});
+		if (e instanceof TerminalFulfillmentError) return refundAndFail(env, db, session, record, e.message);
+		const msg = e instanceof Error ? e.message : "Provisioning failed";
+		console.error(`[billing] provisioning ${domain} failed, Stripe will retry:`, msg);
+		return { status: 502, body: { error: `Provisioning failed: ${msg}` } };
+	}
+}
+
+async function provision(
+	env: Env,
+	db: AuthDb,
+	session: StripeCheckoutSession,
+	record: BillingSessionRecord,
+	domain: string,
+	existing: DomainMetadata | null,
+): Promise<WebhookOutcome> {
+	// 1. Register once. If an earlier attempt bought it without recording the
+	// result, the registrar already lists it under our account.
+	let registration = record.registration;
+	if (!registration) {
+		try {
+			registration = await registerDomain(env, domain);
+		} catch (e) {
+			const owned = await getOwnedRegistration(env, domain).catch(() => null);
+			if (owned) registration = owned;
+			else if (isTerminalRegistrarError(e)) throw new TerminalFulfillmentError(DOMAIN_TAKEN_MESSAGE);
+			else throw e;
+		}
+		record.registration = registration;
+		record.status = "provisioning";
+		await saveBillingSession(env.BUCKET, record);
+	}
+
+	// 2. Zone and DNS. The registrar may have made the zone; a retry finds ours.
+	const zone = await ensureZone(env, domain);
+	if (record.zoneId !== zone.id) {
+		record.zoneId = zone.id;
+		await saveBillingSession(env.BUCKET, record);
+	}
+	await ensureFullEmailDns(env, zone.id, domain);
+
+	// 3. The owner: the signed-in buyer, or the account this checkout creates.
+	const ownerUserId = await resolveOwner(env, db, record, domain);
+	if (record.mailboxId && record.ownerUserId && !record.mailboxInitializedAt) {
+		await initializeMailboxStorage(env, record.mailboxId, { name: record.displayName || record.username || "" });
+		record.mailboxInitializedAt = new Date().toISOString();
+		await saveBillingSession(env.BUCKET, record);
+	}
+
+	// 4. Ownership row (a retry finds it already there).
+	await db
+		.insert(schema.domain)
+		.values({ domain, ownerUserId, status: "active", verifiedAt: new Date() })
+		.onConflictDoUpdate({
+			target: schema.domain.domain,
+			set: { status: "active", ...(ownerUserId ? { ownerUserId } : {}) },
+		});
+
+	// 5. Domain metadata, carrying the subscription that pays for it.
+	const now = new Date().toISOString();
+	const totalAnnualUsd = parseFloat(session.metadata?.totalAnnualUsd || "20.00");
+	const customerId = stripeId(session.customer);
+	const subscriptionId = stripeId(session.subscription);
+	const billing: DomainBillingInfo = {
+		status: "active",
+		...existing?.billing,
+		provider: "stripe",
+		checkoutSessionId: session.id,
+		customerId,
+		subscriptionId,
+		lastPaidAt: existing?.billing?.lastPaidAt ?? now,
+		updatedAt: now,
+	};
+	const domainMetadata: DomainMetadata = {
+		...existing,
+		domain,
+		zoneId: zone.id,
+		ownerUserId: ownerUserId ?? "registrar_owner",
+		adminUserIds: ownerUserId ? [ownerUserId] : [],
+		status: "active",
+		nameservers: zone.name_servers,
+		emailRoutingEnabled: true,
+		registration: {
+			provider: "cloudflare_registrar",
+			registeredAt: registration.registeredAt,
+			expiresAt: registration.expiresAt,
+			autoRenew: registration.autoRenew,
+			whoisPrivacy: registration.whoisPrivacy,
+			locked: registration.locked,
+			retailPriceUsd: totalAnnualUsd,
+		},
+		billing,
+		createdAt: existing?.createdAt ?? now,
+		updatedAt: now,
+	};
+	await saveDomainMetadata(env.BUCKET, domainMetadata);
+	if (customerId) {
+		await env.BUCKET.put(
+			billingCustomerKey(customerId),
+			JSON.stringify({ customerId, domain, sessionId: session.id, subscriptionId }),
+		);
+	}
+
+	// 6. Done: the password hash has served its purpose.
+	record.status = "ready";
+	record.ownerUserId = ownerUserId ?? undefined;
+	record.passwordHash = undefined;
+	record.error = undefined;
+	await saveBillingSession(env.BUCKET, record);
+	await releaseForSession(db, domain, session.id);
+
+	return {
+		status: 200,
+		body: {
+			received: true,
+			domain,
+			status: "provisioned",
+			retailPriceUsd: totalAnnualUsd,
+			zoneId: zone.id,
+			pricing: {
+				domainFeeUsd: parseFloat(session.metadata?.domainFeeUsd || "10.44"),
+				platformFeeUsd: parseFloat(session.metadata?.platformFeeUsd || "9.56"),
+				totalAnnualUsd,
+			},
+		},
+	};
+}
+
+/**
+ * The account that owns the purchased domain. A retry adopts the account an
+ * earlier attempt created (same login, same password hash) instead of leaving
+ * the domain ownerless.
+ */
+async function resolveOwner(
+	env: Env,
+	db: AuthDb,
+	record: BillingSessionRecord,
+	domain: string,
+): Promise<string | null> {
+	if (record.ownerUserId && (await findUserById(db, record.ownerUserId))) return record.ownerUserId;
+
+	const { username, passwordHash } = record;
+	if (!username || !passwordHash) return null;
+	const canonical = canonicalMailboxId(`${username}@${domain}`);
+	if (!canonical) return null;
+
+	const adopt = async (): Promise<string | null> => {
+		const user = await findUserByEmail(db, canonical);
+		if (!user) return null;
+		const credential = await db
+			.select({ password: schema.account.password })
+			.from(schema.account)
+			.where(and(eq(schema.account.userId, user.id), eq(schema.account.providerId, "credential")))
+			.get();
+		return credential?.password === passwordHash ? user.id : null;
+	};
+
+	let ownerUserId = await adopt();
+	if (!ownerUserId && !(await findUserByEmail(db, canonical)) && !(await isMailboxAddressTaken(env, db, canonical))) {
+		const userId = crypto.randomUUID();
+		try {
+			await db.batch([
+				db.insert(schema.user).values({
+					id: userId,
+					email: canonical,
+					name: record.displayName || username,
+					emailVerified: true,
+				}),
+				// Hashed at checkout; never stored in plain text.
+				db.insert(schema.account).values({
+					id: `credential_${userId}`,
+					accountId: userId,
+					providerId: "credential",
+					userId,
+					password: passwordHash,
+				}),
+				...mailboxRowStatements(db, canonical, userId),
+			] as unknown as Parameters<typeof db.batch>[0]);
+			ownerUserId = userId;
+		} catch (e) {
+			if (!isUniqueViolation(e)) throw e;
+			ownerUserId = await adopt();
+		}
+	}
+	if (!ownerUserId) return null;
+
+	record.ownerUserId = ownerUserId;
+	record.mailboxId = canonical;
+	await saveBillingSession(env.BUCKET, record);
+	return ownerUserId;
+}
+
+/**
+ * Give the money back: cancel the subscription first (no renewal charge), then
+ * refund the payment. Both are safe to repeat, so a failure here answers 502
+ * and Stripe's retry finishes the job.
+ */
+async function refundAndFail(
+	env: Env,
+	db: AuthDb,
+	session: StripeCheckoutSession,
+	record: BillingSessionRecord,
+	reason: string,
+): Promise<WebhookOutcome> {
+	if (record.terminalError !== reason) {
+		record.terminalError = reason;
+		await saveBillingSession(env.BUCKET, record);
+	}
+
+	const canRefund = canCallStripeFor(env, session.id);
+	if (canRefund) {
+		try {
+			const subscriptionId = stripeId(session.subscription);
+			if (subscriptionId) await cancelSubscription(env, subscriptionId);
+			record.refundIds = await refundCheckoutPayment(env, session);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Stripe error";
+			console.error(`[billing] refund for ${session.id} failed, Stripe will retry:`, msg);
+			return { status: 502, body: { error: `Refund failed: ${msg}` } };
+		}
+	}
+
+	record.status = canRefund ? "refunded" : "failed";
+	record.error = reason;
+	record.passwordHash = undefined;
+	await saveBillingSession(env.BUCKET, record);
+	await releaseForSession(db, record.domain, session.id);
+	console.warn(`[billing] ${record.domain}: ${reason} (${record.status})`);
+	return { status: 200, body: { received: true, domain: record.domain, status: record.status, error: reason } };
+}
+
+/** Completed with a delayed payment method: keep the domain held until the money lands. */
+export async function markAwaitingPayment(env: Env, session: StripeCheckoutSession): Promise<WebhookOutcome> {
+	const domain = checkoutDomain(session);
+	if (!domain) return { status: 400, body: { error: "No domain metadata in checkout session" } };
+	const loaded = await loadRecordFor(env, session, domain);
+	if (isOutcome(loaded)) return loaded;
+	const record = loaded;
+	if (record.status !== "pending" && record.status !== "awaiting_payment") {
+		return { status: 200, body: { received: true, domain, status: record.status } };
+	}
+
+	// If another buyer took the domain meanwhile, a later success is refunded.
+	await claimForSession(authDb(env.AUTH_DB), domain, session.id, "awaiting_payment", null);
+	record.status = "awaiting_payment";
+	await saveBillingSession(env.BUCKET, record);
+	return { status: 200, body: { received: true, domain, status: "awaiting_payment" } };
+}
+
+/** The delayed payment failed, or the checkout expired unpaid: let the domain go. */
+export async function endUnpaidCheckout(
+	env: Env,
+	session: StripeCheckoutSession,
+	outcome: "failed" | "canceled",
+): Promise<WebhookOutcome> {
+	const domain = checkoutDomain(session);
+	if (!domain) return { status: 200, body: { received: true, ignored: true } };
+	const record = await loadBillingSession(env.BUCKET, session.id);
+	if (record && record.domain !== domain) {
+		return { status: 400, body: { error: "Checkout session does not match its domain" } };
+	}
+	if (record && (record.status === "pending" || record.status === "awaiting_payment")) {
+		record.status = outcome;
+		record.error = outcome === "failed" ? "Your payment didn't go through." : "The checkout expired before payment.";
+		record.passwordHash = undefined;
+		await saveBillingSession(env.BUCKET, record);
+	}
+	await releaseForSession(authDb(env.AUTH_DB), domain, session.id);
+	return { status: 200, body: { received: true, domain, status: outcome } };
+}
+
+// ── Subscription lifecycle ───────────────────────────────────────
+
+/** A Stripe event as delivered to the webhook. */
+export interface StripeEvent {
+	id?: string;
+	type?: string;
+	created?: number;
+	data?: { object?: Record<string, any> };
+}
+
+export const LIFECYCLE_EVENT_TYPES = new Set([
+	"invoice.paid",
+	"invoice.payment_succeeded",
+	"invoice.payment_failed",
+	"customer.subscription.updated",
+	"customer.subscription.deleted",
+	"charge.refunded",
+	"charge.dispute.created",
+	"charge.dispute.closed",
+]);
+
+async function domainForCustomer(env: Env, customerId: string | undefined): Promise<string | null> {
+	if (!customerId) return null;
+	const obj = await env.BUCKET.get(billingCustomerKey(customerId));
+	if (!obj) return null;
+	try {
+		return ((await obj.json()) as { domain?: string }).domain ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/** Disputes name the charge, not the customer. */
+async function customerForCharge(env: Env, chargeId: string | undefined): Promise<string | undefined> {
+	if (!chargeId || !env.STRIPE_SECRET_KEY) return undefined;
+	const charge = await stripeRequest<{ customer?: string | { id: string } | null }>(
+		env,
+		"GET",
+		`/charges/${encodeURIComponent(chargeId)}`,
+	);
+	return stripeId(charge.customer);
+}
+
+/**
+ * Keep the domain's billing state in step with its subscription. When the
+ * subscription ends, registrar auto-renew goes off so the operator isn't
+ * billed to renew a domain nobody pays for. Mail keeps working until the
+ * registration expires.
+ */
+export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise<WebhookOutcome> {
+	const type = event.type ?? "";
+	const obj = event.data?.object ?? {};
+	const eventAt = typeof event.created === "number" ? event.created : Math.floor(Date.now() / 1000);
+
+	// The first invoice belongs to the checkout, which has its own events.
+	if (type.startsWith("invoice.") && obj.billing_reason === "subscription_create") {
+		return { status: 200, body: { received: true, ignored: true } };
+	}
+
+	const customerId = type.startsWith("charge.dispute.")
+		? await customerForCharge(env, stripeId(obj.charge))
+		: stripeId(obj.customer);
+	const domain = await domainForCustomer(env, customerId);
+	const meta = domain ? await getDomainMetadata(env.BUCKET, domain) : null;
+	if (!domain || !meta?.billing) return { status: 200, body: { received: true, ignored: true } };
+
+	const now = new Date().toISOString();
+	const billing: DomainBillingInfo = { ...meta.billing };
+	const setStatus = (status: string, force = false) => {
+		if (!force && billing.statusEventAt && eventAt < billing.statusEventAt) return;
+		billing.status = status;
+		billing.statusEventAt = eventAt;
+	};
+
+	switch (type) {
+		case "invoice.paid":
+		case "invoice.payment_succeeded":
+			billing.lastPaidAt = now;
+			billing.pastDueSince = undefined;
+			setStatus("active");
+			break;
+		case "invoice.payment_failed":
+			billing.pastDueSince ??= now;
+			setStatus("past_due");
+			break;
+		case "customer.subscription.updated":
+			if (typeof obj.status === "string") setStatus(obj.status);
+			billing.cancelAtPeriodEnd = Boolean(obj.cancel_at_period_end);
+			break;
+		case "customer.subscription.deleted":
+			setStatus("canceled", true);
+			billing.canceledAt ??= now;
+			if (meta.registration?.provider === "cloudflare_registrar" && meta.registration.autoRenew !== false) {
+				await setDomainAutoRenew(env, domain, false);
+				meta.registration = { ...meta.registration, autoRenew: false };
+			}
+			break;
+		case "charge.refunded":
+			billing.refundedAt = now;
+			if (typeof obj.amount_refunded === "number") billing.amountRefunded = obj.amount_refunded;
+			break;
+		case "charge.dispute.created":
+		case "charge.dispute.closed":
+			billing.disputedAt ??= now;
+			if (typeof obj.status === "string") billing.disputeStatus = obj.status;
+			console.warn(`[billing] dispute on ${domain}: ${obj.status ?? type}`);
+			break;
+	}
+
+	billing.updatedAt = now;
+	await saveDomainMetadata(env.BUCKET, { ...meta, billing, updatedAt: now });
+	return { status: 200, body: { received: true, domain, type, billingStatus: billing.status } };
+}

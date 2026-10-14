@@ -31,6 +31,28 @@ export interface DomainRegistrationInfo {
 	retailPriceUsd?: number;
 }
 
+/** The Stripe subscription that pays for a purchased domain. */
+export interface DomainBillingInfo {
+	provider: "stripe";
+	checkoutSessionId: string;
+	customerId?: string;
+	subscriptionId?: string;
+	/** Stripe subscription status ("active", "past_due", "unpaid", "canceled", ...). */
+	status: string;
+	/** `created` (unix seconds) of the event that last set `status`; older events don't override it. */
+	statusEventAt?: number;
+	cancelAtPeriodEnd?: boolean;
+	lastPaidAt?: string;
+	pastDueSince?: string;
+	canceledAt?: string;
+	refundedAt?: string;
+	/** Amount refunded so far, in cents. */
+	amountRefunded?: number;
+	disputedAt?: string;
+	disputeStatus?: string;
+	updatedAt: string;
+}
+
 export interface DomainAlias {
 	aliasLocal: string;
 	aliasEmail: string;
@@ -47,6 +69,7 @@ export interface DomainMetadata {
 	nameservers: string[];
 	emailRoutingEnabled: boolean;
 	registration?: DomainRegistrationInfo;
+	billing?: DomainBillingInfo;
 	aliases?: DomainAlias[];
 	createdAt: string;
 	updatedAt: string;

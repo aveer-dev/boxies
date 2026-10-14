@@ -141,11 +141,15 @@ export interface DomainCheckoutResponse {
 }
 
 export interface CheckoutStatusResponse {
-	status: "pending" | "provisioning" | "ready" | "failed";
+	/**
+	 * `awaiting_payment`: a bank payment is still clearing (can take days).
+	 * `refunded`: the domain couldn't be bought, so the payment was returned.
+	 * `canceled`: the checkout was abandoned or expired.
+	 */
+	status: "pending" | "awaiting_payment" | "provisioning" | "ready" | "failed" | "refunded" | "canceled";
 	domain: string;
 	pricing?: DomainPricingBreakdown;
 	mailboxId?: string;
-	ownerUserId?: string;
 	error?: string;
 }
 

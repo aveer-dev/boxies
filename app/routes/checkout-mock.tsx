@@ -5,7 +5,7 @@
 import { Button, Loader } from "@cloudflare/kumo";
 import { CreditCardIcon, GlobeIcon, ShieldCheckIcon, SparkleIcon } from "@phosphor-icons/react";
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 
 export function meta() {
 	return [{ title: "Mock Stripe Checkout — Inboxies" }];
@@ -34,10 +34,10 @@ export default function CheckoutMockRoute() {
 
 function CheckoutMockSimulator() {
 	const [searchParams] = useSearchParams();
-	const navigate = useNavigate();
 	const domain = searchParams.get("domain") || "example.com";
 	const sessionId = searchParams.get("session_id") || `mock_cs_${Date.now()}`;
 	const client = searchParams.get("client") || "";
+	const hold = searchParams.get("hold") || "";
 	const [completing, setCompleting] = useState(false);
 
 	const domainFee = 10.44;
@@ -156,7 +156,10 @@ function CheckoutMockSimulator() {
 					<Button
 						variant="secondary"
 						className="w-full justify-center"
-						onClick={() => navigate(`/checkout/cancel?domain=${encodeURIComponent(domain)}`)}
+						onClick={() => {
+							// Same cancel URL Stripe sends the buyer to: it gives the domain hold back.
+							window.location.href = `/api/v1/billing/checkout-cancel?domain=${encodeURIComponent(domain)}&hold=${encodeURIComponent(hold)}${client ? `&client=${encodeURIComponent(client)}` : ""}`;
+						}}
 						disabled={completing}
 					>
 						Cancel
