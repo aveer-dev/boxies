@@ -23,6 +23,7 @@ import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "
 import type { Env } from "../types";
 import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "../auth/authz";
 import type { RequestPrincipal } from "../auth/principal";
+import { serviceEndedErrorForMailbox } from "../lib/domain-service";
 
 /** Wrap a plain result object into MCP content format. */
 function mcpText(result: unknown) {
@@ -88,6 +89,9 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 				}
 				return { denied: mcpError(`Not allowed to access mailbox "${mailboxId}".`) };
 			}
+			// AI access is part of the service, which ends with the domain's subscription.
+			const ended = await serviceEndedErrorForMailbox(env, authz.mailboxId);
+			if (ended) return { denied: mcpError(ended.error) };
 			return { mailboxId: authz.mailboxId };
 		};
 

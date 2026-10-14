@@ -52,6 +52,8 @@ import {
 	isDomainVerified,
 	verificationRequiredBody,
 } from "../lib/domain-verification";
+import { isDomainSuspended, serviceEndedError } from "../lib/domain-service";
+import { anyRecoveryEmail } from "../auth/users";
 
 /** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
 function canSkipDomainVerification(env: Env): boolean {
@@ -97,7 +99,24 @@ export async function authorizeDomainAdmin(
 	return { principal, domainMeta };
 }
 
+/**
+ * Domain changes an owner may still make after the subscription ended: get
+ * their mail out, or take the domain elsewhere.
+ */
+const ALLOWED_WHEN_ENDED = /^\/(export|decommission-preflight|decommission|transfer-lock)$/;
+
 export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
+	// A domain whose subscription ended is frozen: no DNS, alias or user changes.
+	app.use("/api/v1/admin/domains/:domain/*", async (c, next) => {
+		const method = c.req.method.toUpperCase();
+		if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+		const domain = c.req.param("domain").trim().toLowerCase();
+		const rest = c.req.path.slice(c.req.path.indexOf("/", "/api/v1/admin/domains/".length));
+		if (ALLOWED_WHEN_ENDED.test(rest)) return next();
+		if (await isDomainSuspended(c.env, domain)) return c.json(serviceEndedError(domain), 403);
+		return next();
+	});
+
 	/**
 	 * List all domains administered by the current user.
 	 */
@@ -117,6 +136,13 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 	app.post("/api/v1/admin/domains", async (c) => {
 		const principal = c.get("principal");
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		// Domain owners need a recovery email outside Inboxies for domain and billing notices.
+		if (!(await anyRecoveryEmail(authDb(c.env.AUTH_DB), principal.userId))) {
+			return c.json(
+				{ error: "Add a recovery email in Settings before connecting a domain", code: "recovery_email_required" },
+				400,
+			);
+		}
 
 		const parsed = z
 			.object({

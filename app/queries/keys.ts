@@ -33,6 +33,7 @@ export const queryKeys = {
 		list: (mailboxId: string, q: string) =>
 			["recipients", mailboxId, q] as const,
 	},
+	domainService: (domain: string) => ["domain-service", domain] as const,
 	config: ["config"] as const,
 	account: {
 		me: ["me"] as const,

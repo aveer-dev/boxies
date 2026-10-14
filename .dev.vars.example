@@ -32,5 +32,9 @@ APPLE_CLIENT_ID=com.example.AgenticInbox
 # --- Stripe Billing & Checkout (Optional in dev; required in prod for live $14/yr domain purchases) ---
 # STRIPE_SECRET_KEY: Secret key (sk_test_... or sk_live_...) for domain checkout sessions.
 # STRIPE_SECRET_KEY=sk_test_...
-# STRIPE_WEBHOOK_SECRET: Webhook secret (whsec_...) for verifying checkout.session.completed webhooks.
+# STRIPE_WEBHOOK_SECRET: Webhook secret (whsec_...) for the /api/v1/billing/stripe-webhook endpoint.
+#   Subscribe the endpoint to: checkout.session.completed, checkout.session.async_payment_succeeded,
+#   checkout.session.async_payment_failed, checkout.session.expired, invoice.paid,
+#   invoice.payment_failed, customer.subscription.updated, customer.subscription.deleted,
+#   charge.refunded, charge.dispute.created, charge.dispute.closed.
 # STRIPE_WEBHOOK_SECRET=whsec_...

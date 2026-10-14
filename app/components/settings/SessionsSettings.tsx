@@ -119,7 +119,7 @@ export default function SessionsSettings() {
 				</p>
 			) : (
 				<div className="space-y-6">
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 						<ul className="divide-y divide-kumo-line">
 							{ordered.map((session) => (
 								<SessionRow

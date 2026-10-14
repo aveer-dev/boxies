@@ -149,7 +149,8 @@ fun EmailDetailView(
             ?: thread.lastOrNull { !it.isDraft }
             ?: current
     }
-    val availability = EmailActionAvailability(source)
+    val readOnly by app.selectedMailboxReadOnly.collectAsState()
+    val availability = EmailActionAvailability(source, readOnly)
     val selfAddress = app.selectedMailbox?.email
 
     var expandedMessageIds by remember { mutableStateOf(setOf<String>()) }
@@ -324,11 +325,12 @@ fun EmailDetailView(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(HomeChromeMetrics.chromeSpacing),
             ) {
-                HomeChromeToolbarCluster(
+                // Read-only mailbox: no delete / archive / reply, so no cluster at all.
+                if (availability.showsDelete || availability.showsArchive || availability.showsReplyActions) HomeChromeToolbarCluster(
                     contentPadding = PaddingValues(horizontal = HomeChromeMetrics.toolbarClusterInnerPadding),
                     itemSpacing = HomeChromeMetrics.toolbarClusterItemSpacing,
                 ) {
-                    Box {
+                    if (availability.showsDelete) Box {
                         HomeChromeToolbarClusterItem(
                             icon = Icons.Outlined.Delete,
                             contentDescription = "Delete",
@@ -383,7 +385,7 @@ fun EmailDetailView(
                 .padding(padding)
                 .verticalScroll(rememberScrollState()),
         ) {
-            if (isScreenerEmail) {
+            if (isScreenerEmail && !readOnly) {
                 ScreenerTriageBar(
                     email = current,
                     onDone = onClose,
@@ -410,6 +412,7 @@ fun EmailDetailView(
                             message = message,
                             onOpen = { scope.launch { app.openDraft(message) } },
                             onDelete = { scope.launch { app.deleteThreadDraft(message) } },
+                            readOnly = readOnly,
                         )
                     } else {
                         val isExpanded = expandedMessageIds.contains(message.id)
@@ -785,6 +788,8 @@ private fun DraftMessageRow(
     message: Email,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    /** Read-only mailbox: the draft can be read here but not edited or discarded. */
+    readOnly: Boolean = false,
 ) {
     val colors = inboxiesColors()
     var showConfirm by remember { mutableStateOf(false) }
@@ -800,7 +805,7 @@ private fun DraftMessageRow(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .clickable(onClick = onOpen),
+                .clickable(enabled = !readOnly, onClick = onOpen),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Row(
@@ -834,8 +839,10 @@ private fun DraftMessageRow(
                 )
             }
         }
-        IconButton(onClick = { showConfirm = true }) {
-            Icon(Icons.Outlined.Delete, contentDescription = "Delete draft", tint = colors.muted)
+        if (!readOnly) {
+            IconButton(onClick = { showConfirm = true }) {
+                Icon(Icons.Outlined.Delete, contentDescription = "Delete draft", tint = colors.muted)
+            }
         }
     }
 
@@ -1155,7 +1162,8 @@ private fun MessageContextMenu(
     onDelete: () -> Unit,
 ) {
     val colors = inboxiesColors()
-    val availability = EmailActionAvailability(message)
+    val readOnly by LocalAppModel.current.selectedMailboxReadOnly.collectAsState()
+    val availability = EmailActionAvailability(message, readOnly)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(message.fromAddress.resolvedName, maxLines = 1, overflow = TextOverflow.Ellipsis) },

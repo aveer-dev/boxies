@@ -9,6 +9,15 @@ enum APIError: LocalizedError {
     case transport(Error)
     /// The bearer token was rejected as invalid or expired; the app signs out globally.
     case sessionExpired
+    /// 403 `code: "service_ended"`: the domain's subscription ended and its mailboxes are
+    /// read-only. Access is intact; never treat this as losing the mailbox or the session.
+    case serviceEnded(domain: String?, message: String)
+
+    /// True for a write refused because the domain's service ended.
+    var isServiceEnded: Bool {
+        if case .serviceEnded = self { return true }
+        return false
+    }
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +33,9 @@ enum APIError: LocalizedError {
             return "Cloudflare Access is blocking the API. Add a Bypass policy for <your-api-host>/api/* (and /agents/* for chat) in Zero Trust, or the Worker never sees Sign in with Apple."
         case .transport(let err): return err.localizedDescription
         case .sessionExpired: return "Your session has expired. Please sign in again."
+        case .serviceEnded(let domain, let message):
+            if !message.isEmpty { return message }
+            return "The subscription for \(domain ?? "this domain") has ended. Mail on it is read-only until it's renewed."
         }
     }
 }
@@ -165,6 +177,12 @@ final class APIClient: @unchecked Sendable {
             }
             guard (200..<300).contains(http.statusCode) else {
                 let message = httpErrorMessage(from: data)
+                if let ended = Self.serviceEndedError(statusCode: http.statusCode, data: data) {
+                    if case .serviceEnded(let domain, let endedMessage) = ended {
+                        Self.postServiceEnded(domain: domain, message: endedMessage)
+                    }
+                    throw ended
+                }
                 if let sentToken, bearerToken == nil,
                    Self.isExpiredSessionResponse(statusCode: http.statusCode, message: message) {
                     Self.postSessionExpired(token: sentToken)
@@ -186,6 +204,25 @@ final class APIClient: @unchecked Sendable {
     static func isExpiredSessionResponse(statusCode: Int, message: String) -> Bool {
         guard statusCode == 401 || statusCode == 403 else { return false }
         return message.localizedCaseInsensitiveContains("invalid or expired mobile session token")
+    }
+
+    /// A write blocked because the domain's subscription ended: 403 with
+    /// `{ error, code: "service_ended", domain }`. Other 403s keep their meaning.
+    static func serviceEndedError(statusCode: Int, data: Data) -> APIError? {
+        guard statusCode == 403,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (obj["code"] as? String) == "service_ended" else { return nil }
+        let domain = (obj["domain"] as? String).flatMap { $0.isEmpty ? nil : $0.lowercased() }
+        return .serviceEnded(domain: domain, message: (obj["error"] as? String) ?? "")
+    }
+
+    /// AppModel marks the domain read-only once, whichever request found out first.
+    private static func postServiceEnded(domain: String?, message: String) {
+        DispatchQueue.main.async {
+            var info: [String: String] = ["message": message]
+            if let domain { info["domain"] = domain }
+            NotificationCenter.default.post(name: .inboxiesServiceEnded, object: nil, userInfo: info)
+        }
     }
 
     private static func postSessionExpired(token: String) {
@@ -1028,6 +1065,7 @@ final class APIClient: @unchecked Sendable {
         username: String? = nil,
         password: String? = nil,
         displayName: String? = nil,
+        backupEmail: String? = nil,
         returnUrl: String? = nil,
         client: String? = "ios"
     ) async throws -> DomainCheckoutResponse {
@@ -1035,12 +1073,29 @@ final class APIClient: @unchecked Sendable {
         if let username { body["username"] = username }
         if let password { body["password"] = password }
         if let displayName { body["displayName"] = displayName }
+        // Domain owners need a recovery email for billing and renewal notices.
+        if let backupEmail, !backupEmail.isEmpty { body["backupEmail"] = backupEmail }
         if let returnUrl { body["returnUrl"] = returnUrl }
         if let client { body["client"] = client }
         return try await request(
             path: "/api/v1/billing/create-domain-checkout",
             method: "POST",
             body: body
+        )
+    }
+
+    /// Where a paid domain's subscription stands. Domain admins, or anyone with a
+    /// mailbox on the domain; 403 for anyone else.
+    func getDomainService(domain: String) async throws -> DomainService {
+        try await request(path: "/api/v1/billing/domains/\(domain.urlPathEncoded)/service")
+    }
+
+    /// Domain admins only: keeps an ending subscription, or opens a renewal Checkout.
+    func renewDomain(domain: String) async throws -> DomainRenewResponse {
+        try await request(
+            path: "/api/v1/billing/domains/\(domain.urlPathEncoded)/renew",
+            method: "POST",
+            body: ["client": "ios"]
         )
     }
 
@@ -1223,6 +1278,9 @@ extension Notification.Name {
     /// Posted on the main queue when the Worker rejects the current bearer token.
     /// `userInfo["token"]` is the rejected token, so a stale request cannot sign out a newer session.
     static let inboxiesSessionExpired = Notification.Name("inboxiesSessionExpired")
+    /// Posted on the main queue when a write is refused because a domain's subscription
+    /// ended. `userInfo["domain"]` (when sent) and `userInfo["message"]` are strings.
+    static let inboxiesServiceEnded = Notification.Name("inboxiesServiceEnded")
 }
 
 struct WorkflowPile: Decodable {

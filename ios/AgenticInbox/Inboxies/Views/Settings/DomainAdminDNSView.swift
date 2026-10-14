@@ -26,6 +26,11 @@ struct DomainAdminDNSView: View {
     @State private var showExportSheet = false
     @State private var showOffboardSheet = false
 
+    /// The domain's subscription ended: DNS edits are frozen; export and transfer stay.
+    private var serviceEnded: Bool {
+        app.domainServices[selectedDomain]?.isEnded == true
+    }
+
     var body: some View {
         List {
             if let errorMessage {
@@ -77,6 +82,10 @@ struct DomainAdminDNSView: View {
                         Task { await loadDomainData(domain: newDomain) }
                     }
                 }
+            }
+
+            if !selectedDomain.isEmpty {
+                DomainSubscriptionSection(domain: selectedDomain)
             }
 
             // Cloudflare Edge Services Showcase
@@ -251,6 +260,7 @@ struct DomainAdminDNSView: View {
                     }
                 }
                 .disabled(isFixing)
+                .lockedWhenReadOnly(serviceEnded)
             } header: {
                 HStack {
                     Text("Email Health Audit")
@@ -273,6 +283,7 @@ struct DomainAdminDNSView: View {
                         .font(.inter(size: 15, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
                 }
+                .lockedWhenReadOnly(serviceEnded)
 
                 if dnsRecords.isEmpty {
                     Text("No DNS records found.")
@@ -317,10 +328,12 @@ struct DomainAdminDNSView: View {
                         }
                         .padding(.vertical, 4)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                Task { await deleteRecord(rec.id) }
-                            } label: {
-                                Label("Delete", systemImage: "trash")
+                            if !serviceEnded {
+                                Button(role: .destructive) {
+                                    Task { await deleteRecord(rec.id) }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
                         }
                     }

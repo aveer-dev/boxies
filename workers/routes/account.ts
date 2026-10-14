@@ -571,6 +571,18 @@ export function registerAccountRoutes(app: App) {
 	app.delete("/api/v1/me/recovery-email", async (c) => {
 		const principal = requirePrincipal(c);
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		// Domain owners must keep one (billing and renewal notices); they can replace it.
+		const owns = await authDb(c.env.AUTH_DB)
+			.select({ domain: schema.domain.domain })
+			.from(schema.domain)
+			.where(eq(schema.domain.ownerUserId, principal.userId))
+			.get();
+		if (owns) {
+			return c.json(
+				{ error: "Domain owners need a recovery email. Replace it instead of removing it.", code: "recovery_email_required" },
+				400,
+			);
+		}
 		await authDb(c.env.AUTH_DB).delete(schema.recoveryEmail).where(eq(schema.recoveryEmail.userId, principal.userId));
 		return c.json({ ok: true });
 	});

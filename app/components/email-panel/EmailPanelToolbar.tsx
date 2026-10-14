@@ -2,12 +2,18 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Tooltip } from "@cloudflare/kumo";
-import { useEffect, useRef, useState } from "react";
+import { Button } from "@cloudflare/kumo";
+import { useCallback, useRef, useState } from "react";
+import FloatingPanel from "~/components/FloatingPanel";
+import { IconButton } from "~/components/IconButton";
+import { useUIStore } from "~/hooks/useUIStore";
+import { keysFor } from "~/lib/shortcuts";
 import {
+	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
 	ArrowLeftIcon,
+	ArrowsOutSimpleIcon,
 	ChatCircleIcon,
 	ClockCounterClockwiseIcon,
 	CodeIcon,
@@ -16,8 +22,10 @@ import {
 	FolderSimpleIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
+	ShieldCheckIcon,
 	StarIcon,
 	TrashIcon,
+	WarningIcon,
 	XIcon,
 } from "@phosphor-icons/react";
 import type { Folder, Email } from "~/types";
@@ -38,14 +46,21 @@ interface EmailPanelToolbarProps {
 	onToggleStar: () => void;
 	onToggleReplyLater: () => void;
 	onToggleRead: () => void;
+	/** Absent when the message is already archived. */
+	onArchive?: () => void;
+	/** Pops the message out of its column (absent once it's popped out). */
+	onPopOut?: () => void;
+	inPopOut?: boolean;
 	onMove: (folderId: string) => void;
+	/** "report" outside Spam, "not-spam" inside it; null hides the button. */
+	spamAction?: "report" | "not-spam" | null;
+	onSpamAction?: () => void;
 	onViewSource: () => void;
 	onDelete: () => void;
 }
 
 export default function EmailPanelToolbar({
 	email,
-	mailboxId,
 	isDraftFolder,
 	isSending,
 	moveToFolders,
@@ -58,31 +73,32 @@ export default function EmailPanelToolbar({
 	onToggleStar,
 	onToggleReplyLater,
 	onToggleRead,
+	onArchive,
+	onPopOut,
+	inPopOut = false,
 	onMove,
+	spamAction,
+	onSpamAction,
 	onViewSource,
 	onDelete,
 }: EmailPanelToolbarProps) {
 	// Icons pop when switched on (not when a starred message first renders).
 	const [starPops, setStarPops] = useState(0);
 	const [laterPops, setLaterPops] = useState(0);
+	// Read-only mailbox (its domain's subscription ended): flags only, no send/move/delete.
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	return (
-		<div className="flex items-center gap-1 h-11 px-2 border-b border-kumo-line shrink-0 md:px-3">
-			<Button
-				variant="ghost"
-				shape="square"
-				size="sm"
-				icon={<ArrowLeftIcon size={18} />}
-				onClick={onBack}
-				aria-label="Back to list"
-				className="md:hidden shrink-0"
-			/>
+		<div className="flex items-center gap-0.5 h-12 px-2 border-b border-kumo-line shrink-0 md:px-3">
+			{!inPopOut && (
+				<IconButton label="Back to list" icon={ArrowLeftIcon} size="md" onClick={onBack} className="md:hidden" />
+			)}
 
-			{isDraftFolder ? (
-				<>
+			{isReadOnly ? null : isDraftFolder ? (
+				<div className="flex items-center gap-1.5 mr-1">
 					<Button
 						variant="primary"
 						size="sm"
-						icon={<PaperPlaneTiltIcon size={16} />}
+						icon={<PaperPlaneTiltIcon size={14} />}
 						onClick={onSendDraft}
 						loading={isSending}
 					>
@@ -91,142 +107,95 @@ export default function EmailPanelToolbar({
 					<Button
 						variant="secondary"
 						size="sm"
-						icon={<PencilSimpleIcon size={16} />}
+						icon={<PencilSimpleIcon size={14} />}
 						onClick={onEditDraft}
 					>
 						Edit
 					</Button>
-				</>
+				</div>
 			) : (
 				<>
-					<Tooltip content="Reply" side="bottom" asChild>
-						<Button
-							variant="ghost"
-							shape="square"
-							size="sm"
-							icon={<ArrowBendUpLeftIcon size={18} />}
-							onClick={onReply}
-							aria-label="Reply"
-						/>
-					</Tooltip>
-					<Tooltip content="Reply All" side="bottom" asChild>
-						<Button
-							variant="ghost"
-							shape="square"
-							size="sm"
-							icon={<ChatCircleIcon size={18} />}
-							onClick={onReplyAll}
-							aria-label="Reply All"
-						/>
-					</Tooltip>
-					<Tooltip content="Forward" side="bottom" asChild>
-						<Button
-							variant="ghost"
-							shape="square"
-							size="sm"
-							icon={<ArrowBendUpRightIcon size={18} />}
-							onClick={onForward}
-							aria-label="Forward"
-						/>
-					</Tooltip>
+					<IconButton label="Reply" shortcut={keysFor("reply")} icon={ArrowBendUpLeftIcon} size="md" onClick={onReply} />
+					<IconButton label="Reply all" shortcut={keysFor("replyAll")} icon={ChatCircleIcon} size="md" onClick={onReplyAll} />
+					<IconButton label="Forward" shortcut={keysFor("forward")} icon={ArrowBendUpRightIcon} size="md" onClick={onForward} />
 				</>
 			)}
 
-			<div className="h-5 w-px bg-kumo-line mx-0.5" />
+			{!isReadOnly && <div className="h-5 w-px bg-kumo-line mx-1" />}
 
-			<Tooltip content={email.starred ? "Unstar" : "Star"} side="bottom" asChild>
-				<Button
-					variant="ghost"
-					shape="square"
-					size="sm"
-					icon={
-						<StarIcon
-							key={starPops}
-							size={18}
-							weight={email.starred ? "fill" : "regular"}
-							className={`${email.starred ? "text-kumo-warning" : ""} ${starPops ? "animate-pop" : ""}`}
-						/>
-					}
-					onClick={() => {
-						if (!email.starred) setStarPops((n) => n + 1);
-						onToggleStar();
-					}}
-					aria-label={email.starred ? "Unstar" : "Star"}
+			<IconButton
+				label={email.starred ? "Unstar" : "Star"}
+				shortcut={keysFor("star")}
+				icon={StarIcon}
+				size="md"
+				weight={email.starred ? "fill" : "regular"}
+				iconKey={starPops}
+				iconClassName={`${email.starred ? "text-kumo-default" : ""} ${starPops ? "animate-pop" : ""}`}
+				aria-pressed={email.starred}
+				onClick={() => {
+					if (!email.starred) setStarPops((n) => n + 1);
+					onToggleStar();
+				}}
+			/>
+			<IconButton
+				label={email.reply_later ? "Remove from Reply Later" : "Reply later"}
+				shortcut={keysFor("replyLater")}
+				icon={ClockCounterClockwiseIcon}
+				size="md"
+				weight={email.reply_later ? "fill" : "regular"}
+				iconKey={laterPops}
+				iconClassName={`${email.reply_later ? "text-kumo-default" : ""} ${laterPops ? "animate-pop" : ""}`}
+				aria-pressed={email.reply_later}
+				onClick={() => {
+					if (!email.reply_later) setLaterPops((n) => n + 1);
+					onToggleReplyLater();
+				}}
+			/>
+			<IconButton
+				label={email.read ? "Mark as unread" : "Mark as read"}
+				shortcut={keysFor("toggleRead")}
+				icon={email.read ? EnvelopeSimpleIcon : EnvelopeOpenIcon}
+				size="md"
+				onClick={onToggleRead}
+			/>
+			{onArchive && !isReadOnly && (
+				<IconButton label="Archive" shortcut={keysFor("archive")} icon={ArchiveIcon} size="md" onClick={onArchive} />
+			)}
+			{!isReadOnly && <MoveToFolderMenu folders={moveToFolders} onMove={onMove} />}
+
+			{spamAction && onSpamAction && !isReadOnly && (
+				<IconButton
+					label={spamAction === "report" ? "Report spam" : "Not spam"}
+					icon={spamAction === "report" ? WarningIcon : ShieldCheckIcon}
+					size="md"
+					onClick={onSpamAction}
 				/>
-			</Tooltip>
-
-			<Tooltip
-				content={email.reply_later ? "Remove from Reply Later" : "Reply later"}
-				side="bottom"
-				asChild
-			>
-				<Button
-					variant="ghost"
-					shape="square"
-					size="sm"
-					icon={
-						<ClockCounterClockwiseIcon
-							key={laterPops}
-							size={18}
-							weight={email.reply_later ? "fill" : "regular"}
-							className={`${email.reply_later ? "text-kumo-accent" : ""} ${laterPops ? "animate-pop" : ""}`}
-						/>
-					}
-					onClick={() => {
-						if (!email.reply_later) setLaterPops((n) => n + 1);
-						onToggleReplyLater();
-					}}
-					aria-label={
-						email.reply_later ? "Remove from Reply Later" : "Reply later"
-					}
-				/>
-			</Tooltip>
-
-			<Tooltip content={email.read ? "Mark as unread" : "Mark as read"} side="bottom" asChild>
-				<Button
-					variant="ghost"
-					shape="square"
-					size="sm"
-					icon={email.read ? <EnvelopeSimpleIcon size={18} /> : <EnvelopeOpenIcon size={18} />}
-					onClick={onToggleRead}
-					aria-label={email.read ? "Mark as unread" : "Mark as read"}
-				/>
-			</Tooltip>
-
-			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
+			)}
 
 			<div className="ml-auto flex items-center gap-0.5">
-				<Tooltip content="View source" side="bottom" asChild>
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={<CodeIcon size={18} />}
-						onClick={onViewSource}
-						aria-label="View source"
-					/>
-				</Tooltip>
-				<Tooltip content="Delete" side="bottom" asChild>
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={<TrashIcon size={18} />}
-						onClick={onDelete}
-						aria-label="Delete"
-					/>
-				</Tooltip>
-				<Tooltip content="Close" side="bottom" asChild>
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={<XIcon size={18} />}
-						onClick={onBack}
-						aria-label="Close"
+				{onPopOut && (
+					<IconButton
+						label="Pop out"
+						shortcut={keysFor("popOut")}
+						icon={ArrowsOutSimpleIcon}
+						size="md"
+						onClick={onPopOut}
 						className="hidden md:inline-flex"
 					/>
-				</Tooltip>
+				)}
+				<IconButton label="View source" icon={CodeIcon} size="md" onClick={onViewSource} />
+				{!isReadOnly && (
+					<IconButton label="Delete" shortcut={keysFor("delete")} icon={TrashIcon} size="md" onClick={onDelete} />
+				)}
+				<IconButton
+					label={inPopOut ? "Back to column" : "Close"}
+					shortcut="Esc"
+					icon={XIcon}
+					size="md"
+					close
+					onClick={onBack}
+					className={inPopOut ? "" : "hidden md:inline-flex"}
+				/>
 			</div>
 		</div>
 	);
@@ -234,45 +203,46 @@ export default function EmailPanelToolbar({
 
 function MoveToFolderMenu({ folders, onMove }: { folders: Folder[]; onMove: (id: string) => void }) {
 	const [open, setOpen] = useState(false);
-	const ref = useRef<HTMLDivElement>(null);
-
-	useEffect(() => {
-		if (!open) return;
-		const handler = (e: MouseEvent) => {
-			if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-		};
-		document.addEventListener("mousedown", handler);
-		return () => document.removeEventListener("mousedown", handler);
-	}, [open]);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const close = useCallback(() => setOpen(false), []);
 
 	return (
-		<div ref={ref} className="relative">
-			<Tooltip content="Move to folder" side="bottom" asChild>
-				<Button
-					variant="ghost"
-					shape="square"
-					size="sm"
-					icon={<FolderSimpleIcon size={18} />}
-					onClick={() => setOpen((o) => !o)}
-					aria-label="Move to folder"
-				/>
-			</Tooltip>
-			{open && (
-				<div className="absolute top-full left-0 z-50 mt-1.5 min-w-[160px] rounded-xl bg-kumo-elevated shadow-[var(--shadow-menu)] p-1 origin-top-left animate-menu-in">
-					<div className="px-2.5 py-1.5 text-xs font-medium text-kumo-subtle">Move to</div>
-					<div className="h-px bg-kumo-line my-1 -mx-1" />
-					{folders.map((f) => (
-						<button
-							key={f.id}
-							type="button"
-							className="w-full text-left px-2.5 py-1.5 rounded-md text-sm text-kumo-default hover:bg-kumo-overlay transition-colors duration-100"
-							onClick={() => { onMove(f.id); setOpen(false); }}
-						>
-							{f.name}
-						</button>
-					))}
-				</div>
-			)}
-		</div>
+		<>
+			<IconButton
+				ref={triggerRef}
+				label="Move to folder"
+				icon={FolderSimpleIcon}
+				size="md"
+				onClick={() => setOpen((o) => !o)}
+				aria-haspopup="menu"
+				aria-expanded={open}
+			/>
+			<FloatingPanel
+				anchorRef={triggerRef}
+				open={open}
+				onClose={close}
+				align="left"
+				role="menu"
+				aria-label="Move to"
+				className="min-w-[200px]"
+			>
+				<div className="px-2.5 py-1.5 text-xs font-medium text-kumo-subtle">Move to</div>
+				<div className="h-px bg-kumo-line my-1 -mx-1" />
+				{folders.map((f) => (
+					<button
+						key={f.id}
+						type="button"
+						role="menuitem"
+						className="w-full text-left px-2.5 py-2 rounded-lg text-sm text-kumo-default hover:bg-kumo-overlay focus-visible:bg-kumo-overlay focus-visible:outline-none transition-colors duration-100"
+						onClick={() => {
+							onMove(f.id);
+							setOpen(false);
+						}}
+					>
+						{f.name}
+					</button>
+				))}
+			</FloatingPanel>
+		</>
 	);
 }

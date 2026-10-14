@@ -91,7 +91,8 @@ const SignupDomainBody = z.object({
 		),
 	password: z.string().min(10, "Password must be at least 10 characters").max(200),
 	displayName: z.string().trim().max(200).optional(),
-	backupEmail: z.string().trim().email("Please provide a valid backup email address").optional(),
+	// Domain owners must have one: billing and renewal notices go there.
+	backupEmail: z.string().trim().email("Please provide a valid backup email address"),
 });
 
 /** The secret domain-claim TXT values are derived from. */
@@ -127,7 +128,8 @@ async function createSignupUser(
 		return { ok: false, status: 409, error: "This username is already taken" };
 	}
 	const backup = user.backupEmail?.trim().toLowerCase();
-	if (backup && (await isHostedEmailDomain(env, backup))) {
+	const ownDomain = user.mailboxId.slice(user.mailboxId.lastIndexOf("@") + 1);
+	if (backup && (backup.endsWith(`@${ownDomain}`) || (await isHostedEmailDomain(env, backup)))) {
 		return { ok: false, status: 400, error: "Use a backup email outside Inboxies" };
 	}
 	const { id: userId, statements } = await userRowStatements(db, {

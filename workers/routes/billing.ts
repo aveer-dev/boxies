@@ -2,45 +2,59 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { type Context, type Hono } from "hono";
+import { type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
 import type { MailboxContext } from "../lib/mailbox";
 import {
 	checkDomainAvailability,
-	registerDomain,
 	computeDomainPricing,
+	listWholesalePrice,
 	type DomainPricingBreakdown,
 } from "../lib/cloudflare-registrar";
-import {
-	createZone,
-	enableEmailRouting,
-	createCatchAllWorkerRule,
-	autoConfigureEmailDns,
-	ensureFullEmailDns,
-	listDnsRecords,
-	auditEmailHealth,
-} from "../lib/cloudflare-client";
-import {
-	getDomainMetadata,
-	saveDomainMetadata,
-	type DomainMetadata,
-} from "../lib/domain-registry";
-import { eq } from "drizzle-orm";
-import { hashPassword } from "../lib/password-auth";
-import { canonicalMailboxId } from "../lib/mailbox-routing";
-import { authDb } from "../auth/authz";
-import {
-	initializeMailboxStorage,
-	isMailboxAddressTaken,
-	isUniqueViolation,
-	mailboxRowStatements,
-} from "../auth/mailboxes";
+import { getDomainMetadata, saveDomainMetadata } from "../lib/domain-registry";
+import { refreshRegistration, setAutoRenewBestEffort, summarizeDomainService } from "../lib/domain-service";
+import { unwatchDomain } from "../lib/service-reminders";
+import { hashPassword, verifyPassword } from "../lib/password-auth";
+import { authDb, isDomainAdmin, listMailboxesForUser } from "../auth/authz";
 import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
-import * as schema from "../auth/schema";
-import { createSessionForUser, findUserByEmail, findUserById, sessionCookieHeader } from "../auth/users";
-import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { isHostedEmailDomain } from "../auth/hooks";
+import { anyRecoveryEmail, createSessionForUser, findUserById, sessionCookieHeader } from "../auth/users";
 import { isDevRuntime } from "../lib/dev-runtime";
+import {
+	applyLifecycleEvent,
+	billingEventKey,
+	billingSessionKey,
+	endUnpaidCheckout,
+	fulfillPaidCheckout,
+	fulfillRenewal,
+	isRenewalCheckout,
+	LIFECYCLE_EVENT_TYPES,
+	markRenewalAwaitingPayment,
+	loadBillingSession,
+	markAwaitingPayment,
+	saveBillingSession,
+	type BillingSessionRecord,
+	type StripeEvent,
+	type WebhookOutcome,
+} from "../lib/billing-fulfillment";
+import {
+	attachCheckoutSession,
+	CHECKOUT_GRACE_MS,
+	getReservation,
+	holdForCheckout,
+	releaseCheckoutHold,
+	takeOverCheckoutHold,
+} from "../lib/domain-reservations";
+import {
+	canCallStripeFor,
+	expireCheckoutSession,
+	resumeSubscription,
+	stripeRequest,
+	type StripeCheckoutSession,
+} from "../lib/stripe";
+
+export { billingEventKey, billingSessionKey, type BillingSessionRecord };
 
 const CreateDomainCheckoutBody = z.object({
 	domain: z
@@ -61,6 +75,8 @@ const CreateDomainCheckoutBody = z.object({
 		.optional(),
 	password: z.string().min(10).max(200).optional(),
 	displayName: z.string().trim().max(200).optional(),
+	/** The owner's recovery email (an address outside Inboxies). */
+	backupEmail: z.string().trim().email("Enter a valid recovery email").optional(),
 	client: z.enum(["web", "ios", "android"]).optional(),
 	returnUrl: z.string().url().optional(),
 });
@@ -70,46 +86,11 @@ interface StripeSessionResponse {
 	url: string;
 }
 
-export interface BillingSessionRecord {
-	sessionId: string;
-	domain: string;
-	status: "pending" | "provisioning" | "ready" | "failed";
-	pricing: DomainPricingBreakdown;
-	username?: string;
-	displayName?: string;
-	mailboxId?: string;
-	ownerUserId?: string;
-	client?: string;
-	createdAt: string;
-	updatedAt: string;
-	error?: string;
-	/** Set once checkout-return has handed out the owner session; never mint twice. */
-	tokenIssuedAt?: string;
-	/** Registrar result, kept so a webhook retry never pays for the domain twice. */
-	registration?: Awaited<ReturnType<typeof registerDomain>>;
-}
-
-export function billingSessionKey(sessionId: string): string {
-	return `billing/sessions/${sessionId}.json`;
-}
-
-export function billingEventKey(eventId: string): string {
-	return `billing/events/${eventId}.json`;
-}
-
-async function loadBillingSession(
-	bucket: R2Bucket,
-	sessionId: string,
-): Promise<BillingSessionRecord | null> {
-	if (!sessionId) return null;
-	const obj = await bucket.get(billingSessionKey(sessionId));
-	if (!obj) return null;
-	try {
-		return (await obj.json()) as BillingSessionRecord;
-	} catch {
-		return null;
-	}
-}
+/**
+ * How long a Checkout Session stays payable. Stripe's minimum is 30 minutes
+ * from when it creates the session, so leave room for the round trip.
+ */
+const CHECKOUT_TTL_MS = 35 * 60 * 1000;
 
 /** Stripe statuses that mean the customer actually owes nothing more. */
 const SETTLED_PAYMENT_STATUSES = new Set(["paid", "no_payment_required"]);
@@ -225,6 +206,9 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 	 * - Domain Registration: Wholesale cost ($10.44 for .com)
 	 * - Inboxies Platform, AI & Cloud Infrastructure: Platform fee ($9.56 for standard; $10 for domains > $15)
 	 * - Total: $20.00/yr (or wholesale + $10/yr)
+	 *
+	 * The domain is held for this checkout until it is paid, abandoned or expires,
+	 * so a second buyer can't pay for the same name.
 	 */
 	app.post("/api/v1/billing/create-domain-checkout", async (c) => {
 		const parsed = CreateDomainCheckoutBody.safeParse(await c.req.json().catch(() => ({})));
@@ -235,9 +219,35 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 			);
 		}
 
-		const { domain: rawDomain, username, password, displayName, client, returnUrl } = parsed.data;
+		const { domain: rawDomain, username, password, displayName, client } = parsed.data;
+		const backupEmail = parsed.data.backupEmail?.toLowerCase();
 		const domain = rawDomain.toLowerCase();
 		if (await isRateLimited(c.env, "checkout", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
+
+		// A signed-in caller (e.g. from the Admin DNS suite) owns the purchase; otherwise
+		// the checkout creates the owner's account, so it needs a login for it.
+		const callerUserId = c.get("principal")?.userId;
+		if (!callerUserId && !(username && password)) {
+			return c.json(
+				{ error: "Sign in, or choose a username and password for the domain's first mailbox" },
+				400,
+			);
+		}
+
+		// Domain owners need a recovery email outside Inboxies: billing, renewal and
+		// end-of-service notices go there (their mailbox may be the thing that stops).
+		if (backupEmail && (backupEmail.endsWith(`@${domain}`) || (await isHostedEmailDomain(c.env, backupEmail)))) {
+			return c.json({ error: "Use a recovery email outside Inboxies", code: "recovery_email_required" }, 400);
+		}
+		if (!backupEmail && !(callerUserId && (await anyRecoveryEmail(authDb(c.env.AUTH_DB), callerUserId)))) {
+			return c.json(
+				{
+					error: "Add a recovery email: domain owners need one for billing and renewal notices",
+					code: "recovery_email_required",
+				},
+				400,
+			);
+		}
 
 		// 1. Verify not already registered inside Inboxies
 		const existingDomain = await getDomainMetadata(c.env.BUCKET, domain);
@@ -259,116 +269,101 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 
 		const pricing = computeDomainPricing(avail.wholesalePriceUsd);
 
-		// 3. A signed-in caller (e.g. from the Admin DNS suite) owns the purchase.
-		const callerUserId = c.get("principal")?.userId;
+		// Without live Stripe credentials only local dev gets the /checkout/mock simulator
+		const useStripe = Boolean(c.env.STRIPE_SECRET_KEY);
+		if (!useStripe && !isDevRuntime()) {
+			return c.json({ error: "Domain checkout is not configured" }, 503);
+		}
+
+		// 3. Hold the domain for this checkout.
+		const db = authDb(c.env.AUTH_DB);
+		const holdId = crypto.randomUUID();
+		const checkoutExpiresAt = new Date(Date.now() + CHECKOUT_TTL_MS);
+		const holdUntil = new Date(checkoutExpiresAt.getTime() + CHECKOUT_GRACE_MS);
+		const held =
+			(await holdForCheckout(db, domain, holdId, holdUntil)) ||
+			(await takeOverOwnCheckout(c.env, domain, holdId, holdUntil, { callerUserId, username, password }));
+		if (!held) {
+			return c.json(
+				{ error: "Someone is already checking out this domain. Try again in a few minutes." },
+				409,
+			);
+		}
 
 		const appBase = c.env.APP_BASE_URL || "https://inboxies.email";
 		const clientParam = client ? `&client=${encodeURIComponent(client)}` : "";
 		const effectiveSuccessUrl = `${appBase}/api/v1/billing/checkout-return?session_id={CHECKOUT_SESSION_ID}&domain=${encodeURIComponent(domain)}${clientParam}`;
-		const effectiveCancelUrl = `${appBase}/api/v1/billing/checkout-cancel?domain=${encodeURIComponent(domain)}${clientParam}`;
+		const effectiveCancelUrl = `${appBase}/api/v1/billing/checkout-cancel?domain=${encodeURIComponent(domain)}&hold=${encodeURIComponent(holdId)}${clientParam}`;
 
-		// 4. Create Stripe Checkout Subscription Session if STRIPE_SECRET_KEY is configured
-		if (c.env.STRIPE_SECRET_KEY) {
-			const form = new URLSearchParams();
-			form.append("mode", "subscription");
+		// 4. Create the Stripe Checkout Subscription Session (or the dev mock).
+		let sessionId: string;
+		let checkoutUrl: string;
+		try {
+			if (useStripe) {
+				const form = new URLSearchParams();
+				form.append("mode", "subscription");
 
-			// Item 1: Domain Registration (Annual ICANN wholesale fee)
-			form.append("line_items[0][price_data][currency]", "usd");
-			form.append("line_items[0][price_data][recurring][interval]", "year");
-			form.append(
-				"line_items[0][price_data][product_data][name]",
-				`Domain Registration: ${domain} (Annual)`,
-			);
-			form.append(
-				"line_items[0][price_data][product_data][description]",
-				`1-year domain registration & wholesale ICANN fee via Cloudflare Registrar`,
-			);
-			form.append("line_items[0][price_data][unit_amount]", Math.round(pricing.domainFeeUsd * 100).toString());
-			form.append("line_items[0][quantity]", "1");
+				// Item 1: Domain Registration (Annual ICANN wholesale fee)
+				form.append("line_items[0][price_data][currency]", "usd");
+				form.append("line_items[0][price_data][recurring][interval]", "year");
+				form.append(
+					"line_items[0][price_data][product_data][name]",
+					`Domain Registration: ${domain} (Annual)`,
+				);
+				form.append(
+					"line_items[0][price_data][product_data][description]",
+					`1-year domain registration & wholesale ICANN fee via Cloudflare Registrar`,
+				);
+				form.append("line_items[0][price_data][unit_amount]", Math.round(pricing.domainFeeUsd * 100).toString());
+				form.append("line_items[0][quantity]", "1");
 
-			// Item 2: Inboxies Platform, AI & Cloud Infrastructure (Annual)
-			form.append("line_items[1][price_data][currency]", "usd");
-			form.append("line_items[1][price_data][recurring][interval]", "year");
-			form.append(
-				"line_items[1][price_data][product_data][name]",
-				"Inboxies Platform, AI & Cloud Infrastructure (Annual)",
-			);
-			form.append(
-				"line_items[1][price_data][product_data][description]",
-				"Dedicated AI email agent, edge server sync, R2 storage, Anycast DNS, and email security",
-			);
-			form.append("line_items[1][price_data][unit_amount]", Math.round(pricing.platformFeeUsd * 100).toString());
-			form.append("line_items[1][quantity]", "1");
+				// Item 2: Inboxies Platform, AI & Cloud Infrastructure (Annual)
+				form.append("line_items[1][price_data][currency]", "usd");
+				form.append("line_items[1][price_data][recurring][interval]", "year");
+				form.append(
+					"line_items[1][price_data][product_data][name]",
+					"Inboxies Platform, AI & Cloud Infrastructure (Annual)",
+				);
+				form.append(
+					"line_items[1][price_data][product_data][description]",
+					"Dedicated AI email agent, edge server sync, R2 storage, Anycast DNS, and email security",
+				);
+				form.append("line_items[1][price_data][unit_amount]", Math.round(pricing.platformFeeUsd * 100).toString());
+				form.append("line_items[1][quantity]", "1");
 
-			form.append("metadata[domain]", domain);
-			form.append("metadata[domainFeeUsd]", pricing.domainFeeUsd.toFixed(2));
-			form.append("metadata[platformFeeUsd]", pricing.platformFeeUsd.toFixed(2));
-			form.append("metadata[totalAnnualUsd]", pricing.totalAnnualUsd.toFixed(2));
-			if (username) form.append("metadata[username]", username.toLowerCase());
-			if (displayName) form.append("metadata[displayName]", displayName);
-			if (password) {
-				const pwHash = await hashPassword(password);
-				form.append("metadata[passwordHash]", pwHash);
+				// Metadata is visible to anyone with Stripe Dashboard access: no secrets.
+				// The password hash stays in our own checkout record.
+				form.append("metadata[domain]", domain);
+				form.append("metadata[domainFeeUsd]", pricing.domainFeeUsd.toFixed(2));
+				form.append("metadata[platformFeeUsd]", pricing.platformFeeUsd.toFixed(2));
+				form.append("metadata[totalAnnualUsd]", pricing.totalAnnualUsd.toFixed(2));
+				if (username) form.append("metadata[username]", username.toLowerCase());
+				if (displayName) form.append("metadata[displayName]", displayName);
+				if (callerUserId) form.append("metadata[ownerUserId]", callerUserId);
+				if (client) form.append("metadata[client]", client);
+				form.append("subscription_data[metadata][domain]", domain);
+
+				form.append("expires_at", Math.floor(checkoutExpiresAt.getTime() / 1000).toString());
+				form.append("success_url", effectiveSuccessUrl);
+				form.append("cancel_url", effectiveCancelUrl);
+
+				const session = await stripeRequest<StripeSessionResponse>(c.env, "POST", "/checkout/sessions", form);
+				sessionId = session.id;
+				checkoutUrl = session.url;
+			} else {
+				sessionId = `mock_cs_${domain.replace(/[^a-z0-9]/gi, "_")}_${Date.now()}`;
+				checkoutUrl = `${appBase}/checkout/mock?session_id=${sessionId}&domain=${encodeURIComponent(domain)}&hold=${encodeURIComponent(holdId)}${clientParam}`;
 			}
-			if (callerUserId) form.append("metadata[ownerUserId]", callerUserId);
-			if (client) form.append("metadata[client]", client);
-
-			form.append("success_url", effectiveSuccessUrl);
-			form.append("cancel_url", effectiveCancelUrl);
-
-			const stripeRes = await fetch("https://api.stripe.com/v1/checkout/sessions", {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${c.env.STRIPE_SECRET_KEY}`,
-					"Content-Type": "application/x-www-form-urlencoded",
-				},
-				body: form.toString(),
-			});
-
-			if (!stripeRes.ok) {
-				const errBody = (await stripeRes.json().catch(() => ({}))) as {
-					error?: { message?: string };
-				};
-				const msg = errBody.error?.message || `Stripe session error: ${stripeRes.status}`;
-				return c.json({ error: msg }, 502);
-			}
-
-			const session = (await stripeRes.json()) as StripeSessionResponse;
-
-			// Save session record in R2 for status tracking
-			const sessionRecord: BillingSessionRecord = {
-				sessionId: session.id,
-				domain,
-				status: "pending",
-				pricing,
-				username: username?.toLowerCase(),
-				displayName: displayName || username,
-				ownerUserId: callerUserId,
-				client,
-				createdAt: new Date().toISOString(),
-				updatedAt: new Date().toISOString(),
-			};
-			await c.env.BUCKET.put(billingSessionKey(session.id), JSON.stringify(sessionRecord));
-
-			return c.json({
-				checkoutUrl: session.url,
-				sessionId: session.id,
-				domain,
-				pricing,
-				priceUsd: pricing.totalAnnualUsd,
-			});
+		} catch (e) {
+			await releaseCheckoutHold(db, domain, holdId).catch(() => {});
+			const msg = e instanceof Error ? e.message : "Stripe session error";
+			return c.json({ error: msg }, 502);
 		}
 
-		// Without live Stripe credentials only local dev gets the /checkout/mock simulator
-		if (!isDevRuntime()) {
-			return c.json({ error: "Domain checkout is not configured" }, 503);
-		}
-
-		const mockSessionId = `mock_cs_${domain.replace(/[^a-z0-9]/gi, "_")}_${Date.now()}`;
-		const mockUrl = `${appBase}/checkout/mock?session_id=${mockSessionId}&domain=${encodeURIComponent(domain)}${clientParam}`;
-
-		const mockRecord: BillingSessionRecord = {
-			sessionId: mockSessionId,
+		// 5. Tie the hold to the session and save our record (with the password hash).
+		const now = new Date().toISOString();
+		const sessionRecord: BillingSessionRecord = {
+			sessionId,
 			domain,
 			status: "pending",
 			pricing,
@@ -376,18 +371,31 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 			displayName: displayName || username,
 			ownerUserId: callerUserId,
 			client,
-			createdAt: new Date().toISOString(),
-			updatedAt: new Date().toISOString(),
+			passwordHash: password ? await hashPassword(password) : undefined,
+			backupEmail,
+			createdAt: now,
+			updatedAt: now,
 		};
-		await c.env.BUCKET.put(billingSessionKey(mockSessionId), JSON.stringify(mockRecord));
+		try {
+			if (!(await attachCheckoutSession(db, domain, holdId, sessionId, holdUntil))) {
+				throw new Error("The domain hold was lost");
+			}
+			await saveBillingSession(c.env.BUCKET, sessionRecord);
+		} catch (e) {
+			// The buyer never gets this URL, so make sure nobody can pay it.
+			if (canCallStripeFor(c.env, sessionId)) await expireCheckoutSession(c.env, sessionId).catch(() => {});
+			await releaseCheckoutHold(db, domain, holdId).catch(() => {});
+			console.error(`[billing] checkout setup for ${domain} failed:`, e);
+			return c.json({ error: "Could not start checkout. Try again." }, 500);
+		}
 
 		return c.json({
-			checkoutUrl: mockUrl,
-			sessionId: mockSessionId,
+			checkoutUrl,
+			sessionId,
 			domain,
 			pricing,
 			priceUsd: pricing.totalAnnualUsd,
-			mock: true,
+			...(useStripe ? {} : { mock: true }),
 		});
 	});
 
@@ -474,15 +482,190 @@ window.location.href = ${JSON.stringify(deepLink)};
 	});
 
 	/**
+	 * Where a paid domain stands: in service, set to end, or ended (read-only),
+	 * and for a domain we registered, until when it can be renewed. Domain admins
+	 * and anyone with a mailbox on the domain may ask; only admins can renew.
+	 */
+	app.get("/api/v1/billing/domains/:domain/service", async (c) => {
+		const domain = c.req.param("domain").toLowerCase().trim();
+		const userId = c.get("principal")?.userId;
+		if (!userId) return c.json({ error: "Unauthorized" }, 401);
+		const db = authDb(c.env.AUTH_DB);
+		const canManage = await isDomainAdmin(db, userId, domain);
+		if (!canManage) {
+			const mine = await listMailboxesForUser(db, userId);
+			if (!mine.some((m) => m.mailboxId.endsWith(`@${domain}`))) return c.json({ error: "Forbidden" }, 403);
+		}
+		const meta = await getDomainMetadata(c.env.BUCKET, domain);
+		if (!meta?.billing) {
+			return c.json({ domain, status: "active", registrarManaged: false, canRenew: false, canManage, billed: false });
+		}
+		return c.json({ ...summarizeDomainService(meta), canManage, billed: true });
+	});
+
+	/**
+	 * Renew a domain whose subscription ended (a new subscription via Stripe
+	 * Checkout), or keep one that is set to end (the subscription is resumed).
+	 */
+	app.post("/api/v1/billing/domains/:domain/renew", async (c) => {
+		const domain = c.req.param("domain").toLowerCase().trim();
+		const userId = c.get("principal")?.userId;
+		if (!userId) return c.json({ error: "Unauthorized" }, 401);
+		const db = authDb(c.env.AUTH_DB);
+		if (!(await isDomainAdmin(db, userId, domain))) return c.json({ error: "Forbidden" }, 403);
+		const body = (await c.req.json().catch(() => ({}))) as { client?: string };
+		const client = body.client === "ios" || body.client === "android" || body.client === "web" ? body.client : undefined;
+
+		const meta = await getDomainMetadata(c.env.BUCKET, domain);
+		if (!meta?.billing) return c.json({ error: "This domain has no Inboxies subscription" }, 404);
+		// The deadline depends on the registration's current expiry.
+		const summary = summarizeDomainService(await refreshRegistration(c.env, meta));
+		if (!summary.canRenew) {
+			return c.json(
+				{
+					error: summary.status === "active" ? "This domain's subscription is active" : "The renewal window for this domain has closed",
+					service: summary,
+				},
+				409,
+			);
+		}
+
+		// Set to end but still running: just take the cancellation back (unless
+		// Stripe already ended it and we're only running out what was paid for).
+		if (summary.status === "ending" && !meta.billing.canceledAt) {
+			const subscriptionId = meta.billing.subscriptionId;
+			if (c.env.STRIPE_SECRET_KEY && subscriptionId) {
+				try {
+					await resumeSubscription(c.env, subscriptionId);
+				} catch (e) {
+					return c.json({ error: e instanceof Error ? e.message : "Could not resume the subscription" }, 502);
+				}
+			} else if (!isDevRuntime()) {
+				return c.json({ error: "Billing is not configured" }, 503);
+			}
+			// Re-read: the webhook for the same change may have landed meanwhile.
+			const latest = (await getDomainMetadata(c.env.BUCKET, domain)) ?? meta;
+			const now = new Date().toISOString();
+			latest.billing = { ...latest.billing!, cancelAtPeriodEnd: false, serviceEndsAt: undefined, remindersSent: [], updatedAt: now };
+			await setAutoRenewBestEffort(c.env, latest, true);
+			await saveDomainMetadata(c.env.BUCKET, { ...latest, updatedAt: now });
+			await unwatchDomain(c.env, domain);
+			return c.json({ resumed: true, service: summarizeDomainService(latest) });
+		}
+
+		// Ended: a new annual subscription, at the price the domain was bought for.
+		const pricing = computeDomainPricing(meta.billing.domainFeeUsd ?? listWholesalePrice(domain));
+		const appBase = c.env.APP_BASE_URL || "https://inboxies.email";
+		const clientParam = client ? `&client=${encodeURIComponent(client)}` : "";
+		const returnBase = `${appBase}/api/v1/billing/renew-return?domain=${encodeURIComponent(domain)}${clientParam}`;
+
+		if (!c.env.STRIPE_SECRET_KEY) {
+			if (!isDevRuntime()) return c.json({ error: "Billing is not configured" }, 503);
+			// Local dev has no Stripe: renew on the spot.
+			const sessionId = `mock_cs_renew_${domain.replace(/[^a-z0-9]/gi, "_")}_${Date.now()}`;
+			const outcome = await fulfillRenewal(c.env, {
+				id: sessionId,
+				payment_status: "paid",
+				metadata: { domain, purpose: "renew", domainFeeUsd: pricing.domainFeeUsd.toFixed(2), platformFeeUsd: pricing.platformFeeUsd.toFixed(2) },
+			});
+			return c.json({ renewed: outcome.status === 200, mock: true, ...outcome.body }, outcome.status);
+		}
+
+		const form = renewalCheckoutForm(domain, pricing, {
+			customerId: meta.billing.customerId,
+			userId,
+			client,
+			successUrl: `${returnBase}&session_id={CHECKOUT_SESSION_ID}`,
+			cancelUrl: `${returnBase}&cancelled=1`,
+		});
+		let session: StripeSessionResponse;
+		try {
+			session = await stripeRequest<StripeSessionResponse>(c.env, "POST", "/checkout/sessions", form);
+		} catch (e) {
+			return c.json({ error: e instanceof Error ? e.message : "Stripe session error" }, 502);
+		}
+		const now = new Date().toISOString();
+		await saveBillingSession(c.env.BUCKET, {
+			sessionId: session.id,
+			domain,
+			purpose: "renew",
+			status: "pending",
+			pricing,
+			ownerUserId: userId,
+			client,
+			createdAt: now,
+			updatedAt: now,
+		});
+		return c.json({ checkoutUrl: session.url, sessionId: session.id, pricing });
+	});
+
+	/**
+	 * Stripe's customer portal for the domain's subscription: change the card,
+	 * see invoices, cancel. Domain admins only. Needs the portal configured in
+	 * the Stripe dashboard (Settings → Billing → Customer portal).
+	 */
+	app.post("/api/v1/billing/domains/:domain/portal", async (c) => {
+		const domain = c.req.param("domain").toLowerCase().trim();
+		const userId = c.get("principal")?.userId;
+		if (!userId) return c.json({ error: "Unauthorized" }, 401);
+		if (!(await isDomainAdmin(authDb(c.env.AUTH_DB), userId, domain))) return c.json({ error: "Forbidden" }, 403);
+		const meta = await getDomainMetadata(c.env.BUCKET, domain);
+		const customerId = meta?.billing?.customerId;
+		if (!customerId) return c.json({ error: "This domain has no Inboxies subscription" }, 404);
+		if (!c.env.STRIPE_SECRET_KEY) return c.json({ error: "Billing is not configured" }, 503);
+		const appBase = c.env.APP_BASE_URL || "https://inboxies.email";
+		try {
+			const session = await stripeRequest<{ url: string }>(
+				c.env,
+				"POST",
+				"/billing_portal/sessions",
+				new URLSearchParams({
+					customer: customerId,
+					return_url: `${appBase}/admin?tab=dns&domain=${encodeURIComponent(domain)}`,
+				}),
+			);
+			return c.json({ url: session.url });
+		} catch (e) {
+			return c.json({ error: e instanceof Error ? e.message : "Could not open billing settings" }, 502);
+		}
+	});
+
+	/** Back from a renewal checkout: into the app (closing the in-app browser), or to the domain page. */
+	app.get("/api/v1/billing/renew-return", (c) => {
+		const domain = (c.req.query("domain") || "").toLowerCase().trim();
+		const cancelled = c.req.query("cancelled") === "1";
+		const clientQuery = c.req.query("client") || "";
+		const isMobile = clientQuery === "ios" || clientQuery === "android" || /iPhone|iPad|iPod|Android/i.test(c.req.header("user-agent") || "");
+		if (isMobile) {
+			return c.redirect(
+				`inboxies://billing/${cancelled ? "renew-cancelled" : "renewed"}?domain=${encodeURIComponent(domain)}`,
+				302,
+			);
+		}
+		return c.redirect(
+			`/admin?tab=dns&domain=${encodeURIComponent(domain)}${cancelled ? "" : "&renewed=1"}`,
+			302,
+		);
+	});
+
+	/**
 	 * Hosted Bridge Cancellation Handler.
-	 * Redirects mobile clients to `inboxies://onboarding/cancelled` (closing in-app browser).
-	 * Redirects desktop web users to `/checkout/cancel`.
+	 * Gives the domain hold back (the checkout's own browser carries its hold id),
+	 * then redirects mobile clients to `inboxies://onboarding/cancelled` (closing the
+	 * in-app browser) and desktop web users to `/checkout/cancel`.
 	 */
 	app.get("/api/v1/billing/checkout-cancel", async (c) => {
 		const domain = (c.req.query("domain") || "").toLowerCase().trim();
+		const holdId = c.req.query("hold") || "";
 		const clientQuery = c.req.query("client") || "";
 		const userAgent = c.req.header("user-agent") || "";
 		const isMobile = clientQuery === "ios" || clientQuery === "android" || /iPhone|iPad|iPod|Android/i.test(userAgent);
+
+		if (domain && holdId) {
+			await releaseAbandonedCheckout(c.env, domain, holdId).catch((e) =>
+				console.warn(`[billing] could not release ${domain} after cancel:`, e),
+			);
+		}
 
 		if (isMobile) {
 			const cancelDeepLink = `inboxies://onboarding/cancelled?domain=${encodeURIComponent(domain)}`;
@@ -504,34 +687,31 @@ window.location.href = ${JSON.stringify(deepLink)};
 			return c.json({ error: "Missing session_id or domain" }, 400);
 		}
 
-		let sessionRecord: BillingSessionRecord | null = null;
-		if (sessionId) {
-			const res = await c.env.BUCKET.get(billingSessionKey(sessionId));
-			if (res) {
-				sessionRecord = (await res.json()) as BillingSessionRecord;
-			}
-		}
-
-		const targetDomain = domain || sessionRecord?.domain;
-		if (targetDomain) {
-			const meta = await getDomainMetadata(c.env.BUCKET, targetDomain);
-			if (meta && meta.status === "active") {
-				return c.json({
-					status: "ready",
-					domain: targetDomain,
-					pricing: computeDomainPricing(sessionRecord?.pricing?.domainFeeUsd ?? 10.44),
-					mailboxId: sessionRecord?.mailboxId,
-				});
-			}
-		}
+		const sessionRecord = await loadBillingSession(c.env.BUCKET, sessionId);
+		const targetDomain = sessionRecord?.domain || domain;
+		const meta = targetDomain ? await getDomainMetadata(c.env.BUCKET, targetDomain) : null;
 
 		if (sessionRecord) {
+			// Ready once this checkout's domain is live, even if the record lags behind.
+			const live = meta?.status === "active" && meta.billing?.checkoutSessionId === sessionRecord.sessionId;
+			const status = live ? "ready" : sessionRecord.status;
 			return c.json({
-				status: sessionRecord.status,
+				status,
 				domain: sessionRecord.domain,
 				// Recompute so records saved before the client field names existed still decode.
 				pricing: computeDomainPricing(sessionRecord.pricing.domainFeeUsd),
 				mailboxId: sessionRecord.mailboxId,
+				...(status === "failed" || status === "refunded" || status === "canceled"
+					? { error: sessionRecord.error }
+					: {}),
+			});
+		}
+
+		if (meta && meta.status === "active") {
+			return c.json({
+				status: "ready",
+				domain: targetDomain,
+				pricing: computeDomainPricing(10.44),
 			});
 		}
 
@@ -542,8 +722,13 @@ window.location.href = ${JSON.stringify(deepLink)};
 	});
 
 	/**
-	 * Stripe Webhook: listens for checkout.session.completed and invoice.payment_succeeded events.
-	 * Cryptographically verifies signatures, calls Cloudflare Registrar wholesale, provisions DNS, and creates primary mailbox.
+	 * Stripe Webhook. Cryptographically verifies signatures, then:
+	 * - checkout.session.completed / async_payment_succeeded: buy the domain, set up DNS and the owner;
+	 * - completed but unpaid (delayed payment methods): keep the domain held;
+	 * - async_payment_failed / expired: release the domain;
+	 * - invoice, subscription, refund and dispute events: track the subscription on the domain.
+	 *
+	 * Subscribe the endpoint to every event type handled below (see .dev.vars.example).
 	 */
 	app.post("/api/v1/billing/stripe-webhook", async (c) => {
 		const rawBody = await c.req.text();
@@ -563,186 +748,181 @@ window.location.href = ${JSON.stringify(deepLink)};
 			// A signed delivery (e.g. `stripe listen`) can't be checked without the secret
 			return c.json({ error: "Webhook verification failed: STRIPE_WEBHOOK_SECRET is not set" }, 400);
 		}
+		const unsignedDevEvent = !webhookSecret;
 
-		let event: any;
+		let event: StripeEvent;
 		try {
 			event = JSON.parse(rawBody);
 		} catch {
 			return c.json({ error: "Invalid JSON payload" }, 400);
 		}
 
-		// Handle annual subscription renewal
-		if (event.type === "invoice.payment_succeeded") {
-			return c.json({ received: true, type: "invoice.payment_succeeded" });
-		}
-
-		if (event.type !== "checkout.session.completed") {
-			return c.json({ received: true, ignored: true });
-		}
-
-		const session = event.data?.object;
-		if (!session) {
-			return c.json({ error: "Missing session object" }, 400);
-		}
-
-		// Never provision for an unpaid session (mock checkout in dev has no payment_status).
-		if (!SETTLED_PAYMENT_STATUSES.has(session.payment_status) && !(isDevRuntime() && !webhookSecret)) {
-			return c.json({ received: true, ignored: true, reason: "payment_not_settled" });
-		}
-
-		// Stripe retries deliveries; skip events that already provisioned.
+		// Stripe retries deliveries; skip events we already handled.
 		const eventId = typeof event.id === "string" ? event.id : "";
 		if (eventId && (await c.env.BUCKET.head(billingEventKey(eventId)))) {
 			return c.json({ received: true, duplicate: true });
 		}
 
-		const domain = (session.metadata?.domain || "").toLowerCase().trim();
-		if (!domain) {
-			return c.json({ error: "No domain metadata in checkout session" }, 400);
-		}
+		const type = event.type ?? "";
+		let outcome: WebhookOutcome;
+		if (type.startsWith("checkout.session.")) {
+			const session = event.data?.object as StripeCheckoutSession | undefined;
+			if (!session?.id) return c.json({ error: "Missing session object" }, 400);
 
-		const username = (session.metadata?.username || "").toLowerCase().trim();
-		const displayName = session.metadata?.displayName || username;
-		const passwordHash = session.metadata?.passwordHash;
-		const metadataOwnerUserId = session.metadata?.ownerUserId;
-		const totalAnnualUsd = parseFloat(session.metadata?.totalAnnualUsd || "20.00");
-		const domainFeeUsd = parseFloat(session.metadata?.domainFeeUsd || "10.44");
-		const platformFeeUsd = parseFloat(session.metadata?.platformFeeUsd || "9.56");
-
-		// 1. Check if domain was already provisioned
-		let existing = await getDomainMetadata(c.env.BUCKET, domain);
-		if (existing && existing.status === "active") {
-			return c.json({ received: true, domain, status: "already_provisioned" });
-		}
-
-		// 2. Register domain via Cloudflare Registrar. A retry after a later step failed
-		// reuses the recorded registration instead of buying the domain again.
-		const sessionRecord = session.id ? await loadBillingSession(c.env.BUCKET, session.id) : null;
-		let registrationResult = sessionRecord?.registration;
-		if (!registrationResult) {
+			const renewal = isRenewalCheckout(session);
+			const fulfill = renewal ? fulfillRenewal : fulfillPaidCheckout;
+			switch (type) {
+				case "checkout.session.completed":
+					if (SETTLED_PAYMENT_STATUSES.has(session.payment_status ?? "")) {
+						outcome = await fulfill(c.env, session);
+					} else if (unsignedDevEvent && !session.payment_status) {
+						// The /checkout/mock page doesn't model payment status.
+						outcome = await fulfill(c.env, session);
+					} else if (session.payment_status === "unpaid") {
+						outcome = renewal
+							? await markRenewalAwaitingPayment(c.env, session)
+							: await markAwaitingPayment(c.env, session);
+					} else {
+						outcome = { status: 200, body: { received: true, ignored: true, reason: "payment_not_settled" } };
+					}
+					break;
+				case "checkout.session.async_payment_succeeded":
+					outcome = await fulfill(c.env, session);
+					break;
+				case "checkout.session.async_payment_failed":
+					outcome = await endUnpaidCheckout(c.env, session, "failed");
+					break;
+				case "checkout.session.expired":
+					outcome = await endUnpaidCheckout(c.env, session, "canceled");
+					break;
+				default:
+					outcome = { status: 200, body: { received: true, ignored: true } };
+			}
+		} else if (LIFECYCLE_EVENT_TYPES.has(type)) {
 			try {
-				registrationResult = await registerDomain(c.env, domain);
-			} catch (regErr: unknown) {
-				const msg = regErr instanceof Error ? regErr.message : "Registrar registration failed";
-				return c.json({ error: `Registrar error: ${msg}` }, 502);
+				outcome = await applyLifecycleEvent(c.env, event);
+			} catch (e) {
+				const msg = e instanceof Error ? e.message : "Lifecycle update failed";
+				console.error(`[billing] ${type} failed, Stripe will retry:`, msg);
+				outcome = { status: 502, body: { error: msg } };
 			}
-			if (sessionRecord) {
-				sessionRecord.registration = registrationResult;
-				sessionRecord.status = "provisioning";
-				sessionRecord.updatedAt = new Date().toISOString();
-				await c.env.BUCKET.put(billingSessionKey(sessionRecord.sessionId), JSON.stringify(sessionRecord));
-			}
+		} else {
+			outcome = { status: 200, body: { received: true, ignored: true } };
 		}
 
-		// 3. Provision Cloudflare Zone & Email Routing
-		let zone;
-		try {
-			zone = await createZone(c.env, domain);
-			await ensureFullEmailDns(c.env, zone.id, domain);
-		} catch (cfErr: unknown) {
-			const msg = cfErr instanceof Error ? cfErr.message : "Cloudflare setup failed";
-			return c.json({ error: `Cloudflare setup failed: ${msg}` }, 502);
-		}
-
-		// 4. Provision primary admin user & mailbox if credentials provided
-		const db = authDb(c.env.AUTH_DB);
-		const callerOwner = metadataOwnerUserId ? await findUserById(db, metadataOwnerUserId) : undefined;
-		let ownerUserId: string | null = callerOwner?.id ?? null;
-		let primaryCanonical: string | undefined;
-
-		if (!ownerUserId && username && passwordHash) {
-			const canonical = canonicalMailboxId(`${username}@${domain}`);
-			if (canonical && !(await findUserByEmail(db, canonical)) && !(await isMailboxAddressTaken(c.env, db, canonical))) {
-				const userId = crypto.randomUUID();
-				try {
-					await db.batch([
-						db.insert(schema.user).values({
-							id: userId,
-							email: canonical,
-							name: displayName || username,
-							emailVerified: true,
-						}),
-						// Hashed at checkout; never stored in plain text.
-						db.insert(schema.account).values({
-							id: `credential_${userId}`,
-							accountId: userId,
-							providerId: "credential",
-							userId,
-							password: passwordHash,
-						}),
-						...mailboxRowStatements(db, canonical, userId),
-					] as unknown as Parameters<typeof db.batch>[0]);
-					await initializeMailboxStorage(c.env, canonical, { name: displayName || username });
-					ownerUserId = userId;
-					primaryCanonical = canonical;
-				} catch (e) {
-					if (!isUniqueViolation(e)) throw e;
-				}
-			}
-		}
-
-		// Ownership row (a retry finds it already there).
-		await db
-			.insert(schema.domain)
-			.values({ domain, ownerUserId, status: "active", verifiedAt: new Date() })
-			.onConflictDoUpdate({
-				target: schema.domain.domain,
-				set: { status: "active", ...(ownerUserId ? { ownerUserId } : {}) },
-			});
-
-		// 5. Persist Domain Metadata in R2
-		const domainMetadata: DomainMetadata = {
-			domain,
-			zoneId: zone.id,
-			ownerUserId: ownerUserId ?? "registrar_owner",
-			adminUserIds: ownerUserId ? [ownerUserId] : [],
-			status: "active",
-			nameservers: zone.name_servers,
-			emailRoutingEnabled: true,
-			registration: {
-				provider: "cloudflare_registrar",
-				registeredAt: registrationResult.registeredAt,
-				expiresAt: registrationResult.expiresAt,
-				autoRenew: registrationResult.autoRenew,
-				whoisPrivacy: registrationResult.whoisPrivacy,
-				locked: registrationResult.locked,
-				retailPriceUsd: totalAnnualUsd,
-			},
-			createdAt: new Date().toISOString(),
-			updatedAt: new Date().toISOString(),
-		};
-
-		await saveDomainMetadata(c.env.BUCKET, domainMetadata);
-
-		// 6. Update session record in R2 if session ID is known
-		if (session.id) {
-			const rec = await loadBillingSession(c.env.BUCKET, session.id);
-			if (rec) {
-				rec.status = "ready";
-				rec.mailboxId = primaryCanonical;
-				rec.ownerUserId = ownerUserId ?? undefined;
-				rec.updatedAt = new Date().toISOString();
-				await c.env.BUCKET.put(billingSessionKey(session.id), JSON.stringify(rec));
-			}
-		}
-		if (eventId) {
+		if (outcome.status === 200 && eventId) {
 			await c.env.BUCKET.put(
 				billingEventKey(eventId),
-				JSON.stringify({ eventId, domain, processedAt: new Date().toISOString() }),
+				JSON.stringify({ eventId, type, processedAt: new Date().toISOString() }),
 			);
 		}
-
-		return c.json({
-			received: true,
-			domain,
-			status: "provisioned",
-			retailPriceUsd: totalAnnualUsd,
-			zoneId: zone.id,
-			pricing: {
-				domainFeeUsd,
-				platformFeeUsd,
-				totalAnnualUsd,
-			},
-		});
+		return c.json(outcome.body, outcome.status);
 	});
+}
+
+/**
+ * A buyer starting over (closed the Stripe tab, dismissed the in-app browser)
+ * gets their own hold back instead of a 409. Same buyer means the same signed-in
+ * account, or the same username with the password the earlier checkout hashed.
+ */
+async function takeOverOwnCheckout(
+	env: Env,
+	domain: string,
+	newHoldId: string,
+	holdUntil: Date,
+	buyer: { callerUserId?: string; username?: string; password?: string },
+): Promise<boolean> {
+	const db = authDb(env.AUTH_DB);
+	const hold = await getReservation(db, domain);
+	if (!hold || hold.status !== "checkout" || !hold.holdId || !hold.sessionId) return false;
+	const previous = await loadBillingSession(env.BUCKET, hold.sessionId);
+	if (!previous || previous.status !== "pending") return false;
+
+	const sameAccount = Boolean(buyer.callerUserId && previous.ownerUserId === buyer.callerUserId);
+	const sameLogin = Boolean(
+		buyer.username &&
+			buyer.password &&
+			previous.passwordHash &&
+			previous.username === buyer.username.toLowerCase() &&
+			(await verifyPassword(buyer.password, previous.passwordHash)),
+	);
+	if (!sameAccount && !sameLogin) return false;
+
+	// Once the hold moves, the old session must not be payable. Stripe refuses
+	// to expire a session that was already paid: then the hold stays put.
+	if (canCallStripeFor(env, hold.sessionId)) {
+		try {
+			await expireCheckoutSession(env, hold.sessionId);
+		} catch {
+			return false;
+		}
+	}
+	if (!(await takeOverCheckoutHold(db, domain, hold.holdId, newHoldId, holdUntil))) return false;
+
+	previous.status = "canceled";
+	previous.error = "Replaced by a newer checkout.";
+	previous.passwordHash = undefined;
+	await saveBillingSession(env.BUCKET, previous);
+	return true;
+}
+
+/**
+ * The checkout's browser gave up. Expire the Stripe session first, so it can't
+ * be paid after the hold is gone; if Stripe refuses (already paid), keep it.
+ */
+async function releaseAbandonedCheckout(env: Env, domain: string, holdId: string): Promise<void> {
+	const db = authDb(env.AUTH_DB);
+	const hold = await getReservation(db, domain);
+	if (!hold || hold.holdId !== holdId || hold.status !== "checkout") return;
+	if (hold.sessionId && canCallStripeFor(env, hold.sessionId)) {
+		await expireCheckoutSession(env, hold.sessionId);
+	}
+	await releaseCheckoutHold(db, domain, holdId);
+	if (hold.sessionId) {
+		const record = await loadBillingSession(env.BUCKET, hold.sessionId);
+		if (record && record.status === "pending") {
+			record.status = "canceled";
+			record.error = "Checkout was cancelled.";
+			record.passwordHash = undefined;
+			await saveBillingSession(env.BUCKET, record);
+		}
+	}
+}
+
+/** A Checkout Session that starts a new annual subscription for a domain we already hold. */
+function renewalCheckoutForm(
+	domain: string,
+	pricing: DomainPricingBreakdown,
+	opts: { customerId?: string; userId: string; client?: string; successUrl: string; cancelUrl: string },
+): URLSearchParams {
+	const form = new URLSearchParams();
+	form.append("mode", "subscription");
+	if (opts.customerId) form.append("customer", opts.customerId);
+	const items: Array<[string, string, number]> = [
+		[`Domain Registration: ${domain} (Annual)`, "1-year domain registration renewal via Cloudflare Registrar", pricing.domainFeeUsd],
+		[
+			"Inboxies Platform, AI & Cloud Infrastructure (Annual)",
+			"Dedicated AI email agent, edge server sync, R2 storage, Anycast DNS, and email security",
+			pricing.platformFeeUsd,
+		],
+	];
+	items.forEach(([name, description, usd], i) => {
+		form.append(`line_items[${i}][price_data][currency]`, "usd");
+		form.append(`line_items[${i}][price_data][recurring][interval]`, "year");
+		form.append(`line_items[${i}][price_data][product_data][name]`, name);
+		form.append(`line_items[${i}][price_data][product_data][description]`, description);
+		form.append(`line_items[${i}][price_data][unit_amount]`, Math.round(usd * 100).toString());
+		form.append(`line_items[${i}][quantity]`, "1");
+	});
+	form.append("metadata[domain]", domain);
+	form.append("metadata[purpose]", "renew");
+	form.append("metadata[ownerUserId]", opts.userId);
+	form.append("metadata[domainFeeUsd]", pricing.domainFeeUsd.toFixed(2));
+	form.append("metadata[platformFeeUsd]", pricing.platformFeeUsd.toFixed(2));
+	form.append("metadata[totalAnnualUsd]", pricing.totalAnnualUsd.toFixed(2));
+	if (opts.client) form.append("metadata[client]", opts.client);
+	form.append("subscription_data[metadata][domain]", domain);
+	form.append("success_url", opts.successUrl);
+	form.append("cancel_url", opts.cancelUrl);
+	return form;
 }

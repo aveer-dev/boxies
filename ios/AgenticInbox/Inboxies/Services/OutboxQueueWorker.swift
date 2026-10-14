@@ -27,6 +27,12 @@ actor OutboxQueueWorker {
             do {
                 try await executeMutation(mutation)
                 db.markMutationCompleted(id: mutation.id)
+            } catch let error as APIError where error.isServiceEnded {
+                // The domain's subscription ended: retrying can't succeed until it's
+                // renewed. Drop it and keep draining; APIClient already told AppModel,
+                // which surfaces the message once and resyncs the optimistic change away.
+                db.markMutationCompleted(id: mutation.id)
+                continue
             } catch {
                 db.incrementMutationRetry(id: mutation.id)
                 // Stop draining on network or server errors; will retry later or on reconnect

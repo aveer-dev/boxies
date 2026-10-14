@@ -202,13 +202,14 @@ struct EmailListView: View {
                         highlightQuery: highlightQuery,
                         folderLabel: folderLabel,
                         showsTags: showsTags,
-                        showsSeparator: !isScreener
+                        showsSeparator: !isScreener || app.isReadOnly
                     )
                 }
             }
             .buttonStyle(MailRowButtonStyle())
 
-            if isScreener && !isSelectMode {
+            // Screening moves mail and saves a sender preference: not on a read-only mailbox.
+            if isScreener && !isSelectMode && !app.isReadOnly {
                 ScreenerActionButtons(email: email)
                     .padding(.horizontal, AppTheme.List.rowHorizontalPadding)
                     .padding(.top, 2)
@@ -256,7 +257,7 @@ struct EmailListView: View {
 
     @ViewBuilder
     private func emailContextMenu(for email: Email) -> some View {
-        let availability = EmailActionAvailability(email: email)
+        let availability = EmailActionAvailability(email: email, readOnly: app.isReadOnly)
 
         if availability.showsReplyActions {
             Button {
@@ -311,11 +312,12 @@ struct EmailListView: View {
     }
 
     private func swipeLayout(for email: Email) -> EmailSwipeLayout {
-        EmailSwipeLayout.resolve(
+        let layout = EmailSwipeLayout.resolve(
             for: email,
             fallbackFolderId: fallbackFolderId,
             preferences: app.swipePreferences
         )
+        return app.isReadOnly ? layout.readOnly() : layout
     }
 
     private func trailingFullSwipe(for email: Email) -> Bool {

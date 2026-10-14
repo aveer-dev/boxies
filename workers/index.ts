@@ -52,6 +52,7 @@ import {
 	authDb,
 	canCreateMailbox,
 	listMailboxMembers,
+	isDomainAdmin,
 	listMailboxesForUser,
 	type AuthDb,
 } from "./auth/authz";
@@ -72,6 +73,7 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
 import { getDomainMetadata } from "./lib/domain-registry";
+import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
 import { sendFcmPush } from "./lib/fcm";
 import {
@@ -313,6 +315,10 @@ app.get("/api/v1/mailboxes", async (c) => {
 	const principal = c.get("principal");
 	if (!principal) return c.json({ error: "Unauthorized" }, 401);
 	const rows = await listMailboxesForUser(authDb(c.env.AUTH_DB), principal.userId);
+	const suspended = await suspendedDomains(
+		c.env,
+		rows.map(({ mailboxId }) => mailboxId.slice(mailboxId.lastIndexOf("@") + 1)),
+	);
 	return c.json(
 		rows.map(({ mailboxId, role }) => ({
 			id: mailboxId,
@@ -320,6 +326,8 @@ app.get("/api/v1/mailboxes", async (c) => {
 			name: mailboxId,
 			role,
 			canManage: role === "owner",
+			// The domain's subscription ended: read and export only.
+			readOnly: suspended.has(mailboxId.slice(mailboxId.lastIndexOf("@") + 1)),
 		})),
 	);
 });
@@ -357,7 +365,16 @@ app.post("/api/v1/mailboxes", async (c) => {
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const db = authDb(c.env.AUTH_DB);
-	return c.json(await mailboxResponse(c.env, db, c.var.mailboxId, c.var.mailboxRole));
+	const domain = c.var.mailboxId.slice(c.var.mailboxId.lastIndexOf("@") + 1);
+	const [mailbox, summary, canManage] = await Promise.all([
+		mailboxResponse(c.env, db, c.var.mailboxId, c.var.mailboxRole),
+		mailboxServiceSummary(c.env, c.var.mailboxId),
+		isDomainAdmin(db, c.get("principal")?.userId ?? "", domain),
+	]);
+	// canManage: whether this user may renew (domain owner/admin).
+	const service = summary ? { ...summary, canManage } : null;
+	// readOnly follows the same D1 status the write gates check.
+	return c.json({ ...mailbox, service, readOnly: await isMailboxSuspended(c.env, c.var.mailboxId) });
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
@@ -1535,12 +1552,10 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	// Email Routing catch-all still points at this Worker.
 	// Private aliases live on private.<domain>, which belongs to <domain>.
 	const recipientDomain = message.to.split("@")[1]?.toLowerCase().replace(/^private\./, "");
-	if (recipientDomain) {
-		const domainMeta = await getDomainMetadata(env.BUCKET, recipientDomain);
-		if (domainMeta?.status === "offboarding") {
-			message.setReject("Domain is no longer hosted here");
-			return;
-		}
+	const recipientDomainMeta = recipientDomain ? await getDomainMetadata(env.BUCKET, recipientDomain) : null;
+	if (recipientDomainMeta?.status === "offboarding") {
+		message.setReject("Domain is no longer hosted here");
+		return;
 	}
 
 	// Holder object: TS does not track assignments made inside the callback.
@@ -1567,6 +1582,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		return;
 	}
 	const mailboxId = route.mailboxId;
+	// A domain whose subscription ended receives nothing, whether the mail is
+	// addressed to it or reaches one of its mailboxes through an alias.
+	const mailboxDomain = mailboxId.slice(mailboxId.lastIndexOf("@") + 1);
+	const mailboxDomainMeta =
+		mailboxDomain === recipientDomain ? recipientDomainMeta : await getDomainMetadata(env.BUCKET, mailboxDomain);
+	if (recipientDomainMeta?.billing?.serviceEndedAt || mailboxDomainMeta?.billing?.serviceEndedAt) {
+		message.setReject("This mailbox is not accepting mail");
+		return;
+	}
 	const routedAliasMeta = route.resolvedViaAlias ? aliasMatch.meta : null;
 	const privateAlias = isPrivateAliasMeta(routedAliasMeta) ? routedAliasMeta : null;
 

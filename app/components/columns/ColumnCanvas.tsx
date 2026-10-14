@@ -4,23 +4,10 @@
 
 import { type ReactNode, useEffect, useRef } from "react";
 import { useColumnFocus } from "~/hooks/useColumnFocus";
+import { useColumnWidths } from "~/hooks/useColumnWidths";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { axisLockedWheel } from "~/lib/scroll-axis";
-
-export function isTypingTarget(target: EventTarget | null): boolean {
-	if (!(target instanceof HTMLElement)) return false;
-	return (
-		target instanceof HTMLInputElement ||
-		target instanceof HTMLTextAreaElement ||
-		target instanceof HTMLSelectElement ||
-		target.isContentEditable
-	);
-}
-
-/** A modal dialog is open (toasts are role=dialog too, but aria-modal=false). */
-export function isModalOpen(): boolean {
-	return Boolean(document.querySelector('[role=dialog]:not([aria-modal="false"]), [role=alertdialog]:not([aria-modal="false"])'));
-}
+import { keysFor, SHORTCUTS, useShortcut } from "~/lib/shortcuts";
 
 function columnsIn(canvas: HTMLElement | null): HTMLElement[] {
 	if (!canvas) return [];
@@ -119,6 +106,9 @@ export default function ColumnCanvas({ children }: { children: ReactNode }) {
 	const { activeColumnId, setActiveColumn } = useColumnFocus();
 	const { closeDeepest } = useMailNavigation();
 
+	// Dragged column widths live in localStorage; read them after hydration.
+	useEffect(() => useColumnWidths.getState().hydrate(), []);
+
 	// Reveal new or re-targeted columns (right-most wins when several change).
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -165,33 +155,23 @@ export default function ColumnCanvas({ children }: { children: ReactNode }) {
 		return () => canvas.removeEventListener("wheel", onWheel);
 	}, []);
 
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.metaKey || e.ctrlKey || e.altKey || isTypingTarget(e.target)) return;
-			if (isModalOpen()) return;
+	useShortcut("close", () => closeDeepest());
 
-			if (e.key === "Escape") {
-				if (closeDeepest()) e.preventDefault();
-				return;
-			}
-			if (e.key !== "[" && e.key !== "]") return;
-			e.preventDefault();
-			const columns = columnsIn(canvasRef.current);
-			if (columns.length === 0) return;
-			const current = columns.findIndex((c) => c.dataset.columnId === activeColumnId);
-			const fallback = e.key === "[" ? columns.length - 1 : 0;
-			const nextIndex =
-				current < 0
-					? fallback
-					: Math.min(columns.length - 1, Math.max(0, current + (e.key === "[" ? -1 : 1)));
-			const target = columns[nextIndex];
-			setActiveColumn(target.dataset.columnId ?? "");
-			revealIn(target);
-			focusTargetIn(target)?.focus({ preventScroll: true });
-		};
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [activeColumnId, setActiveColumn, closeDeepest]);
+	const step = (by: -1 | 1) => {
+		const columns = columnsIn(canvasRef.current);
+		if (columns.length === 0) return;
+		const current = columns.findIndex((c) => c.dataset.columnId === activeColumnId);
+		const nextIndex =
+			current < 0
+				? by < 0 ? columns.length - 1 : 0
+				: Math.min(columns.length - 1, Math.max(0, current + by));
+		const target = columns[nextIndex];
+		setActiveColumn(target.dataset.columnId ?? "");
+		revealIn(target);
+		focusTargetIn(target)?.focus({ preventScroll: true });
+	};
+	useShortcut("prevColumn", () => step(-1));
+	useShortcut("nextColumn", () => step(1));
 
 	return (
 		<>
@@ -210,10 +190,11 @@ export default function ColumnCanvas({ children }: { children: ReactNode }) {
 }
 
 const HINTS: [string, string][] = [
-	["C", "New message"],
-	["⌘K", "Search"],
-	["[  ]", "Move between columns"],
-	["Esc", "Close the last column"],
+	[keysFor("compose"), SHORTCUTS.compose.label],
+	[keysFor("search"), SHORTCUTS.search.label],
+	[`${keysFor("prevColumn")}  ${keysFor("nextColumn")}`, "Move between columns"],
+	[keysFor("close"), SHORTCUTS.close.label],
+	[keysFor("cheatSheet"), "All shortcuts"],
 ];
 
 /** Fills the free width until a message (or settings page) opens there. */
@@ -221,11 +202,11 @@ function EmptyRoom() {
 	return (
 		<div aria-hidden className="column-filler @container hidden md:flex flex-1 min-w-0 overflow-hidden items-center justify-center pb-[var(--dock-h)]">
 			{/* Only when there's real room; a sliver of free width stays blank. */}
-			<dl className="hidden @min-[280px]:grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[11px] leading-4 text-[var(--text-subtle)] animate-reveal">
+			<dl className="hidden @min-[280px]:grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-xs leading-4 text-[var(--text-subtle)] animate-reveal">
 				{HINTS.map(([keys, label]) => (
 					<div key={label} className="contents">
 						<dt className="justify-self-end">
-							<kbd className="inline-block min-w-5 rounded-[5px] bg-[var(--bg-badge)] px-1.5 text-center font-sans text-[10px] leading-[18px] text-[var(--text-muted)] shadow-[inset_0_0_0_1px_var(--border-card)]">
+							<kbd className="inline-block min-w-5 rounded-md bg-[var(--bg-badge)] px-1.5 text-center font-sans text-2xs leading-[18px] text-[var(--text-muted)] shadow-[inset_0_0_0_1px_var(--border-card)]">
 								{keys}
 							</kbd>
 						</dt>

@@ -289,6 +289,7 @@ async function runTests() {
 					domain: "supercorp.io",
 					username: "ceo",
 					password: "securepassword999",
+					backupEmail: "owner@personal.test",
 					displayName: "Chief Executive",
 				}),
 			}),
@@ -310,6 +311,7 @@ async function runTests() {
 					domain: "supercorp.io",
 					username: "cto",
 					password: "anotherpassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);
@@ -340,6 +342,7 @@ async function runTests() {
 							domain: "someone-elses.com",
 							username: "ceo",
 							password: "securepassword999",
+							backupEmail: "owner@personal.test",
 						}),
 					}),
 				);
@@ -402,6 +405,7 @@ async function runTests() {
 					domain: "startup.dev",
 					username: "founder",
 					password: "founderpassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);
@@ -543,6 +547,7 @@ async function runTests() {
 					domain: "startup.dev",
 					username: "alice",
 					password: "securepassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);
@@ -649,6 +654,7 @@ async function runTests() {
 					domain: "startup.dev",
 					username: "alice",
 					password: "alicepassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);

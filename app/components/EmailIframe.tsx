@@ -5,6 +5,42 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { scrollerFor } from "~/lib/scroll-axis";
+import { useTextSize } from "~/lib/text-size";
+import { useTheme } from "~/lib/theme";
+
+/** Colours for the iframe document (it can't read the app's CSS variables). */
+const PALETTES = {
+	light: {
+		scheme: "light",
+		bg: "#ffffff",
+		text: "#1a1a1a",
+		link: "#171717",
+		linkLine: "rgba(23, 23, 23, 0.35)",
+		quoteBorder: "#d1d5db",
+		quoteText: "#6b7280",
+		pre: "#f3f4f6",
+		thumb: "rgba(23, 23, 23, 0.22)",
+	},
+	// Matches the dark app tokens (--bg, --text-primary, --border-control…).
+	dark: {
+		scheme: "dark",
+		bg: "#111111",
+		text: "#e4e4e4",
+		link: "#ececec",
+		linkLine: "rgba(236, 236, 236, 0.4)",
+		quoteBorder: "#363636",
+		quoteText: "#969696",
+		pre: "#191919",
+		thumb: "rgba(236, 236, 236, 0.22)",
+	},
+} as const;
+
+/**
+ * The email paints its own colours (backgrounds, text colours, <font color>).
+ * Darkening those risks dark-on-dark text, so in dark mode such mail is shown
+ * as it was designed, on a light sheet; plain mail takes the dark theme.
+ */
+const OWN_COLORS_PATTERN = /\bbgcolor\s*=|background(?:-color)?\s*:|[\s;"']color\s*:|<font[^>]+color\s*=/i;
 
 interface EmailIframeProps {
 	body: string;
@@ -34,7 +70,25 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const [height, setHeight] = useState(autoSize ? 100 : 0);
 	const [allowRemoteImages, setAllowRemoteImages] = useState(false);
+	/**
+	 * The sanitised document, and a version that remounts the iframe for each
+	 * new one: re-assigning `srcdoc` on a live sandboxed frame can leave it
+	 * stuck on its old (blank) document, while a fresh frame always loads.
+	 */
+	const [doc, setDoc] = useState<{ html: string; version: number } | null>(null);
 	const hasRemoteImages = REMOTE_IMAGE_PATTERN.test(body);
+	const dark = useTheme((s) => s.resolved) === "dark";
+	// Dark mode, but the email brings its own colours: show it on a light sheet.
+	const paper = dark && OWN_COLORS_PATTERN.test(body);
+	const palette = PALETTES[dark && !paper ? "dark" : "light"];
+	// Text size zooms the whole message (its own inline sizes included). Live
+	// changes are posted in, so dragging the wheel doesn't reload the frame.
+	const zoom = useTextSize((s) => s.percent) / 100;
+	const zoomRef = useRef(zoom);
+	zoomRef.current = zoom;
+	useEffect(() => {
+		iframeRef.current?.contentWindow?.postMessage({ __emailZoom: zoom }, "*");
+	}, [zoom]);
 
 	// A different message starts blocked again.
 	useEffect(() => {
@@ -77,8 +131,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 	}, [handleMessage]);
 
 	useEffect(() => {
-		const iframe = iframeRef.current;
-		if (!iframe || !body) return;
+		if (!body) return;
 
 		// Every link opens in a new tab instead of navigating the iframe or the app.
 		DOMPurify.addHook("afterSanitizeAttributes", (node) => {
@@ -99,7 +152,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 			? "data: cid: https:"
 			: `data: cid: ${window.location.origin}`;
 
-		const padding = autoSize ? "0" : "24px";
+		const padding = autoSize ? (paper ? "16px" : "0") : "24px";
 
 		// Height-reporting script: sends body.scrollHeight to the parent.
 		// Runs inside the opaque-origin sandbox so it has zero access to
@@ -107,7 +160,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 		const heightScript = autoSize
 			? `<script>
 				function reportHeight() {
-					var h = document.body.scrollHeight;
+					var h = Math.ceil(document.documentElement.getBoundingClientRect().height);
 					if (h > 0) parent.postMessage({ __emailIframeHeight: true, height: h }, "*");
 				}
 				reportHeight();
@@ -116,6 +169,14 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 				setTimeout(reportHeight, 400);
 			<\/script>`
 			: "";
+
+		const zoomScript = `<script>
+			window.addEventListener("message", function (e) {
+				if (e.source !== parent || !e.data || typeof e.data.__emailZoom !== "number") return;
+				document.documentElement.style.zoom = e.data.__emailZoom;
+				${autoSize ? "reportHeight();" : ""}
+			});
+		<\/script>`;
 
 		// Mostly-vertical wheels that drift sideways must not pan the app's
 		// columns. An auto-sized body doesn't scroll, so it hands the vertical
@@ -131,7 +192,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 
 		// Use srcdoc so the iframe is truly sandboxed (no same-origin access).
 		// We can't use doc.write() because that requires allow-same-origin.
-		iframe.srcdoc = `<!DOCTYPE html>
+		const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -140,19 +201,20 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 <style>
 * { box-sizing: border-box; }
 html {
-	background: #ffffff;
-	color-scheme: light;
+	zoom: ${zoomRef.current};
+	background: ${palette.bg};
+	color-scheme: ${palette.scheme};
 	scrollbar-width: thin;
-	scrollbar-color: rgba(23, 23, 23, 0.22) transparent;
+	scrollbar-color: ${palette.thumb} transparent;
 }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background: rgba(23, 23, 23, 0.22); border-radius: 999px; }
+::-webkit-scrollbar-thumb { background: ${palette.thumb}; border-radius: 999px; }
 body {
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	font-size: 14px;
 	line-height: 1.6;
-	color: #1a1a1a;
-	background: #ffffff;
+	color: ${palette.text};
+	background: ${palette.bg};
 	padding: ${padding};
 	margin: 0;
 	word-wrap: break-word;
@@ -162,16 +224,16 @@ body {
 [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
 	position: relative !important;
 }
-a { color: #2563eb; }
+a { color: ${palette.link}; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: ${palette.linkLine}; }
 img { max-width: 100%; height: auto; }
 blockquote {
-	border-left: 3px solid #d1d5db;
+	border-left: 3px solid ${palette.quoteBorder};
 	padding-left: 1em;
 	margin-left: 0;
-	color: #6b7280;
+	color: ${palette.quoteText};
 }
 pre {
-	background: #f3f4f6;
+	background: ${palette.pre};
 	padding: 12px;
 	border-radius: 6px;
 	overflow-x: auto;
@@ -184,19 +246,25 @@ h1, h2, h3 { margin: 8px 0 4px; }
 ul, ol { padding-left: 20px; margin: 4px 0; }
 </style>
 </head>
-<body>${cleanBody}${heightScript}${wheelScript}</body>
+<body>${cleanBody}${heightScript}${wheelScript}${zoomScript}</body>
 </html>`;
-	}, [body, autoSize, allowRemoteImages]);
+		setDoc((prev) => ({ html, version: (prev?.version ?? 0) + 1 }));
+	}, [body, autoSize, allowRemoteImages, palette, paper]);
 
-	const frame = (
+	const iframe = (
 		<iframe
+			key={doc?.version ?? 0}
 			ref={iframeRef}
-			className="block w-full border-0"
+			srcDoc={doc?.html}
+			className={`block w-full border-0 ${paper ? "rounded-xl" : ""}`}
 			style={autoSize ? { height: `${height}px` } : { height: "100%" }}
 			sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
 			title="Email content"
 		/>
 	);
+	// A full-height sheet keeps a margin of the dark reader around it. The
+	// wrapper is always there: re-parenting the iframe would blank it.
+	const frame = autoSize ? iframe : <div className={`h-full ${paper ? "p-3" : ""}`}>{iframe}</div>;
 	if (!hasRemoteImages || allowRemoteImages) return frame;
 	return (
 		<div className={autoSize ? undefined : "flex h-full flex-col"}>

@@ -16,6 +16,7 @@ import { useUIStore } from "~/hooks/useUIStore";
 import { useMe, useRecoveryEmail } from "~/queries/account";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import { signOut } from "~/lib/sign-out";
+import AppearanceCard from "./AppearanceCard";
 import {
 	ACCOUNT_PAGES,
 	INCOMING_MAIL_PAGES,
@@ -84,8 +85,10 @@ function SettingsContent() {
 		<div className="px-4 py-4 md:px-6 md:py-5">
 
 			<div className="space-y-6">
+				<AppearanceCard />
+
 				{/* This mailbox */}
-				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 					<div className="text-sm font-medium text-kumo-default mb-4">
 						Mailbox
 					</div>
@@ -102,7 +105,7 @@ function SettingsContent() {
 				<AccountCard settingsPage={settingsPage} openSettings={openSettings} />
 
 				{/* Mail automations */}
-				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 					<div className="text-sm font-medium text-kumo-default mb-4">
 						Incoming mail
 					</div>
@@ -119,7 +122,7 @@ function SettingsContent() {
 				</div>
 
 				{/* Agent System Prompt */}
-				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 					<div className="flex items-center justify-between mb-4">
 						<div className="flex items-center gap-2">
 							<RobotIcon size={16} weight="duotone" className="text-kumo-subtle" />
@@ -152,7 +155,7 @@ function SettingsContent() {
 						onChange={(e) => setAgentPrompt(e.target.value)}
 						placeholder={PROMPT_PLACEHOLDER}
 						rows={12}
-						className="w-full resize-y rounded-lg border border-kumo-line bg-kumo-recessed px-3 py-2 text-xs text-kumo-default placeholder:text-kumo-subtle focus:outline-none focus:ring-1 focus:ring-kumo-ring font-mono leading-relaxed"
+						className="w-full resize-y rounded-2xl border border-kumo-line bg-kumo-recessed px-3 py-2 text-xs text-kumo-default placeholder:text-kumo-subtle focus:outline-none focus:ring-1 focus:ring-kumo-ring font-mono leading-relaxed"
 					/>
 					<p className="text-xs text-kumo-subtle mt-2">
 						The prompt is sent as the system message to the AI model.
@@ -185,7 +188,7 @@ function AccountCard({
 	// password" quietly sends nothing.
 	const needsRecovery = recovery !== undefined && !recovery.verified;
 	return (
-		<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+		<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 			<div className="flex items-baseline justify-between gap-3 mb-4">
 				<span className="text-sm font-medium text-kumo-default">Your account</span>
 				{me?.email && (
@@ -243,7 +246,7 @@ function SettingsLink({
 			onClick={onOpen}
 			aria-current={isOpen ? "true" : undefined}
 			data-settings-page={id}
-			className={`group w-full flex items-center gap-3 px-2 py-3 text-left rounded-md transition-colors ${
+			className={`group w-full flex items-center gap-3 px-3 py-3 text-left rounded-xl transition-colors ${
 				isOpen ? "bg-kumo-tint" : "hover:bg-kumo-tint"
 			}`}
 		>
@@ -278,7 +281,6 @@ export default function SettingsColumns() {
 				revealKey={session}
 				onClose={closeSettings}
 				closeLabel="Close settings"
-				widthClassName="md:w-[460px]"
 			>
 				<SettingsContent />
 			</ColumnPane>
@@ -288,8 +290,6 @@ export default function SettingsColumns() {
 					title={page.label}
 					hideHeader
 					revealKey={page.id}
-					grow
-					widthClassName="md:w-auto md:flex-1 md:min-w-[560px]"
 				>
 					<Suspense
 						fallback={

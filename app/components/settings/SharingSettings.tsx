@@ -179,7 +179,7 @@ export default function SharingSettings() {
 						{errorMessage(error, "Couldn't load members.")}
 					</p>
 				) : (
-					<section className="rounded-lg border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
+					<section className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
 						<div className="px-5 py-3 text-sm font-medium text-kumo-default">
 							{members.length === 1 ? "1 person" : `${members.length} people`}
 						</div>
@@ -204,7 +204,7 @@ export default function SharingSettings() {
 				{canManage && <InviteMemberCard mailboxId={mailboxId} />}
 
 				{you && (
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
 						<div>
 							<div className="text-sm font-medium text-kumo-default">Leave this mailbox</div>
 							<p className="text-xs text-kumo-subtle mt-1">

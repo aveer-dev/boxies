@@ -57,6 +57,7 @@ import { allowedMailboxSet, canonicalMailboxId, mailboxMetadataKey, strictMailbo
 import { validatePasswordStrength } from "../lib/password-auth";
 import type { Env } from "../types";
 import { compatKeys, leaveMailbox } from "./account";
+import { serviceEndedErrorForMailbox } from "../lib/domain-service";
 
 type App = Hono<MailboxContext>;
 type C = Context<MailboxContext>;
@@ -255,6 +256,9 @@ async function createInvite(
 ) {
 	const inviteeEmail = normalizeEmailAddress(opts.inviteEmail);
 	if (!inviteeEmail) return { ok: false as const, status: 400 as const, error: "Invalid invitee email" };
+	// Nobody joins a mailbox whose domain's subscription has ended.
+	const ended = await serviceEndedErrorForMailbox(c.env, opts.mailboxId);
+	if (ended) return { ok: false as const, status: 403 as const, error: ended.error, code: ended.code };
 	// Invites send mail from our own address to anyone: cap them per inviter
 	// and per invitee.
 	if (
@@ -361,7 +365,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 				inviteeName: body.assignTo.inviteeName,
 				role: body.assignTo.role ?? "owner",
 			});
-			if (!result.ok) return c.json({ error: result.error }, result.status);
+			if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 			invite = result.body;
 		}
 		await audit(db, principal.userId, "mailbox.create", check.mailboxId, {
@@ -379,6 +383,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		if (!(await mailboxExists(db, mailboxId))) return c.json({ error: "Not found" }, 404);
+		const ended = await serviceEndedErrorForMailbox(c.env, mailboxId);
+		if (ended) return c.json(ended, 403);
 		const body = AssignBody.parse(await c.req.json());
 		if (body.assignTo === "self") {
 			await grantMailboxRole(db, mailboxId, principal.userId, "owner");
@@ -391,7 +397,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.assignTo.inviteeName,
 			role: body.assignTo.role ?? "owner",
 		});
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		return c.json({ mailboxId, invite: result.body });
 	});
 
@@ -410,6 +416,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		if (!(await mailboxExists(db, mailboxId))) return c.json({ error: "Not found" }, 404);
+		const ended = await serviceEndedErrorForMailbox(c.env, mailboxId);
+		if (ended) return c.json(ended, 403);
 		const stub = getMailboxStub(c.env, mailboxId);
 		const { conversationIds } = await stub.purgeMailbox(mailboxId);
 		await purgeEmailAgents(c.env, mailboxId, conversationIds);
@@ -436,7 +444,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.inviteeName,
 			role: body.role ?? "owner",
 		});
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		return c.json(result.body, 201);
 	});
 
@@ -481,6 +489,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (!invite) return c.json({ error: "Not found" }, 404);
 		if (!(await canManageMembers(db, principal.userId, invite.mailboxId))) return c.json({ error: "Forbidden" }, 403);
 		if (inviteStatus(invite) !== "pending") return c.json({ error: "Invite is not active" }, 400);
+		const ended = await serviceEndedErrorForMailbox(c.env, invite.mailboxId);
+		if (ended) return c.json(ended, 403);
 		if (invite.emailCount >= MAX_INVITE_EMAILS) {
 			return c.json({ error: "This invite has been emailed too many times; revoke it and invite again" }, 429);
 		}
@@ -516,7 +526,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.inviteeName,
 			role: body.role ?? "member",
 		});
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		return c.json(result.body, 201);
 	});
 
@@ -537,7 +547,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const body = z.object({ role: z.enum(["owner", "member"]) }).parse(await c.req.json());
 		const userId = c.req.param("userId");
 		const result = await setMailboxRole(db, mailboxId, userId, body.role);
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		await audit(db, principal!.userId, "member.role", mailboxId, { userId, role: body.role });
 		return c.json({ ok: true });
 	});
@@ -553,7 +563,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		const result = await leaveMailbox(c.env, mailboxId, userId);
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		await audit(db, principal!.userId, self ? "member.leave" : "member.remove", mailboxId, { userId });
 		return c.json({ ok: true });
 	});
@@ -573,6 +583,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const db = authDb(c.env.AUTH_DB);
 		const invite = await findInviteByToken(db, c.req.param("token"));
 		if (!invite || inviteStatus(invite) !== "pending") return c.json({ error: "Invite is not active" }, 410);
+		// Invites sent before the domain's subscription ended can't be used to join.
+		const ended = await serviceEndedErrorForMailbox(c.env, invite.mailboxId);
+		if (ended) return c.json(ended, 403);
 		if (
 			(await isRateLimited(c.env, "otp-send", clientIp(c.req.raw.headers))) ||
 			(await isRateLimited(c.env, "otp-send", invite.inviteeEmail))
@@ -600,6 +613,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (!invite) return c.json({ error: "Invite not found" }, 404);
 		if (inviteStatus(invite) !== "pending") return c.json({ error: "Invite is not active" }, 410);
 		if (!(await mailboxExists(db, invite.mailboxId))) return c.json({ error: "Mailbox not found" }, 404);
+		const ended = await serviceEndedErrorForMailbox(c.env, invite.mailboxId);
+		if (ended) return c.json(ended, 403);
 		const body = AcceptInviteBody.parse(await c.req.json().catch(() => ({})));
 		if (await isRateLimited(c.env, "otp-verify", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
 

@@ -26,8 +26,8 @@ export function searchPath(mailboxId: string, query: string) {
  *   /mailbox/:id/reply-later/:emailId?      Reply Later → reader
  *   /mailbox/:id/search/:emailId?q=…        results → reader
  *
- * Compose, agent and settings are side panels (`useUIStore`): they open to
- * the right of these columns, in the order they were opened.
+ * Compose, extra readers, agent and settings are side panels (`useUIStore`):
+ * they open to the right of these columns, in the order they were opened.
  */
 export function useMailNavigation() {
 	const { mailboxId = "", emailId } = useParams<{
@@ -39,6 +39,7 @@ export function useMailNavigation() {
 	const {
 		panels,
 		closeCompose,
+		closeReader,
 		closeAgentPanel,
 		isSettingsOpen: isSettings,
 		settingsPage,
@@ -82,18 +83,20 @@ export function useMailNavigation() {
 	/** Esc / mobile back: close the right-most column that can be closed. */
 	const closeDeepest = useCallback((): boolean => {
 		const panel = panels[panels.length - 1];
-		if (panel === "agent") {
-			closeAgentPanel();
-			return true;
-		}
-		if (panel === "compose") {
-			closeCompose();
-			return true;
-		}
-		if (panel === "settings") {
-			if (settingsPage) closeSettingsPage();
-			else closeSettings();
-			return true;
+		switch (panel?.kind) {
+			case "agent":
+				closeAgentPanel();
+				return true;
+			case "compose":
+				closeCompose(panel.key);
+				return true;
+			case "reader":
+				closeReader(panel.key);
+				return true;
+			case "settings":
+				if (settingsPage) closeSettingsPage();
+				else closeSettings();
+				return true;
 		}
 		if (emailId) {
 			closeEmail();
@@ -108,6 +111,7 @@ export function useMailNavigation() {
 		panels,
 		closeAgentPanel,
 		closeCompose,
+		closeReader,
 		settingsPage,
 		closeSettingsPage,
 		closeSettings,

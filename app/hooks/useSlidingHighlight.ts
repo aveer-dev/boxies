@@ -52,4 +52,4 @@ export function useSlidingHighlight<T extends HTMLElement>(
 
 /** Classes for the highlight element itself. */
 export const slidingMarkClass =
-	"pointer-events-none absolute left-0 top-0 rounded-md bg-kumo-fill opacity-0 data-[ready=true]:transition-[transform,width,height,opacity] data-[ready=true]:duration-[420ms] data-[ready=true]:ease-[var(--spring)]";
+	"pointer-events-none absolute left-0 top-0 rounded-lg bg-kumo-fill opacity-0 data-[ready=true]:transition-[transform,width,height,opacity] data-[ready=true]:duration-[420ms] data-[ready=true]:ease-[var(--spring)]";

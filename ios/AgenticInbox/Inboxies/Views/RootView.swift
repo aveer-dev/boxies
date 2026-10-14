@@ -24,7 +24,9 @@ struct RootView: View {
             || args.contains("-previewDomainAdminDetailUnassigned")
             || args.contains("-previewPasswordSignIn")
             || args.contains("-previewInviteAccept")
-            || args.contains("-previewSignInMethods") {
+            || args.contains("-previewSignInMethods")
+            || args.contains("-previewDomainAdminServiceEnded")
+            || PreviewSupport.isServiceMailboxPreview {
             return false
         }
         #endif
@@ -83,7 +85,9 @@ struct RootView: View {
                 || args.contains("-previewDomainAdminDetailUnassigned")
                 || args.contains("-previewPasswordSignIn")
                 || args.contains("-previewInviteAccept")
-                || args.contains("-previewSignInMethods") {
+                || args.contains("-previewSignInMethods")
+                || args.contains("-previewDomainAdminServiceEnded")
+                || PreviewSupport.isServiceMailboxPreview {
                 return
             }
             #endif
@@ -113,6 +117,9 @@ struct RootView: View {
                 }
             case .cancelled:
                 app.showToast("Checkout cancelled. Your domain was not purchased.")
+            case .renewed, .renewCancelled:
+                let callback = PaymentCallback.parse(url)
+                Task { await app.handleRenewalCallback(callback) }
             case .unrecognized:
                 if url.scheme == "inboxies" && url.host == "onboarding" {
                     Task {
@@ -132,6 +139,13 @@ struct RootView: View {
             app.reset()
             auth.signOut()
             auth.errorMessage = APIError.sessionExpired.errorDescription
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .inboxiesServiceEnded)) { note in
+            // A write hit a domain whose subscription ended: read-only, never signed out.
+            app.markServiceEnded(
+                domain: note.userInfo?["domain"] as? String,
+                message: note.userInfo?["message"] as? String ?? ""
+            )
         }
         .onAppear {
             if let stored = UserDefaults.standard.string(forKey: "pendingInviteToken") {
@@ -1814,6 +1828,7 @@ struct MailboxOnboardingView: View {
                 username: username,
                 password: customPassword,
                 displayName: customName.isEmpty ? nil : customName,
+                backupEmail: customBackupEmail.trimmingCharacters(in: .whitespacesAndNewlines),
                 returnUrl: returnUrl,
                 client: "ios"
             )
@@ -1847,7 +1862,7 @@ struct MailboxOnboardingView: View {
             handlePaymentComplete(domain: domain, token: token)
         case .cancelled:
             errorMessage = "Checkout was cancelled, so the domain was not purchased. You can try again."
-        case .unrecognized:
+        case .renewed, .renewCancelled, .unrecognized:
             errorMessage = "Checkout returned an unexpected response. If you were charged, contact support."
         }
     }

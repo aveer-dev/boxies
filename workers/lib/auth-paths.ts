@@ -42,6 +42,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/billing/checkout-return" ||
 		pathname === "/api/v1/billing/checkout-cancel" ||
 		pathname === "/api/v1/billing/checkout-status" ||
+		pathname === "/api/v1/billing/renew-return" ||
 		pathname === "/api/v1/billing/stripe-webhook"
 	) {
 		return true;

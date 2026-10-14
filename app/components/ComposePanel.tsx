@@ -3,18 +3,17 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Banner, Button, Input } from "@cloudflare/kumo";
+import { IconButton } from "~/components/IconButton";
 import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import type { ComposeOptions } from "~/hooks/useUIStore";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import ComposeBodyChrome from "./compose/ComposeBodyChrome";
 import PrivateEmailLogo from "./PrivateEmailLogo";
 
-export default function ComposePanel() {
-	const { mailboxId, folder } = useParams<{
-		mailboxId: string;
-		folder: string;
-	}>();
+export default function ComposePanel({ panelKey, options }: { panelKey: string; options: ComposeOptions }) {
+	const { mailboxId } = useParams<{ mailboxId: string }>();
 
 	const {
 		to,
@@ -43,23 +42,23 @@ export default function ComposePanel() {
 		handleDiscard,
 		handleSend,
 		closeCompose,
-	} = useComposeForm(mailboxId, folder);
+	} = useComposeForm(mailboxId, panelKey, options);
 
 	return (
 		<div className="flex flex-col h-full bg-kumo-base">
-			<div className="flex items-center justify-between h-11 px-4 border-b border-kumo-line shrink-0">
+			<div className="flex items-center justify-between h-12 px-4 border-b border-kumo-line shrink-0">
 				<h2 className="text-sm font-semibold text-kumo-default">
 					{formTitle}
 				</h2>
 				<div className="flex items-center gap-1">
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={<XIcon size={18} />}
+					<IconButton
+						label="Close compose"
+						shortcut="Esc"
+						icon={XIcon}
+						size="md"
+						close
 						onClick={closeCompose}
 						disabled={isSending}
-						aria-label="Close compose"
 					/>
 				</div>
 			</div>

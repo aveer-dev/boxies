@@ -77,7 +77,7 @@ export default function RecoveryEmailSection() {
 	};
 
 	return (
-		<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+		<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 			<div>
 				<div className="text-sm font-medium text-kumo-default mb-1 flex items-center gap-2">
 					Recovery email

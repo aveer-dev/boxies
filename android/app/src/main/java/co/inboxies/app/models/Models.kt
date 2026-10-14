@@ -42,7 +42,16 @@ data class Mailbox(
     val canManage: Boolean? = null,
     /** `owner` or `member` for the signed-in user. */
     val role: String? = null,
-)
+    /** The domain's subscription ended: read, flag and export only. Absent on older servers. */
+    val readOnly: Boolean? = null,
+    /** Detail only; null for domains without Inboxies billing (e.g. the shared platform domain). */
+    val service: DomainService? = null,
+) {
+    val domain: String get() = email.substringAfterLast('@').lowercase()
+
+    /** [readOnly] wins: a list refresh carries it but not [service], which may be stale. */
+    val isReadOnly: Boolean get() = readOnly ?: (service?.isEnded == true)
+}
 
 @Serializable
 data class MailboxSettings(
@@ -1394,4 +1403,50 @@ data class DeleteAccountResponse(
 @Serializable
 data class EmptyTrashResponse(
     val deleted: Int = 0,
+)
+
+/**
+ * Where a paid domain's service stands (`GET /api/v1/billing/domains/:domain/service`).
+ * The mailbox detail embeds the same summary without [canManage] / [billed].
+ */
+@Serializable
+data class DomainService(
+    val domain: String = "",
+    /** `active`, `ending` (subscription set to cancel) or `ended` (read-only). */
+    val status: String = STATUS_ACTIVE,
+    val endsAt: String? = null,
+    val endedAt: String? = null,
+    /** Inboxies registered the domain, so it lapses unless renewed by [renewBy]. */
+    val registrarManaged: Boolean = false,
+    val registrationExpiresAt: String? = null,
+    val renewBy: String? = null,
+    val daysLeftToRenew: Int? = null,
+    val canRenew: Boolean = false,
+    /** Caller is an admin of the domain (only the service endpoint sends it). */
+    val canManage: Boolean? = null,
+    val billed: Boolean? = null,
+) {
+    val isEnded: Boolean get() = status == STATUS_ENDED
+    val isEnding: Boolean get() = status == STATUS_ENDING
+
+    companion object {
+        const val STATUS_ACTIVE = "active"
+        const val STATUS_ENDING = "ending"
+        const val STATUS_ENDED = "ended"
+    }
+}
+
+/**
+ * `POST /api/v1/billing/domains/:domain/renew`: a resumed subscription, a Stripe
+ * Checkout to open, or (local dev) an immediate mock renewal.
+ */
+@Serializable
+data class RenewDomainResponse(
+    val resumed: Boolean? = null,
+    val renewed: Boolean? = null,
+    val mock: Boolean? = null,
+    val service: DomainService? = null,
+    val checkoutUrl: String? = null,
+    val sessionId: String? = null,
+    val pricing: DomainPricingBreakdown? = null,
 )

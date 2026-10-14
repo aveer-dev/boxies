@@ -56,7 +56,7 @@ export function InviteMemberCard({ mailboxId }: { mailboxId: string }) {
 	};
 
 	return (
-		<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+		<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
 			<div>
 				<div className="text-sm font-medium text-kumo-default">Invite someone</div>
 				<p className="text-xs text-kumo-subtle mt-1">
@@ -132,7 +132,7 @@ export function PendingInvitesCard({ mailboxId }: { mailboxId: string }) {
 	if (isLoading || invites.length === 0) return null;
 
 	return (
-		<section className="rounded-lg border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
+		<section className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
 			<div className="px-5 py-3 text-sm font-medium text-kumo-default">Pending invites</div>
 			{invites.map((invite) => (
 				<div key={invite.id} className="px-5 py-3 flex items-center gap-3">
