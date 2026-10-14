@@ -132,6 +132,7 @@ export default function EmailListRoute() {
 	}>();
 	const { emailId, openEmail, closeEmail } = useMailNavigation();
 	const startCompose = useUIStore((s) => s.startCompose);
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	const navigate = useNavigate();
 	const [page, setPage] = useState(1);
 
@@ -302,7 +303,7 @@ export default function EmailListRoute() {
 					<ListEmptyState
 						{...emptyState}
 						action={
-							"showCompose" in emptyState && emptyState.showCompose ? (
+							"showCompose" in emptyState && emptyState.showCompose && !isReadOnly ? (
 								<Button
 									variant="primary"
 									size="sm"

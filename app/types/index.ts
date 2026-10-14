@@ -229,6 +229,36 @@ export interface Mailbox {
 	name: string;
 	settings?: MailboxSettings;
 	canManage?: boolean;
+	/** The domain's subscription ended: read and export only. */
+	readOnly?: boolean;
+	/** Billing state of the mailbox's domain; null for domains Inboxies doesn't bill. */
+	service?: DomainService | null;
+}
+
+/** Where a paid domain's service stands (GET /api/v1/billing/domains/:domain/service). */
+export interface DomainService {
+	domain: string;
+	status: "active" | "ending" | "ended";
+	/** When a subscription set to cancel ends. */
+	endsAt?: string;
+	endedAt?: string;
+	registrarManaged: boolean;
+	registrationExpiresAt?: string;
+	/** Last day the domain can be renewed (registrar grace period). */
+	renewBy?: string;
+	daysLeftToRenew?: number;
+	canRenew: boolean;
+	/** The caller is an owner/admin of the domain (only those can renew). */
+	canManage?: boolean;
+	billed?: boolean;
+}
+
+export interface RenewDomainResponse {
+	resumed?: boolean;
+	renewed?: boolean;
+	checkoutUrl?: string;
+	sessionId?: string;
+	service?: DomainService;
 }
 
 export interface EmailAuthSnapshot {

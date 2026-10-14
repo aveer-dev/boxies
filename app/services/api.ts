@@ -17,6 +17,8 @@ import type {
 	DomainAvailabilityResponse,
 	DomainCheckoutResponse,
 	CheckoutStatusResponse,
+	DomainService,
+	RenewDomainResponse,
 	ExportJob,
 	DecommissionPreflightResponse,
 	DecommissionResponse,
@@ -733,6 +735,13 @@ const api = {
 				...(params.domain ? { domain: params.domain } : {}),
 			},
 		}),
+
+	getDomainService: (domain: string) =>
+		get<DomainService>(`/api/v1/billing/domains/${encodeURIComponent(domain)}/service`),
+
+	/** Keep a subscription that is set to end, or start a new one for an ended domain. */
+	renewDomain: (domain: string) =>
+		post<RenewDomainResponse>(`/api/v1/billing/domains/${encodeURIComponent(domain)}/renew`, { client: "web" }),
 
 	// Email Data Export Engine
 	exportMailbox: (mailboxId: string) =>

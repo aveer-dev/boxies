@@ -12,6 +12,7 @@ import type { Email } from "~/types";
 import ColumnPane from "./ColumnPane";
 import QuickReplyBar from "./QuickReplyBar";
 import { ThreadChip } from "./ThreadRow";
+import { useUIStore } from "~/hooks/useUIStore";
 
 /**
  * Column 4 — the reading room for `:emailId`. Wraps the full `EmailPanel`
@@ -20,6 +21,7 @@ import { ThreadChip } from "./ThreadRow";
 export default function ReaderColumn({ emailId }: { emailId: string }) {
 	const { mailboxId = "", folder } = useParams<{ mailboxId: string; folder?: string }>();
 	const { closeEmail } = useMailNavigation();
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: folders = [] } = useFolders(mailboxId);
 
@@ -58,9 +60,9 @@ export default function ReaderColumn({ emailId }: { emailId: string }) {
 				folder={folder}
 				onClose={closeEmail}
 				chips={chips}
-				renderFooter={(replyTarget) => (
-					<QuickReplyBar mailboxId={mailboxId} replyTarget={replyTarget} />
-				)}
+				renderFooter={(replyTarget) =>
+					isReadOnly ? null : <QuickReplyBar mailboxId={mailboxId} replyTarget={replyTarget} />
+				}
 			/>
 		</ColumnPane>
 	);

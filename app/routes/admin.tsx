@@ -253,6 +253,7 @@ export default function AdminRoute() {
 						mailDomain={mailDomain}
 						initialDomain={searchParams.get("domain") || undefined}
 						justPurchased={searchParams.get("purchased") === "true"}
+						justRenewed={searchParams.get("renewed") === "1"}
 					/>
 				) : isLoading ? (
 					<div className="flex justify-center py-20">
