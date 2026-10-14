@@ -184,7 +184,7 @@ export default function FiltersSettings() {
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Filters">
 			<div className="space-y-4">
-				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
 					<p className="text-sm text-kumo-default leading-relaxed">
 						If a message matches, file it, skip auto-draft, or forward. First
 						matching rule wins.
@@ -197,7 +197,7 @@ export default function FiltersSettings() {
 					</p>
 				</div>
 
-				<div className="rounded-lg border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
 					{rules.length === 0 && (
 						<p className="px-5 py-6 text-sm text-kumo-subtle">No filters yet.</p>
 					)}
@@ -244,7 +244,7 @@ export default function FiltersSettings() {
 				</div>
 
 				{editing && (
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 						<div className="text-sm font-medium text-kumo-default">
 							Edit filter
 						</div>
@@ -290,7 +290,7 @@ export default function FiltersSettings() {
 							<label className="block space-y-1.5">
 								<span className="text-sm text-kumo-default">Move to folder</span>
 								<select
-									className="w-full rounded-lg border border-kumo-line bg-kumo-base px-3 py-2 text-sm text-kumo-default"
+									className="w-full rounded-2xl border border-kumo-line bg-kumo-base px-3 py-2 text-sm text-kumo-default"
 									value={editing.folderId || ""}
 									onChange={(e) =>
 										updateRule(editing.id, { folderId: e.target.value })

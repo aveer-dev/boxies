@@ -4,6 +4,7 @@
 
 import { type ReactNode, useEffect, useRef } from "react";
 import { useColumnFocus } from "~/hooks/useColumnFocus";
+import { useColumnWidths } from "~/hooks/useColumnWidths";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { axisLockedWheel } from "~/lib/scroll-axis";
 
@@ -119,6 +120,9 @@ export default function ColumnCanvas({ children }: { children: ReactNode }) {
 	const { activeColumnId, setActiveColumn } = useColumnFocus();
 	const { closeDeepest } = useMailNavigation();
 
+	// Dragged column widths live in localStorage; read them after hydration.
+	useEffect(() => useColumnWidths.getState().hydrate(), []);
+
 	// Reveal new or re-targeted columns (right-most wins when several change).
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -221,11 +225,11 @@ function EmptyRoom() {
 	return (
 		<div aria-hidden className="column-filler @container hidden md:flex flex-1 min-w-0 overflow-hidden items-center justify-center pb-[var(--dock-h)]">
 			{/* Only when there's real room; a sliver of free width stays blank. */}
-			<dl className="hidden @min-[280px]:grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-[11px] leading-4 text-[var(--text-subtle)] animate-reveal">
+			<dl className="hidden @min-[280px]:grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-xs leading-4 text-[var(--text-subtle)] animate-reveal">
 				{HINTS.map(([keys, label]) => (
 					<div key={label} className="contents">
 						<dt className="justify-self-end">
-							<kbd className="inline-block min-w-5 rounded-[5px] bg-[var(--bg-badge)] px-1.5 text-center font-sans text-[10px] leading-[18px] text-[var(--text-muted)] shadow-[inset_0_0_0_1px_var(--border-card)]">
+							<kbd className="inline-block min-w-5 rounded-md bg-[var(--bg-badge)] px-1.5 text-center font-sans text-[11px] leading-[18px] text-[var(--text-muted)] shadow-[inset_0_0_0_1px_var(--border-card)]">
 								{keys}
 							</kbd>
 						</dt>

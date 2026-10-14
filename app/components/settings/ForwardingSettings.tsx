@@ -71,7 +71,7 @@ export default function ForwardingSettings() {
 
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Forwarding">
-			<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+			<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 				<p className="text-sm text-kumo-default leading-relaxed">
 					When this is on, a copy of each incoming message is sent to another
 					address. This mailbox still keeps the original.

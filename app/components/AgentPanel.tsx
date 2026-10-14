@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Loader, Tooltip } from "@cloudflare/kumo";
+import { Badge, Button, Loader } from "@cloudflare/kumo";
 import {
 	ArrowUpIcon,
 	RobotIcon,
@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { UIMessage } from "ai";
 
@@ -364,20 +365,15 @@ function AgentChatConnected({
 				<div className="flex items-center gap-1">
 					{isStreaming && <Loader size="sm" />}
 					{messages.length > 0 && (
-						<Tooltip content="Clear chat" asChild>
-							<Button
-								variant="ghost"
-								shape="square"
-								size="sm"
-								icon={<TrashIcon size={14} />}
-								onClick={() => {
-									if (window.confirm("Clear chat history?")) {
-										setMessages([]);
-									}
-								}}
-								aria-label="Clear chat"
-							/>
-						</Tooltip>
+						<IconButton
+							label="Clear chat"
+							icon={TrashIcon}
+							onClick={() => {
+								if (window.confirm("Clear chat history?")) {
+									setMessages([]);
+								}
+							}}
+						/>
 					)}
 				</div>
 			</div>

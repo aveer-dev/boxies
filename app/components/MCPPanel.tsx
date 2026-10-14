@@ -2,7 +2,6 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Tooltip } from "@cloudflare/kumo";
 import {
 	CheckIcon,
 	CopyIcon,
@@ -10,6 +9,7 @@ import {
 	WrenchIcon,
 } from "@phosphor-icons/react";
 import { useState } from "react";
+import { IconButton } from "~/components/IconButton";
 import { useParams } from "react-router";
 
 function CopyButton({ text }: { text: string }) {
@@ -26,22 +26,13 @@ function CopyButton({ text }: { text: string }) {
 	};
 
 	return (
-		<Tooltip content={copied ? "Copied!" : "Copy"} asChild>
-			<Button
-				variant="ghost"
-				shape="square"
-				size="sm"
-				icon={
-					copied ? (
-						<CheckIcon size={12} weight="bold" className="text-kumo-success" />
-					) : (
-						<CopyIcon size={12} />
-					)
-				}
-				onClick={handleCopy}
-				aria-label="Copy to clipboard"
-			/>
-		</Tooltip>
+		<IconButton
+			label={copied ? "Copied" : "Copy"}
+			icon={copied ? CheckIcon : CopyIcon}
+			weight={copied ? "bold" : "regular"}
+			iconClassName={copied ? "text-kumo-default animate-pop" : ""}
+			onClick={handleCopy}
+		/>
 	);
 }
 

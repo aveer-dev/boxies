@@ -6,13 +6,35 @@
   --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
   /* Referenced by a few components but never defined by Kumo. */
   --color-kumo-accent: var(--accent);
-  --color-kumo-ring: var(--accent);
+  --color-kumo-ring: var(--focus-ring);
+  /* Used by the compose format sheet and links, also never defined by Kumo. */
+  --color-kumo-link: var(--accent);
+  --text-color-kumo-link-hover: var(--text-strong);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-spring: var(--spring);
-  --animate-reveal: reveal 420ms var(--ease-out) both;
-  --animate-pop: pop 360ms var(--spring) both;
-  --animate-menu-in: menu-in 160ms var(--ease-out) both;
-  --animate-bar-in: bar-in 320ms var(--spring) both;
+  /* `backwards`, never `both`: a filled animation keeps its element a stacking
+     context (and, with filter, a containing block for fixed children). */
+  --animate-reveal: reveal 420ms var(--ease-out) backwards;
+  --animate-pop: pop 360ms var(--spring) backwards;
+  --animate-menu-in: menu-in 160ms var(--ease-out) backwards;
+
+  /* Standard type scale (Kumo ships 12/13/14/16). */
+  --text-xs: 12px;
+  --text-xs--line-height: 1rem;
+  --text-sm: 14px;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 15px;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 17px;
+  --text-lg--line-height: 1.5rem;
+
+  /* One rounder radius scale, shared with Kumo (which uses rounded-md/lg/xl). */
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 24px;
 }
 
 /*
@@ -21,18 +43,26 @@
  * follows it. Unlayered, so it wins over Kumo's @layer base values.
  */
 :root {
+  /*
+   * Monochrome: every colour is a step between white and black (zero
+   * chroma). Only status signals (errors, spoofing, delivery failures) keep
+   * Kumo's semantic hues.
+   */
   --bg: #fcfcfc;
-  --bg-card: #f5f5f3;
-  --bg-card-hover: #efefe9;
-  --bg-badge: #f0f0ed;
+  --bg-card: #f6f6f6;
+  --bg-card-hover: #f0f0f0;
+  --bg-badge: #f2f2f2;
   --text-primary: #171717;
-  --text-strong: #3f3f3c;
-  --text-muted: #6b6b67;
-  --text-subtle: #92928e;
-  --border-subtle: #eaeae7;
-  --border-card: #e4e4df;
-  --accent: #2659d9;
-  --accent-soft: color-mix(in oklab, var(--accent) 9%, var(--bg));
+  --text-strong: #404040;
+  --text-muted: #6b6b6b;
+  --text-subtle: #949494;
+  --border-subtle: #ebebeb;
+  --border-card: #e2e2e2;
+  --border-control: #d9d9d9;
+  --accent: #171717;
+  --accent-soft: rgba(0, 0, 0, 0.06);
+  /* Focus: a mid gray, ≥3:1 on every surface. */
+  --focus-ring: #8a8a8a;
   --glass-bg: color-mix(in srgb, var(--bg) 72%, transparent);
   --glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.06);
   --scroll-thumb: color-mix(in srgb, var(--text-primary) 22%, transparent);
@@ -55,10 +85,12 @@
   --color-kumo-fill-hover: var(--bg-badge);
   --color-kumo-interact: var(--border-card);
   --color-kumo-line: var(--border-subtle);
-  --color-kumo-hairline: var(--border-subtle);
+  --color-kumo-hairline: var(--border-control);
   --color-kumo-contrast: var(--text-primary);
   --color-kumo-brand: var(--accent);
-  --color-kumo-brand-hover: color-mix(in oklab, var(--accent) 86%, #000);
+  --color-kumo-brand-hover: #333333;
+  --color-kumo-tip-shadow: var(--border-card);
+  --color-kumo-tip-stroke: var(--border-card);
   --color-kumo-info-tint: var(--accent-soft);
 
   --text-color-kumo-default: var(--text-primary);
@@ -91,13 +123,13 @@ html {
 }
 
 ::selection {
-  background: color-mix(in oklab, var(--accent) 18%, transparent);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 @layer base {
   /* Focus: the accent ring, as on the site. */
-  :where(a, button, [role="button"], summary):focus-visible {
-    outline: 2px solid var(--accent);
+  :where(a, button, [role="button"], [role="separator"], summary):focus-visible {
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
   }
 
@@ -130,6 +162,76 @@ html {
     background: var(--scroll-thumb);
     border-radius: 999px;
   }
+}
+
+/*
+ * Controls: Kumo draws fields and secondary buttons with a hairline ring and
+ * no visible focus. Give fields an accent edge plus a soft halo on focus.
+ */
+:is(input, textarea, select)[class*="ring-kumo-hairline"]:focus,
+[class*="ring-kumo-hairline"]:has(> :is(input, textarea):focus) {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px var(--accent-soft);
+}
+:is(input, textarea, select)[class*="ring-kumo-hairline"] {
+  transition: box-shadow 160ms var(--ease-out);
+}
+button[class*="ring-kumo-hairline"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px var(--accent-soft);
+}
+
+/*
+ * Icon buttons: a soft background blooms in behind the glyph, which lifts on
+ * hover and dips on press. `.icon-btn-close` turns its ✕ a quarter.
+ */
+.icon-btn {
+  position: relative;
+  isolation: isolate;
+  color: var(--text-muted);
+}
+.icon-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--bg-card-hover);
+  opacity: 0;
+  transform: scale(0.7);
+  transition: opacity 160ms var(--ease-out), transform 280ms var(--spring);
+}
+.icon-btn:hover,
+.icon-btn[aria-expanded="true"],
+.icon-btn[aria-pressed="true"] {
+  color: var(--text-primary);
+}
+.icon-btn:hover::before,
+.icon-btn[aria-expanded="true"]::before {
+  opacity: 1;
+  transform: scale(1);
+}
+.icon-btn > svg,
+.icon-motion svg {
+  transition: transform 280ms var(--spring), rotate 280ms var(--spring);
+}
+.icon-btn:hover > svg,
+.icon-motion:hover svg {
+  transform: translateY(-1px) scale(1.08);
+}
+.icon-btn:active > svg,
+.icon-motion:active svg {
+  transform: scale(0.88);
+  transition-duration: 80ms;
+}
+.icon-btn-close:hover > svg {
+  rotate: 90deg;
+}
+.icon-btn:disabled {
+  opacity: 0.5;
+}
+.icon-btn:disabled::before {
+  display: none;
 }
 
 /* TipTap list styles */
@@ -199,12 +301,6 @@ html {
   }
 }
 
-@keyframes bar-in {
-  from {
-    transform: scaleY(0);
-  }
-}
-
 @keyframes menu-in {
   from {
     opacity: 0;
@@ -214,10 +310,10 @@ html {
 
 @media (prefers-reduced-motion: no-preference) {
   .column-enter > * {
-    animation: column-in 420ms var(--ease-out) both;
+    animation: column-in 420ms var(--ease-out) backwards;
   }
   .row-enter {
-    animation: row-in 320ms var(--ease-out) calc(min(var(--i, 0), 12) * 16ms) both;
+    animation: row-in 320ms var(--ease-out) calc(min(var(--i, 0), 12) * 16ms) backwards;
   }
 }
 
@@ -240,4 +336,28 @@ html {
 [role="region"][aria-label="Notifications"] {
   z-index: 60;
   bottom: calc(var(--dock-h) + 4px);
+}
+
+/* While a column edge is dragged: one cursor everywhere, no text selection,
+   and iframes (email bodies) don't swallow the pointer. */
+.is-resizing-columns,
+.is-resizing-columns * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+.is-resizing-columns iframe {
+  pointer-events: none;
+}
+
+/* Tooltips (`Tip`): Kumo's popup restyled as a small light card. */
+[data-side] > :has(> .tip-content) {
+  border-radius: var(--radius-xl);
+  padding: 6px 10px;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: 18px;
+  font-weight: 500;
+  outline: none;
+  box-shadow: var(--shadow-menu);
 }

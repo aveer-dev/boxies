@@ -48,10 +48,8 @@ export default function ReaderColumn({ emailId }: { emailId: string }) {
 			id="reader"
 			title={email?.subject || "Message"}
 			revealKey={emailId}
-			grow
 			hideHeader
 			scrollBody={false}
-			widthClassName="md:w-auto md:flex-1 md:min-w-[848px]"
 		>
 			<EmailPanel
 				key={emailId}

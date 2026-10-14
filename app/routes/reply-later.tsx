@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { formatParticipants } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
+import { IconButton } from "~/components/IconButton";
 import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components/columns/ListParts";
 import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
@@ -86,18 +87,14 @@ export default function ReplyLaterRoute() {
 				revealKey={`${mailboxId}/reply-later`}
 				title="Reply Later"
 				counter={totalCount || undefined}
-				widthClassName="md:w-[400px]"
 				actions={
-					<button
-						type="button"
+					<IconButton
+						label="Refresh"
+						icon={ArrowsClockwiseIcon}
+						iconClassName={isRefreshing ? "animate-spin" : ""}
 						onClick={handleRefresh}
 						disabled={isRefreshing}
-						className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint disabled:opacity-60"
-						aria-label="Refresh"
-						title="Refresh"
-					>
-						<ArrowsClockwiseIcon size={15} className={isRefreshing ? "animate-spin" : ""} />
-					</button>
+					/>
 				}
 			>
 				{totalCount > 0 && (
@@ -149,7 +146,8 @@ export default function ReplyLaterRoute() {
 								hoverActions={
 									<RowAction
 										label="Remove from Reply Later"
-										icon={<ClockCounterClockwiseIcon size={14} weight="fill" />}
+										icon={ClockCounterClockwiseIcon}
+										weight="fill"
 										onClick={() =>
 											updateEmail.mutate({
 												mailboxId,

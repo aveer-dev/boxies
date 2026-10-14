@@ -355,7 +355,7 @@ export default function SignInSettings() {
 				</div>
 			) : (
 				<div className="space-y-6">
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 						<div className="text-sm font-medium text-kumo-default mb-3">
 							Connected
 						</div>
@@ -386,7 +386,7 @@ export default function SignInSettings() {
 					</div>
 
 					{hasPassword && (
-						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+						<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 							<div>
 								<div className="text-sm font-medium text-kumo-default mb-1">
 									Password
@@ -450,7 +450,7 @@ export default function SignInSettings() {
 					)}
 
 					{canAddMethod && (
-						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+						<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 							<div>
 								<div className="text-sm font-medium text-kumo-default mb-1">
 									Add a method
@@ -536,7 +536,7 @@ export default function SignInSettings() {
 						</div>
 					)}
 
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 						<button
 							type="button"
 							className="text-sm font-medium text-kumo-default flex items-center gap-2"

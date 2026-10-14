@@ -162,7 +162,7 @@ body {
 [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
 	position: relative !important;
 }
-a { color: #2563eb; }
+a { color: #171717; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: rgba(23, 23, 23, 0.35); }
 img { max-width: 100%; height: auto; }
 blockquote {
 	border-left: 3px solid #d1d5db;

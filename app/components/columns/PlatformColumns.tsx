@@ -17,7 +17,6 @@ export function ComposeColumn() {
 			revealKey={session}
 			hideHeader
 			scrollBody={false}
-			widthClassName="md:w-[600px]"
 		>
 			<ComposePanel />
 		</ColumnPane>
@@ -37,7 +36,6 @@ export function AgentColumn() {
 			closeLabel="Close assistant"
 			scrollBody={false}
 			bodyClassName="pb-[var(--dock-h)]"
-			widthClassName="md:w-[400px]"
 		>
 			<AgentSidebar />
 		</ColumnPane>

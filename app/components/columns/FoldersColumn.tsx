@@ -29,6 +29,7 @@ import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlig
 import { mailboxDisplayName } from "~/lib/mailbox-display";
 import { useCreateFolder, useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
+import { IconButton } from "~/components/IconButton";
 import ColumnPane from "./ColumnPane";
 
 const FOLDER_ICONS: Record<string, ReactNode> = {
@@ -65,7 +66,7 @@ function FolderRow({
 		<NavLink
 			to={to}
 			className={({ isActive }) =>
-				`group/folder relative flex items-center gap-2.5 rounded-md px-2 py-1 text-sm transition-colors duration-150 ${
+				`group/folder relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-150 ${
 					isActive
 						? "text-kumo-default"
 						: `${muted ? "text-kumo-subtle" : "text-kumo-strong"} hover:bg-kumo-tint hover:text-kumo-default`
@@ -87,8 +88,8 @@ function FolderRow({
 
 function SectionLabel({ children, action }: { children: ReactNode; action?: ReactNode }) {
 	return (
-		<div className="flex items-center justify-between px-2 pt-5 pb-1.5">
-			<span className="text-[10px] font-medium uppercase tracking-wider text-kumo-subtle truncate">
+		<div className="flex items-center justify-between px-2.5 pt-6 pb-2">
+			<span className="text-[11px] font-medium uppercase tracking-wider text-kumo-subtle truncate">
 				{children}
 			</span>
 			{action}
@@ -147,7 +148,7 @@ export default function FoldersColumn() {
 		<ColumnPane id="folders" title={displayName} bodyClassName="px-2 pt-1.5">
 			<div ref={railRef} className="relative">
 				<span ref={markRef} aria-hidden className={slidingMarkClass} />
-				<nav aria-label="Folders" className="space-y-px">
+				<nav aria-label="Folders" className="space-y-0.5">
 					{SYSTEM_FOLDER_IDS.map((id) => (
 						<FolderRow
 							key={id}
@@ -169,22 +170,19 @@ export default function FoldersColumn() {
 
 				<SectionLabel
 					action={
-						<button
-							type="button"
+						<IconButton
+							label="Create tag"
+							icon={PlusIcon}
 							onClick={() => setIsCreateOpen(true)}
-							className="p-0.5 rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint hover:rotate-90 transition-[color,background-color,rotate] duration-200"
-							aria-label="Create tag"
-							title="Create tag"
-						>
-							<PlusIcon size={12} />
-						</button>
+							className="-my-1.5 -mr-1"
+						/>
 					}
 				>
 					{displayName} tags
 				</SectionLabel>
-				<nav aria-label="Tags" className="space-y-px">
+				<nav aria-label="Tags" className="space-y-0.5">
 					{tags.length === 0 ? (
-						<p className="px-2 py-1 text-xs text-kumo-subtle">
+						<p className="px-2.5 py-1 text-xs text-kumo-subtle">
 							No tags yet. Tags are folders you create.
 						</p>
 					) : (

@@ -29,6 +29,7 @@ import { useNavigate, useParams } from "react-router";
 import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { formatParticipants } from "shared/sender";
 import ColumnMenu from "~/components/columns/ColumnMenu";
+import { IconButton } from "~/components/IconButton";
 import ColumnPane from "~/components/columns/ColumnPane";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components/columns/ListParts";
@@ -248,48 +249,32 @@ export default function EmailListRoute() {
 				revealKey={`${mailboxId}/${folder}`}
 				title={folderName}
 				counter={unreadCount || undefined}
-				widthClassName="md:w-[400px]"
 				actions={
 					<>
-						<button
-							type="button"
+						<IconButton
+							label="Refresh"
+							icon={ArrowsClockwiseIcon}
+							iconClassName={isRefreshing ? "animate-spin" : ""}
 							onClick={handleRefresh}
 							disabled={isRefreshing}
-							className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint disabled:opacity-60"
-							aria-label="Refresh"
-							title="Refresh"
-						>
-							<ArrowsClockwiseIcon size={15} className={isRefreshing ? "animate-spin" : ""} />
-						</button>
-						<button
-							type="button"
-							onClick={handleMarkAllRead}
-							className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
-							aria-label="Mark all as read"
-							title="Mark all as read"
-						>
-							<ChecksIcon size={15} />
-						</button>
+						/>
+						<IconButton label="Mark all as read" icon={ChecksIcon} onClick={handleMarkAllRead} />
 						{folder === Folders.TRASH && totalCount > 0 && (
-							<button
-								type="button"
+							<IconButton
+								label="Empty Trash"
+								icon={TrashIcon}
 								onClick={handleEmptyTrash}
 								disabled={emptyingTrash}
-								className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint disabled:opacity-60"
-								aria-label="Empty Trash"
-								title="Empty Trash"
-							>
-								<TrashIcon size={15} />
-							</button>
+							/>
 						)}
 						<ColumnMenu
 							label="Filter"
 							heading={`Filter ${folderName}`}
-							trigger={<SlidersHorizontalIcon size={15} />}
+							icon={SlidersHorizontalIcon}
 							items={[
-								{ label: "Unread", icon: <EnvelopeSimpleIcon size={15} />, onSelect: () => filterBy("is:unread") },
-								{ label: "Starred", icon: <StarIcon size={15} />, onSelect: () => filterBy("is:starred") },
-								{ label: "Has attachment", icon: <PaperclipIcon size={15} />, onSelect: () => filterBy("has:attachment") },
+								{ label: "Unread", icon: EnvelopeSimpleIcon, onSelect: () => filterBy("is:unread") },
+								{ label: "Starred", icon: StarIcon, onSelect: () => filterBy("is:starred") },
+								{ label: "Has attachment", icon: PaperclipIcon, onSelect: () => filterBy("has:attachment") },
 							]}
 						/>
 					</>
@@ -322,20 +307,20 @@ export default function EmailListRoute() {
 								return (
 									<div
 										key={`section-${item.id}`}
-										className="sticky top-0 z-[1] flex items-center gap-2 bg-kumo-base/95 backdrop-blur-sm px-6 pt-3 pb-1.5 border-b border-kumo-line"
+										className="sticky top-0 z-[1] flex items-center gap-2 bg-kumo-base/95 backdrop-blur-sm pl-10 pr-4 pt-4 pb-2"
 									>
-										<span className="text-[10px] font-medium tracking-wider uppercase text-kumo-subtle">
+										<span className="text-[11px] font-medium tracking-wider uppercase text-kumo-subtle">
 											{item.label}
 										</span>
 										{item.count != null && (
-											<span className="text-[10px] text-kumo-subtle">· {item.count}</span>
+											<span className="text-[11px] text-kumo-subtle">· {item.count}</span>
 										)}
 									</div>
 								);
 							}
 							if (item.type === "empty-new") {
 								return (
-									<p key="empty-new" className="px-6 py-3 text-sm text-kumo-subtle border-b border-kumo-line">
+									<p key="empty-new" className="pl-10 pr-4 py-3 text-sm text-kumo-subtle">
 										You’re caught up
 									</p>
 								);
@@ -363,12 +348,12 @@ export default function EmailListRoute() {
 										<>
 											<RowAction
 												label={email.read ? "Mark unread" : "Mark read"}
-												icon={email.read ? <EnvelopeSimpleIcon size={14} /> : <EnvelopeOpenIcon size={14} />}
+												icon={email.read ? EnvelopeSimpleIcon : EnvelopeOpenIcon}
 												onClick={() => markRead(email, !email.read)}
 											/>
 											<RowAction
 												label="Delete"
-												icon={<TrashIcon size={14} />}
+												icon={TrashIcon}
 												onClick={() => handleDelete(email)}
 											/>
 										</>

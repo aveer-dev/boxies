@@ -2,7 +2,6 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Tooltip } from "@cloudflare/kumo";
 import {
 	GearSixIcon,
 	MagnifyingGlassIcon,
@@ -12,6 +11,7 @@ import {
 } from "@phosphor-icons/react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
+import { IconButton, Tip } from "~/components/IconButton";
 import ProgressiveBlur from "~/components/ProgressiveBlur";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -24,12 +24,12 @@ const glass =
 	"bg-[var(--glass-bg)] backdrop-blur-xl backdrop-saturate-150 shadow-[var(--glass-ring)]";
 
 const roundButton =
-	"relative h-10 w-10 shrink-0 rounded-full flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-kumo-brand focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]";
+	"relative h-10 w-10 shrink-0 rounded-full flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]";
 
 /** A panel toggle: opens it, brings it back on screen, or closes it when it's in view. */
 function PanelToggle({
 	label,
-	tooltip,
+	shortcut,
 	isOpen,
 	columnId,
 	onOpen,
@@ -37,7 +37,7 @@ function PanelToggle({
 	icon,
 }: {
 	label: string;
-	tooltip: string;
+	shortcut?: string;
 	isOpen: boolean;
 	columnId: string;
 	onOpen: () => void;
@@ -45,7 +45,7 @@ function PanelToggle({
 	icon: React.ReactNode;
 }) {
 	return (
-		<Tooltip content={tooltip} side="top" asChild>
+		<Tip label={isOpen ? `Hide ${label.toLowerCase()}` : label} shortcut={shortcut} side="top">
 			<button
 				type="button"
 				onClick={() => {
@@ -67,7 +67,7 @@ function PanelToggle({
 					}`}
 				/>
 			</button>
-		</Tooltip>
+		</Tip>
 	);
 }
 
@@ -160,16 +160,17 @@ export default function FloatingDock() {
 						className="flex-1 min-w-0 bg-transparent text-sm text-kumo-default placeholder:text-kumo-subtle outline-none"
 					/>
 					{query ? (
-						<button
-							type="button"
+						<IconButton
+							label="Clear search"
+							shortcut="Esc"
+							icon={XIcon}
+							close
+							tooltipSide="top"
 							onClick={clear}
-							className="p-1 rounded-full text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint animate-pop"
-							aria-label="Clear search"
-						>
-							<XIcon size={13} />
-						</button>
+							className="rounded-full! animate-pop"
+						/>
 					) : (
-						<kbd className="hidden sm:inline-block shrink-0 rounded-full bg-[var(--bg-badge)] px-2 text-[11px] leading-5 font-sans text-kumo-subtle shadow-[inset_0_0_0_1px_var(--border-card)]">
+						<kbd className="hidden sm:inline-block shrink-0 rounded-full bg-[var(--bg-badge)] px-2 text-xs leading-5 font-sans text-kumo-subtle shadow-[inset_0_0_0_1px_var(--border-card)]">
 							⌘K
 						</kbd>
 					)}
@@ -181,7 +182,7 @@ export default function FloatingDock() {
 							{SEARCH_HINTS.map((hint) => (
 								<code
 									key={hint}
-									className="mr-1.5 rounded-md bg-[var(--bg-badge)] px-1.5 py-px text-[11px] text-kumo-default"
+									className="mr-1.5 rounded-md bg-[var(--bg-badge)] px-1.5 py-px text-xs text-kumo-default"
 								>
 									{hint}
 								</code>
@@ -192,7 +193,6 @@ export default function FloatingDock() {
 
 				<PanelToggle
 					label="Settings"
-					tooltip="Settings"
 					isOpen={isSettings}
 					columnId="settings"
 					onOpen={openSettings}
@@ -200,15 +200,15 @@ export default function FloatingDock() {
 					icon={<GearSixIcon size={16} />}
 				/>
 				<PanelToggle
-					label="Toggle agent"
-					tooltip={isAgentPanelOpen ? "Hide agent" : "Agent (⌘J in a message)"}
+					label="Assistant"
+					shortcut="⌘J"
 					isOpen={isAgentPanelOpen}
 					columnId="agent"
 					onOpen={openAgentPanel}
 					onClose={closeAgentPanel}
 					icon={<RobotIcon size={16} />}
 				/>
-				<Tooltip content="New message (C)" side="top" asChild>
+				<Tip label="New message" shortcut="C" side="top">
 					<button
 						type="button"
 						onClick={() => startCompose()}
@@ -217,7 +217,7 @@ export default function FloatingDock() {
 					>
 						<NotePencilIcon size={16} />
 					</button>
-				</Tooltip>
+				</Tip>
 			</nav>
 		</div>
 	);

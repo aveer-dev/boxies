@@ -134,7 +134,7 @@ try {
 	await page.keyboard.press("Meta+j");
 	await page.waitForSelector("#column-agent textarea");
 	await page.waitForFunction(() => /Draft a reply/.test(document.querySelector("#column-agent textarea")?.value || ""));
-	await page.getByRole("button", { name: "Toggle agent" }).click();
+	await page.getByRole("button", { name: "Assistant", exact: true }).click();
 	step("⌘J opens the assistant with a reply prompt");
 
 	// Search from the dock replaces the list column.
