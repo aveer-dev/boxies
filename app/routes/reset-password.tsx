@@ -88,8 +88,12 @@ export default function ResetPasswordRoute() {
 				<form onSubmit={handleSubmit} className="space-y-4">
 					{!tokenParam && (
 						<>
+							<p className="text-xs text-kumo-subtle">
+								Enter the email you sign in with and the 6-digit code we sent to your
+								recovery email.
+							</p>
 							<Input
-								label="Email"
+								label="Inboxies email"
 								type="email"
 								size="sm"
 								value={email}

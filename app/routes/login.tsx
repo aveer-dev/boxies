@@ -107,8 +107,9 @@ export default function PasswordLoginRoute() {
 			if (res.devResetCode) {
 				setResetCode(res.devResetCode);
 			}
+			// The server answers the same either way; codes go only to a verified recovery email.
 			toastManager.add({
-				title: "Reset code sent! Check your email.",
+				title: "If this account has a verified recovery email, we sent a code there.",
 				variant: "success",
 			});
 			setStep("reset");
@@ -317,13 +318,18 @@ export default function PasswordLoginRoute() {
 								<ArrowLeftIcon size={14} /> Back to sign in
 							</button>
 							<p className="text-xs text-kumo-subtle">
-								Enter your mailbox or contact email. We'll send you a 6-digit reset code.
+								Enter the email you sign in with. We'll send a 6-digit code to your
+								recovery email.
+							</p>
+							<p className="text-xs text-kumo-subtle mt-2">
+								No recovery email set up? Then no code will arrive. Sign in with Google
+								or Apple if you connected one, and add a recovery email in Settings.
 							</p>
 						</div>
 
 						<div>
 							<label className="block text-xs font-medium text-kumo-subtle mb-1">
-								Email address
+								Inboxies email
 							</label>
 							<Input
 								ref={emailInputRef}
@@ -361,7 +367,8 @@ export default function PasswordLoginRoute() {
 								<ArrowLeftIcon size={14} /> Back
 							</button>
 							<p className="text-xs text-kumo-subtle">
-								Enter the 6-digit code sent to <strong className="text-kumo-default">{email}</strong> and your new password.
+								Enter the 6-digit code we sent to the recovery email for{" "}
+								<strong className="text-kumo-default">{email}</strong>, and choose a new password.
 							</p>
 						</div>
 

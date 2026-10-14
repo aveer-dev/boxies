@@ -245,10 +245,6 @@ const api = {
 				current: boolean;
 			}[];
 		}>("/api/v1/me/identities/password", body),
-	createIdentityLinkCode: () =>
-		post<{ code: string; expiresAt: string }>("/api/v1/me/identity-link-codes"),
-	redeemIdentityLink: (code: string) =>
-		post<{ ok: boolean; isAdmin: boolean }>("/api/v1/auth/redeem-identity-link", { code }),
 	/** Disconnect a sign-in method; the server refuses to remove the last one. */
 	removeIdentity: (type: string) =>
 		del<{ ok: boolean }>(`/api/v1/me/identities/${encodeURIComponent(type)}`),
@@ -301,14 +297,6 @@ const api = {
 		post<unknown>(`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/assign`, {
 			assignTo,
 		}),
-	transferAdminAcl: (
-		mailboxId: string,
-		acl: { owners: string[]; members?: string[] },
-	) =>
-		put<Mailbox>(
-			`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/acl`,
-			acl,
-		),
 	deleteAdminMailbox: (mailboxId: string) =>
 		del<void>(`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}`),
 	createAdminInvite: (body: {
@@ -345,7 +333,7 @@ const api = {
 	 */
 	acceptInvite: (
 		token: string,
-		body: { code?: string; password?: string; displayName?: string },
+		body: { code: string; password?: string; displayName?: string },
 	) =>
 		post<{
 			mailboxId: string;
@@ -377,7 +365,6 @@ const api = {
 			expiresAt?: string;
 			email?: string | null;
 		}>("/api/v1/auth/password/reset", body),
-	passwordLogout: () => post<{ ok: boolean }>("/api/v1/auth/password/logout"),
 	/** Revokes this session and clears the session cookie. */
 	logout: () => post<{ ok: boolean }>("/api/v1/auth/logout"),
 
