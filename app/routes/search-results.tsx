@@ -4,7 +4,7 @@
 
 import { Loader } from "@cloudflare/kumo";
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { displaySenderName } from "shared/sender";
@@ -13,6 +13,8 @@ import { ListEmptyState, ListPagination } from "~/components/columns/ListParts";
 import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { ThreadChip } from "~/components/columns/ThreadRow";
+import { useEmailActions } from "~/hooks/useEmailActions";
+import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { getSnippetText } from "~/lib/utils";
 import { useUpdateEmail } from "~/queries/emails";
@@ -40,7 +42,7 @@ function highlightTerms(text: string, query: string): React.ReactNode {
 export default function SearchResultsRoute() {
 	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
 	const [searchParams] = useSearchParams();
-	const { emailId, openEmail, closeSearch } = useMailNavigation();
+	const { emailId, openEmail, closeEmail, closeSearch } = useMailNavigation();
 	const updateEmail = useUpdateEmail();
 	const { data: folders = [] } = useFolders(mailboxId);
 	const urlQuery = searchParams.get("q") || "";
@@ -64,6 +66,17 @@ export default function SearchResultsRoute() {
 	} = useSearchEmails(mailboxId, urlQuery, currentPage);
 	const results = searchData?.results ?? [];
 	const totalCount = searchData?.totalCount ?? 0;
+	const emailIdRef = useRef(emailId);
+	emailIdRef.current = emailId;
+	const closeEmailRef = useRef(closeEmail);
+	closeEmailRef.current = closeEmail;
+	const actions = useEmailActions(
+		mailboxId,
+		useCallback((email: Email) => {
+			if (emailIdRef.current === email.id) closeEmailRef.current();
+		}, []),
+	);
+	useListShortcuts(results, actions);
 
 	const isUnread = (email: Email) => !email.read && email.folder_id !== Folders.DRAFT;
 	const handleOpen = (email: Email) => {

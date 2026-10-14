@@ -9,6 +9,7 @@ import { displaySenderName } from "shared/sender";
 import { buildReplyEnvelope, plainTextToHtml } from "shared/reply-envelope";
 import { Tip } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
+import { keysFor, useShortcut } from "~/lib/shortcuts";
 import {
 	buildQuotedReplyBlock,
 	getSignatureBlock,
@@ -108,17 +109,9 @@ export default function QuickReplyBar({
 			}`,
 		);
 
-	// ⌘J works anywhere in the reader, not just inside the textarea.
-	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => {
-			if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "j") {
-				e.preventDefault();
-				aiAssist();
-			}
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	});
+	// ⌘J works anywhere while a reader is open, not just inside the textarea;
+	// it outranks the dock's plain Assistant toggle.
+	useShortcut("assistant", aiAssist, { priority: 1 });
 
 	const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -173,7 +166,7 @@ export default function QuickReplyBar({
 					className="block w-full resize-none bg-transparent px-3 py-2 text-sm text-kumo-default placeholder:text-kumo-subtle focus:outline-none"
 				/>
 				<div className="flex items-center justify-between gap-2 px-2 pb-2">
-					<Tip label="Draft with the assistant" shortcut="⌘J" side="top">
+					<Tip label="Draft with the assistant" shortcut={keysFor("assistant")} side="top">
 						<button
 							type="button"
 							onClick={aiAssist}

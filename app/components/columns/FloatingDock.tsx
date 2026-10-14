@@ -15,8 +15,9 @@ import { IconButton, Tip } from "~/components/IconButton";
 import ProgressiveBlur from "~/components/ProgressiveBlur";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { useUIStore } from "~/hooks/useUIStore";
+import { keysFor, useShortcut } from "~/lib/shortcuts";
 import { useTheme } from "~/lib/theme";
-import { isModalOpen, isTypingTarget, revealColumn } from "./ColumnCanvas";
+import { revealColumn } from "./ColumnCanvas";
 
 const SEARCH_HINTS = ["from:", "is:unread", "is:starred", "has:attachment", "before:2025-01-01"];
 
@@ -89,31 +90,16 @@ export default function FloatingDock() {
 	// Keep the pill in sync with the URL (back/forward, filter menu).
 	useEffect(() => setQuery(urlQuery), [urlQuery]);
 
-	useEffect(() => {
-		const onKey = (e: KeyboardEvent) => {
-			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-				e.preventDefault();
-				inputRef.current?.focus();
-				inputRef.current?.select();
-			} else if (
-				!e.metaKey &&
-				!e.ctrlKey &&
-				!e.altKey &&
-				!isTypingTarget(e.target) &&
-				!isModalOpen()
-			) {
-				if (e.key.toLowerCase() === "c" && !e.shiftKey) {
-					e.preventDefault();
-					startCompose();
-				} else if (e.key === "T" && e.shiftKey) {
-					e.preventDefault();
-					useTheme.getState().toggle();
-				}
-			}
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
-	}, [startCompose]);
+	useShortcut("search", () => {
+		inputRef.current?.focus();
+		inputRef.current?.select();
+	});
+	useShortcut("compose", () => startCompose());
+	useShortcut("assistant", () => {
+		if (!isAgentPanelOpen) openAgentPanel();
+		else if (!revealColumn("agent")) closeAgentPanel();
+	});
+	useShortcut("toggleTheme", () => useTheme.getState().toggle());
 
 	const submit = (e: FormEvent) => {
 		e.preventDefault();
@@ -176,7 +162,7 @@ export default function FloatingDock() {
 						/>
 					) : (
 						<kbd className="hidden sm:inline-block shrink-0 rounded-full bg-[var(--bg-badge)] px-2 text-xs leading-5 font-sans text-kumo-subtle shadow-[inset_0_0_0_1px_var(--border-card)]">
-							⌘K
+							{keysFor("search")}
 						</kbd>
 					)}
 					{isFocused && !query && (
@@ -206,14 +192,14 @@ export default function FloatingDock() {
 				/>
 				<PanelToggle
 					label="Assistant"
-					shortcut="⌘J"
+					shortcut={keysFor("assistant")}
 					isOpen={isAgentPanelOpen}
 					columnId="agent"
 					onOpen={openAgentPanel}
 					onClose={closeAgentPanel}
 					icon={<RobotIcon size={16} />}
 				/>
-				<Tip label="New message" shortcut="C" side="top">
+				<Tip label="New message" shortcut={keysFor("compose")} side="top">
 					<button
 						type="button"
 						onClick={() => startCompose()}

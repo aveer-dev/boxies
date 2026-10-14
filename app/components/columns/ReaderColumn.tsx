@@ -16,10 +16,21 @@ import { ThreadChip } from "./ThreadRow";
 /**
  * Column 4 — the reading room for `:emailId`. Wraps the full `EmailPanel`
  * (toolbar, thread, attachments, triage) and docks the quick reply under it.
+ * Also used for a message opened in its own column (`columnId` + `onClose`).
  */
-export default function ReaderColumn({ emailId }: { emailId: string }) {
+export default function ReaderColumn({
+	emailId,
+	columnId = "reader",
+	onClose,
+}: {
+	emailId: string;
+	columnId?: string;
+	/** Closes this column; defaults to closing the route's reader. */
+	onClose?: () => void;
+}) {
 	const { mailboxId = "", folder } = useParams<{ mailboxId: string; folder?: string }>();
 	const { closeEmail } = useMailNavigation();
+	const close = onClose ?? closeEmail;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: folders = [] } = useFolders(mailboxId);
 
@@ -45,7 +56,8 @@ export default function ReaderColumn({ emailId }: { emailId: string }) {
 
 	return (
 		<ColumnPane
-			id="reader"
+			id={columnId}
+			sizeId="reader"
 			title={email?.subject || "Message"}
 			revealKey={emailId}
 			hideHeader
@@ -55,8 +67,8 @@ export default function ReaderColumn({ emailId }: { emailId: string }) {
 				key={emailId}
 				emailId={emailId}
 				mailboxId={mailboxId}
-				folder={folder}
-				onClose={closeEmail}
+				folder={onClose ? folderId : folder}
+				onClose={close}
 				chips={chips}
 				renderFooter={(replyTarget) => (
 					<QuickReplyBar mailboxId={mailboxId} replyTarget={replyTarget} />

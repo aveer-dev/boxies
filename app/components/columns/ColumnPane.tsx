@@ -124,6 +124,11 @@ export function ColumnHeader({
 export interface ColumnPaneProps extends ColumnHeaderProps {
 	/** DOM id is `column-${id}`; also used for [ / ] keyboard focus and its size. */
 	id: string;
+	/**
+	 * Size and remembered width to use when several columns share a kind
+	 * (compose-1, compose-2… all size as "compose"). Defaults to `id`.
+	 */
+	sizeId?: string;
 	hideHeader?: boolean;
 	/** False when the content manages its own scrolling (reader, compose). */
 	scrollBody?: boolean;
@@ -139,6 +144,7 @@ export interface ColumnPaneProps extends ColumnHeaderProps {
 
 export default function ColumnPane({
 	id,
+	sizeId = id,
 	hideHeader = false,
 	scrollBody = true,
 	revealKey,
@@ -150,8 +156,8 @@ export default function ColumnPane({
 	const setActiveColumn = useColumnFocus((s) => s.setActiveColumn);
 	const isActive = useColumnFocus((s) => s.activeColumnId === id);
 	const label = typeof header.title === "string" ? header.title : id;
-	const size = COLUMN_SIZES[id] ?? DEFAULT_SIZE;
-	const pinned = useColumnWidths((s) => s.widths[id]);
+	const size = COLUMN_SIZES[sizeId] ?? DEFAULT_SIZE;
+	const pinned = useColumnWidths((s) => s.widths[sizeId]);
 	const style = { "--col-w": pinned ? `${pinned}px` : size.width } as CSSProperties;
 
 	return (
@@ -184,7 +190,7 @@ export default function ColumnPane({
 					{children}
 				</div>
 			)}
-			<ResizeHandle id={id} label={label} size={size} />
+			<ResizeHandle id={sizeId} label={label} size={size} />
 		</section>
 	);
 }

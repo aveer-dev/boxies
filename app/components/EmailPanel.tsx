@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, useKumoToastManager } from "@cloudflare/kumo";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
 import { rewriteSelfReplyTo } from "shared/reply-recipients";
@@ -20,6 +20,7 @@ import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, 
 import { useFolders } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
+import { type ShortcutId, useShortcut } from "~/lib/shortcuts";
 import type { Email, Folder, Mailbox } from "~/types";
 import { displaySenderName } from "shared/sender";
 
@@ -110,7 +111,38 @@ export default function EmailPanel({
 
 	const moveToFolders = useMemo(() => { const cur = folder || email?.folder_id; return folders.filter((f) => f.id !== cur); }, [folders, folder, email?.folder_id]);
 
-	if (!email) return <EmailPanelSkeleton />;
+	// Keyboard: the open message's actions, filled in below once it's loaded.
+	const rootRef = useRef<HTMLDivElement>(null);
+	const keyActions = useRef<Partial<Record<ShortcutId, () => void>>>({});
+	const inCharge = () => {
+		const column = rootRef.current?.closest<HTMLElement>("section[data-column-id]");
+		if (!column) return false;
+		if (column.dataset.active === "true") return true;
+		// No reader column is active: the route's reader answers.
+		return (
+			column.dataset.columnId === "reader" &&
+			!document.querySelector('section[data-column-id^="reader"][data-active="true"]')
+		);
+	};
+	const useReaderKey = (id: ShortcutId) =>
+		useShortcut(id, () => {
+			const run = keyActions.current[id];
+			if (!run || !inCharge()) return false;
+			run();
+		});
+	useReaderKey("reply");
+	useReaderKey("replyAll");
+	useReaderKey("forward");
+	useReaderKey("archive");
+	useReaderKey("delete");
+	useReaderKey("toggleRead");
+	useReaderKey("star");
+	useReaderKey("replyLater");
+
+	if (!email) {
+		keyActions.current = {};
+		return <EmailPanelSkeleton />;
+	}
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
 	const toggleReplyLater = () => {
@@ -234,13 +266,29 @@ export default function EmailPanel({
 		} finally { setIsSending(false); }
 	};
 
+	const reply = () => startCompose({ mode: "reply", originalEmail: lastReceivedMessage });
+	const replyAll = () => startCompose({ mode: "reply-all", originalEmail: lastReceivedMessage });
+	const forward = () => startCompose({ mode: "forward", originalEmail: email });
+	const toggleRead = () => {
+		if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { read: !email.read } });
+	};
+	const archive = email.folder_id === Folders.ARCHIVE ? undefined : () => handleMove(Folders.ARCHIVE);
+	keyActions.current = {
+		...(isDraftFolder ? {} : { reply, replyAll, forward }),
+		archive,
+		delete: handleDelete,
+		toggleRead,
+		star: toggleStar,
+		replyLater: toggleReplyLater,
+	};
+
 	const hasThread = allMessages.length > 1;
 	// Gate on the message folder only (match iOS/Android) so a Screener
 	// sidebar selection cannot triage a non-screener thread message.
 	const isScreenerFolder = email.folder_id === Folders.SCREENER;
 
 	return (
-		<div className="flex flex-col h-full">
+		<div ref={rootRef} className="flex flex-col h-full">
 			<EmailPanelToolbar
 				email={email}
 				mailboxId={mailboxId}
@@ -250,27 +298,13 @@ export default function EmailPanel({
 				onBack={closePanel}
 				onSendDraft={() => handleSendDraft()}
 				onEditDraft={() => handleEditDraft()}
-				onReply={() =>
-					startCompose({ mode: "reply", originalEmail: lastReceivedMessage })
-				}
-				onReplyAll={() =>
-					startCompose({
-						mode: "reply-all",
-						originalEmail: lastReceivedMessage,
-					})
-				}
-				onForward={() => startCompose({ mode: "forward", originalEmail: email })}
+				onReply={reply}
+				onReplyAll={replyAll}
+				onForward={forward}
 				onToggleStar={toggleStar}
 				onToggleReplyLater={toggleReplyLater}
-				onToggleRead={() => {
-					if (mailboxId) {
-						updateEmail.mutate({
-							mailboxId,
-							id: email.id,
-							data: { read: !email.read },
-						});
-					}
-				}}
+				onToggleRead={toggleRead}
+				onArchive={archive}
 				onMove={handleMove}
 				spamAction={spamAction}
 				onSpamAction={handleSpamAction}

@@ -24,7 +24,7 @@ import {
 	WarningIcon,
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { formatParticipants } from "shared/sender";
@@ -36,15 +36,13 @@ import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components
 import { ListLoadError } from "~/components/ListLoadError";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
 import { searchPath, useMailNavigation } from "~/hooks/useMailNavigation";
+import { hasUnread, useEmailActions } from "~/hooks/useEmailActions";
+import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useUIStore } from "~/hooks/useUIStore";
 import { buildInboxListItems } from "~/lib/list-sections";
+import { keysFor } from "~/lib/shortcuts";
 import { getSnippetText } from "~/lib/utils";
-import {
-	useDeleteEmail,
-	useEmails,
-	useMarkThreadRead,
-	useUpdateEmail,
-} from "~/queries/emails";
+import { useEmails } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
@@ -119,12 +117,6 @@ const FOLDER_EMPTY_STATES: Record<
 	},
 };
 
-function hasUnread(email: Email): boolean {
-	if (email.folder_id === Folders.DRAFT) return false;
-	if ((email.thread_unread_count ?? 0) > 0) return true;
-	return !email.read;
-}
-
 /** Column 3 for `/emails/:folder` (+ the reader for `:emailId`). */
 export default function EmailListRoute() {
 	const { mailboxId = "", folder = Folders.INBOX } = useParams<{
@@ -137,9 +129,17 @@ export default function EmailListRoute() {
 	const [page, setPage] = useState(1);
 
 	const queryClient = useQueryClient();
-	const updateEmail = useUpdateEmail();
-	const markThreadRead = useMarkThreadRead();
-	const deleteEmail = useDeleteEmail();
+	const emailIdRef = useRef(emailId);
+	emailIdRef.current = emailId;
+	const closeEmailRef = useRef(closeEmail);
+	closeEmailRef.current = closeEmail;
+	// A message leaving the list closes the reader if it was open there.
+	const actions = useEmailActions(
+		mailboxId,
+		useCallback((email: Email) => {
+			if (emailIdRef.current === email.id) closeEmailRef.current();
+		}, []),
+	);
 
 	const params = useMemo(
 		() => ({ folder, page: String(page), limit: String(PAGE_SIZE) }),
@@ -184,30 +184,12 @@ export default function EmailListRoute() {
 		prevFolderRef.current = key;
 	}, [mailboxId, folder]);
 
-	const markRead = (email: Email, read: boolean) => {
-		if (read && email.thread_id && (email.thread_count ?? 1) > 1) {
-			markThreadRead.mutate({ mailboxId, threadId: email.thread_id });
-		} else {
-			updateEmail.mutate({ mailboxId, id: email.id, data: { read } });
-		}
-	};
-
 	const handleOpen = (email: Email) => {
 		openEmail(email.id);
-		if (hasUnread(email)) markRead(email, true);
+		if (hasUnread(email)) actions.setRead(email, true);
 	};
 
-	const handleDelete = (email: Email) => {
-		// Outside Trash, delete just moves to Trash (restorable); only confirm the permanent one.
-		if (
-			folder === Folders.TRASH &&
-			!window.confirm("Permanently delete this email? This can't be undone.")
-		) {
-			return;
-		}
-		deleteEmail.mutate({ mailboxId, id: email.id });
-		if (emailId === email.id) closeEmail();
-	};
+	useListShortcuts(emails, actions);
 
 	const [emptyingTrash, setEmptyingTrash] = useState(false);
 	const handleEmptyTrash = async () => {
@@ -223,7 +205,7 @@ export default function EmailListRoute() {
 	};
 
 	const handleMarkAllRead = () => {
-		for (const email of emails) if (hasUnread(email)) markRead(email, true);
+		for (const email of emails) if (hasUnread(email)) actions.setRead(email, true);
 	};
 
 	const handleRefresh = () => {
@@ -337,24 +319,20 @@ export default function EmailListRoute() {
 									onOpen={() => handleOpen(email)}
 									sender={formatParticipants(email)}
 									snippet={getSnippetText(email.snippet)}
-									onToggleStar={() =>
-										updateEmail.mutate({
-											mailboxId,
-											id: email.id,
-											data: { starred: !email.starred },
-										})
-									}
+									onToggleStar={() => actions.toggleStar(email)}
 									hoverActions={
 										<>
 											<RowAction
-												label={email.read ? "Mark unread" : "Mark read"}
-												icon={email.read ? EnvelopeSimpleIcon : EnvelopeOpenIcon}
-												onClick={() => markRead(email, !email.read)}
+												label={unread ? "Mark read" : "Mark unread"}
+												shortcut={keysFor("toggleRead")}
+												icon={unread ? EnvelopeOpenIcon : EnvelopeSimpleIcon}
+												onClick={() => actions.toggleRead(email)}
 											/>
 											<RowAction
 												label="Delete"
+												shortcut={keysFor("delete")}
 												icon={TrashIcon}
-												onClick={() => handleDelete(email)}
+												onClick={() => actions.remove(email)}
 											/>
 										</>
 									}

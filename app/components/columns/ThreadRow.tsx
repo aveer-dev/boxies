@@ -187,11 +187,13 @@ function StarToggle({ starred, onToggle }: { starred: boolean; onToggle: () => v
 /** Small icon button for a row's hover actions. */
 export function RowAction({
 	label,
+	shortcut,
 	icon,
 	weight,
 	onClick,
 }: {
 	label: string;
+	shortcut?: string;
 	icon: Icon;
 	weight?: IconWeight;
 	onClick: () => void;
@@ -199,6 +201,7 @@ export function RowAction({
 	return (
 		<IconButton
 			label={label}
+			shortcut={shortcut}
 			icon={icon}
 			weight={weight}
 			onClick={(e) => {

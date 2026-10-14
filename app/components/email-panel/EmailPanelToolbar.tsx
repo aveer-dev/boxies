@@ -6,7 +6,9 @@ import { Button } from "@cloudflare/kumo";
 import { useCallback, useRef, useState } from "react";
 import FloatingPanel from "~/components/FloatingPanel";
 import { IconButton } from "~/components/IconButton";
+import { keysFor } from "~/lib/shortcuts";
 import {
+	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
 	ArrowLeftIcon,
@@ -42,6 +44,8 @@ interface EmailPanelToolbarProps {
 	onToggleStar: () => void;
 	onToggleReplyLater: () => void;
 	onToggleRead: () => void;
+	/** Absent when the message is already archived. */
+	onArchive?: () => void;
 	onMove: (folderId: string) => void;
 	/** "report" outside Spam, "not-spam" inside it; null hides the button. */
 	spamAction?: "report" | "not-spam" | null;
@@ -64,6 +68,7 @@ export default function EmailPanelToolbar({
 	onToggleStar,
 	onToggleReplyLater,
 	onToggleRead,
+	onArchive,
 	onMove,
 	spamAction,
 	onSpamAction,
@@ -99,9 +104,9 @@ export default function EmailPanelToolbar({
 				</div>
 			) : (
 				<>
-					<IconButton label="Reply" icon={ArrowBendUpLeftIcon} size="md" onClick={onReply} />
-					<IconButton label="Reply all" icon={ChatCircleIcon} size="md" onClick={onReplyAll} />
-					<IconButton label="Forward" icon={ArrowBendUpRightIcon} size="md" onClick={onForward} />
+					<IconButton label="Reply" shortcut={keysFor("reply")} icon={ArrowBendUpLeftIcon} size="md" onClick={onReply} />
+					<IconButton label="Reply all" shortcut={keysFor("replyAll")} icon={ChatCircleIcon} size="md" onClick={onReplyAll} />
+					<IconButton label="Forward" shortcut={keysFor("forward")} icon={ArrowBendUpRightIcon} size="md" onClick={onForward} />
 				</>
 			)}
 
@@ -109,6 +114,7 @@ export default function EmailPanelToolbar({
 
 			<IconButton
 				label={email.starred ? "Unstar" : "Star"}
+				shortcut={keysFor("star")}
 				icon={StarIcon}
 				size="md"
 				weight={email.starred ? "fill" : "regular"}
@@ -122,6 +128,7 @@ export default function EmailPanelToolbar({
 			/>
 			<IconButton
 				label={email.reply_later ? "Remove from Reply Later" : "Reply later"}
+				shortcut={keysFor("replyLater")}
 				icon={ClockCounterClockwiseIcon}
 				size="md"
 				weight={email.reply_later ? "fill" : "regular"}
@@ -135,10 +142,14 @@ export default function EmailPanelToolbar({
 			/>
 			<IconButton
 				label={email.read ? "Mark as unread" : "Mark as read"}
+				shortcut={keysFor("toggleRead")}
 				icon={email.read ? EnvelopeSimpleIcon : EnvelopeOpenIcon}
 				size="md"
 				onClick={onToggleRead}
 			/>
+			{onArchive && (
+				<IconButton label="Archive" shortcut={keysFor("archive")} icon={ArchiveIcon} size="md" onClick={onArchive} />
+			)}
 			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
 
 			{spamAction && onSpamAction && (
@@ -156,7 +167,7 @@ export default function EmailPanelToolbar({
 
 			<div className="ml-auto flex items-center gap-0.5">
 				<IconButton label="View source" icon={CodeIcon} size="md" onClick={onViewSource} />
-				<IconButton label="Delete" icon={TrashIcon} size="md" onClick={onDelete} />
+				<IconButton label="Delete" shortcut={keysFor("delete")} icon={TrashIcon} size="md" onClick={onDelete} />
 				<IconButton
 					label="Close"
 					shortcut="Esc"

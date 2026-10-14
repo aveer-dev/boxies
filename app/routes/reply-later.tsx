@@ -8,7 +8,7 @@ import {
 	ClockCounterClockwiseIcon,
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { formatParticipants } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
@@ -17,8 +17,10 @@ import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components
 import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
+import { useEmailActions } from "~/hooks/useEmailActions";
+import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
-import { useUIStore } from "~/hooks/useUIStore";
+import { selectIsComposing, useUIStore } from "~/hooks/useUIStore";
 import { getSnippetText } from "~/lib/utils";
 import { useEmails, useUpdateEmail } from "~/queries/emails";
 import { queryKeys } from "~/queries/keys";
@@ -29,8 +31,9 @@ const PAGE_SIZE = 25;
 /** Column 3 for `/reply-later` (+ the reader for `:emailId`). */
 export default function ReplyLaterRoute() {
 	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
-	const { emailId, openEmail } = useMailNavigation();
-	const { isComposing, startCompose } = useUIStore();
+	const { emailId, openEmail, closeEmail } = useMailNavigation();
+	const startCompose = useUIStore((s) => s.startCompose);
+	const isComposing = useUIStore(selectIsComposing);
 	const [page, setPage] = useState(1);
 	const [focusIndex, setFocusIndex] = useState(0);
 
@@ -49,6 +52,17 @@ export default function ReplyLaterRoute() {
 	} = useEmails(mailboxId, params, { refetchInterval: 30_000 });
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
+	const emailIdRef = useRef(emailId);
+	emailIdRef.current = emailId;
+	const closeEmailRef = useRef(closeEmail);
+	closeEmailRef.current = closeEmail;
+	const actions = useEmailActions(
+		mailboxId,
+		useCallback((email: Email) => {
+			if (emailIdRef.current === email.id) closeEmailRef.current();
+		}, []),
+	);
+	useListShortcuts(emails, actions);
 
 	useEffect(() => {
 		setPage(1);
