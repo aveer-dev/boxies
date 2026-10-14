@@ -19,6 +19,7 @@ import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlig
 import { useInboxUnreadCounts } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
+import { signOut } from "~/lib/sign-out";
 import { useMailboxDetails, useMailboxes } from "~/queries/mailboxes";
 import api from "~/services/api";
 import ColumnMenu from "./ColumnMenu";
@@ -73,9 +74,7 @@ export default function AccountsColumn() {
 		{
 			label: "Log out",
 			icon: SignOutIcon,
-			onSelect: () => {
-				window.location.href = "/cdn-cgi/access/logout";
-			},
+			onSelect: () => void signOut(),
 		},
 	];
 
