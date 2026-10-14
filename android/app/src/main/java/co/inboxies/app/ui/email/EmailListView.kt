@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -78,6 +79,9 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -118,6 +122,11 @@ import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.utils.DateUtils
+import co.inboxies.app.services.EmailPaging
+import co.inboxies.app.services.EmailPagingState
+import co.inboxies.app.ui.components.LoadFailedContent
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -140,15 +149,38 @@ fun EmailListView(
     folderLabel: String? = null,
     fallbackFolderId: String? = null,
     showsTags: Boolean = true,
+    /** Fetch failed with nothing cached: error + Retry instead of "This folder is empty". */
+    loadError: String? = null,
+    /** Infinite scroll for this list; null (or no more pages) hides the footer row. */
+    paging: EmailPagingState? = null,
+    onLoadMore: (suspend () -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
+    var retrying by remember { mutableStateOf(false) }
     var actionsEmail by remember { mutableStateOf<Email?>(null) }
 
     val content: @Composable () -> Unit = {
         when {
             isLoading && emails.isEmpty() -> SkeletonList(bottomInset = bottomInset)
+            loadError != null && emails.isEmpty() && !isFiltered -> ListLoadError(
+                message = loadError,
+                isRetrying = retrying,
+                onRetry = {
+                    if (!retrying && onRefresh != null) {
+                        scope.launch {
+                            retrying = true
+                            try {
+                                onRefresh()
+                            } finally {
+                                retrying = false
+                            }
+                        }
+                    }
+                },
+                bottomInset = bottomInset,
+            )
             emails.isEmpty() -> EmptyList(
                 isFiltered = isFiltered,
                 onClearFilters = onClearFilters,
@@ -166,6 +198,8 @@ fun EmailListView(
                 folderLabel = folderLabel,
                 fallbackFolderId = fallbackFolderId,
                 showsTags = showsTags,
+                paging = paging?.takeIf { onLoadMore != null },
+                onLoadMore = { onLoadMore?.invoke() },
                 onOpen = onOpen,
                 onMore = { actionsEmail = it },
             )
@@ -220,14 +254,38 @@ private fun EmailRows(
     folderLabel: String?,
     fallbackFolderId: String?,
     showsTags: Boolean = true,
+    paging: EmailPagingState? = null,
+    onLoadMore: suspend () -> Unit = {},
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
 ) {
     val app = LocalAppModel.current
     val swipePreferences by app.swipePreferences.collectAsState()
     val colors = inboxiesColors()
+    val listState = rememberLazyListState()
+
+    // Infinite scroll: ask for the next page PREFETCH_DISTANCE rows before the end. AppModel
+    // ignores repeats while a page is in flight; after a failure only Retry fetches again.
+    val currentCanLoadMore by rememberUpdatedState(
+        paging != null && paging.hasMore && !paging.isLoadingMore && !paging.loadMoreFailed,
+    )
+    val currentOnLoadMore by rememberUpdatedState(onLoadMore)
+    val nearEnd by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            EmailPaging.shouldPrefetch(lastVisible, info.totalItemsCount)
+        }
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { nearEnd && currentCanLoadMore }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect { currentOnLoadMore() }
+    }
 
     LazyColumn(
+        state = listState,
         contentPadding = PaddingValues(top = 12.dp, bottom = bottomInset),
         modifier = Modifier.fillMaxSize(),
         userScrollEnabled = true,
@@ -312,7 +370,89 @@ private fun EmailRows(
                 )
             }
         }
+
+        // While more pages exist: one pulsing placeholder row (iOS twin: same row, no
+        // "Load more" button), or a quiet Retry line after a failed page.
+        if (paging != null && paging.showsFooter) {
+            item(key = "load-more-footer") {
+                if (paging.loadMoreFailed && !paging.isLoadingMore) {
+                    val scope = rememberCoroutineScope()
+                    LoadMoreFailedRow(onRetry = { scope.launch { onLoadMore() } })
+                } else {
+                    LoadMoreSkeletonRow()
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun LoadMoreFailedRow(onRetry: () -> Unit) {
+    val colors = inboxiesColors()
+    val list = AppThemeDims.List
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onRetry)
+            .padding(horizontal = list.rowHorizontalPadding, vertical = list.rowVerticalPadding),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Couldn’t load more",
+            color = colors.muted,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = list.preview,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            "Retry",
+            color = colors.accent,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = list.preview,
+        )
+    }
+}
+
+/** Folder fetch failed with an empty cache. A LazyColumn so pull-to-refresh still works. */
+@Composable
+private fun ListLoadError(message: String?, isRetrying: Boolean, onRetry: () -> Unit, bottomInset: Dp) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = bottomInset),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        item {
+            LoadFailedContent(
+                title = "Couldn’t load emails",
+                message = message,
+                isRetrying = isRetrying,
+                onRetry = onRetry,
+                modifier = Modifier.padding(top = 48.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoadMoreSkeletonRow() {
+    val pulse = rememberInfiniteTransition(label = "loadMoreSkeleton")
+    val alpha by pulse.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(950), RepeatMode.Reverse),
+        label = "loadMoreSkeletonAlpha",
+    )
+    SkeletonRow(
+        senderWidth = 136.dp,
+        subjectWidth = 208.dp,
+        previewWidth = 248.dp,
+        alpha = alpha,
+        showDivider = false,
+        modifier = Modifier.semantics { contentDescription = "Loading more emails" },
+    )
 }
 
 @Composable
@@ -806,8 +946,6 @@ private fun EmptyList(
 
 @Composable
 private fun SkeletonList(bottomInset: Dp) {
-    val colors = inboxiesColors()
-    val list = AppThemeDims.List
     val pulse = rememberInfiniteTransition(label = "skeleton")
     val alpha by pulse.animateFloat(
         initialValue = 0.45f,
@@ -827,51 +965,73 @@ private fun SkeletonList(bottomInset: Dp) {
         userScrollEnabled = false,
     ) {
         items(9) { index ->
-            Box(modifier = Modifier.fillMaxWidth()) {
-                Row(
+            SkeletonRow(
+                senderWidth = senderWidths[index].dp,
+                subjectWidth = subjectWidths[index].dp,
+                previewWidth = previewWidths[index].dp,
+                alpha = alpha,
+            )
+        }
+    }
+}
+
+/** One placeholder mail row: dot, sender + date, subject, preview. */
+@Composable
+private fun SkeletonRow(
+    senderWidth: Dp,
+    subjectWidth: Dp,
+    previewWidth: Dp,
+    alpha: Float,
+    showDivider: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
+    val colors = inboxiesColors()
+    val list = AppThemeDims.List
+    Box(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = list.rowHorizontalPadding, vertical = list.rowVerticalPadding),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Box(
+                modifier = Modifier
+                    .height(list.unreadDotLineHeight)
+                    .width(list.unreadDotSize),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = list.rowHorizontalPadding, vertical = list.rowVerticalPadding),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .height(list.unreadDotLineHeight)
-                            .width(list.unreadDotSize),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(list.unreadDotSize)
-                                .clip(CircleShape)
-                                .background(colors.pillActive.copy(alpha = alpha)),
-                        )
-                    }
-                    Spacer(Modifier.width(list.dotToText))
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(list.rowTextSpacing),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            SkeletonBar(senderWidths[index].dp, list.sender.value.dp, alpha)
-                            Spacer(Modifier.weight(1f))
-                            SkeletonBar(44.dp, list.date.value.dp, alpha)
-                        }
-                        SkeletonBar(subjectWidths[index].dp, list.subject.value.dp, alpha)
-                        SkeletonBar(previewWidths[index].dp, list.preview.value.dp, alpha)
-                    }
-                }
-                HorizontalDivider(
-                    color = colors.line.copy(alpha = 0.65f),
-                    thickness = list.separatorHeight,
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(
-                            start = list.separatorLeadingInset,
-                            end = list.rowHorizontalPadding,
-                        ),
+                        .size(list.unreadDotSize)
+                        .clip(CircleShape)
+                        .background(colors.pillActive.copy(alpha = alpha)),
                 )
             }
+            Spacer(Modifier.width(list.dotToText))
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(list.rowTextSpacing),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SkeletonBar(senderWidth, list.sender.value.dp, alpha)
+                    Spacer(Modifier.weight(1f))
+                    SkeletonBar(44.dp, list.date.value.dp, alpha)
+                }
+                SkeletonBar(subjectWidth, list.subject.value.dp, alpha)
+                SkeletonBar(previewWidth, list.preview.value.dp, alpha)
+            }
+        }
+        if (showDivider) {
+            HorizontalDivider(
+                color = colors.line.copy(alpha = 0.65f),
+                thickness = list.separatorHeight,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(
+                        start = list.separatorLeadingInset,
+                        end = list.rowHorizontalPadding,
+                    ),
+            )
         }
     }
 }

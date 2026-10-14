@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonObject
 import java.time.Instant
 import java.util.UUID
 
@@ -150,11 +151,42 @@ class AppModel {
     )
     val swipePreferences: StateFlow<SwipeActionPreferences> = _swipePreferences.asStateFlow()
 
+    private val _mailboxesLoadFailed = MutableStateFlow(false)
+    /** The mailbox list request failed with nothing cached: RootView shows an error, never onboarding. */
+    val mailboxesLoadFailed: StateFlow<Boolean> = _mailboxesLoadFailed.asStateFlow()
+
+    private val _emailListError = MutableStateFlow<String?>(null)
+    /** The visible list's fetch failed with nothing cached: error + Retry instead of "This folder is empty". */
+    val emailListError: StateFlow<String?> = _emailListError.asStateFlow()
+
+    private val _paging = MutableStateFlow(EmailPagingState())
+    /** Infinite-scroll cursor for [emails]; the list shows a skeleton row while [EmailPagingState.isLoadingMore]. */
+    val paging: StateFlow<EmailPagingState> = _paging.asStateFlow()
+
     private var toastDismissJob: Job? = null
     private var pendingUndoJob: Job? = null
 
+    /** Process-level foreground state (ProcessLifecycleOwner); sync only runs while true. */
+    @Volatile
+    private var isAppInForeground = false
+
     val selectedMailbox: Mailbox?
         get() = _mailboxes.value.firstOrNull { it.id == _selectedMailboxId.value }
+
+    /** The folder / pile [emails] currently represents. */
+    private val currentListScope: EmailListScope?
+        get() = EmailListScope.of(_selectedMailboxId.value, _selectedTab.value)
+
+    // Every async load captures the mailbox (and list scope) before its first await and
+    // applies results through these, so a slow response can't land on a newer selection.
+    // All writes happen on Main, so the check and the write can't interleave.
+    private inline fun <T> ifStillSelected(mailboxId: String, block: () -> T): T? =
+        co.inboxies.app.services.ifStillSelected(mailboxId, _selectedMailboxId.value, block)
+
+    private inline fun <T> ifStillShowing(scope: EmailListScope, block: () -> T): T? =
+        co.inboxies.app.services.ifStillShowing(scope, currentListScope, block)
+
+    private fun isSelected(mailboxId: String) = _selectedMailboxId.value == mailboxId
 
     fun updateSwipePreferences(transform: (SwipeActionPreferences) -> SwipeActionPreferences) {
         val current = _swipePreferences.value
@@ -179,7 +211,7 @@ class AppModel {
         get() {
             val mailboxId = _selectedMailboxId.value
             if (mailboxId != null) {
-                val cached = db.getEmails(mailboxId, FolderIds.SCREENER, 50)
+                val cached = db.getEmails(mailboxId, FolderIds.SCREENER)
                 val distinct = cached.map { it.sender.trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
                 if (distinct > 0) return distinct
             }
@@ -221,6 +253,8 @@ class AppModel {
 
     suspend fun bootstrap(authToken: String?) {
         bootstrappedToken = authToken
+        // A failure from a previous session must not flash the error gate on sign-in.
+        _mailboxesLoadFailed.value = false
         // AuthStore owns ApiClient.authTokenProvider (a live read of its token), so a
         // sign-out stops sending the old token; don't pin it to this snapshot here.
         val cached = db.getMailboxes()
@@ -233,14 +267,14 @@ class AppModel {
                 if (folders.isNotEmpty()) _folders.value = folders
                 _replyLaterCount.value = db.getReplyLaterCount(id)
                 if (_selectedTab.value is HomeTab.ReplyLater) {
-                    val emails = db.getReplyLaterEmails(id, 50)
+                    val emails = db.getReplyLaterEmails(id)
                     if (emails.isNotEmpty()) {
                         _emails.value = emails
                         _isLoading.value = false
                     }
                 } else {
                     _selectedTab.value.syncFolderId?.let { folderId ->
-                        val emails = db.getEmails(id, folderId, 50)
+                        val emails = db.getEmails(id, folderId)
                         if (emails.isNotEmpty()) {
                             _emails.value = emails
                             _isLoading.value = false
@@ -256,27 +290,54 @@ class AppModel {
 
     private fun setupRealTimeStream() {
         val mailboxId = _selectedMailboxId.value ?: return
-        streamClient.onNewEmailReceived = { email ->
-            scope.launch { handleIncomingRealTimeEmail(email) }
+        // Callbacks carry the mailbox the stream was started for; a blocking read can
+        // still deliver an old-mailbox event right after a switch, so drop mismatches.
+        streamClient.onNewEmailReceived = { streamMailboxId, email ->
+            scope.launch {
+                ifStillSelected(streamMailboxId) { handleIncomingRealTimeEmail(streamMailboxId, email) }
+            }
         }
-        streamClient.onSyncRequested = {
-            scope.launch { refreshCurrentTabSilently() }
+        streamClient.onSyncRequested = { streamMailboxId ->
+            scope.launch {
+                if (isSelected(streamMailboxId)) refreshCurrentTabSilently()
+            }
         }
-        streamClient.start(mailboxId)
-        PushNotificationManager.shared.requestPermissionAndRegister(mailboxId)
+        // Backgrounded: ProcessLifecycleOwner's ON_START restarts it (onAppForegrounded).
+        if (isAppInForeground) streamClient.start(mailboxId)
+        PushNotificationManager.shared.registerMailboxes(
+            (_mailboxes.value.map { it.id } + mailboxId).distinct(),
+        )
     }
 
-    private suspend fun handleIncomingRealTimeEmail(email: Email) {
-        val currentFolder = _selectedTab.value.syncFolderId
+    /** ProcessLifecycleOwner ON_START: resume live sync and catch up once. */
+    fun onAppForegrounded(isSignedIn: Boolean) {
+        isAppInForeground = true
+        if (isDebugPreview || !isSignedIn || bootstrappedToken == null) return
+        val mailboxId = _selectedMailboxId.value ?: return
+        if (!streamClient.isRunning) setupRealTimeStream()
+        scope.launch {
+            if (isSelected(mailboxId)) refreshCurrentTabSilently()
+        }
+    }
+
+    /** ProcessLifecycleOwner ON_STOP: no SSE socket or 20 s poll while nothing is visible. */
+    fun onAppBackgrounded() {
+        isAppInForeground = false
+        streamClient.stop()
+    }
+
+    private fun handleIncomingRealTimeEmail(mailboxId: String, email: Email) {
+        val currentFolder = currentListScope?.folderId
         if (currentFolder != null) {
             val target = email.folderId ?: "inbox"
-            if (target.equals(currentFolder, ignoreCase = true) &&
-                _emails.value.none { it.id == email.id }
-            ) {
-                _emails.value = listOf(email) + _emails.value
+            if (target.equals(currentFolder, ignoreCase = true)) {
+                db.upsertEmails(mailboxId, listOf(email), defaultFolder = target)
+                if (_emails.value.none { it.id == email.id }) {
+                    _emails.value = listOf(email) + _emails.value
+                }
             }
             if (_selectedTab.value is HomeTab.AiInbox) {
-                loadInboxDigest(showLoading = false)
+                scope.launch { loadInboxDigest(showLoading = false) }
             }
         }
         if (email.isUnread) {
@@ -312,6 +373,7 @@ class AppModel {
                 }
             }
             _mailboxes.value = merged
+            _mailboxesLoadFailed.value = false
             db.upsertMailboxes(merged)
             val selected = _selectedMailboxId.value
             if (selected != null && list.none { it.id == selected }) {
@@ -324,6 +386,9 @@ class AppModel {
             _selectedMailboxId.value?.let { loadMailbox(it) } ?: run { _isLoading.value = false }
         } catch (e: Exception) {
             _errorMessage.value = e.message
+            // Only "the server returned zero mailboxes" leads to onboarding; a failed
+            // request with nothing cached is an error state with Retry.
+            _mailboxesLoadFailed.value = _mailboxes.value.isEmpty()
             _isLoading.value = false
             _isMailboxLoading.value = false
         }
@@ -379,9 +444,18 @@ class AppModel {
             pendingConversationIds.clear()
             _conversations.value = emptyList()
             _inboxDigest.value = null
+            _isDigestLoading.value = false
             if (_chatSession.value !is ChatSession.Dismissed) {
                 _chatSession.value = ChatSession.Dismissed
             }
+            // Never show the previous mailbox's rows, folders or open thread under the new one.
+            _emails.value = emptyList()
+            _folders.value = emptyList()
+            _selectedEmail.value = null
+            _threadEmails.value = emptyList()
+            _paging.value = EmailPagingState()
+            _emailListError.value = null
+            _isLoading.value = true
         }
         _selectedMailboxId.value = id
         setupRealTimeStream()
@@ -393,16 +467,16 @@ class AppModel {
         }
         _replyLaterCount.value = db.getReplyLaterCount(id)
         if (_selectedTab.value is HomeTab.ReplyLater) {
-            val cachedEmails = db.getReplyLaterEmails(id, 50)
+            val cachedEmails = db.getReplyLaterEmails(id)
             if (cachedEmails.isNotEmpty()) {
                 _emails.value = cachedEmails
                 _isLoading.value = false
             }
         } else {
             _selectedTab.value.syncFolderId?.let { folderId ->
-                val cached = db.getEmails(id, folderId, 50)
+                val cached = db.getEmails(id, folderId)
                 if (cached.isNotEmpty()) {
-                    _emails.value = cached
+                    _emails.value = displayOrder(folderId, cached)
                     _isLoading.value = false
                 }
             }
@@ -423,48 +497,63 @@ class AppModel {
                 }
                 throw e
             }
+            if (!isSelected(id)) return
             _isMailboxLoading.value = false
             coroutineScope {
                 val foldersDeferred = async { MailboxSyncService.syncMailbox(id) }
                 val conversationsDeferred = async { runCatching { ApiClient.shared.listConversations(id) }.getOrNull() }
                 val replyLaterDeferred = async { refreshReplyLaterCount() }
-                _folders.value = foldersDeferred.await()
+                val folders = foldersDeferred.await()
+                ifStillSelected(id) { _folders.value = folders }
                 conversationsDeferred.await()?.let { server ->
-                    _conversations.value = visibleConversations(server)
-                    dropStaleActiveConversation()
+                    ifStillSelected(id) {
+                        _conversations.value = visibleConversations(server)
+                        dropStaleActiveConversation()
+                    }
                 }
-                loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty())
-                if (_selectedTab.value is HomeTab.AiInbox) {
+                if (isSelected(id)) {
+                    loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty(), resetPaging = true)
+                }
+                if (isSelected(id) && _selectedTab.value is HomeTab.AiInbox) {
                     loadInboxDigest(showLoading = _inboxDigest.value == null)
                 }
                 replyLaterDeferred.await()
             }
         } catch (e: Exception) {
-            _errorMessage.value = e.message
-            _isMailboxLoading.value = false
-            _isLoading.value = false
+            // Transport failures (no HTTP status) never drop the mailbox; show the list error.
+            ifStillSelected(id) {
+                _errorMessage.value = e.message
+                if (_emails.value.isEmpty() && currentListScope != null) _emailListError.value = e.message
+                _isMailboxLoading.value = false
+                _isLoading.value = false
+            }
         } finally {
-            _isSyncing.value = false
+            // A newer selection owns the spinner; its own load clears it.
+            ifStillSelected(id) { _isSyncing.value = false }
         }
     }
 
     private suspend fun dropInaccessibleMailbox(id: String) {
         db.deleteMailbox(id)
         _mailboxes.update { it.filterNot { m -> m.id == id } }
-        if (_selectedMailboxId.value == id) {
-            _selectedMailboxId.value = _mailboxes.value.firstOrNull()?.id
-        }
+        // The user may have switched away while the 403/404 was in flight; leave that alone.
+        if (_selectedMailboxId.value != id) return
         _isMailboxLoading.value = false
-        val next = _selectedMailboxId.value
-        if (next != null && next != id) {
+        val next = _mailboxes.value.firstOrNull()?.id
+        if (next != null) {
+            // Switching through loadMailbox clears the dropped mailbox's rows first.
             loadMailbox(next)
         } else {
+            _selectedMailboxId.value = null
+            streamClient.stop()
             _emails.value = emptyList()
             _folders.value = emptyList()
             _inboxDigest.value = null
             _conversations.value = emptyList()
             _activeConversationId.value = null
+            _paging.value = EmailPagingState()
             _isLoading.value = false
+            _isSyncing.value = false
         }
     }
 
@@ -493,10 +582,12 @@ class AppModel {
     fun selectTab(tab: HomeTab) {
         _selectedTab.value = tab
         _selectedEmail.value = null
+        _paging.value = EmailPagingState()
+        _emailListError.value = null
 
         if (tab is HomeTab.ReplyLater) {
             _selectedMailboxId.value?.let { mailboxId ->
-                val cached = db.getReplyLaterEmails(mailboxId, 50)
+                val cached = db.getReplyLaterEmails(mailboxId)
                 if (cached.isNotEmpty()) {
                     _emails.value = cached
                     _isLoading.value = false
@@ -514,9 +605,9 @@ class AppModel {
         } else {
             tab.syncFolderId?.let { folderId ->
                 _selectedMailboxId.value?.let { mailboxId ->
-                    val cached = db.getEmails(mailboxId, folderId, 50)
+                    val cached = db.getEmails(mailboxId, folderId)
                     if (cached.isNotEmpty()) {
-                        _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(cached) else cached
+                        _emails.value = displayOrder(folderId, cached)
                         _isLoading.value = false
                     } else {
                         _emails.value = emptyList()
@@ -527,14 +618,19 @@ class AppModel {
         }
 
         scope.launch {
-            loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty())
+            loadEmailsForCurrentTab(showLoading = _emails.value.isEmpty(), resetPaging = true)
             if (tab is HomeTab.AiInbox) {
                 loadInboxDigest(showLoading = _inboxDigest.value == null)
             }
         }
     }
 
-    suspend fun loadEmailsForCurrentTab(showLoading: Boolean = true) {
+    /**
+     * Load page 1 of the current folder / pile. [resetPaging] (tab or mailbox switch,
+     * pull-to-refresh) starts the list over at page 1; otherwise rows from pages already
+     * loaded by infinite scroll are kept so a background refresh never collapses the list.
+     */
+    suspend fun loadEmailsForCurrentTab(showLoading: Boolean = true, resetPaging: Boolean = false) {
         val mailboxId = _selectedMailboxId.value
         if (mailboxId == null) {
             _isLoading.value = false
@@ -547,50 +643,137 @@ class AppModel {
             return
         }
 
-        if (_selectedTab.value is HomeTab.ReplyLater) {
+        val listScope = currentListScope
+        if (listScope == null) {
+            _emails.value = emptyList()
+            _isLoading.value = false
+            return
+        }
+        val keepLoadedPages = !resetPaging && _paging.value.scope == listScope && _paging.value.page > 1
+
+        if (listScope.replyLater) {
             if (showLoading && _emails.value.isEmpty()) _isLoading.value = true
             _isSyncing.value = true
             try {
                 val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
                 db.upsertEmails(mailboxId, response.emails)
-                _replyLaterCount.value = response.totalCount
-                if (_selectedTab.value is HomeTab.ReplyLater) {
-                    _emails.value = response.emails
+                ifStillSelected(mailboxId) { _replyLaterCount.value = response.totalCount }
+                ifStillShowing(listScope) {
+                    _emailListError.value = null
+                    if (keepLoadedPages && _paging.value.scope == listScope) {
+                        _emails.value = EmailPaging.mergeFirstPage(response.emails, _emails.value)
+                    } else {
+                        _emails.value = response.emails
+                        _paging.value = EmailPagingState.afterFirstPage(
+                            listScope,
+                            received = response.emails.size,
+                            totalCount = response.totalCount,
+                            loadedCount = response.emails.size,
+                        )
+                    }
                 }
             } catch (e: Exception) {
-                if (_emails.value.isEmpty()) _errorMessage.value = e.message
+                ifStillShowing(listScope) {
+                if (_emails.value.isEmpty()) {
+                    _errorMessage.value = e.message
+                    _emailListError.value = e.message ?: "Couldn't load emails"
+                }
+            }
             } finally {
-                _isLoading.value = false
-                _isSyncing.value = false
+                ifStillShowing(listScope) {
+                    _isLoading.value = false
+                    _isSyncing.value = false
+                }
             }
             return
         }
 
-        val folderId = _selectedTab.value.syncFolderId
-        if (folderId == null) {
-            _emails.value = emptyList()
-            _isLoading.value = false
-            return
-        }
-        val cached = db.getEmails(mailboxId, folderId, 50)
+        val folderId = listScope.folderId ?: return
+        val cached = db.getEmails(mailboxId, folderId)
         if (cached.isNotEmpty()) {
-            _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(cached) else cached
+            _emails.value = displayOrder(folderId, cached)
             _isLoading.value = false
         } else if (showLoading) {
             _isLoading.value = true
         }
         _isSyncing.value = true
         try {
-            val synced = MailboxSyncService.syncFolder(mailboxId, folderId)
-            if (_selectedTab.value.syncFolderId == folderId) {
-                _emails.value = if (folderId == FolderIds.INBOX) orderNewThenSeen(synced) else synced
+            // Pruning page 1 would also evict the older pages infinite scroll loaded.
+            val synced = MailboxSyncService.syncFolder(mailboxId, folderId, page = 1, prune = !keepLoadedPages)
+            ifStillShowing(listScope) {
+                _emails.value = displayOrder(folderId, synced.emails)
+                _emailListError.value = null
+                if (!keepLoadedPages || _paging.value.scope != listScope) {
+                    _paging.value = EmailPagingState.afterFirstPage(
+                        listScope,
+                        received = synced.received,
+                        totalCount = synced.totalCount,
+                        loadedCount = synced.emails.size,
+                    )
+                }
             }
             refreshReplyLaterCount()
         } catch (e: Exception) {
-            if (_emails.value.isEmpty()) _errorMessage.value = e.message
+            ifStillShowing(listScope) {
+                if (_emails.value.isEmpty()) {
+                    _errorMessage.value = e.message
+                    _emailListError.value = e.message ?: "Couldn't load emails"
+                }
+            }
         } finally {
-            _isLoading.value = false
-            _isSyncing.value = false
+            ifStillShowing(listScope) {
+                _isLoading.value = false
+                _isSyncing.value = false
+            }
+        }
+    }
+
+    /**
+     * Infinite scroll: fetch the next page of the current folder / pile and append it.
+     * No-op while a page is already loading or nothing is left. Results are dropped if
+     * the mailbox or tab changed meanwhile. DEBUG previews keep the skeleton row up.
+     */
+    suspend fun loadMoreEmails() {
+        val listScope = currentListScope ?: return
+        val page = _paging.value.nextPage(listScope) ?: return
+        _paging.value = _paging.value.beginLoadMore()
+        // Fixture: no network; leave the bottom skeleton row visible for the emulator preview.
+        if (isDebugPreview) return
+        try {
+            if (listScope.replyLater) {
+                val response = ApiClient.shared.listReplyLaterEmails(listScope.mailboxId, page = page)
+                db.upsertEmails(listScope.mailboxId, response.emails)
+                ifStillShowing(listScope) {
+                    val known = _emails.value.map { it.id }.toSet()
+                    val appended = _emails.value + response.emails.filterNot { it.id in known }
+                    _emails.value = appended
+                    _paging.value = _paging.value.afterPage(
+                        page,
+                        received = response.emails.size,
+                        totalCount = response.totalCount,
+                        loadedCount = appended.size,
+                    )
+                }
+            } else {
+                val folderId = listScope.folderId ?: return
+                val synced = MailboxSyncService.syncFolder(listScope.mailboxId, folderId, page = page)
+                ifStillShowing(listScope) {
+                    _emails.value = displayOrder(folderId, synced.emails)
+                    _paging.value = _paging.value.afterPage(
+                        page,
+                        received = synced.received,
+                        totalCount = synced.totalCount,
+                        loadedCount = synced.emails.size,
+                    )
+                }
+            }
+        } catch (_: Exception) {
+            // hasMore stays set; the footer swaps to "Couldn't load more · Retry".
+            if (_paging.value.scope == listScope) _paging.value = _paging.value.failLoad()
+        } finally {
+            if (_paging.value.scope == listScope && _paging.value.isLoadingMore) {
+                _paging.value = _paging.value.cancelLoad()
+            }
         }
     }
 
@@ -607,42 +790,56 @@ class AppModel {
         if (localCount > 0 || _replyLaterCount.value == 0) {
             _replyLaterCount.value = localCount
         }
+        val replyLaterScope = EmailListScope(mailboxId, folderId = null, replyLater = true)
         try {
             val response = ApiClient.shared.listReplyLaterEmails(mailboxId)
             db.upsertEmails(mailboxId, response.emails)
-            _replyLaterCount.value = response.totalCount
-            if (_selectedTab.value is HomeTab.ReplyLater) {
-                _emails.value = response.emails
+            ifStillSelected(mailboxId) { _replyLaterCount.value = response.totalCount }
+            ifStillShowing(replyLaterScope) {
+                // Only page 1 came back; don't collapse a pile infinite scroll extended.
+                _emails.value = if (_paging.value.scope == replyLaterScope && _paging.value.page > 1) {
+                    EmailPaging.mergeFirstPage(response.emails, _emails.value)
+                } else {
+                    response.emails
+                }
             }
         } catch (_: Exception) {
             runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull()?.let { piles ->
-                _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
+                ifStillSelected(mailboxId) {
+                    _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
+                }
             }
         }
     }
 
+    /** Pull-to-refresh: start the list over at page 1. */
     suspend fun refreshCurrentTab() {
         when (val tab = _selectedTab.value) {
             is HomeTab.Folder, is HomeTab.AiInbox, is HomeTab.ReplyLater -> {
-                loadEmailsForCurrentTab(showLoading = false)
+                loadEmailsForCurrentTab(showLoading = false, resetPaging = true)
                 if (tab is HomeTab.AiInbox) loadInboxDigest(showLoading = false)
             }
             is HomeTab.Chats -> refreshConversations()
         }
     }
 
+    /** SSE / 20 s poll / after send: refresh page 1 without collapsing loaded pages. */
     suspend fun refreshCurrentTabSilently() {
         val mailboxId = _selectedMailboxId.value ?: return
-        val folderId = _selectedTab.value.syncFolderId
-        if (folderId != null) {
-            runCatching { MailboxSyncService.syncFolder(mailboxId, folderId) }.getOrNull()?.let {
-                _emails.value = it
+        val listScope = currentListScope
+        val folderId = listScope?.folderId
+        if (listScope != null && folderId != null) {
+            val keepLoadedPages = _paging.value.scope == listScope && _paging.value.page > 1
+            runCatching {
+                MailboxSyncService.syncFolder(mailboxId, folderId, page = 1, prune = !keepLoadedPages)
+            }.getOrNull()?.let { synced ->
+                ifStillShowing(listScope) { _emails.value = displayOrder(folderId, synced.emails) }
             }
-            if (_selectedTab.value is HomeTab.AiInbox) {
+            if (isSelected(mailboxId) && _selectedTab.value is HomeTab.AiInbox) {
                 loadInboxDigest(showLoading = false)
             }
         }
-        refreshOpenEmailDetailSilently()
+        if (isSelected(mailboxId)) refreshOpenEmailDetailSilently()
     }
 
     /** Keep an open thread's delivery badges in sync when SSE/`email_updated` triggers a silent refresh. */
@@ -659,8 +856,8 @@ class AppModel {
             if (threadId != null && shouldLoadThread) {
                 val remote = ApiClient.shared.getThread(mailboxId, threadId)
                 db.upsertEmails(mailboxId, remote, defaultFolder = email.folderId)
-                if (_selectedEmail.value?.id == email.id ||
-                    _selectedEmail.value?.threadId == threadId
+                if (isSelected(mailboxId) &&
+                    (_selectedEmail.value?.id == email.id || _selectedEmail.value?.threadId == threadId)
                 ) {
                     _threadEmails.value = remote
                     remote.firstOrNull { it.id == email.id }?.let { updated ->
@@ -670,7 +867,7 @@ class AppModel {
             } else {
                 val full = ApiClient.shared.getEmail(mailboxId, email.id)
                 db.upsertEmails(mailboxId, listOf(full), defaultFolder = email.folderId)
-                if (_selectedEmail.value?.id == email.id) {
+                if (isSelected(mailboxId) && _selectedEmail.value?.id == email.id) {
                     _selectedEmail.value = mergeListMetadata(email, full)
                     if (_threadEmails.value.size <= 1) {
                         _threadEmails.value = listOf(full)
@@ -694,11 +891,13 @@ class AppModel {
         }
         if (showLoading && _inboxDigest.value == null) _isDigestLoading.value = true
         try {
-            _inboxDigest.value = ApiClient.shared.getInboxDigest(mailboxId)
+            val digest = ApiClient.shared.getInboxDigest(mailboxId)
+            ifStillSelected(mailboxId) { _inboxDigest.value = digest }
         } catch (e: Exception) {
-            if (_inboxDigest.value == null) _errorMessage.value = e.message
+            ifStillSelected(mailboxId) { if (_inboxDigest.value == null) _errorMessage.value = e.message }
         } finally {
-            _isDigestLoading.value = false
+            // A mailbox switch resets the flag itself (loadMailbox).
+            ifStillSelected(mailboxId) { _isDigestLoading.value = false }
         }
     }
 
@@ -785,22 +984,21 @@ class AppModel {
                     val remote = ApiClient.shared.getThread(mailboxId, email.threadId)
                     db.pruneLocalOnlyDrafts(mailboxId, email.threadId, remote.map { it.id }.toSet())
                     db.upsertEmails(mailboxId, remote, defaultFolder = email.folderId)
-                    if (_selectedEmail.value?.id == email.id ||
-                        _selectedEmail.value?.threadId == email.threadId
-                    ) {
+                    if (isStillOpen(mailboxId, email)) {
                         _threadEmails.value = remote
                     }
                 } else if (!hasBody) {
                     val full = ApiClient.shared.getEmail(mailboxId, email.id)
                     db.upsertEmails(mailboxId, listOf(full), defaultFolder = email.folderId)
-                    if (_selectedEmail.value?.id == email.id) {
+                    if (isSelected(mailboxId) && _selectedEmail.value?.id == email.id) {
                         _selectedEmail.value = mergeListMetadata(email, full)
                         _threadEmails.value = listOf(full)
                     }
                 }
             } catch (_: Exception) {
             } finally {
-                _isEmailDetailLoading.value = false
+                // Opening another message (or closing) already reset the flag for it.
+                if (isStillOpen(mailboxId, email)) _isEmailDetailLoading.value = false
             }
         }
     }
@@ -822,9 +1020,11 @@ class AppModel {
                     db.upsertEmails(mailboxId, listOf(remote), defaultFolder = remote.folderId ?: folderId)
                 }
             }.getOrElse {
-                showToast("Couldn’t open email", isError = true)
+                if (isSelected(mailboxId)) showToast("Couldn’t open email", isError = true)
                 return
             }
+        // The user switched mailboxes while this resolved; don't yank them back.
+        if (!isSelected(mailboxId)) return
 
         val folder = folderId?.takeIf { it.isNotBlank() }
         if (folder != null) {
@@ -836,7 +1036,8 @@ class AppModel {
             // Assign tab directly — `selectTab` clears selected email and awaits folder sync.
             if (_selectedTab.value != tab) {
                 _selectedTab.value = tab
-                scope.launch { loadEmailsForCurrentTab(showLoading = false) }
+                _paging.value = EmailPagingState()
+                scope.launch { loadEmailsForCurrentTab(showLoading = false, resetPaging = true) }
             }
         }
 
@@ -861,6 +1062,13 @@ class AppModel {
         return runCatching { ApiClient.shared.getEmail(mailboxId, inReplyTo) }.getOrNull()
     }
 
+    /** The detail sheet still shows [email] (or its thread) from [mailboxId]. */
+    private fun isStillOpen(mailboxId: String, email: Email): Boolean {
+        if (!isSelected(mailboxId)) return false
+        val open = _selectedEmail.value ?: return false
+        return open.id == email.id || (email.threadId != null && open.threadId == email.threadId)
+    }
+
     private fun mergeListMetadata(listRow: Email, full: Email): Email = full.copy(
         folderId = full.folderId ?: listRow.folderId,
         folderName = full.folderName ?: listRow.folderName,
@@ -879,8 +1087,9 @@ class AppModel {
             _errorMessage.value = "No mailbox selected."
             return
         }
+        val mailboxId = mailbox.id
         if (mailbox.settings == null) {
-            runCatching { ApiClient.shared.getMailbox(mailbox.id) }.getOrNull()?.let { detailed ->
+            runCatching { ApiClient.shared.getMailbox(mailboxId) }.getOrNull()?.let { detailed ->
                 mailbox = detailed
                 _mailboxes.update { list -> list.map { if (it.id == detailed.id) detailed else it } }
                 db.upsertMailboxes(listOf(detailed))
@@ -901,6 +1110,8 @@ class AppModel {
                 ApiClient.shared.getEmail(mailbox.id, draft.id)
             }.getOrNull() ?: draft
         }
+        // Switched mailboxes while the original / draft loaded: don't open a stale compose.
+        if (!isSelected(mailboxId)) return
         val form = ComposeFormModel(
             mode = mode,
             mailbox = mailbox,
@@ -1127,6 +1338,16 @@ class AppModel {
         }
     }
 
+    /** Settings → Notifications off: unregister this device from every mailbox. */
+    fun disablePushNotifications() {
+        val mailboxIds = _mailboxes.value.map { it.id }
+        scope.launch {
+            withTimeoutOrNull(PUSH_UNREGISTER_TIMEOUT_MS) {
+                PushNotificationManager.shared.disableNotifications(mailboxIds)
+            }
+        }
+    }
+
     /**
      * DELETE /api/v1/me — sole-owned mailboxes are purged, shared ones are left.
      * Throws on failure so the caller can keep the confirmation UI up.
@@ -1181,9 +1402,18 @@ class AppModel {
         threadEmails: List<Email>,
         replyLaterCount: Int,
         isAdmin: Boolean,
+        hasMorePages: Boolean = false,
+        mailboxesLoadFailed: Boolean = false,
+        emailListError: String? = null,
+        errorMessage: String? = null,
     ) {
         streamClient.stop()
         isDebugPreview = true
+        _paging.value = EmailListScope.of(selectedMailboxId, selectedTab)
+            ?.let { EmailPagingState(scope = it, page = 1, hasMore = hasMorePages) }
+            ?: EmailPagingState()
+        _mailboxesLoadFailed.value = mailboxesLoadFailed
+        _emailListError.value = emailListError
         _mailboxes.value = mailboxes
         _selectedMailboxId.value = selectedMailboxId
         _folders.value = folders
@@ -1198,7 +1428,7 @@ class AppModel {
         _chatSession.value = ChatSession.Dismissed
         _conversations.value = emptyList()
         _pendingInviteToken.value = null
-        _errorMessage.value = null
+        _errorMessage.value = errorMessage
         _toast.value = null
         _isMailboxLoading.value = false
         _isLoading.value = false
@@ -1247,18 +1477,8 @@ class AppModel {
                 }
                 val payload = form.toSendPayload()
                 when (form.mode) {
-                    ComposeMode.Reply -> {
-                        val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyToEmail(mailboxId, origId, payload)
-                    }
-                    ComposeMode.ReplyAll -> {
-                        val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.replyToEmail(mailboxId, origId, payload)
-                    }
-                    ComposeMode.Forward -> {
-                        val origId = form.original?.id ?: error("Missing original")
-                        ApiClient.shared.forwardEmail(mailboxId, origId, payload)
-                    }
+                    ComposeMode.Reply, ComposeMode.ReplyAll, ComposeMode.Forward ->
+                        sendReplyOrForward(form, mailboxId, payload)
                     else -> ApiClient.shared.sendEmail(mailboxId, payload)
                 }
             }.onSuccess {
@@ -1275,6 +1495,32 @@ class AppModel {
             }
         } finally {
             form.isSending = false
+        }
+    }
+
+    /**
+     * Reply / forward through the server route that threads against the original.
+     * A reopened reply draft may never have loaded its original (deleted, or not
+     * reachable when the draft opened), so fall back to [ComposeFormModel.originalEmailId]
+     * (the draft's `in_reply_to`), which the route resolves server-side. When there is no
+     * id at all, or the route can't find it (404), send what the user wrote as a new
+     * message instead of failing — threading and server-side quoting are lost, the text isn't.
+     */
+    private suspend fun sendReplyOrForward(form: ComposeFormModel, mailboxId: String, payload: JsonObject) {
+        val targetId = form.original?.id ?: form.originalEmailId?.takeIf { it.isNotBlank() }
+        if (targetId == null) {
+            ApiClient.shared.sendEmail(mailboxId, payload)
+            return
+        }
+        try {
+            if (form.mode == ComposeMode.Forward) {
+                ApiClient.shared.forwardEmail(mailboxId, targetId, payload)
+            } else {
+                ApiClient.shared.replyToEmail(mailboxId, targetId, payload)
+            }
+        } catch (e: ApiException.Http) {
+            if (e.code != 404 || form.original != null) throw e
+            ApiClient.shared.sendEmail(mailboxId, payload)
         }
     }
 
@@ -1559,7 +1805,9 @@ class AppModel {
                 _threadEmails.value = emptyList()
             }
             loadEmailsForCurrentTab(showLoading = false)
-            runCatching { _folders.value = MailboxSyncService.syncMailbox(mailboxId) }
+            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
+                ifStillSelected(mailboxId) { _folders.value = folders }
+            }
         } catch (e: Exception) {
             _errorMessage.value = e.message
         }
@@ -1590,7 +1838,9 @@ class AppModel {
                 _threadEmails.value = emptyList()
             }
             loadEmailsForCurrentTab(showLoading = false)
-            runCatching { _folders.value = MailboxSyncService.syncMailbox(mailboxId) }
+            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
+                ifStillSelected(mailboxId) { _folders.value = folders }
+            }
         } catch (e: Exception) {
             _errorMessage.value = e.message
         }
@@ -1725,6 +1975,8 @@ class AppModel {
         for (conv in visible.filter { it.title == "New chat" }.take(8)) {
             if (conv.id in preserve) continue
             val msgs = AgentChatClient.fetchMessages(mailboxId, conv.id, authToken) ?: continue
+            // update/delete below act on the selected mailbox; stop if it changed.
+            if (!isSelected(mailboxId)) return
             val firstUser = msgs.firstOrNull { it.role == "user" && it.text.isNotEmpty() }
             if (firstUser != null) {
                 val derived = ConversationTitleHelper.deriveTitle(firstUser.text)
@@ -1743,6 +1995,7 @@ class AppModel {
             for (conv in group) {
                 if (conv.id in preserve) continue
                 val msgs = AgentChatClient.fetchMessages(mailboxId, conv.id, authToken) ?: continue
+                if (!isSelected(mailboxId)) return
                 if (msgs.isEmpty()) deleteConversation(conv.id)
             }
         }
@@ -1773,6 +2026,7 @@ class AppModel {
         pendingConversationIds.add(targetId)
         return try {
             val created = ApiClient.shared.createConversation(mailboxId, targetId, finalTitle, lastMessagePreview)
+            if (!isSelected(mailboxId)) return created
             if (created.id == targetId) {
                 upsertLocalConversation(created)
                 pendingConversationIds.remove(targetId)
@@ -1793,6 +2047,7 @@ class AppModel {
         val mailboxId = _selectedMailboxId.value ?: return
         try {
             val server = ApiClient.shared.listConversations(mailboxId)
+            if (!isSelected(mailboxId)) return
             val visible = visibleConversations(server)
             val serverIds = visible.map { it.id }.toSet()
             pendingConversationIds.retainAll { it !in serverIds }
@@ -1807,7 +2062,7 @@ class AppModel {
             }
             dropStaleActiveConversation()
         } catch (e: Exception) {
-            _errorMessage.value = e.message
+            ifStillSelected(mailboxId) { _errorMessage.value = e.message }
         }
     }
 
@@ -1820,10 +2075,11 @@ class AppModel {
         applyLocalConversationUpdate(id, title, lastMessagePreview)
         return try {
             val updated = ApiClient.shared.updateConversation(mailboxId, id, title, lastMessagePreview)
-            upsertLocalConversation(updated)
+            ifStillSelected(mailboxId) { upsertLocalConversation(updated) }
             updated
         } catch (e: ApiException.Http) {
-            if (e.code == 404) {
+            // Re-creating would land in whichever mailbox is selected now.
+            if (e.code == 404 && isSelected(mailboxId)) {
                 val local = _conversations.value.firstOrNull { it.id == id }
                 createConversation(id, title ?: local?.title, lastMessagePreview ?: local?.lastMessagePreview)
             } else null
@@ -1849,11 +2105,11 @@ class AppModel {
     suspend fun notifyAIToolCompleted() {
         val mailboxId = _selectedMailboxId.value ?: return
         runCatching { MailboxSyncService.syncFolder(mailboxId, "draft") }
-        _selectedTab.value.syncFolderId?.let { folderId ->
-            runCatching { MailboxSyncService.syncFolder(mailboxId, folderId) }
+        if (!isSelected(mailboxId)) return
+        if (_selectedTab.value.syncFolderId != null) {
             loadEmailsForCurrentTab(showLoading = false)
         }
-        if (_selectedTab.value is HomeTab.AiInbox) {
+        if (isSelected(mailboxId) && _selectedTab.value is HomeTab.AiInbox) {
             loadInboxDigest(showLoading = false)
         }
     }
@@ -1897,6 +2153,9 @@ class AppModel {
 
         private fun visibleConversations(conversations: List<AgentConversation>) =
             conversations.filter { it.id != AUTO_CONVERSATION_ID }
+
+        private fun displayOrder(folderId: String, emails: List<Email>): List<Email> =
+            if (folderId == FolderIds.INBOX) orderNewThenSeen(emails) else emails
 
         /** Inbox New (unread) then Seen, each by date DESC. */
         fun orderNewThenSeen(emails: List<Email>): List<Email> {

@@ -164,6 +164,8 @@ fun HomeShellView(
     val emails by appModel.emails.collectAsState()
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
+    val paging by appModel.paging.collectAsState()
+    val emailListError by appModel.emailListError.collectAsState()
     val isDigestLoading by appModel.isDigestLoading.collectAsState()
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
@@ -216,7 +218,7 @@ fun HomeShellView(
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        PushNotificationManager.shared.onPermissionResult(granted, appModel.selectedMailboxId.value)
+        PushNotificationManager.shared.onPermissionResult(granted)
     }
     LaunchedEffect(selectedMailboxId) {
         if (selectedMailboxId == null || appModel.isDebugPreview) return@LaunchedEffect
@@ -710,6 +712,9 @@ fun HomeShellView(
                                     null
                                 },
                                 onRefresh = { appModel.refreshCurrentTab() },
+                                loadError = emailListError,
+                                paging = paging,
+                                onLoadMore = { appModel.loadMoreEmails() },
                                 onOpen = { email ->
                                     scope.launch {
                                         if (email.isDraft) appModel.openDraft(email) else appModel.openEmail(email)
@@ -735,6 +740,9 @@ fun HomeShellView(
                                 onClearFilters = null,
                                 filterChipsBar = null,
                                 onRefresh = { appModel.refreshCurrentTab() },
+                                loadError = emailListError,
+                                paging = paging,
+                                onLoadMore = { appModel.loadMoreEmails() },
                                 onOpen = { email ->
                                     scope.launch { appModel.openEmail(email) }
                                 },

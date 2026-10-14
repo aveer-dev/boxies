@@ -2,6 +2,10 @@
 <resources>
     <string name="app_name">Inboxies</string>
 
+    <!-- Mail notifications. The id must match PushNotificationManager.CHANNEL_ID. -->
+    <string name="notification_channel_id" translatable="false">inboxies_mail</string>
+    <string name="notification_channel_name">Inboxies</string>
+
     <!-- Autofill: private email suggestion (dropdown + keyboard inline chip) -->
     <string name="autofill_create_title">Create private email</string>
     <string name="autofill_create_subtitle">New Inboxies address for %1$s</string>

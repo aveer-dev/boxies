@@ -9,6 +9,8 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import co.inboxies.app.BuildConfig
+import co.inboxies.app.R
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +22,13 @@ import kotlinx.coroutines.launch
 /**
  * FCM registration coordinator. No-ops when Firebase / google-services.json
  * is not configured (`BuildConfig.HAS_GOOGLE_SERVICES == false`).
+ *
+ * Policy: the device token is registered for **every** mailbox the signed-in user has
+ * while notifications are on (preference + OS permission), and unregistered from all of
+ * them when the user turns notifications off or signs out. [registerMailboxes] is called
+ * on each mailbox load, so it only POSTs mailboxes not yet registered in this process.
+ * The mailbox list is also persisted so the FCM service (which can run without the UI)
+ * only shows pushes for mailboxes the user still has.
  */
 data class PushDeepLink(
     val mailboxId: String,
@@ -30,32 +39,38 @@ data class PushDeepLink(
 class PushNotificationManager private constructor(private val appContext: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val prefs get() = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    private var activeMailboxId: String? = null
     /** Persisted so sign-out / account deletion can unregister after a cold start. */
+    @Volatile
     private var deviceToken: String? = prefs.getString(KEY_DEVICE_TOKEN, null)
-    /** Mailboxes this device token was registered for in this process. */
+    /** Mailboxes [deviceToken] was registered for in this process. */
     private val registeredMailboxIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val _pendingDeepLink = MutableStateFlow<PushDeepLink?>(null)
     val pendingDeepLink: StateFlow<PushDeepLink?> = _pendingDeepLink.asStateFlow()
 
-    fun requestPermissionAndRegister(mailboxId: String) {
-        activeMailboxId = mailboxId
-        if (!BuildConfig.HAS_GOOGLE_SERVICES) return
-        if (!isNotificationsEnabled()) return
+    /** The signed-in user's mailboxes (persisted; see [isKnownMailbox]). */
+    private val knownMailboxIds: Set<String>
+        get() = prefs.getStringSet(KEY_KNOWN_MAILBOXES, emptySet()).orEmpty()
 
-        ensureChannel()
-        deviceToken?.let { syncTokenWithServer(mailboxId, it) }
+    /**
+     * Remember the user's mailboxes and, when notifications are on, register the device
+     * token for any of them not registered yet in this process.
+     */
+    fun registerMailboxes(mailboxIds: Collection<String>) {
+        val ids = mailboxIds.filter { it.isNotBlank() }.toSet()
+        if (ids.isEmpty()) return
+        if (ids != knownMailboxIds) prefs.edit { putStringSet(KEY_KNOWN_MAILBOXES, ids) }
+        registerKnownMailboxes()
+    }
 
-        // Permission is requested from Settings / Activity when needed; here we only sync.
-        if (Build.VERSION.SDK_INT >= 33) {
-            val granted = ContextCompat.checkSelfPermission(
-                appContext,
-                Manifest.permission.POST_NOTIFICATIONS,
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) return
+    /** (Re)register the token for every known mailbox when notifications are on. */
+    fun registerKnownMailboxes() {
+        if (!BuildConfig.HAS_GOOGLE_SERVICES || !isEffectivelyEnabled()) return
+        val token = deviceToken
+        if (token != null) {
+            knownMailboxIds.filterNot { it in registeredMailboxIds }.forEach { syncTokenWithServer(it, token) }
         }
-
-        fetchAndRegisterToken(mailboxId)
+        // Refresh the token too; a new one lands in handleTokenReceived.
+        fetchToken()
     }
 
     fun isNotificationsEnabled(): Boolean = prefs.getBoolean(KEY_PUSH_ENABLED, true)
@@ -65,6 +80,21 @@ class PushNotificationManager private constructor(private val appContext: Contex
 
     fun setNotificationsEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_PUSH_ENABLED, enabled) }
+    }
+
+    /** Settings toggle on: register for all of the user's mailboxes. */
+    fun enableNotifications() {
+        setNotificationsEnabled(true)
+        registerKnownMailboxes()
+    }
+
+    /**
+     * Settings toggle off: unregister this device from every mailbox (not just the
+     * selected one), so no mailbox keeps pushing to it.
+     */
+    suspend fun disableNotifications(mailboxIds: Collection<String>) {
+        setNotificationsEnabled(false)
+        unregisterFrom(mailboxIds + knownMailboxIds)
     }
 
     /**
@@ -81,9 +111,9 @@ class PushNotificationManager private constructor(private val appContext: Contex
         prefs.edit { putBoolean(KEY_PERMISSION_PROMPTED, true) }
     }
 
-    fun onPermissionResult(granted: Boolean, mailboxId: String?) {
+    fun onPermissionResult(granted: Boolean) {
         setNotificationsEnabled(granted)
-        if (granted) mailboxId?.let { requestPermissionAndRegister(it) }
+        if (granted) registerKnownMailboxes()
     }
 
     fun hasNotificationPermission(): Boolean {
@@ -94,18 +124,24 @@ class PushNotificationManager private constructor(private val appContext: Contex
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    fun handleTokenReceived(token: String) {
-        deviceToken = token
-        prefs.edit { putString(KEY_DEVICE_TOKEN, token) }
-        activeMailboxId?.let { syncTokenWithServer(it, token) }
+    /** True when a push for [mailboxId] belongs to a mailbox the user still has. */
+    fun isKnownMailbox(mailboxId: String?): Boolean {
+        val known = knownMailboxIds
+        // Nothing recorded yet (first launch after an update): don't drop until the app ran once.
+        if (mailboxId.isNullOrBlank() || known.isEmpty()) return true
+        return known.any { it.equals(mailboxId, ignoreCase = true) }
     }
 
-    fun unregisterToken(mailboxId: String) {
-        val token = deviceToken ?: return
-        registeredMailboxIds.remove(mailboxId)
-        scope.launch {
-            runCatching { ApiClient.shared.unregisterDeviceToken(mailboxId, token) }
+    fun handleTokenReceived(token: String) {
+        if (token != deviceToken) {
+            // Registrations were for the old token; the server prunes it on its next 404.
+            registeredMailboxIds.clear()
         }
+        deviceToken = token
+        prefs.edit { putString(KEY_DEVICE_TOKEN, token) }
+        // FCM rotates tokens on its own; never re-register while the user has push off.
+        if (!BuildConfig.HAS_GOOGLE_SERVICES || !isEffectivelyEnabled()) return
+        knownMailboxIds.filterNot { it in registeredMailboxIds }.forEach { syncTokenWithServer(it, token) }
     }
 
     /**
@@ -113,59 +149,45 @@ class PushNotificationManager private constructor(private val appContext: Contex
      * (sign-out / account deletion). Must run while the Bearer token is still valid.
      */
     suspend fun unregisterAll(mailboxIds: Collection<String>) {
-        val token = deviceToken ?: return
+        unregisterFrom(mailboxIds + knownMailboxIds)
+        forgetMailboxes()
+    }
+
+    /** Signed out: no mailbox is "known" any more, so the FCM service drops every push. */
+    fun forgetMailboxes() {
+        registeredMailboxIds.clear()
+        prefs.edit { remove(KEY_KNOWN_MAILBOXES) }
+    }
+
+    private suspend fun unregisterFrom(mailboxIds: Collection<String>) {
+        val token = deviceToken
         val targets = (mailboxIds + registeredMailboxIds).toSet()
+        registeredMailboxIds.clear()
+        if (token == null) return
         for (id in targets) {
             runCatching { ApiClient.shared.unregisterDeviceToken(id, token) }
         }
-        registeredMailboxIds.clear()
-        activeMailboxId = null
     }
 
-    private fun fetchAndRegisterToken(mailboxId: String) {
-        // Firebase Messaging is optional; resolve via reflection so missing
-        // google-services.json does not crash class loading paths at compile time.
+    private fun fetchToken() {
+        // Only reached with google-services.json (FirebaseApp initialised); stay silent
+        // if Firebase isn't usable on this device (e.g. no Play services).
         try {
-            val firebaseMessaging = Class.forName("com.google.firebase.messaging.FirebaseMessaging")
-            val instance = firebaseMessaging.getMethod("getInstance").invoke(null)
-            val task = firebaseMessaging.getMethod("getToken").invoke(instance)
-            val addOnSuccess = task.javaClass.getMethod(
-                "addOnSuccessListener",
-                Class.forName("com.google.android.gms.tasks.OnSuccessListener"),
-            )
-            val listener = java.lang.reflect.Proxy.newProxyInstance(
-                appContext.classLoader,
-                arrayOf(Class.forName("com.google.android.gms.tasks.OnSuccessListener")),
-            ) { _, _, args ->
-                val token = args?.getOrNull(0) as? String
+            FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
                 if (token != null) handleTokenReceived(token)
-                null
             }
-            addOnSuccess.invoke(task, listener)
-            syncTokenWithServer(mailboxId, deviceToken ?: return)
         } catch (_: Exception) {
-            // Firebase not configured — silent no-op
         }
     }
 
     private fun syncTokenWithServer(mailboxId: String, token: String) {
+        // Claim it up front so overlapping calls don't double-POST; release on failure.
+        if (!registeredMailboxIds.add(mailboxId)) return
         scope.launch {
             runCatching { ApiClient.shared.registerDeviceToken(mailboxId, token) }
-                .onSuccess { registeredMailboxIds.add(mailboxId) }
+                .onFailure { registeredMailboxIds.remove(mailboxId) }
         }
     }
-
-    private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = appContext.getSystemService(NotificationManager::class.java) ?: return
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            "Inboxies",
-            NotificationManager.IMPORTANCE_DEFAULT,
-        )
-        manager.createNotificationChannel(channel)
-    }
-
 
     fun setPendingDeepLink(mailboxId: String?, emailId: String?, folderId: String?) {
         val mb = mailboxId?.takeIf { it.isNotBlank() } ?: return
@@ -187,12 +209,28 @@ class PushNotificationManager private constructor(private val appContext: Contex
         private const val KEY_PUSH_ENABLED = "push_notifications_enabled"
         private const val KEY_PERMISSION_PROMPTED = "push_permission_prompted"
         private const val KEY_DEVICE_TOKEN = "push_device_token"
+        private const val KEY_KNOWN_MAILBOXES = "push_known_mailboxes"
 
         lateinit var shared: PushNotificationManager
             private set
 
         fun init(context: Context) {
             shared = PushNotificationManager(context.applicationContext)
+            ensureChannel(context.applicationContext)
+        }
+
+        /**
+         * Created at app start regardless of FCM config, so the channel the manifest names
+         * as FCM's default always exists and users can tune it in system Settings.
+         */
+        fun ensureChannel(context: Context) {
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                context.getString(R.string.notification_channel_name),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            )
+            manager.createNotificationChannel(channel)
         }
     }
 }

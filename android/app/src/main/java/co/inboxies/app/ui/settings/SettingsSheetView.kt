@@ -130,9 +130,8 @@ fun SettingsSheetView(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            push.setNotificationsEnabled(true)
             notificationsEnabled = true
-            mailboxId?.let { push.requestPermissionAndRegister(it) }
+            push.enableNotifications()
         } else {
             push.setNotificationsEnabled(false)
             notificationsEnabled = false
@@ -143,16 +142,16 @@ fun SettingsSheetView(
         if (Build.VERSION.SDK_INT >= 33 && !push.hasNotificationPermission()) {
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            push.setNotificationsEnabled(true)
             notificationsEnabled = true
-            mailboxId?.let { push.requestPermissionAndRegister(it) }
+            // Registers this device for every mailbox the user has, not just the open one.
+            push.enableNotifications()
         }
     }
 
     fun disableNotifications() {
-        push.setNotificationsEnabled(false)
         notificationsEnabled = false
-        mailboxId?.let { push.unregisterToken(it) }
+        // Off means off for every mailbox (runs app-scoped; closing Settings can't cancel it).
+        app.disablePushNotifications()
     }
 
     fun navigateBack() {

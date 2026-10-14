@@ -32,6 +32,7 @@ import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.ThemeMode
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.auth.MailboxOnboardingView
+import co.inboxies.app.ui.components.MailboxLoadFailedView
 import co.inboxies.app.ui.auth.OnboardingTrack
 import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
@@ -69,6 +70,9 @@ object PreviewHarness {
                 // Splash preview needs no extra session seeding.
             }
             PreviewMode.Mailbox,
+            PreviewMode.LoadMore,
+            PreviewMode.LoadFailed,
+            PreviewMode.ListError,
             PreviewMode.Screener,
             PreviewMode.ScreenerList,
             PreviewMode.ReplyLater,
@@ -134,7 +138,10 @@ fun PreviewRoot(
                 }
             }
         }
+        PreviewMode.LoadFailed -> MailboxLoadFailedView(appModel = appModel, auth = auth)
         PreviewMode.Mailbox,
+        PreviewMode.LoadMore,
+        PreviewMode.ListError,
         PreviewMode.Screener,
         PreviewMode.ScreenerList,
         PreviewMode.ReplyLater,

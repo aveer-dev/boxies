@@ -5,6 +5,9 @@
 # Usage:
 #   ./scripts/run-debug-preview.sh domainAdmin
 #   ./scripts/run-debug-preview.sh mailbox
+#   ./scripts/run-debug-preview.sh loadMore
+#   ./scripts/run-debug-preview.sh loadFailed
+#   ./scripts/run-debug-preview.sh listError
 #   ./scripts/run-debug-preview.sh screener
 #   ./scripts/run-debug-preview.sh screenerList
 #   ./scripts/run-debug-preview.sh domainDns
@@ -34,6 +37,9 @@ case "$mode" in
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
+  loadMore|LoadMore|previewLoadMore) extra=previewLoadMore; label=loadMore ;;
+  loadFailed|LoadFailed|previewLoadFailed) extra=previewLoadFailed; label=loadFailed ;;
+  listError|ListError|previewListError) extra=previewListError; label=listError ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
   screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;
   domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
@@ -48,7 +54,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | screener | replyLater" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | loadFailed | listError | screener | replyLater" >&2
     exit 1
     ;;
 esac

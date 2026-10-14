@@ -25,6 +25,12 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     InviteAccept("inviteAccept", "previewInviteAccept"),
     SignInMethods("signInMethods", "previewSignInMethods"),
     Mailbox("mailbox", "previewMailbox"),
+    /** Inbox with more pages to load: the bottom skeleton row (iOS `-previewLoadMore`). */
+    LoadMore("loadMore", "previewLoadMore"),
+    /** Signed in, first mailbox load failed, nothing cached (iOS `-previewLoadFailed`). */
+    LoadFailed("loadFailed", "previewLoadFailed"),
+    /** Inbox fetch failed with an empty cache: error + Retry (iOS `-previewListError`). */
+    ListError("listError", "previewListError"),
     Screener("screener", "previewScreener"),
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),

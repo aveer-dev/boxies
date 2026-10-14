@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,11 +106,23 @@ fun SearchView(
                 return@launch
             }
             loading = true
-            results = runCatching {
+            val found = runCatching {
                 ApiClient.shared.searchEmails(mailboxId, parsedQuery).emails
             }.getOrElse { emptyList() }
+            // Results for a mailbox the user switched away from must not show under the new one.
+            results = if (app.selectedMailboxId.value == mailboxId) found else emptyList()
             loading = false
         }
+    }
+
+    // Mailbox switched while searching: re-run against the new mailbox.
+    val selectedMailboxId by app.selectedMailboxId.collectAsState()
+    var searchedMailboxId by remember { mutableStateOf(selectedMailboxId) }
+    LaunchedEffect(selectedMailboxId) {
+        if (selectedMailboxId == searchedMailboxId) return@LaunchedEffect
+        searchedMailboxId = selectedMailboxId
+        results = emptyList()
+        if (query.isNotBlank()) runSearch(query)
     }
 
     LaunchedEffect(initialQuery) {
