@@ -161,16 +161,12 @@ export default function EmailPanelToolbar({
 			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
 
 			{spamAction && onSpamAction && (
-				<Tooltip content={spamAction === "report" ? "Report spam" : "Not spam"} side="bottom" asChild>
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={spamAction === "report" ? <WarningIcon size={18} /> : <ShieldCheckIcon size={18} />}
-						onClick={onSpamAction}
-						aria-label={spamAction === "report" ? "Report spam" : "Not spam"}
-					/>
-				</Tooltip>
+				<IconButton
+					label={spamAction === "report" ? "Report spam" : "Not spam"}
+					icon={spamAction === "report" ? WarningIcon : ShieldCheckIcon}
+					size="md"
+					onClick={onSpamAction}
+				/>
 			)}
 
 			<div className="ml-auto flex items-center gap-0.5">
