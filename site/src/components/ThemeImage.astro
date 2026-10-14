@@ -1,0 +1,57 @@
+---
+// A screen in both themes. CSS shows exactly one twin (.tw-light / .tw-dark in
+// global.css), and both are lazy, so the hidden one never downloads. The light
+// twin comes first: theme.ts relies on that order to pre-decode the other.
+import { Picture } from "astro:assets";
+import { getStill, stills, type StillName } from "../data/media";
+
+interface Props {
+	still: StillName;
+	alt?: string;
+	sizes: string;
+}
+
+const { still, alt = stills[still].alt, sizes } = Astro.props;
+---
+
+<div class="tw-light media-fill">
+	<Picture
+		src={getStill(still, "light")}
+		alt={alt}
+		formats={["avif", "webp"]}
+		fallbackFormat="webp"
+		width={960}
+		widths={[320, 640, 960]}
+		sizes={sizes}
+		loading="lazy"
+		decoding="async"
+	/>
+</div>
+<div class="tw-dark media-fill">
+	<Picture
+		src={getStill(still, "dark")}
+		alt={alt}
+		formats={["avif", "webp"]}
+		fallbackFormat="webp"
+		width={960}
+		widths={[320, 640, 960]}
+		sizes={sizes}
+		loading="lazy"
+		decoding="async"
+	/>
+</div>
+
+<style>
+	.media-fill {
+		position: absolute;
+		inset: 0;
+	}
+
+	.media-fill :global(picture),
+	.media-fill :global(img) {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+</style>

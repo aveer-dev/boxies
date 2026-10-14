@@ -4,6 +4,7 @@ import UIKit
 enum ComposeActionItem: String, Identifiable, CaseIterable {
     case settings
     case trash
+    case spam
     case archive
     case drafts
     case sent
@@ -20,6 +21,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         switch self {
         case .settings: return "Settings"
         case .trash: return "Trash"
+        case .spam: return "Spam"
         case .archive: return "Archive"
         case .drafts: return "Drafts"
         case .sent: return "Sent"
@@ -36,6 +38,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         switch self {
         case .settings: return "gearshape"
         case .trash: return HomeTab.folder("trash").systemImage
+        case .spam: return HomeTab.folder("spam").systemImage
         case .archive: return HomeTab.folder("archive").systemImage
         case .drafts: return HomeTab.folder("draft").systemImage
         case .sent: return HomeTab.folder("sent").systemImage
@@ -58,6 +61,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .sent: return .folder("sent")
         case .drafts: return .folder("draft")
         case .archive: return .folder("archive")
+        case .spam: return .folder("spam")
         case .trash: return .folder("trash")
         case .settings, .compose: return nil
         }
@@ -145,6 +149,8 @@ struct ComposeStackButton: View {
 struct ComposeActionListOverlay: View {
     var highlightedID: ComposeActionItem.ID?
     var isClosing: Bool = false
+    /// Read-only mailbox (service ended): folders and settings only.
+    var hidesCompose: Bool = false
     var onSelect: (ComposeActionItem) -> Void
     var onDismiss: () -> Void
     var onRowFramesChange: ([ComposeActionItem.ID: CGRect]) -> Void
@@ -155,7 +161,9 @@ struct ComposeActionListOverlay: View {
     @State private var isDismissingInternal = false
     @Namespace private var highlightNamespace
 
-    private let actions = ComposeActionItem.allCases
+    private var actions: [ComposeActionItem] {
+        hidesCompose ? ComposeActionItem.allCases.filter { $0 != .compose } : ComposeActionItem.allCases
+    }
     private let iconSize: CGFloat = 44
     private let rowSpacing: CGFloat = 10
     private let baseOffsetToStack: CGFloat = 60

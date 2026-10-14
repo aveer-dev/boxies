@@ -13,6 +13,7 @@ import java.net.URI
 object AppConfig {
     const val PREFS_NAME = "inboxies_config"
     private const val KEY_API_BASE = "apiBaseURL"
+    private const val KEY_PENDING_CHECKOUT_SESSION = "pendingCheckoutSessionId"
     const val AGENT_PATH_PREFIX = "/agents/email-agent"
     val agentPathPrefix: String get() = AGENT_PATH_PREFIX
     const val PACKAGE_ID = "co.inboxies.app"
@@ -53,6 +54,23 @@ object AppConfig {
                 prefs?.edit { putString(KEY_API_BASE, value) }
             }
         }
+
+    /**
+     * Stripe checkout session this app started. The `inboxies://onboarding` deep link
+     * only applies its session token when it returns this id, so a crafted link
+     * can't sign the user into someone else's account.
+     */
+    fun rememberPendingCheckout(sessionId: String) {
+        prefs?.edit { putString(KEY_PENDING_CHECKOUT_SESSION, sessionId) }
+    }
+
+    /** True (and forgets it) when [sessionId] is the checkout this app started. */
+    fun consumePendingCheckout(sessionId: String?): Boolean {
+        val pending = prefs?.getString(KEY_PENDING_CHECKOUT_SESSION, null) ?: return false
+        if (sessionId.isNullOrBlank() || sessionId != pending) return false
+        prefs?.edit { remove(KEY_PENDING_CHECKOUT_SESSION) }
+        return true
+    }
 
     val isLocalDevelopmentAPI: Boolean
         get() {

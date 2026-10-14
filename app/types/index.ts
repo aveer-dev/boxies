@@ -30,10 +30,16 @@ export interface SenderPreference {
 	updatedAt?: string;
 }
 
+/**
+ * Read-only membership the server synthesizes for older app builds. Never
+ * sent back: membership changes go through invites and the members routes.
+ */
 export interface MailboxAcl {
 	owners?: string[];
 	members?: string[];
 }
+
+export type MailboxRole = "owner" | "member";
 
 export interface MailboxSettings {
 	fromName?: string;
@@ -42,16 +48,58 @@ export interface MailboxSettings {
 	autoReply?: { enabled: boolean; subject: string; message: string };
 	agentSystemPrompt?: string;
 	filters?: InboxFilterRule[];
+	/** Server-synthesized, read-only; stripped before every save. */
 	acl?: MailboxAcl;
 	canManage?: boolean;
 }
 
 export interface MeResponse {
+	userId: string;
+	name: string | null;
 	email: string | null;
 	sub: string | null;
 	keys: string[];
 	isAdmin?: boolean;
 	administeredDomains?: string[];
+	mailDomain?: string;
+	domains?: string[];
+	sessionScope?: string | null;
+}
+
+export interface AccountSession {
+	id: string;
+	label: string | null;
+	scope: string | null;
+	userAgent: string | null;
+	ipAddress: string | null;
+	createdAt: string;
+	lastActiveAt: string;
+	expiresAt: string;
+	current: boolean;
+}
+
+export interface RecoveryEmailStatus {
+	email: string | null;
+	verified: boolean;
+}
+
+export interface MailboxMember {
+	userId: string;
+	email: string;
+	name: string | null;
+	role: MailboxRole;
+	you: boolean;
+}
+
+export interface MailboxInviteRow {
+	id: string;
+	mailboxId: string;
+	role: MailboxRole;
+	inviteeEmail: string;
+	inviteeName?: string;
+	expiresAt: string;
+	status: "pending" | "accepted" | "revoked" | "expired";
+	createdAt: string;
 }
 
 export interface CloudflareDnsRecord {
@@ -141,11 +189,15 @@ export interface DomainCheckoutResponse {
 }
 
 export interface CheckoutStatusResponse {
-	status: "pending" | "provisioning" | "ready" | "failed";
+	/**
+	 * `awaiting_payment`: a bank payment is still clearing (can take days).
+	 * `refunded`: the domain couldn't be bought, so the payment was returned.
+	 * `canceled`: the checkout was abandoned or expired.
+	 */
+	status: "pending" | "awaiting_payment" | "provisioning" | "ready" | "failed" | "refunded" | "canceled";
 	domain: string;
 	pricing?: DomainPricingBreakdown;
 	mailboxId?: string;
-	ownerUserId?: string;
 	error?: string;
 }
 
@@ -224,7 +276,43 @@ export interface Mailbox {
 	email: string;
 	name: string;
 	settings?: MailboxSettings;
+	role?: MailboxRole | null;
 	canManage?: boolean;
+	/** The domain's subscription ended: read and export only. */
+	readOnly?: boolean;
+	/** Billing state of the mailbox's domain; null for domains Inboxies doesn't bill. */
+	service?: DomainService | null;
+}
+
+/** Where a paid domain's service stands (GET /api/v1/billing/domains/:domain/service). */
+export interface DomainService {
+	domain: string;
+	status: "active" | "ending" | "ended";
+	/** When a subscription set to cancel ends. */
+	endsAt?: string;
+	endedAt?: string;
+	registrarManaged: boolean;
+	registrationExpiresAt?: string;
+	/** Last day the domain can be renewed (registrar grace period). */
+	renewBy?: string;
+	daysLeftToRenew?: number;
+	canRenew: boolean;
+	/** The caller is an owner/admin of the domain (only those can renew). */
+	canManage?: boolean;
+	billed?: boolean;
+	/** In service: the next yearly charge (60 days before the registration expires). */
+	nextChargeAt?: string;
+	nextChargeUsd?: number;
+	/** Ended: when the mail on the domain is deleted (30 days after the name is released). */
+	purgeAt?: string;
+}
+
+export interface RenewDomainResponse {
+	resumed?: boolean;
+	renewed?: boolean;
+	checkoutUrl?: string;
+	sessionId?: string;
+	service?: DomainService;
 }
 
 export interface EmailAuthSnapshot {
@@ -264,7 +352,12 @@ export interface Email {
 	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
 	delivery_error?: string | null;
 	auth?: EmailAuthSnapshot | null;
+	/** Private email the message arrived on or was sent from. */
 	alias_id?: string | null;
+	/** Detail/thread payloads only. Replies go out from this address. */
+	alias_email?: string | null;
+	/** Alias still active and unexpired; false means replies are refused. */
+	alias_active?: boolean | null;
 	attachments?: Attachment[];
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)

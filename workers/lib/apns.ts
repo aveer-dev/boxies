@@ -9,7 +9,7 @@ export interface APNsPayload {
 	title: string;
 	/** APNs alert.body (preview, or subject when no preview). */
 	body: string;
-	/** FCM notification.body; defaults to `body` when omitted. */
+	/** FCM data `body` (the Android app renders it); defaults to `body` when omitted. */
 	fcmBody?: string;
 	/** APNs alert.subtitle (typically the mail subject). */
 	subtitle?: string;
@@ -18,6 +18,16 @@ export interface APNsPayload {
 	folderId?: string;
 	badge?: number;
 }
+
+/**
+ * The env fields APNs delivery reads. `APNS_SANDBOX` / `APNS_TOPIC` are wrangler
+ * vars that deployments override, so read them as plain strings rather than the
+ * literal defaults `wrangler types` generates from wrangler.jsonc.
+ */
+type APNsEnv = Pick<Env, "APNS_KEY_ID" | "APNS_TEAM_ID" | "APNS_PRIVATE_KEY"> & {
+	APNS_SANDBOX?: string;
+	APNS_TOPIC?: string;
+};
 
 let cachedKey: CryptoKey | null = null;
 let cachedKeyPem: string | null = null;
@@ -45,7 +55,7 @@ async function getPrivateKey(pem: string): Promise<CryptoKey> {
 /**
  * Generates an APNs authentication token (valid for up to 50 minutes).
  */
-async function getAPNsBearerToken(env: Env): Promise<string | null> {
+async function getAPNsBearerToken(env: APNsEnv): Promise<string | null> {
 	if (!env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_PRIVATE_KEY) {
 		return null;
 	}
@@ -75,7 +85,7 @@ async function getAPNsBearerToken(env: Env): Promise<string | null> {
  * Dispatches an Apple Push Notification to one or more iOS device tokens.
  */
 export async function sendAPNsPush(
-	env: Env,
+	env: APNsEnv,
 	deviceTokens: string[],
 	payload: APNsPayload,
 ): Promise<{ successCount: number; failureCount: number; staleTokens: string[]; details: any[] }> {

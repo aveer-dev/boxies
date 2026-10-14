@@ -122,6 +122,18 @@ extension AppModel {
         }
     }
 
+    /// Move to Spam and reject the sender: their future mail is screened out.
+    func reportSpam(_ email: Email, fromList: Bool = false) async {
+        await moveEmail(email, to: "spam", fromList: fromList, setSenderPreference: true)
+        showToast("Reported as spam")
+    }
+
+    /// Move back to Inbox and allow the sender.
+    func markNotSpam(_ email: Email, fromList: Bool = false) async {
+        await moveEmail(email, to: "inbox", fromList: fromList, setSenderPreference: true)
+        showToast("Moved to Inbox")
+    }
+
     func deleteCurrentEmail() async {
         guard let email = selectedEmail ?? threadEmails.last else { return }
         await deleteEmail(email)

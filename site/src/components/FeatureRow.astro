@@ -1,0 +1,20 @@
+---
+// A feature that works today, as a Row: title (linking to its Support answer)
+// and the platforms it runs on. Anything not available fails the build, so an
+// unbuilt feature can never land in "And the rest".
+import type { Feature } from "../data/types";
+import { platformLine } from "../lib/platforms";
+import Row from "./Row.astro";
+
+interface Props {
+	feature: Feature;
+}
+
+const { feature } = Astro.props;
+
+if (feature.status !== "available") {
+	throw new Error(`FeatureRow: "${feature.id}" is "${feature.status}", and only available features can be listed`);
+}
+---
+
+<Row title={feature.title} href={feature.href} meta={platformLine(feature.platforms)} description={feature.description} />

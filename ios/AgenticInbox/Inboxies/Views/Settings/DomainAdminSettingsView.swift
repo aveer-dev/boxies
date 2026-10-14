@@ -18,6 +18,11 @@ struct DomainAdminSettingsView: View {
     @State private var lastInviteUrl: String?
     @State private var statusMessage: String?
 
+    /// The domain this console administers (new addresses are created on it).
+    private var adminDomain: String {
+        app.mailDomain.lowercased()
+    }
+
     var body: some View {
         Group {
             if isLoading {
@@ -54,6 +59,8 @@ struct DomainAdminSettingsView: View {
                         }
                     }
 
+                    DomainSubscriptionSection(domain: adminDomain)
+
                     Section {
                         NavigationLink {
                             DomainAdminDNSView()
@@ -70,6 +77,8 @@ struct DomainAdminSettingsView: View {
                                 .font(.inter(size: 15, weight: .medium))
                                 .foregroundStyle(AppTheme.accent)
                         }
+                        // No new addresses on a domain whose subscription ended.
+                        .lockedWhenReadOnly(app.domainServices[adminDomain]?.isEnded == true)
                     }
 
                     Section("Domain mailboxes") {
@@ -234,6 +243,12 @@ struct DomainAdminMailboxDetailView: View {
     @State private var showInviteSheet = false
     @State private var showDeleteConfirm = false
 
+    /// The mailbox's domain subscription ended: users and invites are frozen.
+    private var serviceEnded: Bool {
+        let domain = mailbox.email.split(separator: "@").last.map { String($0).lowercased() } ?? ""
+        return app.domainServices[domain]?.isEnded == true
+    }
+
     private var isAssignedToCurrentUser: Bool {
         if app.mailboxes.contains(where: {
             $0.id == mailbox.id || $0.email.caseInsensitiveCompare(mailbox.email) == .orderedSame
@@ -312,6 +327,10 @@ struct DomainAdminMailboxDetailView: View {
                 }
             } header: {
                 Text("Details")
+            } footer: {
+                if serviceEnded {
+                    Text("The subscription for this domain ended, so its users and invites can't be changed until it's renewed.")
+                }
             }
 
         }
@@ -365,6 +384,7 @@ struct DomainAdminMailboxDetailView: View {
                 .tint(.red)
                 .disabled(isAssigning || isDeleting)
             }
+            .lockedWhenReadOnly(serviceEnded)
             .padding(.horizontal, 20)
             .padding(.top, 12)
             .padding(.bottom, 16)

@@ -1,0 +1,32 @@
+{
+	"name": "inboxies-site",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=22.12"
+	},
+	"scripts": {
+		"dev": "astro dev",
+		"build": "astro build && node scripts/check-claims.mjs && node scripts/check-budget.mjs",
+		"preview": "pnpm run build && wrangler versions upload",
+		"check": "astro check",
+		"check:claims": "node scripts/check-claims.mjs",
+		"check:budget": "node scripts/check-budget.mjs",
+		"typegen": "wrangler types",
+		"og": "node scripts/make-og.mjs",
+		"deploy": "pnpm run build && wrangler deploy"
+	},
+	"dependencies": {
+		"astro": "^7.3.6",
+		"@astrojs/cloudflare": "^14.3.3",
+		"@fontsource/inter": "^5.3.0"
+	},
+	"devDependencies": {
+		"@astrojs/check": "^0.9.10",
+		"typescript": "^5.9.3",
+		"wrangler": "^4.147.0",
+		"sharp": "^0.35.4",
+		"node-html-parser": "^9.0.4"
+	}
+}

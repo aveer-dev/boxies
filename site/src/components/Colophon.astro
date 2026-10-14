@@ -1,0 +1,107 @@
+---
+// The in-flow site map at the end of every page. The fixed footer keeps the
+// portfolio's two rows, so source, X and the rest live here.
+// src: FSW#per-mailbox-isolation; PS#7; RM#4 (forked from cloudflare/agentic-inbox)
+import { GITHUB_URL, SIGN_UP_URL, SUPPORT_EMAIL, X_URL, flags } from "../config";
+---
+
+<nav class="colophon column-container" aria-label="Site map">
+	<hr class="divider" />
+	<dl class="colophon-rows">
+		<div>
+			<dt>Product</dt>
+			<dd>
+				<a href="/#tour">Tour</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/pricing">Pricing</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/roadmap">Roadmap</a>{
+					flags.webAppPublic && (
+						<>
+							<span aria-hidden="true" class="dot">·</span><wbr /><a href={SIGN_UP_URL}>Open the app&#8288;<span class="arrow-out" aria-hidden="true">↗</span></a>
+						</>
+					)
+				}
+			</dd>
+		</div>
+		<div>
+			<dt>Help</dt>
+			<dd>
+				<a href="/support">Support</a><span aria-hidden="true" class="dot">·</span><wbr /><a href="/support#contact">Contact</a><span aria-hidden="true" class="dot">·</span><wbr /><a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+			</dd>
+		</div>
+		<div>
+			<dt>Elsewhere</dt>
+			<dd>
+				<a href={GITHUB_URL}>Source&#8288;<span class="arrow-out" aria-hidden="true">↗</span></a>{
+					X_URL && (
+						<>
+							<span aria-hidden="true" class="dot">·</span><wbr /><a href={X_URL}>@inboxies_app&#8288;<span class="arrow-out" aria-hidden="true">↗</span></a>
+						</>
+					)
+				}
+			</dd>
+		</div>
+	</dl>
+	<p class="colophon-note">
+		Made with Cloudflare Workers, Durable Objects, R2 and Workers AI. Inboxies began as a fork of Cloudflare’s open-source agentic-inbox (Apache-2.0).
+	</p>
+</nav>
+
+<style>
+	.colophon {
+		display: block;
+		margin-top: 96px;
+	}
+
+	@media (max-width: 640px) {
+		.colophon {
+			margin-top: 64px;
+		}
+	}
+
+	.colophon-rows {
+		margin-top: 16px;
+	}
+
+	.colophon-rows > div {
+		display: grid;
+		grid-template-columns: 6.5rem 1fr;
+		gap: 16px;
+		padding: 6px 0;
+	}
+
+	/* Muted, not subtle: the labels name the link groups, so they need AA
+	   contrast (subtle is 3.04:1). */
+	dt {
+		font-size: 0.6875rem;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	/* Between links a line breaks after the dot (the <wbr>s), so a dot never
+	   starts a line; a long address wraps rather than widening the page. */
+	dd {
+		font-size: 0.75rem;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+		overflow-wrap: anywhere;
+	}
+
+	dd a {
+		transition: color 150ms var(--ease-out);
+	}
+
+	dd a:hover {
+		color: var(--text-primary);
+	}
+
+	.dot {
+		margin: 0 6px;
+		color: var(--text-subtle);
+	}
+
+	.colophon-note {
+		margin-top: 16px;
+		max-width: 46ch;
+		font-size: 0.6875rem;
+		line-height: 1.125rem;
+		color: var(--text-muted);
+	}
+</style>

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Drafts
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -81,6 +82,7 @@ import kotlinx.coroutines.launch
 enum class ComposeActionItem {
     Settings,
     Trash,
+    Spam,
     Archive,
     Drafts,
     Sent,
@@ -96,6 +98,7 @@ enum class ComposeActionItem {
         get() = when (this) {
             Settings -> "Settings"
             Trash -> "Trash"
+            Spam -> "Spam"
             Archive -> "Archive"
             Drafts -> "Drafts"
             Sent -> "Sent"
@@ -111,6 +114,7 @@ enum class ComposeActionItem {
         get() = when (this) {
             Settings -> Icons.Filled.Settings
             Trash -> Icons.Filled.Delete
+            Spam -> Icons.Filled.Warning
             Archive -> Icons.Filled.Archive
             Drafts -> Icons.Outlined.Drafts
             Sent -> Icons.AutoMirrored.Filled.Send
@@ -132,6 +136,7 @@ enum class ComposeActionItem {
             Sent -> HomeTab.Folder(FolderIds.SENT)
             Drafts -> HomeTab.Folder(FolderIds.DRAFT)
             Archive -> HomeTab.Folder(FolderIds.ARCHIVE)
+            Spam -> HomeTab.Folder(FolderIds.SPAM)
             Trash -> HomeTab.Folder(FolderIds.TRASH)
             Settings, Compose -> null
         }
@@ -185,13 +190,17 @@ fun ComposeActionListOverlay(
     dismissEnabled: Boolean,
     isClosingExternal: Boolean = false,
     onDismissStarted: () -> Unit = {},
+    /** False for a read-only mailbox (service ended): folders and Settings only. */
+    showCompose: Boolean = true,
 ) {
     val colors = inboxiesColors()
     val density = LocalDensity.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val reduceMotion = rememberReduceMotion()
-    val actions = ComposeActionItem.entries
+    val actions = remember(showCompose) {
+        if (showCompose) ComposeActionItem.entries else ComposeActionItem.entries - ComposeActionItem.Compose
+    }
     val rowFrames = remember { mutableMapOf<ComposeActionItem, Rect>() }
     var publishedFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
     val backdropAlpha = remember { Animatable(0f) }
@@ -200,7 +209,7 @@ fun ComposeActionListOverlay(
     val hoverFill = lerp(colors.pillActive, colors.surface, 0.45f)
     var isClosing by remember { mutableStateOf(false) }
 
-    val appearedAnimatables = remember {
+    val appearedAnimatables = remember(actions) {
         List(actions.size) { Animatable(0f) }
     }
 

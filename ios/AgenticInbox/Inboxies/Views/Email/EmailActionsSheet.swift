@@ -13,7 +13,7 @@ struct EmailActionsSheet: View {
     }
 
     private var availability: EmailActionAvailability {
-        EmailActionAvailability(email: source)
+        EmailActionAvailability(email: source, readOnly: app.isReadOnly)
     }
 
     private var fromList: Bool {
@@ -21,8 +21,19 @@ struct EmailActionsSheet: View {
     }
 
     private var moveTargets: [Folder] {
+        guard availability.showsMove else { return [] }
         let current = source.folderId
         return app.folders.filter { $0.id != current }
+    }
+
+    /// Your own messages are never judged as spam.
+    private var isSelfSender: Bool {
+        guard let mailbox = app.selectedMailbox?.email else { return false }
+        return source.sender.caseInsensitiveCompare(mailbox) == .orderedSame
+    }
+
+    private var showsSpamAction: Bool {
+        !isSelfSender && (availability.showsReportSpam || availability.showsNotSpam)
     }
 
     private var previewLine: String {
@@ -84,6 +95,23 @@ struct EmailActionsSheet: View {
                             }
                         } label: {
                             Label("Move to Folder", systemImage: "folder")
+                        }
+                    }
+
+                    if showsSpamAction {
+                        actionRow(
+                            availability.showsNotSpam ? "Not Spam" : "Report Spam",
+                            systemImage: availability.showsNotSpam ? "checkmark.shield" : "exclamationmark.triangle"
+                        ) {
+                            Task {
+                                dismiss()
+                                if availability.showsNotSpam {
+                                    await app.markNotSpam(source, fromList: fromList)
+                                } else {
+                                    await app.reportSpam(source, fromList: fromList)
+                                }
+                                if fromList { onRemoveFromList?(source.id) }
+                            }
                         }
                     }
 
@@ -153,6 +181,7 @@ struct EmailActionsSheet: View {
         }
         var rows = 3 // Star, Reply Later, Read
         if !moveTargets.isEmpty { rows += 1 }
+        if showsSpamAction { rows += 1 }
         rows += 1 // View Source
         if availability.showsDelete { rows += 1 }
         

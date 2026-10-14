@@ -1,0 +1,28 @@
+---
+// A pill button (global .btn styles): a link when it has an href, otherwise a
+// <button>. External links get a ↗ but stay in the same tab.
+interface Props {
+	href?: string;
+	variant?: "primary" | "secondary" | "text";
+	external?: boolean;
+	type?: "button" | "submit";
+	class?: string;
+	ariaLabel?: string;
+}
+
+const { href, variant = "primary", external = false, type = "button", class: className, ariaLabel, ...rest } = Astro.props;
+const classes = ["btn", `btn-${variant}`, className];
+---
+
+{
+	href ? (
+		<a href={href} class:list={classes} aria-label={ariaLabel} {...rest}>
+			<slot />
+			{external && <span class="arrow-out" aria-hidden="true">↗</span>}
+		</a>
+	) : (
+		<button type={type} class:list={classes} aria-label={ariaLabel} {...rest}>
+			<slot />
+		</button>
+	)
+}

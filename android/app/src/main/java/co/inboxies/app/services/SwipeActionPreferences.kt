@@ -88,6 +88,19 @@ data class EmailSwipeLayout(
     val leadingAllowsFullSwipe: Boolean,
     val showsMore: Boolean,
 ) {
+    /** Read-only mailbox: keep only the flag swipes (star, read/unread). */
+    fun readOnly(): EmailSwipeLayout {
+        val allowed = setOf(SwipeQuickAction.STAR, SwipeQuickAction.TOGGLE_READ)
+        val trailing = trailingActions.filter { it in allowed }
+        val leading = leadingActions.filter { it in allowed }
+        return copy(
+            trailingActions = trailing,
+            trailingAllowsFullSwipe = trailingAllowsFullSwipe && trailing.isNotEmpty(),
+            leadingActions = leading,
+            leadingAllowsFullSwipe = leadingAllowsFullSwipe && leading.isNotEmpty(),
+        )
+    }
+
     companion object {
         fun resolve(
             email: Email,
@@ -128,13 +141,28 @@ data class EmailSwipeLayout(
     }
 }
 
-data class EmailActionAvailability(val email: Email) {
+/**
+ * [readOnly]: the mailbox's domain service ended, so only read/star/reply-later flags
+ * remain; reply, forward, move, archive and delete are hidden rather than left to fail.
+ */
+data class EmailActionAvailability(val email: Email, val readOnly: Boolean = false) {
     val showsArchive: Boolean
-        get() = EmailFolderContext.kind(email, null) != EmailFolderKind.ARCHIVE && !email.isDraft
+        get() = !readOnly && EmailFolderContext.kind(email, null) != EmailFolderKind.ARCHIVE && !email.isDraft
 
-    val showsDelete: Boolean get() = true
+    val showsDelete: Boolean get() = !readOnly
 
-    val showsReplyActions: Boolean get() = !email.isDraft
+    val showsMove: Boolean get() = !readOnly
+
+    val showsReplyActions: Boolean get() = !readOnly && !email.isDraft
+
+    /** Report Spam: received mail that isn't already in Spam. It's a move, so never read-only. */
+    val showsReportSpam: Boolean
+        get() = !readOnly && !email.isDraft && !isInSpam && email.folderId != "sent" && email.folderId != "draft"
+
+    /** Not Spam: anything in Spam (also a move). */
+    val showsNotSpam: Boolean get() = !readOnly && isInSpam
+
+    private val isInSpam: Boolean get() = email.folderId == "spam"
 }
 
 data class SwipeActionPreferences(

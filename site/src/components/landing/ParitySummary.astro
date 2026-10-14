@@ -1,0 +1,51 @@
+---
+// Gmail and HEY, side by side: the eight things people ask about from each,
+// and where they stand in Inboxies today, including what isn't there yet.
+// The full tables, with notes, are on /roadmap.
+import { landingGmail, landingHey } from "../../data/parity";
+import ComparisonTable from "../ComparisonTable.astro";
+import Tabs from "../Tabs.astro";
+---
+
+<section class="section column-container" aria-labelledby="compare">
+	<Tabs
+		id="compare"
+		title="Gmail and HEY, side by side"
+		titleId="compare"
+		label="Compare with"
+		tabs={[
+			{ id: "gmail", label: "From Gmail" },
+			{ id: "hey", label: "From HEY" },
+		]}
+	>
+		{/* src: RM#2-3 */}
+		<p slot="intro" class="parity-intro">
+			Inboxies borrows good ideas from both, on purpose. Here’s where it stands today, including what isn’t there yet.
+		</p>
+		<ComparisonTable slot="gmail" mode="parity" caption="Gmail features in Inboxies" competitor="Gmail" rows={landingGmail} condensed />
+		<ComparisonTable slot="hey" mode="parity" caption="HEY features in Inboxies" competitor="HEY" rows={landingHey} condensed />
+	</Tabs>
+	<p class="parity-more"><a class="quiet-link" href="/roadmap#compare">Full comparison, with notes →</a></p>
+	<p class="parity-note">Gmail and HEY are trademarks of their owners. Names are used only to compare features.</p>
+</section>
+
+<style>
+	.parity-intro {
+		margin-bottom: 20px;
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.parity-more {
+		margin-top: 16px;
+		line-height: 1rem;
+	}
+
+	.parity-note {
+		margin-top: 8px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+</style>

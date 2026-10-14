@@ -24,15 +24,24 @@ import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
 import { allowOutboundRecipients } from "../lib/sender-triage";
+import {
+	findThreadAliasId,
+	isInboundEmail,
+	resolveOutboundSender,
+	type AliasSenderStub,
+} from "../lib/alias-sender";
 
 type AppContext = Context<MailboxContext>;
-type RateLimitStub = { checkSendRateLimit: () => Promise<string | null> };
+type RateLimitStub = {
+	checkSendRateLimit: () => Promise<string | null>;
+	releaseSendSlot: () => Promise<void>;
+};
 
 export async function handleReplyEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { cc, bcc, from, subject, html, text, attachments } = body;
+	const { cc, bcc, subject, html, text, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -43,31 +52,49 @@ export async function handleReplyEmail(c: AppContext) {
 
 	const originalEmail = await resolveOriginalEmail(stub, rawOriginal);
 	const { originalMsgId, references, threadId: thread_id } = buildReferencesChain(originalEmail);
-	const to = rewriteSelfReplyTo(body.to, originalEmail, mailboxId);
 
-	const candidateFrom = (typeof from === "string" ? from : from?.email)?.toLowerCase();
-	let allowedSenders: string[] | undefined;
-	if (candidateFrom && candidateFrom !== mailboxId.toLowerCase()) {
-		const alias = await (stub as any).getAlias(candidateFrom);
-		if (alias && alias.is_active) {
-			allowedSenders = [candidateFrom];
-		}
-	} else if ((originalEmail as any).alias_id) {
-		const alias = await (stub as any).getAlias((originalEmail as any).alias_id);
-		if (alias && alias.is_active) {
-			allowedSenders = [alias.alias_email.toLowerCase()];
-		}
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const sender = await resolveOutboundSender({
+		stub: aliasStub,
+		mailboxId,
+		requestedFrom: body.from,
+		threadAliasId: await findThreadAliasId(aliasStub, {
+			aliasId: rawOriginal.alias_id ?? originalEmail.alias_id ?? null,
+			threadId: thread_id,
+			originalIsInbound: isInboundEmail(originalEmail),
+		}),
+	});
+	if (!sender.ok) {
+		return c.json({ error: sender.error, ...(sender.code ? { code: sender.code } : {}) }, sender.status);
 	}
+	const from = sender.from;
+	// Replying to your own Sent copy must not address the alias you sent from.
+	const to = sender.aliasId
+		? rewriteSelfReplyTo(rewriteSelfReplyTo(body.to, originalEmail, mailboxId), originalEmail, sender.fromEmail)
+		: rewriteSelfReplyTo(body.to, originalEmail, mailboxId);
 
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId, allowedSenders));
+		({ toStr, fromEmail, fromDomain } = validateSender(
+			to,
+			from,
+			mailboxId,
+			sender.aliasId ? [sender.fromEmail] : undefined,
+		));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
+
+	// Validate before reserving a send slot, so a refused message is free.
+	try {
+		assertOutboundMessageSize({ html, text, attachments });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		throw e;
+	}
 
 	const rateLimitError = await (stub as unknown as RateLimitStub)
 		.checkSendRateLimit();
@@ -76,46 +103,46 @@ export async function handleReplyEmail(c: AppContext) {
 	}
 
 	try {
-		assertOutboundMessageSize({ html, text, attachments });
+		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+
+		await stub.createEmail(
+			Folders.SENT,
+			{
+				id: messageId,
+				subject,
+				sender: fromEmail,
+				sender_name: displayNameFromAddressField(from),
+				recipient: toStr,
+				cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
+				bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
+				date: new Date().toISOString(),
+				body: html || text || "",
+				in_reply_to: originalMsgId,
+				email_references: JSON.stringify(references),
+				thread_id: thread_id,
+				message_id: outgoingMessageId,
+				delivery_status: "queued",
+				delivery_error: null,
+				alias_id: sender.aliasId,
+				raw_headers: JSON.stringify([
+					{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
+					{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
+					...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
+					...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
+					{ key: "subject", value: subject },
+					{ key: "date", value: new Date().toISOString() },
+					{ key: "message-id", value: `<${outgoingMessageId}>` },
+					...(originalMsgId ? [{ key: "in-reply-to", value: `<${originalMsgId}>` }] : []),
+					...(references.length > 0 ? [{ key: "references", value: references.map((r: string) => `<${r}>`).join(" ") }] : []),
+				]),
+			},
+			attachmentData,
+		);
 	} catch (e) {
-		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		// Not accepted, so it shouldn't count against the send quota.
+		await (stub as unknown as RateLimitStub).releaseSendSlot().catch(() => {});
 		throw e;
 	}
-
-	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
-
-	await stub.createEmail(
-		Folders.SENT,
-		{
-			id: messageId,
-			subject,
-			sender: fromEmail,
-			sender_name: displayNameFromAddressField(from),
-			recipient: toStr,
-			cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
-			bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
-			date: new Date().toISOString(),
-			body: html || text || "",
-			in_reply_to: originalMsgId,
-			email_references: JSON.stringify(references),
-			thread_id: thread_id,
-			message_id: outgoingMessageId,
-			delivery_status: "queued",
-			delivery_error: null,
-			raw_headers: JSON.stringify([
-				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
-				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
-				...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
-				...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
-				{ key: "subject", value: subject },
-				{ key: "date", value: new Date().toISOString() },
-				{ key: "message-id", value: `<${outgoingMessageId}>` },
-				...(originalMsgId ? [{ key: "in-reply-to", value: `<${originalMsgId}>` }] : []),
-				...(references.length > 0 ? [{ key: "references", value: references.map((r: string) => `<${r}>`).join(" ") }] : []),
-			]),
-		},
-		attachmentData,
-	);
 
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
 	await stub.markThreadRead(thread_id);
@@ -149,7 +176,7 @@ export async function handleForwardEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments } = body;
+	const { to, cc, bcc, subject, html, text, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -160,15 +187,40 @@ export async function handleForwardEmail(c: AppContext) {
 
 	await resolveOriginalEmail(stub, rawOriginal);
 
+	// A forward starts a new conversation with someone you chose, so it is
+	// not bound to the original's private email — but may still use one.
+	const sender = await resolveOutboundSender({
+		stub: stub as unknown as AliasSenderStub,
+		mailboxId,
+		requestedFrom: body.from,
+	});
+	if (!sender.ok) {
+		return c.json({ error: sender.error, ...(sender.code ? { code: sender.code } : {}) }, sender.status);
+	}
+	const from = sender.from;
+
 	let toStr: string, fromEmail: string, fromDomain: string;
 	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId));
+		({ toStr, fromEmail, fromDomain } = validateSender(
+			to,
+			from,
+			mailboxId,
+			sender.aliasId ? [sender.fromEmail] : undefined,
+		));
 	} catch (e) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
+
+	// Validate before reserving a send slot, so a refused message is free.
+	try {
+		assertOutboundMessageSize({ html, text, attachments });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		throw e;
+	}
 
 	const rateLimitError = await (stub as unknown as RateLimitStub)
 		.checkSendRateLimit();
@@ -177,44 +229,44 @@ export async function handleForwardEmail(c: AppContext) {
 	}
 
 	try {
-		assertOutboundMessageSize({ html, text, attachments });
+		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+
+		await stub.createEmail(
+			Folders.SENT,
+			{
+				id: messageId,
+				subject,
+				sender: fromEmail,
+				sender_name: displayNameFromAddressField(from),
+				recipient: toStr,
+				cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
+				bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
+				date: new Date().toISOString(),
+				body: html || text || "",
+				in_reply_to: null,
+				email_references: null,
+				thread_id: messageId,
+				message_id: outgoingMessageId,
+				delivery_status: "queued",
+				delivery_error: null,
+				alias_id: sender.aliasId,
+				raw_headers: JSON.stringify([
+					{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
+					{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
+					...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
+					...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
+					{ key: "subject", value: subject },
+					{ key: "date", value: new Date().toISOString() },
+					{ key: "message-id", value: `<${outgoingMessageId}>` },
+				]),
+			},
+			attachmentData,
+		);
 	} catch (e) {
-		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		// Not accepted, so it shouldn't count against the send quota.
+		await (stub as unknown as RateLimitStub).releaseSendSlot().catch(() => {});
 		throw e;
 	}
-
-	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
-
-	await stub.createEmail(
-		Folders.SENT,
-		{
-			id: messageId,
-			subject,
-			sender: fromEmail,
-			sender_name: displayNameFromAddressField(from),
-			recipient: toStr,
-			cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
-			bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
-			date: new Date().toISOString(),
-			body: html || text || "",
-			in_reply_to: null,
-			email_references: null,
-			thread_id: messageId,
-			message_id: outgoingMessageId,
-			delivery_status: "queued",
-			delivery_error: null,
-			raw_headers: JSON.stringify([
-				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
-				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
-				...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
-				...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
-				{ key: "subject", value: subject },
-				{ key: "date", value: new Date().toISOString() },
-				{ key: "message-id", value: `<${outgoingMessageId}>` },
-			]),
-		},
-		attachmentData,
-	);
 
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
 

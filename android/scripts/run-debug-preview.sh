@@ -5,11 +5,25 @@
 # Usage:
 #   ./scripts/run-debug-preview.sh domainAdmin
 #   ./scripts/run-debug-preview.sh mailbox
+#   ./scripts/run-debug-preview.sh loadMore
+#   ./scripts/run-debug-preview.sh loadFailed
+#   ./scripts/run-debug-preview.sh listError
 #   ./scripts/run-debug-preview.sh screener
+#   ./scripts/run-debug-preview.sh screenerList
+#   ./scripts/run-debug-preview.sh domainDns
+#   ./scripts/run-debug-preview.sh forgotPassword
 #   ./scripts/run-debug-preview.sh replyLater
+#   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh passwordSignIn
 #   ./scripts/run-debug-preview.sh inviteAccept
 #   ./scripts/run-debug-preview.sh signInMethods
+#   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
+#   ./scripts/run-debug-preview.sh members
+#   ./scripts/run-debug-preview.sh sessions
+#   ./scripts/run-debug-preview.sh serviceEnded        # read-only inbox, admin "Renew"
+#   ./scripts/run-debug-preview.sh serviceEndedMember  # read-only inbox, "Ask an admin"
+#   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
+#   ./scripts/run-debug-preview.sh domainDnsEnded      # DNS console, Subscription card
 #
 # Env:
 #   ANDROID_SERIAL  — optional adb device serial
@@ -30,19 +44,33 @@ case "$mode" in
   passwordSignIn|PasswordSignIn|password|previewPasswordSignIn) extra=previewPasswordSignIn; label=passwordSignIn ;;
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
+  inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
+  members|Members|previewMembers) extra=previewMembers; label=members ;;
+  sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
+  loadMore|LoadMore|previewLoadMore) extra=previewLoadMore; label=loadMore ;;
+  loadFailed|LoadFailed|previewLoadFailed) extra=previewLoadFailed; label=loadFailed ;;
+  listError|ListError|previewListError) extra=previewListError; label=listError ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
+  screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;
+  domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
+  forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
+  spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
+  serviceEnded|ServiceEnded|previewServiceEnded) extra=previewServiceEnded; label=serviceEnded ;;
+  serviceEndedMember|ServiceEndedMember|previewServiceEndedMember) extra=previewServiceEndedMember; label=serviceEndedMember ;;
+  serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
+  domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,20p' "$0"
+    sed -n '2,26p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | screener | replyLater" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | loadFailed | listError | screener | replyLater | spam | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
     exit 1
     ;;
 esac

@@ -1,16 +1,28 @@
 package co.inboxies.app.models
 
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonNames
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import co.inboxies.app.util.DeliveryStatus
+import co.inboxies.app.utils.DateUtils
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -28,7 +40,18 @@ data class Mailbox(
     val name: String,
     val settings: MailboxSettings? = null,
     val canManage: Boolean? = null,
-)
+    /** `owner` or `member` for the signed-in user. */
+    val role: String? = null,
+    /** The domain's subscription ended: read, flag and export only. Absent on older servers. */
+    val readOnly: Boolean? = null,
+    /** Detail only; null for domains without Inboxies billing (e.g. the shared platform domain). */
+    val service: DomainService? = null,
+) {
+    val domain: String get() = email.substringAfterLast('@').lowercase()
+
+    /** [readOnly] wins: a list refresh carries it but not [service], which may be stale. */
+    val isReadOnly: Boolean get() = readOnly ?: (service?.isEnded == true)
+}
 
 @Serializable
 data class MailboxSettings(
@@ -41,6 +64,10 @@ data class MailboxSettings(
     val acl: MailboxAcl? = null,
 )
 
+/**
+ * Read-only: the server derives it from mailbox members. Sharing changes go
+ * through members and invites, never through mailbox settings.
+ */
 @Serializable
 data class MailboxAcl(
     val owners: List<String>? = null,
@@ -48,14 +75,58 @@ data class MailboxAcl(
 )
 
 @Serializable
-data class AccountSummary(
-    val id: String,
+data class MailboxMember(
+    val userId: String,
     val email: String,
     val name: String? = null,
+    val role: String,
+    val you: Boolean = false,
+) {
+    val isOwner: Boolean get() = role == "owner"
+}
+
+@Serializable
+data class MailboxInviteRow(
+    val id: String,
+    val mailboxId: String,
+    val role: String,
+    val inviteeEmail: String,
+    val inviteeName: String? = null,
+    val expiresAt: String,
+    val status: String,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class RecoveryEmailStatus(
+    val email: String? = null,
+    val verified: Boolean = false,
+    val devCode: String? = null,
+)
+
+@Serializable
+data class AccountSession(
+    val id: String,
+    val label: String? = null,
+    val scope: String? = null,
+    val userAgent: String? = null,
+    val ipAddress: String? = null,
+    val createdAt: String,
+    val lastActiveAt: String,
+    val expiresAt: String,
+    val current: Boolean = false,
+)
+
+@Serializable
+data class RevokeSessionsResponse(
+    val ok: Boolean = false,
+    val revoked: Int = 0,
 )
 
 @Serializable
 data class MeResponse(
+    val userId: String? = null,
+    val name: String? = null,
     val email: String? = null,
     val sub: String? = null,
     val linkedEmails: List<String> = emptyList(),
@@ -80,25 +151,6 @@ data class IdentitiesResponse(
     val identities: List<LinkedIdentity> = emptyList(),
     val keys: List<String> = emptyList(),
     val linkedEmails: List<String> = emptyList(),
-)
-
-@Serializable
-data class IdentityLinkCodeResponse(
-    val code: String,
-    val emails: List<String> = emptyList(),
-    val principals: List<String> = emptyList(),
-    val accountId: String? = null,
-    val expiresAt: String,
-)
-
-@Serializable
-data class RedeemIdentityLinkResponse(
-    val ok: Boolean = false,
-    val accountId: String? = null,
-    val linkedEmails: List<String> = emptyList(),
-    val keys: List<String> = emptyList(),
-    val isAdmin: Boolean = false,
-    val identities: List<LinkedIdentity> = emptyList(),
 )
 
 @Serializable
@@ -144,8 +196,17 @@ data class InvitePublic(
 data class InviteAcceptResponse(
     val mailboxId: String,
     val userId: String,
-    val token: String,
-    val expiresAt: String,
+    /** New accounts only; accepting while signed in keeps the current session. */
+    val token: String? = null,
+    val expiresAt: String? = null,
+    val email: String? = null,
+)
+
+@Serializable
+data class InviteCodeResponse(
+    val ok: Boolean = false,
+    val sentTo: String,
+    val devCode: String? = null,
 )
 
 @Serializable
@@ -428,7 +489,12 @@ data class Email(
     @SerialName("delivery_error") val deliveryError: String? = null,
     /** Inbox New vs Seen (`new` | `seen`); derived from read state when absent. */
     @SerialName("list_section") val listSection: String? = null,
+    /** Private email this thread is bound to. List rows carry only the id. */
     @SerialName("alias_id") val aliasId: String? = null,
+    /** Detail / thread / reply-draft payloads: the private address replies go out from. */
+    @SerialName("alias_email") val aliasEmail: String? = null,
+    /** Alias still active and unexpired; `null` when not a private-email thread. */
+    @SerialName("alias_active") val aliasActive: Boolean? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -818,12 +884,14 @@ data class DraftSaveResponse(
     val resolvedId: String get() = id ?: draftId ?: ""
 }
 
+/** Registry rows are camelCase on the Worker; snake_case still decodes for older builds. */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AgentConversation(
     val id: String,
     val title: String = "",
-    @SerialName("created_at") val createdAt: String = "",
-    @SerialName("updated_at") val updatedAt: String = "",
+    @JsonNames("created_at") val createdAt: String = "",
+    @JsonNames("updated_at") val updatedAt: String = "",
     val lastMessagePreview: String? = null,
 )
 
@@ -1140,13 +1208,19 @@ data class DomainPricingLineItem(
 
 @Serializable
 data class DomainPricingBreakdown(
-    val domainWholesaleUsd: Double,
-    val platformFeeUsd: Double,
-    val totalAnnualUsd: Double,
+    /** Registrar fee the user pays for the domain (preferred over [domainWholesaleUsd]). */
+    val domainFeeUsd: Double? = null,
+    val domainWholesaleUsd: Double? = null,
+    val platformFeeUsd: Double = 0.0,
+    val totalAnnualUsd: Double = 0.0,
     val currency: String = "usd",
+    val billingInterval: String? = null,
     val interval: String = "year",
     val lineItems: List<DomainPricingLineItem> = emptyList(),
-)
+) {
+    val domainUsd: Double? get() = domainFeeUsd ?: domainWholesaleUsd
+    val resolvedInterval: String get() = billingInterval ?: interval
+}
 
 @Serializable
 data class DomainAvailabilityResponse(
@@ -1181,7 +1255,8 @@ data class ExportJobProgress(
 
 @Serializable
 data class ExportJob(
-    val id: String,
+    val id: String = "",
+    val exportId: String? = null,
     val domain: String? = null,
     val mailboxId: String? = null,
     val status: String = "pending",
@@ -1192,7 +1267,9 @@ data class ExportJob(
     val expiresAt: String? = null,
     val createdAt: String? = null,
     val error: String? = null,
-)
+) {
+    val resolvedId: String get() = id.ifEmpty { exportId.orEmpty() }
+}
 
 @Serializable
 data class DecommissionLastExport(
@@ -1231,7 +1308,7 @@ data class DomainEppCodeResponse(
 
 @Serializable
 data class DomainTransferLockResponse(
-    val success: Boolean,
+    val success: Boolean = true,
     val domain: String,
     val locked: Boolean,
 )
@@ -1256,20 +1333,55 @@ data class DomainAliasesResponse(
     val aliases: List<DomainAliasItem> = emptyList(),
 )
 
+/**
+ * SQLite stores booleans as INTEGER, so the Worker sends `0` / `1`. Also accepts
+ * `true` / `false` so a future boolean payload keeps decoding.
+ */
+object IntAsBooleanSerializer : KSerializer<Boolean> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("co.inboxies.app.IntAsBoolean", PrimitiveKind.BOOLEAN)
+
+    override fun deserialize(decoder: Decoder): Boolean {
+        val jsonDecoder = decoder as? JsonDecoder ?: return decoder.decodeBoolean()
+        val primitive = jsonDecoder.decodeJsonElement() as? JsonPrimitive ?: return false
+        primitive.booleanOrNull?.let { return it }
+        primitive.longOrNull?.let { return it != 0L }
+        return false
+    }
+
+    override fun serialize(encoder: Encoder, value: Boolean) {
+        encoder.encodeBoolean(value)
+    }
+}
+
+/** Private email row from `/api/v1/mailboxes/:id/aliases` (snake_case, `is_active` 0/1). */
 @Serializable
 data class MaskedAlias(
     val id: String,
-    @SerialName("mailbox_id") val mailboxId: String,
     @SerialName("alias_email") val aliasEmail: String,
+    val domain: String? = null,
+    @SerialName("base_domain") val baseDomain: String? = null,
     val label: String? = null,
-    val notes: String? = null,
+    @Serializable(with = IntAsBooleanSerializer::class)
     @SerialName("is_active") val isActive: Boolean = true,
+    /** `drop` (silently discard) or `reject` (SMTP bounce) while paused. */
+    @SerialName("paused_action") val pausedAction: String = PAUSED_DROP,
     @SerialName("expires_at") val expiresAt: String? = null,
-    @SerialName("paused_action") val pausedAction: String = "drop",
-    @SerialName("forwarded_count") val forwardedCount: Int = 0,
     @SerialName("created_at") val createdAt: String? = null,
-    @SerialName("updated_at") val updatedAt: String? = null,
-)
+    @SerialName("stats_received") val statsReceived: Int = 0,
+    @SerialName("stats_blocked") val statsBlocked: Int = 0,
+) {
+    val expiresAtInstant: Instant?
+        get() = expiresAt?.let { DateUtils.parseIso(it) }
+
+    fun isExpired(now: Instant = Instant.now()): Boolean =
+        expiresAtInstant?.let { !it.isAfter(now) } == true
+
+    companion object {
+        const val PAUSED_DROP = "drop"
+        const val PAUSED_REJECT = "reject"
+    }
+}
 
 @Serializable
 data class AliasesResponse(
@@ -1282,21 +1394,59 @@ data class CreateAliasResponse(
 )
 
 @Serializable
-data class CreateAliasRequest(
-    val label: String? = null,
-    val notes: String? = null,
-    @SerialName("expires_in_seconds") val expiresInSeconds: Int? = null,
-    @SerialName("paused_action") val pausedAction: String = "drop",
+data class DeleteAccountResponse(
+    val ok: Boolean = false,
+    val deletedMailboxes: List<String> = emptyList(),
+    val leftMailboxes: List<String> = emptyList(),
 )
 
 @Serializable
-data class UpdateAliasRequest(
-    val label: String? = null,
-    val notes: String? = null,
-    @SerialName("is_active") val isActive: Boolean? = null,
-    @SerialName("paused_action") val pausedAction: String? = null,
+data class EmptyTrashResponse(
+    val deleted: Int = 0,
 )
 
+/**
+ * Where a paid domain's service stands (`GET /api/v1/billing/domains/:domain/service`).
+ * The mailbox detail embeds the same summary without [canManage] / [billed].
+ */
+@Serializable
+data class DomainService(
+    val domain: String = "",
+    /** `active`, `ending` (subscription set to cancel) or `ended` (read-only). */
+    val status: String = STATUS_ACTIVE,
+    val endsAt: String? = null,
+    val endedAt: String? = null,
+    /** Inboxies registered the domain, so it lapses unless renewed by [renewBy]. */
+    val registrarManaged: Boolean = false,
+    val registrationExpiresAt: String? = null,
+    val renewBy: String? = null,
+    val daysLeftToRenew: Int? = null,
+    val canRenew: Boolean = false,
+    /** Caller is an admin of the domain (only the service endpoint sends it). */
+    val canManage: Boolean? = null,
+    val billed: Boolean? = null,
+) {
+    val isEnded: Boolean get() = status == STATUS_ENDED
+    val isEnding: Boolean get() = status == STATUS_ENDING
 
+    companion object {
+        const val STATUS_ACTIVE = "active"
+        const val STATUS_ENDING = "ending"
+        const val STATUS_ENDED = "ended"
+    }
+}
 
-
+/**
+ * `POST /api/v1/billing/domains/:domain/renew`: a resumed subscription, a Stripe
+ * Checkout to open, or (local dev) an immediate mock renewal.
+ */
+@Serializable
+data class RenewDomainResponse(
+    val resumed: Boolean? = null,
+    val renewed: Boolean? = null,
+    val mock: Boolean? = null,
+    val service: DomainService? = null,
+    val checkoutUrl: String? = null,
+    val sessionId: String? = null,
+    val pricing: DomainPricingBreakdown? = null,
+)

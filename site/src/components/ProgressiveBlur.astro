@@ -1,0 +1,90 @@
+---
+// A frosted edge for a bar that floats over the page: what scrolls beneath it
+// blurs harder the closer it gets to `edge`, and fades into the background.
+//
+// One backdrop-filter can only blur evenly, so the ramp is a stack of them,
+// each twice as strong as the last and masked to its own overlapping band.
+// The parent positions it; it fills its containing block by default.
+interface Props {
+	edge: "top" | "bottom" | "left";
+	/** Fades the blur in and out along the other axis over this length, for
+	    one that stops short of the screen's sides (the text-size ruler's). */
+	fade?: string;
+	class?: string;
+}
+
+const { edge, fade, class: className, ...rest } = Astro.props;
+const across = edge === "left" ? "to bottom" : "to right";
+const fadeMask = fade && `linear-gradient(${across}, transparent, #000 ${fade}, #000 calc(100% - ${fade}), transparent)`;
+
+const BLURS = [1, 2, 4, 8, 16];
+const band = 100 / BLURS.length;
+
+// Each layer fades in over one band, holds for one, and fades out over the
+// next; the strongest runs on to the edge.
+const mask = (i: number) =>
+	[
+		`transparent ${i * band}%`,
+		`#000 ${(i + 1) * band}%`,
+		i + 2 <= BLURS.length && `#000 ${(i + 2) * band}%`,
+		i + 3 <= BLURS.length && `transparent ${(i + 3) * band}%`,
+	]
+		.filter(Boolean)
+		.join(", ");
+---
+
+<div
+	class:list={["progressive-blur", className, { "is-faded": fadeMask }]}
+	style={`--toward: to ${edge}${fadeMask ? `; --fade: ${fadeMask}` : ""}`}
+	aria-hidden="true"
+	{...rest}
+>
+	{BLURS.map((blur, i) => <div style={`--blur: ${blur}px; --mask: linear-gradient(var(--toward), ${mask(i)})`} />)}
+</div>
+
+<style>
+	.progressive-blur {
+		position: absolute;
+		inset: 0;
+		pointer-events: none;
+	}
+
+	.progressive-blur > div,
+	.progressive-blur::after {
+		position: absolute;
+		inset: 0;
+	}
+
+	.progressive-blur > div {
+		-webkit-backdrop-filter: blur(var(--blur));
+		backdrop-filter: blur(var(--blur));
+		-webkit-mask-image: var(--mask);
+		mask-image: var(--mask);
+	}
+
+	/* Each layer takes the cross fade itself: a mask on the parent would leave
+	   the layers nothing behind it to blur. */
+	.progressive-blur.is-faded > div {
+		-webkit-mask-image: var(--mask), var(--fade);
+		mask-image: var(--mask), var(--fade);
+		-webkit-mask-composite: source-in;
+		mask-composite: intersect;
+	}
+
+	.progressive-blur.is-faded::after {
+		-webkit-mask-image: var(--fade);
+		mask-image: var(--fade);
+	}
+
+	/* A wash of the page colour over the blur, eased so it has no hard start. */
+	.progressive-blur::after {
+		content: "";
+		background: linear-gradient(
+			var(--toward),
+			transparent,
+			color-mix(in srgb, var(--bg) 24%, transparent) 25%,
+			color-mix(in srgb, var(--bg) 56%, transparent) 55%,
+			color-mix(in srgb, var(--bg) 80%, transparent)
+		);
+	}
+</style>

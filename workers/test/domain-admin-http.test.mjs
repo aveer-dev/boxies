@@ -1,688 +1,263 @@
 /**
- * HTTP E2E for Domain Admin + invites + password accept.
+ * Domain Admin and invites over HTTP after the auth cutover: admins are
+ * AUTH_DB domain owner/admin rows and only act on their own domains; invites
+ * are hashed rows; accepting creates a new user (or, signed in with the
+ * emailed code, joins the current one) and never takes over an existing login.
  * Run: node --experimental-strip-types --import ./workers/test/register-ts-ext.mjs workers/test/domain-admin-http.test.mjs
  */
 
 import assert from "node:assert/strict";
-import { Hono } from "hono";
-import { app as apiApp } from "../index.ts";
-import { mailboxMetadataKey } from "../lib/mailbox-routing.ts";
-import { principalFromClaims } from "../lib/mailbox-acl.ts";
-import { verifyMobileSessionToken } from "../lib/apple-auth.ts";
+import { mailboxRole } from "../auth/authz.ts";
+import { sha256Hex } from "../auth/otp.ts";
+import {
+	addDomain,
+	addMailbox,
+	addUser,
+	authedRequest,
+	createAuthTestEnv,
+	lastCodeSentTo,
+	principalFor,
+	request,
+	signIn,
+} from "./auth-fixtures.mjs";
 
-const admin = principalFromClaims({
-	email: "admin@example.com",
-	sub: "admin-sub",
-});
-const eve = principalFromClaims({ email: "eve@example.com", sub: "eve-sub" });
+const { env, d1, db, bucket, mailboxes, email } = createAuthTestEnv();
+const admin = await addUser(db, { id: "admin", email: "admin@acme.com" });
+const helper = await addUser(db, { id: "helper", email: "helper@gmail.com" });
+const rival = await addUser(db, { id: "rival", email: "rival@other.com" });
+const nobody = await addUser(db, { id: "nobody", email: "nobody@gmail.com" });
+const [asAdmin, asHelper, asRival, asNobody] = [admin, helper, rival, nobody].map((u) => principalFor(u));
 
-function mockBucket(initial = {}) {
-	const store = new Map(
-		Object.entries(initial).map(([key, value]) => [
-			key,
-			typeof value === "string" ? value : JSON.stringify(value),
-		]),
-	);
-	return {
-		store,
-		async get(key) {
-			if (!store.has(key)) return null;
-			const text = store.get(key);
-			return { json: async () => JSON.parse(text) };
-		},
-		async put(key, value) {
-			store.set(key, typeof value === "string" ? value : JSON.stringify(value));
-		},
-		async head(key) {
-			return store.has(key) ? { key } : null;
-		},
-		async list({ prefix = "" } = {}) {
-			return {
-				objects: [...store.keys()]
-					.filter((key) => key.startsWith(prefix))
-					.map((key) => ({ key })),
-			};
-		},
-		async delete(key) {
-			store.delete(key);
-		},
-	};
+await addDomain(db, bucket, { domain: "acme.com", ownerUserId: "admin", admins: ["helper"] });
+await addDomain(db, bucket, { domain: "other.com", ownerUserId: "rival" });
+await addDomain(db, bucket, { domain: "gone.com", ownerUserId: "admin", status: "decommissioned" });
+await addMailbox(db, bucket, "existing@acme.com", { owners: ["admin"] });
+await addMailbox(db, bucket, "secret@other.com", { owners: ["rival"] });
+
+// ── /me reports admin status from rows ─────────────────────────
+{
+	const me = await request(env, { path: "/api/v1/me", principal: asHelper });
+	assert.equal(me.payload.isAdmin, true);
+	assert.deepEqual(me.payload.administeredDomains, ["acme.com"]);
+	const plain = await request(env, { path: "/api/v1/me", principal: asNobody });
+	assert.equal(plain.payload.isAdmin, false);
+	assert.deepEqual(plain.payload.administeredDomains, []);
 }
 
-function mockEnv(bucket, extras = {}) {
-	return {
-		BUCKET: bucket,
-		EMAIL_ADDRESSES: [],
-		DOMAINS: "inboxies.email",
-		DOMAIN_ADMINS: "admin@example.com",
-		MAILBOX_CREATE_POLICY: "admin_only",
-		MOBILE_JWT_SECRET: "test-mobile-jwt-secret-xx",
-		APP_BASE_URL: "https://inboxies.email",
-		EMAIL: {
-			send: async () => ({ messageId: "msg-1" }),
-		},
-		MAILBOX: {
-			idFromName(name) {
-				return name;
-			},
-			get(id) {
-				return {
-					id,
-					reviveMailbox: async () => {},
-					getFolders: async () => [],
-					getEmails: async () => [],
-					countEmails: async () => 0,
-					purgeMailbox: async () => ({ conversationIds: [] }),
-				};
-			},
-		},
-		EMAIL_AGENT: {
-			idFromName(name) {
-				return name;
-			},
-			get() {
-				return { purge: async () => {} };
-			},
-		},
-		...extras,
-	};
+// ── List: only the admin's own domains ─────────────────────────
+{
+	const list = await request(env, { path: "/api/v1/admin/mailboxes", principal: asHelper });
+	assert.equal(list.status, 200);
+	assert.deepEqual(list.payload.map((m) => m.id), ["existing@acme.com"]);
+	assert.deepEqual(list.payload[0].acl, { owners: ["email:admin@acme.com"], members: [] });
+	assert.equal(list.payload[0].claimed, true);
+	assert.equal((await request(env, { path: "/api/v1/admin/mailboxes", principal: asNobody })).status, 403);
 }
 
-function mountedApp(principal) {
-	const parent = new Hono();
-	parent.use("*", async (c, next) => {
-		if (principal) c.set("principal", principal);
-		await next();
+// ── Create / assign / delete stay inside the admin's domains ───
+{
+	const created = await request(env, {
+		method: "POST",
+		path: "/api/v1/admin/mailboxes",
+		principal: asHelper,
+		body: { email: "Sales@Acme.com", name: "Sales" },
 	});
-	parent.route("/", apiApp);
-	return parent;
-}
+	assert.equal(created.status, 201);
+	assert.equal(created.payload.email, "sales@acme.com");
+	assert.equal(await mailboxRole(db, "helper", "sales@acme.com"), "owner");
 
-async function jsonRequest(app, env, { method = "GET", path, principal, body } = {}) {
-	const parent = mountedApp(principal);
-	const res = await parent.request(path, {
-		method,
-		headers: body ? { "content-type": "application/json" } : undefined,
-		body: body ? JSON.stringify(body) : undefined,
-	}, env);
-	const text = await res.text();
-	let json = null;
-	try {
-		json = text ? JSON.parse(text) : null;
-	} catch {
-		json = { raw: text };
+	for (const target of ["ceo@other.com", "x@gone.com", "x@inboxies.email"]) {
+		const res = await request(env, { method: "POST", path: "/api/v1/admin/mailboxes", principal: asHelper, body: { email: target } });
+		assert.equal(res.status, 403, `can't create ${target}`);
 	}
-	return { status: res.status, json, headers: res.headers };
-}
 
-// ── /me isAdmin ───────────────────────────────────────────────────
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-	const adminMe = await jsonRequest(apiApp, env, {
-		path: "/api/v1/me",
-		principal: admin,
-	});
-	assert.equal(adminMe.status, 200);
-	assert.equal(adminMe.json.isAdmin, true);
-
-	const eveMe = await jsonRequest(apiApp, env, {
-		path: "/api/v1/me",
-		principal: eve,
-	});
-	assert.equal(eveMe.status, 200);
-	assert.equal(eveMe.json.isAdmin, false);
-}
-
-// ── Non-admin cannot create when admin_only ───────────────────────
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-	const res = await jsonRequest(apiApp, env, {
+	// Assign-to-me on the admin's own domain: becomes an owner, answers with the Mailbox shape.
+	const assign = await request(env, {
 		method: "POST",
-		path: "/api/v1/mailboxes",
-		principal: eve,
-		body: { email: "eve@inboxies.email", name: "Eve" },
-	});
-	assert.equal(res.status, 403);
-	assert.match(res.json.error, /admin/i);
-}
-
-// ── Admin list/create/assign-self ─────────────────────────────────
-
-{
-	const bucket = mockBucket({
-		[mailboxMetadataKey("existing@inboxies.email")]: {
-			fromName: "Existing",
-			acl: { owners: ["email:someone@else.com"], members: [] },
-		},
-	});
-	const env = mockEnv(bucket);
-
-	const forbidden = await jsonRequest(apiApp, env, {
-		path: "/api/v1/admin/mailboxes",
-		principal: eve,
-	});
-	assert.equal(forbidden.status, 403);
-
-	const list = await jsonRequest(apiApp, env, {
-		path: "/api/v1/admin/mailboxes",
-		principal: admin,
-	});
-	assert.equal(list.status, 200);
-	assert.equal(list.json.length, 1);
-	assert.equal(list.json[0].email, "existing@inboxies.email");
-
-	const created = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/admin/mailboxes",
-		principal: admin,
-		body: {
-			email: "adminbox@inboxies.email",
-			name: "Admin Box",
-			assignTo: "self",
-		},
-	});
-	assert.equal(created.status, 201);
-	assert.equal(created.json.email, "adminbox@inboxies.email");
-	assert.equal(created.json.settings.acl.owners.length, 1);
-	assert.ok(created.json.settings.acl.owners[0].startsWith("account:"));
-
-	const userList = await jsonRequest(apiApp, env, {
-		path: "/api/v1/mailboxes",
-		principal: admin,
-	});
-	assert.equal(userList.status, 200);
-	assert.ok(userList.json.some((m) => m.id === "adminbox@inboxies.email"));
-}
-
-// ── Admin invite + accept password ────────────────────────────────
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-
-	const created = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/admin/mailboxes",
-		principal: admin,
-		body: {
-			email: "alex@inboxies.email",
-			name: "Alex",
-			assignTo: {
-				inviteEmail: "alex.person@gmail.com",
-				inviteeName: "Alex",
-			},
-		},
-	});
-	assert.equal(created.status, 201);
-	assert.ok(created.json.invite?.token);
-	assert.equal(created.json.invite.emailSent, true);
-	assert.ok(created.json.invite.inviteUrl.includes("/invite/"));
-
-	const token = created.json.invite.token;
-
-	const pub = await jsonRequest(apiApp, env, {
-		path: `/api/v1/invites/${token}`,
-	});
-	assert.equal(pub.status, 200);
-	assert.equal(pub.json.mailboxId, "alex@inboxies.email");
-	assert.equal(pub.json.status, "pending");
-
-	const accept = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: `/api/v1/invites/${token}/accept`,
-		body: { password: "secure-password-1", displayName: "Alex P" },
-	});
-	assert.equal(accept.status, 200);
-	assert.equal(accept.json.mailboxId, "alex@inboxies.email");
-	assert.ok(accept.json.token);
-	assert.ok(accept.json.accountId);
-	assert.ok(accept.json.principal.keys.some((k) => k.startsWith("user:")));
-	assert.ok(
-		accept.json.principal.keys.includes(`account:${accept.json.accountId}`),
-	);
-
-	const settingsObj = JSON.parse(
-		bucket.store.get(mailboxMetadataKey("alex@inboxies.email")),
-	);
-	assert.ok(
-		settingsObj.acl.owners.includes(`account:${accept.json.accountId}`),
-		"invite accept stamps account-scoped owner",
-	);
-	assert.equal(
-		settingsObj.acl.owners.some((k) => k.startsWith("user:")),
-		false,
-		"invite accept does not dual-stamp user: on ACL",
-	);
-
-	const sessionClaims = await verifyMobileSessionToken(
-		accept.json.token,
-		env.MOBILE_JWT_SECRET,
-	);
-	assert.equal(sessionClaims.auth, "password");
-
-	const inviteePrincipal = principalFromClaims(sessionClaims);
-	const mailboxes = await jsonRequest(apiApp, env, {
-		path: "/api/v1/mailboxes",
-		principal: inviteePrincipal,
-	});
-	assert.equal(mailboxes.status, 200);
-	assert.equal(mailboxes.json.length, 1);
-	assert.equal(mailboxes.json[0].id, "alex@inboxies.email");
-
-	const eveList = await jsonRequest(apiApp, env, {
-		path: "/api/v1/mailboxes",
-		principal: eve,
-	});
-	assert.equal(eveList.json.length, 0);
-
-	const login = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "alex@inboxies.email", password: "secure-password-1" },
-	});
-	assert.equal(login.status, 200);
-	assert.ok(login.json.token);
-
-	const badLogin = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "alex@inboxies.email", password: "nope-nope-no" },
-	});
-	assert.equal(badLogin.status, 401);
-}
-
-// ── Invite-create keeps provisional admin owner (not claimable) ───
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-	const created = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/admin/mailboxes",
-		principal: admin,
-		body: {
-			email: "pending@inboxies.email",
-			assignTo: { inviteEmail: "person@gmail.com" },
-		},
-	});
-	assert.equal(created.status, 201);
-	assert.equal(created.json.settings.acl.owners.length, 1);
-	assert.ok(
-		created.json.settings.acl.owners[0].startsWith("account:"),
-		"invite-assigned mailbox must keep provisional admin account owner",
-	);
-
-	// Matching Access identity must NOT auto-claim over the provisional owner.
-	const claimer = principalFromClaims({
-		email: "pending@inboxies.email",
-		sub: "pending-sub",
-	});
-	const list = await jsonRequest(apiApp, env, {
-		path: "/api/v1/mailboxes",
-		principal: claimer,
-	});
-	assert.equal(list.status, 200);
-	assert.equal(
-		list.json.some((m) => m.id === "pending@inboxies.email"),
-		false,
-	);
-}
-
-// ── Member invite must not steal mailbox password login ───────────
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-	const created = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/admin/mailboxes",
-		principal: admin,
-		body: {
-			email: "shared@inboxies.email",
-			assignTo: {
-				inviteEmail: "owner@gmail.com",
-				role: "owner",
-			},
-		},
-	});
-	assert.equal(created.status, 201);
-	const ownerToken = created.json.invite.token;
-	const ownerAccept = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: `/api/v1/invites/${ownerToken}/accept`,
-		body: { password: "owner-password-1" },
-	});
-	assert.equal(ownerAccept.status, 200);
-
-	const memberInvite = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/admin/invites",
-		principal: admin,
-		body: {
-			mailboxId: "shared@inboxies.email",
-			inviteEmail: "member@gmail.com",
-			role: "member",
-		},
-	});
-	assert.equal(memberInvite.status, 201);
-	const memberAccept = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: `/api/v1/invites/${memberInvite.json.token}/accept`,
-		body: { password: "member-password-1" },
-	});
-	assert.equal(memberAccept.status, 200);
-
-	const ownerLogin = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "shared@inboxies.email", password: "owner-password-1" },
-	});
-	assert.equal(ownerLogin.status, 200);
-	assert.equal(ownerLogin.json.sub, ownerAccept.json.principal.sub);
-
-	const memberViaMailbox = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "shared@inboxies.email", password: "member-password-1" },
-	});
-	assert.equal(memberViaMailbox.status, 401);
-
-	const memberViaContact = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "member@gmail.com", password: "member-password-1" },
-	});
-	assert.equal(memberViaContact.status, 200);
-
-	const secondOwnerInvite = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/admin/invites",
-		principal: admin,
-		body: {
-			mailboxId: "shared@inboxies.email",
-			inviteEmail: "other-owner@gmail.com",
-			role: "owner",
-		},
-	});
-	assert.equal(secondOwnerInvite.status, 201);
-	const secondAccept = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: `/api/v1/invites/${secondOwnerInvite.json.token}/accept`,
-		body: { password: "other-owner-pw1" },
-	});
-	assert.equal(secondAccept.status, 409);
-}
-
-// ── Admin transfer ACL ────────────────────────────────────────────
-
-{
-	const bucket = mockBucket({
-		[mailboxMetadataKey("xfer@inboxies.email")]: {
-			fromName: "X",
-			acl: { owners: ["email:old@example.com"], members: [] },
-		},
-	});
-	const env = mockEnv(bucket);
-	const res = await jsonRequest(apiApp, env, {
-		method: "PUT",
-		path: "/api/v1/admin/mailboxes/xfer@inboxies.email/acl",
-		principal: admin,
-		body: { owners: ["email:admin@example.com"], members: [] },
-	});
-	assert.equal(res.status, 200);
-	assert.deepEqual(res.json.settings.acl.owners, ["email:admin@example.com"]);
-}
-
-// ── Identity link code + Apple principal list / isAdmin ───────────
-
-{
-	const bucket = mockBucket({
-		[mailboxMetadataKey("ops@inboxies.email")]: {
-			fromName: "Ops",
-			acl: { owners: ["email:admin@example.com"], members: [] },
-		},
-	});
-	const env = mockEnv(bucket);
-
-	const mint = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identity-link-codes",
-		principal: admin,
-	});
-	assert.equal(mint.status, 200);
-	assert.ok(mint.json.code);
-	assert.ok(mint.json.emails.includes("admin@example.com"));
-
-	const apple = principalFromClaims({ sub: "apple.hide.email.sub" });
-	const before = await jsonRequest(apiApp, env, {
-		path: "/api/v1/me",
-		principal: apple,
-	});
-	assert.equal(before.json.isAdmin, false);
-
-	const redeem = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/redeem-identity-link",
-		principal: apple,
-		body: { code: mint.json.code },
-	});
-	assert.equal(redeem.status, 200);
-	assert.equal(redeem.json.isAdmin, true);
-	assert.ok(redeem.json.linkedEmails.includes("admin@example.com"));
-
-	// Middleware expands from R2 on subsequent requests.
-	const afterMe = await jsonRequest(apiApp, env, {
-		path: "/api/v1/me",
-		principal: apple,
-	});
-	assert.equal(afterMe.json.isAdmin, true);
-	assert.ok(afterMe.json.keys.includes("email:admin@example.com"));
-
-	const list = await jsonRequest(apiApp, env, {
-		path: "/api/v1/mailboxes",
-		principal: apple,
-	});
-	assert.equal(list.status, 200);
-	assert.deepEqual(
-		list.json.map((m) => m.id),
-		["ops@inboxies.email"],
-	);
-
-	// Assign-to-me stamps account-scoped owner (not Access email / Apple sub rows).
-	const assign = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/admin/mailboxes/ops@inboxies.email/assign",
-		principal: admin,
+		path: "/api/v1/admin/mailboxes/existing@acme.com/assign",
+		principal: asHelper,
 		body: { assignTo: "self" },
 	});
 	assert.equal(assign.status, 200);
-	assert.equal(assign.json.settings.acl.owners.length, 1);
-	assert.ok(assign.json.settings.acl.owners[0].startsWith("account:"));
+	assert.equal(assign.payload.id, "existing@acme.com");
+	assert.equal(assign.payload.email, "existing@acme.com");
+	assert.ok(assign.payload.name);
+	assert.equal(await mailboxRole(db, "helper", "existing@acme.com"), "owner");
+
 	assert.equal(
-		assign.json.settings.acl.owners.includes("email:admin@example.com"),
-		false,
+		(await request(env, { method: "POST", path: "/api/v1/admin/mailboxes/secret@other.com/assign", principal: asHelper, body: { assignTo: "self" } })).status,
+		403,
 	);
 	assert.equal(
-		assign.json.settings.acl.owners.includes("sub:apple.hide.email.sub"),
-		false,
+		(await request(env, { method: "DELETE", path: "/api/v1/admin/mailboxes/secret@other.com", principal: asHelper })).status,
+		403,
 	);
-
-	const appleGet = await jsonRequest(apiApp, env, {
-		path: "/api/v1/mailboxes/ops@inboxies.email",
-		principal: apple,
-	});
-	assert.equal(appleGet.status, 200);
-	assert.equal(appleGet.json.canManage, true);
-}
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-	const eveMint = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identity-link-codes",
-		principal: eve,
-	});
-	assert.equal(eveMint.status, 200);
-	assert.ok(eveMint.json.code);
-	assert.ok(eveMint.json.emails.includes("eve@example.com"));
-
-	const apple = principalFromClaims({ sub: "apple.eve.nonadmin" });
-	const redeem = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/redeem-identity-link",
-		principal: apple,
-		body: { code: eveMint.json.code },
-	});
-	assert.equal(redeem.status, 200);
-	assert.ok(redeem.json.keys.includes("email:eve@example.com"));
-
-	const identities = await jsonRequest(apiApp, env, {
-		path: "/api/v1/me/identities",
-		principal: apple,
-	});
-	assert.equal(identities.status, 200);
-	assert.ok(Array.isArray(identities.json.identities));
-	assert.ok(
-		identities.json.identities.some(
-			(i) => i.key === "email:eve@example.com" || i.label === "eve@example.com",
-		),
-	);
-}
-
-// ── In-session attach password + conflict ─────────────────────────
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-	const attach = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/attach",
-		principal: eve,
-		body: { provider: "password", password: "correct-horse-battery" },
-	});
-	assert.equal(attach.status, 200);
-	assert.equal(attach.json.provider, "password");
-	assert.ok(attach.json.userId);
-	assert.ok(
-		attach.json.identities.some((i) => i.type === "password"),
-	);
-
-	const again = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/attach",
-		principal: eve,
-		body: { provider: "password", password: "another-long-password" },
-	});
-	assert.equal(again.status, 409);
-
-	const login = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "eve@example.com", password: "correct-horse-battery" },
-	});
-	assert.equal(login.status, 200);
-	assert.ok(login.json.token);
-
-	const wrongCurrent = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/password",
-		principal: eve,
-		body: {
-			currentPassword: "wrong-current-password",
-			newPassword: "brand-new-password-1",
-		},
-	});
-	assert.equal(wrongCurrent.status, 401);
-
-	const tooShort = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/password",
-		principal: eve,
-		body: {
-			currentPassword: "correct-horse-battery",
-			newPassword: "short",
-		},
-	});
-	assert.equal(tooShort.status, 400);
-
-	const changed = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/password",
-		principal: eve,
-		body: {
-			currentPassword: "correct-horse-battery",
-			newPassword: "brand-new-password-1",
-		},
-	});
-	assert.equal(changed.status, 200);
-	assert.equal(changed.json.ok, true);
-	assert.ok(changed.json.userId);
-
-	const oldLogin = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "eve@example.com", password: "correct-horse-battery" },
-	});
-	assert.equal(oldLogin.status, 401);
-
-	const newLogin = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/auth/password",
-		body: { email: "eve@example.com", password: "brand-new-password-1" },
-	});
-	assert.equal(newLogin.status, 200);
-	assert.ok(newLogin.json.token);
-}
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket);
-	const noPassword = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/password",
-		principal: admin,
-		body: {
-			currentPassword: "whatever-long-enough",
-			newPassword: "brand-new-password-2",
-		},
-	});
-	assert.equal(noPassword.status, 404);
-}
-
-{
-	const bucket = mockBucket();
-	const env = mockEnv(bucket, {
-		APPLE_CLIENT_ID: "co.inboxies.app",
-		GOOGLE_CLIENT_ID: "test-google-client.apps.googleusercontent.com",
-	});
-	const badApple = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/attach",
-		principal: admin,
-		body: { provider: "apple", identityToken: "not-a-real-jwt" },
-	});
-	assert.equal(badApple.status, 401);
-
-	const badGoogle = await jsonRequest(apiApp, env, {
-		method: "POST",
-		path: "/api/v1/me/identities/attach",
-		principal: admin,
-		body: { provider: "google", idToken: "not-a-real-jwt" },
-	});
-	assert.equal(badGoogle.status, 401);
-
-	const cfg = await jsonRequest(apiApp, env, { path: "/api/v1/config" });
-	assert.equal(cfg.status, 200);
 	assert.equal(
-		cfg.json.googleClientId,
-		"test-google-client.apps.googleusercontent.com",
+		(await request(env, { method: "PUT", path: "/api/v1/admin/mailboxes/existing@acme.com/acl", principal: asAdmin, body: { owners: ["email:x@y.com"] } })).status,
+		410,
+		"raw ACL writes are gone",
 	);
-	assert.equal(cfg.json.appleSignInConfigured, true);
+	const del = await request(env, { method: "DELETE", path: "/api/v1/admin/mailboxes/sales@acme.com", principal: asAdmin });
+	assert.equal(del.status, 204);
+	assert.ok(mailboxes.calls.some(([id, m]) => id === "sales@acme.com" && m === "purgeMailbox"));
+	assert.equal(await mailboxRole(db, "helper", "sales@acme.com"), null);
+}
+
+// ── Invites: hashed at rest, escaped in mail, throttled ───────
+let ownerInviteToken;
+{
+	const created = await request(env, {
+		method: "POST",
+		path: "/api/v1/admin/mailboxes",
+		principal: asAdmin,
+		body: {
+			email: "alex@acme.com",
+			name: "Alex",
+			assignTo: { inviteEmail: "Alex@Gmail.com", inviteeName: '<a href="https://evil.example">click</a>', role: "owner" },
+		},
+	});
+	assert.equal(created.status, 201);
+	const invite = created.payload.invite;
+	ownerInviteToken = invite.token;
+	assert.match(invite.inviteUrl, /\/invite\/[0-9a-f]{48}$/);
+	assert.equal(invite.emailSent, true);
+	const stored = await d1.prepare("select token_hash, invitee_email from invite").all();
+	assert.equal(stored.results.length, 1);
+	assert.equal(stored.results[0].token_hash, await sha256Hex(invite.token), "only the token hash is stored");
+	assert.equal(stored.results[0].invitee_email, "alex@gmail.com");
+
+	const mail = email.sent.at(-1);
+	assert.equal(mail.to, "alex@gmail.com");
+	assert.equal(mail.html.includes('<a href="https://evil.example">'), false, "inviter-supplied name is escaped");
+	assert.ok(mail.html.includes("&lt;a href="));
+
+	// Revoke/resend by someone else's admin: 403. Resend right away: throttled.
+	assert.equal((await request(env, { method: "POST", path: `/api/v1/admin/invites/${invite.token}/revoke`, principal: asRival })).status, 403);
+	const resend = await request(env, { method: "POST", path: `/api/v1/admin/invites/${invite.token}/resend`, principal: asAdmin });
+	assert.equal(resend.status, 429);
+
+	const pub = await request(env, { path: `/api/v1/invites/${invite.token}` });
+	assert.equal(pub.status, 200);
+	assert.equal(pub.payload.mailboxId, "alex@acme.com");
+	assert.equal(pub.payload.status, "pending");
+	assert.equal((await request(env, { path: `/api/v1/invites/${"0".repeat(48)}` })).status, 404);
+
+	// Admin list shows invites by id (hash), never the token.
+	const list = await request(env, { path: "/api/v1/admin/mailboxes/alex@acme.com/invites", principal: asAdmin });
+	assert.equal(list.payload.length, 1);
+	assert.equal(list.payload[0].token, undefined);
+}
+
+// ── Accept (signed out, app builds without codes): new user, owner login ──
+{
+	const accept = await request(env, {
+		method: "POST",
+		path: `/api/v1/invites/${ownerInviteToken}/accept`,
+		body: { password: "alex password 123", displayName: "Alex" },
+	});
+	assert.equal(accept.status, 200);
+	assert.equal(accept.payload.mailboxId, "alex@acme.com");
+	assert.equal(accept.payload.email, "alex@acme.com", "an owner signs in as the mailbox, as before");
+	assert.ok(accept.payload.token);
+	assert.ok(accept.headers.get("set-cookie")?.includes("better-auth.session_token="));
+	assert.equal(await mailboxRole(db, accept.payload.userId, "alex@acme.com"), "owner");
+
+	// The session works through the real middleware.
+	const list = await authedRequest(env, { path: "/api/v1/mailboxes", token: accept.payload.token });
+	assert.deepEqual(list.payload.map((m) => m.id), ["alex@acme.com"]);
+
+	// Single use.
+	const again = await request(env, { method: "POST", path: `/api/v1/invites/${ownerInviteToken}/accept`, body: { password: "another password 1" } });
+	assert.equal(again.status, 410);
+}
+
+// ── Member invite: login is the invitee address, unverified without a code ──
+{
+	const inv = await request(env, {
+		method: "POST",
+		path: "/api/v1/mailboxes/existing@acme.com/invites",
+		principal: asAdmin,
+		body: { inviteEmail: "member@gmail.com", role: "member" },
+	});
+	assert.equal(inv.status, 201);
+	const accept = await request(env, { method: "POST", path: `/api/v1/invites/${inv.payload.token}/accept`, body: { password: "member password 1" } });
+	assert.equal(accept.status, 200);
+	assert.equal(accept.payload.email, "member@gmail.com");
+	const row = await d1.prepare("select email_verified from user where id = ?").bind(accept.payload.userId).first("email_verified");
+	assert.equal(row, 0, "codeless accept leaves the address unverified");
+	assert.equal(await d1.prepare("select count(*) as n from recovery_email where user_id = ?").bind(accept.payload.userId).first("n"), 0);
+	assert.equal(await mailboxRole(db, accept.payload.userId, "existing@acme.com"), "member");
+
+	// An invite to an address that already has an account can't create a
+	// second login for it, and leaves the existing user alone.
+	const inv2 = await request(env, { method: "POST", path: "/api/v1/mailboxes/existing@acme.com/invites", principal: asAdmin, body: { inviteEmail: "nobody@gmail.com", role: "member" } });
+	const clash = await request(env, { method: "POST", path: `/api/v1/invites/${inv2.payload.token}/accept`, body: { password: "attacker password 1" } });
+	assert.equal(clash.status, 409);
+	assert.equal(await mailboxRole(db, "nobody", "existing@acme.com"), null);
+	assert.equal(await d1.prepare("select count(*) as n from account where user_id = 'nobody'").first("n"), 0, "no password was added to nobody");
+	assert.equal((await request(env, { path: `/api/v1/invites/${inv2.payload.token}` })).status, 200, "the invite is still pending");
+}
+
+// ── With codes required: verified address becomes the recovery email ──
+{
+	const strict = { ...env, LEGACY_INVITE_ACCEPT: "false" };
+	const inv = await request(strict, { method: "POST", path: "/api/v1/mailboxes/existing@acme.com/invites", principal: asAdmin, body: { inviteEmail: "carol@gmail.com", role: "member" } });
+	const token = inv.payload.token;
+	const noCode = await request(strict, { method: "POST", path: `/api/v1/invites/${token}/accept`, body: { password: "carol password 1" } });
+	assert.equal(noCode.status, 400);
+	assert.equal(noCode.payload.codeRequired, true);
+
+	const sent = await request(strict, { method: "POST", path: `/api/v1/invites/${token}/otp` });
+	assert.equal(sent.status, 200);
+	assert.equal(sent.payload.sentTo, "carol@gmail.com", "the code goes to the invitee address only");
+	const code = lastCodeSentTo(email, "carol@gmail.com");
+	assert.ok(code);
+
+	const wrong = await request(strict, { method: "POST", path: `/api/v1/invites/${token}/accept`, body: { password: "carol password 1", code: code === "000000" ? "111111" : "000000" } });
+	assert.equal(wrong.status, 400);
+	const ok = await request(strict, { method: "POST", path: `/api/v1/invites/${token}/accept`, body: { password: "carol password 1", code } });
+	assert.equal(ok.status, 200);
+	const user = await d1.prepare("select email, email_verified from user where id = ?").bind(ok.payload.userId).first();
+	assert.deepEqual({ ...user }, { email: "carol@gmail.com", email_verified: 1 });
+	const recovery = await d1.prepare("select email, verified_at from recovery_email where user_id = ?").bind(ok.payload.userId).first();
+	assert.equal(recovery.email, "carol@gmail.com");
+	assert.ok(recovery.verified_at);
+}
+
+// ── Signed in: the code is always required, and the invite joins that user ──
+{
+	const inv = await request(env, { method: "POST", path: "/api/v1/mailboxes/existing@acme.com/invites", principal: asAdmin, body: { inviteEmail: "nobody@gmail.com", role: "member" } });
+	const token = inv.payload.token;
+	const session = await signIn(env, nobody);
+	const noCode = await authedRequest(env, { method: "POST", path: `/api/v1/invites/${token}/accept`, token: session.token, body: {} });
+	assert.equal(noCode.status, 400);
+	assert.equal(noCode.payload.codeRequired, true);
+	await request(env, { method: "POST", path: `/api/v1/invites/${token}/otp` });
+	const code = lastCodeSentTo(email, "nobody@gmail.com");
+	// Signed out first: the address has an account, so 409 — and the code is
+	// not used up, so it still works once they sign in.
+	const signedOut = await request(env, { method: "POST", path: `/api/v1/invites/${token}/accept`, body: { code, password: "another password 1" } });
+	assert.equal(signedOut.status, 409);
+	const ok = await authedRequest(env, { method: "POST", path: `/api/v1/invites/${token}/accept`, token: session.token, body: { code } });
+	assert.equal(ok.status, 200);
+	assert.equal(ok.payload.userId, "nobody");
+	assert.equal(await mailboxRole(db, "nobody", "existing@acme.com"), "member");
+}
+
+// ── Revoked invites can't be accepted ──────────────────────────
+{
+	const inv = await request(env, { method: "POST", path: "/api/v1/admin/invites", principal: asAdmin, body: { mailboxId: "existing@acme.com", inviteEmail: "late@gmail.com", role: "member" } });
+	assert.equal(inv.status, 201);
+	const revoke = await request(env, { method: "POST", path: `/api/v1/admin/invites/${inv.payload.token}/revoke`, principal: asAdmin });
+	assert.equal(revoke.status, 200);
+	assert.equal(revoke.payload.status, "revoked");
+	const accept = await request(env, { method: "POST", path: `/api/v1/invites/${inv.payload.token}/accept`, body: { password: "late password 12" } });
+	assert.equal(accept.status, 410);
+	assert.equal(
+		(await request(env, { method: "POST", path: "/api/v1/admin/invites", principal: asAdmin, body: { mailboxId: "secret@other.com", inviteEmail: "x@gmail.com" } })).status,
+		403,
+		"no invites into another tenant's mailbox",
+	);
 }
 
 console.log("domain-admin-http: ok");

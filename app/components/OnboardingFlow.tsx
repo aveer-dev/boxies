@@ -250,6 +250,8 @@ export function OnboardingFlow({
 				username: customUsername.trim().toLowerCase() || "admin",
 				password: customPassword,
 				displayName: customName.trim() || undefined,
+				// Domain owners need a recovery email for billing and renewal notices.
+				backupEmail: customBackupEmail.trim() || undefined,
 				client: "web",
 			});
 
@@ -837,8 +839,8 @@ export function OnboardingFlow({
 											Domain Name
 										</label>
 										{checkLoading && (
-											<span className="text-[11px] text-kumo-subtle flex items-center gap-1">
-												<Loader size="xs" /> Checking availability...
+											<span className="text-2xs text-kumo-subtle flex items-center gap-1">
+												<Loader size="sm" /> Checking availability...
 											</span>
 										)}
 									</div>
@@ -882,7 +884,7 @@ export function OnboardingFlow({
 													<GlobeIcon size={16} />
 													Domain is registered externally.
 												</span>
-												<span className="text-[11px]">Connect via Cloudflare NS</span>
+												<span className="text-2xs">Connect via Cloudflare NS</span>
 											</div>
 										)}
 									</div>
@@ -932,17 +934,17 @@ export function OnboardingFlow({
 											<div className="space-y-2 text-xs">
 												<div className="flex justify-between items-center text-kumo-default font-medium">
 													<span>1. Domain Registration ({customDomain})</span>
-													<span>${(availability.pricing?.domainWholesaleUsd ?? 10.46).toFixed(2)}</span>
+													<span>${(availability.pricing?.domainFeeUsd ?? 10.44).toFixed(2)}</span>
 												</div>
-												<p className="text-[11px] text-kumo-subtle pl-3">
+												<p className="text-2xs text-kumo-subtle pl-3">
 													Wholesale registrar pass-through cost via Cloudflare Registrar. Zero registrar markup.
 												</p>
 
 												<div className="flex justify-between items-center text-kumo-default font-medium pt-1">
 													<span>2. Inboxies Platform, AI & Cloud Infrastructure</span>
-													<span>${(availability.pricing?.platformFeeUsd ?? 9.54).toFixed(2)}</span>
+													<span>${(availability.pricing?.platformFeeUsd ?? 9.56).toFixed(2)}</span>
 												</div>
-												<p className="text-[11px] text-kumo-subtle pl-3">
+												<p className="text-2xs text-kumo-subtle pl-3">
 													Workers AI intelligent semantic agent, Durable Objects edge server sync, encrypted R2 storage, Anycast DNS, SSL, and automated SPF/DKIM/DMARC routing.
 												</p>
 											</div>
@@ -1126,7 +1128,7 @@ export function OnboardingFlow({
 												value={newUserUsername}
 												onChange={(e) => setNewUserUsername(e.target.value)}
 											/>
-											<span className="text-[11px] text-kumo-subtle">@{customDomain}</span>
+											<span className="text-2xs text-kumo-subtle">@{customDomain}</span>
 										</div>
 									</div>
 									<Button
@@ -1196,7 +1198,7 @@ export function OnboardingFlow({
 											key={preset}
 											type="button"
 											onClick={() => handleAddAlias(preset)}
-											className="text-[11px] px-2.5 py-1 rounded-full border border-kumo-line bg-kumo-base hover:bg-kumo-tint text-kumo-default transition-all cursor-pointer"
+											className="text-2xs px-2.5 py-1 rounded-full border border-kumo-line bg-kumo-base hover:bg-kumo-tint text-kumo-default transition-all cursor-pointer"
 										>
 											+{preset}@{customDomain}
 										</button>
@@ -1336,15 +1338,15 @@ export function OnboardingFlow({
 
 								<div className="rounded-xl border border-kumo-line bg-kumo-recessed p-3.5 space-y-2 text-xs font-mono">
 									<div className="p-2 rounded bg-kumo-base border border-kumo-line">
-										<div className="text-[10px] text-kumo-subtle uppercase">MX Records (Priority 10)</div>
+										<div className="text-3xs text-kumo-subtle uppercase">MX Records (Priority 10)</div>
 										<div>route1.mx.cloudflare.net</div>
 									</div>
 									<div className="p-2 rounded bg-kumo-base border border-kumo-line">
-										<div className="text-[10px] text-kumo-subtle uppercase">SPF Record (TXT)</div>
+										<div className="text-3xs text-kumo-subtle uppercase">SPF Record (TXT)</div>
 										<div>v=spf1 include:_spf.mx.cloudflare.net ~all</div>
 									</div>
 									<div className="p-2 rounded bg-kumo-base border border-kumo-line">
-										<div className="text-[10px] text-kumo-subtle uppercase">DMARC Record (TXT)</div>
+										<div className="text-3xs text-kumo-subtle uppercase">DMARC Record (TXT)</div>
 										<div>v=DMARC1; p=reject; sp=reject; adkim=r; aspf=r;</div>
 									</div>
 								</div>

@@ -1,7 +1,6 @@
 package co.inboxies.app.services
 
 import android.util.Log
-import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AppJson
 import co.inboxies.app.models.Email
 import kotlinx.coroutines.CoroutineScope
@@ -9,48 +8,72 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.net.URI
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.coroutineContext
 
-/** SSE event stream + 20s poll safety net. */
+/**
+ * SSE event stream + 20s poll safety net for one mailbox.
+ *
+ * Callbacks carry the mailbox id the stream was started for. A blocking read can still
+ * hand over an event from the previous mailbox right after a switch, so listeners must
+ * drop ids that are no longer selected (this client also drops them once [stop] ran).
+ * [stop] cancels the in-flight HTTP call so the socket closes immediately — that is what
+ * lets the app go quiet in the background.
+ */
 class RealTimeStreamClient private constructor(private val api: ApiClient) {
-    var onNewEmailReceived: ((Email) -> Unit)? = null
-    var onSyncRequested: (() -> Unit)? = null
+    var onNewEmailReceived: ((mailboxId: String, email: Email) -> Unit)? = null
+    var onSyncRequested: ((mailboxId: String) -> Unit)? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
     private var currentMailboxId: String? = null
     private var streamJob: Job? = null
     private var pollJob: Job? = null
+
+    /** In-flight SSE call per stream run, so one run can't clear or leak another's. */
+    private val activeCalls = java.util.concurrent.ConcurrentHashMap<Job, Call>()
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .connectTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    val isRunning: Boolean
+        get() = streamJob?.isActive == true
+
+    @Synchronized
     fun start(mailboxId: String) {
         if (currentMailboxId == mailboxId && streamJob?.isActive == true) return
         stop()
         currentMailboxId = mailboxId
         streamJob = scope.launch { runEventStream(mailboxId) }
-        pollJob = scope.launch { runAdaptivePolling() }
+        pollJob = scope.launch { runAdaptivePolling(mailboxId) }
     }
 
+    @Synchronized
     fun stop() {
+        currentMailboxId = null
         streamJob?.cancel()
         streamJob = null
         pollJob?.cancel()
         pollJob = null
-        currentMailboxId = null
+        // Close every socket, including one a stopped run published just now.
+        activeCalls.values.forEach { it.cancel() }
     }
+
+    private fun isCurrent(mailboxId: String) = currentMailboxId == mailboxId
 
     private suspend fun runEventStream(mailboxId: String) {
         var backoff = 2_000L
-        while (currentMailboxId == mailboxId) {
+        val parser = SseEventParser()
+        val job = coroutineContext[Job] ?: return
+        while (isCurrent(mailboxId) && coroutineContext.isActive) {
             try {
                 val url = eventsUrl(mailboxId) ?: return
                 val requestBuilder = Request.Builder()
@@ -59,31 +82,35 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
                 api.authTokenProvider()?.let {
                     requestBuilder.header("Authorization", "Bearer $it")
                 }
-                client.newCall(requestBuilder.build()).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        delay(backoff)
-                        backoff = minOf(backoff * 2, 30_000L)
-                        return@use
-                    }
-                    backoff = 2_000L
-                    val source = response.body?.source() ?: return@use
-                    var eventName = "message"
-                    while (currentMailboxId == mailboxId && !source.exhausted()) {
-                        val line = source.readUtf8Line() ?: break
-                        val trimmed = line.trim()
-                        when {
-                            trimmed.isEmpty() -> Unit
-                            trimmed.startsWith("event:") ->
-                                eventName = trimmed.removePrefix("event:").trim()
-                            trimmed.startsWith("data:") -> {
-                                val data = trimmed.removePrefix("data:").trim()
-                                handleServerEvent(eventName, data)
-                                eventName = "message"
-                            }
+                val call = client.newCall(requestBuilder.build())
+                activeCalls[job] = call
+                // stop() may have run between the loop check and publishing the call.
+                if (!isCurrent(mailboxId) || !job.isActive) {
+                    call.cancel()
+                    activeCalls.remove(job, call)
+                    return
+                }
+                try {
+                    call.execute().use { response ->
+                        if (!response.isSuccessful) {
+                            delay(backoff)
+                            backoff = minOf(backoff * 2, 30_000L)
+                            return@use
+                        }
+                        backoff = 2_000L
+                        parser.reset()
+                        val source = response.body?.source() ?: return@use
+                        while (isCurrent(mailboxId) && !source.exhausted()) {
+                            val line = source.readUtf8Line() ?: break
+                            val event = parser.feed(line) ?: continue
+                            if (isCurrent(mailboxId)) handleServerEvent(mailboxId, event)
                         }
                     }
+                } finally {
+                    activeCalls.remove(job, call)
                 }
             } catch (e: Exception) {
+                if (!isCurrent(mailboxId)) return
                 Log.d(TAG, "Realtime reconnect: ${e.message}")
                 delay(backoff)
                 backoff = minOf(backoff * 2, 30_000L)
@@ -91,33 +118,28 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
         }
     }
 
-    private fun handleServerEvent(event: String, data: String) {
-        if (event == "ping" || event == "connected") return
-        if (event == "new_email" || event == "message") {
-            runCatching { AppJson.decodeFromString(Email.serializer(), data) }.getOrNull()?.let { email ->
-                onNewEmailReceived?.invoke(email)
+    private fun handleServerEvent(mailboxId: String, event: SseEvent) {
+        if (event.event == "ping" || event.event == "connected") return
+        if (event.event == "new_email" || event.event == "message") {
+            runCatching { AppJson.decodeFromString(Email.serializer(), event.data) }.getOrNull()?.let { email ->
+                onNewEmailReceived?.invoke(mailboxId, email)
                 return
             }
         }
-        onSyncRequested?.invoke()
+        onSyncRequested?.invoke(mailboxId)
     }
 
-    private suspend fun runAdaptivePolling() {
-        while (true) {
+    private suspend fun runAdaptivePolling(mailboxId: String) {
+        while (isCurrent(mailboxId) && coroutineContext.isActive) {
             delay(20_000L)
-            onSyncRequested?.invoke()
+            if (isCurrent(mailboxId)) onSyncRequested?.invoke(mailboxId)
         }
     }
 
-    private fun eventsUrl(mailboxId: String): String? = try {
-        val base = URI(AppConfig.apiBaseURL)
-        val encoded = URLEncoder.encode(mailboxId, StandardCharsets.UTF_8.name()).replace("+", "%20")
-        val path = "/api/v1/mailboxes/$encoded/events"
-        val port = if (base.port != -1) ":${base.port}" else ""
-        "${base.scheme}://${base.host}$port$path"
-    } catch (_: Exception) {
-        null
-    }
+    /** Built like every other API URL, so a base path in the API base URL is kept. */
+    private fun eventsUrl(mailboxId: String): String? = runCatching {
+        api.buildUrl("/api/v1/mailboxes/${api.pathEncode(mailboxId)}/events")
+    }.getOrNull()
 
     companion object {
         private const val TAG = "RealtimeStream"

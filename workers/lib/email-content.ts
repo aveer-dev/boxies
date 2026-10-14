@@ -24,14 +24,49 @@ export function emailContentKeys(emailId: string): string[] {
 }
 
 /** First N characters of the stored body — matches historical SUBSTR(body, 1, 300). */
+const NAMED_ENTITIES: Record<string, string> = {
+	nbsp: " ",
+	amp: "&",
+	lt: "<",
+	gt: ">",
+	quot: '"',
+	apos: "'",
+	zwnj: "",
+	zwj: "",
+};
+
+/** Plain-text preview of an HTML body: no markup, CSS, or entities. */
+function htmlToPreviewText(html: string): string {
+	return html
+		.replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, " ")
+		.replace(/<!--[\s\S]*?-->/g, " ")
+		.replace(/<[^>]+>/g, " ")
+		.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity: string) => {
+			if (entity[0] === "#") {
+				const code =
+					entity[1] === "x" || entity[1] === "X"
+						? parseInt(entity.slice(2), 16)
+						: parseInt(entity.slice(1), 10);
+				return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : " ";
+			}
+			return NAMED_ENTITIES[entity.toLowerCase()] ?? match;
+		})
+		.replace(/[\u200b-\u200d\u034f\u00ad]/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/**
+ * Short list / push preview. HTML bodies are reduced to text first: cutting raw
+ * markup at 300 chars usually lands inside <style>, leaving CSS as the preview.
+ */
 export function computeSnippet(
 	htmlOrText: string,
 	maxLength = SNIPPET_MAX_LENGTH,
 ): string {
 	if (!htmlOrText) return "";
-	return htmlOrText.length <= maxLength
-		? htmlOrText
-		: htmlOrText.slice(0, maxLength);
+	const text = /<[a-z!/][^>]*>/i.test(htmlOrText) ? htmlToPreviewText(htmlOrText) : htmlOrText;
+	return text.length <= maxLength ? text : text.slice(0, maxLength);
 }
 
 export async function storeEmailContent(

@@ -1,9 +1,12 @@
 package co.inboxies.app.ui.home
 
+import android.Manifest
 import android.os.Build
 import android.view.HapticFeedbackConstants
 import android.view.View
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -14,11 +17,13 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -113,6 +118,7 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
+import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.theme.AvatarInitials
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
@@ -123,7 +129,10 @@ import co.inboxies.app.theme.homeChromeToolbarSurface
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.theme.liquidGlass
 import co.inboxies.app.ui.chat.ChatSheetView
+import co.inboxies.app.ui.components.DomainServiceBanner
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
+import co.inboxies.app.ui.components.domainServiceCopy
+import co.inboxies.app.ui.components.rememberDomainRenewal
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.ui.components.UndoToastBanner
@@ -160,6 +169,8 @@ fun HomeShellView(
     val emails by appModel.emails.collectAsState()
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
+    val paging by appModel.paging.collectAsState()
+    val emailListError by appModel.emailListError.collectAsState()
     val isDigestLoading by appModel.isDigestLoading.collectAsState()
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
@@ -189,6 +200,20 @@ fun HomeShellView(
 
     val isAdmin by appModel.isAdmin.collectAsState()
     var pendingDomain by remember { mutableStateOf<AdminDomainInfo?>(null) }
+
+    // Service ended for this mailbox's domain: read, flag and export only.
+    val isReadOnly by appModel.selectedMailboxReadOnly.collectAsState()
+    val domainService by appModel.selectedDomainService.collectAsState()
+    val administeredDomains by appModel.administeredDomains.collectAsState()
+    val renewal = rememberDomainRenewal()
+    val serviceCopy = mailbox?.let { m ->
+        domainServiceCopy(
+            domain = m.domain,
+            service = domainService,
+            readOnly = isReadOnly,
+            isAdmin = domainService?.canManage ?: (m.domain in administeredDomains),
+        )
+    }
     var settingsInitialDomainAdmin by remember { mutableStateOf(false) }
 
     LaunchedEffect(isAdmin) {
@@ -203,6 +228,23 @@ fun HomeShellView(
     LaunchedEffect(Unit) {
         if (!appModel.isDebugPreview) {
             appModel.refreshReplyLaterCount()
+        }
+    }
+
+    // POST_NOTIFICATIONS is a runtime permission (minSdk 34): ask once the user has
+    // a mailbox to register for, then register the FCM token if granted.
+    val selectedMailboxId by appModel.selectedMailboxId.collectAsState()
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        PushNotificationManager.shared.onPermissionResult(granted)
+    }
+    LaunchedEffect(selectedMailboxId) {
+        if (selectedMailboxId == null || appModel.isDebugPreview) return@LaunchedEffect
+        val push = PushNotificationManager.shared
+        if (push.shouldPromptForPermission()) {
+            push.markPermissionPrompted()
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -396,8 +438,7 @@ fun HomeShellView(
                             },
                             onSignOut = {
                                 showMailboxMenu = false
-                                auth.signOut()
-                                appModel.reset()
+                                appModel.signOut(auth)
                             },
                         )
                     }
@@ -621,6 +662,25 @@ fun HomeShellView(
                     }
                 }
 
+                // Subscription ended (read-only) or, for admins, set to end.
+                AnimatedVisibility(
+                    visible = serviceCopy != null,
+                    enter = expandVertically(selectModeSpring()) + fadeIn(selectModeSpring()),
+                    exit = shrinkVertically(selectModeSpring()) + fadeOut(selectModeSpring()),
+                ) {
+                    // Keep the last copy on screen while the exit animation runs.
+                    var shownCopy by remember { mutableStateOf(serviceCopy) }
+                    if (serviceCopy != null) shownCopy = serviceCopy
+                    shownCopy?.let { copy ->
+                        DomainServiceBanner(
+                            copy = copy,
+                            isWorking = renewal.workingDomain != null,
+                            onAction = { mailbox?.domain?.let { renewal.renew(it) } },
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        )
+                    }
+                }
+
                 // Tab content with swipe
                 var dragAccum by remember { mutableFloatStateOf(0f) }
                 Box(
@@ -690,6 +750,9 @@ fun HomeShellView(
                                     null
                                 },
                                 onRefresh = { appModel.refreshCurrentTab() },
+                                loadError = emailListError,
+                                paging = paging,
+                                onLoadMore = { appModel.loadMoreEmails() },
                                 onOpen = { email ->
                                     scope.launch {
                                         if (email.isDraft) appModel.openDraft(email) else appModel.openEmail(email)
@@ -715,6 +778,9 @@ fun HomeShellView(
                                 onClearFilters = null,
                                 filterChipsBar = null,
                                 onRefresh = { appModel.refreshCurrentTab() },
+                                loadError = emailListError,
+                                paging = paging,
+                                onLoadMore = { appModel.loadMoreEmails() },
                                 onOpen = { email ->
                                     scope.launch { appModel.openEmail(email) }
                                 },
@@ -851,6 +917,7 @@ fun HomeShellView(
                                 }
                             },
                             modifier = Modifier.padding(horizontal = 16.dp),
+                            canMove = !isReadOnly,
                         )
                     } else {
                         BottomBar(
@@ -892,11 +959,19 @@ fun HomeShellView(
                             },
                             onOpenCompose = {
                                 composeDoubleTapArmed = false
-                                showComposeActions = false
                                 composeActionsClosing = false
-                                scope.launch { appModel.startCompose(ComposeMode.New) }
+                                if (isReadOnly) {
+                                    // Nothing to compose from a read-only mailbox; the press
+                                    // still opens the folder list.
+                                    composeActionsDismissible = true
+                                    showComposeActions = true
+                                } else {
+                                    showComposeActions = false
+                                    scope.launch { appModel.startCompose(ComposeMode.New) }
+                                }
                             },
                             onCloseComposeMenu = { dismissComposeMenu() },
+                            showAskAi = !isReadOnly,
                         )
                     }
                 }
@@ -944,8 +1019,9 @@ fun HomeShellView(
                         composeDoubleTapArmed = false
                         highlightedComposeAction = null
                     },
+                    showCompose = !isReadOnly,
                 )
-                if (composeDoubleTapArmed) {
+                if (composeDoubleTapArmed && !isReadOnly) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -1273,6 +1349,8 @@ private fun BottomBar(
     onOpenComposeMenu: () -> Unit,
     onOpenCompose: () -> Unit,
     onCloseComposeMenu: () -> Unit,
+    /** False for a read-only mailbox: the AI agent ended with the service. */
+    showAskAi: Boolean = true,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -1340,33 +1418,37 @@ private fun BottomBar(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .height(HomeChromeMetrics.actionBarHeight)
-                .homeChromeToolbarSurface(RoundedCornerShape(50))
-                .clickable {
-                    if (showComposeActions) {
-                        onCloseComposeMenu()
-                    } else {
-                        onAskAi()
+        if (showAskAi) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(HomeChromeMetrics.actionBarHeight)
+                    .homeChromeToolbarSurface(RoundedCornerShape(50))
+                    .clickable {
+                        if (showComposeActions) {
+                            onCloseComposeMenu()
+                        } else {
+                            onAskAi()
+                        }
                     }
-                }
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = colors.muted, modifier = Modifier.size(18.dp))
-            Text(
-                "Ask AI",
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Medium,
-                fontSize = 16.sp,
-                color = colors.muted,
-            )
-        }
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = colors.muted, modifier = Modifier.size(18.dp))
+                Text(
+                    "Ask AI",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 16.sp,
+                    color = colors.muted,
+                )
+            }
 
-        Spacer(modifier = Modifier.width(HomeChromeMetrics.chromeSpacing))
+            Spacer(modifier = Modifier.width(HomeChromeMetrics.chromeSpacing))
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+        }
 
         val composeButtonAlpha by animateFloatAsState(
             targetValue = if (showComposeActions) 0f else 1f,
@@ -1506,6 +1588,7 @@ private fun SelectionActionBar(
     onArchive: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
+    canMove: Boolean = true,
 ) {
     val colors = inboxiesColors()
     val enabled = selectedCount > 0
@@ -1562,19 +1645,22 @@ private fun SelectionActionBar(
                 onClick = onToggleStar,
                 contentDescription = "Star or unstar",
             )
-            CircleAction(
-                icon = Icons.Filled.Archive,
-                enabled = enabled,
-                onClick = onArchive,
-                contentDescription = "Archive",
-            )
-            CircleAction(
-                icon = Icons.Filled.Delete,
-                enabled = enabled,
-                tint = Color.Red,
-                onClick = onDelete,
-                contentDescription = "Delete",
-            )
+            // Read-only mailbox (service ended): read/star flags only.
+            if (canMove) {
+                CircleAction(
+                    icon = Icons.Filled.Archive,
+                    enabled = enabled,
+                    onClick = onArchive,
+                    contentDescription = "Archive",
+                )
+                CircleAction(
+                    icon = Icons.Filled.Delete,
+                    enabled = enabled,
+                    tint = Color.Red,
+                    onClick = onDelete,
+                    contentDescription = "Delete",
+                )
+            }
         }
     }
 }

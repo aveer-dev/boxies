@@ -17,10 +17,18 @@ import type {
 	DomainAvailabilityResponse,
 	DomainCheckoutResponse,
 	CheckoutStatusResponse,
+	DomainService,
+	RenewDomainResponse,
 	ExportJob,
 	DecommissionPreflightResponse,
 	DecommissionResponse,
 	MaskedAlias,
+	MeResponse,
+	AccountSession,
+	RecoveryEmailStatus,
+	MailboxMember,
+	MailboxInviteRow,
+	MailboxRole,
 } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -84,12 +92,18 @@ async function request<T>(
 	}
 }
 
-interface RequestOptions {
-	signal?: AbortSignal;
-}
+/** Per-call options; `signal` lets TanStack Query cancel in-flight requests. */
+type RequestOptions = { signal?: AbortSignal };
 
-function get<T>(url: string, opts?: { params?: Record<string, string>; responseType?: string; signal?: AbortSignal }) {
-	const query = opts?.params ? `?${new URLSearchParams(opts.params)}` : "";
+function get<T>(
+	url: string,
+	opts?: { params?: Record<string, string | undefined>; responseType?: string } & RequestOptions,
+) {
+	// Drop undefined params instead of sending the string "undefined".
+	const params = Object.fromEntries(
+		Object.entries(opts?.params ?? {}).filter((entry): entry is [string, string] => entry[1] !== undefined),
+	);
+	const query = Object.keys(params).length > 0 ? `?${new URLSearchParams(params)}` : "";
 	return request<T>(`${url}${query}`, {
 		method: "GET",
 		signal: opts?.signal,
@@ -97,7 +111,7 @@ function get<T>(url: string, opts?: { params?: Record<string, string>; responseT
 	});
 }
 
-function post<T>(url: string, body?: unknown, opts?: { signal?: AbortSignal }) {
+function post<T>(url: string, body?: unknown, opts?: RequestOptions) {
 	return request<T>(url, {
 		method: "POST",
 		signal: opts?.signal,
@@ -105,9 +119,10 @@ function post<T>(url: string, body?: unknown, opts?: { signal?: AbortSignal }) {
 	});
 }
 
-function put<T>(url: string, body?: unknown) {
+function put<T>(url: string, body?: unknown, opts?: RequestOptions) {
 	return request<T>(url, {
 		method: "PUT",
+		signal: opts?.signal,
 		body: body != null ? JSON.stringify(body) : undefined,
 	});
 }
@@ -159,16 +174,36 @@ const api = {
 
     // Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
-	getMe: () =>
-		get<{
-			email: string | null;
-			sub: string | null;
-			linkedEmails?: string[];
-			keys: string[];
-			isAdmin?: boolean;
-			mailDomain?: string;
-			domains?: string[];
-		}>("/api/v1/me"),
+	/** Token for the browser extension; the Worker scopes it to private emails. */
+	createExtensionSession: () =>
+		post<{ token: string; expiresAt: string }>("/api/v1/me/extension-session"),
+	getMe: () => get<MeResponse>("/api/v1/me"),
+	/** Delete the signed-in account; mailboxes only this user owns go with it. */
+	deleteAccount: () =>
+		request<{ ok: boolean; deletedMailboxes: string[]; leftMailboxes: string[] }>("/api/v1/me", {
+			method: "DELETE",
+			body: JSON.stringify({ confirm: "DELETE" }),
+		}),
+
+	// Sessions
+	listSessions: () => get<AccountSession[]>("/api/v1/me/sessions"),
+	revokeSession: (sessionId: string) =>
+		del<{ ok: boolean }>(`/api/v1/me/sessions/${encodeURIComponent(sessionId)}`),
+	revokeOtherSessions: () =>
+		post<{ ok: boolean; revoked: number }>("/api/v1/me/sessions/revoke-others"),
+
+	// Recovery email (where password reset codes go)
+	getRecoveryEmail: () => get<RecoveryEmailStatus>("/api/v1/me/recovery-email"),
+	/** Sets (or replaces) the address and mails it a 6-digit code. */
+	setRecoveryEmail: (email: string) =>
+		post<{ ok: boolean; email: string; verified: false; devCode?: string }>(
+			"/api/v1/me/recovery-email",
+			{ email },
+		),
+	verifyRecoveryEmail: (code: string) =>
+		post<{ ok: boolean; email: string; verified: true }>("/api/v1/me/recovery-email/verify", { code }),
+	removeRecoveryEmail: () => del<{ ok: boolean }>("/api/v1/me/recovery-email"),
+
 	listIdentities: () =>
 		get<{
 			accountId: string;
@@ -212,28 +247,9 @@ const api = {
 				current: boolean;
 			}[];
 		}>("/api/v1/me/identities/password", body),
-	createIdentityLinkCode: () =>
-		post<{
-			code: string;
-			emails: string[];
-			principals: string[];
-			accountId?: string;
-			expiresAt: string;
-		}>("/api/v1/me/identity-link-codes"),
-	redeemIdentityLink: (code: string) =>
-		post<{
-			ok: boolean;
-			accountId: string;
-			linkedEmails: string[];
-			keys: string[];
-			isAdmin: boolean;
-			identities?: {
-				type: string;
-				key: string;
-				label: string;
-				current: boolean;
-			}[];
-		}>("/api/v1/auth/redeem-identity-link", { code }),
+	/** Disconnect a sign-in method; the server refuses to remove the last one. */
+	removeIdentity: (type: string) =>
+		del<{ ok: boolean }>(`/api/v1/me/identities/${encodeURIComponent(type)}`),
 	createMailbox: (email: string, name: string, settings?: unknown) =>
 		post<Mailbox>("/api/v1/mailboxes", { email, name, settings }),
 	getMailbox: (mailboxId: string) =>
@@ -283,14 +299,6 @@ const api = {
 		post<unknown>(`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/assign`, {
 			assignTo,
 		}),
-	transferAdminAcl: (
-		mailboxId: string,
-		acl: { owners: string[]; members?: string[] },
-	) =>
-		put<Mailbox>(
-			`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/acl`,
-			acl,
-		),
 	deleteAdminMailbox: (mailboxId: string) =>
 		del<void>(`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}`),
 	createAdminInvite: (body: {
@@ -316,15 +324,23 @@ const api = {
 			expiresAt: string;
 			status: string;
 		}>(`/api/v1/invites/${encodeURIComponent(token)}`),
+	/** Mails a 6-digit code to the invited address. */
+	sendInviteCode: (token: string) =>
+		post<{ ok: boolean; sentTo: string; devCode?: string }>(
+			`/api/v1/invites/${encodeURIComponent(token)}/otp`,
+		),
+	/**
+	 * Signed in: `code` joins the invite to this account. Signed out: creates
+	 * a new account with `password` and sets the session cookie.
+	 */
 	acceptInvite: (
 		token: string,
-		body: { password: string; displayName?: string },
+		body: { code: string; password?: string; displayName?: string },
 	) =>
 		post<{
 			mailboxId: string;
 			userId: string;
-			token: string;
-			expiresAt: string;
+			email?: string;
 		}>(`/api/v1/invites/${encodeURIComponent(token)}/accept`, body),
 	passwordLogin: (email: string, password: string) =>
 		post<{ token: string; expiresAt: string; email: string | null }>(
@@ -351,7 +367,8 @@ const api = {
 			expiresAt?: string;
 			email?: string | null;
 		}>("/api/v1/auth/password/reset", body),
-	passwordLogout: () => post<{ ok: boolean }>("/api/v1/auth/password/logout"),
+	/** Revokes this session and clears the session cookie. */
+	logout: () => post<{ ok: boolean }>("/api/v1/auth/logout"),
 
 	// Sharing invite (owner)
 	createMailboxInvite: (
@@ -367,6 +384,28 @@ const api = {
 			body,
 		),
 
+	listMailboxInvites: (mailboxId: string) =>
+		get<MailboxInviteRow[]>(
+			`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/invites`,
+		),
+	/** `inviteId` is the invite's `id` from the list. */
+	revokeMailboxInvite: (inviteId: string) =>
+		post<unknown>(`/api/v1/admin/invites/${encodeURIComponent(inviteId)}/revoke`),
+
+	// Members
+	listMailboxMembers: (mailboxId: string) =>
+		get<MailboxMember[]>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/members`),
+	setMailboxMemberRole: (mailboxId: string, userId: string, role: MailboxRole) =>
+		patch<{ ok: boolean }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/members/${encodeURIComponent(userId)}`,
+			{ role },
+		),
+	/** Owners remove anyone; removing yourself leaves the mailbox. */
+	removeMailboxMember: (mailboxId: string, userId: string) =>
+		del<{ ok: boolean }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/members/${encodeURIComponent(userId)}`,
+		),
+
 	// Emails
 	listEmails: (mailboxId: string, params: Record<string, string>, opts?: { signal?: AbortSignal }) =>
 		get<EmailListResponse | Email[]>(`/api/v1/mailboxes/${mailboxId}/emails`, { params, signal: opts?.signal }),
@@ -376,8 +415,11 @@ const api = {
 		get<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, { signal: opts?.signal }),
 	updateEmail: (mailboxId: string, id: string, data: unknown) =>
 		put<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, data),
+	/** Moves to Trash; permanent when the email is already in Trash or Drafts. */
 	deleteEmail: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`),
+	emptyTrash: (mailboxId: string) =>
+		post<{ deleted: number }>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/folders/trash/empty`),
 	moveEmail: (
 		mailboxId: string,
 		id: string,
@@ -708,6 +750,7 @@ const api = {
 		username?: string;
 		password?: string;
 		displayName?: string;
+		backupEmail?: string;
 		client?: "web" | "ios" | "android";
 		returnUrl?: string;
 	}) =>
@@ -720,6 +763,17 @@ const api = {
 				...(params.domain ? { domain: params.domain } : {}),
 			},
 		}),
+
+	getDomainService: (domain: string) =>
+		get<DomainService>(`/api/v1/billing/domains/${encodeURIComponent(domain)}/service`),
+
+	/** Stripe's billing portal for the domain's subscription (card, invoices, cancel). */
+	openBillingPortal: (domain: string) =>
+		post<{ url: string }>(`/api/v1/billing/domains/${encodeURIComponent(domain)}/portal`),
+
+	/** Keep a subscription that is set to end, or start a new one for an ended domain. */
+	renewDomain: (domain: string) =>
+		post<RenewDomainResponse>(`/api/v1/billing/domains/${encodeURIComponent(domain)}/renew`, { client: "web" }),
 
 	// Email Data Export Engine
 	exportMailbox: (mailboxId: string) =>
@@ -760,7 +814,7 @@ const api = {
 			{ locked },
 		),
 
-	// Masked Email Aliases
+	// Private emails (aliases on the mailbox's own domain)
 	listAliases: (mailboxId: string, options?: RequestOptions) =>
 		get<{ aliases: MaskedAlias[] }>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases`,
@@ -770,8 +824,7 @@ const api = {
 	createAlias: (
 		mailboxId: string,
 		body: {
-			baseDomain?: string;
-			label?: string;
+			label?: string | null;
 			expiresAt?: string | null;
 			pausedAction?: "drop" | "reject";
 		},

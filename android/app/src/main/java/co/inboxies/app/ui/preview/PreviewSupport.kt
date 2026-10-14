@@ -2,10 +2,13 @@ package co.inboxies.app.ui.preview
 
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
+import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
+import co.inboxies.app.models.InvitePublic
+import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxAcl
 import co.inboxies.app.models.MailboxSettings
@@ -14,12 +17,16 @@ import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.services.DatabaseService
 import java.net.URI
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * Shared DEBUG fixtures for emulator previews and Compose `@Preview`.
  * Parallel to iOS `PreviewSupport.swift`.
  */
 object PreviewSupport {
+    private const val OFFLINE_MESSAGE = "The Internet connection appears to be offline."
+
     /** Fixture domain derived from [BuildConfig.DEFAULT_API_BASE]; never hardcodes a product host. */
     fun mailDomain(): String {
         val host = runCatching { URI(BuildConfig.DEFAULT_API_BASE).host }.getOrNull()?.lowercase()
@@ -40,8 +47,43 @@ object PreviewSupport {
         )
     }
 
+    /**
+     * Subscription fixtures for the service-ended previews: ended 9 days ago with a
+     * registrar renew-by deadline 21 days out, or (ending) set to cancel in 6 days.
+     */
+    fun domainServiceFixture(mode: PreviewMode, domain: String = mailDomain()): DomainService? {
+        val now = Instant.now()
+        fun iso(days: Long) = now.plus(days, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS).toString()
+        return when (mode) {
+            PreviewMode.ServiceEnded, PreviewMode.ServiceEndedMember, PreviewMode.DomainDnsEnded -> DomainService(
+                domain = domain,
+                status = DomainService.STATUS_ENDED,
+                endedAt = iso(-9),
+                registrarManaged = true,
+                registrationExpiresAt = iso(-19),
+                renewBy = iso(21),
+                daysLeftToRenew = 21,
+                canRenew = true,
+                canManage = mode != PreviewMode.ServiceEndedMember,
+                billed = true,
+            )
+            PreviewMode.ServiceEnding -> DomainService(
+                domain = domain,
+                status = DomainService.STATUS_ENDING,
+                endsAt = iso(6),
+                registrarManaged = true,
+                registrationExpiresAt = iso(120),
+                canRenew = true,
+                canManage = true,
+                billed = true,
+            )
+            else -> null
+        }
+    }
+
     fun applyMailboxPreview(app: AppModel, mode: PreviewMode) {
         val you = addr("you")
+        val service = domainServiceFixture(mode)
         val mailbox = Mailbox(
             id = "mb-preview",
             email = you,
@@ -50,7 +92,12 @@ object PreviewSupport {
                 fromName = "Alex Rivera",
                 signature = SignatureSettings(enabled = true, text = "Alex"),
             ),
+            readOnly = service?.isEnded,
+            service = service,
         )
+        val serviceAdmin = service?.canManage == true
+        val administeredDomains = if (serviceAdmin) listOf(mailbox.domain) else emptyList()
+        val domainServices = service?.let { mapOf(mailbox.domain to it) } ?: emptyMap()
         val folders = listOf(
             Folder(id = FolderIds.INBOX, name = "Inbox", unreadCount = 3),
             Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 1),
@@ -58,7 +105,9 @@ object PreviewSupport {
             Folder(id = FolderIds.UPDATES, name = "Updates", unreadCount = 0),
             Folder(id = FolderIds.SENT, name = "Sent", unreadCount = 0),
             Folder(id = FolderIds.ARCHIVE, name = "Archive", unreadCount = 0),
+            Folder(id = FolderIds.SPAM, name = "Spam", unreadCount = 1),
             Folder(id = FolderIds.SCREENED_OUT, name = "Screened out", unreadCount = 0),
+            Folder(id = FolderIds.TRASH, name = "Trash", unreadCount = 0),
         )
         val allEmails = emails(you)
         DatabaseService.shared.upsertMailboxes(listOf(mailbox))
@@ -94,6 +143,20 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
+            PreviewMode.Spam -> {
+                val spam = allEmails.filter { it.folderId == FolderIds.SPAM }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = spam,
+                    selectedTab = HomeTab.Folder(FolderIds.SPAM),
+                    selectedEmail = spam.firstOrNull(),
+                    threadEmails = spam.take(1),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
             PreviewMode.ReplyLater -> {
                 val queued = allEmails.filter { it.replyLater }
                 app.applyDebugPreview(
@@ -106,6 +169,53 @@ object PreviewSupport {
                     threadEmails = emptyList(),
                     replyLaterCount = queued.size,
                     isAdmin = false,
+                )
+            }
+            PreviewMode.LoadFailed -> {
+                app.applyDebugPreview(
+                    mailboxes = emptyList(),
+                    selectedMailboxId = null,
+                    folders = emptyList(),
+                    emails = emptyList(),
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = 0,
+                    isAdmin = false,
+                    mailboxesLoadFailed = true,
+                    errorMessage = OFFLINE_MESSAGE,
+                )
+            }
+            PreviewMode.ListError -> {
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = emptyList(),
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = 0,
+                    isAdmin = false,
+                    emailListError = OFFLINE_MESSAGE,
+                )
+            }
+            PreviewMode.LoadMore -> {
+                // A full first page (fixtures + filler) with more on the "server": scrolling
+                // to the end shows the pulsing load-more row, which stays up (no network).
+                val inbox = allEmails.filter { it.folderId == FolderIds.INBOX } + fillerSeenEmails(you)
+                DatabaseService.shared.upsertEmails(mailbox.id, inbox)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = AppModel.orderNewThenSeen(inbox),
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                    hasMorePages = true,
                 )
             }
             else -> {
@@ -121,12 +231,28 @@ object PreviewSupport {
                     threadEmails = emptyList(),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
+                    administeredDomains = administeredDomains,
+                    domainServices = domainServices,
                 )
             }
         }
     }
 
-    fun applyAdminPreview(app: AppModel) {
+    fun invite() = InvitePublic(
+        mailboxId = addr("team"),
+        role = "member",
+        inviteeEmail = "alex@example.com",
+        inviteeName = "Alex",
+        expiresAt = "2026-12-01T00:00:00.000Z",
+        status = "pending",
+    )
+
+    fun identities() = listOf(
+        LinkedIdentity(type = "password", key = "user:preview", label = "Password (${addr("you")})"),
+        LinkedIdentity(type = "google", key = "sub:preview", label = "Google"),
+    )
+
+    fun applyAdminPreview(app: AppModel, domainServices: Map<String, DomainService> = emptyMap()) {
         app.applyDebugPreview(
             mailboxes = emptyList(),
             selectedMailboxId = null,
@@ -137,6 +263,8 @@ object PreviewSupport {
             threadEmails = emptyList(),
             replyLaterCount = 0,
             isAdmin = true,
+            administeredDomains = domainServices.keys.toList(),
+            domainServices = domainServices,
         )
     }
 
@@ -179,6 +307,39 @@ object PreviewSupport {
         )
     }
 
+    /** Older, read inbox rows that pad the load-more preview past one screen. */
+    private fun fillerSeenEmails(you: String): List<Email> {
+        val senders = listOf(
+            "Priya Natarajan" to "priya@example.com",
+            "Marco Bellini" to "marco@example.com",
+            "Hana Sato" to "hana@example.com",
+            "Theo Laurent" to "theo@example.com",
+        )
+        val subjects = listOf(
+            "Weekly metrics digest",
+            "Re: Offsite logistics",
+            "Contract redlines attached",
+            "Lunch next week?",
+            "Release notes draft",
+        )
+        return (1..22).map { i ->
+            val (name, address) = senders[i % senders.size]
+            Email(
+                id = "preview-older-$i",
+                folderId = FolderIds.INBOX,
+                subject = subjects[i % subjects.size],
+                sender = address,
+                senderName = name,
+                recipient = you,
+                date = "2026-08-%02dT10:00:00.000Z".format(28 - i),
+                read = true,
+                starred = false,
+                snippet = "Following up on the thread from last week.",
+                listSection = "seen",
+            )
+        }
+    }
+
     fun emails(you: String = addr("you")): List<Email> = listOf(
         Email(
             id = "preview-1",
@@ -190,7 +351,9 @@ object PreviewSupport {
             date = "2026-09-03T14:30:00.000Z",
             read = false,
             starred = false,
-            body = "<p>Can we move Thursday's sync to the morning instead?</p>",
+            // Remote pixel exercises the "Load images" bar in DEBUG previews.
+            body = "<p>Can we move Thursday's sync to the morning instead?</p>" +
+                "<img src=\"https://example.com/pixel.gif\" width=\"1\" height=\"1\" alt=\"\">",
             snippet = "Can we move Thursday's sync to the morning instead?",
             threadCount = 3,
             listSection = "new",
@@ -252,6 +415,20 @@ object PreviewSupport {
             body = "<p>Hi — we'd love to show you Acme. No pressure.</p>",
             snippet = "Hi — we'd love to show you Acme. No pressure.",
             folderName = "Screener",
+        ),
+        Email(
+            id = "preview-spam-1",
+            folderId = FolderIds.SPAM,
+            subject = "You've won a $500 gift card",
+            sender = "prizes@winner.example",
+            senderName = "Rewards Center",
+            recipient = you,
+            date = "2026-09-20T07:15:00.000Z",
+            read = false,
+            starred = false,
+            body = "<p>Claim your reward before it expires.</p>",
+            snippet = "Claim your reward before it expires.",
+            folderName = "Spam",
         ),
         Email(
             id = "preview-rl-2",

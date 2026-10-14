@@ -1,0 +1,18 @@
+---
+// The receipts Ask AI shows while it works (chapter 03), in one mono line.
+// src: MEDIA (chat still); FC#4.8 (receipts, "Thought for Ns")
+import { agentStrip } from "../../data/tour";
+---
+
+{/* A paragraph can't carry a name of its own, so the label is sr-only text instead of aria-label. */}
+<p class="agent-strip"><span class="sr-only">{agentStrip.label}: </span>{agentStrip.steps.join(" · ")}</p>
+
+<style>
+	.agent-strip {
+		font-family: var(--mono);
+		font-size: 0.6875rem;
+		line-height: 1.125rem;
+		color: var(--text-muted);
+		text-wrap: pretty;
+	}
+</style>

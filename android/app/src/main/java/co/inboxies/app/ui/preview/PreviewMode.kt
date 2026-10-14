@@ -23,14 +23,32 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     PasswordSignIn("passwordSignIn", "previewPasswordSignIn"),
     ForgotPassword("forgotPassword", "previewForgotPassword"),
     InviteAccept("inviteAccept", "previewInviteAccept"),
+    InviteAcceptSignedIn("inviteAcceptSignedIn", "previewInviteAcceptSignedIn"),
     SignInMethods("signInMethods", "previewSignInMethods"),
+    Members("members", "previewMembers"),
+    Sessions("sessions", "previewSessions"),
     Mailbox("mailbox", "previewMailbox"),
+    /** Inbox with more pages to load: the bottom skeleton row (iOS `-previewLoadMore`). */
+    LoadMore("loadMore", "previewLoadMore"),
+    /** Signed in, first mailbox load failed, nothing cached (iOS `-previewLoadFailed`). */
+    LoadFailed("loadFailed", "previewLoadFailed"),
+    /** Inbox fetch failed with an empty cache: error + Retry (iOS `-previewListError`). */
+    ListError("listError", "previewListError"),
     Screener("screener", "previewScreener"),
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
+    Spam("spam", "previewSpam"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),
+    /** Read-only inbox, domain admin: "Renew" banner with a registrar renew-by deadline. */
+    ServiceEnded("serviceEnded", "previewServiceEnded"),
+    /** Read-only inbox, regular member: "Ask an admin of … to renew." */
+    ServiceEndedMember("serviceEndedMember", "previewServiceEndedMember"),
+    /** Still active, set to end: admin-only "Keep subscription" notice. */
+    ServiceEnding("serviceEnding", "previewServiceEnding"),
+    /** DNS console for an ended domain: Subscription card, DNS edits frozen. */
+    DomainDnsEnded("domainDnsEnded", "previewDomainDnsEnded"),
     ;
 
     companion object {

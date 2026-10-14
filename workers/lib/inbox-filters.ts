@@ -200,6 +200,10 @@ export function inboxFiltersError(
 		if (!hasAction(rule)) {
 			return "Each filter needs at least one action (folder, skip auto-draft, or forward)";
 		}
+		// Sent and Drafts only hold mail this mailbox wrote.
+		if (rule.folderId === "sent" || rule.folderId === "draft") {
+			return "Filters can't file mail into Sent or Drafts";
+		}
 
 		if (rule.forwardTo) {
 			const dest = normalizeEmailAddress(rule.forwardTo);

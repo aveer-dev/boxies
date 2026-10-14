@@ -2,6 +2,7 @@ package co.inboxies.app.services
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -13,27 +14,27 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
-/** Session store — EncryptedSharedPreferences for the auth token. */
+/**
+ * Session store — EncryptedSharedPreferences for the auth token. The token is never
+ * written in plaintext: if encrypted storage can't be opened even after a reset, the
+ * session lives in memory only and the user signs in again on the next launch.
+ */
 class AuthStore(context: Context) {
-    private val prefs: SharedPreferences = try {
-        val masterKey = MasterKey.Builder(context.applicationContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            context.applicationContext,
-            "inboxies_secure_session",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    } catch (_: Exception) {
-        context.applicationContext.getSharedPreferences("inboxies_session_fallback", Context.MODE_PRIVATE)
+    /** Null when encrypted storage is unavailable (memory-only session). */
+    private val prefs: SharedPreferences? = SecureSessionStorage.open(context.applicationContext)
+
+    /** Memory-only session, used when [prefs] is null. */
+    private var memoryToken: String? = null
+    private var memoryEmail: String? = null
+
+    init {
+        migrateLegacyPlaintextSession(context.applicationContext)
     }
 
-    private val _token = MutableStateFlow(prefs.getString(TOKEN_KEY, null))
+    private val _token = MutableStateFlow(storedToken())
     val token: StateFlow<String?> = _token.asStateFlow()
 
-    private val _userEmail = MutableStateFlow(prefs.getString(EMAIL_KEY, null))
+    private val _userEmail = MutableStateFlow(storedEmail())
     val userEmail: StateFlow<String?> = _userEmail.asStateFlow()
 
     private val _isBusy = MutableStateFlow(false)
@@ -145,18 +146,21 @@ class AuthStore(context: Context) {
 
     /** Re-read session from disk — undoes a DEBUG [applyEphemeralSession] after a preview launch. */
     fun resyncFromStorage() {
-        _token.value = prefs.getString(TOKEN_KEY, null)
-        _userEmail.value = prefs.getString(EMAIL_KEY, null)
+        _token.value = storedToken()
+        _userEmail.value = storedEmail()
         ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
+    /** The server rejected this session: sign out and say why on the sign-in screen. */
+    fun signOutExpired() {
+        signOut()
+        _errorMessage.value = "Your session expired. Sign in again."
     }
 
     fun signOut() {
         _token.value = null
         _userEmail.value = null
-        prefs.edit {
-            remove(TOKEN_KEY)
-            remove(EMAIL_KEY)
-        }
+        clearStoredSession()
     }
 
     fun clearError() {
@@ -170,11 +174,51 @@ class AuthStore(context: Context) {
     private fun persist(token: String, email: String?) {
         _token.value = token
         _userEmail.value = email
-        prefs.edit {
+        writeStoredSession(token, email)
+        ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
+    private fun storedToken(): String? = prefs?.getString(TOKEN_KEY, null) ?: memoryToken
+
+    private fun storedEmail(): String? = prefs?.getString(EMAIL_KEY, null) ?: memoryEmail
+
+    private fun writeStoredSession(token: String, email: String?) {
+        val secure = prefs
+        if (secure == null) {
+            memoryToken = token
+            if (email != null) memoryEmail = email
+            return
+        }
+        secure.edit {
             putString(TOKEN_KEY, token)
             if (email != null) putString(EMAIL_KEY, email)
         }
-        ApiClient.shared.authTokenProvider = { _token.value }
+    }
+
+    private fun clearStoredSession() {
+        memoryToken = null
+        memoryEmail = null
+        prefs?.edit {
+            remove(TOKEN_KEY)
+            remove(EMAIL_KEY)
+        }
+    }
+
+    /**
+     * Older builds fell back to a plaintext prefs file when encryption failed. Move any
+     * session found there into encrypted storage (or memory, if that's still unavailable)
+     * and delete the file either way.
+     */
+    private fun migrateLegacyPlaintextSession(context: Context) {
+        runCatching {
+            val legacy = context.getSharedPreferences(LEGACY_PLAINTEXT_PREFS, Context.MODE_PRIVATE)
+            val legacyToken = legacy.getString(TOKEN_KEY, null)
+            if (!legacyToken.isNullOrEmpty() && storedToken().isNullOrEmpty()) {
+                writeStoredSession(legacyToken, legacy.getString(EMAIL_KEY, null))
+            }
+            legacy.edit(commit = true) { clear() }
+            context.deleteSharedPreferences(LEGACY_PLAINTEXT_PREFS)
+        }.onFailure { Log.w(TAG, "Couldn't clear legacy session prefs", it) }
     }
 
     init {
@@ -182,7 +226,71 @@ class AuthStore(context: Context) {
     }
 
     companion object {
+        private const val TAG = "AuthStore"
         private const val TOKEN_KEY = "mobileSessionToken"
         private const val EMAIL_KEY = "mobileUserEmail"
+        private const val LEGACY_PLAINTEXT_PREFS = "inboxies_session_fallback"
+    }
+}
+
+/** Opens the encrypted session prefs, recovering once from a corrupted keyset / master key. */
+internal object SecureSessionStorage {
+    private const val TAG = "SecureSessionStorage"
+    const val PREFS_NAME = "inboxies_secure_session"
+
+    fun open(context: Context): SharedPreferences? {
+        var failure: Exception? = null
+        // Keystore hiccups are often transient: retry once before touching anything.
+        repeat(2) {
+            try {
+                return create(context)
+            } catch (e: Exception) {
+                failure = e
+            }
+        }
+        val error = failure ?: return null
+        if (!isUnrecoverableKeyset(error)) {
+            // Don't wipe on an unknown error: that would sign the user out for good.
+            Log.e(TAG, "Encrypted session prefs unavailable; session is memory-only", error)
+            return null
+        }
+        // A keyset the Keystore can no longer decrypt (restore onto a new device, Keystore
+        // reset). The stored session is unrecoverable anyway: start over.
+        Log.w(TAG, "Encrypted session prefs unreadable; resetting", error)
+        runCatching { context.deleteSharedPreferences(PREFS_NAME) }
+        runCatching {
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                .deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+        }
+        return try {
+            create(context)
+        } catch (second: Exception) {
+            Log.e(TAG, "Encrypted session prefs unavailable; session is memory-only", second)
+            null
+        }
+    }
+
+    /** Decrypt / keyset corruption anywhere in the cause chain (vs. a transient failure). */
+    internal fun isUnrecoverableKeyset(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is java.security.GeneralSecurityException) return true // incl. AEADBadTagException
+            if (current.javaClass.name.endsWith("InvalidProtocolBufferException")) return true
+            current = current.cause.takeIf { it !== current }
+        }
+        return false
+    }
+
+    private fun create(context: Context): SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        return EncryptedSharedPreferences.create(
+            context,
+            PREFS_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
     }
 }

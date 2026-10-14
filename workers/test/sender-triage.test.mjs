@@ -11,6 +11,7 @@ import {
 	isVouchedSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
+	senderLessonForMove,
 	screenerSettingsError,
 } from "../lib/sender-triage.ts";
 import { shouldFallbackToInbox } from "../lib/classify-email.ts";
@@ -57,7 +58,8 @@ const allowed = (sender, destination_folder_id = null) => ({
 	assert.equal(result.triageAction, "unknown");
 	assert.equal(result.skipPush, true);
 	assert.equal(result.skipAutoDraft, true);
-	assert.equal(result.skipForward, true);
+	// Forwarding still applies to Screener mail (the forwarder drops spam/spoofs).
+	assert.equal(result.skipForward, false);
 	assert.equal(result.skipAutoReply, true);
 }
 
@@ -207,6 +209,55 @@ const allowed = (sender, destination_folder_id = null) => ({
 	});
 	assert.equal(result.folderId, "trash");
 	assert.equal(result.triageAction, "disabled");
+}
+
+// ── Rejected senders stay out with Screener off (to Spam) ─────────
+{
+	const rejected = { sender: "spammer@x.com", status: "rejected", destination_folder_id: null, decided_at: "", updated_at: "" };
+	const off = resolveInboundFolder({
+		classification: ham,
+		triage: rejected,
+		filterHit: { ruleId: "a", folderId: "inbox", skipAutoDraft: false },
+		screenerEnabled: false,
+		preferenceFolderId: "inbox",
+	});
+	assert.equal(off.folderId, "spam", "a filter or preference can't pull a reported sender back in");
+	assert.equal(off.triageAction, "rejected");
+	assert.equal(off.skipPush, true);
+	assert.equal(off.skipAutoReply, true);
+	assert.equal(off.skipForward, true);
+	const on = resolveInboundFolder({ classification: ham, triage: rejected, filterHit: null, screenerEnabled: true });
+	assert.equal(on.folderId, "screened_out");
+}
+
+// ── What a move teaches about the sender ──────────────────────────
+{
+	const base = { mailboxId: "ada@inboxies.email" };
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "Spammer <SPAM@x.com>", fromFolderId: "inbox", toFolderId: "spam" }),
+		{ kind: "reject", sender: "spam@x.com" },
+		"Report spam rejects the sender",
+	);
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "news@x.com", fromFolderId: "spam", toFolderId: "promotions" }),
+		{ kind: "allow", sender: "news@x.com", destination: "promotions" },
+		"Not spam to a purpose box allows and files there",
+	);
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "news@x.com", fromFolderId: "spam", toFolderId: "archive" }),
+		{ kind: "allow", sender: "news@x.com", destination: null },
+		"Not spam elsewhere allows without a default box",
+	);
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "news@x.com", fromFolderId: "inbox", toFolderId: "updates" }),
+		{ kind: "preference", sender: "news@x.com", destination: "updates" },
+	);
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "Ada+notes@Inboxies.Email", fromFolderId: "sent", toFolderId: "spam" }),
+		{ kind: "none" },
+		"your own address is never rejected",
+	);
+	assert.deepEqual(senderLessonForMove({ ...base, sender: null, fromFolderId: "inbox", toFolderId: "spam" }), { kind: "none" });
 }
 
 // ── Destination helper ────────────────────────────────────────────

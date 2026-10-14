@@ -6,6 +6,144 @@ struct Mailbox: Identifiable, Codable, Hashable {
     let name: String
     var settings: MailboxSettings?
     var canManage: Bool?
+    /// `owner` or `member` for the signed-in user.
+    var role: String?
+    /// The domain's subscription ended: the mailbox can be read and exported, not changed.
+    var readOnly: Bool?
+    /// Billing state of the mailbox's domain (detail GET only; nil without Inboxies billing).
+    var service: DomainService?
+
+    var isReadOnly: Bool { readOnly == true }
+
+    var domain: String {
+        email.split(separator: "@").last.map { String($0).lowercased() } ?? ""
+    }
+}
+
+extension Mailbox {
+    private enum CodingKeys: String, CodingKey {
+        case id, email, name, settings, canManage, role, readOnly, service
+    }
+
+    /// Lenient: older Workers omit `readOnly` / `service`, and a malformed service
+    /// summary must never cost the user the mailbox.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        email = try c.decode(String.self, forKey: .email)
+        name = try c.decode(String.self, forKey: .name)
+        settings = try c.decodeIfPresent(MailboxSettings.self, forKey: .settings)
+        canManage = try? c.decodeIfPresent(Bool.self, forKey: .canManage)
+        role = try? c.decodeIfPresent(String.self, forKey: .role)
+        readOnly = try? c.decodeIfPresent(Bool.self, forKey: .readOnly)
+        service = try? c.decodeIfPresent(DomainService.self, forKey: .service)
+    }
+}
+
+/// Where a paid domain's subscription stands: `GET /billing/domains/:domain/service`,
+/// or the `service` summary on a mailbox. Every field decodes leniently.
+struct DomainService: Codable, Hashable {
+    var domain: String
+    /// "active", "ending" (set to cancel, still running) or "ended" (read-only).
+    var status: String
+    var endsAt: String?
+    var endedAt: String?
+    /// Inboxies registered the domain, so it lapses unless renewed by `renewBy`.
+    var registrarManaged: Bool
+    var registrationExpiresAt: String?
+    var renewBy: String?
+    var daysLeftToRenew: Int?
+    /// Renewing (or keeping an ending subscription) is possible right now.
+    var canRenew: Bool
+    /// Service endpoint only: the caller is an admin of the domain.
+    var canManage: Bool?
+    var billed: Bool?
+
+    var isEnded: Bool { status == "ended" }
+    var isEnding: Bool { status == "ending" }
+    /// An admin can act on it now: renew an ended domain, or keep an ending one.
+    var canAdminRenew: Bool { canManage == true && canRenew }
+
+    var endsAtDate: Date? { Self.parseDate(endsAt) }
+    var renewByDate: Date? { Self.parseDate(renewBy) }
+
+    init(
+        domain: String,
+        status: String,
+        endsAt: String? = nil,
+        endedAt: String? = nil,
+        registrarManaged: Bool = false,
+        registrationExpiresAt: String? = nil,
+        renewBy: String? = nil,
+        daysLeftToRenew: Int? = nil,
+        canRenew: Bool = false,
+        canManage: Bool? = nil,
+        billed: Bool? = nil
+    ) {
+        self.domain = domain
+        self.status = status
+        self.endsAt = endsAt
+        self.endedAt = endedAt
+        self.registrarManaged = registrarManaged
+        self.registrationExpiresAt = registrationExpiresAt
+        self.renewBy = renewBy
+        self.daysLeftToRenew = daysLeftToRenew
+        self.canRenew = canRenew
+        self.canManage = canManage
+        self.billed = billed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        domain = (try? c.decodeIfPresent(String.self, forKey: .domain)) ?? ""
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "active"
+        endsAt = try? c.decodeIfPresent(String.self, forKey: .endsAt)
+        endedAt = try? c.decodeIfPresent(String.self, forKey: .endedAt)
+        registrarManaged = (try? c.decodeIfPresent(Bool.self, forKey: .registrarManaged)) ?? false
+        registrationExpiresAt = try? c.decodeIfPresent(String.self, forKey: .registrationExpiresAt)
+        renewBy = try? c.decodeIfPresent(String.self, forKey: .renewBy)
+        daysLeftToRenew = try? c.decodeIfPresent(Int.self, forKey: .daysLeftToRenew)
+        canRenew = (try? c.decodeIfPresent(Bool.self, forKey: .canRenew)) ?? false
+        canManage = try? c.decodeIfPresent(Bool.self, forKey: .canManage)
+        billed = try? c.decodeIfPresent(Bool.self, forKey: .billed)
+    }
+
+    static func parseDate(_ iso: String?) -> Date? {
+        guard let iso, !iso.isEmpty else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    }
+
+    /// "Oct 14, 2026": end dates and renewal deadlines are day-precise.
+    static func displayDate(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+/// `POST /billing/domains/:domain/renew`: the scheduled cancellation was taken back
+/// (`resumed`), a Checkout to pay (`checkoutUrl`), or a local-dev instant renewal.
+struct DomainRenewResponse: Decodable {
+    var resumed: Bool?
+    var renewed: Bool?
+    var mock: Bool?
+    var checkoutUrl: String?
+    var sessionId: String?
+    var service: DomainService?
+
+    private enum CodingKeys: String, CodingKey {
+        case resumed, renewed, mock, checkoutUrl, sessionId, service
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        resumed = try? c.decodeIfPresent(Bool.self, forKey: .resumed)
+        renewed = try? c.decodeIfPresent(Bool.self, forKey: .renewed)
+        mock = try? c.decodeIfPresent(Bool.self, forKey: .mock)
+        checkoutUrl = try? c.decodeIfPresent(String.self, forKey: .checkoutUrl)
+        sessionId = try? c.decodeIfPresent(String.self, forKey: .sessionId)
+        service = try? c.decodeIfPresent(DomainService.self, forKey: .service)
+    }
 }
 
 struct MailboxSettings: Codable, Hashable {
@@ -18,22 +156,73 @@ struct MailboxSettings: Codable, Hashable {
     var acl: MailboxAcl?
 }
 
+/// Read-only: the server derives it from mailbox members. Sharing changes go
+/// through members and invites, never through mailbox settings.
 struct MailboxAcl: Codable, Hashable {
     var owners: [String]?
     var members: [String]?
 }
 
-struct AccountSummary: Codable, Identifiable, Hashable {
-    var id: String
+struct MailboxMember: Codable, Identifiable, Hashable {
+    var userId: String
     var email: String
     var name: String?
+    var role: String
+    var you: Bool?
+
+    var id: String { userId }
+    var isOwner: Bool { role == "owner" }
+}
+
+struct MailboxInviteRow: Codable, Identifiable, Hashable {
+    var id: String
+    var mailboxId: String
+    var role: String
+    var inviteeEmail: String
+    var inviteeName: String?
+    var expiresAt: String
+    var status: String
+    var createdAt: String?
+}
+
+struct RecoveryEmailStatus: Codable, Hashable {
+    var email: String?
+    var verified: Bool
+    var devCode: String?
+}
+
+struct AccountSession: Codable, Identifiable, Hashable {
+    var id: String
+    var label: String?
+    var scope: String?
+    var userAgent: String?
+    var ipAddress: String?
+    var createdAt: String
+    var lastActiveAt: String
+    var expiresAt: String
+    var current: Bool
+}
+
+struct RevokeSessionsResponse: Codable {
+    var ok: Bool
+    var revoked: Int?
+}
+
+/// A scoped session (private emails only) for the AutoFill extension.
+struct ScopedSessionResponse: Codable {
+    var id: String
+    var token: String
+    var expiresAt: String
+    var label: String?
 }
 
 struct MeResponse: Codable {
+    var userId: String?
+    var name: String?
     var email: String?
     var sub: String?
     var linkedEmails: [String]?
-    var keys: [String]
+    var keys: [String]?
     var isAdmin: Bool?
     var administeredDomains: [String]?
     var mailDomain: String?
@@ -54,23 +243,6 @@ struct IdentitiesResponse: Codable {
     var identities: [LinkedIdentity]
     var keys: [String]?
     var linkedEmails: [String]?
-}
-
-struct IdentityLinkCodeResponse: Codable {
-    var code: String
-    var emails: [String]?
-    var principals: [String]?
-    var accountId: String?
-    var expiresAt: String
-}
-
-struct RedeemIdentityLinkResponse: Codable {
-    var ok: Bool
-    var accountId: String?
-    var linkedEmails: [String]?
-    var keys: [String]?
-    var isAdmin: Bool
-    var identities: [LinkedIdentity]?
 }
 
 struct AttachIdentityResponse: Codable {
@@ -332,6 +504,10 @@ struct Email: Identifiable, Codable, Hashable {
     /// Inbox New vs Seen (`new` | `seen`); derived from read state when absent.
     var listSection: String? = nil
     var aliasId: String? = nil
+    /// Private email this conversation came in on; replies go out from it.
+    var aliasEmail: String? = nil
+    /// False when that private email is paused, expired or deleted (detail payloads only).
+    var aliasActive: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -354,6 +530,8 @@ struct Email: Identifiable, Codable, Hashable {
         case replyLater = "reply_later"
         case replyLaterAt = "reply_later_at"
         case aliasId = "alias_id"
+        case aliasEmail = "alias_email"
+        case aliasActive = "alias_active"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -638,6 +816,57 @@ struct Email: Identifiable, Codable, Hashable {
         if let d = formatter.date(from: date) { return d }
         let fallback = ISO8601DateFormatter()
         return fallback.date(from: date)
+    }
+}
+
+extension Email {
+    /// Lenient decode: list, detail, cache and SSE `new_email` payloads do not all
+    /// carry every column (older Workers omit `reply_later`), and SQLite booleans
+    /// can arrive as 0/1. Lives in an extension so the memberwise init survives.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        threadId = try c.decodeIfPresent(String.self, forKey: .threadId)
+        folderId = try c.decodeIfPresent(String.self, forKey: .folderId)
+        subject = try c.decodeIfPresent(String.self, forKey: .subject) ?? ""
+        sender = try c.decodeIfPresent(String.self, forKey: .sender) ?? ""
+        senderName = try c.decodeIfPresent(String.self, forKey: .senderName)
+        recipient = try c.decodeIfPresent(String.self, forKey: .recipient) ?? ""
+        cc = try c.decodeIfPresent(String.self, forKey: .cc)
+        bcc = try c.decodeIfPresent(String.self, forKey: .bcc)
+        date = try c.decodeIfPresent(String.self, forKey: .date) ?? ""
+        read = c.decodeLenientBool(forKey: .read) ?? false
+        starred = c.decodeLenientBool(forKey: .starred) ?? false
+        replyLater = c.decodeLenientBool(forKey: .replyLater) ?? false
+        replyLaterAt = try c.decodeIfPresent(String.self, forKey: .replyLaterAt)
+        body = try c.decodeIfPresent(String.self, forKey: .body)
+        snippet = try c.decodeIfPresent(String.self, forKey: .snippet)
+        inReplyTo = try c.decodeIfPresent(String.self, forKey: .inReplyTo)
+        messageId = try c.decodeIfPresent(String.self, forKey: .messageId)
+        rawHeaders = try c.decodeIfPresent(String.self, forKey: .rawHeaders)
+        threadCount = try c.decodeIfPresent(Int.self, forKey: .threadCount)
+        threadUnreadCount = try c.decodeIfPresent(Int.self, forKey: .threadUnreadCount)
+        participants = try c.decodeIfPresent(String.self, forKey: .participants)
+        folderName = try c.decodeIfPresent(String.self, forKey: .folderName)
+        hasDraft = c.decodeLenientBool(forKey: .hasDraft)
+        needsReply = c.decodeLenientBool(forKey: .needsReply)
+        hasAttachment = c.decodeLenientBool(forKey: .hasAttachment)
+        attachments = try c.decodeIfPresent([Attachment].self, forKey: .attachments)
+        auth = try? c.decodeIfPresent(EmailAuth.self, forKey: .auth)
+        providerMessageId = try c.decodeIfPresent(String.self, forKey: .providerMessageId)
+        deliveryStatus = try c.decodeIfPresent(String.self, forKey: .deliveryStatus)
+        deliveryError = try c.decodeIfPresent(String.self, forKey: .deliveryError)
+        listSection = try c.decodeIfPresent(String.self, forKey: .listSection)
+        aliasId = try c.decodeIfPresent(String.self, forKey: .aliasId)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// `true`/`false` or SQLite-style `0`/`1`; nil when absent, null, or another type.
+    func decodeLenientBool(forKey key: Key) -> Bool? {
+        if let value = try? decodeIfPresent(Bool.self, forKey: key) { return value }
+        if let value = try? decodeIfPresent(Int.self, forKey: key) { return value != 0 }
+        return nil
     }
 }
 
@@ -1061,8 +1290,16 @@ struct InvitePublic: Codable {
 struct InviteAcceptResponse: Codable {
     var mailboxId: String
     var userId: String
-    var token: String
-    var expiresAt: String
+    /// New accounts only; accepting while signed in keeps the current session.
+    var token: String?
+    var expiresAt: String?
+    var email: String?
+}
+
+struct InviteCodeResponse: Codable {
+    var ok: Bool
+    var sentTo: String
+    var devCode: String?
 }
 
 struct PasswordLoginResponse: Codable {
@@ -1223,6 +1460,42 @@ struct DomainPricingBreakdown: Codable, Hashable {
     var currency: String
     var interval: String
     var lineItems: [DomainPricingLineItem]?
+
+    enum CodingKeys: String, CodingKey {
+        case domainWholesaleUsd, platformFeeUsd, totalAnnualUsd, currency, interval, lineItems
+        case domainFeeUsd, billingInterval
+    }
+
+    /// The Worker sends both `domainWholesaleUsd`/`interval` and the newer
+    /// `domainFeeUsd`/`billingInterval`; accept either.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let wholesale = try c.decodeIfPresent(Double.self, forKey: .domainWholesaleUsd)
+            ?? c.decodeIfPresent(Double.self, forKey: .domainFeeUsd) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.domainWholesaleUsd,
+                .init(codingPath: c.codingPath, debugDescription: "Missing domainWholesaleUsd / domainFeeUsd")
+            )
+        }
+        domainWholesaleUsd = wholesale
+        platformFeeUsd = try c.decode(Double.self, forKey: .platformFeeUsd)
+        totalAnnualUsd = try c.decode(Double.self, forKey: .totalAnnualUsd)
+        currency = try c.decodeIfPresent(String.self, forKey: .currency) ?? "USD"
+        interval = try c.decodeIfPresent(String.self, forKey: .interval)
+            ?? c.decodeIfPresent(String.self, forKey: .billingInterval)
+            ?? "year"
+        lineItems = try c.decodeIfPresent([DomainPricingLineItem].self, forKey: .lineItems)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(domainWholesaleUsd, forKey: .domainWholesaleUsd)
+        try c.encode(platformFeeUsd, forKey: .platformFeeUsd)
+        try c.encode(totalAnnualUsd, forKey: .totalAnnualUsd)
+        try c.encode(currency, forKey: .currency)
+        try c.encode(interval, forKey: .interval)
+        try c.encodeIfPresent(lineItems, forKey: .lineItems)
+    }
 }
 
 struct DomainAvailabilityResponse: Codable, Hashable {
@@ -1264,8 +1537,25 @@ struct ExportJobProgress: Codable, Hashable {
     var processedCount: Int
     var totalCount: Int
     var percent: Int
+
+    init(processedCount: Int, totalCount: Int, percent: Int) {
+        self.processedCount = processedCount
+        self.totalCount = totalCount
+        self.percent = percent
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        processedCount = (try? c.decodeIfPresent(Int.self, forKey: .processedCount)) ?? 0
+        totalCount = (try? c.decodeIfPresent(Int.self, forKey: .totalCount)) ?? 0
+        // Percent may be fractional; clamp for ProgressView.
+        let raw = (try? c.decodeIfPresent(Double.self, forKey: .percent)) ?? 0
+        percent = min(100, max(0, Int(raw.rounded())))
+    }
 }
 
+/// `GET /api/v1/exports/:id` and `POST …/export`. The Worker sends `id` plus a
+/// legacy `exportId`, and `domain` or `mailboxId` depending on the target.
 struct ExportJob: Codable, Identifiable, Hashable {
     var id: String
     var domain: String?
@@ -1278,6 +1568,48 @@ struct ExportJob: Codable, Identifiable, Hashable {
     var expiresAt: String?
     var createdAt: String?
     var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, exportId, domain, mailboxId, status, progress, totalEmails, fileSizeBytes
+        case downloadUrl, expiresAt, createdAt, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        guard let jobId = try c.decodeIfPresent(String.self, forKey: .id)
+            ?? c.decodeIfPresent(String.self, forKey: .exportId) else {
+            throw DecodingError.keyNotFound(
+                CodingKeys.id,
+                .init(codingPath: c.codingPath, debugDescription: "Missing id / exportId")
+            )
+        }
+        id = jobId
+        domain = try c.decodeIfPresent(String.self, forKey: .domain)
+        mailboxId = try c.decodeIfPresent(String.self, forKey: .mailboxId)
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "pending"
+        progress = try? c.decodeIfPresent(ExportJobProgress.self, forKey: .progress)
+        totalEmails = try? c.decodeIfPresent(Int.self, forKey: .totalEmails)
+        fileSizeBytes = try? c.decodeIfPresent(Int64.self, forKey: .fileSizeBytes)
+        downloadUrl = try c.decodeIfPresent(String.self, forKey: .downloadUrl)
+        expiresAt = try c.decodeIfPresent(String.self, forKey: .expiresAt)
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(domain, forKey: .domain)
+        try c.encodeIfPresent(mailboxId, forKey: .mailboxId)
+        try c.encode(status, forKey: .status)
+        try c.encodeIfPresent(progress, forKey: .progress)
+        try c.encodeIfPresent(totalEmails, forKey: .totalEmails)
+        try c.encodeIfPresent(fileSizeBytes, forKey: .fileSizeBytes)
+        try c.encodeIfPresent(downloadUrl, forKey: .downloadUrl)
+        try c.encodeIfPresent(expiresAt, forKey: .expiresAt)
+        try c.encodeIfPresent(createdAt, forKey: .createdAt)
+        try c.encodeIfPresent(error, forKey: .error)
+    }
 }
 
 struct DecommissionLastExport: Codable, Hashable {
@@ -1312,9 +1644,16 @@ struct DomainEppCodeResponse: Codable {
 }
 
 struct DomainTransferLockResponse: Codable {
-    var success: Bool
+    var success: Bool?
     var domain: String
     var locked: Bool
+}
+
+/// `DELETE /api/v1/me` — account deletion result.
+struct DeleteAccountResponse: Codable {
+    var ok: Bool?
+    var deletedMailboxes: [String]?
+    var leftMailboxes: [String]?
 }
 
 struct AdminDomainConnectResponse: Codable {
@@ -1322,68 +1661,59 @@ struct AdminDomainConnectResponse: Codable {
     var audit: EmailHealthAudit?
 }
 
+/// Private email: a random address on the mailbox's own domain that delivers
+/// into the mailbox. Replies in its conversations go out from it.
 struct MaskedAlias: Identifiable, Codable, Hashable {
     let id: String
-    var mailboxId: String?
     let aliasEmail: String
     var label: String?
-    var notes: String?
     var isActive: Bool
+    /// What inbound mail gets while paused: `drop` (silent) or `reject` (bounce).
     var pausedAction: String
     var expiresAt: String?
-    var forwardedCount: Int?
     var createdAt: String?
-    var updatedAt: String?
-
-    var active: Bool {
-        isActive
-    }
+    var statsReceived: Int
+    var statsBlocked: Int
 
     enum CodingKeys: String, CodingKey {
-        case id, label, notes
-        case mailboxId = "mailbox_id"
+        case id, label
         case aliasEmail = "alias_email"
         case isActive = "is_active"
         case pausedAction = "paused_action"
         case expiresAt = "expires_at"
-        case forwardedCount = "forwarded_count"
         case createdAt = "created_at"
-        case updatedAt = "updated_at"
+        case statsReceived = "stats_received"
+        case statsBlocked = "stats_blocked"
     }
 
     init(
         id: String,
-        mailboxId: String? = nil,
         aliasEmail: String,
         label: String? = nil,
-        notes: String? = nil,
         isActive: Bool = true,
         pausedAction: String = "drop",
         expiresAt: String? = nil,
-        forwardedCount: Int? = 0,
         createdAt: String? = nil,
-        updatedAt: String? = nil
+        statsReceived: Int = 0,
+        statsBlocked: Int = 0
     ) {
         self.id = id
-        self.mailboxId = mailboxId
         self.aliasEmail = aliasEmail
         self.label = label
-        self.notes = notes
         self.isActive = isActive
         self.pausedAction = pausedAction
         self.expiresAt = expiresAt
-        self.forwardedCount = forwardedCount
         self.createdAt = createdAt
-        self.updatedAt = updatedAt
+        self.statsReceived = statsReceived
+        self.statsBlocked = statsBlocked
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        mailboxId = try container.decodeIfPresent(String.self, forKey: .mailboxId)
         aliasEmail = try container.decode(String.self, forKey: .aliasEmail)
         label = try container.decodeIfPresent(String.self, forKey: .label)
-        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+        // SQLite rows send 0/1; tolerate a JSON bool too.
         if let boolVal = try? container.decode(Bool.self, forKey: .isActive) {
             isActive = boolVal
         } else if let intVal = try? container.decode(Int.self, forKey: .isActive) {
@@ -1393,9 +1723,48 @@ struct MaskedAlias: Identifiable, Codable, Hashable {
         }
         pausedAction = try container.decodeIfPresent(String.self, forKey: .pausedAction) ?? "drop"
         expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
-        forwardedCount = try container.decodeIfPresent(Int.self, forKey: .forwardedCount) ?? 0
         createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
-        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        statsReceived = (try? container.decodeIfPresent(Int.self, forKey: .statsReceived)) ?? 0
+        statsBlocked = (try? container.decodeIfPresent(Int.self, forKey: .statsBlocked)) ?? 0
+    }
+
+    var expiryDate: Date? {
+        guard let expiresAt, !expiresAt.isEmpty else { return nil }
+        return Self.parseISODate(expiresAt)
+    }
+
+    /// Past its expiry: mail is refused and replies are blocked even if not paused.
+    func isExpired(now: Date = Date()) -> Bool {
+        guard let expiryDate else { return false }
+        return expiryDate <= now
+    }
+
+    static func parseISODate(_ iso: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: iso) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: iso)
+    }
+}
+
+/// Expiry edit for a private email; `.never` clears it (sent as JSON null).
+enum AliasExpiry: Hashable {
+    case never
+    case at(Date)
+
+    /// ISO 8601 UTC with `Z`, the shape the API's `datetime()` check accepts.
+    var isoString: String? {
+        guard case .at(let date) = self else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    /// JSON body value: the ISO string, or null to clear.
+    var apiValue: Any {
+        if let isoString { return isoString }
+        return NSNull()
     }
 }
 

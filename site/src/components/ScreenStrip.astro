@@ -1,0 +1,195 @@
+---
+// A full-bleed row of bare screens (the run page's timeline breakout): drag,
+// scroll or use the arrow keys. Light · Dark re-skins only this band, its
+// background included, so a light screen never sits on a dark page.
+import type { StillName } from "../data/media";
+import PhoneFrame from "./PhoneFrame.astro";
+import SectionHead from "./SectionHead.astro";
+
+interface Props {
+	id: string;
+	title: string;
+	frames: { still: StillName; caption: [string, string] }[];
+	note: string;
+}
+
+const { id, title, frames, note } = Astro.props;
+---
+
+<section class="section--air strip-section" aria-labelledby={`${id}-title`}>
+	<div class="column-container">
+		<SectionHead id={`${id}-title`} title={title}>
+			<div slot="meta" class="strip-themes js-only" role="group" aria-label="Theme for these screens">
+				<button type="button" data-strip-theme="light" aria-pressed="false">Light</button>
+				<span class="strip-dot" aria-hidden="true">·</span>
+				<button type="button" data-strip-theme="dark" aria-pressed="false">Dark</button>
+			</div>
+		</SectionHead>
+	</div>
+	<div class="strip" id={id} data-strip>
+		<div class="strip-scroll" tabindex="0" role="region" aria-label="App screens. Scroll sideways or use the arrow keys.">
+			<ol class="strip-track">
+				{
+					frames.map((f) => (
+						<li class="strip-frame" data-reveal-on-scroll>
+							<PhoneFrame
+								media={{ still: f.still }}
+								bezel={false}
+								width="var(--shot-w)"
+								sizes="(min-width: 1440px) 264px, (min-width: 641px) 220px, 188px"
+							/>
+							<p class="strip-caption"><span class="cap-lead">{f.caption[0]}</span><span class="cap-dot" aria-hidden="true">·</span>{f.caption[1]}</p>
+						</li>
+					))
+				}
+			</ol>
+		</div>
+	</div>
+	<div class="column-container"><p class="strip-note">{note}</p></div>
+</section>
+
+<script>
+	import "../scripts/strip";
+</script>
+
+<style>
+	.strip {
+		width: 100vw;
+		margin-left: calc(50% - 50vw);
+		padding-block: 24px;
+		--shot-w: clamp(188px, 12vw + 96px, 264px);
+	}
+
+	/* The run timeline's scroller, with snapping and its own fade at the edges. */
+	.strip-scroll {
+		display: flex;
+		overflow-x: auto;
+		overflow-y: hidden;
+		overscroll-behavior-x: contain;
+		scrollbar-width: none;
+		user-select: none;
+		-webkit-user-select: none;
+		-webkit-touch-callout: none;
+		outline: none;
+		scroll-snap-type: x proximity;
+		scroll-padding-inline: max(24px, calc((100vw - 560px) / 2));
+		mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 64px), transparent);
+	}
+
+	.strip-scroll::-webkit-scrollbar {
+		display: none;
+	}
+
+	.strip-scroll:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: -2px;
+	}
+
+	/* The first frame lines up with the text column's left edge. */
+	.strip-track {
+		display: flex;
+		gap: 16px;
+		list-style: none;
+		padding: 8px 64px 16px max(24px, calc((100vw - 560px) / 2));
+		transition: opacity 200ms var(--ease-out);
+	}
+
+	/* The theme switch: out quickly, swap, back in. */
+	.strip.is-swapping .strip-track {
+		opacity: 0;
+		transition: opacity 120ms var(--ease-in);
+	}
+
+	.strip-frame {
+		flex: 0 0 var(--shot-w);
+		scroll-snap-align: start;
+	}
+
+	.strip-caption {
+		margin-top: 12px;
+		max-width: var(--shot-w);
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.cap-lead {
+		color: var(--text-primary);
+	}
+
+	.cap-dot {
+		margin: 0 4px;
+	}
+
+	.strip.is-dragging .strip-scroll {
+		cursor: grabbing;
+		/* Snapping would fight the drag; it settles again on release. */
+		scroll-snap-type: none;
+	}
+
+	.strip.is-dragging .strip-frame {
+		pointer-events: none;
+	}
+
+	.strip-themes {
+		display: inline-flex;
+		gap: 6px;
+	}
+
+	.strip-themes button {
+		padding: 0;
+		border: 0;
+		background: none;
+		font: inherit;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color 150ms var(--ease-out);
+	}
+
+	/* The site's separator dot, as in the header and the colophon. */
+	.strip-dot {
+		color: var(--text-subtle);
+	}
+
+	.strip-themes button:hover {
+		color: var(--text-primary);
+	}
+
+	.strip-themes button[aria-pressed="true"] {
+		color: var(--text-primary);
+		text-decoration: underline;
+		text-underline-offset: 4px;
+	}
+
+	@media (pointer: coarse) {
+		.strip-themes button {
+			position: relative;
+		}
+
+		.strip-themes button::after {
+			content: "";
+			position: absolute;
+			inset: -12px -6px;
+		}
+	}
+
+	.strip-note {
+		margin-top: 8px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	@media (max-width: 640px) {
+		.strip-track {
+			gap: 12px;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.strip-track,
+		.strip.is-swapping .strip-track {
+			transition: none;
+		}
+	}
+</style>

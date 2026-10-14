@@ -24,6 +24,7 @@ import {
 	useMailboxes,
 } from "~/queries/mailboxes";
 import { queryKeys } from "~/queries/keys";
+import { signOut } from "~/lib/sign-out";
 
 export function meta() {
 	return [{ title: "Agentic Inbox" }];
@@ -188,9 +189,7 @@ export default function HomeRoute() {
 							)}
 							<Button
 								variant="secondary"
-								onClick={() => {
-									window.location.href = "/cdn-cgi/access/logout";
-								}}
+								onClick={() => void signOut()}
 							>
 								Log out
 							</Button>
@@ -309,7 +308,7 @@ export default function HomeRoute() {
 										{isAdmin
 											? "Create the first address for this domain from Admin."
 											: isConfigured
-												? "No mailboxes you can access yet. Configured addresses are created on first visit if they do not already exist. An owner must share existing mailboxes with your Access email."
+												? "To join an existing mailbox, ask an owner to invite you, then open the link they email you."
 												: "Create a mailbox to start sending and receiving emails with your domain."}
 									</p>
 									{isAdmin ? (

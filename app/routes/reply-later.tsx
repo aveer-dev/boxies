@@ -8,15 +8,20 @@ import {
 	ClockCounterClockwiseIcon,
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { formatParticipants } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
+import { IconButton } from "~/components/IconButton";
 import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components/columns/ListParts";
+import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
+import { useEmailActions } from "~/hooks/useEmailActions";
+import { useEmailMenu } from "~/hooks/useEmailMenu";
+import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
-import { useUIStore } from "~/hooks/useUIStore";
+import { selectIsComposing, useUIStore } from "~/hooks/useUIStore";
 import { getSnippetText } from "~/lib/utils";
 import { useEmails, useUpdateEmail } from "~/queries/emails";
 import { queryKeys } from "~/queries/keys";
@@ -27,8 +32,9 @@ const PAGE_SIZE = 25;
 /** Column 3 for `/reply-later` (+ the reader for `:emailId`). */
 export default function ReplyLaterRoute() {
 	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
-	const { emailId, openEmail } = useMailNavigation();
-	const { isComposing, startCompose } = useUIStore();
+	const { emailId, openEmail, closeEmail } = useMailNavigation();
+	const startCompose = useUIStore((s) => s.startCompose);
+	const isComposing = useUIStore(selectIsComposing);
 	const [page, setPage] = useState(1);
 	const [focusIndex, setFocusIndex] = useState(0);
 
@@ -39,11 +45,26 @@ export default function ReplyLaterRoute() {
 		() => ({ reply_later: "true", page: String(page), limit: String(PAGE_SIZE) }),
 		[page],
 	);
-	const { data: emailData, isFetching: isRefreshing } = useEmails(mailboxId, params, {
-		refetchInterval: 30_000,
-	});
+	const {
+		data: emailData,
+		isFetching: isRefreshing,
+		error: loadError,
+		refetch,
+	} = useEmails(mailboxId, params, { refetchInterval: 30_000 });
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
+	const emailIdRef = useRef(emailId);
+	emailIdRef.current = emailId;
+	const closeEmailRef = useRef(closeEmail);
+	closeEmailRef.current = closeEmail;
+	const actions = useEmailActions(
+		mailboxId,
+		useCallback((email: Email) => {
+			if (emailIdRef.current === email.id) closeEmailRef.current();
+		}, []),
+	);
+	const openMenu = useEmailMenu(mailboxId, actions);
+	useListShortcuts(emails, actions);
 
 	useEffect(() => {
 		setPage(1);
@@ -79,20 +100,17 @@ export default function ReplyLaterRoute() {
 		<>
 			<ColumnPane
 				id="list"
+				revealKey={`${mailboxId}/reply-later`}
 				title="Reply Later"
 				counter={totalCount || undefined}
-				widthClassName="md:w-[400px]"
 				actions={
-					<button
-						type="button"
+					<IconButton
+						label="Refresh"
+						icon={ArrowsClockwiseIcon}
+						iconClassName={isRefreshing ? "animate-spin" : ""}
 						onClick={handleRefresh}
 						disabled={isRefreshing}
-						className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint disabled:opacity-60"
-						aria-label="Refresh"
-						title="Refresh"
-					>
-						<ArrowsClockwiseIcon size={15} className={isRefreshing ? "animate-spin" : ""} />
-					</button>
+					/>
 				}
 			>
 				{totalCount > 0 && (
@@ -114,6 +132,8 @@ export default function ReplyLaterRoute() {
 				)}
 				{isRefreshing && emails.length === 0 ? (
 					<ThreadListSkeleton />
+				) : loadError && emails.length === 0 ? (
+					<ListLoadError error={loadError} onRetry={() => void refetch()} />
 				) : emails.length === 0 ? (
 					<ListEmptyState
 						icon={<ClockCounterClockwiseIcon size={40} weight="thin" className="text-kumo-subtle" />}
@@ -122,9 +142,11 @@ export default function ReplyLaterRoute() {
 					/>
 				) : (
 					<>
-						{emails.map((email: Email) => (
+						{emails.map((email: Email, index) => (
 							<ThreadRow
 								key={email.id}
+								onMenu={(from) => openMenu(email, from)}
+								index={index}
 								email={email}
 								isSelected={emailId === email.id}
 								isUnread={false}
@@ -141,7 +163,8 @@ export default function ReplyLaterRoute() {
 								hoverActions={
 									<RowAction
 										label="Remove from Reply Later"
-										icon={<ClockCounterClockwiseIcon size={14} weight="fill" />}
+										icon={ClockCounterClockwiseIcon}
+										weight="fill"
 										onClick={() =>
 											updateEmail.mutate({
 												mailboxId,

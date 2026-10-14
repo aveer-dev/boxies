@@ -4,18 +4,74 @@ import SwiftSoup
 /// Native analogue of web `EmailIframe` DOMPurify options:
 /// HTML profile, forbid `<style>` tags, keep `target` on links.
 enum EmailHTMLSanitizer {
+    /// Policy once the reader taps "Load images" (same as web's opted-in policy).
+    /// No page script ever runs: height measuring is an app-world `WKUserScript`,
+    /// which CSP and `allowsContentJavaScript = false` do not block.
     static let contentSecurityPolicy =
-        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'"
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'"
+
+    /// Default policy: remote images stay blocked (tracking pixels, read receipts)
+    /// until the reader opts in; inline `data:` / `cid:` images still render.
+    static let remoteImagesBlockedPolicy =
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'none'"
 
     static let opaqueOrigin = URL(string: "https://inboxies.invalid/")!
 
-    struct SplitBody {
+    private static let remoteImageReference = try? NSRegularExpression(
+        pattern: #"(?:\bsrc|\bbackground)\s*=\s*["']?\s*(?:https:)?//|url\(\s*["']?\s*(?:https:)?//"#,
+        options: [.caseInsensitive]
+    )
+
+    /// True when sanitized HTML references images the default policy would block
+    /// (`https:` or protocol-relative, which resolves to https on the opaque origin).
+    static func containsRemoteImages(_ html: String) -> Bool {
+        guard let remoteImageReference, !html.isEmpty else { return false }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return remoteImageReference.firstMatch(in: html, range: range) != nil
+    }
+
+    struct SplitBody: Sendable, Equatable {
         let main: String
         let quote: String?
     }
 
+    /// Everything the body view needs from one sanitize pass. Plain strings only,
+    /// so it can cross from the background task to the main actor.
+    struct PreparedBody: Sendable, Equatable {
+        let main: String
+        let quote: String?
+        let hasRemoteImages: Bool
+    }
+
     static func prepare(_ html: String) -> SplitBody {
         splitQuotedReplies(sanitize(html))
+    }
+
+    /// One SwiftSoup pass per body, off the main actor. Results are cached by `key`
+    /// (email id + source fingerprint) so reopening a message or remounting the view is free.
+    /// Remote-image consent only swaps the CSP, so it is not part of the key.
+    static func prepareOffMain(_ html: String, key: String) async -> PreparedBody {
+        if let cached = PreparedBodyCache.shared.value(for: key) { return cached }
+        let prepared = await Task.detached(priority: .userInitiated) {
+            let split = prepare(html)
+            return PreparedBody(
+                main: split.main,
+                quote: split.quote,
+                hasRemoteImages: containsRemoteImages(split.main) || containsRemoteImages(split.quote ?? "")
+            )
+        }.value
+        PreparedBodyCache.shared.store(prepared, for: key)
+        return prepared
+    }
+
+    /// `sanitize` off the main actor (quoted-replies sheet).
+    static func sanitizeOffMain(_ html: String) async -> String {
+        await Task.detached(priority: .userInitiated) { sanitize(html) }.value
+    }
+
+    /// Stable cache key for a body: email id plus a cheap fingerprint of the source HTML.
+    static func cacheKey(emailId: String?, html: String) -> String {
+        "\(emailId ?? "-")|\(html.utf8.count)|\(html.hashValue)"
     }
 
     static func sanitize(_ html: String) -> String {
@@ -222,5 +278,30 @@ private extension Element {
             current = el.parent()
         }
         return nil
+    }
+}
+
+/// Small in-memory cache of prepared bodies. NSCache is thread-safe and drops
+/// entries under memory pressure.
+private final class PreparedBodyCache: @unchecked Sendable {
+    static let shared = PreparedBodyCache()
+
+    private final class Box {
+        let value: EmailHTMLSanitizer.PreparedBody
+        init(_ value: EmailHTMLSanitizer.PreparedBody) { self.value = value }
+    }
+
+    private let cache: NSCache<NSString, Box> = {
+        let cache = NSCache<NSString, Box>()
+        cache.countLimit = 64
+        return cache
+    }()
+
+    func value(for key: String) -> EmailHTMLSanitizer.PreparedBody? {
+        cache.object(forKey: key as NSString)?.value
+    }
+
+    func store(_ value: EmailHTMLSanitizer.PreparedBody, for key: String) {
+        cache.setObject(Box(value), forKey: key as NSString)
     }
 }

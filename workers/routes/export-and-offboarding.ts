@@ -4,15 +4,16 @@
 
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
-import type { Env } from "../types";
-import type { RequestPrincipal } from "../lib/mailbox-acl";
-import { authorizeMailbox } from "../lib/mailbox-acl";
+import { eq } from "drizzle-orm";
+import type { MailboxContext } from "../lib/mailbox";
+import { authDb, authorizeMailboxAccess } from "../auth/authz";
+import * as schema from "../auth/schema";
 import {
 	getExportJob,
 	runMailboxExportJob,
 	runDomainExportJob,
 	hasRecentExportForDomain,
-	exportDataKey,
+	type ExportJob,
 } from "../lib/email-exporter";
 import {
 	authorizeDomainAdmin,
@@ -24,8 +25,8 @@ import {
 import {
 	saveDomainMetadata,
 } from "../lib/domain-registry";
-
-type AppVariables = { principal?: RequestPrincipal };
+import { disableCatchAllRule } from "../lib/cloudflare-client";
+import { listAllR2Objects } from "../lib/r2-list";
 
 const DecommissionBody = z.object({
 	confirmDomain: z.string().trim().min(1, "Confirmation domain is required"),
@@ -36,32 +37,85 @@ const TransferLockBody = z.object({
 	locked: z.boolean(),
 });
 
+type ExportContext = Context<MailboxContext>;
+
+/**
+ * Wire shape every client decodes (web, iOS, Android): `id`, a progress object,
+ * and the target as `domain` / `mailboxId`. `exportId` is kept for older callers.
+ */
+function toExportResponse(job: ExportJob) {
+	return {
+		id: job.id,
+		exportId: job.id,
+		targetType: job.targetType,
+		targetId: job.targetId,
+		...(job.targetType === "domain" ? { domain: job.targetId } : { mailboxId: job.targetId }),
+		status: job.status,
+		progress: {
+			processedCount: job.processedEmails,
+			totalCount: job.totalEmails,
+			percent: job.progress,
+		},
+		totalEmails: job.totalEmails,
+		fileSizeBytes: job.fileSizeBytes,
+		downloadUrl: job.downloadUrl,
+		expiresAt: job.expiresAt,
+		createdAt: job.createdAt,
+		...(job.error ? { error: job.error } : {}),
+	};
+}
+
+/**
+ * Load an export job only if the caller may access its target: mailbox
+ * exports require mailbox ACL access, domain exports require domain admin.
+ * Returns null for both missing and unauthorized jobs so callers answer 404
+ * either way and export ids can't be probed.
+ */
+async function loadAuthorizedExportJob(
+	c: ExportContext,
+	exportId: string,
+): Promise<ExportJob | null> {
+	const job = await getExportJob(c.env.BUCKET, exportId);
+	if (!job) return null;
+
+	if (job.targetType === "mailbox") {
+		const auth = await authorizeMailboxAccess(authDb(c.env.AUTH_DB), c.get("principal")?.userId, job.targetId);
+		return auth.ok ? job : null;
+	}
+
+	if (job.targetType === "domain") {
+		const authz = await authorizeDomainAdmin(c, job.targetId, { offboarding: true });
+		return authz instanceof Response ? null : job;
+	}
+
+	return null;
+}
+
+/** Expired exports are gone: drop the archive and answer 410. Null while still valid. */
+async function expiredExportResponse(c: ExportContext, job: ExportJob): Promise<Response | null> {
+	if (new Date(job.expiresAt).getTime() >= Date.now()) return null;
+	if (job.downloadKey) await c.env.BUCKET.delete(job.downloadKey);
+	return c.json({ error: "Export has expired" }, 410);
+}
+
 export function registerExportAndOffboardingRoutes(
-	app: Hono<{ Bindings: Env; Variables: AppVariables }>,
+	app: Hono<MailboxContext>,
 ) {
 	/**
 	 * Export a single mailbox to an RFC 4155 .mbox archive.
 	 */
 	app.post("/api/v1/mailboxes/:id/export", async (c) => {
-		const principal = c.get("principal") as RequestPrincipal | undefined;
 		const mailboxId = c.req.param("id");
 
-		const auth = await authorizeMailbox(c.env.BUCKET, principal, mailboxId);
+		const auth = await authorizeMailboxAccess(authDb(c.env.AUTH_DB), c.get("principal")?.userId, mailboxId);
 		if (!auth.ok) {
 			return c.json({ error: auth.error || "Unauthorized" }, auth.status as any);
 		}
 
 		try {
-			const job = await runMailboxExportJob(c.env, mailboxId);
-			return c.json({
-				exportId: job.id,
-				status: job.status,
-				progress: job.progress,
-				totalEmails: job.totalEmails,
-				fileSizeBytes: job.fileSizeBytes,
-				downloadUrl: job.downloadUrl,
-				expiresAt: job.expiresAt,
-			});
+			// Export the mailbox that was authorized, not the raw path value.
+			const job = await runMailboxExportJob(c.env, auth.mailboxId);
+			return c.json(toExportResponse(job));
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Export failed";
 			return c.json({ error: msg }, 500);
@@ -72,22 +126,14 @@ export function registerExportAndOffboardingRoutes(
 	 * Export all mailboxes for an entire domain into a unified RFC 4155 .mbox archive.
 	 */
 	app.post("/api/v1/admin/domains/:domain/export", async (c) => {
-		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
 		if (authz instanceof Response) return authz;
 
 		const { domainMeta } = authz;
 
 		try {
 			const job = await runDomainExportJob(c.env, domainMeta.domain);
-			return c.json({
-				exportId: job.id,
-				status: job.status,
-				progress: job.progress,
-				totalEmails: job.totalEmails,
-				fileSizeBytes: job.fileSizeBytes,
-				downloadUrl: job.downloadUrl,
-				expiresAt: job.expiresAt,
-			});
+			return c.json(toExportResponse(job));
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Domain export failed";
 			return c.json({ error: msg }, 500);
@@ -98,14 +144,15 @@ export function registerExportAndOffboardingRoutes(
 	 * Query export job status and progress.
 	 */
 	app.get("/api/v1/exports/:exportId", async (c) => {
-		const exportId = c.req.param("exportId");
-		const job = await getExportJob(c.env.BUCKET, exportId);
+		const job = await loadAuthorizedExportJob(c, c.req.param("exportId"));
 
 		if (!job) {
 			return c.json({ error: "Export job not found" }, 404);
 		}
+		const expired = await expiredExportResponse(c, job);
+		if (expired) return expired;
 
-		return c.json(job);
+		return c.json(toExportResponse(job));
 	});
 
 	/**
@@ -113,16 +160,21 @@ export function registerExportAndOffboardingRoutes(
 	 */
 	app.get("/api/v1/exports/:exportId/download", async (c) => {
 		const exportId = c.req.param("exportId");
-		const job = await getExportJob(c.env.BUCKET, exportId);
+		const job = await loadAuthorizedExportJob(c, exportId);
+		if (job) {
+			const expired = await expiredExportResponse(c, job);
+			if (expired) return expired;
+		}
 
-		const dataKey = job?.downloadKey || exportDataKey(exportId, "mbox");
-		const fileObj = await c.env.BUCKET.get(dataKey);
+		// Only serve archives referenced by job metadata the caller is
+		// authorized for — never guess the R2 key from the id alone.
+		const fileObj = job?.downloadKey ? await c.env.BUCKET.get(job.downloadKey) : null;
 
-		if (!fileObj) {
+		if (!job || !fileObj) {
 			return c.json({ error: "Export archive file not found or expired" }, 404);
 		}
 
-		const filename = job?.filename || `inboxies-export-${exportId}.mbox`;
+		const filename = job.filename || `inboxies-export-${exportId}.mbox`;
 
 		return new Response(fileObj.body, {
 			headers: {
@@ -144,7 +196,7 @@ export function registerExportAndOffboardingRoutes(
 		const normalizedDomain = domainMeta.domain.toLowerCase();
 
 		// Count mailboxes for domain
-		const listed = await c.env.BUCKET.list({ prefix: "mailboxes/" });
+		const listed = { objects: await listAllR2Objects(c.env.BUCKET, "mailboxes/") };
 		const suffix = `@${normalizedDomain}.json`;
 		const activeMailboxes = listed.objects
 			.filter((o) => o.key.endsWith(suffix))
@@ -218,8 +270,20 @@ export function registerExportAndOffboardingRoutes(
 		}
 
 		let eppCode: string | undefined;
+		const warnings: string[] = [];
 
-		// 3. If registered via Cloudflare Registrar, unlock domain and fetch transfer EPP code
+		// 3. Stop Cloudflare delivering this zone's mail to us. Inbound also rejects
+		// offboarding domains, so mail stops even if this call fails.
+		let routingDisconnected = false;
+		try {
+			await disableCatchAllRule(c.env, domainMeta.zoneId);
+			routingDisconnected = true;
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : "unknown error";
+			warnings.push(`Could not disable the Email Routing catch-all: ${msg}`);
+		}
+
+		// 4. If registered via Cloudflare Registrar, unlock domain and fetch transfer EPP code
 		if (domainMeta.registration?.provider === "cloudflare_registrar") {
 			try {
 				await setDomainTransferLock(c.env, domainMeta.domain, false);
@@ -229,24 +293,33 @@ export function registerExportAndOffboardingRoutes(
 					domainMeta.registration.eppAuthCodeRequestedAt = new Date().toISOString();
 				}
 			} catch (regErr: unknown) {
-				// Non-fatal if registrar unlock encounters an issue in testing
+				const msg = regErr instanceof Error ? regErr.message : "unknown error";
+				warnings.push(`Could not unlock the domain for transfer: ${msg}`);
 			}
 		}
 
-		// 4. Update domain status to "offboarding"
+		// 5. Update domain status to "offboarding"
 		domainMeta.status = "offboarding";
 		domainMeta.emailRoutingEnabled = false;
 		domainMeta.updatedAt = new Date().toISOString();
 
 		await saveDomainMetadata(c.env.BUCKET, domainMeta);
+		// Admin rights end here; the owner keeps the offboarding routes.
+		await authDb(c.env.AUTH_DB)
+			.update(schema.domain)
+			.set({ status: "decommissioned" })
+			.where(eq(schema.domain.domain, domainMeta.domain));
 
 		return c.json({
 			success: true,
 			domain: domainMeta.domain,
 			status: "offboarding",
 			eppCode,
-			message:
-				"Email routing has been safely disconnected. You may now point your nameservers elsewhere or transfer your domain registration.",
+			routingDisconnected,
+			...(warnings.length > 0 ? { warnings } : {}),
+			message: routingDisconnected
+				? "Email routing has been disconnected. You may now point your nameservers elsewhere or transfer your domain registration."
+				: "Inboxies now rejects mail for this domain, but the Email Routing catch-all could not be disabled; check the warnings.",
 		});
 	});
 
@@ -254,7 +327,7 @@ export function registerExportAndOffboardingRoutes(
 	 * Retrieve EPP Transfer Authorization Code for a registered domain.
 	 */
 	app.get("/api/v1/admin/domains/:domain/epp-code", async (c) => {
-		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
 		if (authz instanceof Response) return authz;
 
 		const { domainMeta } = authz;
@@ -272,7 +345,7 @@ export function registerExportAndOffboardingRoutes(
 	 * Toggle domain transfer lock on Cloudflare Registrar.
 	 */
 	app.post("/api/v1/admin/domains/:domain/transfer-lock", async (c) => {
-		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
 		if (authz instanceof Response) return authz;
 
 		const { domainMeta } = authz;
@@ -290,7 +363,7 @@ export function registerExportAndOffboardingRoutes(
 				domainMeta.updatedAt = new Date().toISOString();
 				await saveDomainMetadata(c.env.BUCKET, domainMeta);
 			}
-			return c.json({ domain: domainMeta.domain, locked: updatedLock });
+			return c.json({ success: true, domain: domainMeta.domain, locked: updatedLock });
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Failed to update transfer lock";
 			return c.json({ error: msg }, 502);

@@ -41,12 +41,15 @@ import type {
 	ExportJob,
 	NewDnsRecord,
 } from "~/types";
+import { DomainSubscriptionCard } from "./DomainSubscriptionCard";
 
 interface AdminDnsSuiteProps {
 	configuredDomains: string[];
 	mailDomain: string;
 	initialDomain?: string;
 	justPurchased?: boolean;
+	/** Back from a renewal checkout. */
+	justRenewed?: boolean;
 }
 
 const RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX", "NS"] as const;
@@ -75,6 +78,7 @@ export function AdminDnsSuite({
 	mailDomain,
 	initialDomain,
 	justPurchased,
+	justRenewed,
 }: AdminDnsSuiteProps) {
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
@@ -529,6 +533,8 @@ export function AdminDnsSuite({
 				</div>
 			)}
 
+			<DomainSubscriptionCard domain={selectedDomain} justRenewed={justRenewed} />
+
 			{/* Domain Selector & Zone Overview */}
 			<div className="rounded-xl border border-kumo-line bg-kumo-base p-6">
 				<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-kumo-line">
@@ -546,7 +552,9 @@ export function AdminDnsSuite({
 							<div className="w-full sm:w-48">
 								<Select
 									value={selectedDomain}
-									onChange={(val) => setSelectedDomain(String(val))}
+									onValueChange={(val) => {
+										if (val) setSelectedDomain(String(val));
+									}}
 								>
 									{availableDomains.map((d) => (
 										<Select.Option key={d} value={d}>
@@ -656,7 +664,7 @@ export function AdminDnsSuite({
 						<h4 className="text-xs font-bold text-kumo-default uppercase tracking-wider">
 							Active Cloudflare Edge Services
 						</h4>
-						<span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+						<span className="text-3xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
 							Included by Default
 						</span>
 					</div>
@@ -666,7 +674,7 @@ export function AdminDnsSuite({
 								<GlobeIcon size={15} className="text-sky-500" />
 								Anycast DNS
 							</div>
-							<p className="text-[11px] text-kumo-subtle">
+							<p className="text-2xs text-kumo-subtle">
 								Fast DNS resolution routed to 330+ Cloudflare global points of
 								presence.
 							</p>
@@ -676,7 +684,7 @@ export function AdminDnsSuite({
 								<ShieldCheckIcon size={15} className="text-emerald-500" />
 								Universal SSL / TLS
 							</div>
-							<p className="text-[11px] text-kumo-subtle">
+							<p className="text-2xs text-kumo-subtle">
 								Automated edge encryption certificates auto-managed with zero
 								downtime.
 							</p>
@@ -686,7 +694,7 @@ export function AdminDnsSuite({
 								<CheckCircleIcon size={15} className="text-sky-500" />
 								Email Routing & DMARC
 							</div>
-							<p className="text-[11px] text-kumo-subtle">
+							<p className="text-2xs text-kumo-subtle">
 								Inbound catch-all routing with strict SPF, DKIM, and DMARC
 								alignment.
 							</p>
@@ -696,7 +704,7 @@ export function AdminDnsSuite({
 								<CloudIcon size={15} className="text-amber-500" />
 								DDoS & WAF Protection
 							</div>
-							<p className="text-[11px] text-kumo-subtle">
+							<p className="text-2xs text-kumo-subtle">
 								Orange Cloud edge protection mitigating layer 3/4 and layer 7
 								attacks.
 							</p>
@@ -861,7 +869,7 @@ export function AdminDnsSuite({
 										<td className="py-3 px-4">
 											{rec.proxiable ? (
 												<span
-													className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-sans ${
+													className={`inline-block px-1.5 py-0.5 rounded text-2xs font-sans ${
 														rec.proxied
 															? "bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
 															: "bg-kumo-fill text-kumo-subtle"
@@ -870,7 +878,7 @@ export function AdminDnsSuite({
 													{rec.proxied ? "Proxied" : "DNS Only"}
 												</span>
 											) : (
-												<span className="text-kumo-subtle font-sans text-[11px]">
+												<span className="text-kumo-subtle font-sans text-2xs">
 													DNS Only
 												</span>
 											)}
@@ -921,7 +929,9 @@ export function AdminDnsSuite({
 								</label>
 								<Select
 									value={recordType}
-									onChange={(val) => setRecordType(val as RecordType)}
+									onValueChange={(val) => {
+										if (val) setRecordType(val as RecordType);
+									}}
 								>
 									{RECORD_TYPES.map((t) => (
 										<Select.Option key={t} value={t}>
@@ -937,7 +947,9 @@ export function AdminDnsSuite({
 								</label>
 								<Select
 									value={String(recordTtl)}
-									onChange={(val) => setRecordTtl(Number(val))}
+									onValueChange={(val) => {
+										if (val) setRecordTtl(Number(val));
+									}}
 								>
 									{TTL_OPTIONS.map((opt) => (
 										<Select.Option key={opt.value} value={String(opt.value)}>
@@ -1155,7 +1167,7 @@ export function AdminDnsSuite({
 								<div className="rounded-xl border border-kumo-line bg-kumo-base p-4 space-y-3">
 									<div className="flex items-center justify-between text-xs text-kumo-default font-medium">
 										<span className="flex items-center gap-2">
-											<Loader size="xs" /> Processing mailboxes...
+											<Loader size="sm" /> Processing mailboxes...
 										</span>
 										<span>{exportJob.progress?.percent ?? 0}%</span>
 									</div>
@@ -1167,7 +1179,7 @@ export function AdminDnsSuite({
 											}}
 										/>
 									</div>
-									<p className="text-[11px] text-kumo-subtle">
+									<p className="text-2xs text-kumo-subtle">
 										Processed {exportJob.progress?.processedCount ?? 0} of{" "}
 										{exportJob.progress?.totalCount ?? 0} emails
 									</p>
@@ -1247,7 +1259,7 @@ export function AdminDnsSuite({
 											<CopyIcon size={16} />
 										</button>
 									</div>
-									<p className="text-[11px] text-kumo-subtle">
+									<p className="text-2xs text-kumo-subtle">
 										Provide this authorization code to your new domain registrar to complete the transfer.
 									</p>
 								</div>
@@ -1370,7 +1382,7 @@ export function AdminDnsSuite({
 									<div className="pt-2 border-t border-kumo-line">
 										{eppCode ? (
 											<div className="space-y-1">
-												<span className="text-[11px] text-kumo-subtle">
+												<span className="text-2xs text-kumo-subtle">
 													EPP Transfer Authorization Code:
 												</span>
 												<div className="flex items-center justify-between text-xs font-mono bg-kumo-base px-2.5 py-1.5 rounded border border-kumo-line">
@@ -1509,8 +1521,8 @@ export function AdminDnsSuite({
 												<div className="text-sm font-bold text-kumo-default">
 													${(newDomainAvailability.pricing?.totalAnnualUsd ?? newDomainAvailability.retailPriceUsd ?? 20).toFixed(2)} USD / year
 												</div>
-												<div className="text-[11px] text-kumo-subtle">
-													Domain wholesale (${(newDomainAvailability.pricing?.domainWholesaleUsd ?? 10.46).toFixed(2)}) + Platform, AI & Cloud Suite (${(newDomainAvailability.pricing?.platformFeeUsd ?? 9.54).toFixed(2)})
+												<div className="text-2xs text-kumo-subtle">
+													Domain wholesale (${(newDomainAvailability.pricing?.domainFeeUsd ?? 10.44).toFixed(2)}) + Platform, AI & Cloud Suite (${(newDomainAvailability.pricing?.platformFeeUsd ?? 9.56).toFixed(2)})
 												</div>
 											</div>
 											<div className="flex gap-2">

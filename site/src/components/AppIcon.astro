@@ -1,0 +1,32 @@
+---
+// The app icon as a squircle tile: the plane on the page colour with a hairline ring.
+import PlaneGlyph from "./PlaneGlyph.astro";
+
+interface Props {
+	size: number;
+}
+
+const { size } = Astro.props;
+---
+
+<span class="app-icon" style={`--s: ${size}px`} aria-hidden="true">
+	<PlaneGlyph class="app-icon-glyph" />
+</span>
+
+<style>
+	.app-icon {
+		width: var(--s);
+		height: var(--s);
+		border-radius: 22.37%;
+		background: var(--bg);
+		box-shadow: 0 0 0 1px var(--border-card);
+		display: grid;
+		place-items: center;
+		color: var(--text-primary);
+	}
+
+	.app-icon-glyph {
+		width: 62%;
+		height: 62%;
+	}
+</style>

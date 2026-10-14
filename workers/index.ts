@@ -4,6 +4,8 @@
 
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
+import { isDevRuntime } from "./lib/dev-runtime";
 import PostalMime from "postal-mime";
 import { z } from "zod";
 import { sendEmail } from "./email-sender";
@@ -40,55 +42,63 @@ import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
 } from "../shared/agent-conversations";
+import { getEmailAgent, purgeEmailAgents } from "./lib/email-agent";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
-import { triggerAutoDraft, type AgentResolver } from "./lib/auto-draft";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
-	applyIncomingAcl,
-	authorizeMailbox,
-	canManageAcl,
-	aclFromOwnerKeys,
-	filterMailboxesForPrincipal,
-	mailboxAccessPayload,
-	principalKeys,
-	type RequestPrincipal,
-} from "./lib/mailbox-acl";
-import { isDomainAdmin } from "./lib/domain-admin";
+	authDb,
+	canCreateMailbox,
+	listMailboxMembers,
+	isDomainAdmin,
+	listMailboxesForUser,
+	type AuthDb,
+} from "./auth/authz";
+import { deviceTokenOwnerKeys } from "./auth/principal";
 import {
-	expandPrincipalWithLinks,
-	autoLinkSubIfAdminEmail,
-	ensurePrincipalAccount,
-	resolveAclPrincipalsToAccounts,
-} from "./lib/identity-links";
-import {
-	registerAdminAndInviteRoutes,
-	resolveCreateGate,
-} from "./routes/admin-invites";
+	deleteMailboxRows,
+	mailboxPayload,
+	MailboxExistsError,
+	provisionMailbox,
+	stripAclFromSettings,
+} from "./auth/mailboxes";
+import type { MailboxRole } from "./auth/schema";
+import { registerAccountRoutes } from "./routes/account";
+import { registerAdminAndInviteRoutes } from "./routes/admin-invites";
 import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerDomainDnsRoutes } from "./routes/domain-dns";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
-import { listDomainsForPrincipal } from "./lib/domain-registry";
-import {
-	issueMobileSessionToken,
-	verifyAppleIdentityToken,
-} from "./lib/apple-auth";
-import { verifyGoogleIdentityToken } from "./lib/google-auth";
+import { getDomainMetadata } from "./lib/domain-registry";
+import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
 import { sendFcmPush } from "./lib/fcm";
 import {
 	aliasMetadataKey,
 	allowedMailboxSet,
 	canonicalMailboxId,
+	isAddressTaken,
+	isReservedLocalPart,
 	isDuplicateInbound,
 	mailboxMetadataKey,
 	routeInboundEnvelope,
 } from "./lib/mailbox-routing";
-import { isAliasExpired, type StoredAliasMetadata } from "./lib/alias-utils";
+import {
+	autoReplySender,
+	isAliasExpired,
+	isPrivateAliasMeta,
+	type AnyAliasMetadata,
+} from "./lib/alias-utils";
+import {
+	findInboundThreadId,
+	findThreadAliasId,
+	resolveOutboundSender,
+	type AliasSenderStub,
+	type InboundThreadStub,
+} from "./lib/alias-sender";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
@@ -124,6 +134,7 @@ import {
 	allowOutboundRecipients,
 	isScreenerDestination,
 	isVouchedSender,
+	senderLessonForMove,
 	normalizeTriageSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
@@ -205,6 +216,25 @@ function boolQuery(c: AppContext, key: string): boolean | undefined {
 // -- App & middleware -----------------------------------------------
 
 const app = new Hono<MailboxContext>();
+
+// Malformed client input is a 400, not a 500: zod parse failures, unparseable
+// JSON bodies, and invalid base64 attachments (atob).
+app.onError((err, c) => {
+	if (err instanceof HTTPException) return err.getResponse();
+	if (err instanceof z.ZodError) {
+		const issue = err.issues[0];
+		const where = issue?.path?.length ? `${issue.path.join(".")}: ` : "";
+		return c.json({ error: `${where}${issue?.message ?? "Invalid request body"}` }, 400);
+	}
+	if (err instanceof SyntaxError) {
+		return c.json({ error: "Request body must be valid JSON" }, 400);
+	}
+	if ((err as { name?: string })?.name === "InvalidCharacterError") {
+		return c.json({ error: "Attachment content must be valid base64" }, 400);
+	}
+	console.error("Unhandled API error:", err);
+	return c.json({ error: "Internal server error" }, 500);
+});
 app.use("/api/*", cors({
 	origin: (origin) => {
 		// Same-origin requests have no Origin header — allow them.
@@ -220,14 +250,7 @@ app.use("/api/*", cors({
 		return undefined;
 	},
 }));
-// Expand Apple/Google sub → linked Access / Domain Admin emails (R2).
-app.use("/api/*", async (c, next) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (principal?.sub && c.env.BUCKET) {
-		c.set("principal", await expandPrincipalWithLinks(c.env.BUCKET, principal));
-	}
-	await next();
-});
+// Also matches /api/v1/mailboxes/:mailboxId itself.
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
@@ -246,25 +269,7 @@ app.get("/api/v1/config", (c) => {
 	});
 });
 
-app.get("/api/v1/me", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal) return c.json({ error: "Unauthorized" }, 401);
-	const globalAdmin = await isDomainAdmin(c.env, principal);
-	const userDomains = await listDomainsForPrincipal(c.env.BUCKET, principal, globalAdmin);
-	const admin = globalAdmin || userDomains.length > 0;
-	const { mailDomain, domains } = mailDomainConfig(c.env);
-	return c.json({
-		email: principal.email ?? null,
-		sub: principal.sub ?? null,
-		linkedEmails: principal.linkedEmails ?? [],
-		keys: principalKeys(principal),
-		isAdmin: admin,
-		administeredDomains: userDomains.map((d) => d.domain),
-		mailDomain,
-		domains,
-	});
-});
-
+registerAccountRoutes(app);
 registerAdminAndInviteRoutes(app);
 registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);
@@ -274,31 +279,63 @@ registerAliasRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
+/**
+ * `settings.acl` for app builds that still render it. Display only: the keys
+ * are `email:` strings clients know how to show, and PUT ignores `acl`
+ * (membership changes go through invites and the members routes).
+ */
+async function compatAcl(db: AuthDb, mailboxId: string) {
+	const members = await listMailboxMembers(db, mailboxId);
+	return {
+		owners: members.filter((m) => m.role === "owner").map((m) => `email:${m.email}`),
+		members: members.filter((m) => m.role === "member").map((m) => `email:${m.email}`),
+	};
+}
+
+async function mailboxResponse(
+	env: Env,
+	db: AuthDb,
+	mailboxId: string,
+	role: MailboxRole | null,
+	settings?: Record<string, unknown>,
+) {
+	const payload = mailboxPayload(mailboxId, settings ?? (await loadMailboxSettingsRaw(env, mailboxId)), role);
+	return { ...payload, settings: { ...payload.settings, acl: await compatAcl(db, mailboxId) } };
+}
+
+/** Purge a mailbox's DO + R2 data, its EmailAgent conversations and its AUTH_DB rows. */
+export async function purgeMailboxAndAgents(env: Env, mailboxId: string): Promise<void> {
+	// Purge DO + R2 and remove metadata inside the DO RPC (closes inbound HEAD).
+	const stub = getMailboxStub(env, mailboxId);
+	const { conversationIds } = await stub.purgeMailbox(mailboxId);
+	await purgeEmailAgents(env, mailboxId, conversationIds);
+	await deleteMailboxRows(authDb(env.AUTH_DB), mailboxId);
+}
+
 app.get("/api/v1/mailboxes", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal) return c.json({ error: "Forbidden" }, 403);
-	const allMailboxes = await listMailboxes(c.env.BUCKET);
-	const allowed = await filterMailboxesForPrincipal(c.env.BUCKET, allMailboxes, principal);
-	return c.json(allowed.map((m) => ({ ...m, name: m.id })));
+	const principal = c.get("principal");
+	if (!principal) return c.json({ error: "Unauthorized" }, 401);
+	const rows = await listMailboxesForUser(authDb(c.env.AUTH_DB), principal.userId);
+	const suspended = await suspendedDomains(
+		c.env,
+		rows.map(({ mailboxId }) => mailboxId.slice(mailboxId.lastIndexOf("@") + 1)),
+	);
+	return c.json(
+		rows.map(({ mailboxId, role }) => ({
+			id: mailboxId,
+			email: mailboxId,
+			name: mailboxId,
+			role,
+			canManage: role === "owner",
+			// The domain's subscription ended: read and export only.
+			readOnly: suspended.has(mailboxId.slice(mailboxId.lastIndexOf("@") + 1)),
+		})),
+	);
 });
 
 app.post("/api/v1/mailboxes", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal || principalKeys(principal).length === 0) {
-		return c.json({ error: "Forbidden" }, 403);
-	}
-	const createGate = await resolveCreateGate(c.env, principal);
-	if (!createGate.allowed) {
-		return c.json(
-			{
-				error:
-					createGate.policy === "admin_only"
-						? "Only domain admins can create mailboxes"
-						: "Forbidden",
-			},
-			403,
-		);
-	}
+	const principal = c.get("principal");
+	if (!principal) return c.json({ error: "Unauthorized" }, 401);
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = canonicalMailboxId(rawEmail);
 	if (!email) return c.json({ error: "Invalid mailbox email address" }, 400);
@@ -306,130 +343,77 @@ app.post("/api/v1/mailboxes", async (c) => {
 	if (allowed.size > 0 && !allowed.has(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
 	}
-	const key = mailboxMetadataKey(email);
-	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
-	const defaultSettings = {
-		fromName: name,
-		forwarding: { enabled: false, email: "" },
-		signature: { enabled: false, text: "" },
-		autoReply: { enabled: false, subject: "", message: "" },
-		screener: { enabled: true },
-	};
-
-	const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-	const finalSettings = {
-		...defaultSettings,
-		...settings,
-		acl: aclFromOwnerKeys(ensured.ownerKeys),
-	};
-	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
-	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
-	await stub.reviveMailbox();
-	await stub.getFolders();
-	await seedWelcomeEmailsForMailbox(c.env, email, name);
-	return c.json(
-		{ ...mailboxAccessPayload(email, finalSettings, ensured.principal), name },
-		201,
-	);
+	const db = authDb(c.env.AUTH_DB);
+	// `admin_only` keeps the shared platform domains closed: addresses there
+	// then come from sign-up or an operator (/ops).
+	const platformDomains =
+		c.env.MAILBOX_CREATE_POLICY?.trim().toLowerCase() === "admin_only" ? [] : mailDomainConfig(c.env).domains;
+	const check = await canCreateMailbox(db, { userId: principal.userId, address: email, platformDomains });
+	if (!check.ok) return c.json({ error: check.error }, check.status);
+	try {
+		const stored = await provisionMailbox(c.env, {
+			mailboxId: check.mailboxId,
+			ownerUserId: principal.userId,
+			name,
+			settings: settings ? stripAclFromSettings(settings) : undefined,
+		});
+		return c.json({ ...(await mailboxResponse(c.env, db, check.mailboxId, "owner", stored)), name }, 201);
+	} catch (e) {
+		if (e instanceof MailboxExistsError) return c.json({ error: "Address is already in use" }, 409);
+		throw e;
+	}
 });
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const authz = await authorizeMailbox(
-		c.env.BUCKET,
-		c.get("principal") as RequestPrincipal | undefined,
-		c.req.param("mailboxId"),
-	);
-	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	return c.json(
-		mailboxAccessPayload(authz.mailboxId, authz.settings, authz.principal),
-	);
+	const db = authDb(c.env.AUTH_DB);
+	const domain = c.var.mailboxId.slice(c.var.mailboxId.lastIndexOf("@") + 1);
+	const [mailbox, summary, canManage] = await Promise.all([
+		mailboxResponse(c.env, db, c.var.mailboxId, c.var.mailboxRole),
+		mailboxServiceSummary(c.env, c.var.mailboxId),
+		isDomainAdmin(db, c.get("principal")?.userId ?? "", domain),
+	]);
+	// canManage: whether this user may renew (domain owner/admin).
+	const service = summary ? { ...summary, canManage } : null;
+	// readOnly follows the same D1 status the write gates check.
+	return c.json({ ...mailbox, service, readOnly: await isMailboxSuspended(c.env, c.var.mailboxId) });
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
-	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	const session = authz.principal;
-	if (!session) return c.json({ error: "Forbidden" }, 403);
+	const db = authDb(c.env.AUTH_DB);
+	const mailboxId = c.var.mailboxId;
+	const role = c.var.mailboxRole;
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
-	const existing = authz.settings;
-	const merged = mergeMailboxSettingsBlob(existing, settings);
-	const aclResult = applyIncomingAcl(existing, merged, settings, session);
-	if (!aclResult.ok) return c.json({ error: aclResult.error }, 400);
-	let next = aclResult.settings;
-	if (
-		settings &&
-		typeof settings === "object" &&
-		!Array.isArray(settings) &&
-		"acl" in settings &&
-		canManageAcl(existing, session) &&
-		next.acl &&
-		typeof next.acl === "object" &&
-		!Array.isArray(next.acl)
-	) {
-		const aclBlob = next.acl as Record<string, unknown>;
-		const resolved = await resolveAclPrincipalsToAccounts(c.env.BUCKET, {
-			owners: Array.isArray(aclBlob.owners)
-				? aclBlob.owners.filter((k): k is string => typeof k === "string")
-				: [],
-			members: Array.isArray(aclBlob.members)
-				? aclBlob.members.filter((k): k is string => typeof k === "string")
-				: [],
-		});
-		next = { ...next, acl: resolved };
+	const existing = await loadMailboxSettingsRaw(c.env, mailboxId);
+	// Clients send their cached `settings.acl` back on every save; membership
+	// lives in AUTH_DB, so it is ignored here (never a way to grant access).
+	const incoming =
+		settings && typeof settings === "object" && !Array.isArray(settings) ? stripAclFromSettings(settings) : {};
+	const next = stripAclFromSettings(mergeMailboxSettingsBlob(existing, incoming));
+	// Settings that send mail elsewhere or steer the agent are owner-only: a
+	// member could otherwise forward the mailbox to themselves and keep it after
+	// being removed. Clients PUT the whole blob, so compare against what's stored.
+	if (role !== "owner") {
+		const ownerOnlyKeys = ["forwarding", "autoReply", "filters", "agentSystemPrompt"] as const;
+		const changed = ownerOnlyKeys.filter(
+			(key) => JSON.stringify(existing[key] ?? null) !== JSON.stringify(next[key] ?? null),
+		);
+		if (changed.length > 0) {
+			return c.json({ error: `Only mailbox owners can change ${changed.join(", ")}` }, 403);
+		}
 	}
-	const automationError = automationSettingsError(
-		parseAutomationSettings(next),
-		authz.mailboxId,
-	);
+	const automationError = automationSettingsError(parseAutomationSettings(next), mailboxId);
 	if (automationError) return c.json({ error: automationError }, 400);
-	const filtersError = inboxFiltersError(parseInboxFilters(next), authz.mailboxId);
+	const filtersError = inboxFiltersError(parseInboxFilters(next), mailboxId);
 	if (filtersError) return c.json({ error: filtersError }, 400);
 	const screenerError = screenerSettingsError(next);
 	if (screenerError) return c.json({ error: screenerError }, 400);
-	await c.env.BUCKET.put(mailboxMetadataKey(authz.mailboxId), JSON.stringify(next));
-	return c.json(mailboxAccessPayload(authz.mailboxId, next, session));
+	await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
+	return c.json(await mailboxResponse(c.env, db, mailboxId, role, next));
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
-	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	if (!canManageAcl(authz.settings, authz.principal)) {
-		return c.json({ error: "Forbidden" }, 403);
-	}
-	const mailboxId = authz.mailboxId;
-
-	// Purge DO + R2 and remove metadata inside the DO RPC (closes inbound HEAD).
-	const stub = getMailboxStub(c.env, mailboxId);
-	const { conversationIds } = await stub.purgeMailbox(mailboxId);
-	const agentNames = new Set<string>([
-		mailboxId, // legacy single-chat EmailAgent name
-		...conversationIds.map((id) => agentInstanceName(mailboxId, id)),
-	]);
-	for (const name of agentNames) {
-		try {
-			const agentStub = c.env.EMAIL_AGENT.get(c.env.EMAIL_AGENT.idFromName(name));
-			// Prefer RPC; fall back to HTTP for agent stubs that only expose fetch.
-			const purgable = agentStub as {
-				purge?: () => Promise<unknown>;
-				fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response>;
-			};
-			if (typeof purgable.purge === "function") {
-				await purgable.purge();
-			} else {
-				await purgable.fetch(new Request("https://agents/purge", { method: "POST" }));
-			}
-		} catch (e) {
-			// Best-effort: conversation ids are already captured; chat storage
-			// orphans are lower impact than blocking mailbox delete.
-			console.error(
-				`EmailAgent purge failed for ${name}:`,
-				(e as Error).message,
-			);
-		}
-	}
-
+	if (c.var.mailboxRole !== "owner") return c.json({ error: "Forbidden" }, 403);
+	await purgeMailboxAndAgents(c.env, c.var.mailboxId);
 	return c.body(null, 204);
 });
 
@@ -487,36 +471,9 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const mailboxId = c.var.mailboxId;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
+	const { to, cc, bcc, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
 
 	const stub = c.var.mailboxStub;
-	const candidateFrom = (typeof from === "string" ? from : from?.email)?.toLowerCase();
-	let allowedSenders: string[] | undefined;
-	if (candidateFrom && candidateFrom !== mailboxId.toLowerCase()) {
-		const alias = await (stub as any).getAlias(candidateFrom);
-		if (alias && alias.is_active) {
-			allowedSenders = [candidateFrom];
-		}
-	}
-
-	let toStr: string, fromEmail: string, fromDomain: string;
-	try {
-		({ toStr, fromEmail, fromDomain } = validateSender(to, from, mailboxId, allowedSenders));
-	} catch (e) {
-		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
-		throw e;
-	}
-
-	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
-	const rateLimitError = await (stub as any).checkSendRateLimit();
-	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
-	try {
-		assertOutboundMessageSize({ html, text, attachments });
-	} catch (e) {
-		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
-		throw e;
-	}
-	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
 	let resolvedThreadId = thread_id;
 	if (!resolvedThreadId && (in_reply_to || (references && references.length > 0))) {
@@ -529,29 +486,74 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		}
 		resolvedThreadId = (await (stub as any).findThreadIdByReferences(refs)) || null;
 	}
+
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const sender = await resolveOutboundSender({
+		stub: aliasStub,
+		mailboxId,
+		requestedFrom: body.from,
+		threadAliasId: await findThreadAliasId(aliasStub, { threadId: resolvedThreadId }),
+	});
+	if (!sender.ok) {
+		return c.json({ error: sender.error, ...(sender.code ? { code: sender.code } : {}) }, sender.status);
+	}
+	const from = sender.from;
+
+	let toStr: string, fromEmail: string, fromDomain: string;
+	try {
+		({ toStr, fromEmail, fromDomain } = validateSender(
+			to,
+			from,
+			mailboxId,
+			sender.aliasId ? [sender.fromEmail] : undefined,
+		));
+	} catch (e) {
+		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
+		throw e;
+	}
+
+	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
+	// Validate before reserving a send slot, so a refused message is free.
+	try {
+		assertOutboundMessageSize({ html, text, attachments });
+	} catch (e) {
+		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
+		throw e;
+	}
+	const rateLimitError = await (stub as any).checkSendRateLimit();
+	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
+
 	if (!resolvedThreadId) {
 		resolvedThreadId = messageId;
 	}
 
-	await stub.createEmail(Folders.SENT, {
-		id: messageId, subject, sender: fromEmail,
-		sender_name: displayNameFromAddressField(from),
-		recipient: toStr,
-		cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
-		bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
-		date: new Date().toISOString(), body: html || text || "",
-		in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
-		thread_id: resolvedThreadId, message_id: outgoingMessageId,
-		delivery_status: "queued", delivery_error: null,
-		raw_headers: JSON.stringify([
-			{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
-			{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
-			...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
-			...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
-			{ key: "subject", value: subject }, { key: "date", value: new Date().toISOString() },
-			{ key: "message-id", value: `<${outgoingMessageId}>` },
-		]),
-	}, attachmentData);
+	try {
+		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+		await stub.createEmail(Folders.SENT, {
+			id: messageId, subject, sender: fromEmail,
+			sender_name: displayNameFromAddressField(from),
+			recipient: toStr,
+			cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
+			bcc: bcc ? (Array.isArray(bcc) ? bcc.join(", ") : bcc).toLowerCase() : null,
+			date: new Date().toISOString(), body: html || text || "",
+			in_reply_to: in_reply_to || null, email_references: references ? JSON.stringify(references) : null,
+			thread_id: resolvedThreadId, message_id: outgoingMessageId,
+			delivery_status: "queued", delivery_error: null,
+			alias_id: sender.aliasId,
+			raw_headers: JSON.stringify([
+				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
+				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
+				...(cc ? [{ key: "cc", value: Array.isArray(cc) ? cc.join(", ") : cc }] : []),
+				...(bcc ? [{ key: "bcc", value: Array.isArray(bcc) ? bcc.join(", ") : bcc }] : []),
+				{ key: "subject", value: subject }, { key: "date", value: new Date().toISOString() },
+				{ key: "message-id", value: `<${outgoingMessageId}>` },
+			]),
+		}, attachmentData);
+	} catch (e) {
+		// Not accepted, so it shouldn't count against the send quota.
+		await (stub as any).releaseSendSlot().catch(() => {});
+		throw e;
+	}
 
 	// Screener-lite: people you email bypass the review queue on reply.
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
@@ -595,6 +597,7 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 		const updated = await stub.updateDraft(draft_id, {
 			...draftFields,
 			thread_id: resolvedThreadId || draft_id,
+			source: null,
 		});
 		if (updated) {
 			await stub.deleteSiblingDrafts(draft_id, {
@@ -612,16 +615,24 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 		}
 	}
 
+	// A reply draft in a private-email thread carries the alias, so clients
+	// reopening it show the alias as From (the send path enforces it anyway).
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const draftAliasId = await findThreadAliasId(aliasStub, { threadId: resolvedThreadId });
+	const draftAlias = draftAliasId ? await aliasStub.getAlias(draftAliasId) : null;
+
 	const messageId = crypto.randomUUID();
 	if (!resolvedThreadId) {
 		resolvedThreadId = messageId;
 	}
 
 	await stub.createEmail(Folders.DRAFT, {
-		id: messageId, subject: draftFields.subject, sender: mailboxId.toLowerCase(),
+		id: messageId, subject: draftFields.subject,
+		sender: (draftAlias?.alias_email ?? mailboxId).toLowerCase(),
 		recipient: draftFields.recipient, cc: draftFields.cc, bcc: draftFields.bcc,
 		date: now, body, in_reply_to: in_reply_to || null, email_references: null,
 		thread_id: resolvedThreadId,
+		alias_id: draftAlias?.id ?? null,
 	}, []);
 	await stub.deleteSiblingDrafts(messageId, {
 		threadId: resolvedThreadId,
@@ -654,11 +665,26 @@ app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 
 app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	const id = c.req.param("id")!;
-	const attachments = await c.var.mailboxStub.deleteEmail(id);
-	if (attachments === null) return c.json({ error: "Not found" }, 404);
+	// Outside Trash this moves to Trash (restorable); from Trash/Drafts it is permanent.
+	const result = await (c.var.mailboxStub as any).trashOrDeleteEmail(id);
+	if (result === null) return c.json({ error: "Not found" }, 404);
 	return c.body(null, 204);
 });
 
+app.post("/api/v1/mailboxes/:mailboxId/folders/trash/empty", async (c: AppContext) => {
+	const deleted = await (c.var.mailboxStub as any).emptyTrash();
+	return c.json({ deleted });
+});
+
+/**
+ * Move a message. With `setSenderPreference`, the move also teaches the
+ * mailbox about the sender:
+ * - into Spam ("Report spam"): the sender is rejected (future mail is
+ *   screened out) and loses any purpose-box default;
+ * - out of Spam ("Not spam"): the sender is allowed, filed to the
+ *   destination when it's a purpose box;
+ * - between purpose boxes: the sender's default box changes.
+ */
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
 	const body = (await c.req.json()) as {
 		folderId: string;
@@ -668,20 +694,56 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	const emailId = c.req.param("id")!;
 	const stub = c.var.mailboxStub;
 
+	const before = setSenderPreference ? await stub.getEmail(emailId) : null;
 	const success = await stub.moveEmail(emailId, folderId);
-	if (!success) return c.json({ error: "Folder not found" }, 400);
+	if (!success) return c.json({ error: "Email or destination folder not found" }, 400);
 
 	if (!setSenderPreference) {
 		return c.json({ status: "moved" });
 	}
 
-	const email = await stub.getEmail(emailId);
-	if (!email?.sender) {
-		return c.json({ status: "moved" });
+	const lesson = senderLessonForMove({
+		sender: before?.sender,
+		mailboxId: c.var.mailboxId,
+		fromFolderId: before?.folder_id,
+		toFolderId: folderId,
+	});
+	if (lesson.kind === "none") return c.json({ status: "moved" });
+	const { sender } = lesson;
+	const displayName = before?.sender_name ?? null;
+
+	if (lesson.kind === "reject") {
+		const triage = await stub.upsertSenderTriage({
+			sender,
+			status: "rejected",
+			destination_folder_id: null,
+			display_name: displayName,
+		});
+		await stub.deleteSenderPreference(sender);
+		return c.json({ status: "moved", senderStatus: "rejected", triage });
+	}
+
+	if (lesson.kind === "allow") {
+		const triage = await stub.upsertSenderTriage({
+			sender,
+			status: "allowed",
+			destination_folder_id: lesson.destination,
+			display_name: displayName,
+		});
+		if (lesson.destination) {
+			await stub.upsertSenderPreference({
+				address: sender,
+				folderId: lesson.destination,
+				displayName,
+				source: "user",
+				refile: false,
+			});
+		}
+		return c.json({ status: "moved", senderStatus: "allowed", triage });
 	}
 
 	const upsertError = senderPreferenceUpsertError({
-		address: email.sender,
+		address: sender,
 		folderId,
 	});
 	if (upsertError) {
@@ -690,23 +752,20 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	}
 
 	const result = await stub.upsertSenderPreference({
-		address: email.sender,
+		address: sender,
 		folderId,
-		displayName: email.sender_name ?? null,
+		displayName,
 		source: "user",
 		refile: true,
 	});
-	const triageSender = normalizeTriageSender(email.sender);
-	if (triageSender) {
-		const triage = await (stub as any).getSenderTriage?.(triageSender);
-		if (triage?.status === "allowed") {
-			await (stub as any).upsertSenderTriage({
-				sender: triageSender,
-				status: "allowed",
-				destination_folder_id: folderId,
-				display_name: email.sender_name ?? triage.display_name ?? null,
-			});
-		}
+	const triage = await stub.getSenderTriage(sender);
+	if (triage?.status === "allowed") {
+		await stub.upsertSenderTriage({
+			sender,
+			status: "allowed",
+			destination_folder_id: folderId,
+			display_name: displayName ?? triage.display_name ?? null,
+		});
 	}
 	return c.json({
 		status: "moved",
@@ -848,7 +907,12 @@ app.get("/api/v1/mailboxes/:mailboxId/events", async (c: AppContext) => {
 app.post("/api/v1/mailboxes/:mailboxId/device-token", async (c: AppContext) => {
 	const { token, platform } = (await c.req.json()) as { token: string; platform?: string };
 	if (!token) return c.json({ error: "Missing token" }, 400);
-	await (c.var.mailboxStub as any).registerDeviceToken(token, platform || "ios");
+	const principal = c.get("principal");
+	await c.var.mailboxStub.registerDeviceToken(
+		token,
+		platform || "ios",
+		principal ? deviceTokenOwnerKeys(principal) : [],
+	);
 	return c.json({ status: "registered" });
 });
 
@@ -944,7 +1008,19 @@ app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 app.put("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
 	const f = await c.var.mailboxStub.updateFolder(c.req.param("id")!, name);
-	return f ? c.json(f) : c.json({ error: "Folder not found" }, 404);
+	if ("error" in f) {
+		switch (f.error) {
+			case "not_found":
+				return c.json({ error: "Folder not found" }, 404);
+			case "system":
+				return c.json({ error: "System folders can't be renamed" }, 400);
+			case "conflict":
+				return c.json({ error: "Folder with this name already exists" }, 409);
+			default:
+				return c.json({ error: "Folder name is required" }, 400);
+		}
+	}
+	return c.json(f);
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
@@ -1199,144 +1275,6 @@ app.delete(
 	},
 );
 
-// -- Auth (mobile Sign in with Apple) --------------------------------
-
-const AppleAuthBody = z.object({
-	identityToken: z.string().min(1),
-	fullName: z
-		.object({
-			givenName: z.string().optional(),
-			familyName: z.string().optional(),
-		})
-		.optional(),
-});
-
-app.post("/api/v1/auth/apple", async (c) => {
-	const appleClientId = c.env.APPLE_CLIENT_ID;
-	const mobileSecret = c.env.MOBILE_JWT_SECRET;
-	if (!appleClientId || !mobileSecret) {
-		return c.json(
-			{
-				error:
-					"Apple Sign In is not configured. Set APPLE_CLIENT_ID and MOBILE_JWT_SECRET secrets.",
-			},
-			503,
-		);
-	}
-
-	const parsed = AppleAuthBody.safeParse(await c.req.json());
-	if (!parsed.success) {
-		return c.json({ error: "identityToken is required" }, 400);
-	}
-
-	try {
-		const claims = await verifyAppleIdentityToken(
-			parsed.data.identityToken,
-			appleClientId,
-		);
-		await autoLinkSubIfAdminEmail(c.env, {
-			sub: claims.sub,
-			email: claims.email,
-			provider: "apple",
-		});
-		const session = await issueMobileSessionToken(mobileSecret, {
-			sub: claims.sub,
-			email: claims.email,
-			auth: "apple",
-		});
-		return c.json({
-			token: session.token,
-			expiresAt: session.expiresAt,
-			user: {
-				id: claims.sub,
-				email: claims.email ?? null,
-				fullName: parsed.data.fullName ?? null,
-			},
-		});
-	} catch (e) {
-		console.error("Apple auth failed:", (e as Error).message);
-		return c.json({ error: "Invalid Apple identity token" }, 401);
-	}
-});
-
-const GoogleAuthBody = z.object({
-	idToken: z.string().min(1),
-});
-
-app.post("/api/v1/auth/google", async (c) => {
-	const googleClientId = c.env.GOOGLE_CLIENT_ID;
-	const mobileSecret = c.env.MOBILE_JWT_SECRET;
-	if (!googleClientId || !mobileSecret) {
-		return c.json(
-			{
-				error:
-					"Google Sign In is not configured. Set GOOGLE_CLIENT_ID and MOBILE_JWT_SECRET secrets.",
-			},
-			503,
-		);
-	}
-
-	const parsed = GoogleAuthBody.safeParse(await c.req.json());
-	if (!parsed.success) {
-		return c.json({ error: "idToken is required" }, 400);
-	}
-
-	try {
-		const claims = await verifyGoogleIdentityToken(
-			parsed.data.idToken,
-			googleClientId,
-		);
-		await autoLinkSubIfAdminEmail(c.env, {
-			sub: claims.sub,
-			email: claims.email,
-			provider: "google",
-		});
-		const session = await issueMobileSessionToken(mobileSecret, {
-			sub: claims.sub,
-			email: claims.email,
-			auth: "google",
-		});
-		return c.json({
-			token: session.token,
-			expiresAt: session.expiresAt,
-			user: {
-				id: claims.sub,
-				email: claims.email ?? null,
-				fullName: claims.name
-					? { givenName: claims.name, familyName: undefined }
-					: null,
-			},
-		});
-	} catch (e) {
-		console.error("Google auth failed:", (e as Error).message);
-		return c.json({ error: "Invalid Google identity token" }, 401);
-	}
-});
-
-/**
- * Local-only helper so the iOS simulator can exercise the app without a real
- * Apple identity token. Disabled outside development.
- */
-app.post("/api/v1/auth/dev", async (c) => {
-	if (!import.meta.env.DEV) {
-		return c.json({ error: "Dev auth is only available in local development" }, 404);
-	}
-	const mobileSecret =
-		c.env.MOBILE_JWT_SECRET || "dev-mobile-jwt-secret-change-me";
-	const body = (await c.req.json().catch(() => ({}))) as { email?: string };
-	const email = body.email?.trim() || "dev@example.com";
-	const session = await issueMobileSessionToken(mobileSecret, {
-		sub: `dev:${email}`,
-		email,
-		auth: "dev",
-	});
-	return c.json({
-		token: session.token,
-		expiresAt: session.expiresAt,
-		user: { id: `dev:${email}`, email, fullName: null },
-	});
-});
-
 // -- Recipients (people I've emailed) -------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/recipients", async (c: AppContext) => {
@@ -1405,6 +1343,7 @@ type AutomationStub = {
 	claimAutoReply: (sender: string) => Promise<boolean>;
 	releaseAutoReply: (sender: string) => Promise<void>;
 	checkSendRateLimit: () => Promise<string | null>;
+	releaseSendSlot: () => Promise<void>;
 	createEmail: (
 		folder: string,
 		email: Record<string, unknown>,
@@ -1480,7 +1419,7 @@ async function applyInboundForward(options: {
 	}
 }
 
-async function sendInboundAutoReply(options: {
+export async function sendInboundAutoReply(options: {
 	env: Env;
 	stub: AutomationStub;
 	mailboxId: string;
@@ -1492,11 +1431,17 @@ async function sendInboundAutoReply(options: {
 	settings: MailboxAutomationSettings;
 	classification: EmailClassification;
 	headers: HeaderSource;
+	/** Address the reply comes from (a domain alias); defaults to mailboxId. */
+	replyFrom?: string;
+	/** Retry from here if sending from replyFrom fails. */
+	replyFallback?: string | null;
 }): Promise<void> {
 	const {
 		env, stub, mailboxId, sender, fromName, subject, originalMessageId,
 		threadId, settings, classification, headers,
 	} = options;
+	const replyFrom = (options.replyFrom || mailboxId).toLowerCase();
+	const replyFallback = options.replyFallback?.toLowerCase() || null;
 	const decision = shouldAutoReply({
 		enabled: Boolean(settings.autoReply?.enabled),
 		message: settings.autoReply?.message,
@@ -1512,21 +1457,24 @@ async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const fromDomain = mailboxId.split("@")[1];
+	const fromDomain = replyFrom.split("@")[1];
 	if (!fromDomain) {
 		console.error(`Skipping auto-reply for ${mailboxId}: invalid mailbox`);
+		return;
+	}
+
+	// Claim the once-per-sender window before touching the send quota, so
+	// inbound mail that gets no reply never costs the user a send.
+	const claimed = await stub.claimAutoReply(sender);
+	if (!claimed) {
+		console.log(`Skipping auto-reply for ${mailboxId}: already sent to ${sender} in 24h`);
 		return;
 	}
 
 	const rateLimitError = await stub.checkSendRateLimit();
 	if (rateLimitError) {
 		console.log(`Skipping auto-reply for ${mailboxId}: ${rateLimitError}`);
-		return;
-	}
-
-	const claimed = await stub.claimAutoReply(sender);
-	if (!claimed) {
-		console.log(`Skipping auto-reply for ${mailboxId}: already sent to ${sender} in 24h`);
+		await stub.releaseAutoReply(sender).catch(() => {});
 		return;
 	}
 
@@ -1541,13 +1489,14 @@ async function sendInboundAutoReply(options: {
 			existingXLoop: (headerMapFromSource(headers).get("x-loop") ?? []).join(", "),
 		}),
 	);
-	const from = fromName ? { email: mailboxId, name: fromName } : mailboxId;
+	const fromField = (address: string) => (fromName ? { email: address, name: fromName } : address);
 
 	try {
 		assertOutboundMessageSize({ html, text });
 	} catch (e) {
 		if (e instanceof OutboundSizeError) {
 			console.error(`Skipping auto-reply for ${mailboxId}: ${e.message}`);
+			await stub.releaseSendSlot().catch(() => {});
 			try {
 				await stub.releaseAutoReply(sender);
 			} catch (releaseError) {
@@ -1561,17 +1510,31 @@ async function sendInboundAutoReply(options: {
 		throw e;
 	}
 
-	let providerMessageId: string;
-	try {
-		const result = await sendEmail(env.EMAIL, {
+	const sendFrom = (address: string) =>
+		sendEmail(env.EMAIL, {
 			to: sender,
-			from,
+			from: fromField(address),
 			subject: replySubject,
 			text,
 			html,
 			headers: autoHeaders,
 		});
-		providerMessageId = result.messageId;
+
+	let providerMessageId: string;
+	let sentFrom = replyFrom;
+	try {
+		try {
+			providerMessageId = (await sendFrom(replyFrom)).messageId;
+		} catch (aliasError) {
+			// A domain alias may live on a domain that can't send yet.
+			if (!replyFallback || replyFallback === replyFrom) throw aliasError;
+			console.warn(
+				`Auto-reply from ${replyFrom} failed, retrying from ${replyFallback}:`,
+				(aliasError as Error).message,
+			);
+			sentFrom = replyFallback;
+			providerMessageId = (await sendFrom(replyFallback)).messageId;
+		}
 	} catch (e) {
 		console.error(`Auto-reply send failed for ${mailboxId}:`, (e as Error).message);
 		try {
@@ -1585,14 +1548,14 @@ async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const fromHeader = fromName ? `${fromName} <${mailboxId}>` : mailboxId;
+	const fromHeader = fromName ? `${fromName} <${sentFrom}>` : sentFrom;
 	try {
 		await stub.createEmail(
 			Folders.SENT,
 			{
 				id: messageId,
 				subject: replySubject,
-				sender: mailboxId,
+				sender: sentFrom,
 				sender_name: fromName || null,
 				recipient: sender,
 				cc: null,
@@ -1624,16 +1587,22 @@ async function sendInboundAutoReply(options: {
 			(e as Error).message,
 		);
 	}
-	console.log(`Sent auto-reply from ${mailboxId} to ${sender}`);
+	console.log(`Sent auto-reply from ${sentFrom} to ${sender}`);
 }
 
-async function receiveEmail(
-	message: ForwardableEmailMessage,
-	env: Env,
-	ctx: ExecutionContext,
-	getAgent: AgentResolver,
-) {
-	let matchedAliasMeta: StoredAliasMetadata | null = null;
+async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+	// A decommissioned custom domain no longer receives mail here, even if its
+	// Email Routing catch-all still points at this Worker.
+	// Private aliases live on private.<domain>, which belongs to <domain>.
+	const recipientDomain = message.to.split("@")[1]?.toLowerCase().replace(/^private\./, "");
+	const recipientDomainMeta = recipientDomain ? await getDomainMetadata(env.BUCKET, recipientDomain) : null;
+	if (recipientDomainMeta?.status === "offboarding") {
+		message.setReject("Domain is no longer hosted here");
+		return;
+	}
+
+	// Holder object: TS does not track assignments made inside the callback.
+	const aliasMatch: { meta: AnyAliasMetadata | null } = { meta: null };
 	const route = await routeInboundEnvelope(
 		message.to,
 		async (mailboxId) =>
@@ -1642,8 +1611,8 @@ async function receiveEmail(
 			const obj = await env.BUCKET.get(aliasMetadataKey(aliasEmail));
 			if (!obj) return null;
 			try {
-				const data = (await obj.json()) as StoredAliasMetadata;
-				matchedAliasMeta = data;
+				const data = (await obj.json()) as AnyAliasMetadata;
+				aliasMatch.meta = data;
 				return data.targetMailboxId || null;
 			} catch {
 				return null;
@@ -1656,16 +1625,27 @@ async function receiveEmail(
 		return;
 	}
 	const mailboxId = route.mailboxId;
+	// A domain whose subscription ended receives nothing, whether the mail is
+	// addressed to it or reaches one of its mailboxes through an alias.
+	const mailboxDomain = mailboxId.slice(mailboxId.lastIndexOf("@") + 1);
+	const mailboxDomainMeta =
+		mailboxDomain === recipientDomain ? recipientDomainMeta : await getDomainMetadata(env.BUCKET, mailboxDomain);
+	if (recipientDomainMeta?.billing?.serviceEndedAt || mailboxDomainMeta?.billing?.serviceEndedAt) {
+		message.setReject("This mailbox is not accepting mail");
+		return;
+	}
+	const routedAliasMeta = route.resolvedViaAlias ? aliasMatch.meta : null;
+	const privateAlias = isPrivateAliasMeta(routedAliasMeta) ? routedAliasMeta : null;
 
-	// Check if this inbound email is addressed to a masked alias that is paused or expired
-	if (matchedAliasMeta) {
-		const isExpired = isAliasExpired(matchedAliasMeta.expiresAt);
-		const isPaused = matchedAliasMeta.isActive === false;
+	// Paused or expired private email: count it, then drop or bounce.
+	if (privateAlias) {
+		const isExpired = isAliasExpired(privateAlias.expiresAt);
+		const isPaused = privateAlias.isActive === false;
 		if (isPaused || isExpired) {
-			console.log(`Masked alias ${matchedAliasMeta.aliasEmail} is ${isExpired ? "expired" : "paused"}`);
+			console.log(`Private email ${privateAlias.aliasEmail} is ${isExpired ? "expired" : "paused"}`);
 			const targetStub = getMailboxStub(env, mailboxId);
-			await (targetStub as any).recordAliasInbound(matchedAliasMeta.aliasEmail, true);
-			if (matchedAliasMeta.pausedAction === "reject") {
+			await (targetStub as any).recordAliasInbound(privateAlias.aliasEmail, true);
+			if (privateAlias.pausedAction === "reject") {
 				message.setReject(isExpired ? "Address expired" : "Address paused");
 			}
 			return;
@@ -1733,17 +1713,12 @@ async function receiveEmail(
 		}
 	}
 
-	let threadId: string | null = null;
-	if (candidateReferences.length > 0) {
-		threadId = await (stub as any).findThreadIdByReferences(candidateReferences);
-	}
-
-	if (!threadId) {
-		threadId = await (stub as any).findThreadBySubject(
-			parsedEmail.subject || "",
-			parsedEmail.from?.address || undefined,
-		);
-	}
+	let threadId = await findInboundThreadId(stub as unknown as InboundThreadStub, {
+		references: candidateReferences,
+		subject: parsedEmail.subject || "",
+		from: parsedEmail.from?.address || undefined,
+		aliasId: privateAlias?.aliasId ?? null,
+	});
 
 	if (!threadId) {
 		threadId = messageId;
@@ -1796,7 +1771,7 @@ async function receiveEmail(
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 		auth: serializeEmailAuth(auth),
-		alias_id: matchedAliasMeta?.aliasId || null,
+		alias_id: privateAlias?.aliasId || null,
 	};
 
 	const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -1865,8 +1840,8 @@ async function receiveEmail(
 	let filedFolder: string = targetFolder;
 	try {
 		await stub.createEmail(targetFolder, inboundEmail, attachmentData);
-		if (matchedAliasMeta) {
-			await (stub as any).recordAliasInbound(matchedAliasMeta.aliasEmail, false);
+		if (privateAlias) {
+			await (stub as any).recordAliasInbound(privateAlias.aliasEmail, false);
 		}
 	} catch (e) {
 		if ((e as Error).message === "Mailbox has been deleted") {
@@ -1914,7 +1889,9 @@ async function receiveEmail(
 				forwardToOverride: filterHit?.forwardTo,
 			});
 		}
-		if (!triageDecision.skipAutoReply) {
+		// Private emails never auto-reply; domain aliases reply as themselves.
+		const replyPlan = autoReplySender(routedAliasMeta, mailboxId);
+		if (!triageDecision.skipAutoReply && !replyPlan.skip) {
 			ctx.waitUntil(
 				sendInboundAutoReply({
 					env,
@@ -1928,6 +1905,8 @@ async function receiveEmail(
 					settings: automationSettings,
 					classification,
 					headers: message.headers,
+					replyFrom: replyPlan.from,
+					replyFallback: replyPlan.fallback,
 				}).catch((e) =>
 					console.error("Auto-reply failed:", (e as Error).message),
 				),
@@ -1949,18 +1928,17 @@ async function receiveEmail(
 		ctx.waitUntil(
 			(async () => {
 				await stub.ensureAutoAgentConversation();
-				await triggerAutoDraft(
-					env.EMAIL_AGENT,
+				const agent = await getEmailAgent(
+					env,
 					agentInstanceName(mailboxId, AUTO_CONVERSATION_ID),
-					{
-						mailboxId,
-						emailId: messageId,
-						sender: (parsedEmail.from?.address || "").toLowerCase(),
-						subject: parsedEmail.subject || "",
-						threadId,
-					},
-					getAgent,
 				);
+				await agent.handleNewEmail({
+					mailboxId,
+					emailId: messageId,
+					sender: (parsedEmail.from?.address || "").toLowerCase(),
+					subject: parsedEmail.subject || "",
+					threadId,
+				});
 			})().catch((e) =>
 				console.error("Auto-draft trigger failed:", (e as Error).message),
 			),

@@ -33,7 +33,6 @@ import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "
 import { mailboxIdFromAgentName } from "../../shared/agent-conversations";
 import type { Env } from "../types";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
-import { NEW_EMAIL_PATH } from "../lib/auto-draft";
 
 // AI SDK v6 changed tool() overloads significantly. We define tools as plain
 // objects matching the Tool type to avoid overload resolution issues.
@@ -297,58 +296,21 @@ export class EmailAgent extends AIChatAgent<any> {
 	}
 
 	/**
-	 * Handle HTTP requests to the agent DO. Intercepts /onNewEmail
-	 * before passing to the default AIChatAgent handler.
-	 */
-	async onRequest(request: Request): Promise<Response> {
-		const url = new URL(request.url);
-		if (url.pathname === NEW_EMAIL_PATH && request.method === "POST") {
-			try {
-				const emailData = await request.json() as {
-					mailboxId: string;
-					emailId: string;
-					sender: string;
-					subject: string;
-					threadId: string;
-				};
-				const result = await this.handleNewEmail(emailData);
-				return new Response(JSON.stringify(result), {
-					headers: { "Content-Type": "application/json" },
-				});
-			} catch (e) {
-				console.error("onNewEmail handler failed:", (e as Error).message);
-				return new Response(
-					JSON.stringify({ error: (e as Error).message }),
-					{ status: 500, headers: { "Content-Type": "application/json" } },
-				);
-			}
-		}
-		if (url.pathname === "/purge" && request.method === "POST") {
-			const result = await this.purge();
-			return new Response(JSON.stringify(result), {
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-		return super.onRequest(request);
-	}
-
-	/**
 	 * Clear persisted chat history when the owning mailbox is deleted.
-	 * No platform DO destroy API — wipe storage so recreate starts empty.
+	 * SDK `destroy()` wipes storage and then resets the live instance; a bare
+	 * `storage.deleteAll()` left it running against dropped chat tables, so a
+	 * recreated mailbox hit "no such table" until eviction.
+	 * Worker RPC via `purgeEmailAgents` (workers/lib/email-agent.ts).
 	 */
 	async purge(): Promise<{ status: string }> {
-		try {
-			await this.persistMessages([]);
-		} catch (e) {
-			console.error("EmailAgent persistMessages([]) failed:", (e as Error).message);
-		}
-		await this.ctx.storage.deleteAll();
+		await this.destroy();
 		return { status: "purged" };
 	}
 
 	/**
 	 * Called when a new email arrives. Reads it, loads the thread,
 	 * drafts a response, and saves it to the Drafts folder.
+	 * Worker RPC from `receiveEmail` via `getEmailAgent` (workers/lib/email-agent.ts).
 	 */
 	async handleNewEmail(emailData: {
 		mailboxId: string;
@@ -359,7 +321,14 @@ export class EmailAgent extends AIChatAgent<any> {
 	}) {
 		const env = this.env as Env;
 		const workersai = createWorkersAI({ binding: env.AI });
-		const tools = createEmailTools(env, emailData.mailboxId);
+		// The auto-run reads attacker-controlled mail, so it only gets read tools plus
+		// draft_reply: no moving, deleting, searching other mail, or free-form drafts.
+		const allTools = createEmailTools(env, emailData.mailboxId);
+		const tools = {
+			get_email: allTools.get_email,
+			get_thread: allTools.get_thread,
+			draft_reply: allTools.draft_reply,
+		};
 		const systemPrompt = await getSystemPrompt(env, emailData.mailboxId);
 
 		// Pre-read the email and thread so the agent has full context
@@ -371,7 +340,11 @@ export class EmailAgent extends AIChatAgent<any> {
 		try {
 			const email = (await stub.getEmail(emailData.emailId)) as EmailFull | null;
 			if (email?.body) {
-				const isInjection = await isPromptInjection(env.AI, email.body);
+				// The subject reaches the prompt too, so scan it with the body.
+				const isInjection = await isPromptInjection(
+					env.AI,
+					`Subject: ${emailData.subject}\n\n${email.body}`,
+				);
 				if (isInjection) {
 					console.warn("Skipping auto-draft due to detected prompt injection:", emailData.emailId);
 					
@@ -444,7 +417,10 @@ export class EmailAgent extends AIChatAgent<any> {
 			}
 		}
 		} catch (e) {
-			console.warn("Pre-read failed, agent will use tools:", (e as Error).message);
+			// Without the pre-read the injection scan didn't run; don't let the model
+			// read the mail unscanned through get_email.
+			console.warn("Pre-read failed, skipping auto-draft:", (e as Error).message);
+			return;
 		}
 
 		let autoPrompt = `A new email just arrived. Draft an appropriate response using draft_reply.
@@ -527,6 +503,7 @@ Based on the email content and thread context above, draft a reply using draft_r
 						in_reply_to: emailData.emailId,
 							email_references: null,
 							thread_id: emailData.threadId,
+							source: "agent",
 						},
 						[],
 					);

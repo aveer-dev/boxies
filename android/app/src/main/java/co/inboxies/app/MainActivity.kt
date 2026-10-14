@@ -44,15 +44,24 @@ class MainActivity : ComponentActivity() {
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }
-        val auth = (application as InboxiesApplication).authStore
-        appModel = AppModel()
+        val app = application as InboxiesApplication
+        val auth = app.authStore
+        appModel = app.appModel
         val model = appModel
         val previewMode = PreviewMode.fromIntent(intent)
+        val isRecreation = savedInstanceState != null
         if (previewMode != null) {
-            PreviewHarness.seed(previewMode, auth, model)
-        } else {
+            // Re-seed only on a cold start (or after process death); a config change
+            // keeps the already-seeded app-scoped model.
+            if (!isRecreation || !model.isDebugPreview) PreviewHarness.seed(previewMode, auth, model)
+        } else if (!isRecreation) {
+            // The process (and AppModel) can outlive a finished Activity; a cold
+            // launch should still refresh, only config-change recreation skips it.
+            model.invalidateBootstrap()
             auth.resyncFromStorage()
-            val extraApiBase = intent.getStringExtra("apiBase")
+            // Debug-only: the launcher activity is exported, so in release any app
+            // could point the API (and our Bearer token) at its own host.
+            val extraApiBase = if (BuildConfig.DEBUG) intent.getStringExtra("apiBase") else null
             if (!extraApiBase.isNullOrBlank()) {
                 co.inboxies.app.config.AppConfig.parseAPIBaseURL(extraApiBase)?.let { parsed ->
                     co.inboxies.app.config.AppConfig.apiBaseURL = parsed
@@ -61,6 +70,7 @@ class MainActivity : ComponentActivity() {
             handlePushIntent(intent)
             handleInviteIntent(intent)
             handleOnboardingIntent(intent)
+            handleBillingIntent(intent)
         }
         setContent {
             var themeMode by remember {
@@ -116,6 +126,23 @@ class MainActivity : ComponentActivity() {
         handlePushIntent(intent)
         handleInviteIntent(intent)
         handleOnboardingIntent(intent)
+        handleBillingIntent(intent)
+    }
+
+    /**
+     * `inboxies://billing/renewed?domain=` (paid; the webhook restores the domain, so
+     * AppModel polls briefly) or `inboxies://billing/renew-cancelled?domain=`.
+     */
+    private fun handleBillingIntent(intent: Intent?) {
+        if (intent == null) return
+        val data = intent.data ?: return
+        if (data.scheme != "inboxies" || data.host != "billing") return
+        val domain = data.getQueryParameter("domain")?.trim()?.lowercase()
+        when (data.pathSegments.firstOrNull()) {
+            "renewed" -> if (!domain.isNullOrBlank()) appModel.handleRenewalReturn(domain, cancelled = false)
+            "renew-cancelled" -> if (!domain.isNullOrBlank()) appModel.handleRenewalReturn(domain, cancelled = true)
+        }
+        intent.data = null
     }
 
     private fun handleOnboardingIntent(intent: Intent?) {
@@ -124,8 +151,11 @@ class MainActivity : ComponentActivity() {
         val isOnboarding = (data.scheme == "inboxies" && (data.host == "onboarding" || data.host == "domain-ready"))
             || (data.host == "inboxies.email" && data.path?.startsWith("/onboarding") == true)
         if (isOnboarding) {
-            val token = data.getQueryParameter("token")
             val domain = data.getQueryParameter("domain")
+            // Only trust a token returned for the checkout this app started.
+            val token = data.getQueryParameter("token")?.takeIf {
+                co.inboxies.app.config.AppConfig.consumePendingCheckout(data.getQueryParameter("session_id"))
+            }
             if (!token.isNullOrBlank()) {
                 val auth = (application as InboxiesApplication).authStore
                 val email = if (!domain.isNullOrBlank()) "admin@$domain" else null

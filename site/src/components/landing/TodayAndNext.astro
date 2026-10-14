@@ -1,0 +1,45 @@
+---
+// Today and next: a small slice of the roadmap database, what works now and
+// what's coming, with the private-email callout while that's still on its way.
+// It opens on "Coming soon": the tour above already showed what works today.
+import { asOf } from "../../config";
+import { landingRows, privateEmailCallout } from "../../data/roadmap";
+import { date } from "../../lib/format";
+import { renderInline } from "../../lib/inline";
+import Callout from "../Callout.astro";
+import RoadmapTable from "../RoadmapTable.astro";
+import SectionHead from "../SectionHead.astro";
+
+// src: RM#1; RM#2; RM#3; FC#2; FSW#ai-email-agent; FSW#custom-domains
+const callout = privateEmailCallout;
+---
+
+<section class="section column-container" aria-labelledby="next">
+	<SectionHead id="next" title="Today and next">
+		<Fragment slot="meta">
+			<span>Updated <time datetime={asOf}>{date(asOf)}</time></span>
+			<span class="dot" aria-hidden="true">·</span>
+			<a class="quiet-link" href="/roadmap">Roadmap →</a>
+		</Fragment>
+	</SectionHead>
+	<RoadmapTable id="db-landing" caption="What works today and what’s coming next" rows={landingRows} views view="soon" />
+	{
+		callout && (
+			<div class="next-callout">
+				<Callout id={callout.id} tone="next" icon="private" status={callout.status} title={callout.title} claim={callout.claim}>
+					<Fragment set:html={renderInline(callout.body)} />
+				</Callout>
+			</div>
+		)
+	}
+</section>
+
+<style>
+	.dot {
+		color: var(--text-subtle);
+	}
+
+	.next-callout {
+		margin-top: 20px;
+	}
+</style>

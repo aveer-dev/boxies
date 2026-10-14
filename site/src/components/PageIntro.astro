@@ -1,0 +1,51 @@
+---
+// The top of a text page: the portfolio's products intro (h1, one line of
+// description), plus an optional quiet meta line and whatever the page adds.
+interface Props {
+	title: string;
+	description?: string;
+	meta?: string;
+}
+
+const { title, description, meta } = Astro.props;
+---
+
+<header class="page-intro">
+	<h1 class="page-heading">{title}</h1>
+	{description && <p class="page-description">{description}</p>}
+	{meta && <p class="page-meta">{meta}</p>}
+	<slot />
+</header>
+
+<style>
+	.page-intro {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.page-heading {
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		font-weight: 400;
+		line-height: 1.25rem;
+		letter-spacing: -0.005em;
+		color: var(--text-primary);
+	}
+
+	.page-description {
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		font-weight: 400;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	/* Dates and the like ("Updated 8 Oct 2026") are information, so muted, not subtle. */
+	.page-meta {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+		font-variant-numeric: tabular-nums;
+	}
+</style>

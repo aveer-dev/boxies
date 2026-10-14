@@ -1,0 +1,128 @@
+---
+// One row of a list, as on the portfolio's products page: a title (a link
+// when it goes somewhere) with a small meta on the right, then a line of
+// description. Rows rise in as they scroll into view.
+import type { Claim } from "../data/types";
+import { renderInline } from "../lib/inline";
+
+interface Props {
+	title: string;
+	href?: string;
+	external?: boolean;
+	meta?: string;
+	metaTone?: "muted" | "ink";
+	description?: string;
+	id?: string;
+	claim?: Claim;
+	as?: "article" | "li";
+}
+
+const { title, href, external = false, meta, metaTone = "muted", description, id, claim, as = "article" } = Astro.props;
+const Element = as;
+// A status pill or a <time> can stand in for the meta string.
+const hasMeta = !!meta || Astro.slots.has("meta");
+---
+
+<Element class="row" id={id} data-claim={claim} data-reveal-on-scroll>
+	<div class="row-head">
+		{
+			href ? (
+				<a href={href} class="row-title-link">
+					<span class="row-title-text">{title}</span>
+					{external && <span class="row-arrow" aria-hidden="true">↗</span>}
+				</a>
+			) : (
+				<span class="row-title">{title}</span>
+			)
+		}
+		{
+			hasMeta && (
+				<span class="row-meta" data-tone={metaTone}>
+					{meta}
+					<slot name="meta" />
+				</span>
+			)
+		}
+	</div>
+	{description && <p class="row-description" set:html={renderInline(description)} />}
+	<slot />
+</Element>
+
+<style>
+	.row {
+		display: flex;
+		flex-direction: column;
+		padding: 24px 0 23px;
+		gap: 6px;
+	}
+
+	.row-head {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 2px 16px;
+		width: 100%;
+	}
+
+	.row-title-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 2px;
+		text-decoration: none;
+	}
+
+	.row-title-text,
+	.row-title {
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		font-weight: 400;
+		line-height: 1.25rem;
+		letter-spacing: -0.005em;
+		color: var(--text-primary);
+	}
+
+	/* Only titles that go somewhere are underlined. */
+	.row-title-text {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		text-decoration-color: var(--text-primary);
+		transition: text-decoration-color 150ms var(--ease-out);
+	}
+
+	.row-title-link:hover .row-title-text {
+		text-decoration-color: var(--text-subtle);
+	}
+
+	.row-arrow {
+		font-family: var(--font-sans);
+		font-size: 0.5rem;
+		line-height: 1.25rem;
+		color: var(--text-subtle);
+		user-select: none;
+	}
+
+	.row-meta {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 6px;
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		font-weight: 400;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.row-meta[data-tone="ink"] {
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.row-description {
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		font-weight: 400;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+</style>

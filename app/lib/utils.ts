@@ -52,10 +52,30 @@ export function toEmailListValue(addresses: string[]): string | string[] | undef
 }
 
 /**
+ * DOMPurify needs a real DOM. During SSR (workerd) its default export is an
+ * inert factory with no `sanitize`, so HTML helpers must take a DOM-free path
+ * there. Browsers always take the sanitising path.
+ */
+function canSanitizeHtml(): boolean {
+	return typeof window !== "undefined" && DOMPurify.isSupported;
+}
+
+/**
  * Convert HTML content to plain text.
- * Uses DOM APIs so must only be called client-side.
+ * Uses DOM APIs in the browser; on the server it falls back to tag stripping
+ * (the result is plain text either way, never HTML).
  */
 export function htmlToPlainText(html: string): string {
+	if (!canSanitizeHtml()) {
+		return decodeHtmlEntities(
+			html
+				.replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, "")
+				.replace(/<br\s*\/?>/gi, "\n")
+				.replace(/<\/p>/gi, "\n\n")
+				.replace(/<\/div>/gi, "\n")
+				.replace(/<[^>]*>/g, ""),
+		).trim();
+	}
 	// Sanitize with DOMPurify before DOM parsing to prevent XSS during innerHTML assignment.
 	// DOMPurify strips all dangerous content (scripts, event handlers, etc.)
 	// while preserving structural HTML for text extraction.
@@ -71,11 +91,38 @@ export function htmlToPlainText(html: string): string {
 	return (div.textContent || div.innerText || "").trim();
 }
 
+/** Remove non-content blocks whose text would otherwise leak into plain text. */
+function dropNonContent(html: string): string {
+	return html
+		.replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, "")
+		.replace(/<!--[\s\S]*?-->/g, "");
+}
+
 /**
- * Strip all HTML tags from a string.
+ * Single-line plain text for previews: no tags, no CSS, entities decoded.
  */
 export function stripHtml(html: string): string {
-	return html.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+	return decodeHtmlEntities(dropNonContent(html).replace(/<[^>]*>/g, " "))
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/**
+ * Plain text that keeps paragraph and line breaks, for quoting a message in a
+ * reply or forward (works without a DOM, unlike htmlToPlainText).
+ */
+export function htmlToQuotedText(html: string): string {
+	const withBreaks = dropNonContent(html)
+		.replace(/<br\s*\/?>/gi, "\n")
+		.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n")
+		.replace(/<li[^>]*>/gi, "• ")
+		.replace(/<[^>]*>/g, "");
+	return decodeHtmlEntities(withBreaks)
+		.split("\n")
+		.map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
+		.join("\n")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
 }
 
 function decodeHtmlEntities(text: string): string {
@@ -144,8 +191,11 @@ export function getSignatureBlock(settings?: {
 		// Sanitize HTML signatures with DOMPurify to allow safe formatting
 		// (bold, italic, links, etc.) while stripping scripts and event handlers.
 		// Text signatures are HTML-escaped since they have no formatting.
+		// Without DOMPurify (SSR) an HTML signature degrades to escaped text.
 		const content = sig.html
-			? DOMPurify.sanitize(sig.html)
+			? canSanitizeHtml()
+				? DOMPurify.sanitize(sig.html)
+				: escapeHtml(htmlToPlainText(sig.html)).replace(/\n/g, "<br>")
 			: escapeHtml(sig.text || "");
 		return `${COMPOSE_SIGNATURE_SPACER}<div style="border-top: 1px solid #ccc; margin-top: 16px; padding-top: 12px;">${content}</div>`;
 	}
@@ -170,7 +220,7 @@ export function buildQuotedReplyBlock(
 	// The original HTML renders safely in the sandboxed iframe, but quoted
 	// reply blocks are injected into the compose editor where raw HTML would
 	// execute. Convert to escaped plain text instead.
-	const bodyToQuote = escapeHtml(stripHtml(body)).replace(/\n/g, "<br>");
+	const bodyToQuote = escapeHtml(htmlToQuotedText(body)).replace(/\n/g, "<br>");
 
 	return `<br><blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;">On ${formattedDate}, ${escapedSender} wrote:<br><br>${bodyToQuote}</blockquote>`;
 }

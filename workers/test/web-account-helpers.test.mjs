@@ -1,0 +1,120 @@
+/**
+ * Web account helpers: session labels and the settings blob the web PUTs.
+ * Run: pnpm test:unit (includes this file)
+ */
+
+import assert from "node:assert/strict";
+import { writableMailboxSettings } from "../../app/lib/mailbox-settings.ts";
+import { mailboxesPurgedOnDelete } from "../../app/lib/account-deletion.ts";
+import { safeRedirectPath } from "../../app/lib/safe-redirect.ts";
+import { describeSession, describeUserAgent } from "../../app/lib/session-label.ts";
+
+// ── writableMailboxSettings: never echo the synthesized ACL back ──
+
+{
+	const settings = {
+		fromName: "Ada",
+		forwarding: { enabled: true, email: "ada@example.com" },
+		acl: { owners: ["email:ada@example.com"], members: [] },
+		canManage: true,
+	};
+	const out = writableMailboxSettings(settings);
+	assert.deepEqual(out, { fromName: "Ada", forwarding: { enabled: true, email: "ada@example.com" } });
+	assert.ok(!("acl" in out));
+	assert.ok(!("canManage" in out));
+	// The caller's object (often the cached query data) is left alone.
+	assert.ok("acl" in settings);
+}
+
+assert.deepEqual(writableMailboxSettings(undefined), {});
+assert.deepEqual(writableMailboxSettings(null), {});
+assert.deepEqual(writableMailboxSettings([1, 2]), {});
+assert.deepEqual(writableMailboxSettings("x"), {});
+assert.deepEqual(writableMailboxSettings({}), {});
+
+// ── describeUserAgent ──
+
+const CHROME_MAC =
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+const SAFARI_IPHONE =
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
+const FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0";
+const EDGE_WIN =
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0";
+const CHROME_ANDROID =
+	"Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36";
+const CHROME_IOS =
+	"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0 Mobile/15E148 Safari/604.1";
+
+assert.equal(describeUserAgent(CHROME_MAC), "Chrome on macOS");
+assert.equal(describeUserAgent(SAFARI_IPHONE), "Safari on iOS");
+assert.equal(describeUserAgent(FIREFOX_WIN), "Firefox on Windows");
+assert.equal(describeUserAgent(EDGE_WIN), "Edge on Windows");
+assert.equal(describeUserAgent(CHROME_ANDROID), "Chrome on Android");
+assert.equal(describeUserAgent(CHROME_IOS), "Chrome on iOS");
+assert.equal(describeUserAgent("AgenticInbox/42 CFNetwork/1568.100.1 Darwin/24.0.0"), "Inboxies for iOS");
+assert.equal(describeUserAgent("okhttp/4.12.0"), "Inboxies for Android");
+assert.equal(describeUserAgent("curl/8.7.1"), null);
+assert.equal(describeUserAgent(""), null);
+assert.equal(describeUserAgent(null), null);
+
+// ── describeSession: label first, then device, then a fallback ──
+
+assert.equal(describeSession({ label: "Browser extension", userAgent: CHROME_MAC }), "Browser extension");
+assert.equal(describeSession({ label: "  ", userAgent: CHROME_MAC }), "Chrome on macOS");
+assert.equal(describeSession({ label: null, userAgent: null }), "Unknown device");
+
+// ── safeRedirectPath: ?next= stays on this origin ──
+
+{
+	const origin = "https://app.inboxies.email";
+	assert.equal(safeRedirectPath("/mailbox/a@b.c/emails/inbox", origin), "/mailbox/a@b.c/emails/inbox");
+	assert.equal(safeRedirectPath("/invite/abc?x=1#y", origin), "/invite/abc?x=1#y");
+	assert.equal(safeRedirectPath("/", origin), "/");
+	assert.equal(safeRedirectPath(null, origin), "/");
+	assert.equal(safeRedirectPath("", origin), "/");
+	// Open-redirect shapes.
+	assert.equal(safeRedirectPath("//evil.com", origin), "/");
+	assert.equal(safeRedirectPath("/\\evil.com", origin), "/");
+	assert.equal(safeRedirectPath(decodeURIComponent("/%5Cevil.com"), origin), "/");
+	assert.equal(safeRedirectPath("/\\/evil.com", origin), "/");
+	assert.equal(safeRedirectPath("https://evil.com", origin), "/");
+	assert.equal(safeRedirectPath("javascript:alert(1)", origin), "/");
+	assert.equal(safeRedirectPath("evil.com", origin), "/");
+	assert.equal(safeRedirectPath(" //evil.com", origin), "/");
+	// Encoded slashes stay inside the path.
+	assert.equal(safeRedirectPath("/%2F%2Fevil.com", origin), "/%2F%2Fevil.com");
+}
+
+// ── mailboxesPurgedOnDelete: sole-owner mailboxes go, whoever else uses them ──
+
+{
+	const mailboxes = [
+		{ id: "solo@x.com", role: "owner" },
+		{ id: "shared-sole@x.com", role: "owner" },
+		{ id: "co-owned@x.com", role: "owner" },
+		{ id: "member-of@x.com", role: "member" },
+		{ id: "unknown@x.com", role: "owner" },
+	];
+	const purged = mailboxesPurgedOnDelete(mailboxes, {
+		"solo@x.com": [{ role: "owner", you: true }],
+		"shared-sole@x.com": [
+			{ role: "owner", you: true },
+			{ role: "member", you: false },
+			{ role: "member", you: false },
+		],
+		"co-owned@x.com": [
+			{ role: "owner", you: true },
+			{ role: "owner", you: false },
+		],
+		// member-of: not fetched (not an owner); unknown: members failed to load.
+	});
+	assert.deepEqual(purged, [
+		{ mailboxId: "solo@x.com", othersLosingAccess: 0 },
+		{ mailboxId: "shared-sole@x.com", othersLosingAccess: 2 },
+		{ mailboxId: "unknown@x.com", othersLosingAccess: 0 },
+	]);
+	assert.deepEqual(mailboxesPurgedOnDelete([], {}), []);
+}
+
+console.log("web-account-helpers: ok");

@@ -2,28 +2,35 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { type Hono } from "hono";
+import { type Context, type Hono } from "hono";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Env } from "../types";
-import {
-	hashPassword,
-	issuePasswordSessionToken,
-	PASSWORD_SESSION_COOKIE,
-	validatePasswordStrength,
-} from "../lib/password-auth";
-import {
-	findUserIdByLoginEmail,
-	savePlatformUser,
-	principalFromPlatformUser,
-	type PlatformUser,
-} from "../lib/platform-users";
+import type { MailboxContext } from "../lib/mailbox";
+import { validatePasswordStrength } from "../lib/password-auth";
 import {
 	canonicalMailboxId,
-	mailboxMetadataKey,
+	isReservedLocalPart,
 } from "../lib/mailbox-routing";
 import { mailDomainConfig } from "../lib/mail-domain";
-import { ensurePrincipalAccount } from "../lib/identity-links";
-import { aclFromOwnerKeys } from "../lib/mailbox-acl";
+import { authDb } from "../auth/authz";
+import { isHostedEmailDomain } from "../auth/hooks";
+import { codeEmail, sendSystemEmail } from "../auth/mail";
+import {
+	initializeMailboxStorage,
+	isMailboxAddressTaken,
+	isUniqueViolation,
+	mailboxRowStatements,
+} from "../auth/mailboxes";
+import { issueOtp } from "../auth/otp";
+import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
+import * as schema from "../auth/schema";
+import {
+	createSessionForUser,
+	findUserByEmail,
+	sessionCookieHeader,
+	userRowStatements,
+} from "../auth/users";
 import {
 	createZone,
 	enableEmailRouting,
@@ -40,6 +47,13 @@ import {
 } from "../lib/domain-registry";
 import { checkDomainAvailability, computeDomainPricing } from "../lib/cloudflare-registrar";
 import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { isDevRuntime } from "../lib/dev-runtime";
+import {
+	domainVerificationChallenge,
+	isDomainVerified,
+	signupClaimant,
+	verificationRequiredBody,
+} from "../lib/domain-verification";
 
 const SignupPersonalBody = z.object({
 	username: z
@@ -77,32 +91,92 @@ const SignupDomainBody = z.object({
 		),
 	password: z.string().min(10, "Password must be at least 10 characters").max(200),
 	displayName: z.string().trim().max(200).optional(),
-	backupEmail: z.string().trim().email("Please provide a valid backup email address").optional(),
+	// Domain owners must have one: billing and renewal notices go there.
+	backupEmail: z.string().trim().email("Please provide a valid backup email address"),
 });
 
-function defaultMailboxSettings(name: string) {
-	return {
-		fromName: name,
-		forwarding: { enabled: false, email: "" },
-		signature: { enabled: false, text: "" },
-		autoReply: { enabled: false, subject: "", message: "" },
-		screener: { enabled: true },
-	};
+/** The secret domain-claim TXT values are derived from. */
+function claimSecret(env: Env): string {
+	return env.BETTER_AUTH_SECRET || (isDevRuntime() ? "dev-better-auth-secret-change-me" : "");
 }
 
-function sessionSecret(env: Env): string {
-	return (
-		env.MOBILE_JWT_SECRET ||
-		(import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "")
-	);
+type SignupUser = {
+	mailboxId: string;
+	username: string;
+	password: string;
+	displayName?: string;
+	backupEmail?: string;
+};
+
+type SignupResult =
+	| { ok: true; userId: string; recoveryCode?: string }
+	| { ok: false; status: 400 | 409; error: string };
+
+/**
+ * Create the user (whose login is the new mailbox address, owned by
+ * construction), their password, the mailbox and its owner row in one D1
+ * batch, plus `extraStatements` (domain rows). The backup email becomes an
+ * unverified recovery email and gets a code.
+ */
+async function createSignupUser(
+	env: Env,
+	user: SignupUser,
+	extraStatements: (userId: string) => unknown[] = () => [],
+): Promise<SignupResult> {
+	const db = authDb(env.AUTH_DB);
+	if ((await isMailboxAddressTaken(env, db, user.mailboxId)) || (await findUserByEmail(db, user.mailboxId))) {
+		return { ok: false, status: 409, error: "This username is already taken" };
+	}
+	const backup = user.backupEmail?.trim().toLowerCase();
+	const ownDomain = user.mailboxId.slice(user.mailboxId.lastIndexOf("@") + 1);
+	if (backup && (backup.endsWith(`@${ownDomain}`) || (await isHostedEmailDomain(env, backup)))) {
+		return { ok: false, status: 400, error: "Use a backup email outside Inboxies" };
+	}
+	const { id: userId, statements } = await userRowStatements(db, {
+		email: user.mailboxId,
+		name: user.displayName || user.username,
+		emailVerified: true,
+		password: user.password,
+	});
+	try {
+		await db.batch([
+			...statements,
+			...extraStatements(userId),
+			...mailboxRowStatements(db, user.mailboxId, userId),
+			...(backup ? [db.insert(schema.recoveryEmail).values({ userId, email: backup, verifiedAt: null })] : []),
+		] as unknown as Parameters<typeof db.batch>[0]);
+	} catch (e) {
+		if (isUniqueViolation(e)) return { ok: false, status: 409, error: "This username is already taken" };
+		throw e;
+	}
+	await initializeMailboxStorage(env, user.mailboxId, { name: user.displayName || user.username });
+	let recoveryCode: string | undefined;
+	if (backup) {
+		const otp = await issueOtp(db, "recovery-email", userId, backup);
+		if (otp.ok) {
+			recoveryCode = otp.code;
+			await sendSystemEmail(env, {
+				to: backup,
+				subject: "Your Inboxies verification code",
+				...codeEmail({ purposeLine: "Confirm this address as your Inboxies recovery email.", code: otp.code }),
+			});
+		}
+	}
+	return { ok: true, userId, recoveryCode };
 }
 
-function sessionCookieHeader(token: string): string {
-	const maxAge = 60 * 60 * 24 * 30; // 30 days
-	return `${PASSWORD_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Lax; Secure`;
+async function issueSignupSession(c: Context<MailboxContext>, userId: string) {
+	const session = await createSessionForUser(c.env, userId, { headers: c.req.raw.headers });
+	c.header("Set-Cookie", await sessionCookieHeader(c.env, session));
+	return { token: session.token, expiresAt: session.expiresAt.toISOString() };
 }
 
-export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
+/** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
+function canSkipDomainVerification(env: Env): boolean {
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
+}
+
+export function registerOnboardingRoutes(app: Hono<MailboxContext>) {
 	/**
 	 * Pre-check domain availability, WHOIS registration, and retail price.
 	 */
@@ -111,6 +185,10 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		const domain = rawDomain.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
 		if (!domain || !domain.includes(".")) {
 			return c.json({ error: "Invalid domain format" }, 400);
+		}
+
+		if (await isRateLimited(c.env, "domain-check", clientIp(c.req.raw.headers))) {
+			return c.json(TOO_MANY, 429);
 		}
 
 		// 1. Check if already managed inside Inboxies
@@ -156,83 +234,38 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 			);
 		}
 		const { username, password, displayName, backupEmail } = parsed.data;
+		if (await isRateLimited(c.env, "sign-up", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
 
 		const strengthErr = validatePasswordStrength(password);
 		if (strengthErr) return c.json({ error: strengthErr }, 400);
 
 		const { mailDomain } = mailDomainConfig(c.env);
-		const fullEmail = `${username.toLowerCase()}@${mailDomain}`;
-		const canonical = canonicalMailboxId(fullEmail);
+		const canonical = canonicalMailboxId(`${username.toLowerCase()}@${mailDomain}`);
 		if (!canonical) return c.json({ error: "Invalid email address" }, 400);
-
-		// Check if mailbox already exists in R2
-		const metaKey = mailboxMetadataKey(canonical);
-		if (await c.env.BUCKET.head(metaKey)) {
-			return c.json({ error: "This username is already taken" }, 409);
+		// Role addresses (postmaster@, admin@, security@, noreply@ …) on the
+		// shared domain belong to the platform: certificate authorities and
+		// users trust them.
+		if (isReservedLocalPart(canonical.split("@")[0])) {
+			return c.json({ error: "This username is reserved" }, 400);
 		}
 
-		// Check if platform user exists
-		const existingUser = await findUserIdByLoginEmail(c.env.BUCKET, canonical);
-		if (existingUser) {
-			return c.json({ error: "This username is already taken" }, 409);
-		}
-
-		const secret = sessionSecret(c.env);
-		if (!secret) {
-			return c.json(
-				{ error: "Server authentication is not configured" },
-				500,
-			);
-		}
-
-		const userId = crypto.randomUUID();
-		const passwordHash = await hashPassword(password);
-		const user: PlatformUser = {
-			id: userId,
-			contactEmail: backupEmail || canonical,
-			mailboxEmail: canonical,
-			passwordHash,
-			linkedSubs: [],
-			createdAt: new Date().toISOString(),
-			updatedAt: new Date().toISOString(),
-		};
-		await savePlatformUser(c.env.BUCKET, user);
-
-		const principal = principalFromPlatformUser(user);
-		const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-
-		const settings = {
-			...defaultMailboxSettings(displayName || username),
-			acl: aclFromOwnerKeys(ensured.ownerKeys),
-		};
-		await c.env.BUCKET.put(metaKey, JSON.stringify(settings));
-
-		// Revive Durable Object for immediate mailbox access
-		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
-		await stub.reviveMailbox();
-		await stub.getFolders();
-		await seedWelcomeEmailsForMailbox(c.env, canonical, displayName || username);
-
-		const { token, expiresAt } = await issuePasswordSessionToken(secret, {
-			userId,
-			email: canonical,
+		const created = await createSignupUser(c.env, {
+			mailboxId: canonical,
+			username,
+			password,
+			displayName,
+			backupEmail,
 		});
-
-		c.header("Set-Cookie", sessionCookieHeader(token));
-
+		if (!created.ok) return c.json({ error: created.error }, created.status);
+		const session = await issueSignupSession(c, created.userId);
+		const name = displayName || username;
 		return c.json(
 			{
-				token,
-				expiresAt,
-				mailbox: {
-					id: canonical,
-					email: canonical,
-					name: displayName || username,
-				},
-				user: {
-					id: userId,
-					email: canonical,
-				},
+				...session,
+				mailbox: { id: canonical, email: canonical, name },
+				user: { id: created.userId, email: canonical },
+				recoveryEmailPending: Boolean(backupEmail),
+				...(isDevRuntime() && created.recoveryCode ? { devRecoveryCode: created.recoveryCode } : {}),
 			},
 			201,
 		);
@@ -251,29 +284,41 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		}
 		const { domain: rawDomain, username, password, displayName, backupEmail } = parsed.data;
 		const domain = rawDomain.toLowerCase();
+		if (await isRateLimited(c.env, "sign-up", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
 
 		const strengthErr = validatePasswordStrength(password);
 		if (strengthErr) return c.json({ error: strengthErr }, 400);
 
-		// Check if domain is already registered in Inboxies
-		const existingDomain = await getDomainMetadata(c.env.BUCKET, domain);
-		if (existingDomain) {
-			return c.json(
-				{ error: "This domain is already registered with Inboxies" },
-				409,
-			);
+		const db = authDb(c.env.AUTH_DB);
+		const existingRow = await db
+			.select({ domain: schema.domain.domain })
+			.from(schema.domain)
+			.where(eq(schema.domain.domain, domain))
+			.get();
+		if (existingRow || (await getDomainMetadata(c.env.BUCKET, domain))) {
+			return c.json({ error: "This domain is already registered with Inboxies" }, 409);
+		}
+		if (mailDomainConfig(c.env).domains.includes(domain)) {
+			return c.json({ error: "This domain is already registered with Inboxies" }, 409);
 		}
 
-		const fullEmail = `${username.toLowerCase()}@${domain}`;
-		const canonical = canonicalMailboxId(fullEmail);
+		const canonical = canonicalMailboxId(`${username.toLowerCase()}@${domain}`);
 		if (!canonical) return c.json({ error: "Invalid email address" }, 400);
 
-		const secret = sessionSecret(c.env);
-		if (!secret) {
-			return c.json(
-				{ error: "Server authentication is not configured" },
-				500,
+		const secret = claimSecret(c.env);
+		if (!secret) return c.json({ error: "Server authentication is not configured" }, 500);
+
+		// Bring-your-own domains must prove DNS control before we create a zone
+		// (purchased domains are provisioned by the paid Stripe webhook instead).
+		if (!canSkipDomainVerification(c.env)) {
+			const challenge = await domainVerificationChallenge(
+				secret,
+				domain,
+				await signupClaimant(username, password),
 			);
+			if (!(await isDomainVerified(challenge))) {
+				return c.json(verificationRequiredBody(domain, challenge), 428);
+			}
 		}
 
 		// 1. Provision Cloudflare Zone & Email Routing
@@ -289,28 +334,31 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		// 2. Fetch initial DNS records to audit
 		const dnsRecords = await listDnsRecords(c.env, zone.id);
 		const audit = auditEmailHealth(domain, dnsRecords, zone.status, zone.name_servers);
+		const active = zone.status === "active";
 
-		// 3. Create Admin Platform User
-		const userId = crypto.randomUUID();
-		const passwordHash = await hashPassword(password);
-		const user: PlatformUser = {
-			id: userId,
-			contactEmail: backupEmail || canonical,
-			mailboxEmail: canonical,
-			passwordHash,
-			linkedSubs: [],
-			createdAt: new Date().toISOString(),
-			updatedAt: new Date().toISOString(),
-		};
-		await savePlatformUser(c.env.BUCKET, user);
+		// 3. User, domain ownership and admin mailbox, in one D1 batch.
+		const created = await createSignupUser(
+			c.env,
+			{ mailboxId: canonical, username, password, displayName, backupEmail },
+			(userId) => [
+				db.insert(schema.domain).values({
+					domain,
+					ownerUserId: userId,
+					status: active ? "active" : "pending",
+					// The TXT record proved control (or, in dev, was skipped).
+					verifiedAt: new Date(),
+				}),
+			],
+		);
+		if (!created.ok) return c.json({ error: created.error }, created.status);
 
-		// 4. Save Domain Metadata in R2
+		// 4. Registrar / DNS details stay in R2.
 		const domainMeta: DomainMetadata = {
 			domain,
 			zoneId: zone.id,
-			ownerUserId: userId,
-			adminUserIds: [userId, canonical],
-			status: zone.status === "active" ? "active" : "pending_nameservers",
+			ownerUserId: created.userId,
+			adminUserIds: [created.userId],
+			status: active ? "active" : "pending_nameservers",
 			nameservers: zone.name_servers,
 			emailRoutingEnabled: true,
 			createdAt: new Date().toISOString(),
@@ -318,38 +366,12 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 		};
 		await saveDomainMetadata(c.env.BUCKET, domainMeta);
 
-		// 5. Create Admin Mailbox
-		const principal = principalFromPlatformUser(user);
-		const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-		const metaKey = mailboxMetadataKey(canonical);
-		const settings = {
-			...defaultMailboxSettings(displayName || username),
-			acl: aclFromOwnerKeys(ensured.ownerKeys),
-		};
-		await c.env.BUCKET.put(metaKey, JSON.stringify(settings));
-
-		const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
-		await stub.reviveMailbox();
-		await stub.getFolders();
-		await seedWelcomeEmailsForMailbox(c.env, canonical, displayName || username);
-
-		// 6. Issue Session Token
-		const { token, expiresAt } = await issuePasswordSessionToken(secret, {
-			userId,
-			email: canonical,
-		});
-
-		c.header("Set-Cookie", sessionCookieHeader(token));
-
+		const session = await issueSignupSession(c, created.userId);
+		const name = displayName || username;
 		return c.json(
 			{
-				token,
-				expiresAt,
-				mailbox: {
-					id: canonical,
-					email: canonical,
-					name: displayName || username,
-				},
+				...session,
+				mailbox: { id: canonical, email: canonical, name },
 				domain: {
 					domain,
 					zoneId: zone.id,
@@ -357,10 +379,8 @@ export function registerOnboardingRoutes(app: Hono<{ Bindings: Env }>) {
 					nameservers: zone.name_servers,
 				},
 				audit,
-				user: {
-					id: userId,
-					email: canonical,
-				},
+				user: { id: created.userId, email: canonical },
+				recoveryEmailPending: Boolean(backupEmail),
 			},
 			201,
 		);

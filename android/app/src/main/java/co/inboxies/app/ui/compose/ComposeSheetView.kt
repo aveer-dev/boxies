@@ -79,6 +79,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -108,10 +109,13 @@ import co.inboxies.app.theme.TransparentSystemBars
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.components.PrivateEmailLogoView
 import co.inboxies.app.ui.components.rememberSheetDragY
 import co.inboxies.app.ui.components.sheetDragToDismiss
 import co.inboxies.app.util.ComposeHtml
+import co.inboxies.app.util.OutboundAttachmentException
 import co.inboxies.app.util.OutboundImageCompressor
+import co.inboxies.app.util.OutboundLimits
 import co.inboxies.app.util.QuotedOriginal
 import android.Manifest
 import android.content.pm.PackageManager
@@ -121,8 +125,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -215,22 +221,6 @@ fun ComposeSheetView(
         onDispose { persist() }
     }
 
-    fun ingestBytes(bytes: ByteArray, filename: String, mime: String) {
-        try {
-            persist()
-            val prepared = OutboundImageCompressor.prepare(
-                bytes = bytes,
-                filename = filename,
-                mimeType = mime,
-                budget = form.remainingAttachmentBudget(),
-            )
-            attachments = attachments + prepared
-            form.attachments = attachments
-        } catch (e: Exception) {
-            toast = ComposeToast(e.message ?: "Couldn't attach file", isError = true)
-        }
-    }
-
     fun extensionForMime(mime: String): String {
         val type = mime.lowercase()
         return when {
@@ -266,16 +256,46 @@ fun ComposeSheetView(
         return fallback
     }
 
-    fun ingestUri(uri: Uri, fallbackStem: String) {
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-        val fallback = if (fallbackStem.contains('.')) {
-            fallbackStem
-        } else {
-            "$fallbackStem.${extensionForMime(mime)}"
+    suspend fun ingestUri(uri: Uri, fallbackStem: String) {
+        persist()
+        val budget = form.remainingAttachmentBudget()
+        // Resolve, read and re-encode off Main; a large pick must not jank or OOM.
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+                val fallback = if (fallbackStem.contains('.')) {
+                    fallbackStem
+                } else {
+                    "$fallbackStem.${extensionForMime(mime)}"
+                }
+                val name = uriDisplayName(uri, fallback)
+                if (OutboundImageCompressor.isVideo(mime, name)) {
+                    throw OutboundAttachmentException(OutboundLimits.VIDEO_REJECT)
+                }
+                val cap = if (OutboundImageCompressor.isImage(mime, name)) {
+                    OutboundLimits.MAX_IMAGE_SOURCE_BYTES
+                } else {
+                    budget
+                }
+                val bytes = context.contentResolver.openInputStream(uri)?.use {
+                    OutboundLimits.readCapped(it, cap)
+                } ?: throw OutboundAttachmentException("Couldn't read file")
+                OutboundImageCompressor.prepare(
+                    bytes = bytes,
+                    filename = name,
+                    mimeType = mime,
+                    budget = budget,
+                )
+            }
         }
-        val name = uriDisplayName(uri, fallback)
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return
-        ingestBytes(bytes, name, mime)
+        result
+            .onSuccess { prepared ->
+                attachments = attachments + prepared
+                form.attachments = attachments
+            }
+            .onFailure { e ->
+                toast = ComposeToast(e.message ?: "Couldn't attach file", isError = true)
+            }
     }
 
     fun uniquePhotoStem(): String = "photo-${UUID.randomUUID().toString().take(8)}"
@@ -283,18 +303,18 @@ fun ComposeSheetView(
     val photoLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(),
     ) { uris ->
-        uris.forEach { ingestUri(it, uniquePhotoStem()) }
+        scope.launch { uris.forEach { ingestUri(it, uniquePhotoStem()) } }
     }
     val fileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetMultipleContents(),
     ) { uris ->
-        uris.forEach { ingestUri(it, "file") }
+        scope.launch { uris.forEach { ingestUri(it, "file") } }
     }
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture(),
     ) { success ->
         if (success) {
-            cameraUri?.let { ingestUri(it, uniquePhotoStem()) }
+            cameraUri?.let { uri -> scope.launch { ingestUri(uri, uniquePhotoStem()) } }
         }
     }
 
@@ -503,16 +523,7 @@ fun ComposeSheetView(
                             onClick = {
                                 showCloseMenu = false
                                 scope.launch {
-                                    form.cancelAutoSave()
-                                    val draftId = form.draftId
-                                    if (!draftId.isNullOrEmpty()) {
-                                        runCatching {
-                                            co.inboxies.app.services.ApiClient.shared.deleteEmail(
-                                                form.fromMailboxId,
-                                                draftId,
-                                            )
-                                        }
-                                    }
+                                    form.deleteSavedDraft()
                                     onClose()
                                 }
                             },
@@ -582,6 +593,11 @@ fun ComposeSheetView(
                         FromRow(
                             displayName = fromDisplayName,
                             mailboxes = mailboxes,
+                            privateEmail = if (form.isAliasBound) {
+                                form.aliasEmail ?: "Private email"
+                            } else {
+                                null
+                            },
                             showMenu = showFromMenu,
                             onShowMenu = { showFromMenu = it },
                             onSelect = { mailbox ->
@@ -837,6 +853,8 @@ private fun FromRow(
     showMenu: Boolean,
     onShowMenu: (Boolean) -> Unit,
     onSelect: (Mailbox) -> Unit,
+    /** Private-email thread: the server sends from the alias, so the picker is locked. */
+    privateEmail: String? = null,
 ) {
     val colors = inboxiesColors()
     Row(
@@ -854,7 +872,30 @@ private fun FromRow(
             color = colors.muted,
         )
         Spacer(Modifier.width(4.dp))
-        if (mailboxes.size > 1) {
+        if (privateEmail != null) {
+            Row(
+                modifier = Modifier.clearAndSetSemantics {
+                    contentDescription = if (privateEmail.contains('@')) {
+                        "From private email $privateEmail"
+                    } else {
+                        "From private email"
+                    }
+                },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PrivateEmailLogoView(size = 14.dp)
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    privateEmail,
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = AppThemeDims.FontSize.sender,
+                    color = colors.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        } else if (mailboxes.size > 1) {
             Box {
                 Row(
                     modifier = Modifier

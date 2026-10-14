@@ -1,0 +1,7 @@
+dist/
+.astro/
+.wrangler/
+node_modules/
+
+# The repo root ignores worker-configuration.d.ts; the site commits its own.
+!worker-configuration.d.ts

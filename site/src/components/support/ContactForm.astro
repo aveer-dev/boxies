@@ -1,0 +1,326 @@
+---
+// The contact form (§4.4 S5). It works with no JS: native validation, a real
+// POST, and a redirect to a result page. contact-form.ts upgrades it to send
+// in place, with friendlier errors and a mailto fallback.
+// src: PS#6 (support@ for Contact Support and Send Feedback)
+import SectionHead from "../SectionHead.astro";
+import { SUPPORT_EMAIL } from "../../config";
+import { CONTACT_TOPICS } from "./contact-topics";
+import { LIMITS } from "./contact-rules";
+import Field from "./Field.astro";
+---
+
+<section class="section contact-section">
+	<SectionHead id="contact" title="Contact" meta={SUPPORT_EMAIL} metaHref={`mailto:${SUPPORT_EMAIL}`} />
+	<p class="contact-intro">
+		Questions, bug reports and ideas all go to the same inbox. Tell us which address it’s about and what you expected to
+		happen. We’ll never ask for your password.
+	</p>
+
+	<form class="contact" method="post" action="/api/contact" data-contact data-reveal-on-scroll>
+		<div class="field-row">
+			<Field id="c-email" name="email" label="Your email" type="email" required maxlength={LIMITS.email} autocomplete="email" help="Where we’ll reply." />
+			<Field id="c-name" name="name" label="Name" maxlength={LIMITS.name} autocomplete="name" help="Optional." />
+		</div>
+		<div class="field">
+			<label for="c-topic">Topic</label>
+			<span class="select-wrap">
+				<select id="c-topic" name="topic" required aria-describedby="c-topic-err">
+					<option value="" disabled selected>Choose a topic</option>
+					{CONTACT_TOPICS.map((t) => <option value={t.value}>{t.label}</option>)}
+				</select>
+			</span>
+			<p class="err" id="c-topic-err" hidden></p>
+		</div>
+		<Field
+			id="c-mailbox"
+			name="mailbox"
+			label="Your Inboxies address"
+			type="email"
+			maxlength={LIMITS.email}
+			help="If it’s about a specific mailbox. Never send a password or reset code."
+		/>
+		<div class="field">
+			<label for="c-message">Message</label>
+			<textarea
+				id="c-message"
+				name="message"
+				rows="6"
+				required
+				minlength={LIMITS.messageMin}
+				maxlength={LIMITS.messageMax}
+				placeholder="What happened, and what did you expect?"
+				aria-describedby="c-message-count c-message-err"></textarea>
+			<p class="counter js-only" id="c-message-count"><span data-count>0</span> / 5000</p>
+			<p class="err" id="c-message-err" hidden></p>
+		</div>
+		{/* Bots fill every field; people never see this one. */}
+		<div class="hp" aria-hidden="true">
+			<label for="c-website">Leave this empty</label>
+			<input id="c-website" name="website" type="text" tabindex="-1" autocomplete="off" />
+		</div>
+		<p class="form-status" role="status" aria-live="polite"></p>
+		<div class="fallback" data-fallback hidden>
+			<a class="btn btn-secondary" href={`mailto:${SUPPORT_EMAIL}`} data-mailto>Open in your email app</a>
+			<button type="button" class="btn btn-text" data-copy-message hidden>Copy message</button>
+		</div>
+		<div class="submit-row">
+			<button class="btn btn-primary" type="submit">Send message</button>
+			<p class="submit-note">Your message goes to {SUPPORT_EMAIL} and nowhere else. We use it only to reply.</p>
+		</div>
+	</form>
+
+	{/* Takes the form's place once the message is sent (JS only). */}
+	<div class="sent" tabindex="-1" data-contact-sent hidden>
+		<p class="sent-title">Sent.</p>
+		<p class="sent-line">Thanks. Your message is on its way to {SUPPORT_EMAIL}. We’ll reply to <span data-sent-email></span>.</p>
+		<button type="button" class="btn btn-text" data-send-another>Send another</button>
+	</div>
+</section>
+
+<script>
+	import "./contact-form";
+</script>
+
+<style>
+	.contact-intro {
+		margin-bottom: 20px;
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.contact {
+		position: relative;
+	}
+
+	/* Margins, not gap: the empty status line must take no room. */
+	.contact > :global(* + *) {
+		margin-top: 16px;
+	}
+
+	.contact > .form-status:empty {
+		margin-top: 0;
+	}
+
+	.field-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 16px;
+	}
+
+	@media (min-width: 641px) {
+		.field-row {
+			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+			gap: 12px;
+		}
+	}
+
+	.contact :global(.field) {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.contact :global(.field > label) {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* The edge is darker than the card hairline: a field has to be findable (3:1 on the page). */
+	.contact :global(:is(input, select, textarea)) {
+		width: 100%;
+		padding: 8px 10px;
+		border: 1px solid var(--border-input);
+		border-radius: var(--radius-sm);
+		background: var(--bg-card);
+		color: var(--text-primary);
+		font: 400 0.75rem/1.25rem var(--font-sans);
+		transition: border-color 150ms var(--ease-out);
+	}
+
+	.contact :global(:is(input, textarea)::placeholder) {
+		color: var(--text-muted);
+		opacity: 1;
+	}
+
+	.contact :global(:is(input, select, textarea):focus-visible) {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 0;
+	}
+
+	.contact :global(:is(input, select, textarea)[aria-invalid="true"]) {
+		border-color: var(--danger);
+	}
+
+	textarea {
+		display: block;
+		min-height: calc(6 * 1.25rem + 18px);
+		resize: vertical;
+	}
+
+	/* A native select can't take padding everywhere, so it's flattened and gets its own caret. */
+	.select-wrap {
+		position: relative;
+		display: block;
+	}
+
+	.select-wrap::after {
+		content: "▾";
+		position: absolute;
+		top: 50%;
+		right: 10px;
+		transform: translateY(-50%);
+		font-size: 0.6875rem;
+		line-height: 1;
+		color: var(--text-muted);
+		pointer-events: none;
+	}
+
+	/* Under .select-wrap so it outranks the shared field padding above. */
+	.select-wrap select {
+		appearance: none;
+		padding-right: 28px;
+		cursor: pointer;
+	}
+
+	/* The disabled placeholder option reads as a prompt, not a value. */
+	.select-wrap select:has(option[value=""]:checked) {
+		color: var(--text-muted);
+	}
+
+	.contact :global(.help),
+	.counter {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.counter {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.counter.is-over {
+		color: var(--danger);
+	}
+
+	.contact :global(.err) {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--danger);
+	}
+
+	.hp {
+		position: absolute;
+		left: -9999px;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+	}
+
+	.form-status {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.fallback {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px 20px;
+	}
+
+	.fallback[hidden],
+	.fallback [hidden] {
+		display: none;
+	}
+
+	.submit-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px 16px;
+	}
+
+	.submit-note {
+		flex: 1 1 14rem;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	@media (max-width: 640px) {
+		.submit-row {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.submit-row .btn {
+			width: 100%;
+		}
+
+		.submit-note {
+			flex: none;
+		}
+	}
+
+	.sent {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+	}
+
+	.sent[hidden] {
+		display: none;
+	}
+
+	/* Focus lands here so screen readers read the confirmation; it isn't a control. */
+	.sent:focus {
+		outline: none;
+	}
+
+	.sent-title {
+		font-size: var(--fs-title);
+		font-weight: 500;
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.sent-line {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.sent .btn-text {
+		margin-top: 4px;
+		font-size: var(--fs-body);
+	}
+
+	@media (pointer: coarse) {
+		/* Text buttons ("Copy message", "Send another") get a finger-sized hit area. */
+		.fallback .btn-text,
+		.sent .btn-text {
+			position: relative;
+		}
+
+		.fallback .btn-text::after,
+		.sent .btn-text::after {
+			content: "";
+			position: absolute;
+			inset: -12px -6px;
+		}
+
+		.contact :global(:is(input, select, textarea)) {
+			font-size: max(16px, 0.75rem);
+		}
+
+		.contact :global(:is(input, select)) {
+			min-height: 2.75rem;
+		}
+	}
+</style>

@@ -86,11 +86,19 @@ fun EmailBodyView(
     var webHeightPx by remember(email.id) { mutableFloatStateOf(1f) }
     var isWebLoading by remember(email.id) { mutableStateOf(isHtml) }
     var showQuoted by remember(email.id) { mutableStateOf(false) }
+    // Remote images are opt-in per message (parity with web "Load images").
+    var allowRemoteImages by remember(email.id) { mutableStateOf(false) }
 
     val bodyHtml = htmlWithImages ?: htmlOrText
     val prepared = remember(bodyHtml) { EmailHtmlSanitizer.prepare(bodyHtml) }
     val plainParts = remember(htmlOrText) { splitPlainTextReplies(htmlOrText) }
     val hasQuoted = if (isHtml) prepared.quote != null else plainParts.second != null
+    val hasRemoteImages = remember(prepared) {
+        isHtml && (
+            EmailHtmlSanitizer.hasRemoteImages(prepared.main) ||
+                prepared.quote?.let(EmailHtmlSanitizer::hasRemoteImages) == true
+            )
+    }
     val showLoading = isHtml && (isWebLoading || webHeightPx <= 1f)
 
     LaunchedEffect(email.id, htmlOrText, attachments.map { it.id }.joinToString(",")) {
@@ -158,9 +166,13 @@ fun EmailBodyView(
                 }
             }
 
+            if (hasRemoteImages && !allowRemoteImages && !showLoading) {
+                RemoteImagesBar(onLoad = { allowRemoteImages = true })
+            }
+
             Box(modifier = Modifier.fillMaxWidth()) {
                 HtmlBodyWebView(
-                    html = wrapEmailHtml(prepared.main),
+                    html = wrapEmailHtml(prepared.main, allowRemoteImages),
                     onHeight = { webHeightPx = it },
                     onLoadingChanged = { isWebLoading = it },
                     modifier = Modifier
@@ -195,9 +207,50 @@ fun EmailBodyView(
             QuotedRepliesSheet(
                 content = quote,
                 isHtml = isHtml,
+                allowRemoteImages = allowRemoteImages,
                 onClose = { showQuoted = false },
             )
         }
+    }
+}
+
+/** "Remote images are hidden · Load images" — muted pill matching the inline-images loader. */
+@Composable
+private fun RemoteImagesBar(onLoad: () -> Unit) {
+    val colors = inboxiesColors()
+    val view = LocalView.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(colors.pillFill)
+            .clickable {
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                onLoad()
+            }
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Text(
+            "Remote images are hidden",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 12.sp,
+            color = colors.muted,
+        )
+        Text(
+            "·",
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            color = colors.muted,
+        )
+        Text(
+            "Load images",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+            color = colors.accent,
+        )
     }
 }
 
@@ -280,6 +333,7 @@ private fun GhostThreeDotButton(onClick: () -> Unit) {
 private fun QuotedRepliesSheet(
     content: String,
     isHtml: Boolean,
+    allowRemoteImages: Boolean,
     onClose: () -> Unit,
 ) {
     val colors = inboxiesColors()
@@ -316,7 +370,7 @@ private fun QuotedRepliesSheet(
                         setBackgroundColor(android.graphics.Color.TRANSPARENT)
                         applyEmailHtmlWebViewSettings(javaScriptEnabled = false)
                         webViewClient = EmailLinkWebViewClient()
-                        val wrapped = wrapQuotedHtml(content)
+                        val wrapped = wrapQuotedHtml(content, allowRemoteImages)
                         tag = wrapped
                         loadDataWithBaseURL(
                             EmailHtmlSanitizer.OPAQUE_ORIGIN,
@@ -328,7 +382,7 @@ private fun QuotedRepliesSheet(
                     }
                 },
                 update = { view ->
-                    val wrapped = wrapQuotedHtml(content)
+                    val wrapped = wrapQuotedHtml(content, allowRemoteImages)
                     if (view.tag != wrapped) {
                         view.tag = wrapped
                         view.loadDataWithBaseURL(
@@ -472,13 +526,26 @@ private fun splitPlainTextReplies(text: String): Pair<String, String?> {
     return text to null
 }
 
+/**
+ * Literal (not regex) replace: Content-IDs are sender-controlled, so a crafted
+ * `cid` with regex metacharacters must not throw or match more than itself.
+ */
 private fun replaceCid(cid: String, html: String, replacement: String): String {
-    var result = html.replace(Regex("cid:$cid", RegexOption.IGNORE_CASE), replacement)
-    result = result.replace(Regex("cid:<$cid>", RegexOption.IGNORE_CASE), replacement)
-    return result
+    if (cid.isEmpty()) return html
+    return html
+        .replace("cid:<$cid>", replacement, ignoreCase = true)
+        .replace("cid:$cid", replacement, ignoreCase = true)
 }
 
-private fun wrapEmailHtml(bodyHtml: String): String {
+/** Remote images load only after the reader taps "Load images". */
+private fun emailCsp(allowRemoteImages: Boolean): String =
+    if (allowRemoteImages) {
+        EmailHtmlSanitizer.CONTENT_SECURITY_POLICY
+    } else {
+        EmailHtmlSanitizer.BLOCKED_REMOTE_IMAGES_POLICY
+    }
+
+private fun wrapEmailHtml(bodyHtml: String, allowRemoteImages: Boolean): String {
     val bodySize = AppThemeDims.FontSize.body.value.toInt()
     return """
         <!DOCTYPE html>
@@ -486,7 +553,7 @@ private fun wrapEmailHtml(bodyHtml: String): String {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="${EmailHtmlSanitizer.CONTENT_SECURITY_POLICY}">
+        <meta http-equiv="Content-Security-Policy" content="${emailCsp(allowRemoteImages)}">
         <style>
           :root { color-scheme: light dark; }
           html, body {
@@ -526,7 +593,7 @@ private fun wrapEmailHtml(bodyHtml: String): String {
     """.trimIndent()
 }
 
-private fun wrapQuotedHtml(bodyContent: String): String {
+private fun wrapQuotedHtml(bodyContent: String, allowRemoteImages: Boolean): String {
     val bodySize = AppThemeDims.FontSize.body.value.toInt()
     val sanitized = EmailHtmlSanitizer.sanitize(bodyContent)
     return """
@@ -535,7 +602,7 @@ private fun wrapQuotedHtml(bodyContent: String): String {
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="${EmailHtmlSanitizer.CONTENT_SECURITY_POLICY}">
+        <meta http-equiv="Content-Security-Policy" content="${emailCsp(allowRemoteImages)}">
         <style>
           :root { color-scheme: light dark; }
           html, body {

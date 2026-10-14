@@ -6,13 +6,15 @@ import co.inboxies.app.models.Mailbox
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Lightweight in-memory cache used by [AppModel]. Room schema lives in Database.kt
- * for future persistence; this keeps the app compiling and online-first for v1.
+ * Process-lifetime, in-memory cache used by [AppModel]. Nothing is persisted to disk:
+ * the app is online-first and repopulates this from the API after every cold start.
  */
 class DatabaseService private constructor() {
     private val mailboxes = ConcurrentHashMap<String, Mailbox>()
     private val folders = ConcurrentHashMap<String, MutableList<Folder>>()
     private val emails = ConcurrentHashMap<String, Email>()
+    /** Email id → owning mailbox id, so cached rows from different mailboxes never mix. */
+    private val emailMailboxIds = ConcurrentHashMap<String, String>()
     private val folderUnread = ConcurrentHashMap<String, Int>()
 
     fun getMailboxes(): List<Mailbox> = mailboxes.values.toList()
@@ -24,13 +26,19 @@ class DatabaseService private constructor() {
     fun deleteMailbox(id: String) {
         mailboxes.remove(id)
         folders.remove(id)
-        emails.entries.removeIf { it.value.folderId != null && it.key.startsWith("$id:") }
+        val ids = emailMailboxIds.filterValues { it == id }.keys
+        ids.forEach { emailId ->
+            emails.remove(emailId)
+            emailMailboxIds.remove(emailId)
+        }
+        folderUnread.keys.removeIf { it.startsWith("$id::") }
     }
 
     fun clearAll() {
         mailboxes.clear()
         folders.clear()
         emails.clear()
+        emailMailboxIds.clear()
         folderUnread.clear()
     }
 
@@ -49,14 +57,29 @@ class DatabaseService private constructor() {
         }.toMutableList()
     }
 
-    fun getEmails(mailboxId: String, folderId: String, limit: Int): List<Email> =
-        emails.values
+    private fun emailsIn(mailboxId: String): Sequence<Email> =
+        emails.values.asSequence().filter { emailMailboxIds[it.id] == mailboxId }
+
+    /**
+     * The folder's list rows (all pages loaded so far), newest first, one per conversation:
+     * messages cached by opening a thread don't become extra rows. Drafts are grouped per
+     * reply target, not per thread, so they are never collapsed.
+     */
+    fun getEmails(mailboxId: String, folderId: String, limit: Int = Int.MAX_VALUE): List<Email> {
+        val rows = getEmailRows(mailboxId, folderId)
+        val listRows = if (folderId == "draft" || folderId == "drafts") rows else EmailPaging.collapseThreads(rows)
+        return listRows.take(limit)
+    }
+
+    /** Every cached message filed in the folder, newest first (not collapsed). */
+    fun getEmailRows(mailboxId: String, folderId: String): List<Email> =
+        emailsIn(mailboxId)
             .filter { it.folderId == folderId || (it.folderId == null && folderId == "inbox") }
             .sortedByDescending { it.date }
-            .take(limit)
+            .toList()
 
-    fun getReplyLaterEmails(mailboxId: String, limit: Int = 50): List<Email> =
-        emails.values
+    fun getReplyLaterEmails(mailboxId: String, limit: Int = Int.MAX_VALUE): List<Email> =
+        emailsIn(mailboxId)
             .filter {
                 it.replyLater && it.folderId !in setOf("trash", "spam", "draft", "drafts")
             }
@@ -65,16 +88,17 @@ class DatabaseService private constructor() {
                     .thenByDescending { it.date }
             )
             .take(limit)
+            .toList()
 
     fun getReplyLaterCount(mailboxId: String): Int =
-        emails.values.count {
+        emailsIn(mailboxId).count {
             it.replyLater && it.folderId !in setOf("trash", "spam", "draft", "drafts")
         }
 
     fun getEmail(id: String): Email? = emails[id]
 
     fun getThreadEmails(mailboxId: String, threadId: String): List<Email> =
-        emails.values.filter { it.threadId == threadId }.sortedBy { it.date }
+        emailsIn(mailboxId).filter { it.threadId == threadId }.sortedBy { it.date }.toList()
 
     fun upsertEmails(mailboxId: String, list: List<Email>, defaultFolder: String? = null) {
         list.forEach { email ->
@@ -84,6 +108,7 @@ class DatabaseService private constructor() {
                 email
             }
             emails[merged.id] = merged
+            emailMailboxIds[merged.id] = mailboxId
         }
     }
 
@@ -109,6 +134,7 @@ class DatabaseService private constructor() {
 
     fun deleteEmail(id: String) {
         emails.remove(id)
+        emailMailboxIds.remove(id)
     }
 
     fun moveEmail(id: String, folderId: String) {
@@ -123,9 +149,30 @@ class DatabaseService private constructor() {
 
     /** Remove local rows for this folder that are not on the server page. */
     fun pruneEmailsNotInFolder(mailboxId: String, folderId: String, serverIds: Set<String>) {
-        emails.entries.removeIf { (_, email) ->
-            email.folderId == folderId && email.id !in serverIds
+        val removed = emails.values.filter { email ->
+            emailMailboxIds[email.id] == mailboxId &&
+                email.folderId == folderId && email.id !in serverIds
         }
+        removed.forEach { deleteEmail(it.id) }
+    }
+
+    /**
+     * Threaded list rows are keyed by the conversation's latest message, so a thread that
+     * got a new message comes back under a new id. When syncing without a prune, drop the
+     * cached row it replaces. Drafts are grouped per reply target, not per thread — skip.
+     */
+    fun dropSupersededThreadRows(mailboxId: String, folderId: String, incoming: List<Email>) {
+        if (folderId == "draft" || folderId == "drafts") return
+        val latestByThread = incoming.mapNotNull { e -> e.threadId?.let { it to e.id } }.toMap()
+        if (latestByThread.isEmpty()) return
+        emailsIn(mailboxId)
+            .filter { e ->
+                e.folderId == folderId &&
+                    e.threadId != null &&
+                    latestByThread[e.threadId]?.let { it != e.id } == true
+            }
+            .toList()
+            .forEach { deleteEmail(it.id) }
     }
 
     fun deleteDrafts(
@@ -134,25 +181,20 @@ class DatabaseService private constructor() {
         originalEmailId: String?,
         draftId: String?,
     ) {
-        if (draftId != null) emails.remove(draftId)
+        if (draftId != null) deleteEmail(draftId)
         if (threadId != null) {
-            emails.entries.removeIf { (_, e) -> e.isDraft && e.threadId == threadId }
+            emailsIn(mailboxId)
+                .filter { it.isDraft && it.threadId == threadId }
+                .toList()
+                .forEach { deleteEmail(it.id) }
         }
     }
 
     fun pruneLocalOnlyDrafts(mailboxId: String, threadId: String, remoteIds: Set<String>) {
-        emails.entries.removeIf { (_, e) ->
-            e.isDraft && e.threadId == threadId && e.id !in remoteIds
-        }
-    }
-
-    fun enqueueMutation(
-        mailboxId: String,
-        emailId: String,
-        action: String,
-        payload: Map<String, Any?> = emptyMap(),
-    ) {
-        // Online-first v1: mutations go through APIClient; outbox is a no-op cache hook.
+        emailsIn(mailboxId)
+            .filter { it.isDraft && it.threadId == threadId && it.id !in remoteIds }
+            .toList()
+            .forEach { deleteEmail(it.id) }
     }
 
     companion object {

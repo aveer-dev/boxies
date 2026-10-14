@@ -1,0 +1,112 @@
+---
+// "And the rest": the smaller things that work in the apps today, each
+// linking to its Support answer, with where it runs on the right. The first
+// six show; the rest wait behind a fold, like the comparison's "Show n".
+import { moreFeatures } from "../../data/features";
+import FeatureRow from "../FeatureRow.astro";
+import RowList from "../RowList.astro";
+import SectionHead from "../SectionHead.astro";
+
+const SHOWN = 6;
+const shown = moreFeatures.slice(0, SHOWN);
+const folded = moreFeatures.slice(SHOWN);
+---
+
+<section class="section column-container" aria-labelledby="more">
+	<SectionHead id="more" title="And the rest" meta="in the apps today" />
+	<RowList>
+		{shown.map((feature) => <FeatureRow feature={feature} />)}
+	</RowList>
+	{
+		folded.length > 0 && (
+			<details class="more-fold">
+				<summary>
+					<span class="more-caret" aria-hidden="true"></span>
+					Show {folded.length} more
+				</summary>
+				<RowList>
+					{folded.map((feature) => <FeatureRow feature={feature} />)}
+				</RowList>
+			</details>
+		)
+	}
+	{/* src: RM#2-3 (the comparison below) */}
+	<p class="more-compare">Coming from Gmail or HEY? <a class="quiet-link" href="#compare">See what maps where ↓</a></p>
+</section>
+
+<style>
+	.more-fold {
+		margin-top: 12px;
+	}
+
+	.more-fold > summary {
+		list-style: none;
+		display: inline-flex;
+		gap: 8px;
+		padding: 6px 0;
+		cursor: pointer;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+		transition: color 150ms var(--ease-out);
+	}
+
+	.more-fold > summary:hover {
+		color: var(--text-primary);
+	}
+
+	.more-fold > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.more-fold > summary:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 3px;
+		border-radius: 2px;
+	}
+
+	/* The FAQ toggle's caret (Faq.astro), one line of this summary tall. */
+	.more-caret {
+		flex: none;
+		display: grid;
+		place-items: center;
+		width: 0.75rem;
+		height: 1rem;
+		transition: transform 150ms var(--ease-out);
+	}
+
+	.more-caret::before {
+		content: "";
+		border-left: 0.3125rem solid currentColor;
+		border-block: 0.21875rem solid transparent;
+	}
+
+	.more-fold[open] .more-caret {
+		transform: rotate(90deg);
+	}
+
+	.more-fold[open] > summary {
+		margin-bottom: 8px;
+	}
+
+	.more-compare {
+		margin-top: 16px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	@media (pointer: coarse) {
+		.more-fold > summary {
+			min-height: 44px;
+			align-items: center;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.more-fold > summary,
+		.more-caret {
+			transition: none;
+		}
+	}
+</style>

@@ -4,7 +4,7 @@
 
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError } from "~/services/api";
+import api, { ApiError } from "~/services/api";
 import {
 	buildQuotedReplyBlock,
 	escapeHtml,
@@ -12,19 +12,22 @@ import {
 	getSignatureBlock,
 	htmlToPlainText,
 	splitEmailList,
-	stripHtml,
+	htmlToQuotedText,
 	toEmailListValue,
 } from "~/lib/utils";
 import { displaySenderName } from "shared/sender";
 import {
+	isSameAddress,
 	replyToAddresses,
 	replyAllAddresses,
 	rewriteSelfReplyTo,
+	uniqueAddresses,
 } from "shared/reply-recipients";
 import { composeBodyHasUserContent } from "shared/compose-body";
-import { plainTextToHtml, prefixSubject, replyFrom } from "shared/reply-envelope";
+import { plainTextToHtml, prefixSubject } from "shared/reply-envelope";
 import {
 	OUTBOUND_SIZE_ERROR,
+	bytesToBase64,
 	remainingOutboundBudget,
 } from "shared/compose-attachments";
 import {
@@ -33,7 +36,7 @@ import {
 } from "shared/outbound-limits";
 import { useDeleteEmail, useForwardEmail, useReplyToEmail, useSaveDraft, useSendEmail } from "~/queries/emails";
 import { useMailbox } from "~/queries/mailboxes";
-import { useUIStore } from "~/hooks/useUIStore";
+import { type ComposeOptions, useUIStore } from "~/hooks/useUIStore";
 import {
 	prepareComposeAttachment,
 	type PreparedAttachment,
@@ -58,7 +61,7 @@ const EMPTY_FIELDS: ComposeFormFields = {
 };
 
 function buildForwardBody(
-	original: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"]>,
+	original: NonNullable<ComposeOptions["originalEmail"]>,
 	sigBlock: string,
 ) {
 	const senderLabel = displaySenderName(original);
@@ -68,21 +71,49 @@ function buildForwardBody(
 			: original.sender,
 	);
 	const safeSubject = escapeHtml(original.subject);
-	const safeBody = escapeHtml(stripHtml(original.body || "")).replace(/\n/g, "<br>");
+	const safeBody = escapeHtml(htmlToQuotedText(original.body || "")).replace(/\n/g, "<br>");
 
 	return `${sigBlock || "<p><br></p>"}<div style="border: 1px solid #ddd; padding: 1em; background-color: #f9f9f9; margin: 1em 0;"><strong>Forwarded message:</strong><br><strong>From:</strong> ${safeSender}<br><strong>Date:</strong> ${formatComposeDate(original.date)}<br><strong>Subject:</strong> ${safeSubject}<br><br>${safeBody}</div>`;
 }
 
 function buildReplyAllFields(
-	original: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"]>,
+	original: NonNullable<ComposeOptions["originalEmail"]>,
 	selfAddress?: string,
+	aliasEmail?: string | null,
 ) {
 	const recipients = replyAllAddresses(original, selfAddress);
+	// The private email is you too; never Reply All back to it.
+	const to = aliasEmail ? uniqueAddresses(recipients.to, aliasEmail) : recipients.to;
+	const cc = aliasEmail ? uniqueAddresses(recipients.cc, aliasEmail) : recipients.cc;
 	return {
-		to: recipients.to.join(", "),
-		cc: recipients.cc.join(", "),
-		showCcBcc: recipients.cc.length > 0,
+		to: to.join(", "),
+		cc: cc.join(", "),
+		showCcBcc: cc.length > 0,
 	};
+}
+
+/**
+ * Private email this compose sends from: a reply in a thread that arrived on
+ * one, or a draft saved in such a thread. The server enforces the same rule.
+ */
+function composeAliasEmail(
+	composeOptions: ComposeOptions,
+): string | null {
+	const { mode, originalEmail: original, draftEmail: draft } = composeOptions;
+	if (draft?.alias_email) return draft.alias_email.toLowerCase();
+	if ((mode === "reply" || mode === "reply-all") && original?.alias_email) {
+		return original.alias_email.toLowerCase();
+	}
+	return null;
+}
+
+/** Your own address in this conversation: the alias if the original came from it. */
+function replySelfAddress(
+	original: { sender: string },
+	mailboxEmail: string | undefined,
+	aliasEmail: string | null,
+) {
+	return aliasEmail && isSameAddress(original.sender, aliasEmail) ? aliasEmail : mailboxEmail;
 }
 
 function recipientFieldToString(value: string | string[]): string {
@@ -109,25 +140,29 @@ function isComposeDraftEmpty(
 }
 
 function draftToField(
-	draft: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["draftEmail"]>,
-	original: ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"],
+	draft: NonNullable<ComposeOptions["draftEmail"]>,
+	original: ComposeOptions["originalEmail"],
 	mailboxEmail?: string,
+	aliasEmail?: string | null,
 ) {
 	const savedTo = draft.recipient || "";
 	if (!original || !mailboxEmail) return savedTo;
-	return recipientFieldToString(rewriteSelfReplyTo(savedTo, original, mailboxEmail));
+	let to = rewriteSelfReplyTo(savedTo, original, mailboxEmail);
+	if (aliasEmail) to = rewriteSelfReplyTo(to, original, aliasEmail);
+	return recipientFieldToString(to);
 }
 
 function buildInitialComposeFields(
-	composeOptions: ReturnType<typeof useUIStore.getState>["composeOptions"],
+	composeOptions: ComposeOptions,
 	mailboxEmail: string | undefined,
 	sigBlock: string,
+	aliasEmail: string | null = null,
 ): ComposeFormFields {
 	const { draftEmail: draft, originalEmail: original, mode } = composeOptions;
 
 	if (draft) {
 		return {
-			to: draftToField(draft, original, mailboxEmail?.toLowerCase()),
+			to: draftToField(draft, original, mailboxEmail?.toLowerCase(), aliasEmail),
 			cc: draft.cc || "",
 			bcc: draft.bcc || "",
 			showCcBcc: Boolean(draft.cc || draft.bcc),
@@ -146,14 +181,18 @@ function buildInitialComposeFields(
 	if (mode === "reply") {
 		return {
 			...EMPTY_FIELDS,
-			to: replyToAddresses(original, mailboxEmail?.toLowerCase()).join(", "),
+			to: replyToAddresses(original, replySelfAddress(original, mailboxEmail?.toLowerCase(), aliasEmail)).join(", "),
 			subject: prefixSubject(original.subject, "Re"),
 			body: `${plainTextToHtml(composeOptions.initialBody ?? "")}${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
 		};
 	}
 
 	if (mode === "reply-all") {
-		const recipients = buildReplyAllFields(original, mailboxEmail?.toLowerCase());
+		const recipients = buildReplyAllFields(
+			original,
+			replySelfAddress(original, mailboxEmail?.toLowerCase(), aliasEmail),
+			aliasEmail,
+		);
 		return {
 			...EMPTY_FIELDS,
 			...recipients,
@@ -178,9 +217,16 @@ function buildInitialComposeFields(
 
 export type DraftSaveStatus = "idle" | "saving" | "saved" | "error";
 
-export function useComposeForm(mailboxId?: string, _folder?: string) {
+/**
+ * State and actions for one compose column. `panelKey` identifies the column
+ * (several can be open); it reports whether the user has changed anything,
+ * so starting another compose never clears this one.
+ */
+export function useComposeForm(mailboxId: string | undefined, panelKey: string, composeOptions: ComposeOptions) {
 	const toastManager = useKumoToastManager();
-	const { composeOptions, closeCompose } = useUIStore();
+	const closeComposeColumn = useUIStore((s) => s.closeCompose);
+	const setComposeDirty = useUIStore((s) => s.setComposeDirty);
+	const closeCompose = () => closeComposeColumn(panelKey);
 	const { data: currentMailbox } = useMailbox(mailboxId);
 	const sendEmailMutation = useSendEmail();
 	const saveDraftMutation = useSaveDraft();
@@ -202,6 +248,9 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const [savedDraftId, setSavedDraftId] = useState<string | undefined>(composeOptions.draftEmail?.id);
 	const lastInitializedOptionsRef = useRef<typeof composeOptions | null>(null);
 	const lastSavedSnapshotRef = useRef<string>("");
+	/** The fields as the column opened with them: anything else is the user's work. */
+	const initialSnapshotRef = useRef<string>("");
+	const [addedFiles, setAddedFiles] = useState(false);
 	const saveGenerationRef = useRef(0);
 	const isSendingRef = useRef(false);
 	const isDraftEdit = !!composeOptions.draftEmail;
@@ -211,7 +260,12 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		switch (composeOptions.mode) { case "reply": return "Reply"; case "reply-all": return "Reply All"; case "forward": return "Forward"; default: return "New Message"; }
 	}, [composeOptions.mode, isDraftEdit]);
 
-	const sigBlock = useMemo(() => getSignatureBlock(currentMailbox?.settings), [currentMailbox]);
+	const aliasEmail = useMemo(() => composeAliasEmail(composeOptions), [composeOptions]);
+	// A signature usually carries your real name, so private-email replies go without.
+	const sigBlock = useMemo(
+		() => (aliasEmail ? "" : getSignatureBlock(currentMailbox?.settings)),
+		[currentMailbox, aliasEmail],
+	);
 
 	useEffect(() => {
 		if (lastInitializedOptionsRef.current === composeOptions) return;
@@ -222,6 +276,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 			composeOptions,
 			selfAddress,
 			sigBlock,
+			aliasEmail,
 		);
 		setError(null);
 		setTo(initialFields.to);
@@ -232,11 +287,52 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		setBody(initialFields.body);
 		setAttachments([]);
 		setSavedDraftId(composeOptions.draftEmail?.id);
+
+		// Forwarding carries the original's files along.
+		const forwardFrom = composeOptions.mode === "forward" ? composeOptions.originalEmail : undefined;
+		const forwardFiles = forwardFrom?.attachments ?? [];
+		if (mailboxId && forwardFrom && forwardFiles.length > 0) {
+			const initializedFor = composeOptions;
+			void (async () => {
+				const loaded: PreparedAttachment[] = [];
+				for (const file of forwardFiles) {
+					try {
+						const blob = await api.getAttachment(mailboxId, forwardFrom.id, file.id);
+						const bytes = new Uint8Array(await blob.arrayBuffer());
+						loaded.push({
+							id: crypto.randomUUID(),
+							content: bytesToBase64(bytes),
+							filename: file.filename,
+							type: file.mimetype || "application/octet-stream",
+							disposition: "attachment",
+							size: bytes.byteLength,
+						});
+					} catch {
+						toastManager.add({ title: `Couldn't attach ${file.filename}`, variant: "error" });
+					}
+				}
+				// Ignore if the user already moved on to a different compose.
+				if (lastInitializedOptionsRef.current === initializedFor && loaded.length > 0) {
+					setAttachments((current) => [...loaded, ...current]);
+				}
+			})();
+		}
 		lastSavedSnapshotRef.current = `${initialFields.to}|${initialFields.cc}|${initialFields.bcc}|${initialFields.subject}|${initialFields.body}`;
+		initialSnapshotRef.current = `${initialFields.to}|${initialFields.cc}|${initialFields.bcc}|${initialFields.subject}|${htmlToPlainText(initialFields.body)}`;
+		setAddedFiles(false);
 		setSaveStatus("idle");
 		saveGenerationRef.current += 1;
 		isSendingRef.current = false;
-	}, [composeOptions, currentMailbox?.email, sigBlock, mailboxId]);
+	}, [composeOptions, currentMailbox?.email, sigBlock, mailboxId, aliasEmail]);
+
+	// Dirty = the user typed, edited or attached something since it opened.
+	// The body compares as text: the editor may re-serialise the starting HTML.
+	const isDirty =
+		addedFiles ||
+		`${to}|${cc}|${bcc}|${subject}|${htmlToPlainText(body)}` !== initialSnapshotRef.current;
+	useEffect(() => {
+		setComposeDirty(panelKey, isDirty);
+	}, [panelKey, isDirty, setComposeDirty]);
 
 	const resolvedDraftId = (res?: { id?: string; draft_id?: string } | null) =>
 		res?.draft_id || res?.id;
@@ -375,14 +471,14 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		const ccRecipients = splitEmailList(cc); const bccRecipients = splitEmailList(bcc);
 		const original = composeOptions.originalEmail;
 		const mode = composeOptions.mode;
-		const from = replyFrom(mode, original, {
-			email: currentMailbox.email,
-			name: currentMailbox.name,
-			fromName: currentMailbox.settings?.fromName,
-		});
+		const fromAddress = aliasEmail ?? currentMailbox.email;
+		// A private email never carries the owner's display name.
+		const fromName = aliasEmail ? null : currentMailbox.settings?.fromName || currentMailbox.name;
+		const from = fromName && fromName !== fromAddress ? { email: fromAddress, name: fromName } : fromAddress;
 		let sendTo: string | string[] = toEmailListValue(toRecipients) ?? toRecipients;
 		if ((mode === "reply" || mode === "reply-all") && original) {
 			sendTo = rewriteSelfReplyTo(sendTo, original, currentMailbox.email || mailboxId);
+			if (aliasEmail) sendTo = rewriteSelfReplyTo(sendTo, original, aliasEmail);
 		}
 		const text = htmlToPlainText(body);
 		const sizeInput = {
@@ -457,6 +553,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		}
 		if (next.length) {
 			setAttachments((current) => [...current, ...next]);
+			setAddedFiles(true);
 		}
 	};
 
@@ -497,6 +594,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		isSending,
 		saveStatus,
 		formTitle,
+		aliasEmail,
 		handleSaveDraft,
 		handleDiscard,
 		handleSend,

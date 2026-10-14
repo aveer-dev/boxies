@@ -6,13 +6,15 @@
 import assert from "node:assert/strict";
 import { Hono } from "hono";
 import { app as apiApp } from "../index.ts";
-import { principalFromClaims } from "../lib/mailbox-acl.ts";
+import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
+import { authDb, isDomainAdmin, listDomainsForUser } from "../auth/authz.ts";
+import { principalFromHeaders } from "../auth/principal.ts";
+import * as schema from "../auth/schema.ts";
+import { createTestD1 } from "./d1-shim.mjs";
 import { auditEmailHealth } from "../lib/cloudflare-client.ts";
 import {
 	saveDomainMetadata,
 	getDomainMetadata,
-	listDomainsForPrincipal,
-	isPrincipalAdminForDomain,
 } from "../lib/domain-registry.ts";
 
 function mockBucket(initial = {}) {
@@ -48,14 +50,27 @@ function mockBucket(initial = {}) {
 	};
 }
 
+// One AUTH_DB per bucket: the envs built over a bucket share its state.
+const authDbs = new WeakMap();
+function authDbFor(bucket) {
+	if (!authDbs.has(bucket)) authDbs.set(bucket, createTestD1());
+	return authDbs.get(bucket);
+}
+
+async function ensureUser(env, id) {
+	await authDb(env.AUTH_DB)
+		.insert(schema.user)
+		.values({ id, email: id.includes("@") ? id : `${id}@example.com`, name: id, emailVerified: true })
+		.onConflictDoNothing();
+}
+
 function mockEnv(bucket, extras = {}) {
 	return {
 		BUCKET: bucket,
+		AUTH_DB: authDbFor(bucket),
+		BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789abcdef",
 		EMAIL_ADDRESSES: [],
 		DOMAINS: "inboxies.email",
-		DOMAIN_ADMINS: "superadmin@example.com",
-		MAILBOX_CREATE_POLICY: "admin_only",
-		MOBILE_JWT_SECRET: "test-mobile-jwt-secret-dns-99",
 		APP_BASE_URL: "https://inboxies.email",
 		WORKER_NAME: "agentic-inbox",
 		EMAIL: {
@@ -88,31 +103,33 @@ function mockEnv(bucket, extras = {}) {
 	};
 }
 
-import { verifyPasswordSessionToken } from "../lib/password-auth.ts";
-import { expandPrincipalWithLinks } from "../lib/identity-links.ts";
+import {
+	domainVerificationChallenge,
+	isDomainVerified,
+	signupClaimant,
+} from "../lib/domain-verification.ts";
+
+// These suites drive the in-memory Cloudflare / registrar mocks, which are
+// dev-only (production fails closed without credentials). Opt in explicitly.
+setDevRuntimeForTesting(true);
 
 function harness(env, defaultPrincipal = null) {
 	const parent = new Hono();
 	parent.use("*", async (c, next) => {
 		const authHeader = c.req.header("authorization");
-		const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
-		if (bearer) {
-			try {
-				const claims = await verifyPasswordSessionToken(bearer, env.MOBILE_JWT_SECRET);
-				const principal = await expandPrincipalWithLinks(
-					env.BUCKET,
-					principalFromClaims(claims),
-				);
+		if (authHeader) {
+			// A real Better Auth session (from sign-up), as the session middleware resolves it.
+			const principal = await principalFromHeaders(env, c.req.raw.headers);
+			if (principal) {
 				c.set("principal", principal);
 				return next();
-			} catch {
-				// invalid token
 			}
 		}
 
 		const override = c.req.header("x-test-user");
 		if (override) {
-			c.set("principal", principalFromClaims({ email: override, sub: `sub-${override}` }));
+			await ensureUser(env, override);
+			c.set("principal", { userId: override, sessionId: `sess-${override}`, email: override, scope: null });
 		} else if (defaultPrincipal) {
 			c.set("principal", defaultPrincipal);
 		}
@@ -172,23 +189,24 @@ async function runTests() {
 		const fetched = await getDomainMetadata(bucket, "acme.corp");
 		assert.equal(fetched?.zoneId, "zone-123");
 
-		const alice = principalFromClaims({ email: "alice@acme.corp", sub: "user:user-alice" });
-		const bob = principalFromClaims({ email: "bob@acme.corp", sub: "user:user-bob" });
-		const carol = principalFromClaims({ email: "carol@acme.corp", sub: "user:user-carol" });
-		const stranger = principalFromClaims({ email: "stranger@other.com", sub: "user:user-stranger" });
+		// Admin rights are AUTH_DB rows (the R2 adminUserIds above are informational).
+		const env = mockEnv(bucket);
+		const db = authDb(env.AUTH_DB);
+		for (const id of ["user-alice", "user-bob", "user-carol", "user-stranger"]) await ensureUser(env, id);
+		await db.insert(schema.domain).values({ domain: "acme.corp", ownerUserId: "user-alice", status: "active" });
+		await db.insert(schema.domainAdmin).values({ domain: "acme.corp", userId: "user-bob" });
 
-		assert.equal(isPrincipalAdminForDomain(domainMeta, alice), true, "Alice (owner) is admin");
-		assert.equal(isPrincipalAdminForDomain(domainMeta, bob), true, "Bob (in adminUserIds) is admin");
-		assert.equal(isPrincipalAdminForDomain(domainMeta, carol), true, "Carol (email match) is admin");
-		assert.equal(isPrincipalAdminForDomain(domainMeta, stranger), false, "Stranger is not admin");
-		assert.equal(isPrincipalAdminForDomain(domainMeta, stranger, true), true, "Super admin always passes");
+		assert.equal(await isDomainAdmin(db, "user-alice", "acme.corp"), true, "Alice (owner) is admin");
+		assert.equal(await isDomainAdmin(db, "user-bob", "ACME.corp"), true, "Bob (domain_admin row) is admin");
+		assert.equal(
+			await isDomainAdmin(db, "user-carol", "acme.corp"),
+			false,
+			"an email listed in R2 adminUserIds grants nothing",
+		);
+		assert.equal(await isDomainAdmin(db, "user-stranger", "acme.corp"), false, "Stranger is not admin");
 
-		const aliceDomains = await listDomainsForPrincipal(bucket, alice);
-		assert.equal(aliceDomains.length, 1);
-		assert.equal(aliceDomains[0].domain, "acme.corp");
-
-		const strangerDomains = await listDomainsForPrincipal(bucket, stranger);
-		assert.equal(strangerDomains.length, 0);
+		assert.deepEqual(await listDomainsForUser(db, "user-alice"), ["acme.corp"]);
+		assert.deepEqual(await listDomainsForUser(db, "user-stranger"), []);
 	}
 	console.log("✔ domain-registry unit tests passed");
 
@@ -215,7 +233,7 @@ async function runTests() {
 		assert.equal(data.mailbox.id, "sarah@inboxies.email");
 		assert.equal(data.mailbox.name, "Sarah Connor");
 		assert.ok(data.token);
-		assert.ok(res.headers.get("set-cookie")?.includes("inboxies_session="));
+		assert.ok(res.headers.get("set-cookie")?.includes("better-auth.session_token="));
 
 		// Duplicate username
 		const resDup = await app.fetch(
@@ -229,6 +247,18 @@ async function runTests() {
 			}),
 		);
 		assert.equal(resDup.status, 409);
+
+		// Role addresses on the shared domain are reserved.
+		for (const username of ["postmaster", "Admin", "security", "noreply", "webmaster"]) {
+			const resReserved = await app.fetch(
+				new Request("https://inboxies.email/api/v1/auth/signup-personal", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ username, password: "supersecretpassword123" }),
+				}),
+			);
+			assert.equal(resReserved.status, 400, `${username} is reserved`);
+		}
 
 		// Password too short
 		const resShort = await app.fetch(
@@ -259,6 +289,7 @@ async function runTests() {
 					domain: "supercorp.io",
 					username: "ceo",
 					password: "securepassword999",
+					backupEmail: "owner@personal.test",
 					displayName: "Chief Executive",
 				}),
 			}),
@@ -280,12 +311,84 @@ async function runTests() {
 					domain: "supercorp.io",
 					username: "cto",
 					password: "anotherpassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);
 		assert.equal(resDup.status, 409);
 	}
 	console.log("✔ signup-domain HTTP tests passed");
+
+	// 4b. Production: bring-your-own domains need a TXT proof bound to the claimant
+	{
+		setDevRuntimeForTesting(false);
+		try {
+			const bucket = mockBucket();
+			const env = mockEnv(bucket);
+			const app = harness(env);
+			const origFetch = globalThis.fetch;
+			globalThis.fetch = async (url) => {
+				if (String(url).includes("cloudflare-dns.com/dns-query")) {
+					return { ok: true, json: async () => ({ Status: 0 }) };
+				}
+				throw new Error(`unexpected fetch ${url}`);
+			};
+			try {
+				const res = await app.fetch(
+					new Request("https://inboxies.email/api/v1/auth/signup-domain", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							domain: "someone-elses.com",
+							username: "ceo",
+							password: "securepassword999",
+							backupEmail: "owner@personal.test",
+						}),
+					}),
+				);
+				assert.equal(res.status, 428, "unverified domain must not be provisioned");
+				const body = await res.json();
+				assert.equal(body.code, "domain_verification_required");
+				assert.equal(body.verification.recordName, "_inboxies-verify.someone-elses.com");
+				assert.match(body.verification.recordValue, /^inboxies-verify=[0-9a-f]{32}$/);
+				assert.equal(await bucket.get("platform/domains/someone-elses.com.json"), null);
+			} finally {
+				globalThis.fetch = origFetch;
+			}
+
+			// The proof is bound to the claimant: the owner's published value
+			// does not verify someone else's claim.
+			const secret = env.BETTER_AUTH_SECRET;
+			const owner = await domainVerificationChallenge(
+				secret,
+				"someone-elses.com",
+				await signupClaimant("ceo", "securepassword999"),
+			);
+			const attacker = await domainVerificationChallenge(
+				secret,
+				"someone-elses.com",
+				await signupClaimant("ceo", "attacker-password-1"),
+			);
+			assert.notEqual(owner.recordValue, attacker.recordValue);
+
+			globalThis.fetch = async () => ({
+				ok: true,
+				json: async () => ({
+					Status: 0,
+					Answer: [{ type: 16, data: `"${owner.recordValue}"` }],
+				}),
+			});
+			try {
+				assert.equal(await isDomainVerified(owner), true);
+				assert.equal(await isDomainVerified(attacker), false);
+			} finally {
+				globalThis.fetch = origFetch;
+			}
+		} finally {
+			setDevRuntimeForTesting(true);
+		}
+	}
+	console.log("✔ domain TXT verification tests passed");
 
 	// 5. HTTP: Admin DNS Suite
 	{
@@ -302,6 +405,7 @@ async function runTests() {
 					domain: "startup.dev",
 					username: "founder",
 					password: "founderpassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);
@@ -443,6 +547,7 @@ async function runTests() {
 					domain: "startup.dev",
 					username: "alice",
 					password: "securepassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);
@@ -549,6 +654,7 @@ async function runTests() {
 					domain: "startup.dev",
 					username: "alice",
 					password: "alicepassword123",
+					backupEmail: "owner@personal.test",
 				}),
 			}),
 		);
@@ -582,6 +688,20 @@ async function runTests() {
 		const createdAlias = await createAliasRes.json();
 		assert.equal(createdAlias.alias.aliasEmail, "support@startup.dev");
 		assert.equal(createdAlias.alias.targetMailboxId, "alice@startup.dev");
+
+		// An alias can't deliver into a stranger's mailbox on another domain.
+		await bucket.put("mailboxes/victim@inboxies.email.json", JSON.stringify({ fromName: "Victim" }));
+		await ensureUser(env, "victim");
+		await authDb(env.AUTH_DB).insert(schema.mailbox).values({ id: "victim@inboxies.email", domain: "inboxies.email" });
+		await authDb(env.AUTH_DB).insert(schema.mailboxMember).values({ mailboxId: "victim@inboxies.email", userId: "victim", role: "owner" });
+		const hijackRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/admin/domains/startup.dev/aliases", {
+				method: "POST",
+				headers: { ...authHeader, "Content-Type": "application/json" },
+				body: JSON.stringify({ aliasLocal: "x", targetMailboxId: "victim@inboxies.email" }),
+			}),
+		);
+		assert.equal(hijackRes.status, 403);
 
 		// 7.3 Test alias resolution via routeInboundEnvelope
 		const { routeInboundEnvelope, aliasMetadataKey } = await import("../lib/mailbox-routing.ts");

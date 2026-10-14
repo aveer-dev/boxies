@@ -1,0 +1,79 @@
+---
+// Big-number tiles (the run page's totals): four across only where a phrase
+// value fits on one line (wider than the 560px column), so two in the column,
+// then one. Laid out against the wrapper's width in rem, so they reflow with
+// the text-size slider too, not only on narrow screens.
+import type { Tile } from "../data/types";
+
+interface Props {
+	tiles: Tile[];
+}
+
+const { tiles } = Astro.props;
+// "SPF · DKIM · DMARC": a wrapped line never starts with the dot.
+const keepDots = (s: string) => s.replaceAll(" · ", " · ");
+---
+
+<div class="tiles-wrap" data-reveal-on-scroll>
+	<dl class="tiles">
+		{
+			tiles.map((t) => (
+				<div>
+					<dt>{t.dt}</dt>
+					<dd>{keepDots(t.dd)}</dd>
+					<dd class="tile-note">{t.p}</dd>
+				</div>
+			))
+		}
+	</dl>
+</div>
+
+<style>
+	.tiles-wrap {
+		container-type: inline-size;
+	}
+
+	.tiles {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 28px 16px;
+	}
+
+	@container (min-width: 13rem) {
+		.tiles {
+			grid-template-columns: repeat(2, 1fr);
+		}
+	}
+
+	@container (min-width: 40rem) {
+		.tiles {
+			grid-template-columns: repeat(4, 1fr);
+		}
+	}
+
+	/* Labels and notes carry meaning, so both use the muted ink (the run page used subtle). */
+	.tiles dt {
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.tiles dd {
+		margin-top: 4px;
+		font-size: 1.0625rem;
+		line-height: 1.375rem;
+		letter-spacing: -0.02em;
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+		text-wrap: balance;
+	}
+
+	.tiles .tile-note {
+		margin-top: 4px;
+		font-size: 0.6875rem;
+		line-height: 0.9375rem;
+		letter-spacing: normal;
+		color: var(--text-muted);
+		text-wrap: pretty;
+	}
+</style>

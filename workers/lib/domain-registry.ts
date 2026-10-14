@@ -2,8 +2,22 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { principalKeys, type RequestPrincipal } from "./mailbox-acl";
-import { aliasMetadataKey, canonicalMailboxId } from "./mailbox-routing";
+import { aliasMetadataKey, canonicalMailboxId, mailboxMetadataKey } from "./mailbox-routing";
+import { listAllR2Objects } from "./r2-list";
+import { isPrivateAliasMeta, type AnyAliasMetadata } from "./alias-utils";
+
+/** The address already belongs to a mailbox or a private email. */
+export class AddressInUseError extends Error {}
+
+async function readAliasRecord(bucket: R2Bucket, aliasEmail: string): Promise<AnyAliasMetadata | null> {
+	const obj = await bucket.get(aliasMetadataKey(aliasEmail));
+	if (!obj) return null;
+	try {
+		return (await obj.json()) as AnyAliasMetadata;
+	} catch {
+		return null;
+	}
+}
 
 export interface DomainRegistrationInfo {
 	provider: "cloudflare_registrar" | "external";
@@ -15,6 +29,40 @@ export interface DomainRegistrationInfo {
 	eppAuthCodeRequestedAt?: string;
 	orderId?: string;
 	retailPriceUsd?: number;
+}
+
+/** The Stripe subscription that pays for a purchased domain. */
+export interface DomainBillingInfo {
+	provider: "stripe";
+	checkoutSessionId: string;
+	customerId?: string;
+	subscriptionId?: string;
+	/** Stripe subscription status ("active", "past_due", "unpaid", "canceled", ...). */
+	status: string;
+	/** `created` (unix seconds) of the event that last set `status`; older events don't override it. */
+	statusEventAt?: number;
+	cancelAtPeriodEnd?: boolean;
+	lastPaidAt?: string;
+	pastDueSince?: string;
+	canceledAt?: string;
+	refundedAt?: string;
+	/** Amount refunded so far, in cents. */
+	amountRefunded?: number;
+	disputedAt?: string;
+	disputeStatus?: string;
+	/** The subscription is set to end at this time (cancel at period end). */
+	serviceEndsAt?: string;
+	/** The subscription ended: mailboxes on the domain are read-only. */
+	serviceEndedAt?: string;
+	/** When Stripe charges next (60 days before the registration it pays for expires). */
+	nextChargeAt?: string;
+	/** Reminder emails already sent for the current end of service, by key. */
+	remindersSent?: string[];
+	/** Annual price parts, reused when the owner renews. */
+	domainFeeUsd?: number;
+	platformFeeUsd?: number;
+	renewedAt?: string;
+	updatedAt: string;
 }
 
 export interface DomainAlias {
@@ -33,6 +81,7 @@ export interface DomainMetadata {
 	nameservers: string[];
 	emailRoutingEnabled: boolean;
 	registration?: DomainRegistrationInfo;
+	billing?: DomainBillingInfo;
 	aliases?: DomainAlias[];
 	createdAt: string;
 	updatedAt: string;
@@ -92,7 +141,7 @@ export async function deleteDomainMetadata(
 export async function listAllRegisteredDomains(
 	bucket: R2Bucket,
 ): Promise<DomainMetadata[]> {
-	const listed = await bucket.list({ prefix: DOMAINS_PREFIX });
+	const listed = { objects: await listAllR2Objects(bucket, DOMAINS_PREFIX) };
 	const results: DomainMetadata[] = [];
 
 	for (const object of listed.objects) {
@@ -108,51 +157,6 @@ export async function listAllRegisteredDomains(
 	}
 
 	return results;
-}
-
-/**
- * Check if the given principal has administrative rights over the domain.
- */
-export function isPrincipalAdminForDomain(
-	domainMetadata: DomainMetadata,
-	principal: RequestPrincipal | null | undefined,
-	isSuperAdmin = false,
-): boolean {
-	if (isSuperAdmin) return true;
-	if (!principal) return false;
-
-	const keys = principalKeys(principal);
-	const ownerKey = `user:${domainMetadata.ownerUserId}`;
-
-	if (keys.includes(ownerKey)) return true;
-
-	// Check if any principal key matches adminUserIds
-	for (const adminId of domainMetadata.adminUserIds) {
-		const adminKey = adminId.includes(":") ? adminId : `user:${adminId}`;
-		if (keys.includes(adminKey)) return true;
-	}
-
-	// Check direct email match against domain admin list
-	if (principal.email && domainMetadata.adminUserIds.includes(principal.email.toLowerCase())) {
-		return true;
-	}
-
-	return false;
-}
-
-/**
- * List all domains that the given principal is authorized to administer.
- */
-export async function listDomainsForPrincipal(
-	bucket: R2Bucket,
-	principal: RequestPrincipal | null | undefined,
-	isSuperAdmin = false,
-): Promise<DomainMetadata[]> {
-	const all = await listAllRegisteredDomains(bucket);
-	if (isSuperAdmin) return all;
-	if (!principal) return [];
-
-	return all.filter((meta) => isPrincipalAdminForDomain(meta, principal, isSuperAdmin));
 }
 
 /**
@@ -172,6 +176,12 @@ export async function saveEmailAlias(
 	const meta = await getDomainMetadata(bucket, normalizedDomain);
 	if (!meta) {
 		throw new Error(`Domain '${normalizedDomain}' not found`);
+	}
+	if (await bucket.head(mailboxMetadataKey(aliasEmail))) {
+		throw new AddressInUseError(`${aliasEmail} is already a mailbox`);
+	}
+	if (isPrivateAliasMeta(await readAliasRecord(bucket, aliasEmail))) {
+		throw new AddressInUseError(`${aliasEmail} is in use by a private email`);
 	}
 
 	const aliasRecord: DomainAlias = {
@@ -220,8 +230,10 @@ export async function deleteEmailAlias(
 		throw new Error(`Domain '${normalizedDomain}' not found`);
 	}
 
-	// 1. Delete O(1) lookup record
-	await bucket.delete(aliasMetadataKey(aliasEmail));
+	// 1. Delete O(1) lookup record — never a private email sharing the prefix.
+	if (!isPrivateAliasMeta(await readAliasRecord(bucket, aliasEmail))) {
+		await bucket.delete(aliasMetadataKey(aliasEmail));
+	}
 
 	// 2. Remove from DomainMetadata
 	if (meta.aliases) {

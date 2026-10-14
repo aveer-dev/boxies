@@ -33,5 +33,16 @@ export const queryKeys = {
 		list: (mailboxId: string, q: string) =>
 			["recipients", mailboxId, q] as const,
 	},
+	domainService: (domain: string) => ["domain-service", domain] as const,
 	config: ["config"] as const,
+	account: {
+		me: ["me"] as const,
+		identities: ["identities"] as const,
+		sessions: ["account", "sessions"] as const,
+		recoveryEmail: ["account", "recovery-email"] as const,
+	},
+	members: {
+		list: (mailboxId: string) => ["members", mailboxId] as const,
+		invites: (mailboxId: string) => ["members", mailboxId, "invites"] as const,
+	},
 };

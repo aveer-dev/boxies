@@ -1,0 +1,34 @@
+---
+// Other ways to reach us, under the form (§4.4 S6). No response-time promise
+// and no status widget: there's no status page to point at.
+// src: WEB#6 (8); BRIEF (no SLAs)
+import Records from "../Records.astro";
+import { IOS_STATUS, SUPPORT_EMAIL, X_URL, flags } from "../../config";
+import type { RecordRow } from "../../data/types";
+
+const rows: RecordRow[] = [
+	// Both apps have it; it goes when neither is shown.
+	...(IOS_STATUS !== "hidden" || flags.androidPublic
+		? [{ label: "In the app", value: "Settings → Support & feedback → Contact Support", src: "FC#4.12" }]
+		: []),
+	{ label: "Email", value: `[${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL})`, src: "PS#6" },
+	...(X_URL ? [{ label: "X", value: `[@inboxies_app](${X_URL})`, src: "PS#6", ownerConfirm: "handle live and owned" }] : []),
+	{
+		label: "Security issue",
+		value: `Choose “Security report” as the topic, or email ${SUPPORT_EMAIL} with “Security” in the subject.`,
+		src: "PS#6",
+		ownerConfirm: "reserve security@",
+	},
+];
+---
+
+<div class="other-ways">
+	<h3 class="sr-only">Other ways to reach us</h3>
+	<Records rows={rows} />
+</div>
+
+<style>
+	.other-ways {
+		margin-top: 32px;
+	}
+</style>

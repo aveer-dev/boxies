@@ -36,6 +36,12 @@ import {
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { allowOutboundRecipients } from "./sender-triage";
+import {
+	findThreadAliasId,
+	isInboundEmail,
+	resolveOutboundSender,
+	type AliasSenderStub,
+} from "./alias-sender";
 import type { Env } from "../types";
 
 // ── Type casts for DO methods not on the base stub type ────────────
@@ -187,12 +193,14 @@ export async function toolDraftReply(
 			in_reply_to: params.originalEmailId,
 			email_references: null,
 			thread_id: threadId,
+			source: "agent",
 		},
 		[],
 	);
 	await stub.deleteSiblingDrafts(draftId, {
 		threadId,
 		inReplyTo: params.originalEmailId,
+		onlySource: "agent",
 	});
 
 	return {
@@ -267,12 +275,14 @@ export async function toolDraftEmail(
 			in_reply_to: params.in_reply_to || null,
 			email_references: null,
 			thread_id: resolvedThreadId,
+			source: "agent",
 		},
 		[],
 	);
 	await stub.deleteSiblingDrafts(draftId, {
 		threadId: resolvedThreadId,
 		inReplyTo: params.in_reply_to,
+		onlySource: "agent",
 	});
 
 	return {
@@ -397,11 +407,14 @@ export async function toolDeleteEmail(
 	emailId: string,
 ) {
 	const stub = getMailboxStub(env, mailboxId);
-	const result = await stub.deleteEmail(emailId);
+	// Same as the app: moves to Trash, permanent only from Trash / Drafts.
+	const result = await (stub as unknown as {
+		trashOrDeleteEmail: (id: string) => Promise<"trashed" | "deleted" | null>;
+	}).trashOrDeleteEmail(emailId);
 	if (result === null) {
 		return { error: "Email not found", emailId };
 	}
-	return { status: "deleted", emailId };
+	return { status: result, emailId };
 }
 
 // ── send_reply ─────────────────────────────────────────────────────
@@ -421,21 +434,33 @@ export async function toolSendReply(
 > {
 	const stub = getMailboxStub(env, mailboxId);
 
-	// Check send rate limit
-	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
-	if (rateLimitError) {
-		return { error: rateLimitError };
-	}
 
 	const originalEmail = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
 	if (!originalEmail) {
 		return { error: "Original email not found" };
 	}
 
-	const rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
-	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 	const { originalMsgId, references, threadId } = buildReferencesChain(originalEmail);
-	const fromDomain = mailboxId.split("@")[1];
+
+	// Agent replies follow the same private-email binding as the API.
+	const aliasStub = stub as unknown as AliasSenderStub;
+	const sender = await resolveOutboundSender({
+		stub: aliasStub,
+		mailboxId,
+		requestedFrom: mailboxId,
+		threadAliasId: await findThreadAliasId(aliasStub, {
+			aliasId: originalEmail.alias_id ?? null,
+			threadId,
+			originalIsInbound: isInboundEmail(originalEmail),
+		}),
+	});
+	if (!sender.ok) return { error: sender.error };
+	const fromAddress = sender.fromEmail;
+
+	let rewrittenTo = rewriteSelfReplyTo(params.to, originalEmail, mailboxId);
+	if (sender.aliasId) rewrittenTo = rewriteSelfReplyTo(rewrittenTo, originalEmail, fromAddress);
+	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
+	const fromDomain = fromAddress.split("@")[1];
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
@@ -458,11 +483,18 @@ export async function toolSendReply(
 		throw e;
 	}
 
+	// Reserve a send slot only once the message is verified and valid, so a
+	// refused draft doesn't use up the user's quota.
+	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
+	if (rateLimitError) {
+		return { error: rateLimitError };
+	}
+
 	let providerMessageId: string;
 	try {
 		const result = await sendEmail(env.EMAIL, {
 			to,
-			from: mailboxId,
+			from: fromAddress,
 			subject: params.subject,
 			html: fullBodyHtml,
 			headers: buildThreadingHeaders(originalMsgId, references),
@@ -479,7 +511,7 @@ export async function toolSendReply(
 		{
 			id: messageId,
 			subject: params.subject,
-			sender: mailboxId.toLowerCase(),
+			sender: fromAddress.toLowerCase(),
 			recipient: to.toLowerCase(),
 			date: new Date().toISOString(),
 			body: fullBodyHtml,
@@ -491,11 +523,13 @@ export async function toolSendReply(
 			provider_message_id: providerMessageId,
 			delivery_status: "accepted",
 			delivery_error: null,
+			alias_id: sender.aliasId,
 		},
 		[],
 	);
 	await allowOutboundRecipients(stub as any, to);
-	await stub.deleteDraftsForThread(threadId);
+	// Replace only the agent's own drafts; the user may be mid-draft here.
+	await stub.deleteSiblingDrafts("", { threadId, onlySource: "agent" });
 	await (stub as any).clearReplyLaterForThread(threadId);
 
 	return { status: "sent", messageId, message: `Reply sent to ${to}` };
@@ -517,11 +551,6 @@ export async function toolSendEmail(
 > {
 	const stub = getMailboxStub(env, mailboxId);
 
-	// Check send rate limit
-	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
-	if (rateLimitError) {
-		return { error: rateLimitError };
-	}
 
 	const fromDomain = mailboxId.split("@")[1];
 	if (!fromDomain) throw new Error("Invalid mailbox email address");
@@ -537,6 +566,13 @@ export async function toolSendEmail(
 	} catch (e) {
 		if (e instanceof OutboundSizeError) return { error: e.message };
 		throw e;
+	}
+
+	// Reserve a send slot only once the message is verified and valid, so a
+	// refused draft doesn't use up the user's quota.
+	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
+	if (rateLimitError) {
+		return { error: rateLimitError };
 	}
 
 	let providerMessageId: string;

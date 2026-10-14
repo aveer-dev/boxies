@@ -8,6 +8,7 @@
  */
 
 import { CloudflareApiError, type CloudflareClientEnv } from "./cloudflare-client";
+import { isDevRuntime } from "./dev-runtime";
 import type { DomainRegistrationInfo } from "./domain-registry";
 
 export interface DomainPricingBreakdown {
@@ -20,6 +21,10 @@ export interface DomainPricingBreakdown {
 		domain: string;
 		aiAndPlatform: string[];
 	};
+	/** Same as domainFeeUsd / billingInterval: the names the iOS & Android models decode. */
+	domainWholesaleUsd: number;
+	interval: "year";
+	lineItems: { name: string; description: string; amountUsd: number }[];
 }
 
 export interface DomainAvailabilityResult {
@@ -80,8 +85,14 @@ const TLD_WHOLESALE_PRICING: Record<string, number> = {
 
 const STANDARD_RETAIL_PRICE = 20.0;
 
+/** Our list wholesale price for `domain`'s TLD (used when no recorded price exists). */
+export function listWholesalePrice(domain: string): number {
+	return TLD_WHOLESALE_PRICING[extractTld(domain.trim().toLowerCase())] ?? 10.44;
+}
+
+// Mock only in local dev / tests. In production missing credentials must fail closed.
 function isMockEnv(env: CloudflareClientEnv): boolean {
-	return !env.CF_API_TOKEN || !env.CF_ACCOUNT_ID;
+	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);
 }
 
 // In-memory mock registrar store for dev / test environments
@@ -96,6 +107,11 @@ const mockRegisteredDomains = new Set<string>([
 ]);
 
 const mockRegistrations = new Map<string, DomainRegistrationResult>();
+
+/** Tests: someone else registers `domain` (e.g. between checkout and payment). */
+export function mockRegisterElsewhereForTesting(domain: string): void {
+	mockRegisteredDomains.add(domain.trim().toLowerCase());
+}
 
 export function extractTld(domain: string): string {
 	const parts = domain.trim().toLowerCase().split(".");
@@ -115,10 +131,24 @@ export function computeDomainPricing(wholesalePrice: number): DomainPricingBreak
 
 	return {
 		domainFeeUsd: domainFee,
+		domainWholesaleUsd: domainFee,
 		platformFeeUsd,
 		totalAnnualUsd,
 		billingInterval: "year",
+		interval: "year",
 		currency: "USD",
+		lineItems: [
+			{
+				name: "Domain registration",
+				description: "1-year registration at the wholesale ICANN price via Cloudflare Registrar",
+				amountUsd: domainFee,
+			},
+			{
+				name: "Inboxies platform, AI & infrastructure",
+				description: "AI email agent, sync, storage, DNS and email security",
+				amountUsd: platformFeeUsd,
+			},
+		],
 		features: {
 			domain: "1-year domain registration & wholesale ICANN fee via Cloudflare Registrar",
 			aiAndPlatform: [
@@ -334,6 +364,10 @@ export async function registerDomain(
 	const expiresAt = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString();
 
 	if (isMockEnv(env)) {
+		// Like the real registrar: a registered name (anyone's, ours included) can't be bought again.
+		if (mockRegisteredDomains.has(domain) || mockRegistrations.has(domain)) {
+			throw new CloudflareApiError(400, `Domain ${domain} is not available for registration`);
+		}
 		const result: DomainRegistrationResult = {
 			domain,
 			status: "active",
@@ -484,6 +518,50 @@ export async function getDomainEppCode(
 }
 
 /**
+ * Update a registration's settings: the current endpoint first, then the legacy one.
+ */
+async function updateRegistration(
+	env: CloudflareClientEnv,
+	domain: string,
+	body: { locked?: boolean; auto_renew?: boolean },
+): Promise<{ locked?: boolean; auto_renew?: boolean } | undefined> {
+	const patchUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/registrations/${encodeURIComponent(domain)}`;
+	let res = await fetch(patchUrl, {
+		method: "PATCH",
+		headers: {
+			Authorization: `Bearer ${env.CF_API_TOKEN}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(body),
+	});
+
+	if (res.status === 404 || res.status === 405) {
+		const legacyUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}`;
+		res = await fetch(legacyUrl, {
+			method: "PUT",
+			headers: {
+				Authorization: `Bearer ${env.CF_API_TOKEN}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
+		});
+	}
+
+	const data = (await res.json().catch(() => ({}))) as {
+		success?: boolean;
+		result?: { locked?: boolean; auto_renew?: boolean };
+		errors?: Array<{ code: number; message: string }>;
+	};
+
+	if (!res.ok || data.success === false) {
+		const errors = data.errors || [];
+		const msg = errors.map((e) => e.message).join("; ") || `Failed to update registration: ${res.status}`;
+		throw new CloudflareApiError(res.status, msg, errors);
+	}
+	return data.result;
+}
+
+/**
  * Toggle registrar transfer lock for a domain.
  */
 export async function setDomainTransferLock(
@@ -502,41 +580,99 @@ export async function setDomainTransferLock(
 		return locked;
 	}
 
-	// Try modern PATCH /accounts/{account_id}/registrar/registrations/{domain}
-	const patchUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/registrations/${encodeURIComponent(domain)}`;
-	let res = await fetch(patchUrl, {
-		method: "PATCH",
-		headers: {
-			Authorization: `Bearer ${env.CF_API_TOKEN}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({ locked }),
-	});
+	const result = await updateRegistration(env, domain, { locked });
+	return result?.locked ?? locked;
+}
 
-	if (res.status === 404 || res.status === 405) {
-		// Fallback to legacy PUT /accounts/{account_id}/registrar/domains/{domain}
-		const legacyUrl = `${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}`;
-		res = await fetch(legacyUrl, {
-			method: "PUT",
-			headers: {
-				Authorization: `Bearer ${env.CF_API_TOKEN}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({ locked }),
-		});
+/**
+ * Turn registrar auto-renew on or off. Off once nobody pays for the domain,
+ * so the operator isn't charged to renew it.
+ */
+export async function setDomainAutoRenew(
+	env: CloudflareClientEnv,
+	rawDomain: string,
+	autoRenew: boolean,
+): Promise<boolean> {
+	const domain = rawDomain.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+
+	if (isMockEnv(env)) {
+		const existing = mockRegistrations.get(domain);
+		if (existing) {
+			existing.autoRenew = autoRenew;
+			existing.registrationInfo.autoRenew = autoRenew;
+		}
+		return autoRenew;
 	}
+
+	const result = await updateRegistration(env, domain, { auto_renew: autoRenew });
+	return result?.auto_renew ?? autoRenew;
+}
+
+/**
+ * The registration for `domain` if the operator's account already holds it,
+ * e.g. an earlier attempt bought it but its result was never recorded.
+ */
+export async function getOwnedRegistration(
+	env: CloudflareClientEnv,
+	rawDomain: string,
+): Promise<DomainRegistrationResult | null> {
+	const domain = rawDomain.trim().toLowerCase().replace(/^\.+|\.+$/g, "");
+
+	if (isMockEnv(env)) return mockRegistrations.get(domain) ?? null;
+
+	const headers = { Authorization: `Bearer ${env.CF_API_TOKEN}` };
+	let res = await fetch(
+		`${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/registrations/${encodeURIComponent(domain)}`,
+		{ headers },
+	);
+	if (res.status === 404 || res.status === 405) {
+		res = await fetch(
+			`${CF_API_BASE}/accounts/${env.CF_ACCOUNT_ID}/registrar/domains/${encodeURIComponent(domain)}`,
+			{ headers },
+		);
+	}
+	if (res.status === 404) return null;
 
 	const data = (await res.json().catch(() => ({}))) as {
 		success?: boolean;
-		result?: { locked?: boolean };
+		result?: {
+			name?: string;
+			domain_name?: string;
+			created_at?: string;
+			expires_at?: string;
+			auto_renew?: boolean;
+			locked?: boolean;
+			privacy?: boolean;
+		} | null;
 		errors?: Array<{ code: number; message: string }>;
 	};
-
 	if (!res.ok || data.success === false) {
 		const errors = data.errors || [];
-		const msg = errors.map((e) => e.message).join("; ") || `Failed to update transfer lock: ${res.status}`;
+		const msg = errors.map((e) => e.message).join("; ") || `Registrar lookup error: ${res.status}`;
 		throw new CloudflareApiError(res.status, msg, errors);
 	}
+	const r = data.result;
+	const name = (r?.domain_name || r?.name || "").toLowerCase();
+	if (!r || name !== domain) return null;
 
-	return data.result?.locked ?? locked;
+	const now = new Date().toISOString();
+	const regInfo: DomainRegistrationInfo = {
+		provider: "cloudflare_registrar",
+		registeredAt: r.created_at || now,
+		expiresAt: r.expires_at,
+		autoRenew: r.auto_renew ?? true,
+		whoisPrivacy: r.privacy ?? true,
+		locked: r.locked ?? true,
+		retailPriceUsd: STANDARD_RETAIL_PRICE,
+	};
+	return {
+		domain,
+		status: "active",
+		registeredAt: regInfo.registeredAt || now,
+		expiresAt: regInfo.expiresAt || now,
+		autoRenew: regInfo.autoRenew,
+		locked: regInfo.locked,
+		whoisPrivacy: regInfo.whoisPrivacy,
+		registrationInfo: regInfo,
+	};
 }

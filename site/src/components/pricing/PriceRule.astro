@@ -1,0 +1,13 @@
+---
+// "How the price works": the rule, not a price list. The fallback table in
+// the app's code can disagree with live Cloudflare prices, so the page states
+// the rule and checkout shows the exact total. Only rendered while domains
+// can be bought (the page checks flags.domainPurchaseLive).
+// src: PS#1 (computeDomainPricing; live Cloudflare price; interval year, USD); PS#3
+import { priceRule } from "../../data/pricing";
+import Records from "../Records.astro";
+import SectionHead from "../SectionHead.astro";
+---
+
+<SectionHead id="how-pricing-works" title="How the price works" meta="billed yearly in USD" />
+<Records rows={priceRule} />

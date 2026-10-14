@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "inboxies-site",
+  // Astro's handler, plus byte ranges for /media and security headers on Worker responses.
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // The Cloudflare Vite plugin writes the effective config to dist/server/wrangler.json and points
+  // assets at ../client. Keep this so plain `wrangler` commands know where assets live; if the plugin
+  // warns that assets.directory is ignored, delete the "directory" key and nothing else.
+  // /media/* reaches the Worker before the asset server, which can't answer Range requests
+  // (Safari and iOS need 206s to play video; see src/worker.ts).
+  "assets": { "binding": "ASSETS", "directory": "./dist/client", "run_worker_first": ["/media/*"] },
+  "routes": [
+    { "pattern": "inboxies.co", "custom_domain": true },
+    { "pattern": "www.inboxies.co", "custom_domain": true }
+  ],
+  // On for staging while inboxies.co moves to Cloudflare. Turn both off once the custom domain serves,
+  // so the site and /api/contact live on one host.
+  "workers_dev": true,
+  "preview_urls": true,
+  // Contact form → support. The destination must be a verified Email Routing destination in this
+  // account, and the From domain (inboxies.co) must be onboarded to Email Service:
+  // `npx wrangler email sending enable inboxies.co`, then check `npx wrangler email sending list`.
+  // That needs inboxies.co to be an active zone in this account first (README, Deploying).
+  "send_email": [{ "name": "SUPPORT_INBOX", "destination_address": "support@inboxies.email" }],
+  // Optional; /api/contact skips the check if the binding is missing. 5 requests / 60 s per IP.
+  "ratelimits": [{ "name": "CONTACT_RATE", "namespace_id": "4101", "simple": { "limit": 5, "period": 60 } }],
+  "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "enabled": true, "invocation_logs": true } }
+}

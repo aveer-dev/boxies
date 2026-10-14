@@ -1,0 +1,16 @@
+---
+// The no-JS contact form's landing page when the message didn't go: a field
+// was missing, or the form can't send right now. Email is the way round (§4.4).
+import Button from "../../components/Button.astro";
+import ResultPage from "../../components/support/ResultPage.astro";
+import { SUPPORT_EMAIL } from "../../config";
+---
+
+<ResultPage
+	title="Not sent"
+	description="Your message didn’t send."
+	heading="That didn’t send."
+	line={`Our form couldn’t take your message just now, or something in it was missing. Email ${SUPPORT_EMAIL} and we’ll pick it up there.`}
+>
+	<Button variant="secondary" href={`mailto:${SUPPORT_EMAIL}?subject=Inboxies%20support`}>Write an email</Button>
+</ResultPage>

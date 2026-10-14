@@ -1,0 +1,33 @@
+---
+// The one call to action: sign up in the web app (or, while it isn't public,
+// the iPhone beta; see primaryCta in config.ts), with an optional quiet second link.
+// No ↗ on the pill: every primary button on the site looks the same.
+import { primaryCta } from "../config";
+import Button from "./Button.astro";
+
+interface Props {
+	secondary?: { label: string; href: string };
+	align?: "start" | "center";
+}
+
+const { secondary, align = "start" } = Astro.props;
+const cta = primaryCta();
+---
+
+<div class="cta-row" data-align={align}>
+	<Button href={cta.href} data-cta="start">{cta.label}</Button>
+	{secondary && <a class="btn btn-text" href={secondary.href}>{secondary.label}</a>}
+</div>
+
+<style>
+	.cta-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px 20px;
+	}
+
+	.cta-row[data-align="center"] {
+		justify-content: center;
+	}
+</style>

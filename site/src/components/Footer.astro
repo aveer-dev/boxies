@@ -1,0 +1,291 @@
+---
+// The portfolio's two fixed footer rows. "Write to us" opens mail; the
+// copyright row shows the app icon at the far right on hover or focus.
+import { SUPPORT_EMAIL, availabilityShort } from "../config";
+import AppIcon from "./AppIcon.astro";
+import Icon from "./Icon.astro";
+import PlaneGlyph from "./PlaneGlyph.astro";
+import ProgressiveBlur from "./ProgressiveBlur.astro";
+---
+
+<footer class="site-footer">
+	<ProgressiveBlur edge="bottom" class="footer-blur" />
+	<div class="footer-meta-col">
+		<a href={`mailto:${SUPPORT_EMAIL}`} class="footer-item">
+			<span class="footer-label"><span class="footer-label-inner">Write to us</span></span>
+			<span class="item-content"><Icon name="mail" /><span class="row-info"><span class="row-name">{SUPPORT_EMAIL}</span><span class="row-arrow" aria-hidden="true">↗</span></span></span>
+		</a>
+		<div class="footer-item" tabindex="0" data-preview="about">
+			<span class="footer-label"><span class="footer-label-inner"><span>Runs on Cloudflare</span><span class="label-dot" aria-hidden="true">·</span><span>Apache-2.0</span></span></span>
+			<span class="item-content"><PlaneGlyph /><span class="row-info"><span class="row-name">© 2026 Inboxies</span></span></span>
+		</div>
+	</div>
+	<div class="preview preview-about" data-preview-panel="about" aria-hidden="true">
+		<div class="music-glow"></div>
+		<AppIcon size={56} />
+		<p class="about-name">inboxies</p>
+		<p class="about-line">Calm email on Cloudflare.</p>
+		<p class="about-avail">{availabilityShort()}</p>
+	</div>
+</footer>
+
+<script>
+	function initFooterPreviews() {
+		const footer = document.querySelector<HTMLElement>(".site-footer");
+		if (!footer || footer.dataset.previewsReady) return;
+		footer.dataset.previewsReady = "true";
+
+		const show = (name: string | null) => {
+			footer.querySelectorAll<HTMLElement>("[data-preview-panel]").forEach((panel) => {
+				panel.classList.toggle("is-active", panel.dataset.previewPanel === name);
+			});
+		};
+
+		footer.querySelectorAll<HTMLElement>("[data-preview]").forEach((item) => {
+			const name = item.dataset.preview!;
+			item.addEventListener("mouseenter", () => show(name));
+			item.addEventListener("mouseleave", () => show(null));
+			item.addEventListener("focusin", () => show(name));
+			item.addEventListener("focusout", () => show(null));
+		});
+	}
+
+	initFooterPreviews();
+</script>
+
+<style>
+	.site-footer {
+		position: relative;
+		width: 100%;
+		padding: 0 24px 56px;
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-end;
+		margin-top: auto;
+		/* The cover glow bleeds past the right edge; clip it without clipping the card above. */
+		overflow-x: clip;
+	}
+
+	/* Desktop: the footer holds still over the page, which blurs away beneath
+	   it. The blur keeps one height, so revealing a row's label doesn't move
+	   it, and starts well above the rows so they sit on a calm patch. */
+	.footer-blur {
+		display: none;
+	}
+
+	@media (min-width: 768px) {
+		.site-footer {
+			position: fixed;
+			z-index: 30;
+			bottom: 0;
+			left: 0;
+		}
+
+		.footer-blur {
+			display: block;
+			top: auto;
+			height: calc(124px + 2.5rem);
+		}
+	}
+
+	.footer-meta-col {
+		position: relative;
+		z-index: 6;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.footer-item {
+		display: flex;
+		flex-direction: column;
+		width: fit-content;
+		outline: none;
+		border-radius: 4px;
+		cursor: default;
+		text-decoration: none;
+	}
+
+	a.footer-item {
+		cursor: pointer;
+	}
+
+	.footer-item:focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 3px;
+	}
+
+	/* Hidden by default, revealed above the row on hover/focus */
+	.footer-label {
+		display: block;
+		height: 0;
+		opacity: 0;
+		overflow: hidden;
+		margin-bottom: 0;
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.footer-item:hover .footer-label,
+	.footer-item:focus-within .footer-label {
+		height: 1.25rem;
+		opacity: 1;
+		margin-bottom: 2px;
+	}
+
+	.footer-label-inner {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		height: 1.25rem;
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+		white-space: nowrap;
+		user-select: none;
+	}
+
+	.label-dot {
+		font-size: 1rem;
+		line-height: 1rem;
+	}
+
+	.item-content {
+		display: flex;
+		align-items: center;
+		gap: 11px;
+		height: 1.25rem;
+	}
+
+	/* Sized with the text beside it, so it follows the text-size slider. */
+	.item-content svg {
+		flex-shrink: 0;
+		width: 0.875rem;
+		height: 0.875rem;
+	}
+
+	.row-info {
+		display: inline-flex;
+		align-items: center;
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		line-height: 1.25rem;
+		white-space: nowrap;
+		gap: 4px;
+	}
+
+	.row-name {
+		color: var(--text-primary);
+	}
+
+	.row-arrow {
+		font-size: 0.625rem;
+		color: var(--text-subtle);
+		opacity: 0;
+		transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.footer-item:hover .row-arrow,
+	.footer-item:focus-visible .row-arrow {
+		opacity: 1;
+	}
+
+	/* Far-right previews */
+	.preview {
+		position: absolute;
+		z-index: 5;
+		pointer-events: none;
+		opacity: 0;
+		transform: translateY(12px);
+		transition:
+			opacity 500ms cubic-bezier(0, 0, 0.2, 1),
+			transform 500ms cubic-bezier(0, 0, 0.2, 1);
+		--map-play: paused;
+	}
+
+	.preview.is-active {
+		opacity: 1;
+		transform: none;
+		--map-play: running;
+	}
+
+	/* The about card: right-aligned, in a neutral glow (re-tinted from the
+	   music cover's colour to the muted ink, so the accent stays out of it). */
+	.preview-about {
+		right: clamp(24px, 8vw, 112px);
+		bottom: clamp(28px, 7vh, 72px);
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 6px;
+		isolation: isolate;
+		--accent: var(--text-muted);
+	}
+
+	.about-name {
+		font-size: 0.8125rem;
+		font-weight: 500;
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.about-line {
+		font-size: 0.75rem;
+		line-height: 1.125rem;
+		color: var(--text-muted);
+	}
+
+	.about-avail {
+		font-size: 0.6875rem;
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* Icons draw in currentColor; the row sets it. */
+	.item-content {
+		color: var(--text-muted);
+	}
+
+	.music-glow {
+		position: absolute;
+		z-index: -1;
+		top: -64px;
+		right: -61px;
+		width: 365px;
+		height: 365px;
+		border-radius: 50%;
+		background: color-mix(in srgb, var(--accent) 26%, transparent);
+		filter: blur(46.5px);
+		animation: music-glow-breathe 3.6s ease-in-out infinite alternate;
+		animation-play-state: var(--map-play, running);
+	}
+
+	@keyframes music-glow-breathe {
+		from {
+			opacity: 0.85;
+			transform: scale(0.96);
+		}
+		to {
+			opacity: 1;
+			transform: scale(1.05);
+		}
+	}
+
+	/* Like the reference, the far-right previews are a desktop affordance. */
+	@media (max-width: 767px) {
+		.preview {
+			display: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.footer-label,
+		.row-arrow,
+		.preview {
+			transition-duration: 0.01ms;
+		}
+		.music-glow {
+			animation: none;
+		}
+	}
+</style>

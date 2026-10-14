@@ -73,7 +73,7 @@ function inboundPipeline({
 	assert.equal(r.folderId, "screener");
 	assert.equal(r.autoDraft, false);
 	assert.equal(r.push, false);
-	assert.equal(r.skipForward, true);
+	assert.equal(r.skipForward, false);
 }
 
 // Allowed after you emailed them (outbound allow stores no destination)

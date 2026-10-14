@@ -6,12 +6,90 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
 	generateRandomAliasToken,
-	buildMaskedAddress,
+	buildPrivateAddress,
 	isAliasExpired,
+	isAliasUsable,
+	isPrivateAliasMeta,
+	autoReplySender,
 	normalizePausedAction,
 	aliasMetadataKey,
+	MAX_ALIASES_PER_MAILBOX,
 } from "../lib/alias-utils.ts";
+import {
+	ALIAS_INACTIVE_ERROR,
+	findInboundThreadId,
+	findThreadAliasId,
+	isInboundEmail,
+	resolveOutboundSender,
+} from "../lib/alias-sender.ts";
+import { isAddressTaken, mailboxMetadataKey } from "../lib/mailbox-routing.ts";
+import {
+	AddressInUseError,
+	deleteEmailAlias,
+	domainR2Key,
+	saveEmailAlias,
+} from "../lib/domain-registry.ts";
 import { validateSender, SenderValidationError } from "../lib/email-helpers.ts";
+import {
+	addMailbox,
+	addUser,
+	authedRequest,
+	createAuthTestEnv,
+	mockMailboxNamespace,
+	principalFor,
+	request,
+	signIn,
+} from "./auth-fixtures.mjs";
+
+function createBucket() {
+	const store = new Map();
+	return {
+		store,
+		async get(key) {
+			if (!store.has(key)) return null;
+			const text = store.get(key);
+			return { json: async () => JSON.parse(text), text: async () => text };
+		},
+		async put(key, value) {
+			store.set(key, typeof value === "string" ? value : JSON.stringify(value));
+		},
+		async head(key) {
+			return store.has(key) ? { key } : null;
+		},
+		async delete(key) {
+			for (const k of Array.isArray(key) ? key : [key]) store.delete(k);
+		},
+	};
+}
+
+function aliasRow(overrides = {}) {
+	return {
+		id: "alias-1",
+		alias_email: "k8m2p9v4@example.com",
+		domain: "example.com",
+		base_domain: "example.com",
+		label: null,
+		is_active: 1,
+		paused_action: "drop",
+		expires_at: null,
+		created_at: new Date().toISOString(),
+		stats_received: 0,
+		stats_blocked: 0,
+		...overrides,
+	};
+}
+
+function senderStub(rows, threadAliases = {}) {
+	return {
+		async getAlias(idOrEmail) {
+			const key = idOrEmail.toLowerCase();
+			return rows.find((r) => r.id === key || r.alias_email === key) ?? null;
+		},
+		async getThreadAliasId(threadId) {
+			return threadAliases[threadId] ?? null;
+		},
+	};
+}
 
 test("generateRandomAliasToken generates valid lowercase alphanumeric strings", () => {
 	const token1 = generateRandomAliasToken(8);
@@ -23,24 +101,15 @@ test("generateRandomAliasToken generates valid lowercase alphanumeric strings", 
 	assert.match(token1, /^[a-z2-9]+$/);
 });
 
-test("buildMaskedAddress prefixes private. subdomain correctly", () => {
-	const res1 = buildMaskedAddress("k8m2p9v4", "acme.com");
-	assert.equal(res1.aliasEmail, "k8m2p9v4@private.acme.com");
-	assert.equal(res1.domain, "private.acme.com");
-	assert.equal(res1.baseDomain, "acme.com");
+test("buildPrivateAddress puts aliases on the apex of the mailbox domain", () => {
+	const res1 = buildPrivateAddress("k8m2p9v4", "acme.com");
+	assert.equal(res1.aliasEmail, "k8m2p9v4@acme.com");
+	assert.equal(res1.domain, "acme.com");
 	assert.equal(res1.local, "k8m2p9v4");
 
-	// Does not duplicate private. if already present
-	const res2 = buildMaskedAddress("a1b2c3d4", "private.acme.com");
-	assert.equal(res2.aliasEmail, "a1b2c3d4@private.acme.com");
-	assert.equal(res2.domain, "private.acme.com");
-	assert.equal(res2.baseDomain, "acme.com");
-
-	// Strips trailing and leading dots
-	const res3 = buildMaskedAddress("test1234", ".my-store.co.uk.");
-	assert.equal(res3.aliasEmail, "test1234@private.my-store.co.uk");
-	assert.equal(res3.domain, "private.my-store.co.uk");
-	assert.equal(res3.baseDomain, "my-store.co.uk");
+	// Normalizes case, stray characters and dots
+	const res2 = buildPrivateAddress(" Test-1234 ", ".My-Store.co.uk.");
+	assert.equal(res2.aliasEmail, "test1234@my-store.co.uk");
 });
 
 test("isAliasExpired accurately detects expired timestamps", () => {
@@ -54,6 +123,16 @@ test("isAliasExpired accurately detects expired timestamps", () => {
 	assert.equal(isAliasExpired(pastIso), true);
 });
 
+test("isAliasUsable requires active and unexpired", () => {
+	assert.equal(isAliasUsable(aliasRow()), true);
+	assert.equal(isAliasUsable(aliasRow({ is_active: 0 })), false);
+	assert.equal(
+		isAliasUsable(aliasRow({ expires_at: new Date(Date.now() - 1000).toISOString() })),
+		false,
+	);
+	assert.equal(isAliasUsable(null), false);
+});
+
 test("normalizePausedAction defaults to drop unless reject is explicitly specified", () => {
 	assert.equal(normalizePausedAction("drop"), "drop");
 	assert.equal(normalizePausedAction("reject"), "reject");
@@ -63,86 +142,224 @@ test("normalizePausedAction defaults to drop unless reject is explicitly specifi
 
 test("aliasMetadataKey formats canonical R2 storage key", () => {
 	assert.equal(
-		aliasMetadataKey("x7k2m9@private.example.com"),
-		"platform/aliases/x7k2m9@private.example.com.json",
+		aliasMetadataKey("x7k2m9@example.com"),
+		"platform/aliases/x7k2m9@example.com.json",
 	);
+});
+
+test("isPrivateAliasMeta tells private emails from admin domain aliases", () => {
+	assert.equal(isPrivateAliasMeta({ kind: "private", aliasEmail: "a@x.com", targetMailboxId: "m@x.com" }), true);
+	// Records written before `kind` existed carry aliasId
+	assert.equal(isPrivateAliasMeta({ aliasId: "id", aliasEmail: "a@x.com", targetMailboxId: "m@x.com" }), true);
+	assert.equal(isPrivateAliasMeta({ aliasEmail: "sales@x.com", targetMailboxId: "m@x.com", domain: "x.com" }), false);
+	assert.equal(isPrivateAliasMeta(null), false);
+});
+
+test("autoReplySender: private emails never reply, domain aliases reply as themselves", () => {
+	const mailbox = "alex@example.com";
+	assert.deepEqual(autoReplySender(null, mailbox), { skip: false, from: mailbox, fallback: null });
+	assert.deepEqual(
+		autoReplySender({ kind: "private", aliasId: "a", aliasEmail: "k8m2p9v4@example.com", targetMailboxId: mailbox }, mailbox),
+		{ skip: true },
+	);
+	assert.deepEqual(
+		autoReplySender({ aliasEmail: "Sales@Example.com", targetMailboxId: mailbox }, mailbox),
+		{ skip: false, from: "sales@example.com", fallback: mailbox },
+	);
+});
+
+test("isAddressTaken covers mailboxes and aliases", async () => {
+	const bucket = createBucket();
+	await bucket.put(mailboxMetadataKey("alex@example.com"), "{}");
+	await bucket.put(aliasMetadataKey("k8m2p9v4@example.com"), "{}");
+
+	assert.equal(await isAddressTaken(bucket, "alex@example.com"), true);
+	assert.equal(await isAddressTaken(bucket, "Alex+news@Example.com"), true);
+	assert.equal(await isAddressTaken(bucket, "k8m2p9v4@example.com"), true);
+	assert.equal(await isAddressTaken(bucket, "free@example.com"), false);
 });
 
 test("validateSender allows sender matching active alias", () => {
 	const mailboxId = "alex@example.com";
-	const activeAlias = "b4k8z9w1@private.example.com";
+	const activeAlias = "b4k8z9w1@example.com";
 
-	// 1. Primary address matches
 	const primary = validateSender("dest@target.com", "alex@example.com", mailboxId);
 	assert.equal(primary.fromEmail, "alex@example.com");
 	assert.equal(primary.fromDomain, "example.com");
 
-	// 2. Active alias matches when passed in allowedSenders
-	const aliasSender = validateSender(
-		"dest@target.com",
-		activeAlias,
-		mailboxId,
-		[activeAlias],
-	);
+	const aliasSender = validateSender("dest@target.com", activeAlias, mailboxId, [activeAlias]);
 	assert.equal(aliasSender.fromEmail, activeAlias);
-	assert.equal(aliasSender.fromDomain, "private.example.com");
 
-	// 3. Rejects alias that is not in allowedSenders
 	assert.throws(
-		() => validateSender("dest@target.com", "hacker@private.example.com", mailboxId, [activeAlias]),
+		() => validateSender("dest@target.com", "hacker@example.com", mailboxId, [activeAlias]),
 		SenderValidationError,
 	);
 });
 
-test("aliases HTTP endpoints CRUD operations", async () => {
-	const { app } = await import("../index.ts");
+test("resolveOutboundSender binds alias conversations to the alias", async () => {
 	const mailboxId = "alex@example.com";
-	const store = new Map();
+	const active = aliasRow();
+	const paused = aliasRow({ id: "alias-2", alias_email: "p4u5e6d7@example.com", is_active: 0 });
+	const stub = senderStub([active, paused], { "thread-a": "alias-1", "thread-p": "alias-2" });
 
-	const bucket = {
-		store,
-		async get(key) {
-			if (!store.has(key)) return null;
-			const text = store.get(key);
-			return { json: async () => JSON.parse(text) };
-		},
-		async put(key, value) {
-			store.set(key, typeof value === "string" ? value : JSON.stringify(value));
-		},
-		async head(key) {
-			return store.has(key) ? { key } : null;
-		},
-		async delete(key) {
-			store.delete(key);
-		},
-	};
-
-	// Mock mailbox metadata in R2
-	await bucket.put(`mailboxes/${mailboxId}.json`, {
-		fromName: "Alex",
-		acl: { owners: ["email:alex@example.com"], members: [] },
+	// Thread bound to an active alias: From is forced to the alias, display name dropped
+	const forced = await resolveOutboundSender({
+		stub,
+		mailboxId,
+		requestedFrom: { email: mailboxId, name: "Alex Real" },
+		threadAliasId: await findThreadAliasId(stub, { threadId: "thread-a" }),
 	});
+	assert.deepEqual(forced, { ok: true, from: active.alias_email, fromEmail: active.alias_email, aliasId: "alias-1" });
 
-	// In-memory mock DO stub
+	// Thread bound to a paused alias: refuse rather than reveal the mailbox
+	const refused = await resolveOutboundSender({
+		stub,
+		mailboxId,
+		requestedFrom: mailboxId,
+		threadAliasId: await findThreadAliasId(stub, { threadId: "thread-p" }),
+	});
+	assert.deepEqual(refused, { ok: false, status: 409, error: ALIAS_INACTIVE_ERROR, code: "alias_inactive" });
+
+	// Thread bound to a deleted alias: same refusal
+	const deleted = await resolveOutboundSender({ stub, mailboxId, requestedFrom: mailboxId, threadAliasId: "gone" });
+	assert.equal(deleted.ok, false);
+	assert.equal(deleted.status, 409);
+
+	// Original message alias wins over thread lookup
+	assert.equal(await findThreadAliasId(stub, { aliasId: "alias-2", threadId: "thread-a" }), "alias-2");
+	assert.equal(await findThreadAliasId(stub, { threadId: "unbound" }), null);
+});
+
+test("a reply to mail at the real address never goes out from a private email", async () => {
+	const stub = senderStub([aliasRow()], { "thread-a": "alias-1" });
+	// Someone who knows the alias mails the real address into the alias thread.
+	const received = { folder_id: "inbox", alias_id: null };
+	assert.equal(isInboundEmail(received), true);
+	assert.equal(
+		await findThreadAliasId(stub, { aliasId: received.alias_id, threadId: "thread-a", originalIsInbound: true }),
+		null,
+		"reply from the real address, not the thread's alias",
+	);
+	// Replying to our own sent alias mail still continues on the alias.
+	const ownSent = { folder_id: "sent", alias_id: null };
+	assert.equal(
+		await findThreadAliasId(stub, { threadId: "thread-a", originalIsInbound: isInboundEmail(ownSent) }),
+		"alias-1",
+	);
+});
+
+test("inbound mail to an alias and to the real address never share a thread", async () => {
+	const threads = { "alias-thread": "alias-1", "real-thread": null };
+	const stub = {
+		findThreadIdByReferences: async (refs) => refs[0] ?? null,
+		findThreadBySubject: async (subject) => (subject === "Order #42" ? "alias-thread" : null),
+		getThreadAliasId: async (id) => threads[id] ?? null,
+	};
+	// Real-address mail that references, or shares a subject with, an alias thread starts its own thread.
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["alias-thread"], subject: "x", aliasId: null }),
+		null,
+	);
+	assert.equal(
+		await findInboundThreadId(stub, { references: [], subject: "Order #42", aliasId: null }),
+		null,
+	);
+	// Alias mail can't join a real-address thread either.
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["real-thread"], subject: "y", aliasId: "alias-1" }),
+		null,
+	);
+	// Matching addresses still thread normally.
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["alias-thread"], subject: "x", aliasId: "alias-1" }),
+		"alias-thread",
+	);
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["real-thread"], subject: "y", aliasId: null }),
+		"real-thread",
+	);
+});
+
+test("resolveOutboundSender for unbound messages", async () => {
+	const mailboxId = "alex@example.com";
+	const active = aliasRow();
+	const paused = aliasRow({ id: "alias-2", alias_email: "p4u5e6d7@example.com", is_active: 0 });
+	const stub = senderStub([active, paused]);
+
+	const primary = await resolveOutboundSender({
+		stub,
+		mailboxId,
+		requestedFrom: { email: "Alex@Example.com", name: "Alex" },
+	});
+	assert.equal(primary.ok, true);
+	assert.equal(primary.fromEmail, mailboxId);
+	assert.equal(primary.aliasId, null);
+	assert.deepEqual(primary.from, { email: "Alex@Example.com", name: "Alex" });
+
+	const viaAlias = await resolveOutboundSender({ stub, mailboxId, requestedFrom: active.alias_email });
+	assert.deepEqual(viaAlias, { ok: true, from: active.alias_email, fromEmail: active.alias_email, aliasId: "alias-1" });
+
+	const viaPaused = await resolveOutboundSender({ stub, mailboxId, requestedFrom: paused.alias_email });
+	assert.equal(viaPaused.ok, false);
+	assert.equal(viaPaused.status, 400);
+
+	const spoofed = await resolveOutboundSender({ stub, mailboxId, requestedFrom: "ceo@othertenant.com" });
+	assert.equal(spoofed.ok, false);
+	assert.equal(spoofed.status, 400);
+
+	// An alias id is not an address
+	const byId = await resolveOutboundSender({ stub, mailboxId, requestedFrom: "alias-1" });
+	assert.equal(byId.ok, false);
+});
+
+test("domain aliases never overwrite or delete private emails", async () => {
+	const bucket = createBucket();
+	await bucket.put(domainR2Key("example.com"), JSON.stringify({ domain: "example.com", aliases: [] }));
+	await bucket.put(mailboxMetadataKey("alex@example.com"), "{}");
+	await bucket.put(
+		aliasMetadataKey("k8m2p9v4@example.com"),
+		JSON.stringify({ kind: "private", aliasId: "a1", aliasEmail: "k8m2p9v4@example.com", targetMailboxId: "alex@example.com" }),
+	);
+
+	await assert.rejects(saveEmailAlias(bucket, "example.com", "k8m2p9v4", "alex@example.com"), AddressInUseError);
+	await assert.rejects(saveEmailAlias(bucket, "example.com", "alex", "alex@example.com"), AddressInUseError);
+
+	const created = await saveEmailAlias(bucket, "example.com", "sales", "alex@example.com");
+	assert.equal(created.aliasEmail, "sales@example.com");
+
+	// Deleting a "domain alias" with a private email's local part leaves the private record alone
+	await deleteEmailAlias(bucket, "example.com", "k8m2p9v4");
+	assert.ok(bucket.store.has(aliasMetadataKey("k8m2p9v4@example.com")));
+	await deleteEmailAlias(bucket, "example.com", "sales");
+	assert.equal(bucket.store.has(aliasMetadataKey("sales@example.com")), false);
+});
+
+test("aliases HTTP endpoints CRUD operations", async () => {
+	const mailboxId = "alex@example.com";
+
 	const aliasList = [];
+	let aliasCountOverride = null;
 	const mockStub = {
 		async listAliases() {
 			return [...aliasList];
 		},
+		async countAliases() {
+			return aliasCountOverride ?? aliasList.length;
+		},
 		async getAlias(idOrEmail) {
-			return (
-				aliasList.find((a) => a.id === idOrEmail || a.alias_email === idOrEmail) ||
-				null
-			);
+			return aliasList.find((a) => a.id === idOrEmail || a.alias_email === idOrEmail) || null;
 		},
 		async createAlias(alias) {
-			aliasList.push(alias);
-			return alias;
+			const row = { ...alias };
+			aliasList.push(row);
+			return row;
 		},
 		async updateAlias(id, updates) {
 			const item = aliasList.find((a) => a.id === id);
 			if (!item) return null;
-			Object.assign(item, updates);
+			for (const [key, value] of Object.entries(updates)) {
+				if (value !== undefined) item[key] = value;
+			}
 			return item;
 		},
 		async deleteAlias(id) {
@@ -153,101 +370,302 @@ test("aliases HTTP endpoints CRUD operations", async () => {
 		},
 	};
 
-	const env = {
-		BUCKET: bucket,
+	const stubIds = [];
+	const { env, db, bucket } = createAuthTestEnv({
+		DOMAINS: "example.com",
 		MAILBOX: {
-			get() {
+			idFromName(name) {
+				return name;
+			},
+			get(id) {
+				stubIds.push(id);
 				return mockStub;
 			},
-			idFromName() {
-				return {};
-			},
 		},
-		DOMAINS: "example.com",
-		MOBILE_JWT_SECRET: "test-secret",
-	};
-
-	const { Hono } = await import("hono");
-	const principal = {
-		email: "alex@example.com",
-		sub: "alex-sub",
-		ownerKeys: ["email:alex@example.com"],
-	};
-	const testApp = new Hono();
-	testApp.use("*", async (c, next) => {
-		c.set("principal", principal);
-		await next();
 	});
-	testApp.route("/", app);
+	const alex = await addUser(db, { email: "alex@example.com" });
+	const sam = await addUser(db, { email: "sam@example.com" });
+	const eve = await addUser(db, { email: "eve@other.example" });
+	await addMailbox(db, bucket, mailboxId, { owners: [alex.id], members: [sam.id], settings: { fromName: "Alex" } });
 
-	const headers = {
-		"Content-Type": "application/json",
-	};
+	const base = `/api/v1/mailboxes/${mailboxId}/aliases`;
+	const call = (opts) => request(env, { principal: principalFor(alex), ...opts });
+
+	// 0. Someone with no membership can neither list nor create private emails.
+	const strangerList = await request(env, { principal: principalFor(eve), path: base });
+	assert.equal(strangerList.status, 403);
+	const strangerCreate = await request(env, { principal: principalFor(eve), method: "POST", path: base, body: {} });
+	assert.equal(strangerCreate.status, 403);
+	const anonymous = await request(env, { path: base });
+	assert.equal(anonymous.status, 403);
+	assert.equal(aliasList.length, 0);
+	assert.equal([...bucket.store.keys()].some((k) => k.startsWith("platform/aliases/")), false);
+
+	// A member passes requireMailbox too.
+	const memberList = await request(env, { principal: principalFor(sam), path: base });
+	assert.equal(memberList.status, 200);
 
 	// 1. Initial list -> empty
-	const res1 = await testApp.request(
-		`http://localhost/api/v1/mailboxes/${mailboxId}/aliases`,
-		{ method: "GET", headers },
-		env,
-	);
+	const res1 = await call({ path: base });
 	assert.equal(res1.status, 200);
-	const data1 = await res1.json();
-	assert.deepEqual(data1.aliases, []);
+	assert.deepEqual(res1.payload.aliases, []);
 
-	// 2. Create alias
-	const res2 = await testApp.request(
-		`http://localhost/api/v1/mailboxes/${mailboxId}/aliases`,
-		{
-			method: "POST",
-			headers,
-			body: JSON.stringify({ label: "Shopping", pausedAction: "drop" }),
-		},
-		env,
-	);
+	// 2. Create alias — caller-supplied baseDomain is ignored
+	const res2 = await call({
+		method: "POST",
+		path: base,
+		body: { label: "Shopping", pausedAction: "drop", baseDomain: "othertenant.com" },
+	});
 	assert.equal(res2.status, 201);
-	const data2 = await res2.json();
-	assert.ok(data2.alias.id);
-	assert.ok(data2.alias.alias_email.endsWith("@private.example.com"));
-	assert.equal(data2.alias.base_domain, "example.com");
-	assert.equal(data2.alias.label, "Shopping");
+	const { alias } = res2.payload;
+	assert.ok(alias.id);
+	assert.match(alias.alias_email, /^[a-z2-9]{8}@example\.com$/);
+	assert.equal(alias.domain, "example.com");
+	assert.equal(alias.label, "Shopping");
 
-	// Verify R2 O(1) index was created
-	const r2Meta = await bucket.get(aliasMetadataKey(data2.alias.alias_email));
-	assert.ok(r2Meta);
-	const r2Data = await r2Meta.json();
+	const r2Data = await (await bucket.get(aliasMetadataKey(alias.alias_email))).json();
+	assert.equal(r2Data.kind, "private");
+	assert.equal(r2Data.aliasId, alias.id);
 	assert.equal(r2Data.targetMailboxId, mailboxId);
 	assert.equal(r2Data.isActive, true);
 
-	// 3. Patch alias (pause)
-	const res3 = await testApp.request(
-		`http://localhost/api/v1/mailboxes/${mailboxId}/aliases/${data2.alias.id}`,
-		{
-			method: "PATCH",
-			headers,
-			body: JSON.stringify({ isActive: false, pausedAction: "reject" }),
-		},
-		env,
-	);
-	assert.equal(res3.status, 200);
-	const data3 = await res3.json();
-	assert.equal(data3.alias.is_active, 0);
-	assert.equal(data3.alias.paused_action, "reject");
+	// 2b. A non-canonical spelling of the mailbox id routes to the canonical one.
+	const upper = await call({ method: "POST", path: `/api/v1/mailboxes/Alex%40Example.COM/aliases`, body: {} });
+	assert.equal(upper.status, 201);
+	assert.equal(upper.payload.alias.mailbox_id, mailboxId);
+	assert.equal(stubIds.at(-1), mailboxId, "the stub is the canonical mailbox's");
+	const upperRecord = await (await bucket.get(aliasMetadataKey(upper.payload.alias.alias_email))).json();
+	assert.equal(upperRecord.targetMailboxId, mailboxId);
+	await call({ method: "DELETE", path: `${base}/${upper.payload.alias.id}` });
 
-	// Verify R2 updated
-	const r2Updated = await (await bucket.get(aliasMetadataKey(data2.alias.alias_email))).json();
+	// 3. Patch alias (pause, set expiry, clear label)
+	const expiresAt = new Date(Date.now() + 86_400_000).toISOString();
+	const res3 = await call({
+		method: "PATCH",
+		path: `${base}/${alias.id}`,
+		body: { isActive: false, pausedAction: "reject", expiresAt, label: null },
+	});
+	assert.equal(res3.status, 200);
+	const updated = res3.payload.alias;
+	assert.equal(updated.is_active, false, "responses carry a boolean is_active");
+	assert.equal(updated.mailbox_id, mailboxId);
+	assert.equal(updated.paused_action, "reject");
+	assert.equal(updated.expires_at, expiresAt);
+	assert.equal(updated.label, null);
+
+	const r2Updated = await (await bucket.get(aliasMetadataKey(alias.alias_email))).json();
+	assert.equal(r2Updated.kind, "private");
 	assert.equal(r2Updated.isActive, false);
 	assert.equal(r2Updated.pausedAction, "reject");
+	assert.equal(r2Updated.expiresAt, expiresAt);
 
-	// 4. Delete alias
-	const res4 = await testApp.request(
-		`http://localhost/api/v1/mailboxes/${mailboxId}/aliases/${data2.alias.id}`,
-		{ method: "DELETE", headers },
-		env,
-	);
+	// 3a. A stranger can't patch or delete it.
+	const strangerPatch = await request(env, {
+		principal: principalFor(eve),
+		method: "PATCH",
+		path: `${base}/${alias.id}`,
+		body: { isActive: true },
+	});
+	assert.equal(strangerPatch.status, 403);
+	const strangerDelete = await request(env, {
+		principal: principalFor(eve),
+		method: "DELETE",
+		path: `${base}/${alias.id}`,
+	});
+	assert.equal(strangerDelete.status, 403);
+	assert.equal(aliasList.length, 1);
+	assert.ok(bucket.store.has(aliasMetadataKey(alias.alias_email)));
+
+	// 3b. Shipped iOS / Android builds send snake_case; it must not be dropped.
+	const res3b = await call({
+		method: "PATCH",
+		path: `${base}/${alias.id}`,
+		body: { is_active: true, paused_action: "drop", expires_in_seconds: 3600 },
+	});
+	assert.equal(res3b.status, 200);
+	const resumed = res3b.payload.alias;
+	assert.equal(resumed.is_active, true);
+	assert.equal(resumed.paused_action, "drop");
+	assert.ok(resumed.expires_at, "expires_in_seconds becomes an expiry");
+	const r2Resumed = await (await bucket.get(aliasMetadataKey(alias.alias_email))).json();
+	assert.equal(r2Resumed.isActive, true);
+
+	// 4. Cap
+	aliasCountOverride = MAX_ALIASES_PER_MAILBOX;
+	const capped = await call({ method: "POST", path: base, body: {} });
+	assert.equal(capped.status, 409);
+	aliasCountOverride = null;
+
+	// 5. Create rolls back the routing record if the Durable Object insert fails
+	const realCreate = mockStub.createAlias;
+	mockStub.createAlias = async () => {
+		throw new Error("DO unavailable");
+	};
+	const keysBefore = [...bucket.store.keys()].filter((k) => k.startsWith("platform/aliases/")).length;
+	const failed = await call({ method: "POST", path: base, body: {} });
+	assert.equal(failed.status, 500);
+	const keysAfter = [...bucket.store.keys()].filter((k) => k.startsWith("platform/aliases/")).length;
+	assert.equal(keysAfter, keysBefore);
+	mockStub.createAlias = realCreate;
+
+	// 6. Delete alias
+	const res4 = await call({ method: "DELETE", path: `${base}/${alias.id}` });
 	assert.equal(res4.status, 204);
-
-	// Verify deleted in R2 and DO
-	const r2Deleted = await bucket.get(aliasMetadataKey(data2.alias.alias_email));
-	assert.equal(r2Deleted, null);
+	assert.equal(await bucket.get(aliasMetadataKey(alias.alias_email)), null);
 	assert.equal(aliasList.length, 0);
+});
+
+test("inbound mail to a paused or expired private email is dropped or bounced", async () => {
+	const { receiveEmail } = await import("../index.ts");
+	const mailboxId = "alex@example.com";
+	const bucket = createBucket();
+	await bucket.put(mailboxMetadataKey(mailboxId), "{}");
+
+	const recorded = [];
+	const env = {
+		BUCKET: bucket,
+		MAILBOX: {
+			idFromName: () => ({}),
+			get: () => ({
+				async recordAliasInbound(email, blocked) {
+					recorded.push({ email, blocked });
+				},
+			}),
+		},
+	};
+
+	async function deliver(to) {
+		const rejections = [];
+		await receiveEmail(
+			{
+				to,
+				from: "shop@vendor.com",
+				headers: new Headers(),
+				raw: new ReadableStream({ start: (c) => c.close() }),
+				rawSize: 0,
+				setReject: (reason) => rejections.push(reason),
+			},
+			env,
+			{ waitUntil() {} },
+		);
+		return rejections;
+	}
+
+	const meta = (overrides) => ({
+		kind: "private",
+		aliasId: "a1",
+		aliasEmail: "k8m2p9v4@example.com",
+		targetMailboxId: mailboxId,
+		domain: "example.com",
+		baseDomain: "example.com",
+		label: null,
+		isActive: true,
+		pausedAction: "drop",
+		expiresAt: null,
+		createdAt: new Date().toISOString(),
+		...overrides,
+	});
+
+	await bucket.put(aliasMetadataKey("k8m2p9v4@example.com"), JSON.stringify(meta({ isActive: false })));
+	assert.deepEqual(await deliver("k8m2p9v4@example.com"), []);
+
+	await bucket.put(
+		aliasMetadataKey("k8m2p9v4@example.com"),
+		JSON.stringify(meta({ isActive: false, pausedAction: "reject" })),
+	);
+	assert.deepEqual(await deliver("K8M2P9V4+tag@example.com"), ["Address paused"]);
+
+	await bucket.put(
+		aliasMetadataKey("k8m2p9v4@example.com"),
+		JSON.stringify(meta({ pausedAction: "reject", expiresAt: new Date(Date.now() - 1000).toISOString() })),
+	);
+	assert.deepEqual(await deliver("k8m2p9v4@example.com"), ["Address expired"]);
+
+	assert.deepEqual(recorded, [
+		{ email: "k8m2p9v4@example.com", blocked: true },
+		{ email: "k8m2p9v4@example.com", blocked: true },
+		{ email: "k8m2p9v4@example.com", blocked: true },
+	]);
+
+	// Unknown address still bounces as before
+	assert.deepEqual(await deliver("nobody@example.com"), ["Mailbox does not exist"]);
+});
+
+test("extension tokens are scoped to private emails", async () => {
+	const { isPathAllowedForTokenScope } = await import("../lib/auth-paths.ts");
+
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/me"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes/alex%40example.com/aliases"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/mailboxes/alex@example.com/aliases"), true);
+	// It may end itself, but not other sessions.
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/auth/logout"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/me/sessions/revoke-others"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "DELETE", "/api/v1/me/sessions/s1"), false);
+	// Never mail, sends, alias edits/deletes, token minting, agents or MCP
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes/alex@example.com/emails"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/mailboxes/alex@example.com/emails"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "DELETE", "/api/v1/mailboxes/alex@example.com/aliases/a1"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "PATCH", "/api/v1/mailboxes/alex@example.com/aliases/a1"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/me/extension-session"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/agents/email-agent/x"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/mcp"), false);
+
+	// End to end through the real session middleware.
+	const aliasList = [];
+	const { env, db, bucket } = createAuthTestEnv({
+		DOMAINS: "example.com",
+		MAILBOX: mockMailboxNamespace({
+			listAliases: async () => [...aliasList],
+			countAliases: async () => aliasList.length,
+			createAlias: async (row) => (aliasList.push(row), row),
+		}),
+	});
+	const alex = await addUser(db, { email: "alex@example.com" });
+	await addMailbox(db, bucket, "alex@example.com", { owners: [alex.id] });
+	const full = await signIn(env, alex);
+
+	// A full app session mints the scoped extension session.
+	const minted = await authedRequest(env, {
+		token: full.token,
+		method: "POST",
+		path: "/api/v1/me/extension-session",
+		body: { client: "browser-extension" },
+	});
+	assert.equal(minted.status, 200);
+	assert.ok(minted.payload.token);
+	const ext = minted.payload.token;
+
+	// The scoped session reaches the private-email routes...
+	const list = await authedRequest(env, { token: ext, path: "/api/v1/mailboxes" });
+	assert.equal(list.status, 200);
+	assert.deepEqual(list.payload.map((m) => m.id), ["alex@example.com"]);
+	const created = await authedRequest(env, {
+		token: ext,
+		method: "POST",
+		path: "/api/v1/mailboxes/alex@example.com/aliases",
+		body: { label: "Shop" },
+	});
+	assert.equal(created.status, 201);
+	assert.equal((await authedRequest(env, { token: ext, path: "/api/v1/mailboxes/alex@example.com/aliases" })).status, 200);
+
+	// ...and nothing else.
+	for (const [method, path, body] of [
+		["GET", "/api/v1/mailboxes/alex@example.com/emails"],
+		["GET", "/api/v1/mailboxes/alex@example.com"],
+		["DELETE", `/api/v1/mailboxes/alex@example.com/aliases/${created.payload.alias.id}`],
+		["PATCH", `/api/v1/mailboxes/alex@example.com/aliases/${created.payload.alias.id}`, { isActive: false }],
+		["POST", "/api/v1/me/extension-session", {}],
+	]) {
+		const res = await authedRequest(env, { token: ext, method, path, body });
+		assert.equal(res.status, 403, `${method} ${path} is out of scope`);
+	}
+
+	// A regular session stays unscoped.
+	const unscoped = await authedRequest(env, { token: full.token, path: "/api/v1/mailboxes/alex@example.com/emails" });
+	assert.equal(unscoped.status, 200);
+
+	// A made-up bearer token is a 401, not a scoped or full session.
+	const forged = await authedRequest(env, { token: "not-a-real-session-token", path: "/api/v1/mailboxes" });
+	assert.equal(forged.status, 401);
 });

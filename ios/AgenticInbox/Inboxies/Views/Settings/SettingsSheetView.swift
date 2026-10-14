@@ -11,6 +11,7 @@ enum SettingsDestination: Hashable {
     case aliases
     case sharing
     case signInMethods
+    case sessions
     case domainAdmin
     case theme
     case support
@@ -27,6 +28,9 @@ struct SettingsSheetView: View {
     @State private var signatureEnabled = false
     @State private var navigationPath: [SettingsDestination] = []
     @State private var loadingDestination: SettingsDestination?
+    @State private var showDeleteAccountConfirm = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountError: String?
     @AppStorage("push_notifications_enabled") private var notificationsEnabled = true
     @AppStorage("app_theme") private var appTheme: ThemeMode = .system
 
@@ -67,16 +71,21 @@ struct SettingsSheetView: View {
 
                 Section {
                     settingsNavRow("Swipe settings", systemImage: "arrow.left.arrow.right", destination: .swipe)
-                    settingsNavRow("AI prompt", systemImage: "sparkles", destination: .agentPrompt)
-                    settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
-                    settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
-                    settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
-                    settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
-                    settingsNavRow("Private email", destination: .aliases) {
-                        PrivateEmailLogoView(size: 18, showTile: false)
+                    // Mailbox configuration freezes when the domain's service ends.
+                    Group {
+                        settingsNavRow("AI prompt", systemImage: "sparkles", destination: .agentPrompt)
+                        settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
+                        settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
+                        settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
+                        settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
+                        settingsNavRow("Private email", destination: .aliases) {
+                            PrivateEmailLogoView(size: 18, showTile: false)
+                        }
+                        settingsNavRow("Members", systemImage: "person.2", destination: .sharing)
                     }
-                    settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
-                    settingsNavRow("Sign-in methods", systemImage: "key", destination: .signInMethods)
+                    .lockedWhenReadOnly(app.isReadOnly)
+                    settingsNavRow("Sign-in & recovery", systemImage: "key", destination: .signInMethods)
+                    settingsNavRow("Devices & sessions", systemImage: "laptopcomputer.and.iphone", destination: .sessions)
 
                     if app.isAdmin {
                         settingsNavRow("Domain Admin", systemImage: "shield.lefthalf.filled", destination: .domainAdmin)
@@ -84,8 +93,13 @@ struct SettingsSheetView: View {
 
                     notificationsToggle
                     signatureToggle
+                        .lockedWhenReadOnly(app.isReadOnly)
                 } header: {
                     Text("Preferences")
+                } footer: {
+                    if let mailbox, mailbox.isReadOnly {
+                        Text("The subscription for \(mailbox.domain) ended, so this mailbox's settings are read-only until it's renewed.")
+                    }
                 }
                 .listRowSeparator(.hidden)
 
@@ -115,6 +129,43 @@ struct SettingsSheetView: View {
                             .font(.inter(size: 16, weight: .medium))
                             .foregroundStyle(.red)
                     }
+                    .lockedWhenReadOnly(app.isReadOnly)
+                }
+
+                Section {
+                    Button(role: .destructive) {
+                        showDeleteAccountConfirm = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Spacer()
+                            if isDeletingAccount {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(isDeletingAccount ? "Deleting account…" : "Delete account")
+                                .font(.inter(size: 16, weight: .medium))
+                                .foregroundStyle(.red)
+                            Spacer()
+                        }
+                    }
+                    .disabled(isDeletingAccount)
+                    // Attached to the button so the iOS 26 popover points at it, not the list.
+                    .confirmationDialog(
+                        "Delete your account?",
+                        isPresented: $showDeleteAccountConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Delete account", role: .destructive) {
+                            Task { await deleteAccount() }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Mailboxes where you're the only owner are deleted with all their mail, for everyone who uses them. Mailboxes with another owner stay; you just lose access. This can't be undone.")
+                    }
+                } header: {
+                    Text("Account")
+                } footer: {
+                    Text("Permanently deletes your Inboxies account and sign-in methods.")
                 }
             }
             .listStyle(.insetGrouped)
@@ -141,6 +192,8 @@ struct SettingsSheetView: View {
                     SharingSettingsView()
                 case .signInMethods:
                     SignInMethodsSettingsView()
+                case .sessions:
+                    SessionsSettingsView()
                 case .domainAdmin:
                     DomainAdminSettingsView(showsDismiss: false)
                 case .theme:
@@ -162,6 +215,18 @@ struct SettingsSheetView: View {
                     }
                     .accessibilityLabel("Close")
                 }
+            }
+            .interactiveDismissDisabled(isDeletingAccount)
+            .alert(
+                "Could not delete account",
+                isPresented: Binding(
+                    get: { deleteAccountError != nil },
+                    set: { if !$0 { deleteAccountError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(deleteAccountError ?? "")
             }
             .alert("Edit name", isPresented: $showEditName) {
                 TextField("Display name", text: $editNameDraft)
@@ -216,6 +281,7 @@ struct SettingsSheetView: View {
             }
             .buttonStyle(.plain)
             .padding(.top, 2)
+            .lockedWhenReadOnly(app.isReadOnly)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
@@ -276,16 +342,6 @@ struct SettingsSheetView: View {
             }
         }
         .tint(AppTheme.accent)
-    }
-
-    private func settingsLabel(_ title: String, systemImage: String) -> some View {
-        Label {
-            Text(title)
-                .foregroundStyle(AppTheme.ink)
-        } icon: {
-            Image(systemName: systemImage)
-                .foregroundStyle(AppTheme.ink)
-        }
     }
 
     private func settingsNavRow(
@@ -408,6 +464,18 @@ struct SettingsSheetView: View {
         }
         if !success {
             signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+        }
+    }
+
+    private func deleteAccount() async {
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+        do {
+            // Unregisters push, deletes on the server, then clears local data and the session.
+            _ = try await app.deleteAccount(auth: auth)
+            dismiss()
+        } catch {
+            deleteAccountError = error.localizedDescription
         }
     }
 

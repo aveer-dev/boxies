@@ -12,7 +12,7 @@ import {
 } from "@cloudflare/kumo";
 import { WarningIcon } from "@phosphor-icons/react";
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { forwardRef, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import {
 	isRouteErrorResponse,
 	Links,
@@ -24,6 +24,9 @@ import {
 } from "react-router";
 import { ApiError } from "~/services/api";
 import "./index.css";
+import { signOut } from "~/lib/sign-out";
+import { TEXT_SIZE_BOOT_SCRIPT, useTextSize } from "~/lib/text-size";
+import { THEME_BOOT_SCRIPT, useTheme } from "~/lib/theme";
 
 function makeQueryClient() {
 	return new QueryClient({
@@ -77,9 +80,11 @@ const KumoLink = forwardRef<
 
 export function Layout({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		// The boot script sets data-mode and --font-scale before hydration, so React must not undo them.
+		<html lang="en" suppressHydrationWarning>
 			<head>
 				<meta charSet="UTF-8" />
+				<script dangerouslySetInnerHTML={{ __html: `${THEME_BOOT_SCRIPT};${TEXT_SIZE_BOOT_SCRIPT}` }} />
 				<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 				<link
 					rel="icon"
@@ -129,6 +134,8 @@ export default function App() {
 	// Use useState to ensure each SSR request gets a fresh client while the
 	// browser reuses the same singleton across navigations.
 	const [queryClient] = useState(getQueryClient);
+	useEffect(() => useTheme.getState().hydrate(), []);
+	useEffect(() => useTextSize.getState().hydrate(), []);
 	return (
 		<QueryClientProvider client={queryClient}>
 			<LinkProvider component={KumoLink}>
@@ -179,9 +186,7 @@ export function ErrorBoundary({ error }: { error: unknown }) {
 						</Button>
 						<Button
 							variant="secondary"
-							onClick={() => {
-								window.location.href = "/cdn-cgi/access/logout";
-							}}
+							onClick={() => void signOut()}
 						>
 							Log out
 						</Button>

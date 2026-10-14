@@ -1,0 +1,257 @@
+---
+// A soft circle that replaces the pointer on mouse and trackpad devices.
+// Touch, pen and forced-colors users keep the native cursor.
+
+const INTERACTIVE = [
+	"a[href]",
+	"button:not(:disabled)",
+	'[role="button"]',
+	"label",
+	"summary",
+	"select",
+	'input:is([type="checkbox"], [type="radio"], [type="button"], [type="submit"])',
+	'[tabindex]:not([tabindex="-1"])',
+].join(", ");
+
+// Text fields keep the native I-beam; the circle steps aside over them.
+const TEXT_FIELD = [
+	'input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="reset"], [type="range"])',
+	"textarea",
+	'[contenteditable]:not([contenteditable="false"])',
+].join(", ");
+---
+
+<div class="site-cursor" aria-hidden="true" data-interactive={INTERACTIVE} data-text-field={TEXT_FIELD}>
+	<div class="site-cursor-dot"></div>
+</div>
+
+<script is:inline>
+	// Put the circle back where the pointer was on the previous page before the
+	// first paint, so it holds still through the page transition.
+	(function () {
+		try {
+			var el = document.querySelector(".site-cursor");
+			var saved = JSON.parse(sessionStorage.getItem("cursor") || "null");
+			if (!el || !saved) return;
+			if (!matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+			if (matchMedia("(forced-colors: active)").matches) return;
+
+			var target = document.elementFromPoint(saved.x, saved.y);
+			if (target && target.closest(el.dataset.textField)) return;
+
+			el.dataset.x = saved.x;
+			el.dataset.y = saved.y;
+			el.style.transform = "translate3d(" + saved.x + "px, " + saved.y + "px, 0)";
+			var hit = target && target.closest(el.dataset.interactive);
+			if (hit && !hit.matches('[data-cursor="plain"]')) el.classList.add("is-hover");
+			el.classList.add("is-visible");
+			document.documentElement.classList.add("has-custom-cursor");
+		} catch (e) {}
+	})();
+</script>
+
+<script>
+	// How tightly the circle follows the pointer: higher is snappier. At 30 it
+	// trails by a frame or two, enough to read as smooth without feeling laggy.
+	const FOLLOW = 30;
+
+	function initCursor() {
+		const el = document.querySelector<HTMLElement>(".site-cursor");
+		if (!el || el.dataset.ready) return;
+		el.dataset.ready = "true";
+
+		const root = document.documentElement;
+		const interactive = el.dataset.interactive!;
+		const textField = el.dataset.textField!;
+		const finePointer = matchMedia("(hover: hover) and (pointer: fine)");
+		const forcedColors = matchMedia("(forced-colors: active)");
+		const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+		// Current (x, y) eases toward the pointer (tx, ty).
+		let x = Number(el.dataset.x);
+		let y = Number(el.dataset.y);
+		let tx = x;
+		let ty = y;
+		let visible = el.classList.contains("is-visible");
+		let frame = 0;
+		let last = 0;
+
+		const enabled = () => finePointer.matches && !forcedColors.matches;
+
+		const render = () => {
+			el.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+		};
+
+		const tick = (now: number) => {
+			const dt = Math.min(now - last, 64) / 1000;
+			last = now;
+			const k = reducedMotion.matches ? 1 : 1 - Math.exp(-FOLLOW * dt);
+			x += (tx - x) * k;
+			y += (ty - y) * k;
+			if (Math.abs(tx - x) < 0.1 && Math.abs(ty - y) < 0.1) {
+				x = tx;
+				y = ty;
+				frame = 0;
+			} else {
+				frame = requestAnimationFrame(tick);
+			}
+			render();
+		};
+
+		const setVisible = (on: boolean) => {
+			visible = on;
+			el.classList.toggle("is-visible", on);
+		};
+
+		const setTarget = (target: EventTarget | null) => {
+			const node = target instanceof Element ? target : null;
+			const overText = !!node?.closest(textField);
+			el.classList.toggle("is-text", overText);
+			// [data-cursor="plain"] keeps the small circle over a focusable surface
+			// that isn't itself a control (a tab panel, a table that scrolls), while
+			// the links and buttons inside it still get the halo.
+			const hit = node?.closest(interactive);
+			el.classList.toggle("is-hover", !overText && !!hit && !hit.matches('[data-cursor="plain"]'));
+		};
+
+		// The next page restores the circle from here (see the inline script).
+		const save = () => {
+			try {
+				sessionStorage.setItem("cursor", JSON.stringify(visible ? { x: tx, y: ty } : null));
+			} catch {}
+		};
+
+		const onPointer = (event: PointerEvent) => {
+			if (event.pointerType !== "mouse" || !enabled()) return;
+			tx = event.clientX;
+			ty = event.clientY;
+			if (!visible) {
+				x = tx;
+				y = ty;
+				render();
+				setVisible(true);
+				root.classList.add("has-custom-cursor");
+			}
+			if (!frame) {
+				last = performance.now();
+				frame = requestAnimationFrame(tick);
+			}
+		};
+
+		const release = () => el.classList.remove("is-pressed");
+
+		document.addEventListener("pointermove", onPointer, { passive: true });
+		document.addEventListener("pointerover", (event) => {
+			onPointer(event);
+			if (event.pointerType === "mouse") setTarget(event.target);
+		});
+		document.addEventListener("pointerout", (event) => {
+			// No related target: the pointer left the window (or entered an iframe).
+			if (event.pointerType === "mouse" && !event.relatedTarget) {
+				setVisible(false);
+				save();
+			}
+		});
+		document.addEventListener("pointerdown", (event) => {
+			if (event.pointerType !== "mouse") {
+				setVisible(false);
+				return;
+			}
+			el.classList.add("is-pressed");
+			save();
+		});
+		window.addEventListener("pointerup", release);
+		window.addEventListener("pointercancel", release);
+		window.addEventListener("blur", release);
+		window.addEventListener("pagehide", save);
+
+		// Content scrolling under a still pointer changes what it's over.
+		window.addEventListener(
+			"scroll",
+			() => {
+				if (visible) requestAnimationFrame(() => setTarget(document.elementFromPoint(tx, ty)));
+			},
+			{ capture: true, passive: true },
+		);
+
+		const onCapabilityChange = () => {
+			if (enabled()) return;
+			setVisible(false);
+			root.classList.remove("has-custom-cursor");
+		};
+		finePointer.addEventListener("change", onCapabilityChange);
+		forcedColors.addEventListener("change", onCapabilityChange);
+	}
+
+	initCursor();
+</script>
+
+<style>
+	.site-cursor {
+		position: fixed;
+		top: 0;
+		left: 0;
+		z-index: 2147483647;
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 160ms var(--ease-out);
+		will-change: transform;
+	}
+
+	.site-cursor.is-visible:not(.is-text) {
+		opacity: 1;
+	}
+
+	/* Drawn at its largest (hover) size and scaled down, so it stays crisp. */
+	.site-cursor-dot {
+		--scale: 0.3;
+		width: 36px;
+		height: 36px;
+		margin: -18px 0 0 -18px;
+		border-radius: 50%;
+		background-color: color-mix(in oklab, var(--cursor) 88%, transparent);
+		/* A faint ring of the page colour keeps it visible over images. */
+		box-shadow: 0 0 0 3px color-mix(in oklab, var(--bg) 55%, transparent);
+		transform: scale(var(--scale));
+		transition:
+			transform 380ms var(--ease-out),
+			background-color 240ms var(--ease-out),
+			box-shadow 240ms var(--ease-out);
+	}
+
+	.is-hover .site-cursor-dot {
+		--scale: 1;
+		background-color: color-mix(in oklab, var(--cursor) 9%, transparent);
+		box-shadow: 0 0 0 0 transparent;
+	}
+
+	.is-pressed .site-cursor-dot {
+		--scale: 0.22;
+	}
+
+	.is-hover.is-pressed .site-cursor-dot {
+		--scale: 0.86;
+	}
+
+	.site-cursor:not(.is-visible) .site-cursor-dot,
+	.is-text .site-cursor-dot {
+		--scale: 0;
+	}
+
+	:global(html.has-custom-cursor),
+	:global(html.has-custom-cursor *) {
+		cursor: none !important;
+	}
+
+	:global(html.has-custom-cursor) :global(input:not([type="checkbox"], [type="radio"], [type="button"], [type="submit"], [type="reset"], [type="range"])),
+	:global(html.has-custom-cursor) :global(textarea),
+	:global(html.has-custom-cursor) :global([contenteditable]:not([contenteditable="false"])) {
+		cursor: text !important;
+	}
+
+	@media print {
+		.site-cursor {
+			display: none;
+		}
+	}
+</style>

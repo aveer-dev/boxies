@@ -21,7 +21,7 @@ When polishing motion, also load `animate`, `apple-design`, and `emil-design-eng
 - Compose-only UI. No Fragments, no `R.layout`.
 - Material 3 (`androidx.compose.material3`) for primitives: `ModalBottomSheet`, `Switch`, `DropdownMenu`, `PullToRefreshBox`, `Button`. Visual language is custom Notion/iOS, not default M3.
 - **No dynamic / wallpaper color.** Comment in `AppTheme.kt`: “Notion-inspired Inboxies palette — not purple Material You.”
-- Navigation Compose is a **declared unused** dependency. Do not introduce `NavHost` / `rememberNavController`.
+- Navigation Compose is **not a dependency** (removed). Do not introduce `NavHost` / `rememberNavController`.
 - `minSdk 34`, `targetSdk/compileSdk 35`, portrait, phone screens.
 - HTML mail via `AndroidView` + `WebView` in `EmailBodyView.kt`.
 - Icons: Material Icons Extended.
@@ -146,7 +146,9 @@ Default chrome spring: `dampingRatio = 0.86f`, `stiffness = Spring.StiffnessMedi
 - **Cards:** Digest `TopicCard` only — surface + **0.5.dp** line + **18.dp** corners, not elevated cards.
 - **Empty:** Centered muted icon 40.dp + SemiBold 17.sp title + 13.sp muted subtitle. Filtered empty offers “Clear Filters.”
 - **Loading:** Skeleton list (~9 pulsing bars) when empty+loading; `CircularProgressIndicator` for chat/body/auth.
-- **Pull to refresh:** `PullToRefreshBox` on email list / digest.
+- **Pull to refresh:** `PullToRefreshBox` on email list / digest. Pull-to-refresh and tab switches reset paging to page 1; background refreshes (SSE, poll, after actions) keep deeper pages.
+- **Infinite scroll:** `AppModel.loadMoreEmails` fires 5 rows before the end (`EmailPaging.PREFETCH_DISTANCE`). While more pages exist the list ends in **one** pulsing skeleton row (same row as the first-load skeleton) — never a "Load more" button. A failed page swaps it for a centred muted "Couldn’t load more" + accent "Retry" line with row padding. Inbox: only page 1 takes part in the New/Seen split; rows from later pages join Seen in date order (even unread), so load-more never inserts above the reader. Matches iOS.
+- **Load errors:** `LoadFailedContent` (`ui/components/LoadFailedViews.kt`): muted offline icon, SemiBold 17.sp title, 13.sp muted message (fallback "Check your connection and try again."), ink pill Retry. Mailbox gate: `MailboxLoadFailedView` adds muted "Sign out". Email list: "Couldn’t load emails" + Retry instead of the empty-folder state.
 - **Sheets:** Custom grabber (36×5 muted pill); often `dragHandle = null`; scrim `HomeChromeMetrics.modalScrim`.
 - **Modals / sheets / dialogs close:** Modal, sheet, and form dialog dismiss/close controls must use an "x" icon (`Icons.Outlined.Close`, `contentDescription = "Close"`, `tint = colors.ink`), never "Cancel" text. Reserve "Cancel" text strictly for confirmation alert dialogs.
 
@@ -188,10 +190,22 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | --- | --- | --- | --- |
 | Domain Admin | `previewDomainAdmin` | `domainAdmin` | Admin mailbox console (fixture rows, no network) |
 | Password sign-in | `previewPasswordSignIn` | `passwordSignIn` | `SignInView` with password form expanded |
-| Invite accept | `previewInviteAccept` | `inviteAccept` | Static accept-invite form |
+| Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |
+| Invite accept (signed in) | `previewInviteAcceptSignedIn` | `inviteAcceptSignedIn` | Invite accept into the signed-in account |
+| Sign-in & recovery | `previewSignInMethods` | `signInMethods` | Sign-in methods + recovery email |
+| Members | `previewMembers` | `members` | Mailbox members + pending invites |
+| Devices & sessions | `previewSessions` | `sessions` | Session list |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
 | Screener | `previewScreener` | `screener` | Screener folder + detail open |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
+| Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
+| Load more | `previewLoadMore` | `loadMore` | Inbox with more pages; scroll down for the pulsing skeleton footer row |
+| Load failed | `previewLoadFailed` | `loadFailed` | Signed in, first mailbox load failed, nothing cached: Retry + Sign out (never onboarding) |
+| List error | `previewListError` | `listError` | Inbox fetch failed with an empty cache: "Couldn’t load emails" + Retry |
+| Service ended (admin) | `previewServiceEnded` | `serviceEnded` | Read-only inbox + "Renew" banner |
+| Service ended (member) | `previewServiceEndedMember` | `serviceEndedMember` | Read-only inbox + "Ask an admin" |
+| Service ending | `previewServiceEnding` | `serviceEnding` | Admin "Keep subscription" notice |
+| DNS, service ended | `previewDomainDnsEnded` | `domainDnsEnded` | Subscription card, DNS edits frozen |
 
 Code: `ui/preview/PreviewMode.kt`, `PreviewSupport.kt`, `PreviewRoots.kt`. Wired from `MainActivity` when `BuildConfig.DEBUG` and an extra is present. Fixtures never persist session (`AuthStore.applyEphemeralSession`); normal launches call `resyncFromStorage()`.
 
@@ -204,6 +218,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ./scripts/run-debug-preview.sh mailbox
 ./scripts/run-debug-preview.sh screener
 ./scripts/run-debug-preview.sh replyLater
+./scripts/run-debug-preview.sh spam
 ./scripts/run-debug-preview.sh passwordSignIn
 ./scripts/run-debug-preview.sh inviteAccept
 ```

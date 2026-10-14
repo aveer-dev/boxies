@@ -1,0 +1,91 @@
+---
+// A quiet aside on a card: an icon, an optional status pill and title, then
+// the text. tone="next" is the private-email callout's accent wash.
+import type { Claim, Status } from "../data/types";
+import Icon from "./Icon.astro";
+import StatusPill from "./StatusPill.astro";
+
+interface Props {
+	icon?: "info" | "private" | "none";
+	tone?: "neutral" | "next";
+	title?: string;
+	status?: Status;
+	claim?: Claim;
+	id?: string;
+}
+
+const { icon = "info", tone = "neutral", title, status, claim, id } = Astro.props;
+---
+
+<aside class="callout" data-tone={tone} data-icon={icon} data-claim={claim} id={id} data-reveal-on-scroll>
+	{icon !== "none" && <Icon name={icon} class="callout-icon" />}
+	<div class="callout-body">
+		{status && <StatusPill status={status} />}
+		{title && <p class="callout-title">{title}</p>}
+		<div class="callout-text"><slot /></div>
+	</div>
+</aside>
+
+<style>
+	.callout {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 12px;
+		padding: 16px 20px;
+		border-radius: var(--radius-md);
+		background: var(--bg-card);
+	}
+
+	.callout[data-icon="none"] {
+		grid-template-columns: 1fr;
+	}
+
+	.callout[data-tone="next"] {
+		background: var(--accent-soft);
+		box-shadow: inset 0 0 0 1px var(--accent-line);
+	}
+
+	/* The status pill's own wash matches this one; the page colour keeps it a chip. */
+	.callout[data-tone="next"] :global(.pill) {
+		background: var(--bg);
+	}
+
+	/* Level with the first line, title or text (both 1.25rem lines; 14px icon). */
+	.callout :global(.callout-icon) {
+		margin-top: 3px;
+		color: var(--text-muted);
+	}
+
+	.callout[data-icon="private"] :global(.callout-icon) {
+		width: 20px;
+		height: 20px;
+		margin-top: 0;
+		color: var(--text-primary);
+	}
+
+	.callout-body {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.callout-title {
+		font-size: var(--fs-title);
+		line-height: 1.25rem;
+		letter-spacing: -0.005em;
+		color: var(--text-primary);
+	}
+
+	.callout-text {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.callout-text :global(strong) {
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+</style>

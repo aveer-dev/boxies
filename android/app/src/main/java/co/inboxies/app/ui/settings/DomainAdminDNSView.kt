@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import android.content.Intent
 import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.File
 import android.view.HapticFeedbackConstants
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -99,6 +101,7 @@ import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
+import co.inboxies.app.ui.components.rememberDomainRenewal
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
@@ -136,11 +139,19 @@ fun DomainAdminDNSView(
     var recordToDelete by remember { mutableStateOf<CloudflareDnsRecord?>(null) }
     var domainMenuExpanded by remember { mutableStateOf(false) }
 
+    // Subscription ended: DNS edits are frozen; export and transfer stay available.
+    val domainServices by app.domainServices.collectAsState()
+    val service = domainServices[selectedDomain.lowercase()]
+    val serviceEnded = service?.isEnded == true
+    val renewal = rememberDomainRenewal()
+
     suspend fun loadDomainData(domain: String) {
         if (domain.isBlank()) return
         errorMessage = null
         try {
             coroutineScope {
+                // Best effort: null (and no Subscription section) for unbilled domains or errors.
+                launch { app.loadDomainService(domain) }
                 val healthDef = async { ApiClient.shared.getDomainDnsHealth(domain) }
                 val recordsDef = async { ApiClient.shared.listDomainDnsRecords(domain) }
                 healthResponse = healthDef.await()
@@ -303,6 +314,12 @@ fun DomainAdminDNSView(
                         }
                     }
                 }
+
+                DomainSubscriptionSection(
+                    domain = selectedDomain,
+                    service = service,
+                    renewal = renewal,
+                )
 
                 if (justPurchased) {
                     SettingsFormGroup {
@@ -601,10 +618,9 @@ fun DomainAdminDNSView(
                         }
                     }
 
-                    HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
-
-                    // Fix & Auto-configure button
-                    Box(
+                    // Fix & Auto-configure button (DNS is frozen once the service ended)
+                    if (!serviceEnded) HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                    if (!serviceEnded) Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable(enabled = !isFixing) {
@@ -661,31 +677,33 @@ fun DomainAdminDNSView(
                 // DNS Records List Card
                 SettingsFormSectionHeader("DNS Records (${dnsRecords.size})")
                 SettingsFormGroup {
-                    // Add record action
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showAddRecord = true }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = null,
-                            tint = colors.accent,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "Add DNS Record",
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 15.sp,
-                            color = colors.accent,
-                        )
-                    }
+                    // Add record action (frozen once the service ended)
+                    if (!serviceEnded) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showAddRecord = true }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Add DNS Record",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 15.sp,
+                                color = colors.accent,
+                            )
+                        }
 
-                    HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                        HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                    }
 
                     if (dnsRecords.isEmpty()) {
                         Text(
@@ -702,7 +720,7 @@ fun DomainAdminDNSView(
                             }
                             DnsRecordRow(
                                 record = rec,
-                                onDelete = { recordToDelete = rec },
+                                onDelete = if (serviceEnded) null else ({ recordToDelete = rec }),
                             )
                         }
                     }
@@ -916,7 +934,8 @@ private fun HealthStatusPill(status: String) {
 @Composable
 private fun DnsRecordRow(
     record: CloudflareDnsRecord,
-    onDelete: () -> Unit,
+    /** Null while the domain's service has ended (DNS is frozen). */
+    onDelete: (() -> Unit)?,
 ) {
     val colors = inboxiesColors()
 
@@ -981,16 +1000,18 @@ private fun DnsRecordRow(
                 )
             }
 
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(28.dp).padding(start = 4.dp),
-            ) {
-                Icon(
-                    Icons.Outlined.Delete,
-                    contentDescription = "Delete Record",
-                    tint = colors.deepDarkRed,
-                    modifier = Modifier.size(16.dp),
-                )
+            if (onDelete != null) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(28.dp).padding(start = 4.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Delete,
+                        contentDescription = "Delete Record",
+                        tint = colors.deepDarkRed,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
         }
 
@@ -1181,6 +1202,7 @@ private fun AddDomainDialog(
                                             returnUrl = returnUrl,
                                             client = "android",
                                         )
+                                        co.inboxies.app.config.AppConfig.rememberPendingCheckout(res.sessionId)
                                         val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(res.checkoutUrl))
                                         browserIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
                                         context.startActivity(browserIntent)
@@ -1626,9 +1648,10 @@ private fun DomainExportDialog(
     var currentJob by remember { mutableStateOf<ExportJob?>(null) }
     var isStarting by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isDownloading by remember { mutableStateOf(false) }
 
-    LaunchedEffect(currentJob?.id) {
-        val jobId = currentJob?.id ?: return@LaunchedEffect
+    LaunchedEffect(currentJob?.resolvedId) {
+        val jobId = currentJob?.resolvedId?.takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
         while (true) {
             delay(1500)
             try {
@@ -1835,10 +1858,39 @@ private fun DomainExportDialog(
 
                             Button(
                                 onClick = {
-                                    val downloadUrl = ApiClient.shared.exportDownloadUrl(job.id)
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl))
-                                    context.startActivity(intent)
+                                    if (isDownloading) return@Button
+                                    isDownloading = true
+                                    errorMessage = null
+                                    scope.launch {
+                                        try {
+                                            // Authenticated download into cache/exports, then hand the
+                                            // file to the share sheet (Files, Drive, email…).
+                                            val exportId = job.resolvedId
+                                            val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+                                            dir.listFiles()?.forEach { it.delete() }
+                                            val file = File(dir, "inboxies-export-$exportId.mbox")
+                                            ApiClient.shared.downloadExport(exportId, file)
+                                            val uri = FileProvider.getUriForFile(
+                                                context,
+                                                "${context.packageName}.fileprovider",
+                                                file,
+                                            )
+                                            val send = Intent(Intent.ACTION_SEND).apply {
+                                                type = "application/mbox"
+                                                putExtra(Intent.EXTRA_STREAM, uri)
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(
+                                                Intent.createChooser(send, "Save export"),
+                                            )
+                                        } catch (e: Exception) {
+                                            errorMessage = e.message ?: "Couldn't download export"
+                                        } finally {
+                                            isDownloading = false
+                                        }
+                                    }
                                 },
+                                enabled = !isDownloading,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = colors.accent,
                                     contentColor = Color.White,
@@ -1848,9 +1900,21 @@ private fun DomainExportDialog(
                                     .fillMaxWidth()
                                     .height(40.dp),
                             ) {
-                                Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                if (isDownloading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = Color.White,
+                                    )
+                                } else {
+                                    Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
                                 Spacer(Modifier.width(8.dp))
-                                Text("Download .mbox Archive", fontFamily = InterFontFamily, fontSize = 14.sp)
+                                Text(
+                                    if (isDownloading) "Downloading…" else "Download .mbox Archive",
+                                    fontFamily = InterFontFamily,
+                                    fontSize = 14.sp,
+                                )
                             }
 
                             Text(

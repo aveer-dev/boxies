@@ -101,125 +101,6 @@ import co.inboxies.app.ui.settings.DomainAdminSettingsView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@Composable
-fun InviteAcceptView(
-    token: String,
-    onDone: () -> Unit,
-) {
-    val auth = LocalAuthStore.current
-    val app = LocalAppModel.current
-    val colors = inboxiesColors()
-    val scope = rememberCoroutineScope()
-    var invite by remember { mutableStateOf<InvitePublic?>(null) }
-    var loadError by remember { mutableStateOf<String?>(null) }
-    var password by remember { mutableStateOf("") }
-    var confirm by remember { mutableStateOf("") }
-    var displayName by remember { mutableStateOf("") }
-    var submitting by remember { mutableStateOf(false) }
-    var formError by remember { mutableStateOf<String?>(null) }
-
-    androidx.compose.runtime.LaunchedEffect(token) {
-        runCatching { ApiClient.shared.getInvite(token) }
-            .onSuccess { invite = it }
-            .onFailure { loadError = it.message }
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .imePadding()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-    ) {
-        TextButton(onClick = onDone) {
-            Text("Cancel", color = colors.muted, fontFamily = InterFontFamily)
-        }
-        Spacer(Modifier.height(16.dp))
-        Text(
-            "Accept invite",
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Bold,
-            fontSize = 24.sp,
-            color = colors.ink,
-        )
-        when {
-            loadError != null -> Text(loadError!!, color = colors.deepDarkRed, modifier = Modifier.padding(top = 12.dp))
-            invite == null -> CircularProgressIndicator(modifier = Modifier.padding(top = 24.dp))
-            else -> {
-                Text(
-                    "Set a password for ${invite!!.mailboxId}",
-                    color = colors.muted,
-                    fontFamily = InterFontFamily,
-                    modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
-                )
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    label = { Text("Display name (optional)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = confirm,
-                    onValueChange = { confirm = it },
-                    label = { Text("Confirm password") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                formError?.let {
-                    Text(it, color = colors.deepDarkRed, modifier = Modifier.padding(top = 8.dp))
-                }
-                Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        scope.launch {
-                            formError = null
-                            if (password != confirm) {
-                                formError = "Passwords do not match"
-                                return@launch
-                            }
-                            if (password.length < 10) {
-                                formError = "Password must be at least 10 characters"
-                                return@launch
-                            }
-                            submitting = true
-                            try {
-                                val result = ApiClient.shared.acceptInvite(
-                                    token,
-                                    password,
-                                    displayName.ifBlank { null },
-                                )
-                                auth.applySession(result.token, result.mailboxId)
-                                app.bootstrap(result.token)
-                                onDone()
-                            } catch (e: Exception) {
-                                formError = e.message
-                            } finally {
-                                submitting = false
-                            }
-                        }
-                    },
-                    enabled = !submitting && password.length >= 10,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (submitting) CircularProgressIndicator()
-                    else Text("Create account", fontFamily = InterFontFamily)
-                }
-            }
-        }
-    }
-}
-
 sealed interface OnboardingTrack {
     data object Select : OnboardingTrack
     data class Personal(val step: Int = 1) : OnboardingTrack
@@ -383,8 +264,7 @@ fun MailboxOnboardingView(
             ) {
                 TextButton(
                     onClick = {
-                        app.reset()
-                        auth.signOut()
+                        app.signOut(auth)
                     },
                 ) {
                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
@@ -473,8 +353,7 @@ fun MailboxOnboardingView(
                         ) {
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }
@@ -717,8 +596,7 @@ fun MailboxOnboardingView(
 
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }
@@ -998,8 +876,7 @@ fun MailboxOnboardingView(
 
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }
@@ -1260,7 +1137,7 @@ fun MailboxOnboardingView(
                                 5 -> {
                                     if (domainAction == "purchase" && (availability?.available == true)) {
                                         val total = availability?.pricing?.totalAnnualUsd ?: availability?.retailPriceUsd ?: 20.0
-                                        val domainCost = availability?.pricing?.domainWholesaleUsd ?: 10.46
+                                        val domainCost = availability?.pricing?.domainUsd ?: 10.46
                                         val platformCost = availability?.pricing?.platformFeeUsd ?: (total - domainCost)
                                         OnboardingStepHeader(
                                             title = "Subscription & Fee Breakdown",
@@ -1331,9 +1208,11 @@ fun MailboxOnboardingView(
                                                                 username = username,
                                                                 password = customPassword,
                                                                 displayName = customName.ifBlank { null },
+                                                                backupEmail = customBackupEmail.ifBlank { null },
                                                                 returnUrl = returnUrl,
                                                                 client = "android",
                                                             )
+                                                            co.inboxies.app.config.AppConfig.rememberPendingCheckout(res.sessionId)
                                                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(res.checkoutUrl))
                                                             context.startActivity(intent)
                                                             isPaymentSyncing = true
@@ -1866,8 +1745,7 @@ fun MailboxOnboardingView(
 
                             if (auth.isAuthenticated && onDismiss == null) {
                                 TextButton(onClick = {
-                                    app.reset()
-                                    auth.signOut()
+                                    app.signOut(auth)
                                 }) {
                                     Text("Sign out", color = colors.deepDarkRed, fontFamily = InterFontFamily)
                                 }

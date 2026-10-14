@@ -1,4 +1,3 @@
-import Security
 import Foundation
 import Observation
 
@@ -6,7 +5,9 @@ import Observation
 @Observable
 @MainActor
 final class AuthStore {
-    private let tokenKey = "mobileSessionToken"
+    /// The app's full session token, in the app-only keychain group.
+    nonisolated static let tokenKey = "mobileSessionToken"
+    private let tokenKey = AuthStore.tokenKey
     private let emailKey = "mobileUserEmail"
 
     var token: String?
@@ -15,14 +16,21 @@ final class AuthStore {
     var isBusy = false
     var errorMessage: String?
     /// Preview hosts keep session in memory so Canvas cannot wipe the real Keychain.
-    var persistsSession = true
+    var persistsSession: Bool
 
-    init() {
-        token = KeychainStore.read(tokenKey)
+    init(persistsSession: Bool = true) {
+        self.persistsSession = persistsSession
+        // Older builds kept the full session in the shared group the AutoFill
+        // extension reads; the extension now gets its own scoped session.
+        if persistsSession {
+            KeychainStore.moveToAppGroup(tokenKey)
+        }
+        token = KeychainStore.read(tokenKey, in: .app)
         userEmail = UserDefaults.standard.string(forKey: emailKey)
+        APIClient.shared.authToken = token
     }
 
-    func signInWithApple(identityToken: String, email: String?) async {
+    func signInWithApple(_ credential: AppleSignInCredential) async {
         isBusy = true
         errorMessage = nil
         defer { isBusy = false }
@@ -30,10 +38,10 @@ final class AuthStore {
             let response: AuthResponse = try await APIClient.shared.request(
                 path: "/api/v1/auth/apple",
                 method: "POST",
-                body: ["identityToken": identityToken],
+                body: credential.requestBody,
                 authed: false
             )
-            persist(token: response.token, email: response.user.email ?? email)
+            persist(token: response.token, email: response.user.email ?? credential.email)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -105,52 +113,22 @@ final class AuthStore {
     func signOut() {
         token = nil
         userEmail = nil
+        APIClient.shared.authToken = nil
         guard persistsSession else { return }
-        KeychainStore.delete(tokenKey)
+        KeychainStore.deleteEverywhere(tokenKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
+        SharedSession.clear()
     }
 
     private func persist(token: String, email: String?) {
         self.token = token
         self.userEmail = email
+        // Set before any view reacts to `token`, so follow-up calls in the same flow are authed.
+        APIClient.shared.authToken = token
         guard persistsSession else { return }
-        KeychainStore.write(tokenKey, value: token)
+        KeychainStore.write(tokenKey, value: token, in: .app)
         if let email {
             UserDefaults.standard.set(email, forKey: emailKey)
         }
-    }
-}
-
-enum KeychainStore {
-    static func write(_ key: String, value: String) {
-        let data = Data(value.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecValueData as String: data,
-        ]
-        SecItemDelete(query as CFDictionary)
-        SecItemAdd(query as CFDictionary, nil)
-    }
-
-    static func read(_ key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    static func delete(_ key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(query as CFDictionary)
     }
 }

@@ -261,14 +261,65 @@ function parseReceivedSpf(value: string): MethodHit | null {
 	return { method: "spf", result, properties };
 }
 
-function lastTrusted(values: string[]): ParsedAuthHeader | null {
-	let found: ParsedAuthHeader | null = null;
+/**
+ * Each receiving hop prepends its results, so the first Cloudflare-stamped
+ * header from the top is ours; a sender can only add forged ones below it.
+ * This relies on `values` being in true order and never merged.
+ */
+function firstTrusted(values: string[]): ParsedAuthHeader | null {
 	for (const value of values) {
 		const parsed = parseAuthenticationResultsValue(value);
-		if (!parsed || !isTrustedAuthserv(parsed.authserv)) continue;
-		found = parsed;
+		if (parsed && isTrustedAuthserv(parsed.authserv)) return parsed;
 	}
-	return found;
+	return null;
+}
+
+/**
+ * When both a plain and an ARC results header are present we can't tell
+ * which one our hop wrote, so take the one that passes less: a forged pass
+ * must never outvote a real fail.
+ */
+function stricterResults(
+	a: ParsedAuthHeader | null,
+	b: ParsedAuthHeader | null,
+): ParsedAuthHeader | null {
+	if (!a || !b) return a ?? b;
+	const passes = (h: ParsedAuthHeader) => h.methods.filter((m) => m.result === "pass").length;
+	return passes(b) < passes(a) ? b : a;
+}
+
+/**
+ * workerd's Headers joins duplicate headers with ", " in get(). A new
+ * results header starts with an authserv-id (or ARC's `i=N`) followed by
+ * `;`, so split there to get the instances back, topmost first.
+ */
+function splitJoinedResults(value: string): string[] {
+	return value
+		.split(/,\s*(?=(?:i=\d+\s*;)|(?:[A-Za-z0-9.-]+\s*;))/)
+		.map((part) => part.trim())
+		.filter(Boolean);
+}
+
+/**
+ * Every instance of a header, topmost first, never merged. A merged value
+ * would let a forged header lower in the message add `dmarc=pass` to the
+ * real one.
+ */
+function orderedHeaderValues(source: HeaderSource, name: string): string[] {
+	if (!source) return [];
+	if (Array.isArray(source) || typeof source === "string") {
+		return headerMapFromSource(source).get(name.toLowerCase()) ?? [];
+	}
+	const headers = source as { get(name: string): string | null; getAll?(name: string): string[] };
+	if (typeof headers.getAll === "function") {
+		try {
+			return headers.getAll(name).map((value) => String(value)).filter(Boolean);
+		} catch {
+			// workerd only supports getAll for Set-Cookie.
+		}
+	}
+	const joined = headers.get(name);
+	return joined ? splitJoinedResults(joined) : [];
 }
 
 function pickVerdict(hits: MethodHit[], method: string): MethodHit | null {
@@ -318,41 +369,27 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	const headerFrom = (input.headerFrom ?? "").trim();
 	const envelopeFrom = (input.envelopeFrom ?? "").trim();
 
-	const envelopeAr = collectHeaderValues(
-		input.envelopeHeaders,
-		"authentication-results",
-	);
-	const mimeAr = collectHeaderValues(
-		input.mimeHeaders,
-		"authentication-results",
-	);
-	const envelopeArc = collectHeaderValues(
-		input.envelopeHeaders,
-		"arc-authentication-results",
-	);
-	const mimeArc = collectHeaderValues(
-		input.mimeHeaders,
-		"arc-authentication-results",
-	);
-
-	const trustedAr =
-		lastTrusted(envelopeAr) ?? lastTrusted(mimeAr);
-	const trustedArc =
-		lastTrusted(envelopeArc) ?? lastTrusted(mimeArc);
+	// Use the delivery headers when we have them. The message's own MIME
+	// headers are what the sender wrote, so they only stand in when no
+	// delivery headers were given (tests, re-parsing stored mail).
+	const ordered = (name: string) =>
+		input.envelopeHeaders != null
+			? orderedHeaderValues(input.envelopeHeaders, name)
+			: orderedHeaderValues(input.mimeHeaders, name);
+	const trustedAr = firstTrusted(ordered("authentication-results"));
+	const trustedArc = firstTrusted(ordered("arc-authentication-results"));
+	const chosen = stricterResults(trustedAr, trustedArc);
 
 	let source: AuthSource = "none";
 	let methods: MethodHit[] = [];
-	if (trustedAr) {
-		source = "authentication-results";
-		methods = trustedAr.methods;
-	} else if (trustedArc) {
-		source = "arc-authentication-results";
-		methods = trustedArc.methods;
+	if (chosen) {
+		source = chosen === trustedAr ? "authentication-results" : "arc-authentication-results";
+		methods = chosen.methods;
 	}
 
-	const envelopeSpf = collectHeaderValues(input.envelopeHeaders, "received-spf");
-	if (envelopeSpf.length > 0 && !pickVerdict(methods, "spf")) {
-		const spfHit = parseReceivedSpf(envelopeSpf[envelopeSpf.length - 1] ?? "");
+	const receivedSpf = ordered("received-spf");
+	if (receivedSpf.length > 0 && !pickVerdict(methods, "spf")) {
+		const spfHit = parseReceivedSpf(receivedSpf[0] ?? "");
 		if (spfHit) methods = [...methods, spfHit];
 	}
 
@@ -369,16 +406,18 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 		spfHit?.properties["smtp.mailfrom"] ??
 		spfHit?.properties["envelope-from"] ??
 		undefined;
-	const headerFromDomain = domainFromAddress(
-		dmarcHit?.properties["header.from"] ?? headerFrom,
-	);
+	// Alignment is judged against the From the user sees, not a domain the
+	// results header merely claims.
+	const headerFromDomain = domainFromAddress(headerFrom || dmarcHit?.properties["header.from"]);
+	const dmarcFromDomain = domainFromAddress(dmarcHit?.properties["header.from"]);
 	const spfDomain = domainFromAddress(spfMailfrom ?? null);
 
 	const dkimAligned =
 		dkimHit?.result === "pass" && domainsAligned(headerFromDomain, dkimDomain);
 	const spfAligned =
 		spfHit?.result === "pass" && domainsAligned(headerFromDomain, spfDomain);
-	const dmarcPass = dmarcHit?.result === "pass";
+	const dmarcPass =
+		dmarcHit?.result === "pass" && (!dmarcFromDomain || dmarcFromDomain === headerFromDomain);
 	const hasEvaluableVerdict =
 		isEvaluableHit(dkimHit) || isEvaluableHit(spfHit) || isEvaluableHit(dmarcHit);
 

@@ -1,0 +1,64 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Not Found" description="This page doesn’t exist." noindex>
+	<div class="not-found">
+		<h1 class="heading">404</h1>
+		<p class="description">This page never made it past the Screener.</p>
+		<p class="description">The page you’re looking for doesn’t exist.</p>
+		<p class="links">
+			<a href="/" class="home-link">← Go home</a>
+			<span class="dot" aria-hidden="true">·</span>
+			<a href="/support" class="home-link">Support</a>
+		</p>
+	</div>
+</Base>
+
+<style>
+	.not-found {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.heading {
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		font-weight: 500;
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.description {
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.links {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 6px;
+		margin-top: 8px;
+		font-size: 0.6875rem;
+		color: var(--text-subtle);
+	}
+
+	/* Muted rather than the portfolio's subtle: these links are the page's
+	   only way on, so they need AA contrast. */
+	.home-link {
+		font-family: var(--font-sans);
+		font-size: 0.6875rem;
+		color: var(--text-muted);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		transition: color 150ms var(--ease-out);
+	}
+
+	.home-link:hover {
+		color: var(--text-primary);
+	}
+</style>

@@ -1,4 +1,7 @@
+packages:
+  - site
 allowBuilds:
   core-js-pure: true
   esbuild: true
   workerd: true
+  sharp: true
