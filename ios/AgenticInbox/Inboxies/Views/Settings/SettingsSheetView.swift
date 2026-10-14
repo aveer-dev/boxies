@@ -70,15 +70,19 @@ struct SettingsSheetView: View {
 
                 Section {
                     settingsNavRow("Swipe settings", systemImage: "arrow.left.arrow.right", destination: .swipe)
-                    settingsNavRow("AI prompt", systemImage: "sparkles", destination: .agentPrompt)
-                    settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
-                    settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
-                    settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
-                    settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
-                    settingsNavRow("Private email", destination: .aliases) {
-                        PrivateEmailLogoView(size: 18, showTile: false)
+                    // Mailbox configuration freezes when the domain's service ends.
+                    Group {
+                        settingsNavRow("AI prompt", systemImage: "sparkles", destination: .agentPrompt)
+                        settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
+                        settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
+                        settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
+                        settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
+                        settingsNavRow("Private email", destination: .aliases) {
+                            PrivateEmailLogoView(size: 18, showTile: false)
+                        }
+                        settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
                     }
-                    settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
+                    .lockedWhenReadOnly(app.isReadOnly)
                     settingsNavRow("Sign-in methods", systemImage: "key", destination: .signInMethods)
 
                     if app.isAdmin {
@@ -87,8 +91,13 @@ struct SettingsSheetView: View {
 
                     notificationsToggle
                     signatureToggle
+                        .lockedWhenReadOnly(app.isReadOnly)
                 } header: {
                     Text("Preferences")
+                } footer: {
+                    if let mailbox, mailbox.isReadOnly {
+                        Text("The subscription for \(mailbox.domain) ended, so this mailbox's settings are read-only until it's renewed.")
+                    }
                 }
                 .listRowSeparator(.hidden)
 
@@ -118,6 +127,7 @@ struct SettingsSheetView: View {
                             .font(.inter(size: 16, weight: .medium))
                             .foregroundStyle(.red)
                     }
+                    .lockedWhenReadOnly(app.isReadOnly)
                 }
 
                 Section {
@@ -267,6 +277,7 @@ struct SettingsSheetView: View {
             }
             .buttonStyle(.plain)
             .padding(.top, 2)
+            .lockedWhenReadOnly(app.isReadOnly)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)

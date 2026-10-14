@@ -145,6 +145,8 @@ struct ComposeStackButton: View {
 struct ComposeActionListOverlay: View {
     var highlightedID: ComposeActionItem.ID?
     var isClosing: Bool = false
+    /// Read-only mailbox (service ended): folders and settings only.
+    var hidesCompose: Bool = false
     var onSelect: (ComposeActionItem) -> Void
     var onDismiss: () -> Void
     var onRowFramesChange: ([ComposeActionItem.ID: CGRect]) -> Void
@@ -155,7 +157,9 @@ struct ComposeActionListOverlay: View {
     @State private var isDismissingInternal = false
     @Namespace private var highlightNamespace
 
-    private let actions = ComposeActionItem.allCases
+    private var actions: [ComposeActionItem] {
+        hidesCompose ? ComposeActionItem.allCases.filter { $0 != .compose } : ComposeActionItem.allCases
+    }
     private let iconSize: CGFloat = 44
     private let rowSpacing: CGFloat = 10
     private let baseOffsetToStack: CGFloat = 60

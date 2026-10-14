@@ -31,10 +31,12 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewChat")
                 || ProcessInfo.processInfo.arguments.contains("-previewScreener")
                 || ProcessInfo.processInfo.arguments.contains("-previewScreenerList")
-                || ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
+                || ProcessInfo.processInfo.arguments.contains("-previewReplyLater")
+                || PreviewSupport.isServiceMailboxPreview {
                 PreviewMailboxRoot()
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewDomainAdmin")
+                || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminServiceEnded")
                 || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetail")
                 || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetailUnassigned")
                 || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn")
