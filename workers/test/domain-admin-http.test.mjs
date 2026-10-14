@@ -234,6 +234,10 @@ let ownerInviteToken;
 	assert.equal(noCode.payload.codeRequired, true);
 	await request(env, { method: "POST", path: `/api/v1/invites/${token}/otp` });
 	const code = lastCodeSentTo(email, "nobody@gmail.com");
+	// Signed out first: the address has an account, so 409 — and the code is
+	// not used up, so it still works once they sign in.
+	const signedOut = await request(env, { method: "POST", path: `/api/v1/invites/${token}/accept`, body: { code, password: "another password 1" } });
+	assert.equal(signedOut.status, 409);
 	const ok = await authedRequest(env, { method: "POST", path: `/api/v1/invites/${token}/accept`, token: session.token, body: { code } });
 	assert.equal(ok.status, 200);
 	assert.equal(ok.payload.userId, "nobody");
