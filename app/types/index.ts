@@ -30,10 +30,16 @@ export interface SenderPreference {
 	updatedAt?: string;
 }
 
+/**
+ * Read-only membership the server synthesizes for older app builds. Never
+ * sent back: membership changes go through invites and the members routes.
+ */
 export interface MailboxAcl {
 	owners?: string[];
 	members?: string[];
 }
+
+export type MailboxRole = "owner" | "member";
 
 export interface MailboxSettings {
 	fromName?: string;
@@ -42,16 +48,58 @@ export interface MailboxSettings {
 	autoReply?: { enabled: boolean; subject: string; message: string };
 	agentSystemPrompt?: string;
 	filters?: InboxFilterRule[];
+	/** Server-synthesized, read-only; stripped before every save. */
 	acl?: MailboxAcl;
 	canManage?: boolean;
 }
 
 export interface MeResponse {
+	userId: string;
+	name: string | null;
 	email: string | null;
 	sub: string | null;
 	keys: string[];
 	isAdmin?: boolean;
 	administeredDomains?: string[];
+	mailDomain?: string;
+	domains?: string[];
+	sessionScope?: string | null;
+}
+
+export interface AccountSession {
+	id: string;
+	label: string | null;
+	scope: string | null;
+	userAgent: string | null;
+	ipAddress: string | null;
+	createdAt: string;
+	lastActiveAt: string;
+	expiresAt: string;
+	current: boolean;
+}
+
+export interface RecoveryEmailStatus {
+	email: string | null;
+	verified: boolean;
+}
+
+export interface MailboxMember {
+	userId: string;
+	email: string;
+	name: string | null;
+	role: MailboxRole;
+	you: boolean;
+}
+
+export interface MailboxInviteRow {
+	id: string;
+	mailboxId: string;
+	role: MailboxRole;
+	inviteeEmail: string;
+	inviteeName?: string;
+	expiresAt: string;
+	status: "pending" | "accepted" | "revoked" | "expired";
+	createdAt: string;
 }
 
 export interface CloudflareDnsRecord {
@@ -228,6 +276,7 @@ export interface Mailbox {
 	email: string;
 	name: string;
 	settings?: MailboxSettings;
+	role?: MailboxRole | null;
 	canManage?: boolean;
 	/** The domain's subscription ended: read and export only. */
 	readOnly?: boolean;

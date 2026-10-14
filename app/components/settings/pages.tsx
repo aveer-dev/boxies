@@ -5,9 +5,11 @@
 import {
 	AddressBookIcon,
 	ArrowBendUpLeftIcon,
+	DevicesIcon,
 	FunnelSimpleIcon,
 	KeyIcon,
 	PaperPlaneTiltIcon,
+	UserMinusIcon,
 	UsersThreeIcon,
 } from "@phosphor-icons/react";
 import { type ComponentType, lazy, type ReactNode } from "react";
@@ -21,6 +23,8 @@ export const SETTINGS_PAGE_IDS = [
 	"senders",
 	"sharing",
 	"sign-in",
+	"sessions",
+	"delete-account",
 ] as const;
 
 export type SettingsPageId = (typeof SETTINGS_PAGE_IDS)[number];
@@ -76,19 +80,36 @@ export const SETTINGS_PAGES: Record<SettingsPageId, SettingsPage> = {
 	},
 	sharing: {
 		id: "sharing",
-		label: "Sharing",
-		description: "Owners and members who can access this mailbox",
+		label: "Members",
+		description: "Who can use this mailbox, invites, and leaving",
 		icon: <UsersThreeIcon size={18} />,
 		Component: lazy(() => import("./SharingSettings")),
 	},
 	"sign-in": {
 		id: "sign-in",
-		label: "Sign-in methods",
-		description: "Apple, Google, password, and linked devices",
+		label: "Sign-in & recovery",
+		description: "Password, Google, Apple, and your recovery email",
 		icon: <KeyIcon size={18} />,
 		Component: lazy(() => import("./SignInSettings")),
 	},
+	sessions: {
+		id: "sessions",
+		label: "Devices",
+		description: "Where you're signed in; sign out other sessions",
+		icon: <DevicesIcon size={18} />,
+		Component: lazy(() => import("./SessionsSettings")),
+	},
+	"delete-account": {
+		id: "delete-account",
+		label: "Delete account",
+		description: "Permanently delete your Inboxies account",
+		icon: <UserMinusIcon size={18} />,
+		Component: lazy(() => import("./DeleteAccountSettings")),
+	},
 };
+
+/** Listed under "Your account" in the Settings column (not per mailbox). */
+export const ACCOUNT_PAGES: SettingsPageId[] = ["sign-in", "sessions", "delete-account"];
 
 /** Listed under "Incoming mail" in the Settings column. */
 export const INCOMING_MAIL_PAGES: SettingsPageId[] = [

@@ -6,7 +6,11 @@ import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
+import ConfirmDialog from "./ConfirmDialog";
+import RecoveryEmailSection from "./RecoveryEmailSection";
 import SettingsSubpage from "./SettingsSubpage";
+import { useIdentities } from "~/queries/account";
+import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
 
 function identityTypeLabel(type: string): string {
@@ -19,10 +23,6 @@ function identityTypeLabel(type: string): string {
 			return "Apple";
 		case "google":
 			return "Google";
-		case "sub":
-			return "Sign-in provider";
-		case "access":
-			return "Access";
 		default:
 			return type;
 	}
@@ -92,11 +92,7 @@ export default function SignInSettings() {
 	const queryClient = useQueryClient();
 	const googleBtnRef = useRef<HTMLDivElement>(null);
 
-	const { data, isLoading, refetch } = useQuery({
-		queryKey: ["identities"],
-		queryFn: () => api.listIdentities(),
-		staleTime: 30_000,
-	});
+	const { data, isLoading, refetch } = useIdentities();
 
 	const { data: config } = useQuery({
 		queryKey: ["config"],
@@ -104,11 +100,6 @@ export default function SignInSettings() {
 		staleTime: 60_000,
 	});
 
-	const [isMinting, setIsMinting] = useState(false);
-	const [linkCode, setLinkCode] = useState<string | null>(null);
-	const [expiresAt, setExpiresAt] = useState<string | null>(null);
-	const [redeemDraft, setRedeemDraft] = useState("");
-	const [isRedeeming, setIsRedeeming] = useState(false);
 	const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
 	const [showPasswordForm, setShowPasswordForm] = useState(false);
 	const [showChangePassword, setShowChangePassword] = useState(false);
@@ -119,20 +110,23 @@ export default function SignInSettings() {
 	const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
 	const [isAddingPassword, setIsAddingPassword] = useState(false);
 	const [isChangingPassword, setIsChangingPassword] = useState(false);
-	const [showAdvanced, setShowAdvanced] = useState(false);
+	const [disconnecting, setDisconnecting] = useState<{ type: string; label: string } | null>(null);
+	const [isDisconnecting, setIsDisconnecting] = useState(false);
 
 	const hasPassword = data?.identities.some((i) => i.type === "password");
 	const hasGoogle = data?.identities.some((i) => i.type === "google");
 	const hasApple = data?.identities.some((i) => i.type === "apple");
 	const googleClientId = config?.googleClientId ?? null;
 	const canAddMethod = !hasGoogle || !hasApple || !hasPassword;
+	// One row per method type; the server refuses to remove the last one.
+	const methodCount = new Set(data?.identities.map((i) => i.type)).size;
 
 	const refreshAfterAttach = useCallback(
 		async (title: string) => {
 			toastManager.add({ title });
 			await refetch();
-			await queryClient.invalidateQueries({ queryKey: ["me"] });
-			await queryClient.invalidateQueries({ queryKey: ["mailboxes"] });
+			await queryClient.invalidateQueries({ queryKey: queryKeys.account.me });
+			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
 		},
 		[queryClient, refetch, toastManager],
 	);
@@ -141,15 +135,11 @@ export default function SignInSettings() {
 		async (credential: string) => {
 			setIsConnectingGoogle(true);
 			try {
-				const res = await api.attachIdentity({
+				await api.attachIdentity({
 					provider: "google",
 					idToken: credential,
 				});
-				await refreshAfterAttach(
-					res.isAdmin
-						? "Google connected — Domain Admin access restored"
-						: "Google connected",
-				);
+				await refreshAfterAttach("Google connected");
 			} catch (err) {
 				const message =
 					err instanceof Error ? err.message : "Could not connect Google";
@@ -190,7 +180,7 @@ export default function SignInSettings() {
 					width: 280,
 				});
 			} catch {
-				/* GIS unavailable — advanced link-code fallback remains */
+				/* GIS unavailable: Google can still be connected from the apps */
 			}
 		})();
 		return () => {
@@ -198,52 +188,21 @@ export default function SignInSettings() {
 		};
 	}, [googleClientId, hasGoogle, handleGoogleCredential, data?.identities]);
 
-	const handleCreateCode = async () => {
-		setIsMinting(true);
+	const handleDisconnect = async () => {
+		if (!disconnecting) return;
+		setIsDisconnecting(true);
 		try {
-			const res = await api.createIdentityLinkCode();
-			setLinkCode(res.code);
-			setExpiresAt(res.expiresAt);
-			toastManager.add({ title: "Link code created — expires in 15 minutes" });
-		} catch {
+			await api.removeIdentity(disconnecting.type);
+			toastManager.add({ title: `${identityTypeLabel(disconnecting.type)} disconnected` });
+			setDisconnecting(null);
+			await refetch();
+		} catch (err) {
 			toastManager.add({
-				title: "Could not create link code",
+				title: err instanceof Error && err.message ? err.message : "Couldn't disconnect it",
 				variant: "error",
 			});
 		} finally {
-			setIsMinting(false);
-		}
-	};
-
-	const handleCopy = async () => {
-		if (!linkCode) return;
-		try {
-			await navigator.clipboard.writeText(linkCode);
-			toastManager.add({ title: "Code copied" });
-		} catch {
-			toastManager.add({ title: "Copy failed", variant: "error" });
-		}
-	};
-
-	const handleRedeem = async () => {
-		const code = redeemDraft.trim();
-		if (!code) return;
-		setIsRedeeming(true);
-		try {
-			const res = await api.redeemIdentityLink(code);
-			await refreshAfterAttach(
-				res.isAdmin
-					? "Linked — Domain Admin access restored"
-					: "Sign-in method linked",
-			);
-			setRedeemDraft("");
-		} catch {
-			toastManager.add({
-				title: "Invalid or expired code",
-				variant: "error",
-			});
-		} finally {
-			setIsRedeeming(false);
+			setIsDisconnecting(false);
 		}
 	};
 
@@ -322,8 +281,10 @@ export default function SignInSettings() {
 		try {
 			await api.changePassword({ currentPassword, newPassword });
 			resetChangePasswordForm();
-			toastManager.add({ title: "Password updated" });
+			// The server signs out every other session on a password change.
+			toastManager.add({ title: "Password updated — other devices were signed out" });
 			await refetch();
+			await queryClient.invalidateQueries({ queryKey: queryKeys.account.sessions });
 		} catch (err) {
 			const message =
 				err instanceof Error ? err.message : "Could not change password";
@@ -341,12 +302,10 @@ export default function SignInSettings() {
 	if (!mailboxId) return null;
 
 	return (
-		<SettingsSubpage mailboxId={mailboxId} title="Sign-in methods">
+		<SettingsSubpage mailboxId={mailboxId} title="Sign-in & recovery">
 			<p className="text-sm text-kumo-subtle mb-6">
-				Ways you can sign in to this Inboxies account. Connected shows one row
-				per method (Access, Apple, Google, Password) — not raw identity keys.
-				Add Apple, Google, or a password on this device; every method reaches
-				the same mailboxes.
+				Ways you sign in to your Inboxies account. Every method reaches the same
+				mailboxes.
 			</p>
 
 			{isLoading || !data ? (
@@ -355,6 +314,8 @@ export default function SignInSettings() {
 				</div>
 			) : (
 				<div className="space-y-6">
+					<RecoveryEmailSection />
+
 					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 						<div className="text-sm font-medium text-kumo-default mb-3">
 							Connected
@@ -376,9 +337,23 @@ export default function SignInSettings() {
 											</div>
 											<div className="text-xs text-kumo-subtle">
 												{identityTypeLabel(identity.type)}
-												{identity.current ? " · this session" : ""}
 											</div>
 										</div>
+										<Button
+											variant="ghost"
+											size="sm"
+											disabled={methodCount <= 1}
+											title={
+												methodCount <= 1
+													? "Add another way to sign in before disconnecting this one"
+													: undefined
+											}
+											onClick={() =>
+												setDisconnecting({ type: identity.type, label: identity.label })
+											}
+										>
+											Disconnect
+										</Button>
 									</li>
 								))}
 							</ul>
@@ -471,8 +446,8 @@ export default function SignInSettings() {
 										</>
 									) : (
 										<p className="text-xs text-kumo-subtle">
-											Connect Google isn’t available here. Use Android, or Link
-											another device below.
+											Connect Google isn’t available here. Connect it from the
+											Android app.
 										</p>
 									)}
 								</div>
@@ -481,7 +456,7 @@ export default function SignInSettings() {
 							{!hasApple && (
 								<p className="text-xs text-kumo-subtle rounded-md bg-kumo-tint px-3 py-2">
 									Connect Apple on iPhone: Settings → Sign-in methods → Connect
-									Apple. Or use Link another device below.
+									Apple.
 								</p>
 							)}
 
@@ -536,75 +511,18 @@ export default function SignInSettings() {
 						</div>
 					)}
 
-					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
-						<button
-							type="button"
-							className="text-sm font-medium text-kumo-default flex items-center gap-2"
-							onClick={() => setShowAdvanced((v) => !v)}
-						>
-							{showAdvanced ? "Hide" : "Show"} · Link another device
-							<span className="text-xs font-normal text-kumo-subtle">
-								(secondary)
-							</span>
-						</button>
-						{showAdvanced && (
-							<>
-								<p className="text-xs text-kumo-subtle">
-									For linking across devices when Connect isn’t available here.
-									Generate a code, then redeem it on the other signed-in
-									session. Codes expire in 15 minutes.
-								</p>
-								<div className="flex flex-wrap items-center gap-2">
-									<Button
-										variant="secondary"
-										size="sm"
-										disabled={isMinting}
-										onClick={handleCreateCode}
-									>
-										{isMinting ? "Creating…" : "Generate link code"}
-									</Button>
-									{linkCode && (
-										<Button variant="secondary" size="sm" onClick={handleCopy}>
-											Copy code
-										</Button>
-									)}
-								</div>
-								{linkCode && (
-									<div className="rounded-md bg-kumo-tint px-3 py-3">
-										<div className="font-mono text-lg tracking-widest text-kumo-default">
-											{linkCode}
-										</div>
-										{expiresAt && (
-											<p className="text-xs text-kumo-subtle mt-1">
-												Expires {new Date(expiresAt).toLocaleString()}
-											</p>
-										)}
-									</div>
-								)}
-								<div className="space-y-3 pt-2 border-t border-kumo-line">
-									<p className="text-xs text-kumo-subtle">
-										Redeem a code from another device or sign-in method.
-									</p>
-									<Input
-										label="Link code"
-										value={redeemDraft}
-										onChange={(e) => setRedeemDraft(e.target.value)}
-										placeholder="Paste code"
-									/>
-									<Button
-										variant="secondary"
-										size="sm"
-										disabled={isRedeeming || !redeemDraft.trim()}
-										onClick={handleRedeem}
-									>
-										{isRedeeming ? "Linking…" : "Link to this account"}
-									</Button>
-								</div>
-							</>
-						)}
-					</div>
 				</div>
 			)}
+
+			<ConfirmDialog
+				open={disconnecting !== null}
+				title={`Disconnect ${disconnecting ? identityTypeLabel(disconnecting.type) : ""}?`}
+				description={`You won't be able to sign in with ${disconnecting?.label ?? "it"} anymore. You can connect it again later.`}
+				confirmLabel="Disconnect"
+				busy={isDisconnecting}
+				onConfirm={() => void handleDisconnect()}
+				onCancel={() => setDisconnecting(null)}
+			/>
 		</SettingsSubpage>
 	);
 }

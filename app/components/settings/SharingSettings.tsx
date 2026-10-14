@@ -2,355 +2,259 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
-import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router";
-import SettingsSubpage from "./SettingsSubpage";
-import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
+import { Badge, Button, Loader, Select, useKumoToastManager } from "@cloudflare/kumo";
+import { TrashIcon } from "@phosphor-icons/react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useNavigate, useParams } from "react-router";
+import { useUIStore } from "~/hooks/useUIStore";
+import { queryKeys } from "~/queries/keys";
+import { useMailbox } from "~/queries/mailboxes";
+import { useMailboxMembers } from "~/queries/members";
 import api from "~/services/api";
-import type { MailboxAcl } from "~/types";
+import type { MailboxMember, MailboxRole } from "~/types";
+import ConfirmDialog from "./ConfirmDialog";
+import { InviteMemberCard, PendingInvitesCard } from "./MemberInvites";
+import SettingsSubpage from "./SettingsSubpage";
 
-function displayAclKey(key: string): string {
-	if (key.startsWith("email:")) return key.slice("email:".length);
-	if (key.startsWith("account:")) return `Account ${key.slice("account:".length).slice(0, 8)}…`;
-	if (key.startsWith("user:")) return `Password ${key.slice("user:".length).slice(0, 8)}…`;
-	if (key.startsWith("sub:")) return `Sign-in ${key.slice("sub:".length).slice(0, 8)}…`;
-	return key;
+const ROLE_LABELS: Record<MailboxRole, string> = { owner: "Owner", member: "Member" };
+
+function errorMessage(err: unknown, fallback: string): string {
+	return err instanceof Error && err.message ? err.message : fallback;
 }
 
-function canonicalEmailAclKey(key: string): string | null {
-	if (!key.startsWith("email:")) return null;
-	const email = key.slice("email:".length);
-	const at = email.lastIndexOf("@");
-	if (at <= 0) return null;
-	const local = email.slice(0, at);
-	const plus = local.indexOf("+");
-	if (plus <= 0) return `email:${email}`;
-	return `email:${local.slice(0, plus)}@${email.slice(at + 1)}`;
+function MemberRow({
+	member,
+	canManage,
+	busy,
+	onRoleChange,
+	onRemove,
+}: {
+	member: MailboxMember;
+	canManage: boolean;
+	busy: boolean;
+	onRoleChange: (role: MailboxRole) => void;
+	onRemove: () => void;
+}) {
+	const title = member.name?.trim() || member.email;
+	return (
+		<div className="px-5 py-3 flex items-center gap-3">
+			<div className="min-w-0 flex-1">
+				<div className="text-sm text-kumo-default truncate flex items-center gap-2">
+					<span className="truncate">{title}</span>
+					{member.you && <Badge variant="neutral">You</Badge>}
+				</div>
+				{title !== member.email && (
+					<p className="text-xs text-kumo-subtle truncate">{member.email}</p>
+				)}
+			</div>
+			{canManage ? (
+				<div className="w-28 shrink-0">
+					<Select
+						size="sm"
+						aria-label={`Role for ${member.email}`}
+						value={member.role}
+						items={ROLE_LABELS}
+						disabled={busy}
+						onValueChange={(value) => {
+							if (value && value !== member.role) onRoleChange(value as MailboxRole);
+						}}
+					>
+						<Select.Option value="owner">Owner</Select.Option>
+						<Select.Option value="member">Member</Select.Option>
+					</Select>
+				</div>
+			) : (
+				<Badge variant={member.role === "owner" ? "primary" : "secondary"}>
+					{member.role === "owner" ? "Owner" : "Member"}
+				</Badge>
+			)}
+			{canManage && !member.you && (
+				<button
+					type="button"
+					className="p-2 text-kumo-subtle hover:text-kumo-default disabled:opacity-40"
+					aria-label={`Remove ${member.email}`}
+					disabled={busy}
+					onClick={onRemove}
+				>
+					<TrashIcon size={16} />
+				</button>
+			)}
+		</div>
+	);
 }
 
-function viewerCanManage(
-	owners: string[],
-	viewerKeys: Set<string>,
-	canManage?: boolean,
-): boolean {
-	if (typeof canManage === "boolean") return canManage;
-	return owners.some((key) => {
-		if (viewerKeys.has(key)) return true;
-		const canonical = canonicalEmailAclKey(key);
-		return Boolean(canonical && viewerKeys.has(canonical));
-	});
-}
-
-function toEmailKey(raw: string): string | null {
-	const trimmed = raw.trim().toLowerCase();
-	if (!trimmed) return null;
-	if (trimmed.startsWith("email:")) {
-		const email = trimmed.slice("email:".length).trim();
-		return email.includes("@") ? `email:${email}` : null;
-	}
-	if (trimmed.startsWith("sub:")) return trimmed;
-	return trimmed.includes("@") ? `email:${trimmed}` : null;
-}
-
+/** Members of this mailbox: owners manage them; anyone can leave. */
 export default function SharingSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const navigate = useNavigate();
 	const toastManager = useKumoToastManager();
+	const queryClient = useQueryClient();
+	const closeSettings = useUIStore((s) => s.closeSettings);
 	const { data: mailbox } = useMailbox(mailboxId);
-	const updateMailboxMutation = useUpdateMailbox();
-	const { data: me } = useQuery({
-		queryKey: ["me"],
-		queryFn: () => api.getMe(),
-		staleTime: 60_000,
-	});
+	const { data: members, isLoading, error } = useMailboxMembers(mailboxId);
+	const [busyUserId, setBusyUserId] = useState<string | null>(null);
+	const [removing, setRemoving] = useState<MailboxMember | null>(null);
+	const [demotingSelf, setDemotingSelf] = useState<MailboxMember | null>(null);
+	const [confirmLeave, setConfirmLeave] = useState(false);
+	const [leaving, setLeaving] = useState(false);
 
-	const [owners, setOwners] = useState<string[]>([]);
-	const [members, setMembers] = useState<string[]>([]);
-	const [draft, setDraft] = useState("");
-	const [addAsOwner, setAddAsOwner] = useState(false);
-	const [isSaving, setIsSaving] = useState(false);
-	const [inviteEmail, setInviteEmail] = useState("");
-	const [inviteAsOwner, setInviteAsOwner] = useState(false);
-	const [isInviting, setIsInviting] = useState(false);
-	const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null);
+	const canManage = Boolean(mailbox?.canManage);
+	const you = members?.find((m) => m.you);
+	const ownerCount = members?.filter((m) => m.role === "owner").length ?? 0;
+	const soleOwner = you?.role === "owner" && ownerCount <= 1;
 
-	useEffect(() => {
-		if (!mailbox) return;
-		const acl = mailbox.settings?.acl;
-		setOwners([...(acl?.owners ?? [])]);
-		setMembers([...(acl?.members ?? [])]);
-	}, [mailbox]);
-
-	const viewerKeys = useMemo(() => new Set(me?.keys ?? []), [me?.keys]);
-	const canManage = viewerCanManage(owners, viewerKeys, mailbox?.canManage);
-
-	const handleRemove = (key: string, role: "owner" | "member") => {
-		if (role === "owner") {
-			if (owners.length <= 1) {
-				toastManager.add({
-					title: "Mailbox must have at least one owner",
-					variant: "error",
-				});
-				return;
-			}
-			setOwners((prev) => prev.filter((item) => item !== key));
-		} else {
-			setMembers((prev) => prev.filter((item) => item !== key));
-		}
+	const refreshMembers = async () => {
+		if (!mailboxId) return;
+		await queryClient.invalidateQueries({ queryKey: queryKeys.members.list(mailboxId) });
+		await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.detail(mailboxId) });
 	};
 
-	const handleAdd = () => {
-		const key = toEmailKey(draft);
-		if (!key) {
-			toastManager.add({
-				title: "Enter a valid email address",
-				variant: "error",
-			});
-			return;
-		}
-		if (owners.includes(key) || members.includes(key)) {
-			toastManager.add({ title: "That person is already listed", variant: "error" });
-			return;
-		}
-		if (addAsOwner) setOwners((prev) => [...prev, key]);
-		else setMembers((prev) => [...prev, key]);
-		setDraft("");
-	};
-
-	const handleSave = async () => {
-		if (!mailbox || !mailboxId) return;
-		if (owners.length === 0) {
-			toastManager.add({
-				title: "Mailbox must have at least one owner",
-				variant: "error",
-			});
-			return;
-		}
-		const acl: MailboxAcl = { owners, members };
-		setIsSaving(true);
+	const handleRoleChange = async (member: MailboxMember, role: MailboxRole) => {
+		if (!mailboxId) return;
+		setBusyUserId(member.userId);
 		try {
-			await updateMailboxMutation.mutateAsync({
-				mailboxId,
-				settings: {
-					...mailbox.settings,
-					acl,
-				},
+			await api.setMailboxMemberRole(mailboxId, member.userId, role);
+			toastManager.add({
+				title: `${member.email} is now ${role === "owner" ? "an owner" : "a member"}`,
 			});
-			toastManager.add({ title: "Sharing saved" });
-		} catch (e) {
-			const title =
-				e instanceof Error && e.message ? e.message : "Failed to save sharing";
-			toastManager.add({ title, variant: "error" });
+			await refreshMembers();
+			// Stepping yourself down also changes what you can manage here.
+			if (member.you) await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
+		} catch (err) {
+			toastManager.add({ title: errorMessage(err, "Couldn't change the role"), variant: "error" });
 		} finally {
-			setIsSaving(false);
+			setBusyUserId(null);
 		}
 	};
 
-	const handleInvite = async () => {
-		if (!mailboxId || !inviteEmail.trim()) {
-			toastManager.add({
-				title: "Enter an email to invite",
-				variant: "error",
-			});
-			return;
-		}
-		setIsInviting(true);
-		setLastInviteUrl(null);
+	const handleRemove = async () => {
+		if (!mailboxId || !removing) return;
+		setBusyUserId(removing.userId);
 		try {
-			const result = await api.createMailboxInvite(mailboxId, {
-				inviteEmail: inviteEmail.trim(),
-				role: inviteAsOwner ? "owner" : "member",
-			});
-			setLastInviteUrl(result.inviteUrl);
-			toastManager.add({
-				title: result.emailSent
-					? "Invite emailed"
-					: "Invite created — copy the link",
-			});
-			setInviteEmail("");
-		} catch (e) {
-			toastManager.add({
-				title: e instanceof Error ? e.message : "Invite failed",
-				variant: "error",
-			});
+			await api.removeMailboxMember(mailboxId, removing.userId);
+			toastManager.add({ title: `${removing.email} removed` });
+			setRemoving(null);
+			await refreshMembers();
+		} catch (err) {
+			toastManager.add({ title: errorMessage(err, "Couldn't remove them"), variant: "error" });
 		} finally {
-			setIsInviting(false);
+			setBusyUserId(null);
 		}
 	};
 
-	if (!mailbox || !mailboxId) {
-		return (
-			<div className="flex justify-center py-20">
-				<Loader size="lg" />
-			</div>
-		);
-	}
+	const handleLeave = async () => {
+		if (!mailboxId || !you) return;
+		setLeaving(true);
+		try {
+			await api.removeMailboxMember(mailboxId, you.userId);
+			toastManager.add({ title: `You left ${mailbox?.email ?? mailboxId}` });
+			closeSettings();
+			queryClient.removeQueries({ queryKey: queryKeys.mailboxes.detail(mailboxId) });
+			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
+			navigate("/", { replace: true });
+		} catch (err) {
+			toastManager.add({ title: errorMessage(err, "Couldn't leave the mailbox"), variant: "error" });
+			setLeaving(false);
+			setConfirmLeave(false);
+		}
+	};
+
+	if (!mailboxId) return null;
 
 	return (
-		<SettingsSubpage mailboxId={mailboxId} title="Sharing">
+		<SettingsSubpage mailboxId={mailboxId} title="Members">
 			<div className="space-y-4">
-				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
-					<p className="text-sm text-kumo-default leading-relaxed">
-						People with access to this mailbox through their Inboxies account.
-						Owners can manage this list. Members can use the mailbox but cannot
-						change who has access. Sign-in methods (Access, Apple, Google,
-						Password) are paths into an account — they do not own the mailbox.
-					</p>
-					<p className="text-xs text-kumo-subtle leading-relaxed">
-						Add someone who already has an Inboxies account by email below (we
-						resolve to their account when known). To onboard a new person with a
-						password, use Invite by email.
-					</p>
-				</div>
+				<p className="text-sm text-kumo-subtle leading-relaxed">
+					People who can use {mailbox?.email ?? "this mailbox"}. Owners invite and remove
+					people and change forwarding, auto-reply, filters, and the agent prompt.
+				</p>
 
-				<section className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
-					<div className="px-5 py-3 text-sm font-medium text-kumo-default">
-						Owners
+				{isLoading ? (
+					<div className="flex justify-center py-12">
+						<Loader size="lg" />
 					</div>
-					{owners.length === 0 && (
-						<p className="px-5 py-4 text-sm text-kumo-subtle">No owners yet.</p>
-					)}
-					{owners.map((key) => (
-						<div key={key} className="px-5 py-3 flex items-center gap-3">
-							<div className="min-w-0 flex-1">
-								<div className="text-sm text-kumo-default truncate">
-									{displayAclKey(key)}
-								</div>
-								<p className="text-xs text-kumo-subtle">{key}</p>
-							</div>
-							{canManage && (
-								<button
-									type="button"
-									className="p-2 text-kumo-subtle hover:text-kumo-default disabled:opacity-40"
-									aria-label={`Remove owner ${displayAclKey(key)}`}
-									disabled={owners.length <= 1}
-									onClick={() => handleRemove(key, "owner")}
-								>
-									<TrashIcon size={16} />
-								</button>
-							)}
+				) : error || !members ? (
+					<p className="text-sm text-kumo-subtle">
+						{errorMessage(error, "Couldn't load members.")}
+					</p>
+				) : (
+					<section className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
+						<div className="px-5 py-3 text-sm font-medium text-kumo-default">
+							{members.length === 1 ? "1 person" : `${members.length} people`}
 						</div>
-					))}
-				</section>
-
-				<section className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
-					<div className="px-5 py-3 text-sm font-medium text-kumo-default">
-						Members
-					</div>
-					{members.length === 0 && (
-						<p className="px-5 py-4 text-sm text-kumo-subtle">No members yet.</p>
-					)}
-					{members.map((key) => (
-						<div key={key} className="px-5 py-3 flex items-center gap-3">
-							<div className="min-w-0 flex-1">
-								<div className="text-sm text-kumo-default truncate">
-									{displayAclKey(key)}
-								</div>
-								<p className="text-xs text-kumo-subtle">{key}</p>
-							</div>
-							{canManage && (
-								<button
-									type="button"
-									className="p-2 text-kumo-subtle hover:text-kumo-default"
-									aria-label={`Remove member ${displayAclKey(key)}`}
-									onClick={() => handleRemove(key, "member")}
-								>
-									<TrashIcon size={16} />
-								</button>
-							)}
-						</div>
-					))}
-				</section>
-
-				{canManage && (
-					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
-						<div className="text-sm font-medium text-kumo-default">
-							Invite by email
-						</div>
-						<p className="text-xs text-kumo-subtle">
-							Sends an invite link so they can set a password and join this
-							mailbox.
-						</p>
-						<Input
-							label="Invitee email"
-							value={inviteEmail}
-							onChange={(e) => setInviteEmail(e.target.value)}
-							placeholder="person@gmail.com"
-						/>
-						<label className="flex items-center gap-2 text-sm text-kumo-default">
-							<input
-								type="checkbox"
-								checked={inviteAsOwner}
-								onChange={(e) => setInviteAsOwner(e.target.checked)}
+						{members.map((member) => (
+							<MemberRow
+								key={member.userId}
+								member={member}
+								canManage={canManage}
+								busy={busyUserId === member.userId}
+								onRoleChange={(role) => {
+									// Only another owner can undo stepping yourself down.
+									if (member.you && role === "member") setDemotingSelf(member);
+									else void handleRoleChange(member, role);
+								}}
+								onRemove={() => setRemoving(member)}
 							/>
-							Invite as owner
-						</label>
-						{lastInviteUrl && (
-							<div className="rounded-md bg-kumo-tint p-3 space-y-2">
-								<code className="text-xs break-all text-kumo-default block">
-									{lastInviteUrl}
-								</code>
-								<Button
-									variant="secondary"
-									size="sm"
-									onClick={() => {
-										void navigator.clipboard.writeText(lastInviteUrl);
-										toastManager.add({ title: "Invite link copied" });
-									}}
-								>
-									Copy link
-								</Button>
-							</div>
-						)}
-						<Button
-							variant="primary"
-							onClick={handleInvite}
-							loading={isInviting}
-						>
-							Send invite
-						</Button>
-					</div>
+						))}
+					</section>
 				)}
 
-				{canManage && (
+				{canManage && <PendingInvitesCard mailboxId={mailboxId} />}
+				{canManage && <InviteMemberCard mailboxId={mailboxId} />}
+
+				{you && (
 					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
-						<div className="text-sm font-medium text-kumo-default">
-							Add person (existing account)
+						<div>
+							<div className="text-sm font-medium text-kumo-default">Leave this mailbox</div>
+							<p className="text-xs text-kumo-subtle mt-1">
+								{soleOwner
+									? "You're the only owner. Make someone else an owner before you leave."
+									: "It disappears from your mailbox list on every device. An owner can invite you back."}
+							</p>
 						</div>
-						<Input
-							label="Email"
-							value={draft}
-							onChange={(e) => setDraft(e.target.value)}
-							placeholder="ada@example.com"
-						/>
-						<label className="flex items-center gap-2 text-sm text-kumo-default">
-							<input
-								type="checkbox"
-								checked={addAsOwner}
-								onChange={(e) => setAddAsOwner(e.target.checked)}
-							/>
-							Add as owner
-						</label>
 						<Button
 							variant="secondary"
-							icon={<PlusIcon size={16} />}
-							onClick={handleAdd}
+							size="sm"
+							disabled={soleOwner}
+							onClick={() => setConfirmLeave(true)}
 						>
-							Add
-						</Button>
-					</div>
-				)}
-
-				{canManage && (
-					<div className="flex justify-end">
-						<Button variant="primary" onClick={handleSave} loading={isSaving}>
-							Save
+							Leave mailbox
 						</Button>
 					</div>
 				)}
 			</div>
+
+			<ConfirmDialog
+				open={removing !== null}
+				title="Remove from mailbox?"
+				description={`${removing?.email ?? "They"} will lose access to this mailbox on every device.`}
+				confirmLabel="Remove"
+				busy={busyUserId !== null && busyUserId === removing?.userId}
+				onConfirm={() => void handleRemove()}
+				onCancel={() => setRemoving(null)}
+			/>
+			<ConfirmDialog
+				open={demotingSelf !== null}
+				title="Become a member?"
+				description="You'll stop managing members, forwarding, auto-reply, filters, and the agent prompt here. Only another owner can make you an owner again."
+				confirmLabel="Become a member"
+				busy={busyUserId !== null && busyUserId === demotingSelf?.userId}
+				onConfirm={() => {
+					if (!demotingSelf) return;
+					void handleRoleChange(demotingSelf, "member").finally(() => setDemotingSelf(null));
+				}}
+				onCancel={() => setDemotingSelf(null)}
+			/>
+			<ConfirmDialog
+				open={confirmLeave}
+				title={`Leave ${mailbox?.email ?? "this mailbox"}?`}
+				description="You'll lose access to its mail on every device until an owner invites you again."
+				confirmLabel="Leave"
+				busy={leaving}
+				onConfirm={() => void handleLeave()}
+				onCancel={() => setConfirmLeave(false)}
+			/>
 		</SettingsSubpage>
 	);
 }
