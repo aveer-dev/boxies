@@ -188,7 +188,11 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | --- | --- | --- | --- |
 | Domain Admin | `previewDomainAdmin` | `domainAdmin` | Admin mailbox console (fixture rows, no network) |
 | Password sign-in | `previewPasswordSignIn` | `passwordSignIn` | `SignInView` with password form expanded |
-| Invite accept | `previewInviteAccept` | `inviteAccept` | Static accept-invite form |
+| Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |
+| Invite accept (signed in) | `previewInviteAcceptSignedIn` | `inviteAcceptSignedIn` | Invite accept into the signed-in account |
+| Sign-in & recovery | `previewSignInMethods` | `signInMethods` | Sign-in methods + recovery email |
+| Members | `previewMembers` | `members` | Mailbox members + pending invites |
+| Devices & sessions | `previewSessions` | `sessions` | Session list |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
 | Screener | `previewScreener` | `screener` | Screener folder + detail open |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |

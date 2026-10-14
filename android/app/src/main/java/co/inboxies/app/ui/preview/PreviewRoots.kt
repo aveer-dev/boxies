@@ -31,12 +31,16 @@ import co.inboxies.app.services.AuthStore
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.ThemeMode
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.auth.InviteAcceptView
 import co.inboxies.app.ui.auth.MailboxOnboardingView
 import co.inboxies.app.ui.auth.OnboardingTrack
 import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
 import co.inboxies.app.ui.settings.DomainAdminDNSView
 import co.inboxies.app.ui.settings.DomainAdminSettingsView
+import co.inboxies.app.ui.settings.SessionsSettingsView
+import co.inboxies.app.ui.settings.SharingSettingsView
+import co.inboxies.app.ui.settings.SignInMethodsSettingsView
 import co.inboxies.app.ui.splash.SplashScreenView
 
 /**
@@ -57,13 +61,26 @@ object PreviewHarness {
             PreviewMode.DomainOnboarding -> {
                 PreviewSupport.applyAuth(auth)
             }
-            PreviewMode.InviteAccept,
+            PreviewMode.InviteAccept -> {
+                // Signed out: the real invite screen on a fixture invite.
+                appModel.reset()
+            }
+            PreviewMode.InviteAcceptSignedIn,
             PreviewMode.DomainAdmin,
             PreviewMode.DomainDns,
-            PreviewMode.SignInMethods,
+            PreviewMode.Sessions,
             -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
+            }
+            PreviewMode.SignInMethods -> {
+                PreviewSupport.applyAuth(auth)
+                PreviewSupport.applyAdminPreview(appModel)
+                appModel.setIdentities(PreviewSupport.identities())
+            }
+            PreviewMode.Members -> {
+                PreviewSupport.applyAuth(auth)
+                PreviewSupport.applyMailboxPreview(appModel, mode)
             }
             PreviewMode.Splash -> {
                 // Splash preview needs no extra session seeding.
@@ -99,8 +116,19 @@ fun PreviewRoot(
                 MailboxOnboardingView(initialTrack = OnboardingTrack.Domain(1))
             }
         }
-        PreviewMode.InviteAccept -> InviteAcceptPreview()
-        PreviewMode.SignInMethods -> SignInMethodsPreview()
+        PreviewMode.InviteAccept,
+        PreviewMode.InviteAcceptSignedIn,
+        -> Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
+            InviteAcceptView(
+                token = "preview",
+                previewInvite = PreviewSupport.invite(),
+                onSignIn = {},
+                onDone = {},
+            )
+        }
+        PreviewMode.SignInMethods -> SettingsPreviewSurface { SignInMethodsSettingsView(onBack = {}) }
+        PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
+        PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
         PreviewMode.DomainAdmin -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
                 Column(
@@ -147,205 +175,16 @@ fun PreviewRoot(
     }
 }
 
-/** Static invite-accept form (no API) — parallel to iOS `InviteAcceptPreview`. */
+/** A settings page on the sheet background, below the status bar. */
 @Composable
-fun InviteAcceptPreview() {
-    val colors = inboxiesColors()
-    var password by remember { mutableStateOf("") }
-    var confirm by remember { mutableStateOf("") }
-    var displayName by remember { mutableStateOf("Alex") }
-    val mailbox = "you@${PreviewSupport.mailDomain()}"
-
-    Surface(modifier = Modifier.fillMaxSize(), color = colors.background) {
+private fun SettingsPreviewSurface(content: @Composable () -> Unit) {
+    Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .statusBarsPadding(),
         ) {
-            TextButton(onClick = {}) {
-                Text("Cancel", color = colors.muted, fontFamily = InterFontFamily)
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "Accept invite",
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 24.sp,
-                color = colors.ink,
-            )
-            Text(
-                "You've been invited to $mailbox.",
-                color = colors.muted,
-                fontFamily = InterFontFamily,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
-            )
-            OutlinedTextField(
-                value = displayName,
-                onValueChange = { displayName = it },
-                label = { Text("Display name (optional)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Password (10+ characters)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = confirm,
-                onValueChange = { confirm = it },
-                label = { Text("Confirm password") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = {},
-                enabled = password.length >= 10 && password == confirm,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = colors.ink,
-                    contentColor = colors.surface,
-                ),
-            ) {
-                Text("Create account", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium)
-            }
-        }
-    }
-}
-
-/**
- * Static Sign-in methods surface (no API) — Connected list + Change password form expanded.
- * Mirrors the production layout for DEBUG emulator review.
- */
-@Composable
-fun SignInMethodsPreview() {
-    val colors = inboxiesColors()
-    var currentPassword by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var passwordConfirm by remember { mutableStateOf("") }
-
-    Surface(modifier = Modifier.fillMaxSize(), color = colors.background) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 32.dp),
-        ) {
-            Text(
-                "Sign-in methods",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 17.sp,
-                color = colors.ink,
-            )
-            Text(
-                "Connected methods share this account. Connect Apple or Google on this device, add or change your password, or link another device.",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                fontFamily = InterFontFamily,
-                fontSize = 12.sp,
-                color = colors.muted,
-            )
-
-            Text(
-                "CONNECTED",
-                modifier = Modifier.padding(start = 20.dp, top = 20.dp, bottom = 8.dp),
-                fontFamily = InterFontFamily,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = colors.muted,
-            )
-            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
-                Text("emmanuel@example.com", fontFamily = InterFontFamily, fontSize = 15.sp, color = colors.ink)
-                Text("Access · this session", fontFamily = InterFontFamily, fontSize = 12.sp, color = colors.muted)
-            }
-            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)) {
-                Text("Password · emmanuel@example.com", fontFamily = InterFontFamily, fontSize = 15.sp, color = colors.ink)
-                Text("Password", fontFamily = InterFontFamily, fontSize = 12.sp, color = colors.muted)
-            }
-
-            Text(
-                "CONNECT ON THIS DEVICE",
-                modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 8.dp),
-                fontFamily = InterFontFamily,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = colors.muted,
-            )
-            Text(
-                "Connect Apple isn’t available on Android. Use iPhone, or Link another device.",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                fontFamily = InterFontFamily,
-                fontSize = 12.sp,
-                color = colors.muted,
-            )
-            TextButton(onClick = {}, modifier = Modifier.padding(horizontal = 8.dp)) {
-                Text("Connect Google", fontFamily = InterFontFamily, color = colors.accent)
-            }
-
-            Text(
-                "Change password",
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
-                color = colors.ink,
-            )
-            OutlinedTextField(
-                value = currentPassword,
-                onValueChange = { currentPassword = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                label = { Text("Current password", fontFamily = InterFontFamily) },
-                singleLine = true,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                label = { Text("New password (10+ characters)", fontFamily = InterFontFamily) },
-                singleLine = true,
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = passwordConfirm,
-                onValueChange = { passwordConfirm = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
-                label = { Text("Confirm new password", fontFamily = InterFontFamily) },
-                singleLine = true,
-            )
-            TextButton(onClick = {}, modifier = Modifier.padding(horizontal = 8.dp)) {
-                Text("Update password", fontFamily = InterFontFamily, color = colors.accent)
-            }
-
-            Text(
-                "LINK ANOTHER DEVICE",
-                modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 8.dp),
-                fontFamily = InterFontFamily,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = colors.muted,
-            )
-            TextButton(onClick = {}, modifier = Modifier.padding(horizontal = 8.dp)) {
-                Text("Link another device", fontFamily = InterFontFamily, color = colors.muted)
-            }
+            content()
         }
     }
 }
