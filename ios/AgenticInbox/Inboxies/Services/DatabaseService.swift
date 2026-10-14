@@ -511,7 +511,15 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
-    func getEmails(mailboxId: String, folderId: String, limit: Int = 50, offset: Int = 0) -> [Email] {
+    /// Newest-first rows for a folder. `limit: nil` reads every row; `since` keeps rows
+    /// dated at or after it (the loaded pagination window).
+    func getEmails(
+        mailboxId: String,
+        folderId: String,
+        limit: Int? = 50,
+        offset: Int = 0,
+        since: String? = nil
+    ) -> [Email] {
         return queue.sync {
             var result: [Email] = []
             var stmt: OpaquePointer?
@@ -525,15 +533,23 @@ final class DatabaseService: @unchecked Sendable {
                 delivery_status, delivery_error, provider_message_id,
                 reply_later, reply_later_at, alias_id, alias_email
             FROM emails
-            WHERE mailbox_id = ? AND folder_id = ?
+            WHERE mailbox_id = ? AND folder_id = ? AND (? IS NULL OR date >= ?)
             ORDER BY date DESC
             LIMIT ? OFFSET ?;
             """
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
                 sqlite3_bind_text(stmt, 2, (folderId as NSString).utf8String, -1, nil)
-                sqlite3_bind_int(stmt, 3, Int32(limit))
-                sqlite3_bind_int(stmt, 4, Int32(offset))
+                if let since {
+                    sqlite3_bind_text(stmt, 3, (since as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 4, (since as NSString).utf8String, -1, nil)
+                } else {
+                    sqlite3_bind_null(stmt, 3)
+                    sqlite3_bind_null(stmt, 4)
+                }
+                // SQLite treats a negative LIMIT as "no limit".
+                sqlite3_bind_int(stmt, 5, Int32(limit ?? -1))
+                sqlite3_bind_int(stmt, 6, Int32(offset))
 
                 while sqlite3_step(stmt) == SQLITE_ROW {
                     if let email = parseEmailRow(stmt) {

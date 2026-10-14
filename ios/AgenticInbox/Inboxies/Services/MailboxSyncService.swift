@@ -70,22 +70,38 @@ actor MailboxSyncService {
 
     // MARK: - Synchronize Folder Emails
 
+    /// What one fetched page contributed, for pagination bookkeeping.
+    struct FolderPage: Sendable {
+        let page: Int
+        let receivedCount: Int
+        let totalCount: Int
+        let oldestDate: String?
+    }
+
+    /// Cached rows after syncing page 1 (callers that don't paginate).
     func syncFolder(
         mailboxId: String,
         folderId: String,
         page: Int = 1
     ) async throws -> [Email] {
-        let syncKey = "\(mailboxId):\(folderId)"
-        guard !inFlightSyncFolders.contains(syncKey) else {
-            return db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
-        }
+        _ = try await syncFolderPage(mailboxId: mailboxId, folderId: folderId, page: page)
+        return db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
+    }
+
+    /// Fetches one page into SQLite. Returns nil when offline or the same page is
+    /// already in flight (the caller keeps its cache). Only page 1 prunes.
+    func syncFolderPage(
+        mailboxId: String,
+        folderId: String,
+        page: Int
+    ) async throws -> FolderPage? {
+        let syncKey = "\(mailboxId):\(folderId):\(page)"
+        guard !inFlightSyncFolders.contains(syncKey) else { return nil }
 
         inFlightSyncFolders.insert(syncKey)
         defer { inFlightSyncFolders.remove(syncKey) }
 
-        guard isOnline else {
-            return db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
-        }
+        guard isOnline else { return nil }
 
         let response = try await APIClient.shared.listEmails(
             mailboxId: mailboxId,
@@ -110,12 +126,19 @@ actor MailboxSyncService {
             )
         }
 
-        // Proactively prefetch bodies for top 15 emails in the background
-        Task { [weak self] in
-            await self?.prefetchEmailBodies(mailboxId: mailboxId, emails: Array(response.emails.prefix(15)))
+        // Proactively prefetch bodies for the top 15 emails of the first page in the background
+        if page == 1 {
+            Task { [weak self] in
+                await self?.prefetchEmailBodies(mailboxId: mailboxId, emails: Array(response.emails.prefix(15)))
+            }
         }
 
-        return db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
+        return FolderPage(
+            page: page,
+            receivedCount: response.emails.count,
+            totalCount: response.totalCount,
+            oldestDate: response.emails.last?.date
+        )
     }
 
     // MARK: - Proactive Background Body Prefetching

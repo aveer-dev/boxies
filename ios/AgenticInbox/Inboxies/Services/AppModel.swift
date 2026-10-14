@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// App-wide state ≈ Zustand `useUIStore` + React Query cache for the active mailbox.
 @Observable
@@ -39,6 +40,12 @@ final class AppModel {
     var isSyncing = false
     var lastSyncedAt: Date?
     var errorMessage: String?
+    /// The mailbox list request failed with nothing cached: RootView shows an error, not onboarding.
+    var mailboxesLoadFailed = false
+    /// The visible list's fetch failed with nothing cached to show (error + Retry, not "empty").
+    var emailListError: String?
+    /// Infinite-scroll state for the visible email list (folder or Reply Later).
+    var listPaging: EmailListPaging?
     var selectedEmail: Email?
     var threadEmails: [Email] = []
     var composeSession: ComposeSession?
@@ -60,6 +67,12 @@ final class AppModel {
     
     var pendingUndoAction: UndoableAction?
     private var pendingUndoTask: Task<Void, Never>?
+    /// Disk copy of a send in its undo window (kill safety). Swappable for tests.
+    var pendingSendStore = PendingSendStore.shared
+    /// Signed-in account the pending-send record is keyed by (AuthStore email).
+    private(set) var accountKey: String?
+    /// Bumped by `reset()` so late async work from a previous session can tell it is stale.
+    private var sessionGeneration = 0
 
     private let db = DatabaseService.shared
     private let syncService = MailboxSyncService.shared
@@ -75,6 +88,39 @@ final class AppModel {
 
     var selectedMailbox: Mailbox? {
         mailboxes.first { $0.id == selectedMailboxId }
+    }
+
+    var mailboxGate: MailboxGate {
+        MailboxGate.resolve(
+            isMailboxLoading: isMailboxLoading,
+            hasMailboxes: !mailboxes.isEmpty,
+            loadFailed: mailboxesLoadFailed
+        )
+    }
+
+    /// `mailboxId|folderId` (or `|reply_later`) of the list on screen.
+    var currentListKey: String? {
+        guard let mailboxId = selectedMailboxId else { return nil }
+        if selectedTab == .replyLater {
+            return EmailListPaging.key(mailboxId: mailboxId, listId: "reply_later")
+        }
+        guard let folderId = selectedTab.syncFolderId else { return nil }
+        return EmailListPaging.key(mailboxId: mailboxId, listId: folderId)
+    }
+
+    /// Paging for the list on screen; nil while another list's state is still around.
+    var visibleListPaging: EmailListPaging? {
+        guard let listPaging, listPaging.key == currentListKey else { return nil }
+        return listPaging
+    }
+
+    /// Cached rows for the loaded window: every loaded page, never a fixed 50.
+    private func cachedFolderEmails(mailboxId: String, folderId: String) -> [Email] {
+        let key = EmailListPaging.key(mailboxId: mailboxId, listId: folderId)
+        let window = (listPaging?.key == key ? listPaging : nil)?.cacheWindow
+            ?? EmailListPaging(key: key).cacheWindow
+        let rows = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: window.limit, since: window.since)
+        return folderId == "inbox" ? Self.orderNewThenSeen(rows) : rows
     }
 
     /// Mirrors the active mailbox for the AutoFill extension. Previews never write.
@@ -128,12 +174,13 @@ final class AppModel {
         adjustFolderUnread(folderId: folderId, delta: isUnread ? 1 : -1)
     }
 
-    func bootstrap(authToken: String?) async {
+    func bootstrap(authToken: String?, accountKey: String? = nil) async {
         // AuthStore owns the shared token; this only covers callers that bootstrap
         // with a token AuthStore has not published yet.
         if let authToken, !authToken.isEmpty {
             APIClient.shared.authToken = authToken
         }
+        self.accountKey = accountKey
 
         // 1. Instant local read (0ms) — eliminate cold start spinners
         let cachedMailboxes = db.getMailboxes()
@@ -170,6 +217,9 @@ final class AppModel {
 
         // 2. Silent background sync
         await refreshMailboxes(showLoading: emails.isEmpty)
+
+        // 3. A send interrupted by a kill inside its undo window comes back as a draft.
+        await restorePendingSendIfNeeded()
     }
 
     private func setupRealTimeStream() {
@@ -227,6 +277,7 @@ final class AppModel {
                 }
             }
 			mailboxes = try await APIClient.shared.listMailboxes()
+            mailboxesLoadFailed = false
             db.upsertMailboxes(mailboxes)
             if let selected = selectedMailboxId, !mailboxes.contains(where: { $0.id == selected }) {
                 selectedMailboxId = mailboxes.first?.id
@@ -242,6 +293,9 @@ final class AppModel {
             }
         } catch {
             errorMessage = error.localizedDescription
+            // Only "the server said zero mailboxes" leads to onboarding; a failed request
+            // with nothing cached is an error state.
+            mailboxesLoadFailed = mailboxes.isEmpty
             isLoading = false
             isMailboxLoading = false
         }
@@ -302,6 +356,8 @@ final class AppModel {
             pendingConversationIds.removeAll()
             conversations = []
             inboxDigest = nil
+            listPaging = nil
+            emailListError = nil
             if chatSession != .dismissed {
                 chatSession = .dismissed
             }
@@ -361,10 +417,13 @@ final class AppModel {
                 return
             }
             errorMessage = error.localizedDescription
+            if emails.isEmpty { emailListError = error.localizedDescription }
             isMailboxLoading = false
             isLoading = false
         } catch {
+            // Transport failures (no HTTP status) never drop the mailbox or reach onboarding.
             errorMessage = error.localizedDescription
+            if emails.isEmpty { emailListError = error.localizedDescription }
             isMailboxLoading = false
             isLoading = false
         }
@@ -416,6 +475,10 @@ final class AppModel {
     func selectTab(_ tab: HomeTab) {
         selectedTab = tab
         selectedEmail = nil
+        emailListError = nil
+        if listPaging?.key != currentListKey {
+            listPaging = nil
+        }
 
         if isDebugPreview {
             if tab == .replyLater {
@@ -446,9 +509,9 @@ final class AppModel {
                 isLoading = false
             }
         } else if let folderId = tab.syncFolderId, let mailboxId = selectedMailboxId {
-            let cached = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
+            let cached = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
             if !cached.isEmpty {
-                emails = folderId == "inbox" ? Self.orderNewThenSeen(cached) : cached
+                emails = cached
                 isLoading = false
             } else {
                 emails = []
@@ -457,17 +520,22 @@ final class AppModel {
         }
 
         Task {
-            await loadEmailsForCurrentTab(showLoading: emails.isEmpty)
+            await loadEmailsForCurrentTab(showLoading: emails.isEmpty, resetPaging: true)
             if tab == .aiInbox {
                 await loadInboxDigest(showLoading: inboxDigest == nil)
             }
         }
     }
 
-    func loadEmailsForCurrentTab(showLoading: Bool = true) async {
-        guard let mailboxId = selectedMailboxId else {
+    /// Fetches page 1 of the visible list. `resetPaging` (tab switch, pull-to-refresh)
+    /// collapses the list back to page 1; otherwise pages already loaded stay on screen.
+    func loadEmailsForCurrentTab(showLoading: Bool = true, resetPaging: Bool = false) async {
+        guard let mailboxId = selectedMailboxId, let key = currentListKey else {
             isLoading = false
             return
+        }
+        if listPaging?.key != key {
+            listPaging = EmailListPaging(key: key)
         }
 
         if isDebugPreview {
@@ -490,12 +558,14 @@ final class AppModel {
                 db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
                 replyLaterCount = response.totalCount
                 lastSyncedAt = Date()
-                if selectedTab == .replyLater {
-                    emails = response.emails
+                if currentListKey == key {
+                    applyReplyLaterFirstPage(response, resetPaging: resetPaging)
+                    emailListError = nil
                 }
             } catch {
-                if emails.isEmpty {
+                if emails.isEmpty, currentListKey == key {
                     errorMessage = error.localizedDescription
+                    emailListError = error.localizedDescription
                 }
             }
             return
@@ -507,9 +577,9 @@ final class AppModel {
             return
         }
 
-        let cached = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
+        let cached = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
         if !cached.isEmpty {
-            emails = folderId == "inbox" ? Self.orderNewThenSeen(cached) : cached
+            emails = cached
             isLoading = false
         } else if showLoading {
             isLoading = true
@@ -522,16 +592,102 @@ final class AppModel {
         }
 
         do {
-            let synced = try await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId)
-            if selectedTab.syncFolderId == folderId {
-                emails = folderId == "inbox" ? Self.orderNewThenSeen(synced) : synced
+            let page = try await syncService.syncFolderPage(mailboxId: mailboxId, folderId: folderId, page: 1)
+            // Mailbox or folder changed while the request was out: drop the result.
+            guard currentListKey == key else { return }
+            if let page {
+                applyFirstPage(page, resetPaging: resetPaging)
+                emailListError = nil
+                lastSyncedAt = Date()
             }
-            lastSyncedAt = Date()
+            emails = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
+            if page == nil, emails.isEmpty, await !syncService.isOnline {
+                emailListError = "You’re offline. Connect to the internet to load this folder."
+            }
             await refreshReplyLaterCount()
         } catch {
-            if emails.isEmpty {
+            if emails.isEmpty, currentListKey == key {
                 errorMessage = error.localizedDescription
+                emailListError = error.localizedDescription
             }
+        }
+    }
+
+    /// Page 1 restarts the window on an explicit refresh; a background reload keeps
+    /// deeper pages so the list under the reader's thumb doesn't shrink.
+    private func applyFirstPage(_ page: MailboxSyncService.FolderPage, resetPaging: Bool) {
+        guard resetPaging || (listPaging?.loadedPages ?? 0) <= 1 else { return }
+        listPaging?.apply(
+            page: 1,
+            receivedCount: page.receivedCount,
+            totalCount: page.totalCount,
+            oldestDate: page.oldestDate
+        )
+    }
+
+    private func applyReplyLaterFirstPage(_ response: EmailListResponse, resetPaging: Bool) {
+        if resetPaging || (listPaging?.loadedPages ?? 0) <= 1 {
+            listPaging?.apply(page: 1, receivedCount: response.emails.count, totalCount: response.totalCount, oldestDate: nil)
+            emails = response.emails
+        } else {
+            // Swap in the fresh first page; keep the rows of later pages after it.
+            let later = Array(emails.dropFirst(min(emails.count, EmailListPaging.pageSize)))
+            emails = EmailListPaging.appending(later, to: response.emails)
+        }
+    }
+
+    /// Infinite scroll: fetch the next page of the visible list. Results are dropped if
+    /// the mailbox or folder changed while the request was out.
+    func loadMoreEmails() async {
+        guard !isDebugPreview,
+              let mailboxId = selectedMailboxId,
+              let key = currentListKey,
+              var paging = listPaging, paging.key == key,
+              let next = paging.nextPage else { return }
+        paging.isLoadingMore = true
+        paging.loadMoreFailed = false
+        listPaging = paging
+
+        var failed = false
+        defer {
+            if listPaging?.key == key {
+                listPaging?.isLoadingMore = false
+                if failed { listPaging?.loadMoreFailed = true }
+            }
+        }
+        do {
+            if selectedTab == .replyLater {
+                let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId, page: next)
+                db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
+                guard currentListKey == key,
+                      listPaging?.apply(
+                          page: next,
+                          receivedCount: response.emails.count,
+                          totalCount: response.totalCount,
+                          oldestDate: nil
+                      ) == true else { return }
+                replyLaterCount = response.totalCount
+                emails = EmailListPaging.appending(response.emails, to: emails)
+            } else if let folderId = selectedTab.syncFolderId {
+                guard let page = try await syncService.syncFolderPage(
+                    mailboxId: mailboxId,
+                    folderId: folderId,
+                    page: next
+                ) else {
+                    failed = true
+                    return
+                }
+                guard currentListKey == key,
+                      listPaging?.apply(
+                          page: next,
+                          receivedCount: page.receivedCount,
+                          totalCount: page.totalCount,
+                          oldestDate: page.oldestDate
+                      ) == true else { return }
+                emails = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
+            }
+        } catch {
+            failed = true
         }
     }
 
@@ -552,8 +708,8 @@ final class AppModel {
             let response = try await APIClient.shared.listReplyLaterEmails(mailboxId: mailboxId)
             db.upsertEmails(mailboxId: mailboxId, emails: response.emails)
             replyLaterCount = response.totalCount
-            if selectedTab == .replyLater {
-                emails = response.emails
+            if selectedTab == .replyLater, listPaging?.key == currentListKey {
+                applyReplyLaterFirstPage(response, resetPaging: false)
             }
         } catch {
             if let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId) {
@@ -566,7 +722,7 @@ final class AppModel {
     func refreshCurrentTab() async {
         switch selectedTab {
         case .folder, .aiInbox, .replyLater:
-            await loadEmailsForCurrentTab(showLoading: false)
+            await loadEmailsForCurrentTab(showLoading: false, resetPaging: true)
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: false)
             }
@@ -576,9 +732,12 @@ final class AppModel {
     }
 
     func refreshCurrentTabSilently() async {
-        if let folderId = selectedTab.syncFolderId, let mailboxId = selectedMailboxId {
-            if let synced = try? await syncService.syncFolder(mailboxId: mailboxId, folderId: folderId) {
-                emails = synced
+        if let folderId = selectedTab.syncFolderId, let mailboxId = selectedMailboxId, let key = currentListKey {
+            if let page = try? await syncService.syncFolderPage(mailboxId: mailboxId, folderId: folderId, page: 1),
+               currentListKey == key {
+                if listPaging?.key != key { listPaging = EmailListPaging(key: key) }
+                applyFirstPage(page, resetPaging: false)
+                emails = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
                 lastSyncedAt = Date()
             }
             if selectedTab == .aiInbox {
@@ -857,11 +1016,29 @@ final class AppModel {
             enrichedDraft = (try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: draft.id)) ?? draft
         }
 
-        let form = ComposeFormModel(
+        let form = makeComposeForm(
             mode: mode,
             mailbox: mailbox,
             original: enrichedOriginal ?? original,
             draft: enrichedDraft ?? draft,
+            initialTo: initialTo
+        )
+        composeSession = ComposeSession(form: form, presentation: .expanded)
+        selectedEmail = nil
+    }
+
+    private func makeComposeForm(
+        mode: ComposeMode,
+        mailbox: Mailbox,
+        original: Email?,
+        draft: Email?,
+        initialTo: [MailAddress] = []
+    ) -> ComposeFormModel {
+        let form = ComposeFormModel(
+            mode: mode,
+            mailbox: mailbox,
+            original: original,
+            draft: draft,
             initialTo: initialTo
         )
         form.onDraftSaved = { [weak self] draftId, threadId, originalEmailId, subject, body, recipient in
@@ -885,8 +1062,77 @@ final class AppModel {
                 hasDraft: false
             )
         }
-        composeSession = ComposeSession(form: form, presentation: .expanded)
-        selectedEmail = nil
+        return form
+    }
+
+    /// Compose "Send": closes compose and holds the send for the undo window. The message
+    /// is also written to disk so a kill inside the window brings it back as a draft.
+    func scheduleSend(_ session: ComposeSession) {
+        let form = session.form
+        let store = pendingSendStore
+        let record = form.pendingSendRecord(accountKey: accountKey ?? "")
+        let generation = sessionGeneration
+        let persists = persistsPreferences && !isDebugPreview
+
+        scheduleUndoableAction(
+            optimistic: { [weak self] in
+                self?.closeCompose()
+            },
+            commit: { @Sendable [weak self] in
+                if persists { store.markSendStarted(id: record.id) }
+                let success = await form.performActualSend()
+                if persists { store.clear(id: record.id) }
+                if success {
+                    await self?.loadEmailsForCurrentTab(showLoading: false)
+                } else {
+                    await self?.restoreComposeAfterFailedSend(session, generation: generation)
+                }
+            },
+            rollback: { [weak self] in
+                if persists { store.clear(id: record.id) }
+                self?.composeSession = session
+                self?.composeSession?.expand()
+            },
+            pendingMessage: "Sending...",
+            completedMessage: "Sent"
+        )
+        // After scheduling: that commits any earlier pending send, which clears only its own record.
+        if persists { store.save(record) }
+    }
+
+    /// Next launch after a kill inside the undo window: never send silently. Put the
+    /// message back in the compose dock as a draft and tell the reader.
+    func restorePendingSendIfNeeded() async {
+        guard persistsPreferences, !isDebugPreview,
+              composeSession == nil, pendingUndoAction == nil,
+              let record = pendingSendStore.load() else { return }
+        switch record.restoreDecision(accountKey: accountKey ?? "", mailboxIds: mailboxes.map(\.id)) {
+        case .wait:
+            return
+        case .discard:
+            pendingSendStore.clear(id: record.id)
+            return
+        case .restore:
+            break
+        }
+        guard let mailbox = mailboxes.first(where: { $0.id == record.mailboxId }) else { return }
+        var original: Email?
+        if let originalId = record.originalEmailId, !originalId.isEmpty {
+            original = db.getEmail(id: originalId)
+            if original == nil {
+                original = try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: originalId)
+            }
+        }
+        // The reader may have started composing while the original loaded.
+        guard composeSession == nil, pendingSendStore.load()?.id == record.id else { return }
+        let form = makeComposeForm(mode: record.composeMode, mailbox: mailbox, original: original, draft: nil)
+        form.restore(from: record)
+        composeSession = ComposeSession(form: form, presentation: .minimized)
+        pendingSendStore.clear(id: record.id)
+        showToast(record.restoreToastMessage, isError: true, duration: 5)
+        Task { @MainActor in
+            await form.saveDraft(explicit: false)
+        }
     }
 
     /// Open a saved draft in compose. Reply-drafts keep reply send semantics.
@@ -1143,6 +1389,18 @@ final class AppModel {
     /// Every sign-out path: unregister this device's push token from each mailbox
     /// (with the outgoing session), wipe local state, then drop the session.
     func signOut(auth: AuthStore) {
+        // A send still in its undo window goes out with the current session first.
+        guard pendingUndoAction != nil else {
+            finishSignOut(auth: auth)
+            return
+        }
+        Task { @MainActor in
+            await commitPendingAction(waitingAtMost: .seconds(5))
+            finishSignOut(auth: auth)
+        }
+    }
+
+    private func finishSignOut(auth: AuthStore) {
         PushNotificationManager.shared.unregisterAll(
             mailboxIds: mailboxes.map(\.id),
             sessionToken: auth.token
@@ -1172,6 +1430,7 @@ final class AppModel {
     }
 
     func reset() {
+        sessionGeneration += 1
         streamClient.stop()
         APIClient.shared.authToken = nil
         mailboxes = []
@@ -1204,6 +1463,13 @@ final class AppModel {
         pendingUndoTask?.cancel()
         pendingUndoTask = nil
         pendingUndoAction = nil
+        mailboxesLoadFailed = false
+        emailListError = nil
+        listPaging = nil
+        accountKey = nil
+        if persistsPreferences && !isDebugPreview {
+            pendingSendStore.clear()
+        }
         isDebugPreview = false
         db.clearAll()
     }
@@ -1247,6 +1513,51 @@ final class AppModel {
         pendingUndoAction = nil
     }
     
+    /// Runs the pending action now and waits for it (background and sign-out paths).
+    func commitPendingActionNow() async {
+        pendingUndoTask?.cancel()
+        pendingUndoTask = nil
+        guard let action = pendingUndoAction else { return }
+        pendingUndoAction = nil
+        if toast?.isUndo == true { hideToast() }
+        await action.execute()
+    }
+
+    /// Commits the pending action but stops waiting after `timeout`; the request itself
+    /// keeps running, so a slow network can't hold sign-out hostage.
+    func commitPendingAction(waitingAtMost timeout: Duration) async {
+        guard pendingUndoAction != nil else { return }
+        final class Completion { var done = false }
+        let completion = Completion()
+        Task { @MainActor in
+            await self.commitPendingActionNow()
+            completion.done = true
+        }
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !completion.done, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    /// The undo window ends when the app leaves the foreground. Commit inside a
+    /// background task so suspension or a kill can't strand a send.
+    func commitPendingActionForBackground() {
+        guard pendingUndoAction != nil else { return }
+        let app = UIApplication.shared
+        var taskId: UIBackgroundTaskIdentifier = .invalid
+        taskId = app.beginBackgroundTask(withName: "co.inboxies.pending-undo") {
+            app.endBackgroundTask(taskId)
+            taskId = .invalid
+        }
+        Task { @MainActor in
+            await self.commitPendingActionNow()
+            if taskId != .invalid {
+                app.endBackgroundTask(taskId)
+                taskId = .invalid
+            }
+        }
+    }
+
     func undoPendingAction() {
         pendingUndoTask?.cancel()
         if let action = pendingUndoAction {
@@ -1407,7 +1718,9 @@ final class AppModel {
 
     /// Send runs after compose closed (undo window), so a failure would vanish.
     /// Show the server's reason (e.g. a paused private email) and dock the message.
-    func restoreComposeAfterFailedSend(_ session: ComposeSession) {
+    func restoreComposeAfterFailedSend(_ session: ComposeSession, generation: Int? = nil) {
+        // The send outlived its session (sign-out timed out): nowhere to dock it.
+        if let generation, generation != sessionGeneration { return }
         let reason = session.form.errorMessage ?? "Couldn’t send message"
         showToast(reason, isError: true, duration: 5)
         guard composeSession == nil else { return }

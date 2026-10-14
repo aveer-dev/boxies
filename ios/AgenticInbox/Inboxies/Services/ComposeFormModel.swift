@@ -539,6 +539,56 @@ final class ComposeFormModel {
         }
     }
 
+    /// Snapshot persisted while this message sits in the undo-send window.
+    func pendingSendRecord(accountKey: String) -> PendingSendRecord {
+        func addresses(_ tokens: [MailAddress]) -> [PendingSendRecord.Address] {
+            tokens.map { PendingSendRecord.Address(name: $0.name, email: $0.email) }
+        }
+        return PendingSendRecord(
+            id: UUID(),
+            accountKey: accountKey,
+            mailboxId: fromMailboxId,
+            mode: mode.rawValue,
+            to: addresses(toTokens),
+            cc: addresses(ccTokens),
+            bcc: addresses(bccTokens),
+            subject: subject,
+            body: body,
+            originalEmailId: originalEmailId,
+            threadId: threadId,
+            draftId: draftId,
+            attachments: attachments.map {
+                PendingSendRecord.AttachmentRecord(
+                    filename: $0.filename,
+                    mimeType: $0.mimeType,
+                    size: $0.size,
+                    base64: $0.base64
+                )
+            },
+            createdAt: Date()
+        )
+    }
+
+    /// Refills a fresh form from a persisted pending send (kill inside the undo window).
+    /// The edits mark the form dirty, so the next draft save keeps it on the server.
+    func restore(from record: PendingSendRecord) {
+        func tokens(_ addresses: [PendingSendRecord.Address]) -> [MailAddress] {
+            addresses.map { MailAddress(name: $0.name, email: $0.email) }
+        }
+        toTokens = tokens(record.to)
+        ccTokens = tokens(record.cc)
+        bccTokens = tokens(record.bcc)
+        showCcBcc = !ccTokens.isEmpty || !bccTokens.isEmpty
+        subject = record.subject
+        body = record.body
+        attachments = record.attachments.map {
+            ComposePendingAttachment(filename: $0.filename, mimeType: $0.mimeType, size: $0.size, base64: $0.base64)
+        }
+        originalEmailId = record.originalEmailId ?? originalEmailId
+        threadId = record.threadId ?? threadId
+        draftId = record.draftId ?? draftId
+    }
+
     private func recipientListValue() -> String {
         toTokens.map(\.email).joined(separator: ", ")
     }

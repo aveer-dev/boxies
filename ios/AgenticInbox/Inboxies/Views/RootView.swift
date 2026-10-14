@@ -37,7 +37,9 @@ struct RootView: View {
                         pendingInviteToken = nil
                     }
                 } else if auth.isAuthenticated {
-                    if !app.isMailboxLoading && app.mailboxes.isEmpty {
+                    if app.mailboxGate == .loadFailed {
+                        MailboxLoadFailedView()
+                    } else if app.mailboxGate == .onboarding {
                         MailboxOnboardingView(initialTrack: .select)
                     } else {
                         HomeShellView()
@@ -83,7 +85,7 @@ struct RootView: View {
             }
             #endif
             if let token = auth.token, !token.isEmpty {
-                await app.bootstrap(authToken: token)
+                await app.bootstrap(authToken: token, accountKey: auth.userEmail)
             } else {
                 app.reset()
             }
