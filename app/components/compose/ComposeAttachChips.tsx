@@ -27,8 +27,8 @@ export default function ComposeAttachChips({
 					className="flex items-center gap-2 rounded-xl bg-kumo-recessed px-2.5 py-2 max-w-[180px] shrink-0"
 				>
 					<div className="min-w-0">
-						<div className="text-[11px] text-kumo-default truncate">{attachment.filename}</div>
-						<div className="text-[9px] text-kumo-subtle">{formatByteSize(attachment.size)}</div>
+						<div className="text-2xs text-kumo-default truncate">{attachment.filename}</div>
+						<div className="text-[length:calc(9px*var(--font-scale))] text-kumo-subtle">{formatByteSize(attachment.size)}</div>
 					</div>
 					<button
 						type="button"

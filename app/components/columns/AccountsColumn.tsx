@@ -12,8 +12,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
+import { Tip } from "~/components/IconButton";
 import { OnboardingFlow } from "~/components/OnboardingFlow";
 import { folderPath } from "~/hooks/useMailNavigation";
+import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { useInboxUnreadCounts } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
@@ -36,6 +38,11 @@ export default function AccountsColumn() {
 	const unread = useInboxUnreadCounts(mailboxIds);
 	const details = useMailboxDetails(mailboxIds);
 	const [isAddOpen, setIsAddOpen] = useState(false);
+	// NavLink only marks the inbox route current; the mailbox stays current in any folder.
+	const { railRef, markRef } = useSlidingHighlight<HTMLElement>(
+		`${activeMailboxId}:${mailboxes.length}`,
+		'[data-current="true"]',
+	);
 
 	const { data: config } = useQuery({
 		queryKey: queryKeys.config,
@@ -52,21 +59,21 @@ export default function AccountsColumn() {
 	const menuItems = [
 		{
 			label: "All mailboxes",
-			icon: <SquaresFourIcon size={16} />,
+			icon: SquaresFourIcon,
 			onSelect: () => navigate("/"),
 		},
 		...(me?.isAdmin
 			? [
 					{
 						label: "Admin",
-						icon: <ShieldIcon size={16} />,
+						icon: ShieldIcon,
 						onSelect: () => navigate("/admin"),
 					},
 				]
 			: []),
 		{
 			label: "Log out",
-			icon: <SignOutIcon size={16} />,
+			icon: SignOutIcon,
 			onSelect: () => void signOut(),
 		},
 	];
@@ -78,17 +85,20 @@ export default function AccountsColumn() {
 			isRoot
 			actions={
 				<>
-					<button
-						type="button"
-						onClick={() => setIsAddOpen(true)}
-						className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint transition-colors"
-					>
-						<PlusIcon size={12} />
-						Add
-					</button>
+					<Tip label="Add a mailbox">
+						<button
+							type="button"
+							onClick={() => setIsAddOpen(true)}
+							className="group/add inline-flex h-7 items-center gap-1 px-2 rounded-lg text-xs font-medium text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
+						>
+							<PlusIcon size={14} className="transition-transform duration-200 group-hover/add:rotate-90" />
+							Add
+						</button>
+					</Tip>
 					<ColumnMenu
 						label="Account menu"
-						trigger={<DotsThreeIcon size={16} weight="bold" />}
+						icon={DotsThreeIcon}
+						weight="bold"
 						items={menuItems}
 					/>
 				</>
@@ -105,7 +115,8 @@ export default function AccountsColumn() {
 					))}
 				</div>
 			) : (
-				<nav aria-label="Mailboxes" className="px-2 space-y-0.5">
+				<nav ref={railRef} aria-label="Mailboxes" className="relative mx-2 space-y-1">
+					<span ref={markRef} aria-hidden className={slidingMarkClass} />
 					{mailboxes.map((mailbox) => {
 						const isActive = mailbox.id === activeMailboxId;
 						const count = unread[mailbox.id] ?? 0;
@@ -114,13 +125,14 @@ export default function AccountsColumn() {
 								key={mailbox.id}
 								to={folderPath(mailbox.id, "inbox")}
 								aria-current={isActive ? "page" : undefined}
-								className={`flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors ${
-									isActive ? "bg-kumo-fill" : "hover:bg-kumo-tint"
+								data-current={isActive}
+								className={`relative flex items-center gap-3 rounded-lg px-2.5 py-2 transition-colors duration-150 ${
+									isActive ? "" : "hover:bg-kumo-tint"
 								}`}
 							>
 								<span
-									className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-										isActive ? "bg-kumo-contrast" : "bg-kumo-line"
+									className={`h-1.5 w-1.5 rounded-full shrink-0 transition-[background-color,scale] duration-300 ease-[var(--spring)] ${
+										isActive ? "bg-kumo-contrast scale-125" : "bg-[var(--border-card)]"
 									}`}
 								/>
 								<span className="min-w-0 flex-1">
@@ -132,7 +144,7 @@ export default function AccountsColumn() {
 									</span>
 								</span>
 								{count > 0 && (
-									<span className="shrink-0 text-[11px] text-kumo-subtle tabular-nums">
+									<span className="shrink-0 text-xs text-kumo-subtle tabular-nums">
 										{formatCount(count)}
 									</span>
 								)}
