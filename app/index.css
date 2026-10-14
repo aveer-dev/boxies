@@ -349,6 +349,15 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   pointer-events: none;
 }
 
+/*
+ * Tooltips sit above everything: columns, the dock, menus, dialogs, toasts.
+ * Kumo portals them to <body> but leaves the positioner at z-index auto, so
+ * any positioned column chrome painted over them.
+ */
+:has(> .kumo-tooltip-popup) {
+  z-index: 1000;
+}
+
 /* Tooltips (`Tip`): Kumo's popup restyled as a small light card. */
 [data-side] > :has(> .tip-content) {
   border-radius: var(--radius-xl);
