@@ -10,6 +10,7 @@ import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders
 import { displaySenderName } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { ListEmptyState, ListPagination } from "~/components/columns/ListParts";
+import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { ThreadChip } from "~/components/columns/ThreadRow";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
@@ -55,7 +56,12 @@ export default function SearchResultsRoute() {
 		setPage(1);
 	}, [searchChanged, searchKey]);
 
-	const { data: searchData, isLoading } = useSearchEmails(mailboxId, urlQuery, currentPage);
+	const {
+		data: searchData,
+		isLoading,
+		error: searchError,
+		refetch,
+	} = useSearchEmails(mailboxId, urlQuery, currentPage);
 	const results = searchData?.results ?? [];
 	const totalCount = searchData?.totalCount ?? 0;
 
@@ -93,6 +99,8 @@ export default function SearchResultsRoute() {
 					<div className="flex justify-center py-16">
 						<Loader size="lg" />
 					</div>
+				) : searchError && results.length === 0 ? (
+					<ListLoadError error={searchError} onRetry={() => void refetch()} />
 				) : results.length === 0 ? (
 					<ListEmptyState
 						icon={<MagnifyingGlassIcon size={40} weight="thin" className="text-kumo-subtle" />}
