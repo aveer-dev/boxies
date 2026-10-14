@@ -538,6 +538,9 @@ struct RecoveryEmailSection: View {
     }
 
     private var footerText: String {
+        if isEditing && isVerified {
+            return "Your current recovery email stops working for password resets until you confirm the new one."
+        }
         if !hasEmail {
             return "Password reset codes go only to a confirmed recovery email. Without one, you can't reset a forgotten password. Use an address outside Inboxies."
         }

@@ -159,7 +159,11 @@ final class SharedSessionTests: XCTestCase {
     /// the AutoFill extension could read it) moves into the app's own group.
     func testAppSessionMovesOutOfSharedGroup() throws {
         let shared = try XCTUnwrap(KeychainStore.accessGroup, "KeychainAccessGroup was not expanded in this build")
-        let appGroup = try XCTUnwrap(KeychainStore.appAccessGroup)
+        // Unsigned builds (CI) have no team prefix, so there is no named app group.
+        // Throw the skip directly: inside XCTUnwrap's autoclosure it is reported as a failure.
+        guard let appGroup = KeychainStore.appAccessGroup else {
+            throw XCTSkip("No team prefix in this build")
+        }
         let key = "test-migration-\(UUID().uuidString)"
         defer { KeychainStore.deleteEverywhere(key) }
 

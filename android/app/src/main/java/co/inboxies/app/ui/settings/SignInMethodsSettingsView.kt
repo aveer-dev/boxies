@@ -785,6 +785,7 @@ private fun RecoveryEmailSection(onStatus: (String) -> Unit) {
     }
     Text(
         when {
+            isEditing && verified -> "Your current recovery email stops working for password resets until you confirm the new one."
             email == null -> "Password reset codes go only to a confirmed recovery email. Without one, you can't reset a forgotten password. Use an address outside Inboxies."
             !verified -> "We sent a code to this address. Password resets won't reach it until you confirm."
             else -> "Password reset codes go to this address."
