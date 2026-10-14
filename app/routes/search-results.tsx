@@ -14,6 +14,7 @@ import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { ThreadChip } from "~/components/columns/ThreadRow";
 import { useEmailActions } from "~/hooks/useEmailActions";
+import { useEmailMenu } from "~/hooks/useEmailMenu";
 import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { getSnippetText } from "~/lib/utils";
@@ -76,6 +77,7 @@ export default function SearchResultsRoute() {
 			if (emailIdRef.current === email.id) closeEmailRef.current();
 		}, []),
 	);
+	const openMenu = useEmailMenu(mailboxId, actions);
 	useListShortcuts(results, actions);
 
 	const isUnread = (email: Email) => !email.read && email.folder_id !== Folders.DRAFT;
@@ -131,6 +133,7 @@ export default function SearchResultsRoute() {
 							return (
 								<ThreadRow
 									key={email.id}
+									onMenu={(from) => openMenu(email, from)}
 									index={index}
 									email={email}
 									isSelected={emailId === email.id}

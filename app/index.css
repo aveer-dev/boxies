@@ -371,6 +371,25 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   }
 }
 
+/* Context menu: grows out of the corner by the pointer; a chosen item blinks once. */
+@keyframes context-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+@keyframes menu-blink {
+  33% {
+    opacity: 0.2;
+  }
+}
+.context-menu {
+  animation: context-in 200ms var(--spring) backwards;
+}
+.context-menu [data-blink] {
+  animation: menu-blink 140ms linear;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .column-enter > * {
     animation: column-in 420ms var(--ease-out) backwards;

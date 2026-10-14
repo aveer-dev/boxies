@@ -6,11 +6,13 @@ import {
 	type Icon,
 	type IconWeight,
 	ArrowBendUpLeftIcon,
+	DotsThreeIcon,
 	PaperclipIcon,
 	StarIcon,
 } from "@phosphor-icons/react";
-import { type CSSProperties, type ReactNode, useState } from "react";
+import { type CSSProperties, type MouseEvent, type ReactNode, useState } from "react";
 import { formatListDate } from "shared/dates";
+import { useContextMenu } from "~/components/ContextMenu";
 import { IconButton, Tip } from "~/components/IconButton";
 import { isAuthSpoofed } from "~/lib/email-auth";
 import { getNonInlineAttachments, hasFileAttachment } from "~/lib/utils";
@@ -41,6 +43,7 @@ export default function ThreadRow({
 	leading,
 	onToggleStar,
 	hoverActions,
+	onMenu,
 	index = 0,
 }: {
 	email: Email;
@@ -54,9 +57,18 @@ export default function ThreadRow({
 	leading?: ReactNode;
 	onToggleStar?: () => void;
 	hoverActions?: ReactNode;
+	/**
+	 * Opens the row's actions menu: at the pointer on right-click, under the
+	 * row from the keyboard (menu key / ⇧F10), or beside the ⋯ button.
+	 */
+	onMenu?: (from: MouseEvent<HTMLElement> | HTMLElement) => void;
 	/** Position in the list: staggers the entrance of the first rows. */
 	index?: number;
 }) {
+	// The row stays marked while its menu is open.
+	const menuOpen = useContextMenu(
+		(s) => s.menu?.returnFocus?.closest<HTMLElement>("[data-email-id]")?.dataset.emailId === email.id,
+	);
 	const fileCount = getNonInlineAttachments(email.attachments).length;
 	const hasFiles = hasFileAttachment(email);
 	const showChips = Boolean(chips) || hasFiles;
@@ -67,19 +79,24 @@ export default function ThreadRow({
 			tabIndex={0}
 			aria-current={isSelected ? "true" : undefined}
 			data-email-id={email.id}
+			data-menu-open={menuOpen || undefined}
 			onClick={onOpen}
+			onContextMenu={onMenu}
 			onKeyDown={(e) => {
 				if (e.target !== e.currentTarget) return;
 				if (e.key === "Enter" || e.key === " ") {
 					e.preventDefault();
 					onOpen();
+				} else if (onMenu && (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) {
+					e.preventDefault();
+					onMenu(e.currentTarget);
 				}
 			}}
 			style={{ "--i": index } as CSSProperties}
 			className={`row-enter group relative mx-2 mb-0.5 flex gap-3 pl-3.5 pr-4 py-4 rounded-xl cursor-pointer transition-colors duration-150 active:bg-kumo-fill focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--focus-ring)] ${
 				isSelected
 					? "bg-kumo-fill [--row-bg:var(--color-kumo-fill)]"
-					: "hover:bg-kumo-tint [--row-bg:var(--color-kumo-tint)]"
+					: "hover:bg-kumo-tint data-[menu-open]:bg-kumo-tint [--row-bg:var(--color-kumo-tint)]"
 			}`}
 		>
 			<div className="w-1.5 shrink-0 pt-2">
@@ -137,6 +154,18 @@ export default function ThreadRow({
 								<StarToggle starred={email.starred} onToggle={onToggleStar} />
 							)}
 							{hoverActions}
+							{onMenu && (
+								<IconButton
+									label="More actions"
+									icon={DotsThreeIcon}
+									weight="bold"
+									aria-haspopup="menu"
+									onClick={(e) => {
+										e.stopPropagation();
+										onMenu(e.currentTarget);
+									}}
+								/>
+							)}
 						</span>
 					</span>
 				</div>

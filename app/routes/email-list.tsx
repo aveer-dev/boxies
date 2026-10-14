@@ -37,6 +37,7 @@ import { ListLoadError } from "~/components/ListLoadError";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
 import { searchPath, useMailNavigation } from "~/hooks/useMailNavigation";
 import { hasUnread, useEmailActions } from "~/hooks/useEmailActions";
+import { useEmailMenu } from "~/hooks/useEmailMenu";
 import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useUIStore } from "~/hooks/useUIStore";
 import { buildInboxListItems } from "~/lib/list-sections";
@@ -189,6 +190,7 @@ export default function EmailListRoute() {
 		if (hasUnread(email)) actions.setRead(email, true);
 	};
 
+	const openMenu = useEmailMenu(mailboxId, actions);
 	useListShortcuts(emails, actions);
 
 	const [emptyingTrash, setEmptyingTrash] = useState(false);
@@ -312,6 +314,7 @@ export default function EmailListRoute() {
 							return (
 								<ThreadRow
 									key={email.id}
+									onMenu={(from) => openMenu(email, from)}
 									index={index}
 									email={email}
 									isSelected={emailId === email.id}

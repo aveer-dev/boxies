@@ -18,6 +18,7 @@ import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
 import { useEmailActions } from "~/hooks/useEmailActions";
+import { useEmailMenu } from "~/hooks/useEmailMenu";
 import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { selectIsComposing, useUIStore } from "~/hooks/useUIStore";
@@ -62,6 +63,7 @@ export default function ReplyLaterRoute() {
 			if (emailIdRef.current === email.id) closeEmailRef.current();
 		}, []),
 	);
+	const openMenu = useEmailMenu(mailboxId, actions);
 	useListShortcuts(emails, actions);
 
 	useEffect(() => {
@@ -143,6 +145,7 @@ export default function ReplyLaterRoute() {
 						{emails.map((email: Email, index) => (
 							<ThreadRow
 								key={email.id}
+								onMenu={(from) => openMenu(email, from)}
 								index={index}
 								email={email}
 								isSelected={emailId === email.id}
