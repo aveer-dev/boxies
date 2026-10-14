@@ -258,7 +258,7 @@ async function createInvite(
 	if (!inviteeEmail) return { ok: false as const, status: 400 as const, error: "Invalid invitee email" };
 	// Nobody joins a mailbox whose domain's subscription has ended.
 	const ended = await serviceEndedErrorForMailbox(c.env, opts.mailboxId);
-	if (ended) return { ok: false as const, status: 403 as const, error: ended.error };
+	if (ended) return { ok: false as const, status: 403 as const, error: ended.error, code: ended.code };
 	// Invites send mail from our own address to anyone: cap them per inviter
 	// and per invitee.
 	if (
@@ -365,7 +365,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 				inviteeName: body.assignTo.inviteeName,
 				role: body.assignTo.role ?? "owner",
 			});
-			if (!result.ok) return c.json({ error: result.error }, result.status);
+			if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 			invite = result.body;
 		}
 		await audit(db, principal.userId, "mailbox.create", check.mailboxId, {
@@ -397,7 +397,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.assignTo.inviteeName,
 			role: body.assignTo.role ?? "owner",
 		});
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		return c.json({ mailboxId, invite: result.body });
 	});
 
@@ -444,7 +444,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.inviteeName,
 			role: body.role ?? "owner",
 		});
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		return c.json(result.body, 201);
 	});
 
@@ -526,7 +526,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.inviteeName,
 			role: body.role ?? "member",
 		});
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		return c.json(result.body, 201);
 	});
 
@@ -547,7 +547,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const body = z.object({ role: z.enum(["owner", "member"]) }).parse(await c.req.json());
 		const userId = c.req.param("userId");
 		const result = await setMailboxRole(db, mailboxId, userId, body.role);
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		await audit(db, principal!.userId, "member.role", mailboxId, { userId, role: body.role });
 		return c.json({ ok: true });
 	});
@@ -563,7 +563,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		const result = await leaveMailbox(c.env, mailboxId, userId);
-		if (!result.ok) return c.json({ error: result.error }, result.status);
+		if (!result.ok) return c.json({ error: result.error, ...("code" in result ? { code: result.code } : {}) }, result.status);
 		await audit(db, principal!.userId, self ? "member.leave" : "member.remove", mailboxId, { userId });
 		return c.json({ ok: true });
 	});

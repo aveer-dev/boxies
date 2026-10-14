@@ -52,6 +52,7 @@ import {
 	authDb,
 	canCreateMailbox,
 	listMailboxMembers,
+	isDomainAdmin,
 	listMailboxesForUser,
 	type AuthDb,
 } from "./auth/authz";
@@ -364,10 +365,14 @@ app.post("/api/v1/mailboxes", async (c) => {
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const db = authDb(c.env.AUTH_DB);
-	const [mailbox, service] = await Promise.all([
+	const domain = c.var.mailboxId.slice(c.var.mailboxId.lastIndexOf("@") + 1);
+	const [mailbox, summary, canManage] = await Promise.all([
 		mailboxResponse(c.env, db, c.var.mailboxId, c.var.mailboxRole),
 		mailboxServiceSummary(c.env, c.var.mailboxId),
+		isDomainAdmin(db, c.get("principal")?.userId ?? "", domain),
 	]);
+	// canManage: whether this user may renew (domain owner/admin).
+	const service = summary ? { ...summary, canManage } : null;
 	// readOnly follows the same D1 status the write gates check.
 	return c.json({ ...mailbox, service, readOnly: await isMailboxSuspended(c.env, c.var.mailboxId) });
 });
