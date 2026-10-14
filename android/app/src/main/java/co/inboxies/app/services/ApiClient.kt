@@ -1101,6 +1101,7 @@ class ApiClient private constructor() {
         username: String? = null,
         password: String? = null,
         displayName: String? = null,
+        backupEmail: String? = null,
         returnUrl: String? = null,
         client: String? = "android",
     ): DomainCheckoutResponse = request(
@@ -1111,6 +1112,8 @@ class ApiClient private constructor() {
             if (username != null) put("username", username)
             if (password != null) put("password", password)
             if (displayName != null) put("displayName", displayName)
+            // Domain owners need a recovery email for billing and renewal notices.
+            if (!backupEmail.isNullOrBlank()) put("backupEmail", backupEmail)
             if (returnUrl != null) put("returnUrl", returnUrl)
             if (client != null) put("client", client)
         },
