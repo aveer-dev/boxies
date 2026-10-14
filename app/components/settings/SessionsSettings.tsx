@@ -65,6 +65,8 @@ export default function SessionsSettings() {
 	const [busy, setBusy] = useState(false);
 
 	const others = sessions?.filter((s) => !s.current) ?? [];
+	// This device first; the rest stay most-recently-active first.
+	const ordered = sessions ? [...sessions].sort((a, b) => Number(b.current) - Number(a.current)) : [];
 	const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.account.sessions });
 
 	const handleRevoke = async () => {
@@ -119,7 +121,7 @@ export default function SessionsSettings() {
 				<div className="space-y-6">
 					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
 						<ul className="divide-y divide-kumo-line">
-							{sessions.map((session) => (
+							{ordered.map((session) => (
 								<SessionRow
 									key={session.id}
 									session={session}

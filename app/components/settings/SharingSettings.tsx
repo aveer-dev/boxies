@@ -17,6 +17,8 @@ import ConfirmDialog from "./ConfirmDialog";
 import { InviteMemberCard, PendingInvitesCard } from "./MemberInvites";
 import SettingsSubpage from "./SettingsSubpage";
 
+const ROLE_LABELS: Record<MailboxRole, string> = { owner: "Owner", member: "Member" };
+
 function errorMessage(err: unknown, fallback: string): string {
 	return err instanceof Error && err.message ? err.message : fallback;
 }
@@ -52,6 +54,7 @@ function MemberRow({
 						size="sm"
 						aria-label={`Role for ${member.email}`}
 						value={member.role}
+						items={ROLE_LABELS}
 						disabled={busy}
 						onValueChange={(value) => {
 							if (value && value !== member.role) onRoleChange(value as MailboxRole);
