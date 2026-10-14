@@ -87,7 +87,7 @@ export default function SearchResultsRoute() {
 				id="list"
 				revealKey={searchKey}
 				title={
-					<h2 className="text-xs font-medium text-kumo-subtle truncate">
+					<h2 className="text-sm font-medium text-kumo-subtle truncate">
 						Search{urlQuery ? <> · <span className="text-kumo-default">{urlQuery}</span></> : null}
 					</h2>
 				}
