@@ -21,6 +21,12 @@ import type {
 	DecommissionPreflightResponse,
 	DecommissionResponse,
 	MaskedAlias,
+	MeResponse,
+	AccountSession,
+	RecoveryEmailStatus,
+	MailboxMember,
+	MailboxInviteRow,
+	MailboxRole,
 } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -169,16 +175,33 @@ const api = {
 	/** Token for the browser extension; the Worker scopes it to private emails. */
 	createExtensionSession: () =>
 		post<{ token: string; expiresAt: string }>("/api/v1/me/extension-session"),
-	getMe: () =>
-		get<{
-			email: string | null;
-			sub: string | null;
-			linkedEmails?: string[];
-			keys: string[];
-			isAdmin?: boolean;
-			mailDomain?: string;
-			domains?: string[];
-		}>("/api/v1/me"),
+	getMe: () => get<MeResponse>("/api/v1/me"),
+	/** Delete the signed-in account; mailboxes only this user owns go with it. */
+	deleteAccount: () =>
+		request<{ ok: boolean; deletedMailboxes: string[]; leftMailboxes: string[] }>("/api/v1/me", {
+			method: "DELETE",
+			body: JSON.stringify({ confirm: "DELETE" }),
+		}),
+
+	// Sessions
+	listSessions: () => get<AccountSession[]>("/api/v1/me/sessions"),
+	revokeSession: (sessionId: string) =>
+		del<{ ok: boolean }>(`/api/v1/me/sessions/${encodeURIComponent(sessionId)}`),
+	revokeOtherSessions: () =>
+		post<{ ok: boolean; revoked: number }>("/api/v1/me/sessions/revoke-others"),
+
+	// Recovery email (where password reset codes go)
+	getRecoveryEmail: () => get<RecoveryEmailStatus>("/api/v1/me/recovery-email"),
+	/** Sets (or replaces) the address and mails it a 6-digit code. */
+	setRecoveryEmail: (email: string) =>
+		post<{ ok: boolean; email: string; verified: false; devCode?: string }>(
+			"/api/v1/me/recovery-email",
+			{ email },
+		),
+	verifyRecoveryEmail: (code: string) =>
+		post<{ ok: boolean; email: string; verified: true }>("/api/v1/me/recovery-email/verify", { code }),
+	removeRecoveryEmail: () => del<{ ok: boolean }>("/api/v1/me/recovery-email"),
+
 	listIdentities: () =>
 		get<{
 			accountId: string;
@@ -223,27 +246,12 @@ const api = {
 			}[];
 		}>("/api/v1/me/identities/password", body),
 	createIdentityLinkCode: () =>
-		post<{
-			code: string;
-			emails: string[];
-			principals: string[];
-			accountId?: string;
-			expiresAt: string;
-		}>("/api/v1/me/identity-link-codes"),
+		post<{ code: string; expiresAt: string }>("/api/v1/me/identity-link-codes"),
 	redeemIdentityLink: (code: string) =>
-		post<{
-			ok: boolean;
-			accountId: string;
-			linkedEmails: string[];
-			keys: string[];
-			isAdmin: boolean;
-			identities?: {
-				type: string;
-				key: string;
-				label: string;
-				current: boolean;
-			}[];
-		}>("/api/v1/auth/redeem-identity-link", { code }),
+		post<{ ok: boolean; isAdmin: boolean }>("/api/v1/auth/redeem-identity-link", { code }),
+	/** Disconnect a sign-in method; the server refuses to remove the last one. */
+	removeIdentity: (type: string) =>
+		del<{ ok: boolean }>(`/api/v1/me/identities/${encodeURIComponent(type)}`),
 	createMailbox: (email: string, name: string, settings?: unknown) =>
 		post<Mailbox>("/api/v1/mailboxes", { email, name, settings }),
 	getMailbox: (mailboxId: string) =>
@@ -326,15 +334,23 @@ const api = {
 			expiresAt: string;
 			status: string;
 		}>(`/api/v1/invites/${encodeURIComponent(token)}`),
+	/** Mails a 6-digit code to the invited address. */
+	sendInviteCode: (token: string) =>
+		post<{ ok: boolean; sentTo: string; devCode?: string }>(
+			`/api/v1/invites/${encodeURIComponent(token)}/otp`,
+		),
+	/**
+	 * Signed in: `code` joins the invite to this account. Signed out: creates
+	 * a new account with `password` and sets the session cookie.
+	 */
 	acceptInvite: (
 		token: string,
-		body: { password: string; displayName?: string },
+		body: { code?: string; password?: string; displayName?: string },
 	) =>
 		post<{
 			mailboxId: string;
 			userId: string;
-			token: string;
-			expiresAt: string;
+			email?: string;
 		}>(`/api/v1/invites/${encodeURIComponent(token)}/accept`, body),
 	passwordLogin: (email: string, password: string) =>
 		post<{ token: string; expiresAt: string; email: string | null }>(
@@ -362,6 +378,8 @@ const api = {
 			email?: string | null;
 		}>("/api/v1/auth/password/reset", body),
 	passwordLogout: () => post<{ ok: boolean }>("/api/v1/auth/password/logout"),
+	/** Revokes this session and clears the session cookie. */
+	logout: () => post<{ ok: boolean }>("/api/v1/auth/logout"),
 
 	// Sharing invite (owner)
 	createMailboxInvite: (
@@ -375,6 +393,28 @@ const api = {
 		post<InviteCreateResponse>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/invites`,
 			body,
+		),
+
+	listMailboxInvites: (mailboxId: string) =>
+		get<MailboxInviteRow[]>(
+			`/api/v1/admin/mailboxes/${encodeURIComponent(mailboxId)}/invites`,
+		),
+	/** `inviteId` is the invite's `id` from the list. */
+	revokeMailboxInvite: (inviteId: string) =>
+		post<unknown>(`/api/v1/admin/invites/${encodeURIComponent(inviteId)}/revoke`),
+
+	// Members
+	listMailboxMembers: (mailboxId: string) =>
+		get<MailboxMember[]>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/members`),
+	setMailboxMemberRole: (mailboxId: string, userId: string, role: MailboxRole) =>
+		patch<{ ok: boolean }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/members/${encodeURIComponent(userId)}`,
+			{ role },
+		),
+	/** Owners remove anyone; removing yourself leaves the mailbox. */
+	removeMailboxMember: (mailboxId: string, userId: string) =>
+		del<{ ok: boolean }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/members/${encodeURIComponent(userId)}`,
 		),
 
 	// Emails
