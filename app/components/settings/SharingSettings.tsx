@@ -7,7 +7,7 @@ import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import api from "~/services/api";
 import type { MailboxAcl } from "~/types";
@@ -55,7 +55,7 @@ function toEmailKey(raw: string): string | null {
 	return trimmed.includes("@") ? `email:${trimmed}` : null;
 }
 
-export default function SharingSettingsRoute() {
+export default function SharingSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
@@ -191,7 +191,7 @@ export default function SharingSettingsRoute() {
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Sharing">
 			<div className="space-y-4">
-				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
 					<p className="text-sm text-kumo-default leading-relaxed">
 						People with access to this mailbox through their Inboxies account.
 						Owners can manage this list. Members can use the mailbox but cannot
@@ -205,7 +205,7 @@ export default function SharingSettingsRoute() {
 					</p>
 				</div>
 
-				<section className="rounded-lg border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
+				<section className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
 					<div className="px-5 py-3 text-sm font-medium text-kumo-default">
 						Owners
 					</div>
@@ -235,7 +235,7 @@ export default function SharingSettingsRoute() {
 					))}
 				</section>
 
-				<section className="rounded-lg border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
+				<section className="rounded-2xl border border-kumo-line bg-kumo-base divide-y divide-kumo-line">
 					<div className="px-5 py-3 text-sm font-medium text-kumo-default">
 						Members
 					</div>
@@ -265,7 +265,7 @@ export default function SharingSettingsRoute() {
 				</section>
 
 				{canManage && (
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
 						<div className="text-sm font-medium text-kumo-default">
 							Invite by email
 						</div>
@@ -315,7 +315,7 @@ export default function SharingSettingsRoute() {
 				)}
 
 				{canManage && (
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-3">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-3">
 						<div className="text-sm font-medium text-kumo-default">
 							Add person (existing account)
 						</div>

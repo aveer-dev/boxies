@@ -6,7 +6,7 @@ import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import api from "~/services/api";
 
 function identityTypeLabel(type: string): string {
@@ -86,7 +86,7 @@ function loadGoogleIdentityScript(): Promise<void> {
 	});
 }
 
-export default function SignInMethodsSettingsRoute() {
+export default function SignInSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
@@ -355,7 +355,7 @@ export default function SignInMethodsSettingsRoute() {
 				</div>
 			) : (
 				<div className="space-y-6">
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 						<div className="text-sm font-medium text-kumo-default mb-3">
 							Connected
 						</div>
@@ -386,7 +386,7 @@ export default function SignInMethodsSettingsRoute() {
 					</div>
 
 					{hasPassword && (
-						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+						<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 							<div>
 								<div className="text-sm font-medium text-kumo-default mb-1">
 									Password
@@ -450,7 +450,7 @@ export default function SignInMethodsSettingsRoute() {
 					)}
 
 					{canAddMethod && (
-						<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+						<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 							<div>
 								<div className="text-sm font-medium text-kumo-default mb-1">
 									Add a method
@@ -536,7 +536,7 @@ export default function SignInMethodsSettingsRoute() {
 						</div>
 					)}
 
-					<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+					<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 						<button
 							type="button"
 							className="text-sm font-medium text-kumo-default flex items-center gap-2"
