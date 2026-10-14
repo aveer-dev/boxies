@@ -57,6 +57,7 @@ import { allowedMailboxSet, canonicalMailboxId, mailboxMetadataKey, strictMailbo
 import { validatePasswordStrength } from "../lib/password-auth";
 import type { Env } from "../types";
 import { compatKeys, leaveMailbox } from "./account";
+import { serviceEndedErrorForMailbox } from "../lib/domain-service";
 
 type App = Hono<MailboxContext>;
 type C = Context<MailboxContext>;
@@ -255,6 +256,9 @@ async function createInvite(
 ) {
 	const inviteeEmail = normalizeEmailAddress(opts.inviteEmail);
 	if (!inviteeEmail) return { ok: false as const, status: 400 as const, error: "Invalid invitee email" };
+	// Nobody joins a mailbox whose domain's subscription has ended.
+	const ended = await serviceEndedErrorForMailbox(c.env, opts.mailboxId);
+	if (ended) return { ok: false as const, status: 403 as const, error: ended.error };
 	// Invites send mail from our own address to anyone: cap them per inviter
 	// and per invitee.
 	if (
@@ -379,6 +383,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		if (!(await mailboxExists(db, mailboxId))) return c.json({ error: "Not found" }, 404);
+		const ended = await serviceEndedErrorForMailbox(c.env, mailboxId);
+		if (ended) return c.json(ended, 403);
 		const body = AssignBody.parse(await c.req.json());
 		if (body.assignTo === "self") {
 			await grantMailboxRole(db, mailboxId, principal.userId, "owner");
@@ -410,6 +416,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 			return c.json({ error: "Forbidden" }, 403);
 		}
 		if (!(await mailboxExists(db, mailboxId))) return c.json({ error: "Not found" }, 404);
+		const ended = await serviceEndedErrorForMailbox(c.env, mailboxId);
+		if (ended) return c.json(ended, 403);
 		const stub = getMailboxStub(c.env, mailboxId);
 		const { conversationIds } = await stub.purgeMailbox(mailboxId);
 		await purgeEmailAgents(c.env, mailboxId, conversationIds);
@@ -481,6 +489,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (!invite) return c.json({ error: "Not found" }, 404);
 		if (!(await canManageMembers(db, principal.userId, invite.mailboxId))) return c.json({ error: "Forbidden" }, 403);
 		if (inviteStatus(invite) !== "pending") return c.json({ error: "Invite is not active" }, 400);
+		const ended = await serviceEndedErrorForMailbox(c.env, invite.mailboxId);
+		if (ended) return c.json(ended, 403);
 		if (invite.emailCount >= MAX_INVITE_EMAILS) {
 			return c.json({ error: "This invite has been emailed too many times; revoke it and invite again" }, 429);
 		}

@@ -9,10 +9,14 @@ import type { MailboxContext } from "../lib/mailbox";
 import {
 	checkDomainAvailability,
 	computeDomainPricing,
+	listWholesalePrice,
+	type DomainPricingBreakdown,
 } from "../lib/cloudflare-registrar";
-import { getDomainMetadata } from "../lib/domain-registry";
+import { getDomainMetadata, saveDomainMetadata } from "../lib/domain-registry";
+import { summarizeDomainService } from "../lib/domain-service";
+import { unwatchDomain } from "../lib/service-reminders";
 import { hashPassword, verifyPassword } from "../lib/password-auth";
-import { authDb } from "../auth/authz";
+import { authDb, isDomainAdmin, listMailboxesForUser } from "../auth/authz";
 import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
 import { createSessionForUser, findUserById, sessionCookieHeader } from "../auth/users";
 import { isDevRuntime } from "../lib/dev-runtime";
@@ -22,7 +26,10 @@ import {
 	billingSessionKey,
 	endUnpaidCheckout,
 	fulfillPaidCheckout,
+	fulfillRenewal,
+	isRenewalCheckout,
 	LIFECYCLE_EVENT_TYPES,
+	markRenewalAwaitingPayment,
 	loadBillingSession,
 	markAwaitingPayment,
 	saveBillingSession,
@@ -41,6 +48,7 @@ import {
 import {
 	canCallStripeFor,
 	expireCheckoutSession,
+	resumeSubscription,
 	stripeRequest,
 	type StripeCheckoutSession,
 } from "../lib/stripe";
@@ -454,6 +462,137 @@ window.location.href = ${JSON.stringify(deepLink)};
 	});
 
 	/**
+	 * Where a paid domain stands: in service, set to end, or ended (read-only),
+	 * and for a domain we registered, until when it can be renewed. Domain admins
+	 * and anyone with a mailbox on the domain may ask; only admins can renew.
+	 */
+	app.get("/api/v1/billing/domains/:domain/service", async (c) => {
+		const domain = c.req.param("domain").toLowerCase().trim();
+		const userId = c.get("principal")?.userId;
+		if (!userId) return c.json({ error: "Unauthorized" }, 401);
+		const db = authDb(c.env.AUTH_DB);
+		const canManage = await isDomainAdmin(db, userId, domain);
+		if (!canManage) {
+			const mine = await listMailboxesForUser(db, userId);
+			if (!mine.some((m) => m.mailboxId.endsWith(`@${domain}`))) return c.json({ error: "Forbidden" }, 403);
+		}
+		const meta = await getDomainMetadata(c.env.BUCKET, domain);
+		if (!meta?.billing) {
+			return c.json({ domain, status: "active", registrarManaged: false, canRenew: false, canManage, billed: false });
+		}
+		return c.json({ ...summarizeDomainService(meta), canManage, billed: true });
+	});
+
+	/**
+	 * Renew a domain whose subscription ended (a new subscription via Stripe
+	 * Checkout), or keep one that is set to end (the subscription is resumed).
+	 */
+	app.post("/api/v1/billing/domains/:domain/renew", async (c) => {
+		const domain = c.req.param("domain").toLowerCase().trim();
+		const userId = c.get("principal")?.userId;
+		if (!userId) return c.json({ error: "Unauthorized" }, 401);
+		const db = authDb(c.env.AUTH_DB);
+		if (!(await isDomainAdmin(db, userId, domain))) return c.json({ error: "Forbidden" }, 403);
+		const body = (await c.req.json().catch(() => ({}))) as { client?: string };
+		const client = body.client === "ios" || body.client === "android" || body.client === "web" ? body.client : undefined;
+
+		const meta = await getDomainMetadata(c.env.BUCKET, domain);
+		if (!meta?.billing) return c.json({ error: "This domain has no Inboxies subscription" }, 404);
+		const summary = summarizeDomainService(meta);
+		if (!summary.canRenew) {
+			return c.json(
+				{
+					error: summary.status === "active" ? "This domain's subscription is active" : "The renewal window for this domain has closed",
+					service: summary,
+				},
+				409,
+			);
+		}
+
+		// Set to end but still running: just take the cancellation back.
+		if (summary.status === "ending") {
+			const subscriptionId = meta.billing.subscriptionId;
+			if (c.env.STRIPE_SECRET_KEY && subscriptionId) {
+				try {
+					await resumeSubscription(c.env, subscriptionId);
+				} catch (e) {
+					return c.json({ error: e instanceof Error ? e.message : "Could not resume the subscription" }, 502);
+				}
+			} else if (!isDevRuntime()) {
+				return c.json({ error: "Billing is not configured" }, 503);
+			}
+			const now = new Date().toISOString();
+			meta.billing = { ...meta.billing, cancelAtPeriodEnd: false, serviceEndsAt: undefined, remindersSent: [], updatedAt: now };
+			await saveDomainMetadata(c.env.BUCKET, { ...meta, updatedAt: now });
+			await unwatchDomain(c.env, domain);
+			return c.json({ resumed: true, service: summarizeDomainService(meta) });
+		}
+
+		// Ended: a new annual subscription, at the price the domain was bought for.
+		const pricing = computeDomainPricing(meta.billing.domainFeeUsd ?? listWholesalePrice(domain));
+		const appBase = c.env.APP_BASE_URL || "https://inboxies.email";
+		const clientParam = client ? `&client=${encodeURIComponent(client)}` : "";
+		const returnBase = `${appBase}/api/v1/billing/renew-return?domain=${encodeURIComponent(domain)}${clientParam}`;
+
+		if (!c.env.STRIPE_SECRET_KEY) {
+			if (!isDevRuntime()) return c.json({ error: "Billing is not configured" }, 503);
+			// Local dev has no Stripe: renew on the spot.
+			const sessionId = `mock_cs_renew_${domain.replace(/[^a-z0-9]/gi, "_")}_${Date.now()}`;
+			const outcome = await fulfillRenewal(c.env, {
+				id: sessionId,
+				payment_status: "paid",
+				metadata: { domain, purpose: "renew", domainFeeUsd: pricing.domainFeeUsd.toFixed(2), platformFeeUsd: pricing.platformFeeUsd.toFixed(2) },
+			});
+			return c.json({ renewed: outcome.status === 200, mock: true, ...outcome.body }, outcome.status);
+		}
+
+		const form = renewalCheckoutForm(domain, pricing, {
+			customerId: meta.billing.customerId,
+			userId,
+			client,
+			successUrl: `${returnBase}&session_id={CHECKOUT_SESSION_ID}`,
+			cancelUrl: `${returnBase}&cancelled=1`,
+		});
+		let session: StripeSessionResponse;
+		try {
+			session = await stripeRequest<StripeSessionResponse>(c.env, "POST", "/checkout/sessions", form);
+		} catch (e) {
+			return c.json({ error: e instanceof Error ? e.message : "Stripe session error" }, 502);
+		}
+		const now = new Date().toISOString();
+		await saveBillingSession(c.env.BUCKET, {
+			sessionId: session.id,
+			domain,
+			purpose: "renew",
+			status: "pending",
+			pricing,
+			ownerUserId: userId,
+			client,
+			createdAt: now,
+			updatedAt: now,
+		});
+		return c.json({ checkoutUrl: session.url, sessionId: session.id, pricing });
+	});
+
+	/** Back from a renewal checkout: into the app (closing the in-app browser), or to the domain page. */
+	app.get("/api/v1/billing/renew-return", (c) => {
+		const domain = (c.req.query("domain") || "").toLowerCase().trim();
+		const cancelled = c.req.query("cancelled") === "1";
+		const clientQuery = c.req.query("client") || "";
+		const isMobile = clientQuery === "ios" || clientQuery === "android" || /iPhone|iPad|iPod|Android/i.test(c.req.header("user-agent") || "");
+		if (isMobile) {
+			return c.redirect(
+				`inboxies://billing/${cancelled ? "renew-cancelled" : "renewed"}?domain=${encodeURIComponent(domain)}`,
+				302,
+			);
+		}
+		return c.redirect(
+			`/admin?tab=dns&domain=${encodeURIComponent(domain)}${cancelled ? "" : "&renewed=1"}`,
+			302,
+		);
+	});
+
+	/**
 	 * Hosted Bridge Cancellation Handler.
 	 * Gives the domain hold back (the checkout's own browser carries its hold id),
 	 * then redirects mobile clients to `inboxies://onboarding/cancelled` (closing the
@@ -574,21 +713,25 @@ window.location.href = ${JSON.stringify(deepLink)};
 			const session = event.data?.object as StripeCheckoutSession | undefined;
 			if (!session?.id) return c.json({ error: "Missing session object" }, 400);
 
+			const renewal = isRenewalCheckout(session);
+			const fulfill = renewal ? fulfillRenewal : fulfillPaidCheckout;
 			switch (type) {
 				case "checkout.session.completed":
 					if (SETTLED_PAYMENT_STATUSES.has(session.payment_status ?? "")) {
-						outcome = await fulfillPaidCheckout(c.env, session);
+						outcome = await fulfill(c.env, session);
 					} else if (unsignedDevEvent && !session.payment_status) {
 						// The /checkout/mock page doesn't model payment status.
-						outcome = await fulfillPaidCheckout(c.env, session);
+						outcome = await fulfill(c.env, session);
 					} else if (session.payment_status === "unpaid") {
-						outcome = await markAwaitingPayment(c.env, session);
+						outcome = renewal
+							? await markRenewalAwaitingPayment(c.env, session)
+							: await markAwaitingPayment(c.env, session);
 					} else {
 						outcome = { status: 200, body: { received: true, ignored: true, reason: "payment_not_settled" } };
 					}
 					break;
 				case "checkout.session.async_payment_succeeded":
-					outcome = await fulfillPaidCheckout(c.env, session);
+					outcome = await fulfill(c.env, session);
 					break;
 				case "checkout.session.async_payment_failed":
 					outcome = await endUnpaidCheckout(c.env, session, "failed");
@@ -688,4 +831,42 @@ async function releaseAbandonedCheckout(env: Env, domain: string, holdId: string
 			await saveBillingSession(env.BUCKET, record);
 		}
 	}
+}
+
+/** A Checkout Session that starts a new annual subscription for a domain we already hold. */
+function renewalCheckoutForm(
+	domain: string,
+	pricing: DomainPricingBreakdown,
+	opts: { customerId?: string; userId: string; client?: string; successUrl: string; cancelUrl: string },
+): URLSearchParams {
+	const form = new URLSearchParams();
+	form.append("mode", "subscription");
+	if (opts.customerId) form.append("customer", opts.customerId);
+	const items: Array<[string, string, number]> = [
+		[`Domain Registration: ${domain} (Annual)`, "1-year domain registration renewal via Cloudflare Registrar", pricing.domainFeeUsd],
+		[
+			"Inboxies Platform, AI & Cloud Infrastructure (Annual)",
+			"Dedicated AI email agent, edge server sync, R2 storage, Anycast DNS, and email security",
+			pricing.platformFeeUsd,
+		],
+	];
+	items.forEach(([name, description, usd], i) => {
+		form.append(`line_items[${i}][price_data][currency]`, "usd");
+		form.append(`line_items[${i}][price_data][recurring][interval]`, "year");
+		form.append(`line_items[${i}][price_data][product_data][name]`, name);
+		form.append(`line_items[${i}][price_data][product_data][description]`, description);
+		form.append(`line_items[${i}][price_data][unit_amount]`, Math.round(usd * 100).toString());
+		form.append(`line_items[${i}][quantity]`, "1");
+	});
+	form.append("metadata[domain]", domain);
+	form.append("metadata[purpose]", "renew");
+	form.append("metadata[ownerUserId]", opts.userId);
+	form.append("metadata[domainFeeUsd]", pricing.domainFeeUsd.toFixed(2));
+	form.append("metadata[platformFeeUsd]", pricing.platformFeeUsd.toFixed(2));
+	form.append("metadata[totalAnnualUsd]", pricing.totalAnnualUsd.toFixed(2));
+	if (opts.client) form.append("metadata[client]", opts.client);
+	form.append("subscription_data[metadata][domain]", domain);
+	form.append("success_url", opts.successUrl);
+	form.append("cancel_url", opts.cancelUrl);
+	return form;
 }

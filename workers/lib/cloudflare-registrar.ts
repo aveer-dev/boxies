@@ -85,6 +85,11 @@ const TLD_WHOLESALE_PRICING: Record<string, number> = {
 
 const STANDARD_RETAIL_PRICE = 20.0;
 
+/** Our list wholesale price for `domain`'s TLD (used when no recorded price exists). */
+export function listWholesalePrice(domain: string): number {
+	return TLD_WHOLESALE_PRICING[extractTld(domain.trim().toLowerCase())] ?? 10.44;
+}
+
 // Mock only in local dev / tests. In production missing credentials must fail closed.
 function isMockEnv(env: CloudflareClientEnv): boolean {
 	return isDevRuntime() && (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID);

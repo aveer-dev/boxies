@@ -13,6 +13,8 @@
  * - Expired sessions are deleted through Better Auth (their device tokens
  *   go with them), and so are expired codes and reset links.
  * - Expired mailbox/domain exports are deleted from R2.
+ * - Domains whose subscription is ending or ended get their due reminder
+ *   emails (see service-reminders.ts).
  *
  * Each step is independent: one failing doesn't stop the others.
  */
@@ -27,6 +29,7 @@ import { deleteZone, getZone } from "./cloudflare-client";
 import { deleteDomainMetadata, getDomainMetadata, saveDomainMetadata } from "./domain-registry";
 import { EXPORTS_JOB_PREFIX, type ExportJob } from "./email-exporter";
 import { listAllR2Objects } from "./r2-list";
+import { sendServiceReminders } from "./service-reminders";
 
 const CLAIM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_SWEEP_BATCH = 200;
@@ -37,6 +40,7 @@ export type MaintenanceReport = {
 	staleClaims: string[];
 	sessionsDeleted: number;
 	exportsDeleted: number;
+	serviceReminders: string[];
 	errors: string[];
 };
 
@@ -56,6 +60,7 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		staleClaims: [],
 		sessionsDeleted: 0,
 		exportsDeleted: 0,
+		serviceReminders: [],
 		errors: [],
 	};
 	const db = authDb(env.AUTH_DB);
@@ -119,6 +124,10 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		await db
 			.delete(schema.invite)
 			.where(and(lt(schema.invite.expiresAt, new Date(now.getTime() - CLAIM_TTL_MS))));
+	});
+
+	await step(report, "service reminders", async () => {
+		report.serviceReminders = await sendServiceReminders(env, now);
 	});
 
 	await step(report, "exports", async () => {

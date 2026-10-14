@@ -94,6 +94,20 @@ export async function cancelSubscription(env: StripeEnv, subscriptionId: string)
 	}
 }
 
+/**
+ * Take back a scheduled cancellation, whichever way it was scheduled
+ * (at period end, or at a set time).
+ */
+export async function resumeSubscription(env: StripeEnv, subscriptionId: string): Promise<void> {
+	const path = `/subscriptions/${encodeURIComponent(subscriptionId)}`;
+	const sub = await stripeRequest<{ cancel_at_period_end?: boolean; cancel_at?: number | null }>(env, "GET", path);
+	const params = new URLSearchParams();
+	if (sub.cancel_at_period_end) params.set("cancel_at_period_end", "false");
+	else if (sub.cancel_at) params.set("cancel_at", "");
+	else return;
+	await stripeRequest(env, "POST", path, params);
+}
+
 interface StripeInvoice {
 	id: string;
 	payments?: {

@@ -155,7 +155,8 @@ export const mailboxMember = sqliteTable(
 	],
 );
 
-export const DOMAIN_STATUSES = ["pending", "active", "decommissioned"] as const;
+/** `suspended`: the domain's subscription ended; its mailboxes are read-only until renewed. */
+export const DOMAIN_STATUSES = ["pending", "active", "suspended", "decommissioned"] as const;
 export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
 
 /** A customer domain. Registrar/DNS details stay in R2 domain metadata. */
