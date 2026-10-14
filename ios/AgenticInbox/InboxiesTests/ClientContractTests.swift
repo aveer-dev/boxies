@@ -158,4 +158,111 @@ final class ClientContractTests: XCTestCase {
         XCTAssertFalse(EmailHTMLSanitizer.containsRemoteImages(#"<a href="https://example.com">link</a>"#))
         XCTAssertFalse(EmailHTMLSanitizer.remoteImagesBlockedPolicy.contains("https:"))
     }
+
+    // MARK: - Service end (read-only domains)
+
+    func testMailboxDecodesWithoutServiceFields() throws {
+        let mailbox = try decode(Mailbox.self, #"{"id":"a@acme.com","email":"a@acme.com","name":"a@acme.com","canManage":true}"#)
+        XCTAssertFalse(mailbox.isReadOnly)
+        XCTAssertNil(mailbox.service)
+        XCTAssertEqual(mailbox.domain, "acme.com")
+    }
+
+    func testMailboxDecodesReadOnlyAndService() throws {
+        let mailbox = try decode(Mailbox.self, """
+        {"id":"a@acme.com","email":"a@acme.com","name":"A","readOnly":true,
+         "service":{"domain":"acme.com","status":"ended","endedAt":"2026-10-01T00:00:00.000Z",
+                    "registrarManaged":true,"renewBy":"2026-11-10T00:00:00.000Z","daysLeftToRenew":27,"canRenew":true}}
+        """)
+        XCTAssertTrue(mailbox.isReadOnly)
+        XCTAssertEqual(mailbox.service?.isEnded, true)
+        XCTAssertEqual(mailbox.service?.daysLeftToRenew, 27)
+        XCTAssertNotNil(mailbox.service?.renewByDate)
+        XCTAssertNil(mailbox.service?.canManage)
+    }
+
+    func testMalformedServiceNeverDropsTheMailbox() throws {
+        let mailbox = try decode(Mailbox.self, #"{"id":"a@acme.com","email":"a@acme.com","name":"A","readOnly":"yes","service":"ended"}"#)
+        XCTAssertEqual(mailbox.id, "a@acme.com")
+        XCTAssertFalse(mailbox.isReadOnly)
+        XCTAssertNil(mailbox.service)
+    }
+
+    func testServiceEndedErrorIsDistinct() {
+        let body = Data(#"{"error":"The subscription for acme.com has ended.","code":"service_ended","domain":"acme.com"}"#.utf8)
+        guard case .serviceEnded(let domain, let message)? = APIClient.serviceEndedError(statusCode: 403, data: body) else {
+            return XCTFail("expected serviceEnded")
+        }
+        XCTAssertEqual(domain, "acme.com")
+        XCTAssertEqual(message, "The subscription for acme.com has ended.")
+        XCTAssertNil(APIClient.serviceEndedError(statusCode: 403, data: Data(#"{"error":"Forbidden"}"#.utf8)))
+        XCTAssertNil(APIClient.serviceEndedError(statusCode: 409, data: body))
+    }
+
+    func testRenewResponseShapes() throws {
+        let resumed = try decode(DomainRenewResponse.self, #"{"resumed":true,"service":{"domain":"acme.com","status":"active","registrarManaged":false,"canRenew":false}}"#)
+        XCTAssertEqual(resumed.resumed, true)
+        XCTAssertEqual(resumed.service?.status, "active")
+        let checkout = try decode(DomainRenewResponse.self, #"{"checkoutUrl":"https://checkout.stripe.com/x","sessionId":"cs_1","pricing":{"totalAnnualUsd":30}}"#)
+        XCTAssertEqual(checkout.checkoutUrl, "https://checkout.stripe.com/x")
+        XCTAssertNil(checkout.resumed)
+    }
+
+    func testBillingRenewalCallbacks() {
+        XCTAssertEqual(
+            PaymentCallback.parse(URL(string: "inboxies://billing/renewed?domain=Acme.com")!),
+            .renewed(domain: "acme.com")
+        )
+        XCTAssertEqual(
+            PaymentCallback.parse(URL(string: "inboxies://billing/renew-cancelled?domain=acme.com")!),
+            .renewCancelled(domain: "acme.com")
+        )
+        XCTAssertEqual(PaymentCallback.parse(URL(string: "inboxies://billing/other")!), .unrecognized)
+    }
+
+    func testServiceNoticeCopy() {
+        let mailbox = Mailbox(id: "a@acme.com", email: "a@acme.com", name: "A", readOnly: true)
+        let admin = DomainService(domain: "acme.com", status: "ended", registrarManaged: true,
+                                  renewBy: "2026-11-10T00:00:00.000Z", daysLeftToRenew: 12,
+                                  canRenew: true, canManage: true, billed: true)
+        let adminNotice = ServiceNotice.make(mailbox: mailbox, service: admin)
+        XCTAssertEqual(adminNotice?.title, "Your subscription for acme.com ended. Mail is read-only.")
+        XCTAssertEqual(adminNotice?.actionTitle, "Renew")
+        XCTAssertTrue(adminNotice?.detail?.contains("12 days left") == true)
+
+        var member = admin
+        member.canManage = false
+        let memberNotice = ServiceNotice.make(mailbox: mailbox, service: member)
+        XCTAssertNil(memberNotice?.actionTitle)
+        XCTAssertTrue(memberNotice?.detail?.contains("Ask an admin of acme.com to renew.") == true)
+
+        var closed = admin
+        closed.canRenew = false
+        XCTAssertEqual(
+            ServiceNotice.make(mailbox: mailbox, service: closed)?.detail,
+            "This domain can no longer be renewed. You can still read and export your mail."
+        )
+
+        let active = Mailbox(id: "a@acme.com", email: "a@acme.com", name: "A")
+        let ending = DomainService(domain: "acme.com", status: "ending", endsAt: "2026-11-01T00:00:00.000Z",
+                                   canRenew: true, canManage: true, billed: true)
+        XCTAssertEqual(ServiceNotice.make(mailbox: active, service: ending)?.actionTitle, "Keep subscription")
+        var endingMember = ending
+        endingMember.canManage = false
+        XCTAssertNil(ServiceNotice.make(mailbox: active, service: endingMember))
+        XCTAssertNil(ServiceNotice.make(mailbox: active, service: nil))
+    }
+
+    func testReadOnlySwipesKeepOnlyFlags() {
+        let layout = EmailSwipeLayout(
+            trailingActions: [.delete, .archive],
+            trailingAllowsFullSwipe: true,
+            leadingActions: [.toggleRead, .reply],
+            leadingAllowsFullSwipe: true,
+            showsMore: true
+        ).readOnly()
+        XCTAssertEqual(layout.trailingActions, [])
+        XCTAssertFalse(layout.trailingAllowsFullSwipe)
+        XCTAssertEqual(layout.leadingActions, [.toggleRead])
+    }
 }

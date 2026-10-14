@@ -6,6 +6,141 @@ struct Mailbox: Identifiable, Codable, Hashable {
     let name: String
     var settings: MailboxSettings?
     var canManage: Bool?
+    /// The domain's subscription ended: the mailbox can be read and exported, not changed.
+    var readOnly: Bool?
+    /// Billing state of the mailbox's domain (detail GET only; nil without Inboxies billing).
+    var service: DomainService?
+
+    var isReadOnly: Bool { readOnly == true }
+
+    var domain: String {
+        email.split(separator: "@").last.map { String($0).lowercased() } ?? ""
+    }
+}
+
+extension Mailbox {
+    private enum CodingKeys: String, CodingKey {
+        case id, email, name, settings, canManage, readOnly, service
+    }
+
+    /// Lenient: older Workers omit `readOnly` / `service`, and a malformed service
+    /// summary must never cost the user the mailbox.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        email = try c.decode(String.self, forKey: .email)
+        name = try c.decode(String.self, forKey: .name)
+        settings = try c.decodeIfPresent(MailboxSettings.self, forKey: .settings)
+        canManage = try? c.decodeIfPresent(Bool.self, forKey: .canManage)
+        readOnly = try? c.decodeIfPresent(Bool.self, forKey: .readOnly)
+        service = try? c.decodeIfPresent(DomainService.self, forKey: .service)
+    }
+}
+
+/// Where a paid domain's subscription stands: `GET /billing/domains/:domain/service`,
+/// or the `service` summary on a mailbox. Every field decodes leniently.
+struct DomainService: Codable, Hashable {
+    var domain: String
+    /// "active", "ending" (set to cancel, still running) or "ended" (read-only).
+    var status: String
+    var endsAt: String?
+    var endedAt: String?
+    /// Inboxies registered the domain, so it lapses unless renewed by `renewBy`.
+    var registrarManaged: Bool
+    var registrationExpiresAt: String?
+    var renewBy: String?
+    var daysLeftToRenew: Int?
+    /// Renewing (or keeping an ending subscription) is possible right now.
+    var canRenew: Bool
+    /// Service endpoint only: the caller is an admin of the domain.
+    var canManage: Bool?
+    var billed: Bool?
+
+    var isEnded: Bool { status == "ended" }
+    var isEnding: Bool { status == "ending" }
+    /// An admin can act on it now: renew an ended domain, or keep an ending one.
+    var canAdminRenew: Bool { canManage == true && canRenew }
+
+    var endsAtDate: Date? { Self.parseDate(endsAt) }
+    var renewByDate: Date? { Self.parseDate(renewBy) }
+
+    init(
+        domain: String,
+        status: String,
+        endsAt: String? = nil,
+        endedAt: String? = nil,
+        registrarManaged: Bool = false,
+        registrationExpiresAt: String? = nil,
+        renewBy: String? = nil,
+        daysLeftToRenew: Int? = nil,
+        canRenew: Bool = false,
+        canManage: Bool? = nil,
+        billed: Bool? = nil
+    ) {
+        self.domain = domain
+        self.status = status
+        self.endsAt = endsAt
+        self.endedAt = endedAt
+        self.registrarManaged = registrarManaged
+        self.registrationExpiresAt = registrationExpiresAt
+        self.renewBy = renewBy
+        self.daysLeftToRenew = daysLeftToRenew
+        self.canRenew = canRenew
+        self.canManage = canManage
+        self.billed = billed
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        domain = (try? c.decodeIfPresent(String.self, forKey: .domain)) ?? ""
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "active"
+        endsAt = try? c.decodeIfPresent(String.self, forKey: .endsAt)
+        endedAt = try? c.decodeIfPresent(String.self, forKey: .endedAt)
+        registrarManaged = (try? c.decodeIfPresent(Bool.self, forKey: .registrarManaged)) ?? false
+        registrationExpiresAt = try? c.decodeIfPresent(String.self, forKey: .registrationExpiresAt)
+        renewBy = try? c.decodeIfPresent(String.self, forKey: .renewBy)
+        daysLeftToRenew = try? c.decodeIfPresent(Int.self, forKey: .daysLeftToRenew)
+        canRenew = (try? c.decodeIfPresent(Bool.self, forKey: .canRenew)) ?? false
+        canManage = try? c.decodeIfPresent(Bool.self, forKey: .canManage)
+        billed = try? c.decodeIfPresent(Bool.self, forKey: .billed)
+    }
+
+    static func parseDate(_ iso: String?) -> Date? {
+        guard let iso, !iso.isEmpty else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    }
+
+    /// "Oct 14, 2026": end dates and renewal deadlines are day-precise.
+    static func displayDate(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+/// `POST /billing/domains/:domain/renew`: the scheduled cancellation was taken back
+/// (`resumed`), a Checkout to pay (`checkoutUrl`), or a local-dev instant renewal.
+struct DomainRenewResponse: Decodable {
+    var resumed: Bool?
+    var renewed: Bool?
+    var mock: Bool?
+    var checkoutUrl: String?
+    var sessionId: String?
+    var service: DomainService?
+
+    private enum CodingKeys: String, CodingKey {
+        case resumed, renewed, mock, checkoutUrl, sessionId, service
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        resumed = try? c.decodeIfPresent(Bool.self, forKey: .resumed)
+        renewed = try? c.decodeIfPresent(Bool.self, forKey: .renewed)
+        mock = try? c.decodeIfPresent(Bool.self, forKey: .mock)
+        checkoutUrl = try? c.decodeIfPresent(String.self, forKey: .checkoutUrl)
+        sessionId = try? c.decodeIfPresent(String.self, forKey: .sessionId)
+        service = try? c.decodeIfPresent(DomainService.self, forKey: .service)
+    }
 }
 
 struct MailboxSettings: Codable, Hashable {
