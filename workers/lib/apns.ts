@@ -9,7 +9,7 @@ export interface APNsPayload {
 	title: string;
 	/** APNs alert.body (preview, or subject when no preview). */
 	body: string;
-	/** FCM notification.body; defaults to `body` when omitted. */
+	/** FCM data `body` (the Android app renders it); defaults to `body` when omitted. */
 	fcmBody?: string;
 	/** APNs alert.subtitle (typically the mail subject). */
 	subtitle?: string;

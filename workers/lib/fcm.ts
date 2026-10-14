@@ -72,6 +72,38 @@ async function getFcmAccessToken(sa: ServiceAccount): Promise<string | null> {
 }
 
 /**
+ * FCM HTTP v1 message for one device. **Data-only** on purpose: a `notification`
+ * block is displayed by the OS while the app is backgrounded without ever reaching
+ * `onMessageReceived`, which would bypass the in-app notifications toggle and the
+ * signed-in-mailbox check. The Android app builds the notification itself from
+ * `title` / `body`. High priority keeps data messages prompt under Doze.
+ */
+export function buildFcmMessage(token: string, payload: APNsPayload) {
+	return {
+		token,
+		data: {
+			title: payload.title,
+			body: payload.fcmBody ?? payload.body,
+			mailboxId: payload.mailboxId,
+			emailId: payload.emailId,
+			folderId: payload.folderId ?? "inbox",
+		},
+		android: {
+			priority: "high",
+		},
+	};
+}
+
+/**
+ * Only a token FCM no longer knows about should be pruned: HTTP 404 /
+ * `UNREGISTERED`. `INVALID_ARGUMENT` (400) is also returned for malformed
+ * payloads, so treating it as stale would wipe healthy devices after a bad send.
+ */
+export function isStaleFcmTokenResponse(status: number, body: string): boolean {
+	return status === 404 || body.includes("UNREGISTERED");
+}
+
+/**
  * Dispatch FCM HTTP v1 notifications. No-ops when FCM_SERVICE_ACCOUNT_JSON is unset.
  */
 export async function sendFcmPush(
@@ -115,25 +147,7 @@ export async function sendFcmPush(
 						authorization: `Bearer ${accessToken}`,
 						"content-type": "application/json",
 					},
-					body: JSON.stringify({
-						message: {
-							token,
-							notification: {
-								title: payload.title,
-								body: payload.fcmBody ?? payload.body,
-							},
-							data: {
-								title: payload.title,
-								body: payload.fcmBody ?? payload.body,
-								mailboxId: payload.mailboxId,
-								emailId: payload.emailId,
-								folderId: payload.folderId ?? "inbox",
-							},
-							android: {
-								priority: "high",
-							},
-						},
-					}),
+					body: JSON.stringify({ message: buildFcmMessage(token, payload) }),
 				});
 				if (res.ok) {
 					successCount += 1;
@@ -142,11 +156,7 @@ export async function sendFcmPush(
 					failureCount += 1;
 					const text = await res.text();
 					details.push({ token: token.slice(0, 8) + "...", status: res.status, body: text });
-					if (
-						res.status === 404 ||
-						text.includes("UNREGISTERED") ||
-						text.includes("INVALID_ARGUMENT")
-					) {
+					if (isStaleFcmTokenResponse(res.status, text)) {
 						staleTokens.push(token);
 					}
 				}
