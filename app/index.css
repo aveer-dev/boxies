@@ -371,6 +371,23 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   }
 }
 
+/*
+ * Popped-out message: a borderless sheet whose edges fade to transparent, so
+ * it dissolves into the blurred canvas behind instead of ending on a line.
+ * The padding keeps the content itself clear of the fade.
+ */
+.popout-sheet {
+  --fade: 36px;
+  padding: var(--fade);
+  border-radius: 36px;
+  mask-image:
+    linear-gradient(to right, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent),
+    linear-gradient(to bottom, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+  transform-origin: top left;
+}
+
 /* Context menu: grows out of the corner by the pointer; a chosen item blinks once. */
 @keyframes context-in {
   from {
@@ -432,11 +449,20 @@ button[class*="ring-kumo-hairline"]:focus-visible {
 }
 
 /*
- * Tooltips sit above everything: columns, the dock, menus, dialogs, toasts.
- * Kumo portals them to <body> but leaves the positioner at z-index auto, so
- * any positioned column chrome painted over them.
+ * Layers, bottom to top: columns · dock (40) · toasts (60) · popped-out
+ * message (90) · Kumo dialogs and tooltips (95) · menus (96).
+ * Kumo portals dialogs and tooltips to <body> at z-index auto, so anything
+ * positioned (column chrome, the dock, the pop-out) painted over them.
  */
+body > [data-base-ui-portal] {
+  position: relative;
+  z-index: 95;
+}
+/* Tooltips: above everything, menus included. */
 :has(> .kumo-tooltip-popup) {
+  z-index: 1000;
+}
+body > [data-base-ui-portal]:has(.kumo-tooltip-popup) {
   z-index: 1000;
 }
 

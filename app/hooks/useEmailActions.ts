@@ -35,6 +35,7 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 	const moveEmail = useMoveEmail();
 	const startCompose = useUIStore((s) => s.startCompose);
 	const openReader = useUIStore((s) => s.openReader);
+	const openPopOut = useUIStore((s) => s.openPopOut);
 
 	const setRead = useCallback(
 		(email: Email, read: boolean) => {
@@ -83,8 +84,13 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 				openReader(email.id);
 				if (hasUnread(email)) setRead(email, true);
 			},
+			/** From a list row: the sheet grows out of the list column. */
+			popOut: (email: Email) => {
+				openPopOut(email.id, "list");
+				if (hasUnread(email)) setRead(email, true);
+			},
 		}),
-		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, onGone, toastManager],
+		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, openPopOut, onGone, toastManager],
 	);
 }
 

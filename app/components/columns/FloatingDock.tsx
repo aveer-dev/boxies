@@ -117,7 +117,7 @@ export default function FloatingDock() {
 	};
 
 	return (
-		<div className="fixed inset-x-0 bottom-0 z-40 h-[var(--dock-h)] pointer-events-none">
+		<div data-app-chrome className="fixed inset-x-0 bottom-0 z-40 h-[var(--dock-h)] pointer-events-none">
 			<ProgressiveBlur edge="bottom" />
 			<nav
 				aria-label="Dock"

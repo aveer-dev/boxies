@@ -41,6 +41,7 @@ export default function EmailPanel({
 	onClose,
 	chips,
 	renderFooter,
+	inPopOut = false,
 }: {
 	emailId: string;
 	mailboxId?: string;
@@ -51,6 +52,8 @@ export default function EmailPanel({
 	chips?: ReactNode;
 	/** Docked under the thread; receives the message a reply should answer. */
 	renderFooter?: (replyTarget: Email) => ReactNode;
+	/** Shown in the pop-out sheet (AVE-29) rather than a column. */
+	inPopOut?: boolean;
 }) {
 	const params = useParams<{ mailboxId: string; folder: string }>();
 	const mailboxId = propMailboxId || params.mailboxId;
@@ -68,7 +71,7 @@ export default function EmailPanel({
 	const { data: currentMailbox } = useMailbox(mailboxId) as {
 		data?: Mailbox;
 	};
-	const { startCompose } = useUIStore();
+	const { startCompose, openPopOut } = useUIStore();
 	const closePanel = onClose;
 	const toastManager = useKumoToastManager();
 	const [isSending, setIsSending] = useState(false);
@@ -115,6 +118,9 @@ export default function EmailPanel({
 	const rootRef = useRef<HTMLDivElement>(null);
 	const keyActions = useRef<Partial<Record<ShortcutId, () => void>>>({});
 	const inCharge = () => {
+		// A popped-out message has the keyboard while it's open.
+		const popOut = document.querySelector("[data-popout]");
+		if (popOut) return popOut.contains(rootRef.current);
 		const column = rootRef.current?.closest<HTMLElement>("section[data-column-id]");
 		if (!column) return false;
 		if (column.dataset.active === "true") return true;
@@ -138,6 +144,7 @@ export default function EmailPanel({
 	useReaderKey("toggleRead");
 	useReaderKey("star");
 	useReaderKey("replyLater");
+	useReaderKey("popOut");
 
 	if (!email) {
 		keyActions.current = {};
@@ -273,8 +280,12 @@ export default function EmailPanel({
 		if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { read: !email.read } });
 	};
 	const archive = email.folder_id === Folders.ARCHIVE ? undefined : () => handleMove(Folders.ARCHIVE);
+	const popOut = inPopOut
+		? undefined
+		: () => openPopOut(email.id, rootRef.current?.closest<HTMLElement>("section[data-column-id]")?.dataset.columnId);
 	keyActions.current = {
 		...(isDraftFolder ? {} : { reply, replyAll, forward }),
+		popOut,
 		archive,
 		delete: handleDelete,
 		toggleRead,
@@ -305,6 +316,8 @@ export default function EmailPanel({
 				onToggleReplyLater={toggleReplyLater}
 				onToggleRead={toggleRead}
 				onArchive={archive}
+				onPopOut={popOut}
+				inPopOut={inPopOut}
 				onMove={handleMove}
 				spamAction={spamAction}
 				onSpamAction={handleSpamAction}

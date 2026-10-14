@@ -11,6 +11,7 @@ import FoldersColumn from "~/components/columns/FoldersColumn";
 import { AgentColumn, ComposeColumn, ExtraReaderColumn } from "~/components/columns/PlatformColumns";
 import SettingsColumns from "~/components/settings/SettingsColumns";
 import { ContextMenuHost } from "~/components/ContextMenu";
+import PopOutReader from "~/components/PopOutReader";
 import ShortcutSheet from "~/components/ShortcutSheet";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -71,6 +72,7 @@ export default function MailboxRoute() {
 			<FloatingDock />
 			<ShortcutSheet />
 			<ContextMenuHost />
+			<PopOutReader />
 		</>
 	);
 }

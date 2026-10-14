@@ -41,7 +41,7 @@ function useRowShortcut(
 	);
 }
 
-/** Mail shortcuts (R A F E # U S L O) act on the focused row of this list. */
+/** Mail shortcuts (R A F E # U S L O P) act on the focused row of this list. */
 export function useListShortcuts(emails: Email[], actions: EmailActions) {
 	useRowShortcut("reply", emails, (email) => actions.reply(email));
 	useRowShortcut("replyAll", emails, (email) => actions.replyAll(email));
@@ -50,6 +50,7 @@ export function useListShortcuts(emails: Email[], actions: EmailActions) {
 	useRowShortcut("star", emails, (email) => actions.toggleStar(email));
 	useRowShortcut("replyLater", emails, (email) => actions.toggleReplyLater(email));
 	useRowShortcut("openInColumn", emails, (email) => actions.openInColumn(email));
+	useRowShortcut("popOut", emails, (email) => actions.popOut(email));
 	useRowShortcut("archive", emails, (email, row) => {
 		focusNeighbour(row);
 		actions.archive(email);

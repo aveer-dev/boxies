@@ -300,7 +300,7 @@ function MenuPanel({
 					clearTimeout(subTimer.current);
 				}}
 				style={{ transformOrigin: origin } as CSSProperties}
-				className="context-menu fixed z-[80] min-w-[220px] max-h-[calc(100dvh-104px)] overflow-y-auto overscroll-contain rounded-2xl bg-kumo-elevated p-1.5 shadow-[var(--shadow-menu)] outline-none"
+				className="context-menu fixed z-[96] min-w-[220px] max-h-[calc(100dvh-104px)] overflow-y-auto overscroll-contain rounded-2xl bg-kumo-elevated p-1.5 shadow-[var(--shadow-menu)] outline-none"
 			>
 				<div className="relative">
 					<span

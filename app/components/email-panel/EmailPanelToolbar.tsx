@@ -12,6 +12,7 @@ import {
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
 	ArrowLeftIcon,
+	ArrowsOutSimpleIcon,
 	ChatCircleIcon,
 	ClockCounterClockwiseIcon,
 	CodeIcon,
@@ -46,6 +47,9 @@ interface EmailPanelToolbarProps {
 	onToggleRead: () => void;
 	/** Absent when the message is already archived. */
 	onArchive?: () => void;
+	/** Pops the message out of its column (absent once it's popped out). */
+	onPopOut?: () => void;
+	inPopOut?: boolean;
 	onMove: (folderId: string) => void;
 	/** "report" outside Spam, "not-spam" inside it; null hides the button. */
 	spamAction?: "report" | "not-spam" | null;
@@ -69,6 +73,8 @@ export default function EmailPanelToolbar({
 	onToggleReplyLater,
 	onToggleRead,
 	onArchive,
+	onPopOut,
+	inPopOut = false,
 	onMove,
 	spamAction,
 	onSpamAction,
@@ -80,7 +86,9 @@ export default function EmailPanelToolbar({
 	const [laterPops, setLaterPops] = useState(0);
 	return (
 		<div className="flex items-center gap-0.5 h-12 px-2 border-b border-kumo-line shrink-0 md:px-3">
-			<IconButton label="Back to list" icon={ArrowLeftIcon} size="md" onClick={onBack} className="md:hidden" />
+			{!inPopOut && (
+				<IconButton label="Back to list" icon={ArrowLeftIcon} size="md" onClick={onBack} className="md:hidden" />
+			)}
 
 			{isDraftFolder ? (
 				<div className="flex items-center gap-1.5 mr-1">
@@ -166,16 +174,26 @@ export default function EmailPanelToolbar({
 			)}
 
 			<div className="ml-auto flex items-center gap-0.5">
+				{onPopOut && (
+					<IconButton
+						label="Pop out"
+						shortcut={keysFor("popOut")}
+						icon={ArrowsOutSimpleIcon}
+						size="md"
+						onClick={onPopOut}
+						className="hidden md:inline-flex"
+					/>
+				)}
 				<IconButton label="View source" icon={CodeIcon} size="md" onClick={onViewSource} />
 				<IconButton label="Delete" shortcut={keysFor("delete")} icon={TrashIcon} size="md" onClick={onDelete} />
 				<IconButton
-					label="Close"
+					label={inPopOut ? "Back to column" : "Close"}
 					shortcut="Esc"
 					icon={XIcon}
 					size="md"
 					close
 					onClick={onBack}
-					className="hidden md:inline-flex"
+					className={inPopOut ? "" : "hidden md:inline-flex"}
 				/>
 			</div>
 		</div>

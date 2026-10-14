@@ -6,7 +6,7 @@ import {
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
-	ArrowSquareOutIcon,
+	ArrowsOutSimpleIcon,
 	ChatCircleIcon,
 	ClockCounterClockwiseIcon,
 	ColumnsPlusRightIcon,
@@ -33,7 +33,6 @@ export function buildEmailMenu(
 	email: Email,
 	actions: EmailActions,
 	moveTargets: { id: string; name: string }[],
-	extra: { popOut?: () => void } = {},
 ): MenuEntry[] {
 	const isDraft = email.folder_id === Folders.DRAFT;
 	const unread = hasUnread(email);
@@ -78,17 +77,15 @@ export function buildEmailMenu(
 			shortcut: keysFor("openInColumn"),
 			onSelect: () => actions.openInColumn(email),
 		},
-	);
-	if (extra.popOut) {
-		entries.push({
+		{
 			type: "item",
 			label: "Pop out",
-			icon: ArrowSquareOutIcon,
+			icon: ArrowsOutSimpleIcon,
 			shortcut: keysFor("popOut"),
-			onSelect: extra.popOut,
-		});
-	}
-	entries.push({ type: "separator" });
+			onSelect: () => actions.popOut(email),
+		},
+		{ type: "separator" },
+	);
 
 	if (email.folder_id !== Folders.ARCHIVE) {
 		entries.push({
@@ -126,15 +123,13 @@ export function buildEmailMenu(
  * Opens the mail-row menu at the pointer (right-click), beside the ⋯ button,
  * or under a focused row (context-menu key / ⇧F10).
  */
-export function useEmailMenu(mailboxId: string, actions: EmailActions, extra?: { popOut?: (email: Email) => void }) {
+export function useEmailMenu(mailboxId: string, actions: EmailActions) {
 	const { data: folders = [] } = useFolders(mailboxId);
 	const open = useContextMenu((s) => s.open);
 
 	return useCallback(
 		(email: Email, from: MouseEvent<HTMLElement> | HTMLElement) => {
-			const entries = buildEmailMenu(email, actions, folders, {
-				popOut: extra?.popOut ? () => extra.popOut?.(email) : undefined,
-			});
+			const entries = buildEmailMenu(email, actions, folders);
 			const label = `Actions for ${email.subject || "message"}`;
 			if (from instanceof HTMLElement) {
 				// Keyboard (row) or the ⋯ button: anchor to the element.
@@ -162,6 +157,6 @@ export function useEmailMenu(mailboxId: string, actions: EmailActions, extra?: {
 				viaKeyboard: from.detail === 0 && from.clientX === 0 && from.clientY === 0,
 			});
 		},
-		[actions, folders, open, extra],
+		[actions, folders, open],
 	);
 }

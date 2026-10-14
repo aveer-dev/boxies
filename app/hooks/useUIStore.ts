@@ -53,6 +53,14 @@ interface UIState {
 	openReader: (emailId: string) => void;
 	closeReader: (key: string) => void;
 
+	/**
+	 * A message popped out of its column into a modal over the canvas. `from`
+	 * is the column it came out of (and morphs back into).
+	 */
+	popOut: { emailId: string; from?: string } | null;
+	openPopOut: (emailId: string, from?: string) => void;
+	closePopOut: () => void;
+
 	isAgentPanelOpen: boolean;
 	openAgentPanel: () => void;
 	closeAgentPanel: () => void;
@@ -141,6 +149,10 @@ export const useUIStore = create<UIState>((set, get) => ({
 		}),
 	closeReader: (key) => set((s) => ({ panels: without(s.panels, key) })),
 
+	popOut: null,
+	openPopOut: (emailId, from) => set({ popOut: { emailId, from } }),
+	closePopOut: () => set({ popOut: null }),
+
 	openAgentPanel: () =>
 		set((s) => ({ isAgentPanelOpen: true, ...opened(s, { kind: "agent", key: "agent" }) })),
 	closeAgentPanel: () =>
@@ -178,6 +190,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 	resetColumns: () =>
 		set((s) => ({
 			pendingAgentPrompt: null,
+			popOut: null,
 			composeDirty: {},
 			panels: s.panels.filter((p) => p.kind !== "compose" && p.kind !== "reader"),
 		})),

@@ -71,12 +71,13 @@ export function isTypingTarget(target: EventTarget | null): boolean {
 
 /**
  * A modal dialog is open (toasts are role=dialog too, but aria-modal=false;
- * a dialog playing its exit animation is already `data-closed`).
+ * a dialog playing its exit animation is already `data-closed`). A popped-out
+ * message is a reader, not a dialog: its keys keep working.
  */
 export function isModalOpen(): boolean {
 	return Boolean(
 		document.querySelector(
-			':is([role=dialog], [role=alertdialog]):not([aria-modal="false"]):not([data-closed])',
+			':is([role=dialog], [role=alertdialog]):not([aria-modal="false"]):not([data-closed]):not([data-popout] *)',
 		),
 	);
 }

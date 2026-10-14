@@ -98,7 +98,7 @@ export default function FloatingPanel({
 		<div
 			ref={panelRef}
 			{...rest}
-			className={`fixed z-[70] overflow-y-auto overscroll-contain rounded-2xl bg-kumo-elevated shadow-[var(--shadow-menu)] p-1.5 animate-menu-in ${origin} ${className}`}
+			className={`fixed z-[96] overflow-y-auto overscroll-contain rounded-2xl bg-kumo-elevated shadow-[var(--shadow-menu)] p-1.5 animate-menu-in ${origin} ${className}`}
 		>
 			{children}
 		</div>,
