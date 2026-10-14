@@ -36,8 +36,8 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
     private var streamJob: Job? = null
     private var pollJob: Job? = null
 
-    @Volatile
-    private var activeCall: Call? = null
+    /** In-flight SSE call per stream run, so one run can't clear or leak another's. */
+    private val activeCalls = java.util.concurrent.ConcurrentHashMap<Job, Call>()
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -63,8 +63,8 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
         streamJob = null
         pollJob?.cancel()
         pollJob = null
-        activeCall?.cancel()
-        activeCall = null
+        // Close every socket, including one a stopped run published just now.
+        activeCalls.values.forEach { it.cancel() }
     }
 
     private fun isCurrent(mailboxId: String) = currentMailboxId == mailboxId
@@ -72,6 +72,7 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
     private suspend fun runEventStream(mailboxId: String) {
         var backoff = 2_000L
         val parser = SseEventParser()
+        val job = coroutineContext[Job] ?: return
         while (isCurrent(mailboxId) && coroutineContext.isActive) {
             try {
                 val url = eventsUrl(mailboxId) ?: return
@@ -82,26 +83,31 @@ class RealTimeStreamClient private constructor(private val api: ApiClient) {
                     requestBuilder.header("Authorization", "Bearer $it")
                 }
                 val call = client.newCall(requestBuilder.build())
-                activeCall = call
+                activeCalls[job] = call
                 // stop() may have run between the loop check and publishing the call.
-                if (!isCurrent(mailboxId)) {
+                if (!isCurrent(mailboxId) || !job.isActive) {
                     call.cancel()
+                    activeCalls.remove(job, call)
                     return
                 }
-                call.execute().use { response ->
-                    if (!response.isSuccessful) {
-                        delay(backoff)
-                        backoff = minOf(backoff * 2, 30_000L)
-                        return@use
+                try {
+                    call.execute().use { response ->
+                        if (!response.isSuccessful) {
+                            delay(backoff)
+                            backoff = minOf(backoff * 2, 30_000L)
+                            return@use
+                        }
+                        backoff = 2_000L
+                        parser.reset()
+                        val source = response.body?.source() ?: return@use
+                        while (isCurrent(mailboxId) && !source.exhausted()) {
+                            val line = source.readUtf8Line() ?: break
+                            val event = parser.feed(line) ?: continue
+                            if (isCurrent(mailboxId)) handleServerEvent(mailboxId, event)
+                        }
                     }
-                    backoff = 2_000L
-                    parser.reset()
-                    val source = response.body?.source() ?: return@use
-                    while (isCurrent(mailboxId) && !source.exhausted()) {
-                        val line = source.readUtf8Line() ?: break
-                        val event = parser.feed(line) ?: continue
-                        if (isCurrent(mailboxId)) handleServerEvent(mailboxId, event)
-                    }
+                } finally {
+                    activeCalls.remove(job, call)
                 }
             } catch (e: Exception) {
                 if (!isCurrent(mailboxId)) return

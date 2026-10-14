@@ -30,6 +30,21 @@ import kotlinx.coroutines.launch
  * The mailbox list is also persisted so the FCM service (which can run without the UI)
  * only shows pushes for mailboxes the user still has.
  */
+/**
+ * Whether the FCM service may show a push for a mailbox, given the persisted list of the
+ * signed-in user's mailboxes: never written (null, first launch after an update) allows
+ * everything; present but empty (signed out) drops everything; otherwise the mailbox
+ * must be listed. A push without a mailbox id is only shown while someone is signed in.
+ */
+internal object PushMailboxFilter {
+    fun allows(storedMailboxIds: Set<String>?, mailboxId: String?): Boolean {
+        if (storedMailboxIds == null) return true
+        if (storedMailboxIds.isEmpty()) return false
+        if (mailboxId.isNullOrBlank()) return true
+        return storedMailboxIds.any { it.equals(mailboxId, ignoreCase = true) }
+    }
+}
+
 data class PushDeepLink(
     val mailboxId: String,
     val emailId: String,
@@ -47,9 +62,19 @@ class PushNotificationManager private constructor(private val appContext: Contex
     private val _pendingDeepLink = MutableStateFlow<PushDeepLink?>(null)
     val pendingDeepLink: StateFlow<PushDeepLink?> = _pendingDeepLink.asStateFlow()
 
-    /** The signed-in user's mailboxes (persisted; see [isKnownMailbox]). */
+    /**
+     * The signed-in user's mailboxes, persisted for the FCM service. Null = never written
+     * (first launch after an update); empty = signed out (see [PushMailboxFilter]).
+     */
+    private val storedMailboxIds: Set<String>?
+        get() = if (prefs.contains(KEY_KNOWN_MAILBOXES)) {
+            prefs.getStringSet(KEY_KNOWN_MAILBOXES, emptySet()).orEmpty()
+        } else {
+            null
+        }
+
     private val knownMailboxIds: Set<String>
-        get() = prefs.getStringSet(KEY_KNOWN_MAILBOXES, emptySet()).orEmpty()
+        get() = storedMailboxIds.orEmpty()
 
     /**
      * Remember the user's mailboxes and, when notifications are on, register the device
@@ -124,13 +149,8 @@ class PushNotificationManager private constructor(private val appContext: Contex
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    /** True when a push for [mailboxId] belongs to a mailbox the user still has. */
-    fun isKnownMailbox(mailboxId: String?): Boolean {
-        val known = knownMailboxIds
-        // Nothing recorded yet (first launch after an update): don't drop until the app ran once.
-        if (mailboxId.isNullOrBlank() || known.isEmpty()) return true
-        return known.any { it.equals(mailboxId, ignoreCase = true) }
-    }
+    /** True when a push for [mailboxId] belongs to a mailbox the signed-in user still has. */
+    fun isKnownMailbox(mailboxId: String?): Boolean = PushMailboxFilter.allows(storedMailboxIds, mailboxId)
 
     fun handleTokenReceived(token: String) {
         if (token != deviceToken) {
@@ -149,14 +169,21 @@ class PushNotificationManager private constructor(private val appContext: Contex
      * (sign-out / account deletion). Must run while the Bearer token is still valid.
      */
     suspend fun unregisterAll(mailboxIds: Collection<String>) {
-        unregisterFrom(mailboxIds + knownMailboxIds)
+        val targets = mailboxIds + knownMailboxIds + registeredMailboxIds
+        // First: if the DELETEs fail (offline) or time out mid-loop, the server may keep
+        // pushing to this device, and the FCM service must already drop all of it.
         forgetMailboxes()
+        unregisterFrom(targets)
     }
 
-    /** Signed out: no mailbox is "known" any more, so the FCM service drops every push. */
+    /**
+     * Signed out: store an *empty* set (not remove the key, which reads as "never
+     * written" and lets pushes through), so the FCM service drops every push until the
+     * next user's mailboxes are recorded.
+     */
     fun forgetMailboxes() {
         registeredMailboxIds.clear()
-        prefs.edit { remove(KEY_KNOWN_MAILBOXES) }
+        prefs.edit(commit = true) { putStringSet(KEY_KNOWN_MAILBOXES, emptySet()) }
     }
 
     private suspend fun unregisterFrom(mailboxIds: Collection<String>) {

@@ -233,24 +233,46 @@ internal object SecureSessionStorage {
     const val PREFS_NAME = "inboxies_secure_session"
 
     fun open(context: Context): SharedPreferences? {
-        return try {
-            create(context)
-        } catch (first: Exception) {
-            // Typically a keyset the Keystore can no longer decrypt (restore to a new
-            // device, Keystore reset). The session is unrecoverable anyway: start over.
-            Log.w(TAG, "Encrypted session prefs unreadable; resetting", first)
-            runCatching { context.deleteSharedPreferences(PREFS_NAME) }
-            runCatching {
-                java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-                    .deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
-            }
+        var failure: Exception? = null
+        // Keystore hiccups are often transient: retry once before touching anything.
+        repeat(2) {
             try {
-                create(context)
-            } catch (second: Exception) {
-                Log.e(TAG, "Encrypted session prefs unavailable; session is memory-only", second)
-                null
+                return create(context)
+            } catch (e: Exception) {
+                failure = e
             }
         }
+        val error = failure ?: return null
+        if (!isUnrecoverableKeyset(error)) {
+            // Don't wipe on an unknown error: that would sign the user out for good.
+            Log.e(TAG, "Encrypted session prefs unavailable; session is memory-only", error)
+            return null
+        }
+        // A keyset the Keystore can no longer decrypt (restore onto a new device, Keystore
+        // reset). The stored session is unrecoverable anyway: start over.
+        Log.w(TAG, "Encrypted session prefs unreadable; resetting", error)
+        runCatching { context.deleteSharedPreferences(PREFS_NAME) }
+        runCatching {
+            java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                .deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+        }
+        return try {
+            create(context)
+        } catch (second: Exception) {
+            Log.e(TAG, "Encrypted session prefs unavailable; session is memory-only", second)
+            null
+        }
+    }
+
+    /** Decrypt / keyset corruption anywhere in the cause chain (vs. a transient failure). */
+    internal fun isUnrecoverableKeyset(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is java.security.GeneralSecurityException) return true // incl. AEADBadTagException
+            if (current.javaClass.name.endsWith("InvalidProtocolBufferException")) return true
+            current = current.cause.takeIf { it !== current }
+        }
+        return false
     }
 
     private fun create(context: Context): SharedPreferences {
