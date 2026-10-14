@@ -165,6 +165,8 @@ Gate iOS 18/26 APIs with `#available` the same way (glass, zoom, `ToolbarSpacer`
 - **Rows:** unread/read dot · sender (+ thread badge / Draft) · date/star/paperclip · subject · 1-line preview · optional tags. `.buttonStyle(.plain)`.
 - **Cards:** rare — digest topic cards only (`surface` + 18pt continuous radius + hairline).
 - **Empty:** `ContentUnavailableView`.
+- **Load failed:** `LoadFailedContent` (`Views/Components/LoadFailedViews.swift`) — `ContentUnavailableView` + ink Retry. Never show onboarding or "empty" for a failed fetch.
+- **Load more:** one `EmailRowSkeleton` footer row while `EmailListPaging.hasMore`; muted "Couldn’t load more · Retry" after a failed page.
 - **Loading:** skeleton rows (`EmailRowSkeleton`, ~9 rows) + `.skeletonPulse`. `ProgressView` for digest/auth/busy, not as the only list placeholder.
 - **Forms:** Settings `insetGrouped`; fields `surface` + continuous rounded 10 + `line` stroke.
 - **Modals / sheets close:** Modal and sheet dismiss/close controls must use an "x" icon (`Image(systemName: "xmark")`, 32×32 frame, `AppTheme.ink`), never "Cancel" text. Use `.accessibilityLabel("Close")`. Reserve "Cancel" text strictly for confirmation alert dialogs.
@@ -197,6 +199,10 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMailbox` | Inbox New/Seen |
 | `-previewScreener` | Screener + detail |
 | `-previewReplyLater` | Reply Later pile |
+| `-previewMailbox -previewLoadFailed` | First mailbox load failed, nothing cached (error + Retry / Sign out, not onboarding) |
+| `-previewMailbox -previewListError` | Folder fetch failed with an empty cache (error + Retry, not "This folder is empty") |
+| `-previewMailbox -previewLoadMore` | Inbox with the infinite-scroll skeleton footer (scroll to the bottom) |
+| `-htmlHardenFixture` | Sanitizer / link-policy fixture + quoted-replies sheet |
 
 ## Hard don'ts
 
