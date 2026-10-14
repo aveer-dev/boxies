@@ -33,6 +33,7 @@ import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.auth.InviteAcceptView
 import co.inboxies.app.ui.auth.MailboxOnboardingView
 import co.inboxies.app.ui.auth.SignInView
+import co.inboxies.app.ui.components.MailboxLoadFailedView
 import co.inboxies.app.ui.home.HomeShellView
 import co.inboxies.app.ui.splash.SplashScreenView
 import kotlinx.coroutines.delay
@@ -143,12 +144,17 @@ private fun RootViewContent(
     onThemeModeChange: (ThemeMode) -> Unit,
 ) {
     val colors = inboxiesColors()
+    val mailboxesLoadFailed by appModel.mailboxesLoadFailed.collectAsState()
 
     Surface(modifier = Modifier.fillMaxSize(), color = colors.background) {
         AnimatedContent(
             targetState = when {
                 !isAuthenticated -> "sign_in"
-                !isMailboxLoading && !hasMailboxes -> "onboarding"
+                hasMailboxes -> "home"
+                // The first load failed with nothing cached: error + Retry, never onboarding.
+                mailboxesLoadFailed -> "load_failed"
+                // Only a successful empty list from the server means "set one up".
+                !isMailboxLoading -> "onboarding"
                 else -> "home"
             },
             transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -157,6 +163,7 @@ private fun RootViewContent(
             when (state) {
                 "sign_in" -> SignInView(isShowingSplash = isShowingSplash)
                 "onboarding" -> MailboxOnboardingView()
+                "load_failed" -> MailboxLoadFailedView(appModel = appModel, auth = auth)
                 else -> HomeShellView(
                     auth = auth,
                     appModel = appModel,

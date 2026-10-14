@@ -5,7 +5,6 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.ksp)
 }
 
 val googleServicesFile = file("google-services.json")
@@ -32,6 +31,30 @@ android {
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$webClientId\"")
     }
 
+    // Upload-key signing for release, from Gradle properties (~/.gradle/gradle.properties
+    // or -P) or env vars. Applied only when all four are set, so local / CI builds without
+    // secrets still assemble an unsigned release APK/AAB. See android/README.md.
+    fun signingValue(name: String): String? =
+        (project.findProperty(name) as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv(name)?.takeIf { it.isNotBlank() }
+    val uploadStoreFile = signingValue("INBOXIES_UPLOAD_STORE_FILE")
+    val uploadStorePassword = signingValue("INBOXIES_UPLOAD_STORE_PASSWORD")
+    val uploadKeyAlias = signingValue("INBOXIES_UPLOAD_KEY_ALIAS")
+    val uploadKeyPassword = signingValue("INBOXIES_UPLOAD_KEY_PASSWORD")
+    val hasUploadKey = listOf(uploadStoreFile, uploadStorePassword, uploadKeyAlias, uploadKeyPassword)
+        .all { it != null }
+
+    signingConfigs {
+        if (hasUploadKey) {
+            create("release") {
+                storeFile = file(uploadStoreFile!!)
+                storePassword = uploadStorePassword
+                keyAlias = uploadKeyAlias
+                keyPassword = uploadKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             buildConfigField("String", "DEFAULT_API_BASE", "\"https://inboxies.email\"")
@@ -39,7 +62,9 @@ android {
         }
         release {
             buildConfigField("String", "DEFAULT_API_BASE", "\"https://inboxies.email\"")
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            if (hasUploadKey) signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -74,7 +99,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.lifecycle.process)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -88,10 +113,6 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
-
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.autofill)

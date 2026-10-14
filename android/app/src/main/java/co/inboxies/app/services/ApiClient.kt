@@ -286,7 +286,7 @@ class ApiClient private constructor() {
         }
     }
 
-    private fun buildUrl(path: String, query: Map<String, String> = emptyMap()): String {
+    internal fun buildUrl(path: String, query: Map<String, String> = emptyMap()): String {
         val base = AppConfig.apiBaseURL
         val uri = try {
             URI(base)
@@ -1310,7 +1310,7 @@ class ApiClient private constructor() {
         method = "DELETE",
     )
 
-    private fun pathEncode(value: String): String =
+    internal fun pathEncode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
     private fun urlEncode(value: String): String =
