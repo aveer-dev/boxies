@@ -82,3 +82,8 @@ export interface FaqGroup extends Sourced { id: string; title: string; items: Fa
 
 // `meta` replaces the computed answer count (Billing: "on Pricing", Contact: "—").
 export interface SupportTopic extends Sourced { id: string; title: string; href: string; description: string; group?: string; meta?: string }
+
+// /legal: documents of numbered clauses. A clause's `id` is its anchor
+// (/legal#privacy-ai); `claim` wraps it for check-claims like any other copy.
+export interface LegalClause extends Sourced { id: string; title: string; body: Block[]; claim?: Claim; hidden?: boolean }
+export interface LegalDoc extends Sourced { id: string; title: string; meta?: string; lead?: string; clauses: LegalClause[] }
