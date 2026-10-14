@@ -49,5 +49,16 @@ export interface Env extends Cloudflare.Env {
 	STRIPE_SECRET_KEY?: string;
 	/** Stripe Webhook Secret for validating checkout.session.completed signatures. */
 	STRIPE_WEBHOOK_SECRET?: string;
+	/** Better Auth signing secret (32+ random bytes). `AUTH_DB` comes from wrangler.jsonc. */
+	BETTER_AUTH_SECRET?: string;
+	/** "true" mounts Better Auth at /api/auth/*. Off until the cutover. */
+	BETTER_AUTH_ENABLED?: string;
+	/** Extra Google client ids (iOS, Android) accepted alongside GOOGLE_CLIENT_ID, comma-separated. */
+	GOOGLE_EXTRA_CLIENT_IDS?: string;
+	GOOGLE_CLIENT_SECRET?: string;
+	/** Apple web sign-in secret; native iOS sign-in only needs the bundle id. */
+	APPLE_CLIENT_SECRET?: string;
+	/** iOS bundle id, the `aud` of native Apple ID tokens (defaults to APPLE_CLIENT_ID). */
+	APPLE_APP_BUNDLE_ID?: string;
 }
 
