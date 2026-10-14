@@ -150,7 +150,7 @@ struct SettingsSheetView: View {
                         }
                         Button("Cancel", role: .cancel) {}
                     } message: {
-                        Text("Mailboxes only you own are permanently deleted with all their mail. Mailboxes shared with others stay for them; you are just removed. This cannot be undone.")
+                        Text("Mailboxes where you're the only owner are deleted with all their mail, for everyone who uses them. Mailboxes with another owner stay; you just lose access. This can't be undone.")
                     }
                 } header: {
                     Text("Account")

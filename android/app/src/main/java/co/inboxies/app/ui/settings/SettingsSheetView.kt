@@ -728,8 +728,8 @@ private fun DeleteAccountDialog(
                     color = colors.ink,
                 )
                 Text(
-                    "Mailboxes you are the only owner of — and all of their mail — are deleted. " +
-                        "Mailboxes shared with other owners stay with them; you just lose access. " +
+                    "Mailboxes where you're the only owner are deleted with all their mail, " +
+                        "for everyone who uses them. Mailboxes with another owner stay; you just lose access. " +
                         "This can't be undone.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
