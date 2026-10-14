@@ -91,7 +91,8 @@ const SignupDomainBody = z.object({
 		),
 	password: z.string().min(10, "Password must be at least 10 characters").max(200),
 	displayName: z.string().trim().max(200).optional(),
-	backupEmail: z.string().trim().email("Please provide a valid backup email address").optional(),
+	// Domain owners must have one: billing and renewal notices go there.
+	backupEmail: z.string().trim().email("Please provide a valid backup email address"),
 });
 
 /** The secret domain-claim TXT values are derived from. */

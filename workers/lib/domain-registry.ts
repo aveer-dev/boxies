@@ -54,6 +54,8 @@ export interface DomainBillingInfo {
 	serviceEndsAt?: string;
 	/** The subscription ended: mailboxes on the domain are read-only. */
 	serviceEndedAt?: string;
+	/** When Stripe charges next (60 days before the registration it pays for expires). */
+	nextChargeAt?: string;
 	/** Reminder emails already sent for the current end of service, by key. */
 	remindersSent?: string[];
 	/** Annual price parts, reused when the owner renews. */

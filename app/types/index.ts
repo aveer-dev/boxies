@@ -251,6 +251,11 @@ export interface DomainService {
 	/** The caller is an owner/admin of the domain (only those can renew). */
 	canManage?: boolean;
 	billed?: boolean;
+	/** In service: the next yearly charge (60 days before the registration expires). */
+	nextChargeAt?: string;
+	nextChargeUsd?: number;
+	/** Ended: when the mail on the domain is deleted (30 days after the name is released). */
+	purgeAt?: string;
 }
 
 export interface RenewDomainResponse {

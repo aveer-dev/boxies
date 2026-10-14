@@ -723,6 +723,7 @@ const api = {
 		username?: string;
 		password?: string;
 		displayName?: string;
+		backupEmail?: string;
 		client?: "web" | "ios" | "android";
 		returnUrl?: string;
 	}) =>
@@ -738,6 +739,10 @@ const api = {
 
 	getDomainService: (domain: string) =>
 		get<DomainService>(`/api/v1/billing/domains/${encodeURIComponent(domain)}/service`),
+
+	/** Stripe's billing portal for the domain's subscription (card, invoices, cancel). */
+	openBillingPortal: (domain: string) =>
+		post<{ url: string }>(`/api/v1/billing/domains/${encodeURIComponent(domain)}/portal`),
 
 	/** Keep a subscription that is set to end, or start a new one for an ended domain. */
 	renewDomain: (domain: string) =>

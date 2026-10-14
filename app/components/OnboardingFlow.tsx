@@ -250,6 +250,8 @@ export function OnboardingFlow({
 				username: customUsername.trim().toLowerCase() || "admin",
 				password: customPassword,
 				displayName: customName.trim() || undefined,
+				// Domain owners need a recovery email for billing and renewal notices.
+				backupEmail: customBackupEmail.trim() || undefined,
 				client: "web",
 			});
 

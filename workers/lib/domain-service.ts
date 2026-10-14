@@ -26,6 +26,7 @@ import * as schema from "../auth/schema";
 import { getOwnedRegistration, setDomainAutoRenew } from "./cloudflare-registrar";
 import { getDomainMetadata, saveDomainMetadata, type DomainMetadata } from "./domain-registry";
 import { alertOps } from "./ops-alert";
+import { canCallStripeFor, stripeRequest } from "./stripe";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -34,6 +35,19 @@ export const REGISTRAR_RENEWAL_GRACE_DAYS = 40;
 
 /** Cloudflare Registrar tries auto-renew about this long before expiry. */
 export const REGISTRAR_AUTO_RENEW_LEAD_DAYS = 30;
+
+/**
+ * The customer is charged this long before the registration expires: 30 days
+ * ahead of the registrar's auto-renew, so a failed card has a month of retries
+ * and auto-renew can be switched off before the operator pays.
+ */
+export const RENEWAL_CHARGE_LEAD_DAYS = 60;
+
+/** Days after expiry until Cloudflare releases a lapsed domain (40 grace + 30 redemption + 5 pending delete). */
+export const REGISTRAR_RELEASE_DAYS = 75;
+
+/** Mail on a released domain is kept this long, then deleted. */
+export const RETENTION_AFTER_RELEASE_DAYS = 30;
 
 export type DomainServiceStatus = "active" | "ending" | "ended";
 
@@ -53,10 +67,24 @@ export interface DomainServiceSummary {
 	daysLeftToRenew?: number;
 	/** A renewal (or resuming the subscription) is possible right now. */
 	canRenew: boolean;
+	/** In service: when the next yearly charge happens, and how much. */
+	nextChargeAt?: string;
+	nextChargeUsd?: number;
+	/** Ended, registrar-managed: when the mail on it is deleted (30 days after the name is released). */
+	purgeAt?: string;
 }
 
 export function isRegistrarManaged(meta: Pick<DomainMetadata, "registration">): boolean {
 	return meta.registration?.provider === "cloudflare_registrar";
+}
+
+/** When the mail on an ended, registrar-managed domain is deleted. */
+export function purgeDate(meta: Pick<DomainMetadata, "registration">): Date | undefined {
+	const expiresAt = meta.registration?.expiresAt;
+	if (!isRegistrarManaged(meta) || !expiresAt) return undefined;
+	const expiry = Date.parse(expiresAt);
+	if (Number.isNaN(expiry)) return undefined;
+	return new Date(expiry + (REGISTRAR_RELEASE_DAYS + RETENTION_AFTER_RELEASE_DAYS) * DAY_MS);
 }
 
 /** Last moment the domain can be renewed at the normal price. */
@@ -88,6 +116,12 @@ export function summarizeDomainService(meta: DomainMetadata, now = new Date()): 
 		daysLeftToRenew: renewBy
 			? Math.max(0, Math.ceil((renewBy.getTime() - now.getTime()) / DAY_MS))
 			: undefined,
+		nextChargeAt: status === "active" ? billing?.nextChargeAt : undefined,
+		nextChargeUsd:
+			status === "active" && billing?.nextChargeAt && billing.domainFeeUsd !== undefined && billing.platformFeeUsd !== undefined
+				? Math.round((billing.domainFeeUsd + billing.platformFeeUsd) * 100) / 100
+				: undefined,
+		purgeAt: ended ? purgeDate(meta)?.toISOString() : undefined,
 		// A domain moved out of Inboxies (offboarding) can't come back this way.
 		canRenew:
 			Boolean(billing) &&
@@ -248,4 +282,45 @@ export function needsManualRegistrarRenewal(meta: DomainMetadata, now = new Date
 	if (!isRegistrarManaged(meta) || !meta.registration?.expiresAt) return false;
 	const expiry = Date.parse(meta.registration.expiresAt);
 	return !Number.isNaN(expiry) && expiry - now.getTime() < REGISTRAR_AUTO_RENEW_LEAD_DAYS * DAY_MS;
+}
+
+/**
+ * Move the next yearly charge to 60 days before `coveredUntil`, the end of the
+ * registration year the latest payment covers, so the customer pays before the
+ * registrar renews. In Stripe that's `trial_end` with no proration on the
+ * subscription: no charge until then, the full yearly price on that date, and
+ * yearly from there. Best effort (ops are told); the caller saves `meta`.
+ */
+export async function scheduleRenewalCharge(
+	env: Env,
+	meta: DomainMetadata,
+	coveredUntil: Date,
+	now = new Date(),
+): Promise<void> {
+	const billing = meta.billing;
+	if (!billing) return;
+	const chargeAt = new Date(coveredUntil.getTime() - RENEWAL_CHARGE_LEAD_DAYS * DAY_MS);
+	// Too close to move: the subscription's own cycle stands.
+	if (chargeAt.getTime() - now.getTime() < 2 * DAY_MS) return;
+
+	if (billing.subscriptionId && canCallStripeFor(env, billing.checkoutSessionId)) {
+		try {
+			await stripeRequest(
+				env,
+				"POST",
+				`/subscriptions/${encodeURIComponent(billing.subscriptionId)}`,
+				new URLSearchParams({ trial_end: String(Math.floor(chargeAt.getTime() / 1000)), proration_behavior: "none" }),
+			);
+		} catch (e) {
+			await alertOps(
+				env,
+				`Move ${meta.domain}'s next charge by hand`,
+				`Couldn't move subscription ${billing.subscriptionId} to charge on ${chargeAt.toISOString()} ` +
+					`(60 days before the registration it pays for expires): ${(e as Error).message || e}. ` +
+					"Set its trial end to that date with no proration in the Stripe dashboard.",
+			);
+			return;
+		}
+	}
+	meta.billing = { ...billing, nextChargeAt: chargeAt.toISOString() };
 }

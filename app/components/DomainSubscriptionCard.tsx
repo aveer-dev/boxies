@@ -2,9 +2,11 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { Button, useKumoToastManager } from "@cloudflare/kumo";
 import { CheckCircleIcon, HourglassIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDomainService } from "~/queries/billing";
+import api, { ApiError } from "~/services/api";
 import { formatServiceDate, RenewButton, serviceMessage } from "./ServiceBanner";
 
 /**
@@ -36,11 +38,20 @@ export function DomainSubscriptionCard({ domain, justRenewed }: { domain: string
 		) : (
 			<CheckCircleIcon size={18} weight="fill" className="shrink-0 text-emerald-500" />
 		);
+	const nextCharge =
+		service.nextChargeAt &&
+		`Next charge${service.nextChargeUsd !== undefined ? ` of $${service.nextChargeUsd.toFixed(2)}` : ""} on ${formatServiceDate(service.nextChargeAt)}.`;
 	const detail =
 		service.status === "active"
-			? service.registrarManaged && service.registrationExpiresAt
-				? `Subscription active. The domain registration renews on ${formatServiceDate(service.registrationExpiresAt)}.`
-				: "Subscription active."
+			? [
+					"Subscription active.",
+					nextCharge,
+					service.registrarManaged && service.registrationExpiresAt
+						? `The domain registration renews before ${formatServiceDate(service.registrationExpiresAt)}.`
+						: undefined,
+				]
+					.filter(Boolean)
+					.join(" ")
 			: serviceMessage(service);
 
 	return (
@@ -52,7 +63,37 @@ export function DomainSubscriptionCard({ domain, justRenewed }: { domain: string
 					{justRenewed && service.status === "ended" ? "Finishing your renewal…" : detail}
 				</p>
 			</div>
+			{service.canManage && service.status !== "ended" && <ManageBillingButton domain={service.domain} />}
 			<RenewButton service={service} />
 		</div>
+	);
+}
+
+/** Stripe's billing portal: change the card, see invoices, cancel. */
+function ManageBillingButton({ domain }: { domain: string }) {
+	const toastManager = useKumoToastManager();
+	const [opening, setOpening] = useState(false);
+	return (
+		<Button
+			variant="secondary"
+			size="sm"
+			loading={opening}
+			onClick={async () => {
+				setOpening(true);
+				try {
+					const { url } = await api.openBillingPortal(domain);
+					window.location.href = url;
+				} catch (e) {
+					setOpening(false);
+					toastManager.add({
+						title: "Couldn't open billing settings",
+						description: e instanceof ApiError ? e.message : "Try again in a moment.",
+						variant: "error",
+					});
+				}
+			}}
+		>
+			Manage billing
+		</Button>
 	);
 }

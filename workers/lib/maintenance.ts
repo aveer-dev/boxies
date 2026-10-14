@@ -13,8 +13,9 @@
  * - Expired sessions are deleted through Better Auth (their device tokens
  *   go with them), and so are expired codes and reset links.
  * - Expired mailbox/domain exports are deleted from R2.
- * - Domains whose subscription is ending or ended get their due reminder
- *   emails (see service-reminders.ts).
+ * - Billed domains get their due emails (charge notices, end of service,
+ *   renewal countdown), and released domains past their 30-day retention have
+ *   their mail deleted (see service-reminders.ts, domain-purge.ts).
  *
  * Each step is independent: one failing doesn't stop the others.
  */
@@ -41,6 +42,7 @@ export type MaintenanceReport = {
 	sessionsDeleted: number;
 	exportsDeleted: number;
 	serviceReminders: string[];
+	domainsPurged: string[];
 	errors: string[];
 };
 
@@ -61,6 +63,7 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		sessionsDeleted: 0,
 		exportsDeleted: 0,
 		serviceReminders: [],
+		domainsPurged: [],
 		errors: [],
 	};
 	const db = authDb(env.AUTH_DB);
@@ -127,7 +130,9 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 	});
 
 	await step(report, "service reminders", async () => {
-		report.serviceReminders = await sendServiceReminders(env, now);
+		const { reminded, purged } = await sendServiceReminders(env, now);
+		report.serviceReminders = reminded;
+		report.domainsPurged = purged;
 	});
 
 	await step(report, "exports", async () => {

@@ -21,9 +21,10 @@ export function serviceMessage(service: DomainService): string {
 	}
 	const base = `The subscription for ${domain} ended. Mail is read-only.`;
 	if (!service.canRenew) {
-		return service.renewBy
-			? `${domain} can no longer be renewed. You can still read and export your mail.`
-			: base;
+		if (!service.renewBy) return base;
+		return service.purgeAt
+			? `${domain} can no longer be renewed. Your mail is deleted on ${formatServiceDate(service.purgeAt)}; export it before then.`
+			: `${domain} can no longer be renewed. You can still read and export your mail.`;
 	}
 	if (service.renewBy) {
 		const days = service.daysLeftToRenew ?? 0;

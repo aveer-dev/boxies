@@ -29,7 +29,9 @@ import {
 	mailboxRowStatements,
 } from "../auth/mailboxes";
 import * as schema from "../auth/schema";
-import { findUserByEmail, findUserById } from "../auth/users";
+import { anyRecoveryEmail, findUserByEmail, findUserById } from "../auth/users";
+import { sendSystemEmail, codeEmail } from "../auth/mail";
+import { issueOtp } from "../auth/otp";
 import { CloudflareApiError, ensureFullEmailDns, ensureZone } from "./cloudflare-client";
 import {
 	computeDomainPricing,
@@ -53,6 +55,7 @@ import {
 import {
 	endDomainService,
 	needsManualRegistrarRenewal,
+	scheduleRenewalCharge,
 	refreshRegistration,
 	restoreDomainService,
 	setAutoRenewBestEffort,
@@ -104,6 +107,9 @@ export interface BillingSessionRecord {
 	 * Stripe, and deleted once the account exists or the checkout ends.
 	 */
 	passwordHash?: string;
+	/** The owner's recovery email from checkout; attached (unverified, with a code) once the owner exists. */
+	backupEmail?: string;
+	recoveryEmailStartedAt?: string;
 	/** The owner's mailbox storage is seeded; a retry must not seed it again. */
 	mailboxInitializedAt?: string;
 	zoneId?: string;
@@ -151,6 +157,8 @@ export interface WebhookOutcome {
 	status: 200 | 400 | 409 | 502;
 	body: Record<string, unknown>;
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Fulfillment can never succeed for this checkout; refund it. */
 class TerminalFulfillmentError extends Error {}
@@ -329,6 +337,13 @@ async function provision(
 		await saveBillingSession(env.BUCKET, record);
 	}
 
+	// The owner's recovery email from checkout, unless they already have one.
+	if (ownerUserId && record.backupEmail && !record.recoveryEmailStartedAt) {
+		await startRecoveryEmail(env, db, ownerUserId, record.backupEmail);
+		record.recoveryEmailStartedAt = new Date().toISOString();
+		await saveBillingSession(env.BUCKET, record);
+	}
+
 	// 4. Ownership row (a retry finds it already there).
 	await db
 		.insert(schema.domain)
@@ -377,7 +392,12 @@ async function provision(
 		createdAt: existing?.createdAt ?? now,
 		updatedAt: now,
 	};
+	// The next charge lands 60 days before this registration expires, ahead of the registrar.
+	if (!existing?.billing?.nextChargeAt && registration.expiresAt) {
+		await scheduleRenewalCharge(env, domainMetadata, new Date(registration.expiresAt));
+	}
 	await saveDomainMetadata(env.BUCKET, domainMetadata);
+	await watchDomain(env, domain);
 
 	// 6. Done: the password hash has served its purpose.
 	record.status = "ready";
@@ -631,11 +651,17 @@ export async function fulfillRenewal(env: Env, session: StripeCheckoutSession, n
 				renewedAt: stamp,
 				updatedAt: stamp,
 			};
+			// This payment covers the registration year after the current expiry (auto-renew
+			// or ops renew it); the next charge comes 60 days before that year ends.
+			if (meta.registration?.expiresAt && meta.registration.provider === "cloudflare_registrar") {
+				await scheduleRenewalCharge(env, meta, new Date(Date.parse(meta.registration.expiresAt) + 365 * DAY_MS), now);
+			}
 		}
 		// Safe to repeat: a retry after a crash finishes the D1 side.
 		await restoreDomainService(env, meta, now);
 		await indexCustomer(env, session, domain);
-		await unwatchDomain(env, domain);
+		// Watched while billed: the charge notice before each renewal.
+		await watchDomain(env, domain);
 
 		if (needsManualRegistrarRenewal(meta, now) && !record.opsAlertedAt) {
 			await alertOps(
@@ -763,6 +789,8 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 	const ended = Boolean(billing.serviceEndedAt);
 	const cancelled = Boolean(billing.canceledAt);
 	let serviceChange: "ending" | "resumed" | "ended" | "restored" | null = null;
+	let renewalPaid = false;
+	let renewalFailed = false;
 	const setStatus = (status: string, force = false) => {
 		if (!force && stale) return;
 		billing.status = status;
@@ -771,14 +799,23 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 
 	switch (type) {
 		case "invoice.paid":
-		case "invoice.payment_succeeded":
+		case "invoice.payment_succeeded": {
 			billing.lastPaidAt = now;
 			billing.pastDueSince = undefined;
 			setStatus("active");
+			// The paid period ends at the next charge.
+			const periodEnd = obj.lines?.data?.[0]?.period?.end;
+			if (typeof periodEnd === "number" && periodEnd * 1000 > Date.now()) {
+				billing.nextChargeAt = new Date(periodEnd * 1000).toISOString();
+			}
 			// An unpaid subscription that gets paid is back (a cancelled one can't be).
 			if (!stale && ended && !cancelled) serviceChange = "restored";
+			else if (!ended && !billing.cancelAtPeriodEnd) renewalPaid = true;
 			break;
+		}
 		case "invoice.payment_failed":
+			// First failure of this charge: stop the registrar renewing until it's paid, and say so.
+			if (!billing.pastDueSince && !ended) renewalFailed = true;
 			billing.pastDueSince ??= now;
 			setStatus("past_due");
 			break;
@@ -798,6 +835,10 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 			const wasEnding = Boolean(billing.cancelAtPeriodEnd);
 			billing.cancelAtPeriodEnd = ending;
 			billing.serviceEndsAt = ending ? scheduledEnd(obj) : undefined;
+			if (!ending) {
+				const next = nextChargeOf(obj);
+				if (next) billing.nextChargeAt = next;
+			}
 			if (ending && !wasEnding) serviceChange = "ending";
 			if (!ending && wasEnding) serviceChange = "resumed";
 			break;
@@ -840,7 +881,8 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 		await refreshRegistration(env, meta);
 		await setAutoRenewBestEffort(env, meta, false);
 	}
-	if (serviceChange === "resumed") await setAutoRenewBestEffort(env, meta, true);
+	if (serviceChange === "resumed" || renewalPaid) await setAutoRenewBestEffort(env, meta, true);
+	if (renewalFailed) await setAutoRenewBestEffort(env, meta, false);
 	if (type.startsWith("invoice.paid") || type === "invoice.payment_succeeded") await refreshRegistration(env, meta);
 	await saveDomainMetadata(env.BUCKET, meta);
 
@@ -851,9 +893,22 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 			console.error(`[billing] reminder for ${domain} failed (the hourly run retries):`, (e as Error).message || e),
 		);
 	}
-	if (serviceChange === "resumed") await unwatchDomain(env, domain);
+	if (renewalFailed) {
+		await sendReminder(env, meta, summarizeDomainService(meta), { kind: "payment-failed" }).catch((e) =>
+			console.error(`[billing] payment-failed notice for ${domain} failed:`, (e as Error).message || e),
+		);
+	}
 
 	return { status: 200, body: { received: true, domain, type, billingStatus: billing.status } };
+}
+
+/** When a live subscription charges next: the trial end it was moved to, or its period end. */
+function nextChargeOf(sub: Record<string, any>): string | undefined {
+	const ts =
+		sub.status === "trialing" && typeof sub.trial_end === "number"
+			? sub.trial_end
+			: (sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end);
+	return typeof ts === "number" && ts * 1000 > Date.now() ? new Date(ts * 1000).toISOString() : undefined;
 }
 
 /** Statuses of a subscription that is collecting again. */
@@ -869,4 +924,20 @@ function scheduledEnd(sub: Record<string, any>): string | undefined {
 	if (!sub.cancel_at_period_end) return undefined;
 	// From basil on, the period lives on the subscription items.
 	return toIso(sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end);
+}
+
+/**
+ * Give a new domain owner the recovery email they entered at checkout, as an
+ * unverified address with a code to confirm it. An existing one is kept.
+ */
+async function startRecoveryEmail(env: Env, db: AuthDb, userId: string, email: string): Promise<void> {
+	if (await anyRecoveryEmail(db, userId)) return;
+	await db.insert(schema.recoveryEmail).values({ userId, email, verifiedAt: null }).onConflictDoNothing();
+	const otp = await issueOtp(db, "recovery-email", userId, email);
+	if (!otp.ok) return;
+	await sendSystemEmail(env, {
+		to: email,
+		subject: "Your Inboxies verification code",
+		...codeEmail({ purposeLine: "Confirm this address as your Inboxies recovery email.", code: otp.code }),
+	});
 }

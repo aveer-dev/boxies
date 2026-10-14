@@ -53,6 +53,7 @@ import {
 	verificationRequiredBody,
 } from "../lib/domain-verification";
 import { isDomainSuspended, serviceEndedError } from "../lib/domain-service";
+import { anyRecoveryEmail } from "../auth/users";
 
 /** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
 function canSkipDomainVerification(env: Env): boolean {
@@ -135,6 +136,13 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 	app.post("/api/v1/admin/domains", async (c) => {
 		const principal = c.get("principal");
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		// Domain owners need a recovery email outside Inboxies for domain and billing notices.
+		if (!(await anyRecoveryEmail(authDb(c.env.AUTH_DB), principal.userId))) {
+			return c.json(
+				{ error: "Add a recovery email in Settings before connecting a domain", code: "recovery_email_required" },
+				400,
+			);
+		}
 
 		const parsed = z
 			.object({

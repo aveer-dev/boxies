@@ -384,7 +384,7 @@ async function runTests() {
 	// ---------------------------------------------------------
 	console.log("\n3. Testing POST /api/v1/billing/create-domain-checkout...");
 
-	const ownerLogin = { username: "founder", password: "SuperSecretPassword123!" };
+	const ownerLogin = { username: "founder", password: "SuperSecretPassword123!", backupEmail: "owner@personal.test" };
 	const postCheckout = (body, envToUse = env) =>
 		apiApp.request(
 			"/api/v1/billing/create-domain-checkout",
@@ -408,7 +408,7 @@ async function runTests() {
 		domain: "my-novel-company.com",
 		username: "founder",
 		displayName: "Alex Founder",
-		password: "SuperSecretPassword123!",
+		password: "SuperSecretPassword123!", backupEmail: "owner@personal.test",
 		client: "ios",
 	});
 	// Mock session creation (without Stripe key) in local dev
@@ -435,7 +435,7 @@ async function runTests() {
 
 	// The domain is held: a second buyer can't start paying for it.
 	const secondBuyerRes = await withDevRuntime(() =>
-		postCheckout({ domain: "my-novel-company.com", username: "other", password: "AnotherPassword123!" }),
+		postCheckout({ domain: "my-novel-company.com", username: "other", password: "AnotherPassword123!", backupEmail: "owner@personal.test" }),
 	);
 	assert.equal(secondBuyerRes.status, 409, "a held domain can't be checked out twice");
 
@@ -471,7 +471,7 @@ async function runTests() {
 				body: JSON.stringify({
 					domain: "my-live-company.com",
 					username: "founder",
-					password: "SuperSecretPassword123!",
+					password: "SuperSecretPassword123!", backupEmail: "owner@personal.test",
 					client: "ios",
 				}),
 			},
@@ -841,7 +841,7 @@ async function runTests() {
 				body: JSON.stringify({
 					domain: "dev-mock-purchase.com",
 					username: "admin",
-					password: "DevMockPassword123!",
+					password: "DevMockPassword123!", backupEmail: "owner@personal.test",
 					client: "android",
 				}),
 			},
@@ -1197,7 +1197,7 @@ async function runTests() {
 
 	// 8e. Another buyer holds the domain: the paid session is refunded, the hold stays theirs.
 	const contestedCheckout = await withDevRuntime(() =>
-		postCheckout({ domain: "contested-domain.com", username: "first", password: "FirstBuyerPassword1!" }),
+		postCheckout({ domain: "contested-domain.com", username: "first", password: "FirstBuyerPassword1!", backupEmail: "owner@personal.test" }),
 	);
 	assert.equal(contestedCheckout.status, 200);
 	const firstBuyerSession = (await contestedCheckout.json()).sessionId;
@@ -1373,12 +1373,12 @@ async function runTests() {
 	}
 
 	// 8k. Same buyer starting over (closed the Stripe tab) gets their hold back; others don't.
-	const startFirst = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "MyOwnPassword123!" }));
+	const startFirst = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "MyOwnPassword123!", backupEmail: "owner@personal.test" }));
 	assert.equal(startFirst.status, 200);
 	const firstSession = (await startFirst.json()).sessionId;
-	const stranger = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "NotMyPassword1234!" }));
+	const stranger = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "NotMyPassword1234!", backupEmail: "owner@personal.test" }));
 	assert.equal(stranger.status, 409, "the wrong password can't take the hold");
-	const startOver = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "MyOwnPassword123!" }));
+	const startOver = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "MyOwnPassword123!", backupEmail: "owner@personal.test" }));
 	assert.equal(startOver.status, 200, "the same buyer can start over");
 	const secondSession = (await startOver.json()).sessionId;
 	assert.equal((await reservationOf("start-over.com")).session_id, secondSession);

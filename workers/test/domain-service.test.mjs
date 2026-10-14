@@ -308,9 +308,9 @@ let inviteToken = "";
 {
 	email.sent.length = 0;
 	// renewBy = expiry (+20d) + 40d = +60d. At +31d: 29 days left → the 30-day reminder.
-	assert.deepEqual(await sendServiceReminders(env, new Date(NOW + 31 * DAY)), ["acme.com"]);
+	assert.deepEqual((await sendServiceReminders(env, new Date(NOW + 31 * DAY))).reminded, ["acme.com"]);
 	assert.equal(sentTo("ada@personal.test", /29 days left to renew/).length, 1);
-	assert.deepEqual(await sendServiceReminders(env, new Date(NOW + 31 * DAY + 3600_000)), [], "each reminder goes out once");
+	assert.deepEqual((await sendServiceReminders(env, new Date(NOW + 31 * DAY + 3600_000))).reminded, [], "each reminder goes out once");
 
 	await sendServiceReminders(env, new Date(NOW + 59.5 * DAY));
 	assert.equal(sentTo("ada@personal.test", /1 day left to renew/).length, 1, "only the most urgent when several are due");
@@ -318,7 +318,8 @@ let inviteToken = "";
 
 	await sendServiceReminders(env, new Date(NOW + 61 * DAY));
 	assert.equal(sentTo("ada@personal.test", /can no longer be renewed/).length, 1);
-	assert.equal(await bucket.get("billing/service-watch/acme.com"), null, "nothing left to say");
+	assert.match(sentTo("ada@personal.test", /can no longer be renewed/)[0].text, /deleted/, "it says when the mail is deleted");
+	assert.ok(await bucket.get("billing/service-watch/acme.com"), "still watched: the mail is deleted 30 days after release");
 }
 
 // ── Renewing brings it back ─────────────────────────────────────
@@ -493,6 +494,137 @@ let inviteToken = "";
 	assert.equal(summary.canRenew, true, "not wrongly past the deadline");
 	assert.equal(sentTo("ada@personal.test", /can no longer be renewed/).length, 0);
 	assert.equal(sentTo("ada@personal.test", /service has ended/).length, 1);
+}
+
+// ── Domain owners need a recovery email ─────────────────────────
+
+{
+	const checkout = (body, principal) =>
+		request(env, { method: "POST", path: "/api/v1/billing/create-domain-checkout", principal, body });
+	const signup = { domain: "zeta.com", username: "zed", password: "ZetaPassword123!" };
+	const missing = await checkout(signup);
+	assert.equal(missing.status, 400);
+	assert.equal(missing.payload.code, "recovery_email_required");
+	const onDomain = await checkout({ ...signup, backupEmail: "zed@zeta.com" });
+	assert.equal(onDomain.payload.code, "recovery_email_required", "not an address on the domain being bought");
+	// A signed-in buyer without one is asked for it; ada already has one.
+	const bobBuys = await checkout({ domain: "bob-shop.com" }, principalFor(bob));
+	assert.equal(bobBuys.payload.code, "recovery_email_required");
+	assert.equal((await checkout({ domain: "ada-shop.com" }, asAda)).status, 200);
+	const bobClaims = await request(env, { method: "POST", path: "/api/v1/admin/domains", principal: principalFor(bob), body: { domain: "bob-own.com" } });
+	assert.equal(bobClaims.payload.code, "recovery_email_required", "connecting your own domain needs one too");
+	const byo = await request(env, {
+		method: "POST",
+		path: "/api/v1/auth/signup-domain",
+		body: { domain: "own-domain.com", username: "me", password: "OwnDomainPassword1!" },
+	});
+	assert.equal(byo.status, 400, "signing up with your own domain needs one");
+
+	// Paid: the new owner gets it as an (unverified) recovery email, with a code to confirm it.
+	const created = await checkout({ ...signup, backupEmail: "Zed@Personal.test" });
+	assert.equal(created.status, 200);
+	email.sent.length = 0;
+	const paid = await request(env, {
+		method: "POST",
+		path: "/api/v1/billing/stripe-webhook",
+		body: { type: "checkout.session.completed", data: { object: { id: created.payload.sessionId, metadata: { domain: "zeta.com", username: "zed" } } } },
+	});
+	assert.equal(paid.payload.status, "provisioned");
+	const zed = await db.select().from(schema.user).where(eq(schema.user.email, "zed@zeta.com")).get();
+	const recovery = await db.select().from(schema.recoveryEmail).where(eq(schema.recoveryEmail.userId, zed.id)).get();
+	assert.equal(recovery.email, "zed@personal.test");
+	assert.equal(recovery.verifiedAt, null);
+	assert.equal(sentTo("zed@personal.test", /verification code/).length, 1);
+
+	// ── Charged 60 days before the registration expires, with a notice first ──
+	const zeta = await getDomainMetadata(bucket, "zeta.com");
+	assert.equal(
+		zeta.billing.nextChargeAt,
+		iso(Date.parse(zeta.registration.expiresAt) - 60 * DAY),
+		"next charge 60 days before expiry (30 ahead of the registrar)",
+	);
+	assert.ok(await bucket.get("billing/service-watch/zeta.com"), "billed domains are watched for charge notices");
+	const chargeAt = Date.parse(zeta.billing.nextChargeAt);
+	assert.ok(!(await sendServiceReminders(env, new Date(chargeAt - 8 * DAY))).reminded.includes("zeta.com"), "not yet");
+	await sendServiceReminders(env, new Date(chargeAt - 6.5 * DAY));
+	const notice = sentTo("zed@personal.test", /renewal of \$20\.00/);
+	assert.equal(notice.length, 1, "a week ahead: what, how much, when");
+	assert.match(notice[0].text, /Manage billing/);
+	await sendServiceReminders(env, new Date(chargeAt - 6 * DAY));
+	assert.equal(sentTo("zed@personal.test", /renewal of/).length, 1, "once per charge");
+}
+
+// The Stripe side of moving the charge: trial_end, no proration.
+{
+	const { scheduleRenewalCharge } = await import("../lib/domain-service.ts");
+	const meta = {
+		domain: "moved.com",
+		billing: { provider: "stripe", checkoutSessionId: "cs_live_moved", subscriptionId: "sub_moved", status: "active", updatedAt: iso(NOW) },
+	};
+	const coveredUntil = new Date(NOW + 365 * DAY);
+	await withFakeStripe({ "POST /v1/subscriptions/sub_moved": { body: { id: "sub_moved", status: "trialing" } } }, async (calls) => {
+		await scheduleRenewalCharge({ ...env, STRIPE_SECRET_KEY: "sk_test" }, meta, coveredUntil, new Date(NOW));
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0].body.get("trial_end"), String(Math.floor((NOW + 305 * DAY) / 1000)));
+		assert.equal(calls[0].body.get("proration_behavior"), "none", "no credit or extra charge for the moved date");
+	});
+	assert.equal(meta.billing.nextChargeAt, iso(NOW + 305 * DAY));
+}
+
+// A failed renewal charge: auto-renew off until it's paid, and the owner is told once.
+{
+	await billedDomain("theta.com", { expiresInDays: 55, billing: { nextChargeAt: iso(NOW - DAY) } });
+	await indexCustomer("theta.com");
+	email.sent.length = 0;
+	const t = Math.floor(NOW / 1000);
+	const failed = { customer: "cus_theta.com", subscription: "sub_theta.com", billing_reason: "subscription_cycle" };
+	await webhook("invoice.payment_failed", failed, t);
+	let meta = await getDomainMetadata(bucket, "theta.com");
+	assert.equal(meta.registration.autoRenew, false, "the registrar won't renew an unpaid domain");
+	assert.equal(sentTo("ada@personal.test", /payment didn't go through/).length, 1);
+	await webhook("invoice.payment_failed", failed, t + 60);
+	assert.equal(sentTo("ada@personal.test", /payment didn't go through/).length, 1, "Stripe's retries don't each email");
+
+	const nextYear = Math.floor((NOW + 365 * DAY) / 1000);
+	await webhook("invoice.paid", { ...failed, lines: { data: [{ period: { end: nextYear } }] } }, t + 120);
+	meta = await getDomainMetadata(bucket, "theta.com");
+	assert.equal(meta.registration.autoRenew, true, "paid: the registrar may renew");
+	assert.equal(meta.billing.nextChargeAt, iso(nextYear * 1000));
+	assert.equal(meta.billing.pastDueSince, undefined);
+}
+
+// ── 30 days after the name is released, the mail is deleted ─────
+
+{
+	const ended = (domain, expiresInDays, remindersSent) =>
+		billedDomain(domain, { expiresInDays, billing: { serviceEndedAt: iso(NOW - 90 * DAY), status: "canceled", remindersSent } });
+
+	// Warned first: released 75 days after expiry, deleted 30 days after that.
+	await ended("lambda.com", -100, ["ended", "renew-closed"]);
+	await db.update(schema.domain).set({ status: "suspended" }).where(eq(schema.domain.domain, "lambda.com"));
+	await bucket.put("billing/service-watch/lambda.com", "1");
+	email.sent.length = 0;
+	await sendServiceReminders(env, new Date(NOW));
+	assert.equal(sentTo("ada@personal.test", /lambda\.com: your mail will be deleted in 5 days/).length, 1);
+
+	await ended("kappa.com", -110, ["ended", "renew-closed", "purge-7d", "purge-1d"]);
+	await db.update(schema.domain).set({ status: "suspended" }).where(eq(schema.domain.domain, "kappa.com"));
+	await addMailbox(db, bucket, "ada@kappa.com", { owners: ["ada"] });
+	await bucket.put("billing/service-watch/kappa.com", "1");
+	const { purged } = await sendServiceReminders(env, new Date(NOW));
+	assert.ok(purged.includes("kappa.com"));
+	assert.ok(env.MAILBOX.calls.some(([id, method]) => id === "ada@kappa.com" && method === "purgeMailbox"), "the mail is deleted");
+	assert.equal(await db.select().from(schema.mailbox).where(eq(schema.mailbox.id, "ada@kappa.com")).get(), undefined);
+	assert.equal(await domainStatus("kappa.com"), undefined, "the domain row is gone, so the name can be added again");
+	assert.equal(await getDomainMetadata(bucket, "kappa.com"), null);
+	assert.equal(await bucket.get("billing/service-watch/kappa.com"), null);
+	assert.ok(await db.select().from(schema.user).where(eq(schema.user.id, "ada")).get(), "accounts stay");
+
+	// A domain renewed in time is never touched.
+	await billedDomain("mu.com", { expiresInDays: -110 });
+	await bucket.put("billing/service-watch/mu.com", "1");
+	assert.ok(!(await sendServiceReminders(env, new Date(NOW))).purged.includes("mu.com"));
+	assert.ok(await getDomainMetadata(bucket, "mu.com"));
 }
 
 console.log("domain-service: ok");

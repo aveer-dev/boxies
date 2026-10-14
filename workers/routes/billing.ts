@@ -18,7 +18,8 @@ import { unwatchDomain } from "../lib/service-reminders";
 import { hashPassword, verifyPassword } from "../lib/password-auth";
 import { authDb, isDomainAdmin, listMailboxesForUser } from "../auth/authz";
 import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
-import { createSessionForUser, findUserById, sessionCookieHeader } from "../auth/users";
+import { isHostedEmailDomain } from "../auth/hooks";
+import { anyRecoveryEmail, createSessionForUser, findUserById, sessionCookieHeader } from "../auth/users";
 import { isDevRuntime } from "../lib/dev-runtime";
 import {
 	applyLifecycleEvent,
@@ -74,6 +75,8 @@ const CreateDomainCheckoutBody = z.object({
 		.optional(),
 	password: z.string().min(10).max(200).optional(),
 	displayName: z.string().trim().max(200).optional(),
+	/** The owner's recovery email (an address outside Inboxies). */
+	backupEmail: z.string().trim().email("Enter a valid recovery email").optional(),
 	client: z.enum(["web", "ios", "android"]).optional(),
 	returnUrl: z.string().url().optional(),
 });
@@ -217,6 +220,7 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 		}
 
 		const { domain: rawDomain, username, password, displayName, client } = parsed.data;
+		const backupEmail = parsed.data.backupEmail?.toLowerCase();
 		const domain = rawDomain.toLowerCase();
 		if (await isRateLimited(c.env, "checkout", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
 
@@ -226,6 +230,21 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 		if (!callerUserId && !(username && password)) {
 			return c.json(
 				{ error: "Sign in, or choose a username and password for the domain's first mailbox" },
+				400,
+			);
+		}
+
+		// Domain owners need a recovery email outside Inboxies: billing, renewal and
+		// end-of-service notices go there (their mailbox may be the thing that stops).
+		if (backupEmail && (backupEmail.endsWith(`@${domain}`) || (await isHostedEmailDomain(c.env, backupEmail)))) {
+			return c.json({ error: "Use a recovery email outside Inboxies", code: "recovery_email_required" }, 400);
+		}
+		if (!backupEmail && !(callerUserId && (await anyRecoveryEmail(authDb(c.env.AUTH_DB), callerUserId)))) {
+			return c.json(
+				{
+					error: "Add a recovery email: domain owners need one for billing and renewal notices",
+					code: "recovery_email_required",
+				},
 				400,
 			);
 		}
@@ -353,6 +372,7 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 			ownerUserId: callerUserId,
 			client,
 			passwordHash: password ? await hashPassword(password) : undefined,
+			backupEmail,
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -576,6 +596,37 @@ window.location.href = ${JSON.stringify(deepLink)};
 			updatedAt: now,
 		});
 		return c.json({ checkoutUrl: session.url, sessionId: session.id, pricing });
+	});
+
+	/**
+	 * Stripe's customer portal for the domain's subscription: change the card,
+	 * see invoices, cancel. Domain admins only. Needs the portal configured in
+	 * the Stripe dashboard (Settings → Billing → Customer portal).
+	 */
+	app.post("/api/v1/billing/domains/:domain/portal", async (c) => {
+		const domain = c.req.param("domain").toLowerCase().trim();
+		const userId = c.get("principal")?.userId;
+		if (!userId) return c.json({ error: "Unauthorized" }, 401);
+		if (!(await isDomainAdmin(authDb(c.env.AUTH_DB), userId, domain))) return c.json({ error: "Forbidden" }, 403);
+		const meta = await getDomainMetadata(c.env.BUCKET, domain);
+		const customerId = meta?.billing?.customerId;
+		if (!customerId) return c.json({ error: "This domain has no Inboxies subscription" }, 404);
+		if (!c.env.STRIPE_SECRET_KEY) return c.json({ error: "Billing is not configured" }, 503);
+		const appBase = c.env.APP_BASE_URL || "https://inboxies.email";
+		try {
+			const session = await stripeRequest<{ url: string }>(
+				c.env,
+				"POST",
+				"/billing_portal/sessions",
+				new URLSearchParams({
+					customer: customerId,
+					return_url: `${appBase}/admin?tab=dns&domain=${encodeURIComponent(domain)}`,
+				}),
+			);
+			return c.json({ url: session.url });
+		} catch (e) {
+			return c.json({ error: e instanceof Error ? e.message : "Could not open billing settings" }, 502);
+		}
 	});
 
 	/** Back from a renewal checkout: into the app (closing the in-app browser), or to the domain page. */

@@ -4,19 +4,23 @@
 
 /**
  * Emails about a domain's service ending, sent to the people who can renew it
- * (the domain's owner and admins) at their verified recovery emails. Before the
+ * (the domain's owner and admins) at their recovery emails. Before the
  * service ends their address on the domain still works, so it's included too.
  *
  * Schedule:
+ * - in service: 7 days before each yearly charge (and when a charge fails);
  * - ending: when the subscription is set to end, then 7 days and 1 day before;
  * - ended: when it ends; for a domain we registered, then 30, 14, 7, 3 and 1
- *   days before the renewal deadline, and once when the deadline has passed.
+ *   days before the renewal deadline, once when the deadline has passed, and
+ *   7 days and 1 day before the mail is deleted (30 days after the name is
+ *   released).
  *
  * Each reminder is sent once (keys in `billing.remindersSent`). If several are
  * due at once (e.g. the cron was down), only the most urgent goes out.
  *
- * Domains that are ending or ended sit on a small R2 watch list, so the hourly
- * cron doesn't read every domain.
+ * Billed domains sit on a small R2 watch list, so the hourly cron doesn't read
+ * every domain. The cron also deletes the mail of a released domain once its
+ * retention runs out (see domain-purge.ts).
  */
 
 import { eq } from "drizzle-orm";
@@ -24,15 +28,18 @@ import type { Env } from "../types";
 import { authDb } from "../auth/authz";
 import { appBaseUrl, sendSystemEmail } from "../auth/mail";
 import * as schema from "../auth/schema";
-import { findUserById, verifiedRecoveryEmail } from "../auth/users";
+import { anyRecoveryEmail, findUserById } from "../auth/users";
 import { getDomainMetadata, saveDomainMetadata, type DomainMetadata } from "./domain-registry";
 import { escapeHtml } from "./email-helpers";
 import { refreshRegistration, summarizeDomainService, type DomainServiceSummary } from "./domain-service";
+import { purgeExpiredDomain } from "./domain-purge";
 import { listAllR2Objects } from "./r2-list";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ENDING_THRESHOLDS_DAYS = [7, 1];
 const RENEW_THRESHOLDS_DAYS = [30, 14, 7, 3, 1];
+const PURGE_THRESHOLDS_DAYS = [7, 1];
+const CHARGE_NOTICE_DAYS = 7;
 
 const WATCH_PREFIX = "billing/service-watch/";
 
@@ -45,10 +52,13 @@ export function unwatchDomain(env: Env, domain: string): Promise<void> {
 }
 
 export type ReminderKind =
+	| { kind: "charge"; daysLeft: number }
+	| { kind: "payment-failed" }
 	| { kind: "ending"; daysLeft?: number }
 	| { kind: "ended" }
 	| { kind: "renew"; daysLeft: number }
 	| { kind: "renew-closed" }
+	| { kind: "purge"; daysLeft: number }
 	| { kind: "restored" };
 
 /**
@@ -74,6 +84,14 @@ export function dueReminder(
 		};
 	};
 
+	if (summary.status === "active") {
+		if (!summary.nextChargeAt) return null;
+		const left = Date.parse(summary.nextChargeAt) - now.getTime();
+		const key = `charge-${summary.nextChargeAt.slice(0, 10)}`;
+		if (left <= 0 || left > CHARGE_NOTICE_DAYS * DAY_MS || done.has(key)) return null;
+		return { reminder: { kind: "charge", daysLeft: Math.ceil(left / DAY_MS) }, keys: [key] };
+	}
+
 	if (summary.status === "ending") {
 		const soon = firstDue("ending", summary.endsAt, ENDING_THRESHOLDS_DAYS);
 		if (!done.has("ending")) {
@@ -86,7 +104,9 @@ export function dueReminder(
 	if (summary.status === "ended") {
 		const closed = summary.renewBy !== undefined && Date.parse(summary.renewBy) <= now.getTime();
 		if (closed) {
-			return done.has("renew-closed") ? null : { reminder: { kind: "renew-closed" }, keys: ["ended", "renew-closed"] };
+			if (!done.has("renew-closed")) return { reminder: { kind: "renew-closed" }, keys: ["ended", "renew-closed"] };
+			const purge = firstDue("purge", summary.purgeAt, PURGE_THRESHOLDS_DAYS);
+			return purge ? { reminder: { kind: "purge", daysLeft: purge.daysLeft }, keys: purge.keys } : null;
 		}
 		if (!done.has("ended")) {
 			const soon = firstDue("renew", summary.renewBy, RENEW_THRESHOLDS_DAYS);
@@ -129,6 +149,35 @@ export function reminderContent(
 		: "You can renew at any time to restore it.";
 
 	switch (reminder.kind) {
+		case "charge": {
+			const amount = summary.nextChargeUsd !== undefined ? `$${summary.nextChargeUsd.toFixed(2)}` : "your yearly price";
+			return {
+				subject: `${domain}: your Inboxies renewal of ${amount} on ${formatDate(summary.nextChargeAt)}`,
+				paragraphs: [
+					`On ${formatDate(summary.nextChargeAt)} we'll charge ${amount} to your card on file to renew your Inboxies subscription for ${domain} for another year.`,
+					summary.registrarManaged && summary.registrationExpiresAt
+						? `It pays for the domain registration, which renews before it expires on ${formatDate(summary.registrationExpiresAt)}, and for the Inboxies service.`
+						: "It pays for the Inboxies service for the year ahead.",
+					"To update your card or cancel, open your billing settings.",
+				],
+				cta: "Manage billing",
+			};
+		}
+		case "payment-failed": {
+			const by = summary.registrationExpiresAt
+				? new Date(Date.parse(summary.registrationExpiresAt) - 30 * DAY_MS).toISOString()
+				: undefined;
+			return {
+				subject: `${domain}: your renewal payment didn't go through`,
+				paragraphs: [
+					`We couldn't charge your card to renew your Inboxies subscription for ${domain}. We'll try again over the coming weeks.`,
+					by
+						? `Update your card before ${formatDate(by)} so the domain registration renews. If the payment doesn't go through, the service ends and ${domain} lapses.`
+						: "Update your card so the service keeps running. If the payment doesn't go through, the service ends.",
+				],
+				cta: "Update payment",
+			};
+		}
 		case "ending": {
 			const when = summary.endsAt ? formatDate(summary.endsAt) : "the end of the billing period";
 			const subject =
@@ -168,8 +217,21 @@ export function reminderContent(
 				subject: `${domain} can no longer be renewed`,
 				paragraphs: [
 					`The renewal window for ${domain} closed on ${formatDate(summary.renewBy)}. The domain registration has lapsed and will be released.`,
-					"Your mail on it stays readable in Inboxies, and you can still export it. If you need the domain back, contact support soon: a restore may still be possible for a short time, at extra cost.",
+					summary.purgeAt
+						? `Your mail on it stays readable in Inboxies until ${formatDate(summary.purgeAt)}, then it's deleted. Export it before then.`
+						: "Your mail on it stays readable in Inboxies, and you can still export it.",
+					"If you need the domain back, contact support soon: a restore may still be possible for a short time, at extra cost.",
 				],
+				cta: summary.purgeAt ? "Export my mail" : undefined,
+			};
+		case "purge":
+			return {
+				subject: `${domain}: your mail will be deleted in ${plural(reminder.daysLeft, "day")}`,
+				paragraphs: [
+					`The subscription for ${domain} ended and the domain has been released. On ${formatDate(summary.purgeAt)} we'll delete the mail on it for good.`,
+					"Export it before then if you want to keep it.",
+				],
+				cta: "Export my mail",
 			};
 		case "restored":
 			return {
@@ -203,8 +265,10 @@ export async function reminderRecipients(env: Env, meta: DomainMetadata, include
 
 	const to = new Set<string>();
 	for (const userId of userIds) {
-		const recovery = await verifiedRecoveryEmail(db, userId);
-		if (recovery) to.add(recovery.toLowerCase());
+		// Unverified counts here: owners give it at sign-up and may never confirm it,
+		// and a billing notice carries nothing sensitive.
+		const recovery = await anyRecoveryEmail(db, userId);
+		if (recovery) to.add(recovery.email.toLowerCase());
 		const user = await findUserById(db, userId);
 		const login = user?.email?.toLowerCase();
 		if (login && (includeOnDomain || !login.endsWith(`@${meta.domain}`))) to.add(login);
@@ -245,7 +309,9 @@ export async function remindIfDue(env: Env, domain: string, now = new Date()): P
 		await unwatchDomain(env, domain);
 		return null;
 	}
-	if (summarizeDomainService(meta, now).status === "active") {
+	const initial = summarizeDomainService(meta, now);
+	// In service with no charge date to announce: nothing to watch for.
+	if (initial.status === "active" && !initial.nextChargeAt) {
 		await unwatchDomain(env, domain);
 		return null;
 	}
@@ -272,24 +338,33 @@ export async function remindIfDue(env: Env, domain: string, now = new Date()): P
 		};
 		await saveDomainMetadata(env.BUCKET, latest);
 	}
-	// Nothing more to say after a closed window, or after the notice for a
-	// domain we didn't register (no countdown).
-	if (due.reminder.kind === "renew-closed" || (due.reminder.kind === "ended" && !summary.renewBy)) {
-		await unwatchDomain(env, domain);
-	}
+	// After the notice for a domain we didn't register there's no countdown (and no deletion).
+	if (due.reminder.kind === "ended" && !summary.renewBy) await unwatchDomain(env, domain);
 	return due.keys.join(",");
 }
 
-/** Hourly: reminders for every watched domain. Returns the domains that got one. */
-export async function sendServiceReminders(env: Env, now = new Date()): Promise<string[]> {
-	const sentTo: string[] = [];
+/**
+ * Hourly: for every watched domain, delete the mail of a released domain whose
+ * retention ran out, else send whatever reminder is due.
+ */
+export async function sendServiceReminders(
+	env: Env,
+	now = new Date(),
+): Promise<{ reminded: string[]; purged: string[] }> {
+	const reminded: string[] = [];
+	const purged: string[] = [];
 	for (const obj of await listAllR2Objects(env.BUCKET, WATCH_PREFIX)) {
 		const domain = obj.key.slice(WATCH_PREFIX.length);
 		try {
-			if (await remindIfDue(env, domain, now)) sentTo.push(domain);
+			if (await purgeExpiredDomain(env, domain, now)) {
+				purged.push(domain);
+				await unwatchDomain(env, domain);
+			} else if (await remindIfDue(env, domain, now)) {
+				reminded.push(domain);
+			}
 		} catch (e) {
 			console.error(`[ServiceReminders] ${domain} failed:`, (e as Error).message || e);
 		}
 	}
-	return sentTo;
+	return { reminded, purged };
 }
