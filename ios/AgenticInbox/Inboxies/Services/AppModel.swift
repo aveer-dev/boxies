@@ -1152,17 +1152,17 @@ final class AppModel {
         let sessionToken = auth.token
         let revokesOnServer = auth.persistsSession && !isDebugPreview
         // The extension loses its token now, even if the server calls fail.
-        let autofillSessionId = revokesOnServer ? AutofillSession.forget() : nil
+        let autofillToken = revokesOnServer ? AutofillSession.forget() : nil
         Task {
             await PushNotificationManager.shared.unregisterAllAndWait(
                 mailboxIds: mailboxIds,
                 sessionToken: sessionToken
             )
-            guard revokesOnServer, let sessionToken else { return }
-            if let autofillSessionId {
-                try? await APIClient.shared.revokeSession(id: autofillSessionId, sessionToken: sessionToken)
+            guard revokesOnServer else { return }
+            await AutofillSession.end(autofillToken)
+            if let sessionToken {
+                try? await APIClient.shared.logout(sessionToken: sessionToken)
             }
-            try? await APIClient.shared.logout(sessionToken: sessionToken)
         }
         reset()
         auth.signOut()

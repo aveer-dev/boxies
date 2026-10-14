@@ -125,6 +125,10 @@ struct RootView: View {
             // Ignore a late rejection of a session the user already replaced.
             guard let rejected = note.userInfo?["token"] as? String,
                   rejected == auth.token else { return }
+            // AutoFill's session outlives this one; end it so the next account
+            // to sign in here can't inherit it.
+            let autofillToken = AutofillSession.forget()
+            Task { await AutofillSession.end(autofillToken) }
             app.reset()
             auth.signOut()
             auth.errorMessage = APIError.sessionExpired.errorDescription

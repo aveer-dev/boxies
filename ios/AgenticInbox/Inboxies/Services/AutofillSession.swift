@@ -25,7 +25,7 @@ enum AutofillSession {
            await isAlive(token) {
             return
         }
-        let previousId = storedId
+        let previousToken = SharedSession.token
         do {
             let session = try await APIClient.shared.createAutofillSession()
             SharedSession.setToken(session.token)
@@ -34,8 +34,8 @@ enum AutofillSession {
                 ?? ISO8601DateFormatter().date(from: session.expiresAt) {
                 UserDefaults.standard.set(expires, forKey: expiresAtKey)
             }
-            if let previousId, previousId != session.id {
-                try? await APIClient.shared.revokeSession(id: previousId)
+            if let previousToken, previousToken != session.token {
+                await end(previousToken)
             }
         } catch {
             // AutoFill shows "Open Inboxies and sign in" until the next try.
@@ -54,15 +54,22 @@ enum AutofillSession {
         }
     }
 
-    /// Drops the extension's token locally and returns the session id, so
-    /// sign-out can revoke it on the server with the outgoing app session.
+    /// Drops the extension's session locally and returns its token, so the
+    /// caller can end it on the server with `end(_:)`.
     @discardableResult
     static func forget() -> String? {
-        let id = storedId
+        let token = SharedSession.token
         SharedSession.setToken(nil)
         UserDefaults.standard.removeObject(forKey: idKey)
         UserDefaults.standard.removeObject(forKey: expiresAtKey)
-        return id
+        return token
+    }
+
+    /// Ends a forgotten extension session on the server. The session logs
+    /// itself out, so this works even when the app's own session is gone.
+    nonisolated static func end(_ token: String?) async {
+        guard let token else { return }
+        try? await APIClient.shared.logout(sessionToken: token)
     }
 }
 
