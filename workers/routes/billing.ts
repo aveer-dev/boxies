@@ -13,7 +13,7 @@ import {
 	type DomainPricingBreakdown,
 } from "../lib/cloudflare-registrar";
 import { getDomainMetadata, saveDomainMetadata } from "../lib/domain-registry";
-import { summarizeDomainService } from "../lib/domain-service";
+import { refreshRegistration, setAutoRenewBestEffort, summarizeDomainService } from "../lib/domain-service";
 import { unwatchDomain } from "../lib/service-reminders";
 import { hashPassword, verifyPassword } from "../lib/password-auth";
 import { authDb, isDomainAdmin, listMailboxesForUser } from "../auth/authz";
@@ -498,7 +498,8 @@ window.location.href = ${JSON.stringify(deepLink)};
 
 		const meta = await getDomainMetadata(c.env.BUCKET, domain);
 		if (!meta?.billing) return c.json({ error: "This domain has no Inboxies subscription" }, 404);
-		const summary = summarizeDomainService(meta);
+		// The deadline depends on the registration's current expiry.
+		const summary = summarizeDomainService(await refreshRegistration(c.env, meta));
 		if (!summary.canRenew) {
 			return c.json(
 				{
@@ -521,11 +522,14 @@ window.location.href = ${JSON.stringify(deepLink)};
 			} else if (!isDevRuntime()) {
 				return c.json({ error: "Billing is not configured" }, 503);
 			}
+			// Re-read: the webhook for the same change may have landed meanwhile.
+			const latest = (await getDomainMetadata(c.env.BUCKET, domain)) ?? meta;
 			const now = new Date().toISOString();
-			meta.billing = { ...meta.billing, cancelAtPeriodEnd: false, serviceEndsAt: undefined, remindersSent: [], updatedAt: now };
-			await saveDomainMetadata(c.env.BUCKET, { ...meta, updatedAt: now });
+			latest.billing = { ...latest.billing!, cancelAtPeriodEnd: false, serviceEndsAt: undefined, remindersSent: [], updatedAt: now };
+			await setAutoRenewBestEffort(c.env, latest, true);
+			await saveDomainMetadata(c.env.BUCKET, { ...latest, updatedAt: now });
 			await unwatchDomain(c.env, domain);
-			return c.json({ resumed: true, service: summarizeDomainService(meta) });
+			return c.json({ resumed: true, service: summarizeDomainService(latest) });
 		}
 
 		// Ended: a new annual subscription, at the price the domain was bought for.

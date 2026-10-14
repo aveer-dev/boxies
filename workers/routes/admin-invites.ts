@@ -583,6 +583,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const db = authDb(c.env.AUTH_DB);
 		const invite = await findInviteByToken(db, c.req.param("token"));
 		if (!invite || inviteStatus(invite) !== "pending") return c.json({ error: "Invite is not active" }, 410);
+		// Invites sent before the domain's subscription ended can't be used to join.
+		const ended = await serviceEndedErrorForMailbox(c.env, invite.mailboxId);
+		if (ended) return c.json(ended, 403);
 		if (
 			(await isRateLimited(c.env, "otp-send", clientIp(c.req.raw.headers))) ||
 			(await isRateLimited(c.env, "otp-send", invite.inviteeEmail))
@@ -610,6 +613,8 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (!invite) return c.json({ error: "Invite not found" }, 404);
 		if (inviteStatus(invite) !== "pending") return c.json({ error: "Invite is not active" }, 410);
 		if (!(await mailboxExists(db, invite.mailboxId))) return c.json({ error: "Mailbox not found" }, 404);
+		const ended = await serviceEndedErrorForMailbox(c.env, invite.mailboxId);
+		if (ended) return c.json(ended, 403);
 		const body = AcceptInviteBody.parse(await c.req.json().catch(() => ({})));
 		if (await isRateLimited(c.env, "otp-verify", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
 

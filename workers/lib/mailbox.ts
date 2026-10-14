@@ -42,7 +42,7 @@ export const requireMailbox = createMiddleware<MailboxContext>(async (c, next) =
 
 	// A domain whose subscription ended is read-only: reading, export and
 	// read/star flags still work; anything that sends or changes config doesn't.
-	if (!isReadOnlySafe(c.req.method, c.req.path)) {
+	if (!isReadOnlySafe(c.req.method, c.req.path, c.get("principal")?.userId)) {
 		const ended = await serviceEndedErrorForMailbox(c.env, authz.mailboxId);
 		if (ended) return c.json(ended, 403);
 	}
@@ -68,10 +68,17 @@ const READ_ONLY_WRITES: Array<[method: string, path: RegExp]> = [
 	["DELETE", /^\/device-token\/[^/]+$/],
 ];
 
-export function isReadOnlySafe(method: string, path: string): boolean {
+export function isReadOnlySafe(method: string, path: string, userId?: string): boolean {
 	const m = method.toUpperCase();
 	if (m === "GET" || m === "HEAD" || m === "OPTIONS") return true;
 	// The part after /api/v1/mailboxes/<id>, however the id was spelled in the URL.
 	const rest = path.replace(/^\/api\/v1\/mailboxes\/[^/]+/, "");
+	// Leaving a mailbox is an account action: members may always remove themselves.
+	const leaving = /^\/members\/([^/]+)$/.exec(rest);
+	if (m === "DELETE" && leaving && userId) {
+		try {
+			if (decodeURIComponent(leaving[1]) === userId) return true;
+		} catch {}
+	}
 	return READ_ONLY_WRITES.some(([wm, re]) => wm === m && re.test(rest));
 }

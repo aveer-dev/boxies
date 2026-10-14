@@ -23,8 +23,9 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { Env } from "../types";
 import { authDb } from "../auth/authz";
 import * as schema from "../auth/schema";
-import { setDomainAutoRenew } from "./cloudflare-registrar";
+import { getOwnedRegistration, setDomainAutoRenew } from "./cloudflare-registrar";
 import { getDomainMetadata, saveDomainMetadata, type DomainMetadata } from "./domain-registry";
+import { alertOps } from "./ops-alert";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -87,7 +88,11 @@ export function summarizeDomainService(meta: DomainMetadata, now = new Date()): 
 		daysLeftToRenew: renewBy
 			? Math.max(0, Math.ceil((renewBy.getTime() - now.getTime()) / DAY_MS))
 			: undefined,
-		canRenew: Boolean(billing) && (status === "ending" || (status === "ended" && beforeDeadline)),
+		// A domain moved out of Inboxies (offboarding) can't come back this way.
+		canRenew:
+			Boolean(billing) &&
+			meta.status !== "offboarding" &&
+			(status === "ending" || (status === "ended" && beforeDeadline)),
 	};
 }
 
@@ -143,23 +148,55 @@ export async function serviceEndedErrorForMailbox(env: Env, mailboxId: string) {
 }
 
 /**
+ * Bring the stored registration in line with the registrar: the expiry moves a
+ * year on every auto-renewal, and deadlines are computed from it. Best effort.
+ */
+export async function refreshRegistration(env: Env, meta: DomainMetadata): Promise<DomainMetadata> {
+	if (!isRegistrarManaged(meta)) return meta;
+	try {
+		const current = await getOwnedRegistration(env, meta.domain);
+		if (current) {
+			meta.registration = { ...meta.registration!, expiresAt: current.expiresAt, autoRenew: current.autoRenew };
+		}
+	} catch (e) {
+		console.warn(`[DomainService] couldn't refresh the registration for ${meta.domain}:`, (e as Error).message || e);
+	}
+	return meta;
+}
+
+/**
+ * Turn registrar auto-renew on or off. A failure (e.g. the registration
+ * already lapsed) mustn't wedge the billing state, so ops are told instead.
+ */
+export async function setAutoRenewBestEffort(env: Env, meta: DomainMetadata, on: boolean): Promise<void> {
+	if (!isRegistrarManaged(meta) || meta.registration?.autoRenew === on) return;
+	try {
+		await setDomainAutoRenew(env, meta.domain, on);
+		meta.registration = { ...meta.registration!, autoRenew: on };
+	} catch (e) {
+		await alertOps(
+			env,
+			`Turn registrar auto-renew ${on ? "on" : "off"} for ${meta.domain} by hand`,
+			`Inboxies couldn't change auto-renew for ${meta.domain}: ${(e as Error).message || e}. ` +
+				(on
+					? "Its subscription is active again, so the registration should renew."
+					: "Nobody pays for it any more, so it shouldn't renew."),
+		);
+	}
+}
+
+/**
  * The subscription ended: freeze the domain. Registrar auto-renew goes off so
  * the operator isn't billed to renew a domain nobody pays for. Safe to repeat.
- * Returns the updated metadata.
+ * R2 is written before D1: inbound mail and the summary read R2, the gates D1.
+ * A domain already moved out (decommissioned/offboarding) is left alone.
  */
 export async function endDomainService(env: Env, domain: string, now = new Date()): Promise<DomainMetadata | null> {
 	const meta = await getDomainMetadata(env.BUCKET, domain);
-	if (!meta?.billing) return meta;
+	if (!meta?.billing || meta.status === "offboarding") return meta;
 
-	await authDb(env.AUTH_DB)
-		.update(schema.domain)
-		.set({ status: "suspended" })
-		.where(eq(schema.domain.domain, domain));
-
-	if (isRegistrarManaged(meta) && meta.registration?.autoRenew !== false) {
-		await setDomainAutoRenew(env, domain, false);
-		meta.registration = { ...meta.registration!, autoRenew: false };
-	}
+	await refreshRegistration(env, meta);
+	await setAutoRenewBestEffort(env, meta, false);
 
 	const stamp = now.toISOString();
 	const newlyEnded = !meta.billing.serviceEndedAt;
@@ -174,20 +211,32 @@ export async function endDomainService(env: Env, domain: string, now = new Date(
 	};
 	meta.updatedAt = stamp;
 	await saveDomainMetadata(env.BUCKET, meta);
+
+	await authDb(env.AUTH_DB)
+		.update(schema.domain)
+		.set({ status: "suspended" })
+		.where(and(eq(schema.domain.domain, domain), inArray(schema.domain.status, ["active", "pending"])));
 	return meta;
 }
 
-/** Back in service (renewed or resumed): undo `endDomainService`. */
-export async function restoreDomainService(env: Env, meta: DomainMetadata): Promise<void> {
+/**
+ * Back in service (renewed, resumed, or an unpaid subscription got paid).
+ * `meta.billing` already describes the paying subscription; this clears the
+ * end of service, turns auto-renew back on and saves, R2 first then D1. Only
+ * a suspended domain is reactivated. Safe to repeat.
+ */
+export async function restoreDomainService(env: Env, meta: DomainMetadata, now = new Date()): Promise<void> {
+	if (meta.billing) {
+		meta.billing = { ...meta.billing, serviceEndedAt: undefined, remindersSent: [], updatedAt: now.toISOString() };
+	}
+	await setAutoRenewBestEffort(env, meta, true);
+	meta.updatedAt = now.toISOString();
+	await saveDomainMetadata(env.BUCKET, meta);
+
 	await authDb(env.AUTH_DB)
 		.update(schema.domain)
 		.set({ status: "active" })
-		.where(eq(schema.domain.domain, meta.domain));
-
-	if (isRegistrarManaged(meta) && meta.registration?.autoRenew === false) {
-		await setDomainAutoRenew(env, meta.domain, true);
-		meta.registration = { ...meta.registration!, autoRenew: true };
-	}
+		.where(and(eq(schema.domain.domain, meta.domain), eq(schema.domain.status, "suspended")));
 }
 
 /**

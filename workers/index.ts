@@ -72,7 +72,7 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
 import { getDomainMetadata } from "./lib/domain-registry";
-import { mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
+import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
 import { sendFcmPush } from "./lib/fcm";
 import {
@@ -368,7 +368,8 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 		mailboxResponse(c.env, db, c.var.mailboxId, c.var.mailboxRole),
 		mailboxServiceSummary(c.env, c.var.mailboxId),
 	]);
-	return c.json({ ...mailbox, service, readOnly: service?.status === "ended" });
+	// readOnly follows the same D1 status the write gates check.
+	return c.json({ ...mailbox, service, readOnly: await isMailboxSuspended(c.env, c.var.mailboxId) });
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {

@@ -27,7 +27,7 @@ import * as schema from "../auth/schema";
 import { findUserById, verifiedRecoveryEmail } from "../auth/users";
 import { getDomainMetadata, saveDomainMetadata, type DomainMetadata } from "./domain-registry";
 import { escapeHtml } from "./email-helpers";
-import { summarizeDomainService, type DomainServiceSummary } from "./domain-service";
+import { refreshRegistration, summarizeDomainService, type DomainServiceSummary } from "./domain-service";
 import { listAllR2Objects } from "./r2-list";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -241,29 +241,42 @@ export async function sendReminder(
 /** Send whatever reminder is due for `domain` now, and record it. */
 export async function remindIfDue(env: Env, domain: string, now = new Date()): Promise<string | null> {
 	const meta = await getDomainMetadata(env.BUCKET, domain);
-	if (!meta?.billing) {
+	if (!meta?.billing || meta.status === "offboarding") {
 		await unwatchDomain(env, domain);
 		return null;
 	}
+	if (summarizeDomainService(meta, now).status === "active") {
+		await unwatchDomain(env, domain);
+		return null;
+	}
+	if (!dueReminder(summarizeDomainService(meta, now), meta.billing.remindersSent ?? [], now)) return null;
+
+	// The deadline comes from the registration's expiry, which moves when it renews.
+	await refreshRegistration(env, meta);
 	const summary = summarizeDomainService(meta, now);
-	if (summary.status === "active") {
-		await unwatchDomain(env, domain);
-		return null;
-	}
 	const due = dueReminder(summary, meta.billing.remindersSent ?? [], now);
 	if (!due) return null;
 
 	const { recipients, sent } = await sendReminder(env, meta, summary, due.reminder);
 	// Every send failed: try again next hour.
 	if (recipients > 0 && sent === 0) return null;
-	meta.billing = {
-		...meta.billing,
-		remindersSent: [...new Set([...(meta.billing.remindersSent ?? []), ...due.keys])],
-		updatedAt: now.toISOString(),
-	};
-	await saveDomainMetadata(env.BUCKET, meta);
-	// After the last word on a closed renewal window there's nothing left to send.
-	if (due.reminder.kind === "renew-closed") await unwatchDomain(env, domain);
+
+	// Re-read before saving: a renewal may have landed while we were sending.
+	const latest = await getDomainMetadata(env.BUCKET, domain);
+	if (latest?.billing && summarizeDomainService(latest, now).status === summary.status) {
+		latest.registration = meta.registration;
+		latest.billing = {
+			...latest.billing,
+			remindersSent: [...new Set([...(latest.billing.remindersSent ?? []), ...due.keys])],
+			updatedAt: now.toISOString(),
+		};
+		await saveDomainMetadata(env.BUCKET, latest);
+	}
+	// Nothing more to say after a closed window, or after the notice for a
+	// domain we didn't register (no countdown).
+	if (due.reminder.kind === "renew-closed" || (due.reminder.kind === "ended" && !summary.renewBy)) {
+		await unwatchDomain(env, domain);
+	}
 	return due.keys.join(",");
 }
 
@@ -279,12 +292,4 @@ export async function sendServiceReminders(env: Env, now = new Date()): Promise<
 		}
 	}
 	return sentTo;
-}
-
-/** Tell the operator something needs a human (logged either way). */
-export async function alertOps(env: Env, subject: string, text: string): Promise<void> {
-	console.error(`[OpsAlert] ${subject}: ${text}`);
-	const to = env.OPS_ALERT_EMAIL?.trim();
-	if (!to) return;
-	await sendSystemEmail(env, { to, subject: `[Inboxies ops] ${subject}`, text, html: `<p>${escapeHtml(text)}</p>` });
 }

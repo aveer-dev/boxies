@@ -53,11 +53,14 @@ import {
 import {
 	endDomainService,
 	needsManualRegistrarRenewal,
+	refreshRegistration,
 	restoreDomainService,
+	setAutoRenewBestEffort,
 	summarizeDomainService,
 } from "./domain-service";
 import { canonicalMailboxId } from "./mailbox-routing";
-import { alertOps, remindIfDue, sendReminder, unwatchDomain, watchDomain } from "./service-reminders";
+import { alertOps } from "./ops-alert";
+import { remindIfDue, sendReminder, unwatchDomain, watchDomain } from "./service-reminders";
 import {
 	canCallStripeFor,
 	cancelSubscription,
@@ -107,6 +110,8 @@ export interface BillingSessionRecord {
 	/** Why this checkout can never be fulfilled; its payment is refunded. */
 	terminalError?: string;
 	refundIds?: string[];
+	/** Ops were already told to renew the registration by hand (renewals). */
+	opsAlertedAt?: string;
 }
 
 export function billingSessionKey(sessionId: string): string {
@@ -590,60 +595,74 @@ export async function fulfillRenewal(env: Env, session: StripeCheckoutSession, n
 	if (record.status === "refunded") return { status: 200, body: { received: true, domain, status: "refunded" } };
 	if (record.terminalError) return refundAndFail(env, db, session, record, record.terminalError);
 
-	const meta = await getDomainMetadata(env.BUCKET, domain);
-	if (!meta?.billing) return refundAndFail(env, db, session, record, "This domain is no longer with Inboxies.");
-	const subscriptionId = stripeId(session.subscription);
-
-	if (meta.billing.checkoutSessionId !== session.id) {
-		const summary = summarizeDomainService(meta, now);
-		if (summary.status !== "ended") {
-			return refundAndFail(env, db, session, record, `${domain} was already renewed.`);
-		}
-		if (summary.renewBy && now.getTime() >= Date.parse(summary.renewBy)) {
-			return refundAndFail(env, db, session, record, `The renewal window for ${domain} has closed.`);
-		}
-
-		// Back in service first (D1 status, registrar auto-renew), then the new subscription.
-		await restoreDomainService(env, meta);
-		const stamp = now.toISOString();
-		meta.billing = {
-			provider: "stripe",
-			checkoutSessionId: session.id,
-			customerId: stripeId(session.customer) ?? meta.billing.customerId,
-			subscriptionId,
-			status: "active",
-			lastPaidAt: stamp,
-			domainFeeUsd: parseFloat(session.metadata?.domainFeeUsd || String(meta.billing.domainFeeUsd ?? 10.44)),
-			platformFeeUsd: parseFloat(session.metadata?.platformFeeUsd || String(meta.billing.platformFeeUsd ?? 9.56)),
-			renewedAt: stamp,
-			updatedAt: stamp,
-		};
-		meta.status = "active";
-		meta.updatedAt = stamp;
-		await saveDomainMetadata(env.BUCKET, meta);
+	const initial = await getDomainMetadata(env.BUCKET, domain);
+	if (!initial?.billing || initial.status === "offboarding") {
+		return refundAndFail(env, db, session, record, "This domain is no longer with Inboxies.");
 	}
-	await indexCustomer(env, session, domain);
-	await unwatchDomain(env, domain);
 
-	if (needsManualRegistrarRenewal(meta, now)) {
-		await alertOps(
-			env,
-			`Renew ${domain} at the registrar by hand`,
-			`${domain} was renewed in Inboxies (checkout ${session.id}), but its registration expires ${meta.registration?.expiresAt}, ` +
-				"too late for auto-renew, and the Registrar API can't renew. Renew it in the Cloudflare dashboard " +
-				`(Domain Registration → Manage domains) before ${summarizeDomainService(meta, now).renewBy ?? "it lapses"}.`,
+	// One renewal at a time per domain: a second one paid at the same moment
+	// waits, then finds the domain back in service and is refunded.
+	const leaseEnd = new Date(now.getTime() + PROVISIONING_LEASE_MS);
+	if (!(await claimForSession(db, domain, session.id, "provisioning", leaseEnd))) {
+		return { status: 409, body: { error: "Another renewal for this domain is being processed" } };
+	}
+
+	try {
+		const meta = (await getDomainMetadata(env.BUCKET, domain)) ?? initial;
+		if (meta.billing?.checkoutSessionId !== session.id) {
+			await refreshRegistration(env, meta);
+			const summary = summarizeDomainService(meta, now);
+			if (summary.status !== "ended") {
+				return await refundAndFail(env, db, session, record, `${domain} was already renewed.`);
+			}
+			if (summary.renewBy && now.getTime() >= Date.parse(summary.renewBy)) {
+				return await refundAndFail(env, db, session, record, `The renewal window for ${domain} has closed.`);
+			}
+			const stamp = now.toISOString();
+			meta.billing = {
+				provider: "stripe",
+				checkoutSessionId: session.id,
+				customerId: stripeId(session.customer) ?? meta.billing?.customerId,
+				subscriptionId: stripeId(session.subscription),
+				status: "active",
+				lastPaidAt: stamp,
+				domainFeeUsd: parseFloat(session.metadata?.domainFeeUsd || String(meta.billing?.domainFeeUsd ?? 10.44)),
+				platformFeeUsd: parseFloat(session.metadata?.platformFeeUsd || String(meta.billing?.platformFeeUsd ?? 9.56)),
+				renewedAt: stamp,
+				updatedAt: stamp,
+			};
+		}
+		// Safe to repeat: a retry after a crash finishes the D1 side.
+		await restoreDomainService(env, meta, now);
+		await indexCustomer(env, session, domain);
+		await unwatchDomain(env, domain);
+
+		if (needsManualRegistrarRenewal(meta, now) && !record.opsAlertedAt) {
+			await alertOps(
+				env,
+				`Renew ${domain} at the registrar by hand`,
+				`${domain} was renewed in Inboxies (checkout ${session.id}), but its registration expires ${meta.registration?.expiresAt}, ` +
+					"too late for auto-renew, and the Registrar API can't renew. Renew it in the Cloudflare dashboard " +
+					`(Domain Registration → Manage domains) before ${summarizeDomainService(meta, now).renewBy ?? "it lapses"}.`,
+			);
+			record.opsAlertedAt = now.toISOString();
+		}
+
+		record.status = "ready";
+		record.error = undefined;
+		await saveBillingSession(env.BUCKET, record);
+		await releaseForSession(db, domain, session.id);
+
+		await sendReminder(env, meta, summarizeDomainService(meta, now), { kind: "restored" }).catch((e) =>
+			console.error(`[billing] renewal confirmation for ${domain} failed:`, (e as Error).message || e),
 		);
+		return { status: 200, body: { received: true, domain, status: "renewed" } };
+	} catch (e) {
+		await endProvisioningLease(db, domain, session.id).catch(() => {});
+		const msg = e instanceof Error ? e.message : "Renewal failed";
+		console.error(`[billing] renewal of ${domain} failed, Stripe will retry:`, msg);
+		return { status: 502, body: { error: `Renewal failed: ${msg}` } };
 	}
-
-	record.status = "ready";
-	record.error = undefined;
-	await saveBillingSession(env.BUCKET, record);
-
-	const summary = summarizeDomainService(meta, now);
-	await sendReminder(env, meta, summary, { kind: "restored" }).catch((e) =>
-		console.error(`[billing] renewal confirmation for ${domain} failed:`, (e as Error).message || e),
-	);
-	return { status: 200, body: { received: true, domain, status: "renewed" } };
 }
 
 // ── Subscription lifecycle ───────────────────────────────────────
@@ -738,9 +757,14 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 
 	const now = new Date().toISOString();
 	const billing: DomainBillingInfo = { ...meta.billing };
-	let serviceChange: "ending" | "resumed" | "ended" | null = null;
+	// Stripe doesn't promise order: an event older than the last status change
+	// may still record facts (refunds, disputes) but never moves the service.
+	const stale = Boolean(billing.statusEventAt && eventAt < billing.statusEventAt);
+	const ended = Boolean(billing.serviceEndedAt);
+	const cancelled = Boolean(billing.canceledAt);
+	let serviceChange: "ending" | "resumed" | "ended" | "restored" | null = null;
 	const setStatus = (status: string, force = false) => {
-		if (!force && billing.statusEventAt && eventAt < billing.statusEventAt) return;
+		if (!force && stale) return;
 		billing.status = status;
 		billing.statusEventAt = eventAt;
 	};
@@ -751,15 +775,23 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 			billing.lastPaidAt = now;
 			billing.pastDueSince = undefined;
 			setStatus("active");
+			// An unpaid subscription that gets paid is back (a cancelled one can't be).
+			if (!stale && ended && !cancelled) serviceChange = "restored";
 			break;
 		case "invoice.payment_failed":
 			billing.pastDueSince ??= now;
 			setStatus("past_due");
 			break;
 		case "customer.subscription.updated": {
+			if (stale) break;
 			if (typeof obj.status === "string") setStatus(obj.status);
 			if (ENDED_SUBSCRIPTION_STATUSES.has(obj.status)) {
-				serviceChange = "ended";
+				if (obj.status === "canceled") billing.canceledAt ??= now;
+				if (!ended) serviceChange = "ended";
+				break;
+			}
+			if (ended) {
+				if (!cancelled && LIVE_SUBSCRIPTION_STATUSES.has(obj.status)) serviceChange = "restored";
 				break;
 			}
 			const ending = Boolean(obj.cancel_at_period_end || obj.cancel_at);
@@ -773,7 +805,7 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 		case "customer.subscription.deleted":
 			setStatus("canceled", true);
 			billing.canceledAt ??= now;
-			serviceChange = "ended";
+			if (!ended) serviceChange = "ended";
 			break;
 		case "charge.refunded":
 			billing.refundedAt = now;
@@ -789,9 +821,29 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 
 	if (serviceChange === "ending" || serviceChange === "resumed") billing.remindersSent = [];
 	billing.updatedAt = now;
-	await saveDomainMetadata(env.BUCKET, { ...meta, billing, updatedAt: now });
+	meta.billing = billing;
+	meta.updatedAt = now;
 
-	// The service follows the subscription: it ends when the subscription does.
+	// The service follows the subscription.
+	if (serviceChange === "restored") {
+		await restoreDomainService(env, meta);
+		await unwatchDomain(env, domain);
+		await sendReminder(env, meta, summarizeDomainService(meta), { kind: "restored" }).catch((e) =>
+			console.error(`[billing] restored notice for ${domain} failed:`, (e as Error).message || e),
+		);
+		return { status: 200, body: { received: true, domain, type, billingStatus: billing.status, service: "restored" } };
+	}
+
+	if (serviceChange === "ending") {
+		// It's leaving: the registrar mustn't renew it in the meantime (auto-renew
+		// runs ~30 days before expiry), and the deadline needs the real expiry.
+		await refreshRegistration(env, meta);
+		await setAutoRenewBestEffort(env, meta, false);
+	}
+	if (serviceChange === "resumed") await setAutoRenewBestEffort(env, meta, true);
+	if (type.startsWith("invoice.paid") || type === "invoice.payment_succeeded") await refreshRegistration(env, meta);
+	await saveDomainMetadata(env.BUCKET, meta);
+
 	if (serviceChange === "ended") await endDomainService(env, domain);
 	if (serviceChange === "ending" || serviceChange === "ended") {
 		await watchDomain(env, domain);
@@ -803,6 +855,9 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 
 	return { status: 200, body: { received: true, domain, type, billingStatus: billing.status } };
 }
+
+/** Statuses of a subscription that is collecting again. */
+const LIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
 
 /** Subscription statuses after which Stripe won't collect again: the service ends. */
 const ENDED_SUBSCRIPTION_STATUSES = new Set(["canceled", "unpaid", "incomplete_expired"]);

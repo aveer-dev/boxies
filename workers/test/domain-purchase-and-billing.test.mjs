@@ -1270,7 +1270,7 @@ async function runTests() {
 		cancel_at_period_end: true,
 	});
 	assert.equal((await founderBilling()).status, "past_due", "an older event doesn't override a newer status");
-	assert.equal((await founderBilling()).cancelAtPeriodEnd, true);
+	assert.ok(!(await founderBilling()).cancelAtPeriodEnd, "nor does it schedule the end of service");
 
 	await lifecycle("evt_inv_paid", "invoice.paid", t0 + 20, { customer: "cus_test_founder", billing_reason: "subscription_cycle" });
 	assert.equal((await founderBilling()).status, "active");

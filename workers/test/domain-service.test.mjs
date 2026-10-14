@@ -141,6 +141,8 @@ async function withFakeStripe(routes, fn) {
 	}
 }
 
+let inviteToken = "";
+
 // ── The subscription is set to end: tell them, let them keep it ─
 
 {
@@ -160,6 +162,18 @@ async function withFakeStripe(routes, fn) {
 	assert.equal(sentTo("ada@acme.com", /ends in 5 days/).length, 1, "their address on the domain still works, so it's told too");
 	assert.equal(sentTo("bob@gmail.com", /ends in 5 days/).length, 1, "domain admins are told");
 	assert.ok(await bucket.get("billing/service-watch/acme.com"), "watched for reminders");
+
+	// An invite sent while the domain still runs (used after it ends, below).
+	const invited = await request(env, {
+		method: "POST",
+		path: "/api/v1/mailboxes/ada@acme.com/invites",
+		principal: asAda,
+		body: { inviteEmail: "carol@else.test" },
+	});
+	assert.equal(invited.status, 201);
+	inviteToken = decodeURIComponent(
+		email.sent.map((m) => m.text?.match(/\/invite\/([^\s"<]+)/)?.[1]).filter(Boolean).at(-1),
+	);
 
 	const service = await request(env, { path: "/api/v1/billing/domains/acme.com/service", principal: asAda });
 	assert.equal(service.payload.status, "ending");
@@ -207,6 +221,30 @@ async function withFakeStripe(routes, fn) {
 	assert.match(notice[0].text, /renew until/, "the notice gives the renewal deadline");
 	assert.equal(sentTo("ada@acme.com", /./).length, 0, "nothing goes to an address that can no longer receive");
 	assert.equal(sentTo("bob@gmail.com", /service has ended/).length, 1);
+
+	// A late, older "cancel scheduled" event doesn't reopen the end of service (or resend notices).
+	const before = email.sent.length;
+	await webhook(
+		"customer.subscription.updated",
+		{ id: "sub_acme.com", customer: "cus_acme.com", status: "active", cancel_at_period_end: true },
+		Math.floor(NOW / 1000) - 3600,
+	);
+	assert.equal(email.sent.length, before, "nothing re-sent");
+	assert.ok((await getDomainMetadata(bucket, "acme.com")).billing.serviceEndedAt);
+
+	// An invite sent before the end can't be used to join now.
+	const otp = await request(env, { method: "POST", path: `/api/v1/invites/${encodeURIComponent(inviteToken)}/otp` });
+	assert.equal(otp.payload.code, "service_ended");
+	const accept = await request(env, { method: "POST", path: `/api/v1/invites/${encodeURIComponent(inviteToken)}/accept`, body: {} });
+	assert.equal(accept.payload.code, "service_ended");
+
+	// Removing someone else is a change to the mailbox (bob is a domain admin, so only the freeze stops it)…
+	const kick = await request(env, { method: "DELETE", path: "/api/v1/mailboxes/ada@acme.com/members/ada", principal: principalFor(bob) });
+	assert.equal(kick.payload?.code, "service_ended");
+	// …but leaving it yourself is an account action and still works.
+	const leave = await request(env, { method: "DELETE", path: "/api/v1/mailboxes/ada@acme.com/members/bob", principal: principalFor(bob) });
+	assert.notEqual(leave.payload?.code, "service_ended");
+	assert.ok(leave.status < 300, `bob can leave (${leave.status})`);
 }
 
 // Read-only: reads and export work; sending, settings, config and AI don't.
@@ -388,6 +426,73 @@ async function withFakeStripe(routes, fn) {
 	assert.equal(nosy.status, 403);
 	const renewByStranger = await request(env, { method: "POST", path: "/api/v1/billing/domains/beta.com/renew", principal: principalFor(eve), body: {} });
 	assert.equal(renewByStranger.status, 403);
+}
+
+// ── Unpaid, then paid: the same subscription brings the domain back ─
+
+{
+	await billedDomain("delta.com", { expiresInDays: 200 });
+	await indexCustomer("delta.com");
+	const t = Math.floor(NOW / 1000);
+	await webhook("customer.subscription.updated", { id: "sub_delta.com", customer: "cus_delta.com", status: "unpaid" }, t);
+	assert.equal(await domainStatus("delta.com"), "suspended", "Stripe stopped collecting: service ends");
+	email.sent.length = 0;
+	await webhook("invoice.paid", { customer: "cus_delta.com", subscription: "sub_delta.com", billing_reason: "subscription_cycle" }, t + 60);
+	assert.equal(await domainStatus("delta.com"), "active", "paying the open invoice restores it, no second subscription");
+	const meta = await getDomainMetadata(bucket, "delta.com");
+	assert.equal(meta.billing.serviceEndedAt, undefined);
+	assert.equal(meta.registration.autoRenew, true);
+	assert.equal(sentTo("ada@personal.test", /back in service/).length, 1);
+	assert.equal(await bucket.get("billing/service-watch/delta.com"), null);
+
+	// A cancelled subscription never comes back this way.
+	await webhook("customer.subscription.deleted", { id: "sub_delta.com", customer: "cus_delta.com", status: "canceled" }, t + 120);
+	await webhook("invoice.paid", { customer: "cus_delta.com", subscription: "sub_delta.com", billing_reason: "subscription_cycle" }, t + 180);
+	assert.equal(await domainStatus("delta.com"), "suspended");
+}
+
+// ── A domain already moved out stays out ────────────────────────
+
+{
+	await billedDomain("omega.com", { expiresInDays: 200 });
+	await indexCustomer("omega.com");
+	await db.update(schema.domain).set({ status: "decommissioned" }).where(eq(schema.domain.domain, "omega.com"));
+	const offboarded = await getDomainMetadata(bucket, "omega.com");
+	await bucket.put("platform/domains/omega.com.json", JSON.stringify({ ...offboarded, status: "offboarding" }));
+	email.sent.length = 0;
+	await webhook("customer.subscription.deleted", { id: "sub_omega.com", customer: "cus_omega.com", status: "canceled" });
+	assert.equal(await domainStatus("omega.com"), "decommissioned", "not revived as suspended (which would restore admin rights)");
+	assert.equal(email.sent.length, 0, "no renewal reminders for a domain that left");
+	assert.equal(await bucket.get("billing/service-watch/omega.com"), null);
+}
+
+// ── The deadline uses the registrar's current expiry ────────────
+
+{
+	// The registrar renewed it last year; our stored expiry is a year stale.
+	const { registerDomain } = await import("../lib/cloudflare-registrar.ts");
+	const current = await registerDomain({}, "epsilon.com");
+	await billedDomain("epsilon.com", { expiresInDays: -10 });
+	await indexCustomer("epsilon.com");
+
+	// Cancellation scheduled: auto-renew goes off right away, before the registrar's own renewal run.
+	await webhook("customer.subscription.updated", {
+		id: "sub_epsilon.com",
+		customer: "cus_epsilon.com",
+		status: "active",
+		cancel_at_period_end: true,
+		cancel_at: Math.floor((NOW + 20 * DAY) / 1000),
+	});
+	assert.equal((await getDomainMetadata(bucket, "epsilon.com")).registration.autoRenew, false);
+
+	email.sent.length = 0;
+	await webhook("customer.subscription.deleted", { id: "sub_epsilon.com", customer: "cus_epsilon.com", status: "canceled" });
+	const meta = await getDomainMetadata(bucket, "epsilon.com");
+	assert.equal(meta.registration.expiresAt, current.expiresAt, "expiry refreshed from the registrar");
+	const summary = summarizeDomainService(meta);
+	assert.equal(summary.canRenew, true, "not wrongly past the deadline");
+	assert.equal(sentTo("ada@personal.test", /can no longer be renewed/).length, 0);
+	assert.equal(sentTo("ada@personal.test", /service has ended/).length, 1);
 }
 
 console.log("domain-service: ok");
