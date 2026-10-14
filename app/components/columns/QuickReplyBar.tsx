@@ -133,8 +133,8 @@ export default function QuickReplyBar({
 	};
 
 	return (
-		<div className="shrink-0 border-t border-kumo-line bg-kumo-base px-3 pt-3 pb-20">
-			<div className="rounded-lg border border-kumo-line bg-kumo-base focus-within:border-kumo-fill-hover shadow-sm">
+		<div className="shrink-0 border-t border-kumo-line bg-kumo-base px-3 pt-3 pb-[var(--dock-h)]">
+			<div className="rounded-xl border border-kumo-line bg-kumo-control transition-[border-color,box-shadow] duration-200 ease-[var(--ease-out)] focus-within:border-[var(--border-card)] focus-within:shadow-[0_0_0_3px_var(--accent-soft),0_8px_24px_rgba(0,0,0,0.06)]">
 				<div className="flex items-center justify-between gap-2 px-3 pt-2 pb-1.5 text-xs text-kumo-subtle border-b border-kumo-line">
 					<div className="flex items-center gap-1.5 min-w-0">
 						<span className="truncate">
@@ -150,11 +150,14 @@ export default function QuickReplyBar({
 					<button
 						type="button"
 						onClick={popOut}
-						className="inline-flex items-center gap-1 shrink-0 rounded px-1.5 py-0.5 hover:text-kumo-default hover:bg-kumo-tint"
+						className="group/pop inline-flex items-center gap-1 shrink-0 rounded-md px-1.5 py-0.5 hover:text-kumo-default hover:bg-kumo-tint"
 						title="Pop Out (⇧⌘O)"
 					>
 						Pop Out <span className="hidden md:inline">(⇧⌘O)</span>
-						<ArrowSquareOutIcon size={12} />
+						<ArrowSquareOutIcon
+							size={12}
+							className="transition-transform duration-200 ease-[var(--ease-out)] group-hover/pop:translate-x-px group-hover/pop:-translate-y-px"
+						/>
 					</button>
 				</div>
 				<textarea
@@ -171,10 +174,13 @@ export default function QuickReplyBar({
 					<button
 						type="button"
 						onClick={aiAssist}
-						className="inline-flex items-center gap-1.5 rounded-md border border-kumo-line px-2 py-1 text-xs text-kumo-strong hover:bg-kumo-tint"
+						className="group/ai inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-badge)] px-2.5 py-1 text-xs text-kumo-strong shadow-[inset_0_0_0_1px_var(--border-card)] hover:bg-[var(--bg-card-hover)] hover:text-kumo-default"
 						title="AI Assist (⌘J)"
 					>
-						<SparkleIcon size={13} />
+						<SparkleIcon
+							size={13}
+							className="transition-[rotate,scale,color] duration-300 ease-[var(--spring)] group-hover/ai:rotate-12 group-hover/ai:scale-110 group-hover/ai:text-kumo-brand"
+						/>
 						AI Assist
 						<kbd className="font-sans text-[10px] text-kumo-subtle">⌘J</kbd>
 					</button>

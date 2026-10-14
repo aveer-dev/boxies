@@ -14,6 +14,7 @@ import { useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
 import { OnboardingFlow } from "~/components/OnboardingFlow";
 import { folderPath } from "~/hooks/useMailNavigation";
+import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { useInboxUnreadCounts } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
@@ -35,6 +36,11 @@ export default function AccountsColumn() {
 	const unread = useInboxUnreadCounts(mailboxIds);
 	const details = useMailboxDetails(mailboxIds);
 	const [isAddOpen, setIsAddOpen] = useState(false);
+	// NavLink only marks the inbox route current; the mailbox stays current in any folder.
+	const { railRef, markRef } = useSlidingHighlight<HTMLElement>(
+		`${activeMailboxId}:${mailboxes.length}`,
+		'[data-current="true"]',
+	);
 
 	const { data: config } = useQuery({
 		queryKey: queryKeys.config,
@@ -82,9 +88,9 @@ export default function AccountsColumn() {
 					<button
 						type="button"
 						onClick={() => setIsAddOpen(true)}
-						className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint transition-colors"
+						className="group/add inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
 					>
-						<PlusIcon size={12} />
+						<PlusIcon size={12} className="transition-transform duration-200 group-hover/add:rotate-90" />
 						Add
 					</button>
 					<ColumnMenu
@@ -106,7 +112,8 @@ export default function AccountsColumn() {
 					))}
 				</div>
 			) : (
-				<nav aria-label="Mailboxes" className="px-2 space-y-0.5">
+				<nav ref={railRef} aria-label="Mailboxes" className="relative mx-2 space-y-0.5">
+					<span ref={markRef} aria-hidden className={slidingMarkClass} />
 					{mailboxes.map((mailbox) => {
 						const isActive = mailbox.id === activeMailboxId;
 						const count = unread[mailbox.id] ?? 0;
@@ -115,13 +122,14 @@ export default function AccountsColumn() {
 								key={mailbox.id}
 								to={folderPath(mailbox.id, "inbox")}
 								aria-current={isActive ? "page" : undefined}
-								className={`flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors ${
-									isActive ? "bg-kumo-fill" : "hover:bg-kumo-tint"
+								data-current={isActive}
+								className={`relative flex items-center gap-3 rounded-md px-2 py-1.5 transition-colors duration-150 ${
+									isActive ? "" : "hover:bg-kumo-tint"
 								}`}
 							>
 								<span
-									className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-										isActive ? "bg-kumo-contrast" : "bg-kumo-line"
+									className={`h-1.5 w-1.5 rounded-full shrink-0 transition-[background-color,scale] duration-300 ease-[var(--spring)] ${
+										isActive ? "bg-kumo-contrast scale-125" : "bg-[var(--border-card)]"
 									}`}
 								/>
 								<span className="min-w-0 flex-1">

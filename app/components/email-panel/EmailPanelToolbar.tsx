@@ -62,6 +62,9 @@ export default function EmailPanelToolbar({
 	onViewSource,
 	onDelete,
 }: EmailPanelToolbarProps) {
+	// Icons pop when switched on (not when a starred message first renders).
+	const [starPops, setStarPops] = useState(0);
+	const [laterPops, setLaterPops] = useState(0);
 	return (
 		<div className="flex items-center gap-1 h-11 px-2 border-b border-kumo-line shrink-0 md:px-3">
 			<Button
@@ -129,7 +132,7 @@ export default function EmailPanelToolbar({
 				</>
 			)}
 
-			<div className="h-5 w-px bg-kumo-fill mx-0.5" />
+			<div className="h-5 w-px bg-kumo-line mx-0.5" />
 
 			<Tooltip content={email.starred ? "Unstar" : "Star"} side="bottom" asChild>
 				<Button
@@ -138,12 +141,16 @@ export default function EmailPanelToolbar({
 					size="sm"
 					icon={
 						<StarIcon
+							key={starPops}
 							size={18}
 							weight={email.starred ? "fill" : "regular"}
-							className={email.starred ? "text-kumo-warning" : ""}
+							className={`${email.starred ? "text-kumo-warning" : ""} ${starPops ? "animate-pop" : ""}`}
 						/>
 					}
-					onClick={onToggleStar}
+					onClick={() => {
+						if (!email.starred) setStarPops((n) => n + 1);
+						onToggleStar();
+					}}
 					aria-label={email.starred ? "Unstar" : "Star"}
 				/>
 			</Tooltip>
@@ -159,12 +166,16 @@ export default function EmailPanelToolbar({
 					size="sm"
 					icon={
 						<ClockCounterClockwiseIcon
+							key={laterPops}
 							size={18}
 							weight={email.reply_later ? "fill" : "regular"}
-							className={email.reply_later ? "text-kumo-accent" : ""}
+							className={`${email.reply_later ? "text-kumo-accent" : ""} ${laterPops ? "animate-pop" : ""}`}
 						/>
 					}
-					onClick={onToggleReplyLater}
+					onClick={() => {
+						if (!email.reply_later) setLaterPops((n) => n + 1);
+						onToggleReplyLater();
+					}}
 					aria-label={
 						email.reply_later ? "Remove from Reply Later" : "Reply later"
 					}
@@ -247,14 +258,14 @@ function MoveToFolderMenu({ folders, onMove }: { folders: Folder[]; onMove: (id:
 				/>
 			</Tooltip>
 			{open && (
-				<div className="absolute top-full left-0 z-50 mt-1 min-w-[160px] rounded-lg border border-kumo-line bg-kumo-elevated shadow-lg py-1">
-					<div className="px-3 py-1.5 text-xs font-medium text-kumo-subtle">Move to</div>
-					<div className="h-px bg-kumo-line my-1" />
+				<div className="absolute top-full left-0 z-50 mt-1.5 min-w-[160px] rounded-xl bg-kumo-elevated shadow-[var(--shadow-menu)] p-1 origin-top-left animate-menu-in">
+					<div className="px-2.5 py-1.5 text-xs font-medium text-kumo-subtle">Move to</div>
+					<div className="h-px bg-kumo-line my-1 -mx-1" />
 					{folders.map((f) => (
 						<button
 							key={f.id}
 							type="button"
-							className="w-full text-left px-3 py-1.5 text-sm text-kumo-default hover:bg-kumo-overlay transition-colors"
+							className="w-full text-left px-2.5 py-1.5 rounded-md text-sm text-kumo-default hover:bg-kumo-overlay transition-colors duration-100"
 							onClick={() => { onMove(f.id); setOpen(false); }}
 						>
 							{f.name}

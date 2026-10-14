@@ -83,6 +83,7 @@ export default function ReplyLaterRoute() {
 		<>
 			<ColumnPane
 				id="list"
+				revealKey={`${mailboxId}/reply-later`}
 				title="Reply Later"
 				counter={totalCount || undefined}
 				widthClassName="md:w-[400px]"
@@ -128,9 +129,10 @@ export default function ReplyLaterRoute() {
 					/>
 				) : (
 					<>
-						{emails.map((email: Email) => (
+						{emails.map((email: Email, index) => (
 							<ThreadRow
 								key={email.id}
+								index={index}
 								email={email}
 								isSelected={emailId === email.id}
 								isUnread={false}

@@ -6,7 +6,7 @@ import { Button, Input, Loader, Switch, useKumoToastManager } from "@cloudflare/
 import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import { useFolders } from "~/queries/folders";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import type { InboxFilterRule } from "~/types";
@@ -59,7 +59,7 @@ function sanitizeRules(rules: InboxFilterRule[]): InboxFilterRule[] {
 	}));
 }
 
-export default function FiltersSettingsRoute() {
+export default function FiltersSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);

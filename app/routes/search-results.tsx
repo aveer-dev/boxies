@@ -79,6 +79,7 @@ export default function SearchResultsRoute() {
 		<>
 			<ColumnPane
 				id="list"
+				revealKey={searchKey}
 				title={
 					<h2 className="text-xs font-medium text-kumo-subtle truncate">
 						Search{urlQuery ? <> · <span className="text-kumo-default">{urlQuery}</span></> : null}
@@ -105,11 +106,12 @@ export default function SearchResultsRoute() {
 					/>
 				) : (
 					<>
-						{results.map((email) => {
+						{results.map((email, index) => {
 							const label = folderLabel(email);
 							return (
 								<ThreadRow
 									key={email.id}
+									index={index}
 									email={email}
 									isSelected={emailId === email.id}
 									isUnread={isUnread(email)}

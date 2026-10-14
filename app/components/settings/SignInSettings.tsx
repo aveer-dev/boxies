@@ -6,7 +6,7 @@ import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import api from "~/services/api";
 
 function identityTypeLabel(type: string): string {
@@ -86,7 +86,7 @@ function loadGoogleIdentityScript(): Promise<void> {
 	});
 }
 
-export default function SignInMethodsSettingsRoute() {
+export default function SignInSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();

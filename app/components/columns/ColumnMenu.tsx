@@ -51,7 +51,7 @@ export default function ColumnMenu({
 			<button
 				type="button"
 				onClick={() => setOpen((o) => !o)}
-				className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint transition-colors"
+				className={`p-1 rounded-md hover:text-kumo-default hover:bg-kumo-tint ${open ? "text-kumo-default bg-kumo-tint" : "text-kumo-subtle"}`}
 				aria-label={label}
 				aria-haspopup="menu"
 				aria-expanded={open}
@@ -62,14 +62,14 @@ export default function ColumnMenu({
 			{open && (
 				<div
 					role="menu"
-					className={`absolute top-full z-50 mt-1 min-w-[180px] rounded-lg border border-kumo-line bg-kumo-elevated shadow-lg py-1 ${
-						align === "right" ? "right-0" : "left-0"
+					className={`absolute top-full z-50 mt-1.5 min-w-[180px] rounded-xl bg-kumo-elevated shadow-[var(--shadow-menu)] p-1 animate-menu-in ${
+						align === "right" ? "right-0 origin-top-right" : "left-0 origin-top-left"
 					}`}
 				>
 					{heading && (
 						<>
-							<div className="px-3 py-1.5 text-xs font-medium text-kumo-subtle">{heading}</div>
-							<div className="h-px bg-kumo-line my-1" />
+							<div className="px-2.5 py-1.5 text-xs font-medium text-kumo-subtle">{heading}</div>
+							<div className="h-px bg-kumo-line my-1 -mx-1" />
 						</>
 					)}
 					{items.map((item) => (
@@ -77,7 +77,7 @@ export default function ColumnMenu({
 							key={item.label}
 							type="button"
 							role="menuitem"
-							className="w-full flex items-center gap-2 text-left px-3 py-1.5 text-sm text-kumo-default hover:bg-kumo-overlay transition-colors"
+							className="w-full flex items-center gap-2 text-left px-2.5 py-1.5 rounded-md text-sm text-kumo-default hover:bg-kumo-overlay focus-visible:bg-kumo-overlay focus-visible:outline-none transition-colors duration-100"
 							onClick={() => {
 								setOpen(false);
 								item.onSelect();
