@@ -64,7 +64,6 @@ import {
 	isAddressTaken,
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
-import { normalizeEmailAddress } from "../lib/mail-automations";
 import { resolveMailDomain } from "../lib/mail-domain";
 import { listMailboxes, getMailboxStub } from "../lib/email-helpers";
 import {
@@ -751,9 +750,10 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		const sessionPrincipal = principalFromPlatformUser(user);
 		const ensured = await ensurePrincipalAccount(c.env.BUCKET, sessionPrincipal, {
+			// The invitee email is unverified (the inviter sees the token), so it
+			// is contact info only: never an identity key.
 			extraPrincipals: [
 				`user:${user.id}`,
-				`email:${normalizeEmailAddress(invite.inviteeEmail) ?? invite.inviteeEmail}`,
 				...(user.mailboxEmail
 					? [`email:${canonicalMailboxId(user.mailboxEmail) ?? user.mailboxEmail}`]
 					: []),
@@ -779,9 +779,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			JSON.stringify(next),
 		);
 
-		const sessionEmail = claimMailboxLogin
-			? invite.mailboxId
-			: invite.inviteeEmail;
+		const sessionEmail = claimMailboxLogin ? invite.mailboxId : undefined;
 		const session = await issuePasswordSessionToken(mobileSecret, {
 			userId,
 			email: sessionEmail,
@@ -827,7 +825,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (!ok) return c.json({ error: "Invalid email or password" }, 401);
 		const session = await issuePasswordSessionToken(mobileSecret, {
 			userId: user.id,
-			email: user.mailboxEmail ?? user.contactEmail,
+			email: user.mailboxEmail,
 			tokenVersion: user.tokenVersion,
 		});
 		c.header(
@@ -997,7 +995,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 
 		const session = await issuePasswordSessionToken(mobileSecret, {
 			userId: user.id,
-			email: user.mailboxEmail ?? user.contactEmail,
+			email: user.mailboxEmail,
 			tokenVersion: user.tokenVersion,
 		});
 		c.header(

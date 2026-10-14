@@ -114,7 +114,8 @@ export function registerExportAndOffboardingRoutes(
 		}
 
 		try {
-			const job = await runMailboxExportJob(c.env, mailboxId);
+			// Export the mailbox that was authorized, not the raw path value.
+			const job = await runMailboxExportJob(c.env, auth.mailboxId);
 			return c.json(toExportResponse(job));
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Export failed";
