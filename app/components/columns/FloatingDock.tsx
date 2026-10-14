@@ -28,7 +28,7 @@ export default function FloatingDock() {
 	const [searchParams] = useSearchParams();
 	const { isSearch, isSettings, search, closeSearch, openSettings, closeSettings } =
 		useMailNavigation();
-	const { startCompose, isAgentPanelOpen, toggleAgentPanel } = useUIStore();
+	const { startCompose, isAgentPanelOpen, toggleAgentPanel, isReadOnly } = useUIStore();
 	const urlQuery = isSearch ? searchParams.get("q") || "" : "";
 	const [query, setQuery] = useState(urlQuery);
 	const [isFocused, setIsFocused] = useState(false);
@@ -142,29 +142,34 @@ export default function FloatingDock() {
 					<GearSixIcon size={16} />
 				</button>
 			</Tooltip>
-			<Tooltip content={isAgentPanelOpen ? "Hide agent" : "Agent (⌘J in a message)"} side="top" asChild>
-				<button
-					type="button"
-					onClick={toggleAgentPanel}
-					className={`${roundButton} border border-kumo-line backdrop-blur-md shadow-lg ${
-						isAgentPanelOpen ? "bg-kumo-fill text-kumo-default" : "bg-kumo-base/85 text-kumo-strong hover:bg-kumo-tint"
-					}`}
-					aria-label="Toggle agent"
-					aria-pressed={isAgentPanelOpen}
-				>
-					<RobotIcon size={16} />
-				</button>
-			</Tooltip>
-			<Tooltip content="New message (C)" side="top" asChild>
-				<button
-					type="button"
-					onClick={() => startCompose()}
-					className={`${roundButton} bg-kumo-contrast text-kumo-inverse shadow-lg hover:opacity-90`}
-					aria-label="Compose"
-				>
-					<NotePencilIcon size={16} />
-				</button>
-			</Tooltip>
+			{/* A read-only mailbox (its domain's subscription ended) has no agent or compose. */}
+			{!isReadOnly && (
+				<>
+					<Tooltip content={isAgentPanelOpen ? "Hide agent" : "Agent (⌘J in a message)"} side="top" asChild>
+						<button
+							type="button"
+							onClick={toggleAgentPanel}
+							className={`${roundButton} border border-kumo-line backdrop-blur-md shadow-lg ${
+								isAgentPanelOpen ? "bg-kumo-fill text-kumo-default" : "bg-kumo-base/85 text-kumo-strong hover:bg-kumo-tint"
+							}`}
+							aria-label="Toggle agent"
+							aria-pressed={isAgentPanelOpen}
+						>
+							<RobotIcon size={16} />
+						</button>
+					</Tooltip>
+					<Tooltip content="New message (C)" side="top" asChild>
+						<button
+							type="button"
+							onClick={() => startCompose()}
+							className={`${roundButton} bg-kumo-contrast text-kumo-inverse shadow-lg hover:opacity-90`}
+							aria-label="Compose"
+						>
+							<NotePencilIcon size={16} />
+						</button>
+					</Tooltip>
+				</>
+			)}
 		</nav>
 	);
 }

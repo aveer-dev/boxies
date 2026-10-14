@@ -39,6 +39,13 @@ interface UIState {
 
 	/** Close compose + agent columns (mailbox switch). */
 	resetColumns: () => void;
+
+	/**
+	 * The open mailbox's subscription ended: no composing and no agent. Set by
+	 * the mailbox route; while true, compose and agent requests are ignored.
+	 */
+	isReadOnly: boolean;
+	setReadOnly: (readOnly: boolean) => void;
 }
 
 const EMPTY_COMPOSE: ComposeOptions = { mode: "new", originalEmail: null };
@@ -48,22 +55,31 @@ export const useUIStore = create<UIState>((set, get) => ({
 	composeOptions: EMPTY_COMPOSE,
 	isAgentPanelOpen: false,
 	pendingAgentPrompt: null,
+	isReadOnly: false,
 
-	startCompose: (options) =>
+	startCompose: (options) => {
+		if (get().isReadOnly) return;
 		set({
 			isComposing: true,
 			composeOptions: options || { ...EMPTY_COMPOSE },
-		}),
+		});
+	},
 
 	closeCompose: () =>
 		set({ isComposing: false, composeOptions: EMPTY_COMPOSE }),
 
-	openAgentPanel: () => set({ isAgentPanelOpen: true }),
+	openAgentPanel: () => {
+		if (!get().isReadOnly) set({ isAgentPanelOpen: true });
+	},
 	closeAgentPanel: () => set({ isAgentPanelOpen: false }),
-	toggleAgentPanel: () => set({ isAgentPanelOpen: !get().isAgentPanelOpen }),
+	toggleAgentPanel: () => {
+		if (get().isReadOnly && !get().isAgentPanelOpen) return;
+		set({ isAgentPanelOpen: !get().isAgentPanelOpen });
+	},
 
-	askAgent: (prompt) =>
-		set({ isAgentPanelOpen: true, pendingAgentPrompt: prompt }),
+	askAgent: (prompt) => {
+		if (!get().isReadOnly) set({ isAgentPanelOpen: true, pendingAgentPrompt: prompt });
+	},
 
 	consumeAgentPrompt: () => {
 		const prompt = get().pendingAgentPrompt;
@@ -77,4 +93,11 @@ export const useUIStore = create<UIState>((set, get) => ({
 			composeOptions: EMPTY_COMPOSE,
 			pendingAgentPrompt: null,
 		}),
+
+	setReadOnly: (readOnly) =>
+		set(
+			readOnly
+				? { isReadOnly: true, isComposing: false, composeOptions: EMPTY_COMPOSE, isAgentPanelOpen: false, pendingAgentPrompt: null }
+				: { isReadOnly: false },
+		),
 }));

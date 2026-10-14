@@ -20,6 +20,7 @@ import {
 	TrashIcon,
 	XIcon,
 } from "@phosphor-icons/react";
+import { useUIStore } from "~/hooks/useUIStore";
 import type { Folder, Email } from "~/types";
 
 interface EmailPanelToolbarProps {
@@ -62,6 +63,8 @@ export default function EmailPanelToolbar({
 	onViewSource,
 	onDelete,
 }: EmailPanelToolbarProps) {
+	// Read-only mailbox (its domain's subscription ended): flags only, no send/move/delete.
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	return (
 		<div className="flex items-center gap-1 h-11 px-2 border-b border-kumo-line shrink-0 md:px-3">
 			<Button
@@ -74,7 +77,7 @@ export default function EmailPanelToolbar({
 				className="md:hidden shrink-0"
 			/>
 
-			{isDraftFolder ? (
+			{isReadOnly ? null : isDraftFolder ? (
 				<>
 					<Button
 						variant="primary"
@@ -129,7 +132,7 @@ export default function EmailPanelToolbar({
 				</>
 			)}
 
-			<div className="h-5 w-px bg-kumo-fill mx-0.5" />
+			{!isReadOnly && <div className="h-5 w-px bg-kumo-fill mx-0.5" />}
 
 			<Tooltip content={email.starred ? "Unstar" : "Star"} side="bottom" asChild>
 				<Button
@@ -182,7 +185,7 @@ export default function EmailPanelToolbar({
 				/>
 			</Tooltip>
 
-			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
+			{!isReadOnly && <MoveToFolderMenu folders={moveToFolders} onMove={onMove} />}
 
 			<div className="ml-auto flex items-center gap-0.5">
 				<Tooltip content="View source" side="bottom" asChild>
@@ -195,16 +198,18 @@ export default function EmailPanelToolbar({
 						aria-label="View source"
 					/>
 				</Tooltip>
-				<Tooltip content="Delete" side="bottom" asChild>
-					<Button
-						variant="ghost"
-						shape="square"
-						size="sm"
-						icon={<TrashIcon size={18} />}
-						onClick={onDelete}
-						aria-label="Delete"
-					/>
-				</Tooltip>
+				{!isReadOnly && (
+					<Tooltip content="Delete" side="bottom" asChild>
+						<Button
+							variant="ghost"
+							shape="square"
+							size="sm"
+							icon={<TrashIcon size={18} />}
+							onClick={onDelete}
+							aria-label="Delete"
+						/>
+					</Tooltip>
+				)}
 				<Tooltip content="Close" side="bottom" asChild>
 					<Button
 						variant="ghost"

@@ -318,6 +318,7 @@ private fun SettingsRootPage(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val isAdmin by app.isAdmin.collectAsState()
+    val readOnly by app.selectedMailboxReadOnly.collectAsState()
 
     val displayName = remember(mailbox) { mailboxDisplayName(mailbox) }
     val emailAddress = mailbox?.email.orEmpty()
@@ -412,7 +413,7 @@ private fun SettingsRootPage(
                         )
                     }
                 }
-                Text(
+                if (!readOnly) Text(
                     "Edit",
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.Medium,
@@ -436,43 +437,46 @@ private fun SettingsRootPage(
                 icon = Icons.Outlined.SwapHoriz,
                 onClick = onOpenSwipe,
             )
-            SettingsNavRow(
-                title = "AI prompt",
-                icon = Icons.Outlined.AutoAwesome,
-                onClick = onOpenAgentPrompt,
-            )
-            SettingsNavRow(
-                title = "Forwarding",
-                icon = Icons.Outlined.ForwardToInbox,
-                onClick = onOpenForwarding,
-            )
-            SettingsNavRow(
-                title = "Auto-reply",
-                icon = Icons.AutoMirrored.Outlined.Reply,
-                onClick = onOpenAutoReply,
-            )
-            SettingsNavRow(
-                title = "Filters",
-                icon = Icons.Outlined.FilterList,
-                onClick = onOpenFilters,
-            )
-            SettingsNavRow(
-                title = "Senders",
-                icon = Icons.Outlined.Person,
-                onClick = onOpenSenders,
-            )
-            SettingsNavRow(
-                title = "Private email",
-                onClick = onOpenAliases,
-                icon = {
-                    PrivateEmailLogoView(size = 20.dp, showTile = false)
-                },
-            )
-            SettingsNavRow(
-                title = "Sharing",
-                icon = Icons.Outlined.Group,
-                onClick = onOpenSharing,
-            )
+            // Service ended: mailbox settings, sharing and private emails are frozen.
+            if (!readOnly) {
+                SettingsNavRow(
+                    title = "AI prompt",
+                    icon = Icons.Outlined.AutoAwesome,
+                    onClick = onOpenAgentPrompt,
+                )
+                SettingsNavRow(
+                    title = "Forwarding",
+                    icon = Icons.Outlined.ForwardToInbox,
+                    onClick = onOpenForwarding,
+                )
+                SettingsNavRow(
+                    title = "Auto-reply",
+                    icon = Icons.AutoMirrored.Outlined.Reply,
+                    onClick = onOpenAutoReply,
+                )
+                SettingsNavRow(
+                    title = "Filters",
+                    icon = Icons.Outlined.FilterList,
+                    onClick = onOpenFilters,
+                )
+                SettingsNavRow(
+                    title = "Senders",
+                    icon = Icons.Outlined.Person,
+                    onClick = onOpenSenders,
+                )
+                SettingsNavRow(
+                    title = "Private email",
+                    onClick = onOpenAliases,
+                    icon = {
+                        PrivateEmailLogoView(size = 20.dp, showTile = false)
+                    },
+                )
+                SettingsNavRow(
+                    title = "Sharing",
+                    icon = Icons.Outlined.Group,
+                    onClick = onOpenSharing,
+                )
+            }
             SettingsNavRow(
                 title = "Sign-in methods",
                 icon = Icons.Outlined.Key,
@@ -528,7 +532,12 @@ private fun SettingsRootPage(
                 checked = notificationsEnabled,
                 onCheckedChange = onNotificationsChange,
             )
-            SettingsToggleRow(
+            if (readOnly) {
+                SettingsFormFooter(
+                    "The subscription for ${mailbox?.domain.orEmpty()} ended, so this mailbox's " +
+                        "settings, sharing and private emails can't be changed until it's renewed.",
+                )
+            } else SettingsToggleRow(
                 title = "Default signature",
                 subtitle = "Show 'Sent with Inboxies Email' in emails",
                 icon = Icons.Outlined.Edit,
@@ -583,7 +592,7 @@ private fun SettingsRootPage(
                 },
             )
 
-            Box(
+            if (!readOnly) Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 24.dp),

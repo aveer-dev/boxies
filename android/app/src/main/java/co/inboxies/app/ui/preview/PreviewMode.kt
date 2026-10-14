@@ -31,6 +31,14 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),
+    /** Read-only inbox, domain admin: "Renew" banner with a registrar renew-by deadline. */
+    ServiceEnded("serviceEnded", "previewServiceEnded"),
+    /** Read-only inbox, regular member: "Ask an admin of … to renew." */
+    ServiceEndedMember("serviceEndedMember", "previewServiceEndedMember"),
+    /** Still active, set to end: admin-only "Keep subscription" notice. */
+    ServiceEnding("serviceEnding", "previewServiceEnding"),
+    /** DNS console for an ended domain: Subscription card, DNS edits frozen. */
+    DomainDnsEnded("domainDnsEnded", "previewDomainDnsEnded"),
     ;
 
     companion object {

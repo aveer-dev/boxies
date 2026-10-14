@@ -151,6 +151,14 @@ export async function canCreateMailbox(
 	}
 
 	if (await isDomainAdmin(db, opts.userId, domainName)) {
+		const row = await db
+			.select({ status: schema.domain.status })
+			.from(schema.domain)
+			.where(eq(schema.domain.domain, domainName))
+			.get();
+		if (row?.status === "suspended") {
+			return { ok: false, status: 403, error: "This domain's subscription has ended. Renew it to add addresses." };
+		}
 		return { ok: true, mailboxId, domain: domainName };
 	}
 	return { ok: false, status: 403, error: "You can't create addresses on that domain" };

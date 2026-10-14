@@ -38,7 +38,7 @@ assert.equal((await request(env, { path: "/api/v1/mailboxes/ada@inboxies.email" 
 	const listed = await request(env, { path: "/api/v1/mailboxes", principal: asBob });
 	assert.equal(listed.status, 200);
 	assert.deepEqual(listed.payload, [
-		{ id: "shared@inboxies.email", email: "shared@inboxies.email", name: "shared@inboxies.email", role: "member", canManage: false },
+		{ id: "shared@inboxies.email", email: "shared@inboxies.email", name: "shared@inboxies.email", role: "member", canManage: false, readOnly: false },
 	]);
 }
 

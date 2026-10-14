@@ -155,7 +155,8 @@ export const mailboxMember = sqliteTable(
 	],
 );
 
-export const DOMAIN_STATUSES = ["pending", "active", "decommissioned"] as const;
+/** `suspended`: the domain's subscription ended; its mailboxes are read-only until renewed. */
+export const DOMAIN_STATUSES = ["pending", "active", "suspended", "decommissioned"] as const;
 export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
 
 /** A customer domain. Registrar/DNS details stay in R2 domain metadata. */
@@ -175,6 +176,29 @@ export const domain = sqliteTable(
 	},
 	(t) => [index("domain_owner_user_id_idx").on(t.ownerUserId)],
 );
+
+export const DOMAIN_RESERVATION_STATUSES = ["checkout", "awaiting_payment", "provisioning"] as const;
+export type DomainReservationStatus = (typeof DOMAIN_RESERVATION_STATUSES)[number];
+
+/**
+ * One in-flight purchase per domain, so two buyers can't both pay for it.
+ * The row goes away once the domain is provisioned, refunded or abandoned.
+ */
+export const domainReservation = sqliteTable("domain_reservation", {
+	domain: text("domain").primaryKey(),
+	/** Secret in the checkout's cancel URL; lets that browser give the hold back. */
+	holdId: text("hold_id"),
+	/** Stripe Checkout Session id; null until the session exists. */
+	sessionId: text("session_id"),
+	status: text("status", { enum: DOMAIN_RESERVATION_STATUSES }).notNull(),
+	/**
+	 * When the hold lapses: checkout expiry plus a grace period for late webhooks,
+	 * or the provisioning lease. Null while a delayed payment is pending.
+	 */
+	expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+	createdAt: createdAt(),
+	updatedAt: updatedAt(),
+});
 
 export const domainAdmin = sqliteTable(
 	"domain_admin",

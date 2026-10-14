@@ -162,15 +162,17 @@ export default function FoldersColumn() {
 
 			<SectionLabel
 				action={
-					<button
-						type="button"
-						onClick={() => setIsCreateOpen(true)}
-						className="p-0.5 rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
-						aria-label="Create tag"
-						title="Create tag"
-					>
-						<PlusIcon size={12} />
-					</button>
+					mailbox?.readOnly ? undefined : (
+						<button
+							type="button"
+							onClick={() => setIsCreateOpen(true)}
+							className="p-0.5 rounded text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
+							aria-label="Create tag"
+							title="Create tag"
+						>
+							<PlusIcon size={12} />
+						</button>
+					)
 				}
 			>
 				{displayName} tags

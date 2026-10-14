@@ -48,6 +48,8 @@ export interface Env extends Cloudflare.Env {
 	STRIPE_SECRET_KEY?: string;
 	/** Stripe Webhook Secret for validating checkout.session.completed signatures. */
 	STRIPE_WEBHOOK_SECRET?: string;
+	/** Optional: where operator alerts go (e.g. a renewed domain that must be renewed by hand at the registrar). */
+	OPS_ALERT_EMAIL?: string;
 	/** Better Auth signing secret (32+ random bytes). `AUTH_DB` comes from wrangler.jsonc. */
 	BETTER_AUTH_SECRET?: string;
 	/** Extra Google client ids (iOS, Android) accepted alongside GOOGLE_CLIENT_ID, comma-separated. */

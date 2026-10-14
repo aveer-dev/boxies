@@ -8,6 +8,7 @@ import AccountsColumn from "~/components/columns/AccountsColumn";
 import ColumnCanvas from "~/components/columns/ColumnCanvas";
 import FloatingDock from "~/components/columns/FloatingDock";
 import FoldersColumn from "~/components/columns/FoldersColumn";
+import ServiceBanner from "~/components/ServiceBanner";
 import { AgentColumn, ComposeColumn } from "~/components/columns/PlatformColumns";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -25,7 +26,14 @@ export default function MailboxRoute() {
 	const navigate = useNavigate();
 	const mailboxQuery = useMailbox(mailboxId);
 	useMailboxEvents(mailboxId);
-	const { isComposing, isAgentPanelOpen, resetColumns } = useUIStore();
+	const { isComposing, isAgentPanelOpen, resetColumns, setReadOnly } = useUIStore();
+	const readOnly = Boolean(mailboxQuery.data?.readOnly);
+
+	// A mailbox whose domain's subscription ended can't compose or use the agent.
+	useEffect(() => {
+		setReadOnly(readOnly);
+	}, [readOnly, setReadOnly]);
+	useEffect(() => () => setReadOnly(false), [setReadOnly]);
 	const prevMailboxIdRef = useRef<string | undefined>(undefined);
 
 	// Switching mailbox drops a compose that belongs to the previous one.
@@ -52,6 +60,7 @@ export default function MailboxRoute() {
 				{isComposing && <ComposeColumn />}
 				{isAgentPanelOpen && <AgentColumn />}
 			</ColumnCanvas>
+			<ServiceBanner mailboxId={mailboxId} billed={Boolean(mailboxQuery.data?.service)} />
 			<FloatingDock />
 		</>
 	);

@@ -70,6 +70,7 @@ import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.rememberDomainRenewal
 import kotlinx.coroutines.launch
 
 @Composable
@@ -93,6 +94,18 @@ fun DomainAdminSettingsView(
     var showCreate by remember { mutableStateOf(false) }
     var selectedMailboxId by remember { mutableStateOf<String?>(null) }
     var showingDns by remember { mutableStateOf(false) }
+
+    // Subscription state per administered domain; an ended one freezes its users.
+    val administeredDomains by app.administeredDomains.collectAsState()
+    val domainServices by app.domainServices.collectAsState()
+    val mailDomain by app.mailDomain.collectAsState()
+    val renewal = rememberDomainRenewal()
+    fun isServiceEnded(email: String) =
+        domainServices[email.substringAfterLast('@').lowercase()]?.isEnded == true
+
+    LaunchedEffect(administeredDomains) {
+        administeredDomains.forEach { app.loadDomainService(it) }
+    }
 
     LaunchedEffect(cachedRows) {
         if (previewRows == null && cachedRows != null) {
@@ -259,8 +272,20 @@ fun DomainAdminSettingsView(
                         )
                     }
 
+                    administeredDomains.forEach { domain ->
+                        DomainSubscriptionSection(
+                            domain = domain,
+                            service = domainServices[domain.lowercase()],
+                            renewal = renewal,
+                            title = if (administeredDomains.size > 1) "Subscription · $domain" else "Subscription",
+                            nested = true,
+                        )
+                    }
+
                     Button(
                         onClick = { showCreate = true },
+                        // New addresses can't be created on a domain whose service ended.
+                        enabled = !isServiceEnded("@$mailDomain"),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.ink, contentColor = colors.surface),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
@@ -351,6 +376,7 @@ fun DomainAdminSettingsView(
                 if (targetMailbox != null) {
                     DomainAdminMailboxDetailView(
                         mailbox = targetMailbox,
+                        serviceEnded = isServiceEnded(targetMailbox.email),
                         onBack = { selectedMailboxId = null },
                         onAssigned = onAssigned,
                         onMailboxUpdated = { updated ->
@@ -409,6 +435,8 @@ fun userEmailsFromAcl(keys: List<String>?): List<String> {
 @Composable
 private fun DomainAdminMailboxDetailView(
     mailbox: AdminMailboxRow,
+    /** The domain's subscription ended: no assigning, inviting or deleting until renewed. */
+    serviceEnded: Boolean = false,
     onBack: () -> Unit,
     onAssigned: (() -> Unit)? = null,
     onMailboxUpdated: (AdminMailboxRow) -> Unit,
@@ -543,7 +571,12 @@ private fun DomainAdminMailboxDetailView(
             }
 
             SettingsFormSectionHeader("Actions")
-            Column(
+            if (serviceEnded) {
+                SettingsFormFooter(
+                    "The subscription for ${currentMailbox.email.substringAfterLast('@')} ended. " +
+                        "Users can't be added, invited or removed until it's renewed.",
+                )
+            } else Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
