@@ -18,28 +18,38 @@ struct EmailBodyView: View {
     @State private var activeQuotedContent: QuotedMailContent? = nil
     /// Remote images stay blocked until the reader taps "Load images" (per message).
     @State private var allowsRemoteImages = false
+    /// Sanitized body, computed once per source off the main actor (never during `body`).
+    @State private var prepared: PreparedState?
+
+    private struct PreparedState: Equatable {
+        let emailKey: String
+        let sourceKey: String
+        let body: EmailHTMLSanitizer.PreparedBody
+    }
 
     private var isHTML: Bool {
         htmlOrText.range(of: #"</?[a-zA-Z][^>]*>"#, options: .regularExpression) != nil
     }
 
-    private var sanitizedSplit: EmailHTMLSanitizer.SplitBody {
-        EmailHTMLSanitizer.prepare(htmlWithImages ?? htmlOrText)
+    private var sourceHTML: String {
+        htmlWithImages ?? htmlOrText
+    }
+
+    private var sanitizeKey: String {
+        EmailHTMLSanitizer.cacheKey(emailId: emailId, html: sourceHTML)
     }
 
     private var bodyHTML: String {
-        sanitizedSplit.main
+        prepared?.body.main ?? ""
     }
 
     private var showLoading: Bool {
-        isHTML && (isWebLoading || webHeight <= 1)
+        isHTML && (prepared == nil || isWebLoading || webHeight <= 1)
     }
 
     private var hasBlockedRemoteImages: Bool {
         guard isHTML, !allowsRemoteImages else { return false }
-        let split = sanitizedSplit
-        return EmailHTMLSanitizer.containsRemoteImages(split.main)
-            || EmailHTMLSanitizer.containsRemoteImages(split.quote ?? "")
+        return prepared?.body.hasRemoteImages ?? false
     }
 
     /// Opted-in policy only after "Load images"; otherwise remote `https:` images are blocked.
@@ -51,7 +61,7 @@ struct EmailBodyView: View {
 
     private var hasQuotedReplies: Bool {
         if isHTML {
-            return sanitizedSplit.quote != nil
+            return prepared?.body.quote != nil
         } else {
             return plainTextParts.quote != nil
         }
@@ -70,14 +80,16 @@ struct EmailBodyView: View {
                 }
 
                 ZStack(alignment: .topLeading) {
-                    HTMLWebView(
-                        html: wrappedHTML,
-                        contentHeight: $webHeight,
-                        isLoading: $isWebLoading
-                    )
-                    .frame(maxWidth: .infinity, alignment: .top)
-                    .frame(height: max(webHeight, 1))
-                    .opacity(showLoading ? 0 : 1)
+                    if prepared != nil {
+                        HTMLWebView(
+                            html: wrappedHTML,
+                            contentHeight: $webHeight,
+                            isLoading: $isWebLoading
+                        )
+                        .frame(maxWidth: .infinity, alignment: .top)
+                        .frame(height: max(webHeight, 1))
+                        .opacity(showLoading ? 0 : 1)
+                    }
 
                     if showLoading {
                         bodySkeleton
@@ -96,7 +108,7 @@ struct EmailBodyView: View {
 
             if hasQuotedReplies && !showLoading {
                 Button {
-                    if let quote = (isHTML ? sanitizedSplit.quote : plainTextParts.quote) {
+                    if let quote = (isHTML ? prepared?.body.quote : plainTextParts.quote) {
                         activeQuotedContent = QuotedMailContent(
                             text: quote,
                             isHTML: isHTML,
@@ -116,6 +128,9 @@ struct EmailBodyView: View {
         .task(id: resolveTaskID) {
             await resolveInlineImages()
         }
+        .task(id: sanitizeKey) {
+            await prepareBody()
+        }
         .onChange(of: resolveTaskID) { _, _ in
             activeQuotedContent = nil
             webHeight = 1
@@ -124,6 +139,7 @@ struct EmailBodyView: View {
         .onChange(of: emailId) { _, _ in
             activeQuotedContent = nil
             allowsRemoteImages = false
+            prepared = nil
             webHeight = 1
             isWebLoading = true
         }
@@ -302,6 +318,24 @@ struct EmailBodyView: View {
         """
     }
 
+    /// Keeps the current body on screen while inline images re-sanitize the same message;
+    /// a different message starts from the skeleton.
+    @MainActor
+    private func prepareBody() async {
+        guard isHTML else {
+            prepared = nil
+            return
+        }
+        let emailKey = EmailHTMLSanitizer.cacheKey(emailId: emailId, html: htmlOrText)
+        let sourceKey = sanitizeKey
+        if prepared?.sourceKey == sourceKey { return }
+        if prepared?.emailKey != emailKey { prepared = nil }
+        let source = sourceHTML
+        let body = await EmailHTMLSanitizer.prepareOffMain(source, key: sourceKey)
+        guard !Task.isCancelled, sanitizeKey == sourceKey else { return }
+        prepared = PreparedState(emailKey: emailKey, sourceKey: sourceKey, body: body)
+    }
+
     @MainActor
     private func resolveInlineImages() async {
         htmlWithImages = nil
@@ -397,7 +431,9 @@ private enum EmailWebViewIsolation {
         config.defaultWebpagePreferences.allowsContentJavaScript = allowsJavaScript
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         config.suppressesIncrementalRendering = false
-        if let heightHandler, allowsJavaScript {
+        // `allowsContentJavaScript` only gates the page's own scripts; this app-world
+        // user script and `evaluateJavaScript(in: heightWorld)` run either way.
+        if let heightHandler {
             config.userContentController.add(heightHandler, contentWorld: heightWorld, name: "bodyHeight")
             let script = WKUserScript(
                 source: heightScriptSource,
@@ -482,7 +518,8 @@ private struct HTMLWebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let config = EmailWebViewIsolation.configuration(allowsJavaScript: true, heightHandler: context.coordinator)
+        // Page JS stays off; the height probe is an app-world user script, which still runs.
+        let config = EmailWebViewIsolation.configuration(allowsJavaScript: false, heightHandler: context.coordinator)
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
         webView.backgroundColor = .clear
@@ -745,14 +782,22 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let fullHTML = wrapQuotedHTML(html)
-        guard context.coordinator.loadedHTML != fullHTML else { return }
-        context.coordinator.loadedHTML = fullHTML
-        webView.loadHTMLString(fullHTML, baseURL: EmailHTMLSanitizer.opaqueOrigin)
+        let key = "\(allowsRemoteImages)|\(EmailHTMLSanitizer.cacheKey(emailId: nil, html: html))"
+        guard context.coordinator.loadedKey != key else { return }
+        context.coordinator.loadedKey = key
+        let source = html
+        let allowsRemoteImages = allowsRemoteImages
+        let coordinator = context.coordinator
+        Task { @MainActor [weak webView] in
+            let sanitized = await EmailHTMLSanitizer.sanitizeOffMain(source)
+            guard let webView, coordinator.loadedKey == key else { return }
+            let fullHTML = Self.wrapQuotedHTML(sanitized, allowsRemoteImages: allowsRemoteImages)
+            webView.loadHTMLString(fullHTML, baseURL: EmailHTMLSanitizer.opaqueOrigin)
+        }
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
-        var loadedHTML: String?
+        var loadedKey: String?
 
         func webView(
             _ webView: WKWebView,
@@ -772,8 +817,7 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         }
     }
 
-    private func wrapQuotedHTML(_ bodyContent: String) -> String {
-        let sanitized = EmailHTMLSanitizer.sanitize(bodyContent)
+    private static func wrapQuotedHTML(_ sanitized: String, allowsRemoteImages: Bool) -> String {
         let contentSecurityPolicy = allowsRemoteImages
             ? EmailHTMLSanitizer.contentSecurityPolicy
             : EmailHTMLSanitizer.remoteImagesBlockedPolicy

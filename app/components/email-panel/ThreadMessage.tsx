@@ -2,9 +2,10 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Tooltip } from '@cloudflare/kumo';
+import { Badge, Button } from '@cloudflare/kumo';
 import { CaretDownIcon, CaretUpIcon, CodeIcon, PaperclipIcon, PaperPlaneTiltIcon, PencilSimpleIcon, TrashIcon } from '@phosphor-icons/react';
 import EmailAttachmentList from '~/components/EmailAttachmentList';
+import { IconButton } from '~/components/IconButton';
 import EmailIframe from '~/components/EmailIframe';
 import { formatDetailDate, formatShortDate, hasFileAttachment, rewriteInlineImages, stripHtml } from '~/lib/utils';
 import { displaySenderName } from 'shared/sender';
@@ -52,7 +53,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
     if (!isExpanded) {
         return (
             <div className={containerClassName}>
-                <button type="button" onClick={onToggleExpand} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kumo-tint rounded-lg text-left">
+                <button type="button" onClick={onToggleExpand} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-kumo-tint rounded-2xl text-left transition-colors">
                     <Avatar isDraft={isDraft} isSelf={isSelf} sender={senderName} />
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
@@ -66,19 +67,19 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                         </div>
                         <p className="text-xs text-kumo-subtle truncate">{stripHtml(email.body || '').slice(0, 80)}</p>
                     </div>
-                    <CaretDownIcon size={14} className="text-kumo-subtle shrink-0" />
+                    <CaretDownIcon size={16} className="text-kumo-subtle shrink-0" />
                 </button>
             </div>
         );
     }
 
     return (
-        <div className={`group/thread-msg ${containerClassName}`}>
+        <div className={`group/thread-msg animate-reveal ${containerClassName}`}>
             <div className="px-4 py-4 md:px-6">
                 <div className="flex items-center justify-between gap-3 mb-3">
                     <div className="flex items-center gap-2.5 min-w-0">
                         <button type="button" onClick={onToggleExpand} className="shrink-0" aria-label="Collapse message">
-                            <div className="cursor-pointer hover:ring-2 hover:ring-kumo-brand/30 transition-shadow rounded-full">
+                            <div className="cursor-pointer hover:ring-2 hover:ring-[var(--border-control)] transition-shadow rounded-full">
                                 <Avatar isDraft={isDraft} isSelf={isSelf} sender={senderName} />
                             </div>
                         </button>
@@ -98,14 +99,8 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                     <div className="flex items-center gap-1 shrink-0">
                         {hasFileAttachment(email) && <PaperclipIcon size={12} className="text-kumo-subtle shrink-0" aria-label="Has attachment" />}
                         <span className="text-xs text-kumo-subtle">{formatShortDate(email.date)}</span>
-                        {onViewSource && (
-                            <Tooltip content="View source" side="bottom" asChild>
-                                <Button variant="ghost" shape="square" size="sm" icon={<CodeIcon size={14} />} onClick={onViewSource} aria-label="View source" className="transition-opacity h-6! w-6!" />
-                            </Tooltip>
-                        )}
-                        <button type="button" onClick={onToggleExpand} className="ml-1" aria-label="Collapse message">
-                            <CaretUpIcon size={14} className="text-kumo-subtle hover:text-kumo-default transition-colors" />
-                        </button>
+                        {onViewSource && <IconButton label="View source" icon={CodeIcon} onClick={onViewSource} />}
+                        <IconButton label="Collapse message" icon={CaretUpIcon} onClick={onToggleExpand} />
                     </div>
                 </div>
 

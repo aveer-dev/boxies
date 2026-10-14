@@ -82,6 +82,8 @@ final class ComposeFormModel {
     var originalEmailId: String?
     var threadId: String?
     var draftId: String?
+    /// Set when this form was rebuilt from a pending-send record left by a killed launch.
+    var restoredPendingSendId: UUID?
 
     var isSending = false
     var isSavingDraft = false
@@ -92,7 +94,12 @@ final class ComposeFormModel {
     private let signature: String
     private let initialSnapshot: String
     private var lastSavedSnapshot: String
+    /// Debounce only. Keystrokes cancel this, never the request in `inFlightSave`.
     private var autoSaveTask: Task<Void, Never>?
+    /// The POST on the wire. Unstructured so a cancelled caller can't abort it: a
+    /// cancelled request can still land server-side, and losing its response loses
+    /// the new draft id (the next save would then create a duplicate).
+    private var inFlightSave: Task<Bool, Never>?
     private var toastDismissTask: Task<Void, Never>?
     private var consecutiveFailures = 0
     private let continuousFailureThreshold = 3
@@ -367,6 +374,11 @@ final class ComposeFormModel {
     private func performSaveDraft(explicit: Bool) async -> Bool {
         commitPendingTokens()
 
+        // Queue behind a save already on the wire; it clears `inFlightSave` when done.
+        while let pending = inFlightSave {
+            _ = await pending.value
+        }
+
         guard !isEmpty else {
             return true
         }
@@ -376,15 +388,25 @@ final class ComposeFormModel {
             }
             return true
         }
-        guard !isSavingDraft else {
-            return false
+
+        let save = Task { @MainActor in
+            let saved = await self.writeDraft(explicit: explicit)
+            self.inFlightSave = nil
+            return saved
         }
+        inFlightSave = save
+        return await save.value
+    }
+
+    private func writeDraft(explicit: Bool) async -> Bool {
+        // Taken before the request: edits made while it's in flight stay unsaved.
+        let snapshot = currentSnapshot
 
         // Preview support: simulate successful draft save in Xcode Previews / canvas mock fixtures
         if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" || fromMailboxId.hasPrefix("mb-") {
             try? await Task.sleep(for: .milliseconds(300))
             if draftId == nil { draftId = UUID().uuidString }
-            lastSavedSnapshot = currentSnapshot
+            lastSavedSnapshot = snapshot
             saveStatus = .saved(Date())
             consecutiveFailures = 0
             if explicit {
@@ -422,7 +444,7 @@ final class ComposeFormModel {
                 return false
             }
             draftId = resolved
-            lastSavedSnapshot = currentSnapshot
+            lastSavedSnapshot = snapshot
             saveStatus = .saved(Date())
             consecutiveFailures = 0
             if explicit {
@@ -433,19 +455,30 @@ final class ComposeFormModel {
             }
             return true
         } catch {
+            // Draft saves stay out of `errorMessage` (the inline send/validation slot):
+            // a background hiccup shouldn't put red text under the body while typing.
             print("[ComposeFormModel] saveDraft error: \(error)")
-            errorMessage = error.localizedDescription
             saveStatus = .failed(error.localizedDescription)
             consecutiveFailures += 1
-            if explicit || consecutiveFailures >= continuousFailureThreshold {
-                showToast("Failed to save draft", isError: true)
+            if explicit || consecutiveFailures == continuousFailureThreshold {
+                showToast("Couldn’t save draft", isError: true)
             }
+            // Retry on its own so a failure isn't stranded until the next edit.
+            // 5s, 10s, 20s, … capped at 60s; a keystroke resets to the normal debounce.
+            let backoff = min(5.0 * pow(2.0, Double(consecutiveFailures - 1)), 60.0)
+            scheduleAutoSave(debounceSeconds: backoff)
             return false
         }
     }
 
+    /// `sessionToken` pins the send to the session it was written in; it is only sent as an
+    /// override once the shared token has changed (sign-out during the undo window).
     @discardableResult
-    func performActualSend() async -> Bool {
+    func performActualSend(sessionToken: String? = nil) async -> Bool {
+        let pinnedToken: String? = {
+            guard let sessionToken, sessionToken != APIClient.shared.authToken else { return nil }
+            return sessionToken
+        }()
         cancelAutoSave()
         commitPendingTokens()
         guard !toTokens.isEmpty else {
@@ -512,7 +545,8 @@ final class ComposeFormModel {
                 _ = try await APIClient.shared.replyToEmail(
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
-                    payload: payload
+                    payload: payload,
+                    bearerToken: pinnedToken
                 )
             case .forward:
                 guard let originalEmailId else {
@@ -522,14 +556,15 @@ final class ComposeFormModel {
                 _ = try await APIClient.shared.forwardEmail(
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
-                    payload: payload
+                    payload: payload,
+                    bearerToken: pinnedToken
                 )
             case .new, .editDraft:
-                _ = try await APIClient.shared.sendEmail(mailboxId: fromMailboxId, payload: payload)
+                _ = try await APIClient.shared.sendEmail(mailboxId: fromMailboxId, payload: payload, bearerToken: pinnedToken)
             }
 
             if let draftId {
-                try? await APIClient.shared.deleteEmail(mailboxId: fromMailboxId, id: draftId)
+                try? await APIClient.shared.deleteEmail(mailboxId: fromMailboxId, id: draftId, bearerToken: pinnedToken)
                 onDraftDeleted?(draftId, threadId, originalEmailId)
             }
             return true
@@ -537,6 +572,56 @@ final class ComposeFormModel {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    /// Snapshot persisted while this message sits in the undo-send window.
+    func pendingSendRecord(accountKey: String) -> PendingSendRecord {
+        func addresses(_ tokens: [MailAddress]) -> [PendingSendRecord.Address] {
+            tokens.map { PendingSendRecord.Address(name: $0.name, email: $0.email) }
+        }
+        return PendingSendRecord(
+            id: UUID(),
+            accountKey: accountKey,
+            mailboxId: fromMailboxId,
+            mode: mode.rawValue,
+            to: addresses(toTokens),
+            cc: addresses(ccTokens),
+            bcc: addresses(bccTokens),
+            subject: subject,
+            body: body,
+            originalEmailId: originalEmailId,
+            threadId: threadId,
+            draftId: draftId,
+            attachments: attachments.map {
+                PendingSendRecord.AttachmentRecord(
+                    filename: $0.filename,
+                    mimeType: $0.mimeType,
+                    size: $0.size,
+                    base64: $0.base64
+                )
+            },
+            createdAt: Date()
+        )
+    }
+
+    /// Refills a fresh form from a persisted pending send (kill inside the undo window).
+    /// The edits mark the form dirty, so the next draft save keeps it on the server.
+    func restore(from record: PendingSendRecord) {
+        func tokens(_ addresses: [PendingSendRecord.Address]) -> [MailAddress] {
+            addresses.map { MailAddress(name: $0.name, email: $0.email) }
+        }
+        toTokens = tokens(record.to)
+        ccTokens = tokens(record.cc)
+        bccTokens = tokens(record.bcc)
+        showCcBcc = !ccTokens.isEmpty || !bccTokens.isEmpty
+        subject = record.subject
+        body = record.body
+        attachments = record.attachments.map {
+            ComposePendingAttachment(filename: $0.filename, mimeType: $0.mimeType, size: $0.size, base64: $0.base64)
+        }
+        originalEmailId = record.originalEmailId ?? originalEmailId
+        threadId = record.threadId ?? threadId
+        draftId = record.draftId ?? draftId
     }
 
     private func recipientListValue() -> String {

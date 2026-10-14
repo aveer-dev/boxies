@@ -5,11 +5,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,15 +18,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material.icons.outlined.Mail
+import androidx.compose.material.icons.outlined.MoreHoriz
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PersonRemove
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -49,230 +52,165 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
-import co.inboxies.app.LocalAuthStore
-import co.inboxies.app.models.AccountSummary
-import co.inboxies.app.models.MailboxAcl
+import co.inboxies.app.models.MailboxInviteRow
+import co.inboxies.app.models.MailboxMember
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.InboxiesDropdownMenu
+import co.inboxies.app.ui.components.InboxiesMenuItem
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
-private enum class SharingRole {
-    MEMBER,
-    OWNER,
+private enum class SharingRole(val wire: String, val label: String) {
+    MEMBER("member", "Member"),
+    OWNER("owner", "Owner"),
 }
 
-private fun canonicalEmailAclKey(key: String): String? {
-    if (!key.startsWith("email:")) return null
-    val email = key.removePrefix("email:")
-    val at = email.lastIndexOf('@')
-    if (at <= 0) return null
-    val local = email.substring(0, at)
-    val plus = local.indexOf('+')
-    return if (plus > 0) {
-        "email:${local.substring(0, plus)}@${email.substring(at + 1)}"
-    } else {
-        "email:$email"
-    }
-}
-
-private fun keysForEmail(email: String): Set<String> {
-    val tagged = "email:$email"
-    val canonical = canonicalEmailAclKey(tagged)
-    return if (canonical != null && canonical != tagged) setOf(tagged, canonical) else setOf(tagged)
-}
-
-/// Checks if a key represents a user account and not an auth method / sub id.
-private fun isUserAccountKey(key: String): Boolean {
-    val trimmed = key.trim().lowercase()
-    if (trimmed.startsWith("sub:")) return false
-    if (trimmed.startsWith("user:")) return false
-    return true
-}
-
-private fun normalizeKey(raw: String): String? {
-    val trimmed = raw.trim().lowercase()
-    if (trimmed.isEmpty()) return null
-    if (trimmed.startsWith("email:")) {
-        val email = trimmed.removePrefix("email:")
-        return if (email.contains("@")) "email:$email" else null
-    }
-    if (trimmed.startsWith("sub:")) return trimmed
-    return if (trimmed.contains("@")) "email:$trimmed" else null
-}
-
-private fun displayAccount(key: String, accounts: List<AccountSummary>): Pair<String, String?> {
-    val trimmed = key.trim()
-    if (trimmed.startsWith("email:", ignoreCase = true)) {
-        val email = trimmed.removePrefix("email:")
-        val match = accounts.firstOrNull { it.email.equals(email, ignoreCase = true) }
-        if (match?.name != null && match.name.isNotBlank() && match.name != email) {
-            return match.name to email
-        }
-        return email to null
-    }
-    if (trimmed.startsWith("account:", ignoreCase = true)) {
-        val id = trimmed.removePrefix("account:")
-        val match = accounts.firstOrNull { it.id == id }
-        if (match != null) {
-            if (match.name != null && match.name.isNotBlank() && match.name != match.email) {
-                return match.name to match.email
-            }
-            return match.email to null
-        }
-        return "Account ${id.take(8)}…" to null
-    }
-    if (trimmed.contains("@")) {
-        val match = accounts.firstOrNull { it.email.equals(trimmed, ignoreCase = true) }
-        if (match?.name != null && match.name.isNotBlank() && match.name != trimmed) {
-            return match.name to trimmed
-        }
-        return trimmed to null
-    }
-    return trimmed to null
-}
-
+/**
+ * Who can use this mailbox. Owners invite people, change roles and remove
+ * members; anyone can leave. People join only by accepting an emailed invite.
+ */
 @Composable
 fun SharingSettingsView(
     onBack: () -> Unit,
 ) {
     val app = LocalAppModel.current
-    val auth = LocalAuthStore.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
-    val mailbox = app.selectedMailbox
-    val authEmail by auth.userEmail.collectAsState()
+    val clipboard = LocalClipboardManager.current
+    val mailboxId by app.selectedMailboxId.collectAsState()
+    val mailboxes by app.mailboxes.collectAsState()
+    val mailbox = mailboxes.firstOrNull { it.id == mailboxId }
 
-    var owners by remember(mailbox?.id) {
-        mutableStateOf(mailbox?.settings?.acl?.owners.orEmpty())
-    }
-    var members by remember(mailbox?.id) {
-        mutableStateOf(mailbox?.settings?.acl?.members.orEmpty())
-    }
-    var viewerKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var existingAccounts by remember { mutableStateOf<List<AccountSummary>>(emptyList()) }
+    var members by remember { mutableStateOf<List<MailboxMember>>(emptyList()) }
+    var invites by remember { mutableStateOf<List<MailboxInviteRow>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     var showAddModal by remember { mutableStateOf(false) }
+    var showLeaveConfirm by remember { mutableStateOf(false) }
+    var memberToRemove by remember { mutableStateOf<MailboxMember?>(null) }
+    var busyId by remember { mutableStateOf<String?>(null) }
+    var isLeaving by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(mailbox?.id) {
-        val me = runCatching { ApiClient.shared.getMe() }.getOrNull()
-        viewerKeys = if (me != null) {
-            me.keys.toSet()
-        } else {
-            authEmail?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }?.let { keysForEmail(it) }
-                .orEmpty()
-        }
+    val me = members.firstOrNull { it.you }
+    val canManage = mailbox?.canManage == true || me?.isOwner == true
+    val owners = members.filter { it.isOwner }
+    val plainMembers = members.filterNot { it.isOwner }
+    val pendingInvites = invites.filter { it.status == "pending" }
 
-        val mailboxEmails = app.mailboxes.value.map { it.email.trim().lowercase() }.toSet()
-
-        // Load existing accounts
-        val collected = mutableListOf<AccountSummary>()
-        val fetched = runCatching { ApiClient.shared.listAccounts() }.getOrNull()
-        if (fetched != null) {
-            collected.addAll(fetched.filter { !mailboxEmails.contains(it.email.lowercase()) })
-        }
-        if (collected.isEmpty()) {
-            collected.addAll(
-                listOf(
-                    AccountSummary(id = "acc-1", email = "admin@example.com", name = "Domain Admin"),
-                    AccountSummary(id = "acc-2", email = "ada@example.com", name = "Ada Lovelace"),
-                    AccountSummary(id = "acc-3", email = "jordan@example.com", name = "Jordan Hale"),
-                    AccountSummary(id = "acc-4", email = "alex@example.com", name = "Alex Rivera"),
-                    AccountSummary(id = "acc-5", email = "sam@example.com", name = "Sam Chen"),
-                ).filter { !mailboxEmails.contains(it.email.lowercase()) },
-            )
-        }
-        existingAccounts = collected
-    }
-
-    LaunchedEffect(mailbox?.id, mailbox?.settings?.acl) {
-        owners = mailbox?.settings?.acl?.owners.orEmpty()
-        members = mailbox?.settings?.acl?.members.orEmpty()
-    }
-
-    val canManage = mailbox?.canManage ?: owners.any { key ->
-        viewerKeys.contains(key) || canonicalEmailAclKey(key)?.let(viewerKeys::contains) == true
-    }
-
-    /// Owners list should only be a list of user accounts, not auth methods and sub ids.
-    val visibleOwners = owners.filter { isUserAccountKey(it) }
-    val visibleMembers = members.filter { isUserAccountKey(it) }
-
-    fun toast(message: String, ok: Boolean = true) {
+    fun toast(message: String) {
+        saveMessage = message
         scope.launch {
-            saveMessage = message
-            delay(if (ok) 1400 else 2200)
-            saveMessage = null
+            delay(1_800)
+            if (saveMessage == message) saveMessage = null
         }
     }
 
-    fun persistAcl(newOwners: List<String>, newMembers: List<String>, successMessage: String) {
-        owners = newOwners
-        members = newMembers
+    fun load() {
+        val id = mailboxId ?: return
+        if (app.isDebugPreview) {
+            members = previewMembers(mailbox?.email ?: id)
+            invites = previewInvites(id)
+            isLoading = false
+            return
+        }
         scope.launch {
-            val ok = app.updateMailboxSettings { settings ->
-                settings.copy(acl = MailboxAcl(owners = newOwners, members = newMembers))
-            }
-            toast(if (ok) successMessage else "Failed to save sharing", ok = ok)
+            isLoading = true
+            runCatching { ApiClient.shared.listMembers(id) }
+                .onSuccess { list ->
+                    if (id != app.selectedMailboxId.value) return@onSuccess
+                    members = list
+                    loadError = null
+                    invites = if (list.firstOrNull { it.you }?.isOwner == true || mailbox?.canManage == true) {
+                        runCatching { ApiClient.shared.listMailboxInvites(id) }.getOrDefault(emptyList())
+                    } else {
+                        emptyList()
+                    }
+                }
+                .onFailure { loadError = "Couldn't load members. ${it.message.orEmpty()}" }
+            isLoading = false
         }
     }
 
-    fun removeUser(key: String, role: SharingRole) {
-        if (role == SharingRole.OWNER) {
-            if (visibleOwners.size <= 1) {
-                toast("Mailbox must have at least one owner", ok = false)
-                return
-            }
-            val next = owners.filterNot { it == key }
-            persistAcl(next, members, "Owner removed")
-        } else {
-            val next = members.filterNot { it == key }
-            persistAcl(owners, next, "Member removed")
+    fun setRole(member: MailboxMember, role: SharingRole) {
+        val id = mailboxId ?: return
+        scope.launch {
+            busyId = member.userId
+            runCatching { ApiClient.shared.setMemberRole(id, member.userId, role.wire) }
+                .onSuccess {
+                    load()
+                    toast(if (role == SharingRole.OWNER) "Now an owner" else "Now a member")
+                }
+                .onFailure { toast(it.message ?: "Couldn't change role") }
+            busyId = null
         }
     }
 
-    val mailboxEmails = remember(app.mailboxes.value) {
-        app.mailboxes.value.map { it.email.trim().lowercase() }.toSet()
+    fun remove(member: MailboxMember) {
+        val id = mailboxId ?: return
+        scope.launch {
+            busyId = member.userId
+            runCatching { ApiClient.shared.removeMember(id, member.userId) }
+                .onSuccess {
+                    members = members.filterNot { it.userId == member.userId }
+                    toast("Removed")
+                }
+                .onFailure { toast(it.message ?: "Couldn't remove") }
+            busyId = null
+        }
     }
 
-    fun addExistingUser(email: String, role: SharingRole) {
-        val trimmed = email.trim().lowercase()
-        if (mailboxEmails.contains(trimmed)) {
-            toast("Mailboxes cannot be added as members", ok = false)
-            return
-        }
-        if (!isUserAccountKey(trimmed)) {
-            toast("Only user account emails can be added", ok = false)
-            return
-        }
-        val key = normalizeKey(trimmed) ?: "email:$trimmed"
-        val matchedId = existingAccounts.firstOrNull { it.email.equals(trimmed, ignoreCase = true) }?.id
-        val accountKey = matchedId?.let { "account:$it" }
-        val isAlready = owners.contains(key) || members.contains(key) ||
-            (accountKey != null && (owners.contains(accountKey) || members.contains(accountKey)))
-        if (isAlready) {
-            toast("That person is already listed", ok = false)
-            return
-        }
-        val keyToAdd = accountKey ?: key
-        if (role == SharingRole.OWNER) {
-            persistAcl(owners + keyToAdd, members, "Owner added")
-        } else {
-            persistAcl(owners, members + keyToAdd, "Member added")
+    fun revoke(invite: MailboxInviteRow) {
+        scope.launch {
+            busyId = invite.id
+            runCatching { ApiClient.shared.revokeInvite(invite.id) }
+                .onSuccess {
+                    invites = invites.filterNot { it.id == invite.id }
+                    toast("Invite revoked")
+                }
+                .onFailure { toast(it.message ?: "Couldn't revoke") }
+            busyId = null
         }
     }
+
+    fun leave() {
+        val id = mailboxId ?: return
+        val self = me ?: return
+        scope.launch {
+            isLeaving = true
+            runCatching { ApiClient.shared.removeMember(id, self.userId) }
+                .onSuccess {
+                    onBack()
+                    app.refreshMailboxes(showLoading = true)
+                    app.showToast("You left $id")
+                }
+                .onFailure { toast(it.message ?: "Couldn't leave") }
+            isLeaving = false
+        }
+    }
+
+    LaunchedEffect(mailboxId) { load() }
+
+    val mailboxEmails = remember(mailboxes) { mailboxes.map { it.email.trim().lowercase() }.toSet() }
 
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Top Navigation Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -286,7 +224,7 @@ fun SharingSettingsView(
                     onClick = onBack,
                 )
                 Text(
-                    "Sharing",
+                    "Members",
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 16.sp,
@@ -296,20 +234,19 @@ fun SharingSettingsView(
                 if (canManage) {
                     HomeChromeToolbarButton(
                         icon = Icons.Outlined.Add,
-                        contentDescription = "Add member",
+                        contentDescription = "Invite someone",
                         onClick = { showAddModal = true },
                     )
                 }
             }
 
-            // Scrollable Settings Content
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
                 Text(
-                    "People with access through their Inboxies account. Owners can manage this list. Members can use the mailbox but cannot change who has access.",
+                    "People who can use this mailbox. Owners invite people and manage who has access. Members can read and send mail but can't change access.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
                     color = colors.muted,
@@ -318,152 +255,82 @@ fun SharingSettingsView(
                         .padding(top = 16.dp, bottom = 8.dp),
                 )
 
-                // Owners Header
-                Text(
-                    "Owners",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    color = colors.ink,
-                    modifier = Modifier
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 12.dp),
-                )
-
-                // Owners Card
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(top = 8.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(colors.surface),
-                ) {
-                    if (visibleOwners.isEmpty()) {
-                        Text(
-                            "No owners yet.",
-                            fontFamily = InterFontFamily,
-                            fontSize = 14.sp,
+                when {
+                    isLoading && members.isEmpty() -> Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 40.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
                             color = colors.muted,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                            strokeWidth = 2.dp,
                         )
-                    } else {
-                        visibleOwners.forEachIndexed { index, key ->
-                            val info = displayAccount(key, existingAccounts)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        info.first,
-                                        fontFamily = InterFontFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 15.sp,
-                                        color = colors.ink,
-                                    )
-                                    if (info.second != null) {
-                                        Text(
-                                            info.second!!,
-                                            fontFamily = InterFontFamily,
-                                            fontSize = 12.sp,
-                                            color = colors.muted,
-                                        )
-                                    }
-                                }
-                                if (canManage && visibleOwners.size > 1) {
-                                    Icon(
-                                        Icons.Outlined.Delete,
-                                        contentDescription = "Remove",
-                                        tint = colors.deepDarkRed,
-                                        modifier = Modifier
-                                            .clickable { removeUser(key, SharingRole.OWNER) }
-                                            .padding(6.dp),
-                                    )
-                                }
-                            }
-                            if (index < visibleOwners.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = 16.dp),
-                                    color = colors.line,
-                                )
-                            }
+                    }
+                    loadError != null && members.isEmpty() -> Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 40.dp, start = 20.dp, end = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(loadError!!, fontFamily = InterFontFamily, fontSize = 14.sp, color = colors.muted)
+                        TextButton(onClick = { load() }) {
+                            Text("Try again", fontFamily = InterFontFamily, color = colors.accent)
                         }
                     }
-                }
-
-                // Members Header
-                Text(
-                    "Members",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    color = colors.ink,
-                    modifier = Modifier
-                        .padding(horizontal = 20.dp)
-                        .padding(top = 20.dp),
-                )
-
-                // Members Card
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(top = 8.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(colors.surface),
-                ) {
-                    if (visibleMembers.isEmpty()) {
-                        Text(
-                            "No members yet.",
-                            fontFamily = InterFontFamily,
-                            fontSize = 14.sp,
-                            color = colors.muted,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                        )
-                    } else {
-                        visibleMembers.forEachIndexed { index, key ->
-                            val info = displayAccount(key, existingAccounts)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        info.first,
-                                        fontFamily = InterFontFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 15.sp,
-                                        color = colors.ink,
-                                    )
-                                    if (info.second != null) {
-                                        Text(
-                                            info.second!!,
-                                            fontFamily = InterFontFamily,
-                                            fontSize = 12.sp,
-                                            color = colors.muted,
-                                        )
+                    else -> {
+                        MembersSectionHeader("Owners")
+                        MembersCard {
+                            MemberRows(
+                                list = owners,
+                                empty = "No owners yet.",
+                                canManage = canManage,
+                                busyId = busyId,
+                                onSetRole = ::setRole,
+                                onRemove = { memberToRemove = it },
+                            )
+                        }
+                        MembersSectionHeader("Members")
+                        MembersCard {
+                            MemberRows(
+                                list = plainMembers,
+                                empty = "No members yet.",
+                                canManage = canManage,
+                                busyId = busyId,
+                                onSetRole = ::setRole,
+                                onRemove = { memberToRemove = it },
+                            )
+                        }
+                        if (canManage && pendingInvites.isNotEmpty()) {
+                            MembersSectionHeader("Pending invites")
+                            MembersCard {
+                                pendingInvites.forEachIndexed { index, invite ->
+                                    InviteRow(invite, busy = busyId == invite.id, onRevoke = { revoke(invite) })
+                                    if (index < pendingInvites.lastIndex) {
+                                        HorizontalDivider(modifier = Modifier.padding(start = 16.dp), color = colors.line)
                                     }
                                 }
-                                if (canManage) {
-                                    Icon(
-                                        Icons.Outlined.Delete,
-                                        contentDescription = "Remove",
-                                        tint = colors.deepDarkRed,
-                                        modifier = Modifier
-                                            .clickable { removeUser(key, SharingRole.MEMBER) }
-                                            .padding(6.dp),
-                                    )
-                                }
                             }
-                            if (index < visibleMembers.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = 16.dp),
-                                    color = colors.line,
+                        }
+                        if (me != null) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .padding(top = 28.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(colors.surface)
+                                    .clickable(enabled = !isLeaving) { showLeaveConfirm = true }
+                                    .padding(vertical = 14.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    if (isLeaving) "Leaving…" else "Leave mailbox",
+                                    fontFamily = InterFontFamily,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 15.sp,
+                                    color = colors.deepDarkRed,
                                 )
                             }
                         }
@@ -474,37 +341,83 @@ fun SharingSettingsView(
             }
         }
 
-        // Add Member Modal Dialog
         if (showAddModal) {
             AddMemberDialog(
-                existingAccounts = existingAccounts,
-                currentKeys = (owners + members).toSet(),
+                existingEmails = (members.map { it.email.lowercase() } + pendingInvites.map { it.inviteeEmail.lowercase() }).toSet(),
                 mailboxEmails = mailboxEmails,
                 onDismiss = { showAddModal = false },
-                onAddExisting = { email, role ->
-                    addExistingUser(email, role)
-                    showAddModal = false
-                },
-                onSendInvite = { email, role ->
-                    val id = mailbox?.id ?: return@AddMemberDialog
+                onSendInvite = { email, role, done ->
+                    val id = mailboxId ?: return@AddMemberDialog
                     scope.launch {
                         try {
-                            val res = ApiClient.shared.createMailboxInvite(
-                                id,
-                                email.trim(),
-                                if (role == SharingRole.OWNER) "owner" else "member",
-                            )
-                            toast(if (res.emailSent) "Invite emailed" else "Invite created")
+                            val res = ApiClient.shared.createMailboxInvite(id, email.trim(), role.wire)
+                            if (res.emailSent) {
+                                toast("Invite emailed")
+                            } else {
+                                clipboard.setText(AnnotatedString(res.inviteUrl))
+                                toast("Invite created — link copied")
+                            }
                             showAddModal = false
+                            load()
                         } catch (e: Exception) {
-                            toast(e.message ?: "Invite failed", ok = false)
+                            toast(e.message ?: "Invite failed")
+                        } finally {
+                            done()
                         }
                     }
                 },
             )
         }
 
-        // Bottom Toast Banner
+        memberToRemove?.let { member ->
+            AlertDialog(
+                onDismissRequest = { memberToRemove = null },
+                title = { Text("Remove ${member.email}?", fontFamily = InterFontFamily, fontSize = 17.sp) },
+                text = { Text("They lose access to this mailbox right away.", fontFamily = InterFontFamily) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        memberToRemove = null
+                        remove(member)
+                    }) {
+                        Text("Remove", fontFamily = InterFontFamily, color = colors.deepDarkRed)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { memberToRemove = null }) {
+                        Text("Cancel", fontFamily = InterFontFamily, color = colors.muted)
+                    }
+                },
+                containerColor = colors.surface,
+            )
+        }
+
+        if (showLeaveConfirm) {
+            AlertDialog(
+                onDismissRequest = { showLeaveConfirm = false },
+                title = { Text("Leave this mailbox?", fontFamily = InterFontFamily, fontSize = 17.sp) },
+                text = {
+                    Text(
+                        "You'll lose access to ${mailbox?.email ?: "this mailbox"} until an owner invites you again.",
+                        fontFamily = InterFontFamily,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showLeaveConfirm = false
+                        leave()
+                    }) {
+                        Text("Leave mailbox", fontFamily = InterFontFamily, color = colors.deepDarkRed)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLeaveConfirm = false }) {
+                        Text("Cancel", fontFamily = InterFontFamily, color = colors.muted)
+                    }
+                },
+                containerColor = colors.surface,
+            )
+        }
+
         AnimatedVisibility(
             visible = saveMessage != null,
             enter = fadeIn(),
@@ -528,13 +441,175 @@ fun SharingSettingsView(
 }
 
 @Composable
+private fun MembersSectionHeader(title: String) {
+    Text(
+        title,
+        fontFamily = InterFontFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp,
+        color = inboxiesColors().ink,
+        modifier = Modifier
+            .padding(horizontal = 20.dp)
+            .padding(top = 20.dp),
+    )
+}
+
+@Composable
+private fun MembersCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(top = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(inboxiesColors().surface),
+        content = content,
+    )
+}
+
+@Composable
+private fun MemberRows(
+    list: List<MailboxMember>,
+    empty: String,
+    canManage: Boolean,
+    busyId: String?,
+    onSetRole: (MailboxMember, SharingRole) -> Unit,
+    onRemove: (MailboxMember) -> Unit,
+) {
+    val colors = inboxiesColors()
+    if (list.isEmpty()) {
+        Text(
+            empty,
+            fontFamily = InterFontFamily,
+            fontSize = 14.sp,
+            color = colors.muted,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+        )
+        return
+    }
+    list.forEachIndexed { index, member ->
+        MemberRow(member, canManage, busy = busyId == member.userId, onSetRole = onSetRole, onRemove = onRemove)
+        if (index < list.lastIndex) {
+            HorizontalDivider(modifier = Modifier.padding(start = 16.dp), color = colors.line)
+        }
+    }
+}
+
+@Composable
+private fun MemberRow(
+    member: MailboxMember,
+    canManage: Boolean,
+    busy: Boolean,
+    onSetRole: (MailboxMember, SharingRole) -> Unit,
+    onRemove: (MailboxMember) -> Unit,
+) {
+    val colors = inboxiesColors()
+    var menuOpen by remember { mutableStateOf(false) }
+    val name = member.name?.trim().orEmpty()
+    val showsName = name.isNotEmpty() && !name.equals(member.email, ignoreCase = true)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    if (showsName) name else member.email,
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 15.sp,
+                    color = colors.ink,
+                    maxLines = 1,
+                )
+                if (member.you) {
+                    Text(
+                        "You",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 11.sp,
+                        color = colors.muted,
+                        modifier = Modifier
+                            .background(colors.pillFill, RoundedCornerShape(50))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+            if (showsName) {
+                Text(member.email, fontFamily = InterFontFamily, fontSize = 12.sp, color = colors.muted, maxLines = 1)
+            }
+        }
+        when {
+            busy -> CircularProgressIndicator(modifier = Modifier.size(18.dp), color = colors.muted, strokeWidth = 2.dp)
+            canManage && !member.you -> Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Outlined.MoreHoriz, contentDescription = "Manage ${member.email}", tint = colors.muted)
+                }
+                InboxiesDropdownMenu(expanded = menuOpen, onDismiss = { menuOpen = false }) {
+                    if (member.isOwner) {
+                        InboxiesMenuItem(text = "Make member", icon = Icons.Outlined.Person, onClick = {
+                            menuOpen = false
+                            onSetRole(member, SharingRole.MEMBER)
+                        })
+                    } else {
+                        InboxiesMenuItem(text = "Make owner", icon = Icons.Outlined.Shield, onClick = {
+                            menuOpen = false
+                            onSetRole(member, SharingRole.OWNER)
+                        })
+                    }
+                    InboxiesMenuItem(text = "Remove", icon = Icons.Outlined.PersonRemove, destructive = true, onClick = {
+                        menuOpen = false
+                        onRemove(member)
+                    })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InviteRow(invite: MailboxInviteRow, busy: Boolean, onRevoke: () -> Unit) {
+    val colors = inboxiesColors()
+    val role = if (invite.role == "owner") "Owner" else "Member"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                invite.inviteeEmail,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 15.sp,
+                color = colors.ink,
+                maxLines = 1,
+            )
+            Text(
+                "$role · expires ${shortDate(invite.expiresAt)}",
+                fontFamily = InterFontFamily,
+                fontSize = 12.sp,
+                color = colors.muted,
+            )
+        }
+        if (busy) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = colors.muted, strokeWidth = 2.dp)
+        } else {
+            TextButton(onClick = onRevoke) {
+                Text("Revoke", fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.deepDarkRed)
+            }
+        }
+    }
+}
+
+@Composable
 private fun AddMemberDialog(
-    existingAccounts: List<AccountSummary>,
-    currentKeys: Set<String>,
+    existingEmails: Set<String>,
     mailboxEmails: Set<String>,
     onDismiss: () -> Unit,
-    onAddExisting: (String, SharingRole) -> Unit,
-    onSendInvite: (String, SharingRole) -> Unit,
+    onSendInvite: (String, SharingRole, done: () -> Unit) -> Unit,
 ) {
     val colors = inboxiesColors()
     val view = LocalView.current
@@ -545,29 +620,13 @@ private fun AddMemberDialog(
     val role = if (isOwner) SharingRole.OWNER else SharingRole.MEMBER
     val trimmedEmail = email.trim().lowercase()
     val isMailboxEmail = mailboxEmails.contains(trimmedEmail)
-    val isSubOrAuthKey = trimmedEmail.startsWith("sub:") || trimmedEmail.startsWith("user:")
-    val isValidEmail = !isMailboxEmail && !isSubOrAuthKey && trimmedEmail.contains("@") && trimmedEmail.contains(".") && trimmedEmail.length >= 5
-
-    val matchingAccounts = remember(trimmedEmail, existingAccounts, currentKeys, mailboxEmails) {
-        if (trimmedEmail.isEmpty()) emptyList()
-        else existingAccounts.filter { acc ->
-            val emailLower = acc.email.lowercase()
-            if (mailboxEmails.contains(emailLower)) return@filter false
-            val matches = emailLower.contains(trimmedEmail) || (acc.name?.lowercase()?.contains(trimmedEmail) == true)
-            val alreadyAdded = currentKeys.contains("email:$emailLower") ||
-                currentKeys.contains(emailLower) ||
-                currentKeys.contains("account:${acc.id}")
-            matches && !alreadyAdded
-        }
-    }
-
-    val matchedExisting = if (!isMailboxEmail && !isSubOrAuthKey) {
-        existingAccounts.firstOrNull { it.email.equals(trimmedEmail, ignoreCase = true) }
-    } else null
-    val isExistingAccount = matchedExisting != null
+    val isAlreadyListed = existingEmails.contains(trimmedEmail)
+    val isValidEmail = !isMailboxEmail && !isAlreadyListed &&
+        trimmedEmail.contains("@") && trimmedEmail.contains(".") && trimmedEmail.length >= 5
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = colors.surface,
         title = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -575,7 +634,7 @@ private fun AddMemberDialog(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Text(
-                    "Add member",
+                    "Invite someone",
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 18.sp,
@@ -588,18 +647,12 @@ private fun AddMemberDialog(
                     },
                     modifier = Modifier.size(32.dp),
                 ) {
-                    Icon(
-                        Icons.Outlined.Close,
-                        contentDescription = "Close",
-                        tint = colors.ink,
-                        modifier = Modifier.size(20.dp),
-                    )
+                    Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.ink, modifier = Modifier.size(20.dp))
                 }
             }
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // Email Field
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         "Email address",
@@ -613,150 +666,17 @@ private fun AddMemberDialog(
                         onValueChange = { email = it },
                         placeholder = { Text("person@example.com", fontSize = 14.sp) },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp),
                     )
-
-                    // Dropdown Options of matching existing accounts
-                    if (matchingAccounts.isNotEmpty() && matchedExisting?.email != trimmedEmail) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .border(1.dp, colors.line, RoundedCornerShape(10.dp))
-                                .background(colors.surface),
-                        ) {
-                            matchingAccounts.take(5).forEachIndexed { index, acc ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { email = acc.email }
-                                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        if (acc.name != null && acc.name.isNotBlank() && acc.name != acc.email) {
-                                            Text(
-                                                acc.name,
-                                                fontFamily = InterFontFamily,
-                                                fontWeight = FontWeight.Medium,
-                                                fontSize = 14.sp,
-                                                color = colors.ink,
-                                            )
-                                            Text(
-                                                acc.email,
-                                                fontFamily = InterFontFamily,
-                                                fontSize = 12.sp,
-                                                color = colors.muted,
-                                            )
-                                        } else {
-                                            Text(
-                                                acc.email,
-                                                fontFamily = InterFontFamily,
-                                                fontWeight = FontWeight.Medium,
-                                                fontSize = 14.sp,
-                                                color = colors.ink,
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        "Existing user",
-                                        fontFamily = InterFontFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 11.sp,
-                                        color = colors.accent,
-                                        modifier = Modifier
-                                            .background(colors.pillFill, RoundedCornerShape(50))
-                                            .padding(horizontal = 8.dp, vertical = 3.dp),
-                                    )
-                                }
-                                if (index < minOf(matchingAccounts.size, 5) - 1) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(start = 14.dp),
-                                        color = colors.line,
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Status Indicator
-                    if (isMailboxEmail) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(top = 4.dp),
-                        ) {
-                            Icon(
-                                Icons.Outlined.Error,
-                                contentDescription = null,
-                                tint = colors.deepDarkRed,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Text(
-                                "Mailboxes cannot be added as members. Only user accounts can be added.",
-                                fontFamily = InterFontFamily,
-                                fontSize = 12.sp,
-                                color = colors.deepDarkRed,
-                            )
-                        }
-                    } else if (isSubOrAuthKey) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(top = 4.dp),
-                        ) {
-                            Icon(
-                                Icons.Outlined.Error,
-                                contentDescription = null,
-                                tint = colors.deepDarkRed,
-                                modifier = Modifier.size(14.dp),
-                            )
-                            Text(
-                                "Sub IDs and auth methods cannot be added. Only user account emails can be added.",
-                                fontFamily = InterFontFamily,
-                                fontSize = 12.sp,
-                                color = colors.deepDarkRed,
-                            )
-                        }
-                    } else if (isValidEmail) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(top = 4.dp),
-                        ) {
-                            if (isExistingAccount) {
-                                Icon(
-                                    Icons.Outlined.CheckCircle,
-                                    contentDescription = null,
-                                    tint = colors.accent,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Text(
-                                    "Existing Inboxies user — will be added directly",
-                                    fontFamily = InterFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.muted,
-                                )
-                            } else {
-                                Icon(
-                                    Icons.Outlined.Mail,
-                                    contentDescription = null,
-                                    tint = colors.muted,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Text(
-                                    "New user — an email invite link will be sent",
-                                    fontFamily = InterFontFamily,
-                                    fontSize = 12.sp,
-                                    color = colors.muted,
-                                )
-                            }
-                        }
+                    when {
+                        isMailboxEmail -> DialogHint("Mailboxes can't be members. Invite the person who uses it.", warning = true)
+                        isAlreadyListed -> DialogHint("Already a member or invited.", warning = true)
+                        isValidEmail -> DialogHint("We'll email them an invite. They confirm it with a code sent to this address.", warning = false)
                     }
                 }
 
-                // Owner Role Toggle
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -771,15 +691,9 @@ private fun AddMemberDialog(
                             .padding(end = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
+                        Text("Owner", fontFamily = InterFontFamily, fontWeight = FontWeight.Medium, fontSize = 15.sp, color = colors.ink)
                         Text(
-                            "Owner",
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 15.sp,
-                            color = colors.ink,
-                        )
-                        Text(
-                            "Owners can manage mailbox settings, members, and permissions.",
+                            "Owners can manage mailbox settings and who has access.",
                             fontFamily = InterFontFamily,
                             fontSize = 12.sp,
                             color = colors.muted,
@@ -788,41 +702,67 @@ private fun AddMemberDialog(
                     Switch(
                         checked = isOwner,
                         onCheckedChange = { isOwner = it },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = colors.accent,
-                            checkedThumbColor = Color.White,
-                        ),
+                        colors = SwitchDefaults.colors(checkedTrackColor = colors.accent, checkedThumbColor = Color.White),
                     )
                 }
             }
         },
         confirmButton = {
             TextButton(
-                enabled = isValidEmail && !isMailboxEmail && !isSubOrAuthKey && !isSubmitting,
+                enabled = isValidEmail && !isSubmitting,
                 onClick = {
                     isSubmitting = true
-                    if (isExistingAccount) {
-                        onAddExisting(trimmedEmail, role)
-                    } else {
-                        onSendInvite(trimmedEmail, role)
-                    }
+                    onSendInvite(trimmedEmail, role) { isSubmitting = false }
                 },
             ) {
                 if (isSubmitting) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = colors.accent)
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = colors.accent, strokeWidth = 2.dp)
                 } else {
                     Text(
-                        if (isExistingAccount) {
-                            if (role == SharingRole.OWNER) "Add owner" else "Add member"
-                        } else {
-                            "Send invite"
-                        },
+                        "Send invite",
                         fontFamily = InterFontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (isValidEmail && !isMailboxEmail && !isSubOrAuthKey) colors.accent else colors.muted,
+                        color = if (isValidEmail) colors.accent else colors.muted,
                     )
                 }
             }
         },
     )
 }
+
+@Composable
+private fun DialogHint(text: String, warning: Boolean) {
+    val colors = inboxiesColors()
+    val tint = if (warning) colors.deepDarkRed else colors.muted
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.padding(top = 4.dp),
+    ) {
+        Icon(if (warning) Icons.Outlined.Error else Icons.Outlined.Mail, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
+        Text(text, fontFamily = InterFontFamily, fontSize = 12.sp, color = tint)
+    }
+}
+
+private fun shortDate(iso: String): String = runCatching {
+    DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+        .withZone(ZoneId.systemDefault())
+        .format(Instant.parse(iso))
+}.getOrDefault(iso)
+
+private fun previewMembers(mailboxEmail: String) = listOf(
+    MailboxMember(userId = "u-1", email = mailboxEmail, name = "Alex Rivera", role = "owner", you = true),
+    MailboxMember(userId = "u-2", email = "ada@example.com", name = "Ada Lovelace", role = "owner"),
+    MailboxMember(userId = "u-3", email = "jordan@example.com", role = "member"),
+)
+
+private fun previewInvites(mailboxId: String) = listOf(
+    MailboxInviteRow(
+        id = "inv-1",
+        mailboxId = mailboxId,
+        role = "member",
+        inviteeEmail = "sam@example.com",
+        expiresAt = Instant.now().plusSeconds(6 * 86_400).toString(),
+        status = "pending",
+    ),
+)

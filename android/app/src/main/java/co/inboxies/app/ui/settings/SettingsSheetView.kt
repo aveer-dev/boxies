@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Close
@@ -98,6 +99,7 @@ private sealed class SettingsPage {
     data object Aliases : SettingsPage()
     data object Sharing : SettingsPage()
     data object SignInMethods : SettingsPage()
+    data object Sessions : SettingsPage()
     data object DomainAdmin : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
@@ -130,9 +132,8 @@ fun SettingsSheetView(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         if (granted) {
-            push.setNotificationsEnabled(true)
             notificationsEnabled = true
-            mailboxId?.let { push.requestPermissionAndRegister(it) }
+            push.enableNotifications()
         } else {
             push.setNotificationsEnabled(false)
             notificationsEnabled = false
@@ -143,16 +144,16 @@ fun SettingsSheetView(
         if (Build.VERSION.SDK_INT >= 33 && !push.hasNotificationPermission()) {
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            push.setNotificationsEnabled(true)
             notificationsEnabled = true
-            mailboxId?.let { push.requestPermissionAndRegister(it) }
+            // Registers this device for every mailbox the user has, not just the open one.
+            push.enableNotifications()
         }
     }
 
     fun disableNotifications() {
-        push.setNotificationsEnabled(false)
         notificationsEnabled = false
-        mailboxId?.let { push.unregisterToken(it) }
+        // Off means off for every mailbox (runs app-scoped; closing Settings can't cancel it).
+        app.disablePushNotifications()
     }
 
     fun navigateBack() {
@@ -234,6 +235,7 @@ fun SettingsSheetView(
                     onOpenAliases = { page = SettingsPage.Aliases },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSignInMethods = { page = SettingsPage.SignInMethods },
+                    onOpenSessions = { page = SettingsPage.Sessions },
                     onOpenDomainAdmin = { page = SettingsPage.DomainAdmin },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
@@ -277,6 +279,9 @@ fun SettingsSheetView(
                 SettingsPage.SignInMethods -> SignInMethodsSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.Sessions -> SessionsSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.DomainAdmin -> DomainAdminSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
@@ -309,6 +314,7 @@ private fun SettingsRootPage(
     onOpenAliases: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSignInMethods: () -> Unit,
+    onOpenSessions: () -> Unit,
     onOpenDomainAdmin: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
@@ -318,6 +324,7 @@ private fun SettingsRootPage(
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
     val isAdmin by app.isAdmin.collectAsState()
+    val readOnly by app.selectedMailboxReadOnly.collectAsState()
 
     val displayName = remember(mailbox) { mailboxDisplayName(mailbox) }
     val emailAddress = mailbox?.email.orEmpty()
@@ -412,7 +419,7 @@ private fun SettingsRootPage(
                         )
                     }
                 }
-                Text(
+                if (!readOnly) Text(
                     "Edit",
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.Medium,
@@ -436,45 +443,48 @@ private fun SettingsRootPage(
                 icon = Icons.Outlined.SwapHoriz,
                 onClick = onOpenSwipe,
             )
+            // Service ended: mailbox settings, sharing and private emails are frozen.
+            if (!readOnly) {
+                SettingsNavRow(
+                    title = "AI prompt",
+                    icon = Icons.Outlined.AutoAwesome,
+                    onClick = onOpenAgentPrompt,
+                )
+                SettingsNavRow(
+                    title = "Forwarding",
+                    icon = Icons.Outlined.ForwardToInbox,
+                    onClick = onOpenForwarding,
+                )
+                SettingsNavRow(
+                    title = "Auto-reply",
+                    icon = Icons.AutoMirrored.Outlined.Reply,
+                    onClick = onOpenAutoReply,
+                )
+                SettingsNavRow(
+                    title = "Filters",
+                    icon = Icons.Outlined.FilterList,
+                    onClick = onOpenFilters,
+                )
+                SettingsNavRow(
+                    title = "Senders",
+                    icon = Icons.Outlined.Person,
+                    onClick = onOpenSenders,
+                )
+                SettingsNavRow(
+                    title = "Private email",
+                    onClick = onOpenAliases,
+                    icon = {
+                        PrivateEmailLogoView(size = 20.dp, showTile = false)
+                    },
+                )
+                SettingsNavRow(
+                    title = "Members",
+                    icon = Icons.Outlined.Group,
+                    onClick = onOpenSharing,
+                )
+            }
             SettingsNavRow(
-                title = "AI prompt",
-                icon = Icons.Outlined.AutoAwesome,
-                onClick = onOpenAgentPrompt,
-            )
-            SettingsNavRow(
-                title = "Forwarding",
-                icon = Icons.Outlined.ForwardToInbox,
-                onClick = onOpenForwarding,
-            )
-            SettingsNavRow(
-                title = "Auto-reply",
-                icon = Icons.AutoMirrored.Outlined.Reply,
-                onClick = onOpenAutoReply,
-            )
-            SettingsNavRow(
-                title = "Filters",
-                icon = Icons.Outlined.FilterList,
-                onClick = onOpenFilters,
-            )
-            SettingsNavRow(
-                title = "Senders",
-                icon = Icons.Outlined.Person,
-                onClick = onOpenSenders,
-            )
-            SettingsNavRow(
-                title = "Private email",
-                onClick = onOpenAliases,
-                icon = {
-                    PrivateEmailLogoView(size = 20.dp, showTile = false)
-                },
-            )
-            SettingsNavRow(
-                title = "Sharing",
-                icon = Icons.Outlined.Group,
-                onClick = onOpenSharing,
-            )
-            SettingsNavRow(
-                title = "Sign-in methods",
+                title = "Sign-in & recovery",
                 icon = Icons.Outlined.Key,
                 isLoading = loadingSignInMethods,
                 onClick = {
@@ -495,6 +505,11 @@ private fun SettingsRootPage(
                         }
                     }
                 },
+            )
+            SettingsNavRow(
+                title = "Devices & sessions",
+                icon = Icons.Outlined.Devices,
+                onClick = onOpenSessions,
             )
             if (isAdmin) {
                 SettingsNavRow(
@@ -528,7 +543,12 @@ private fun SettingsRootPage(
                 checked = notificationsEnabled,
                 onCheckedChange = onNotificationsChange,
             )
-            SettingsToggleRow(
+            if (readOnly) {
+                SettingsFormFooter(
+                    "The subscription for ${mailbox?.domain.orEmpty()} ended, so this mailbox's " +
+                        "settings, sharing and private emails can't be changed until it's renewed.",
+                )
+            } else SettingsToggleRow(
                 title = "Default signature",
                 subtitle = "Show 'Sent with Inboxies Email' in emails",
                 icon = Icons.Outlined.Edit,
@@ -583,7 +603,7 @@ private fun SettingsRootPage(
                 },
             )
 
-            Box(
+            if (!readOnly) Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 24.dp),
@@ -716,8 +736,8 @@ private fun DeleteAccountDialog(
                     color = colors.ink,
                 )
                 Text(
-                    "Mailboxes you are the only owner of — and all of their mail — are deleted. " +
-                        "Mailboxes shared with other owners stay with them; you just lose access. " +
+                    "Mailboxes where you're the only owner are deleted with all their mail, " +
+                        "for everyone who uses them. Mailboxes with another owner stay; you just lose access. " +
                         "This can't be undone.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,

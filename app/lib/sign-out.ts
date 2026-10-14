@@ -5,22 +5,14 @@
 import api from "~/services/api";
 
 /**
- * Sign out of whichever web session is active. The password-session cookie is
- * HttpOnly, so only the Worker can clear it; Cloudflare Access sessions end at
- * Access's logout endpoint.
+ * Sign out of the web session. The session cookie is HttpOnly, so only the
+ * Worker can revoke it and clear it; then land on the sign-in screen.
  */
 export async function signOut(): Promise<void> {
-	let isPasswordSession = false;
 	try {
-		const me = await api.getMe();
-		isPasswordSession = Boolean(me.sub?.startsWith("user:"));
+		await api.logout();
 	} catch {
-		// Already signed out or unreachable: still clear the cookie below.
+		// Already signed out or unreachable: still leave the app.
 	}
-	try {
-		await api.passwordLogout();
-	} catch {
-		// Best effort; the redirect below still leaves the app.
-	}
-	window.location.href = isPasswordSession ? "/login" : "/cdn-cgi/access/logout";
+	window.location.href = "/login";
 }

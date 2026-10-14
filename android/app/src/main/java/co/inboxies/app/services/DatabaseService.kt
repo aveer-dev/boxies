@@ -6,8 +6,8 @@ import co.inboxies.app.models.Mailbox
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Lightweight in-memory cache used by [AppModel]. Room schema lives in Database.kt
- * for future persistence; this keeps the app compiling and online-first for v1.
+ * Process-lifetime, in-memory cache used by [AppModel]. Nothing is persisted to disk:
+ * the app is online-first and repopulates this from the API after every cold start.
  */
 class DatabaseService private constructor() {
     private val mailboxes = ConcurrentHashMap<String, Mailbox>()
@@ -60,14 +60,25 @@ class DatabaseService private constructor() {
     private fun emailsIn(mailboxId: String): Sequence<Email> =
         emails.values.asSequence().filter { emailMailboxIds[it.id] == mailboxId }
 
-    fun getEmails(mailboxId: String, folderId: String, limit: Int): List<Email> =
+    /**
+     * The folder's list rows (all pages loaded so far), newest first, one per conversation:
+     * messages cached by opening a thread don't become extra rows. Drafts are grouped per
+     * reply target, not per thread, so they are never collapsed.
+     */
+    fun getEmails(mailboxId: String, folderId: String, limit: Int = Int.MAX_VALUE): List<Email> {
+        val rows = getEmailRows(mailboxId, folderId)
+        val listRows = if (folderId == "draft" || folderId == "drafts") rows else EmailPaging.collapseThreads(rows)
+        return listRows.take(limit)
+    }
+
+    /** Every cached message filed in the folder, newest first (not collapsed). */
+    fun getEmailRows(mailboxId: String, folderId: String): List<Email> =
         emailsIn(mailboxId)
             .filter { it.folderId == folderId || (it.folderId == null && folderId == "inbox") }
             .sortedByDescending { it.date }
-            .take(limit)
             .toList()
 
-    fun getReplyLaterEmails(mailboxId: String, limit: Int = 50): List<Email> =
+    fun getReplyLaterEmails(mailboxId: String, limit: Int = Int.MAX_VALUE): List<Email> =
         emailsIn(mailboxId)
             .filter {
                 it.replyLater && it.folderId !in setOf("trash", "spam", "draft", "drafts")
@@ -143,6 +154,25 @@ class DatabaseService private constructor() {
                 email.folderId == folderId && email.id !in serverIds
         }
         removed.forEach { deleteEmail(it.id) }
+    }
+
+    /**
+     * Threaded list rows are keyed by the conversation's latest message, so a thread that
+     * got a new message comes back under a new id. When syncing without a prune, drop the
+     * cached row it replaces. Drafts are grouped per reply target, not per thread — skip.
+     */
+    fun dropSupersededThreadRows(mailboxId: String, folderId: String, incoming: List<Email>) {
+        if (folderId == "draft" || folderId == "drafts") return
+        val latestByThread = incoming.mapNotNull { e -> e.threadId?.let { it to e.id } }.toMap()
+        if (latestByThread.isEmpty()) return
+        emailsIn(mailboxId)
+            .filter { e ->
+                e.folderId == folderId &&
+                    e.threadId != null &&
+                    latestByThread[e.threadId]?.let { it != e.id } == true
+            }
+            .toList()
+            .forEach { deleteEmail(it.id) }
     }
 
     fun deleteDrafts(

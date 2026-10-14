@@ -35,6 +35,10 @@ const webIframe = readFileSync(
 
 const csp =
 	"default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'";
+// iOS runs no page script at all (its height probe is an app-world WKUserScript),
+// so it keeps web's opted-in img-src but forbids every script.
+const iosCsp =
+	"default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'";
 
 assert.match(webIframe, /DOMPurify\.sanitize/);
 // Web fills img-src per message: remote images are blocked until the reader
@@ -56,7 +60,13 @@ for (const [name, src] of [
 }
 
 assert.ok(androidSanitizer.includes(csp), "android CSP matches web's opted-in policy");
-assert.ok(iosSanitizer.includes(csp), "ios CSP matches web's opted-in policy");
+assert.ok(iosSanitizer.includes(iosCsp), "ios CSP matches web's opted-in policy with page script off");
+assert.ok(
+	iosSanitizer.includes("img-src data: cid:; script-src 'none'"),
+	"ios blocks remote images by default",
+);
+assert.doesNotMatch(iosSanitizer, /script-src 'unsafe-inline'/, "ios never allows page script");
+assert.doesNotMatch(iosView, /allowsJavaScript: true/, "ios body views keep page JS off");
 assert.match(androidSanitizer, /CONTENT_SECURITY_POLICY/);
 assert.match(iosSanitizer, /contentSecurityPolicy/);
 assert.match(androidView, /CONTENT_SECURITY_POLICY/);

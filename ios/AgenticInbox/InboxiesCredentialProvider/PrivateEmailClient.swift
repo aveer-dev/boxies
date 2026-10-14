@@ -1,6 +1,7 @@
 import Foundation
 
-/// The one API call the extension makes, on the app's shared session.
+/// The one API call the extension makes, on its own scoped session (private
+/// emails only), which the app mints and shares through the keychain group.
 /// The server picks the address; the extension never invents one.
 enum PrivateEmailClient {
     enum Failure: LocalizedError {
@@ -68,7 +69,8 @@ enum PrivateEmailClient {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-        if status == 401 { throw Failure.signedOut }
+        // A missing, expired or revoked session: the app mints a new one when opened.
+        if status == 401 || (status == 403 && isExpiredSession(data)) { throw Failure.signedOut }
         guard (200..<300).contains(status) else {
             throw Failure.server(serverMessage(from: data) ?? "Couldn’t create a private email (HTTP \(status)).")
         }
@@ -77,6 +79,10 @@ enum PrivateEmailClient {
             throw Failure.server("Unexpected response from Inboxies.")
         }
         return created.alias.aliasEmail
+    }
+
+    private static func isExpiredSession(_ data: Data) -> Bool {
+        serverMessage(from: data)?.localizedCaseInsensitiveContains("invalid or expired mobile session token") ?? false
     }
 
     private static func serverMessage(from data: Data) -> String? {

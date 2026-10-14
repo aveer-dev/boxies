@@ -20,7 +20,31 @@ import {
 	saveDomainMetadata,
 	getDomainMetadata,
 } from "../lib/domain-registry.ts";
-import { principalFromClaims } from "../lib/mailbox-acl.ts";
+import { eq } from "drizzle-orm";
+import { authDb } from "../auth/authz.ts";
+import * as schema from "../auth/schema.ts";
+import { createTestD1 } from "./d1-shim.mjs";
+
+/** Users are AUTH_DB rows; tests name them by id (an email string here). */
+async function ensureUser(env, id) {
+	const db = authDb(env.AUTH_DB);
+	await db
+		.insert(schema.user)
+		.values({ id, email: id.includes("@") ? id : `${id}@example.com`, name: id, emailVerified: true })
+		.onConflictDoNothing();
+}
+
+async function addDomainRow(env, domain, ownerUserId) {
+	await ensureUser(env, ownerUserId);
+	await authDb(env.AUTH_DB).insert(schema.domain).values({ domain, ownerUserId, status: "active" }).onConflictDoNothing();
+}
+
+async function addMailboxRow(env, mailboxId, ownerUserId) {
+	await ensureUser(env, ownerUserId);
+	const db = authDb(env.AUTH_DB);
+	await db.insert(schema.mailbox).values({ id: mailboxId, domain: mailboxId.split("@")[1] }).onConflictDoNothing();
+	await db.insert(schema.mailboxMember).values({ mailboxId, userId: ownerUserId, role: "owner" }).onConflictDoNothing();
+}
 
 function mockBucket(initial = {}) {
 	const store = new Map(
@@ -64,9 +88,8 @@ function mockEnv(bucket, sampleEmails = []) {
 		BUCKET: bucket,
 		EMAIL_ADDRESSES: [],
 		DOMAINS: "inboxies.email",
-		DOMAIN_ADMINS: "superadmin@example.com",
-		MAILBOX_CREATE_POLICY: "admin_only",
-		MOBILE_JWT_SECRET: "test-mobile-jwt-secret-export-99",
+		AUTH_DB: createTestD1(),
+		BETTER_AUTH_SECRET: "test-better-auth-secret-0123456789abcdef",
 		APP_BASE_URL: "https://inboxies.email",
 		WORKER_NAME: "agentic-inbox",
 		EMAIL: {
@@ -110,7 +133,8 @@ function harness(env, defaultPrincipal = null) {
 	parent.use("*", async (c, next) => {
 		const override = c.req.header("x-test-user");
 		if (override) {
-			c.set("principal", principalFromClaims({ email: override, sub: `sub-${override}` }));
+			await ensureUser(env, override);
+			c.set("principal", { userId: override, sessionId: `sess-${override}`, email: override, scope: null });
 		} else if (defaultPrincipal) {
 			c.set("principal", defaultPrincipal);
 		}
@@ -287,7 +311,8 @@ async function runTests() {
 		updatedAt: new Date().toISOString(),
 	});
 
-	const adminPrincipal = { email: "admin@acme.com", linkedUserIds: ["admin-user"] };
+	await addDomainRow(env, "acme.com", "admin-user");
+	const adminPrincipal = { userId: "admin-user", sessionId: "sess-admin", email: "admin-user@example.com", scope: null };
 	const client = harness(env, adminPrincipal);
 
 	// Domain export via admin endpoint
@@ -350,10 +375,8 @@ async function runTests() {
 	assert.equal(outsiderDomainDownloadRes.status, 404, "Outsider must not download domain export");
 
 	// Mailbox export: owner can read status and download
-	await bucket.put(
-		"mailboxes/you@acme.com.json",
-		JSON.stringify({ fromName: "You", acl: { owners: ["email:you@acme.com"], members: [] } }),
-	);
+	await bucket.put("mailboxes/you@acme.com.json", JSON.stringify({ fromName: "You" }));
+	await addMailboxRow(env, "you@acme.com", "you@acme.com");
 	const owner = { "x-test-user": "you@acme.com" };
 	const mailboxExportRes = await client.request(
 		"/api/v1/mailboxes/you@acme.com/export",
@@ -451,6 +474,8 @@ async function runTests() {
 		updatedAt: new Date().toISOString(),
 	});
 
+	await addDomainRow(env, "no-export.com", "admin-user");
+
 	const blockedRes = await client.request(
 		"/api/v1/admin/domains/no-export.com/decommission",
 		{
@@ -480,6 +505,37 @@ async function runTests() {
 	const updatedMeta = await getDomainMetadata(bucket, "no-export.com");
 	assert.equal(updatedMeta.status, "offboarding");
 	assert.equal(updatedMeta.emailRoutingEnabled, false);
+
+	// Decommissioned: admin rights are gone, the owner keeps offboarding routes.
+	const decommRow = await authDb(env.AUTH_DB)
+		.select({ status: schema.domain.status })
+		.from(schema.domain)
+		.where(eq(schema.domain.domain, "no-export.com"))
+		.get();
+	assert.equal(decommRow.status, "decommissioned");
+	await ensureUser(env, "helper-admin");
+	await authDb(env.AUTH_DB).insert(schema.domainAdmin).values({ domain: "no-export.com", userId: "helper-admin" });
+	const helper = { "x-test-user": "helper-admin" };
+	assert.equal(
+		(await client.request("/api/v1/admin/domains/no-export.com/dns/records", { headers: helper })).status,
+		403,
+		"a decommissioned domain grants its admins nothing",
+	);
+	assert.equal(
+		(await client.request("/api/v1/admin/domains/no-export.com/epp-code", { headers: helper })).status,
+		403,
+		"offboarding routes are the owner's alone",
+	);
+	assert.equal(
+		(await client.request("/api/v1/admin/domains/no-export.com/dns/records")).status,
+		403,
+		"the owner loses admin routes too",
+	);
+	assert.equal(
+		(await client.request("/api/v1/admin/domains/no-export.com/export", { method: "POST" })).status,
+		200,
+		"the owner can still export after decommission",
+	);
 
 	// ---------------------------------------------------------
 	// 5. Registrar EPP Code & Transfer Lock Endpoints
@@ -515,6 +571,7 @@ async function runTests() {
 	const isoBucket = mockBucket();
 	const isoEnv = mockEnv(isoBucket, sampleEmails);
 	const isoClient = harness(isoEnv, adminPrincipal);
+	await addDomainRow(isoEnv, "acme.com", "admin-user");
 
 	await saveDomainMetadata(isoBucket, {
 		domain: "acme.com",

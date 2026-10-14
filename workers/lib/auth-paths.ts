@@ -19,10 +19,12 @@ export function isPathAllowedForTokenScope(
 	if (verb === "GET" && (pathname === "/api/v1/mailboxes" || pathname === "/api/v1/me" || pathname === "/api/v1/config")) {
 		return true;
 	}
+	// A scoped session may end itself (the app revokes AutoFill's on sign-out).
+	if (verb === "POST" && pathname === "/api/v1/auth/logout") return true;
 	return (verb === "GET" || verb === "POST") && MAILBOX_ALIASES_PATH.test(pathname);
 }
 
-/** Public API + SPA paths that must work without Access / Bearer (token-gated later). */
+/** API and SPA paths that work signed out (they still see the session when there is one). */
 export function isPublicAuthPath(pathname: string): boolean {
 	if (
 		pathname === "/api/v1/auth/apple" ||
@@ -30,6 +32,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/auth/dev" ||
 		pathname === "/api/v1/auth/password" ||
 		pathname === "/api/v1/auth/password/logout" ||
+		pathname === "/api/v1/auth/logout" ||
 		pathname === "/api/v1/auth/password/forgot" ||
 		pathname === "/api/v1/auth/password/reset" ||
 		pathname === "/api/v1/auth/signup-personal" ||
@@ -39,6 +42,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/billing/checkout-return" ||
 		pathname === "/api/v1/billing/checkout-cancel" ||
 		pathname === "/api/v1/billing/checkout-status" ||
+		pathname === "/api/v1/billing/renew-return" ||
 		pathname === "/api/v1/billing/stripe-webhook"
 	) {
 		return true;

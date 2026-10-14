@@ -57,6 +57,11 @@ GOOGLE_WEB_CLIENT_ID=xxxxxx.apps.googleusercontent.com
 2. Rebuild — `BuildConfig.HAS_GOOGLE_SERVICES` becomes `true` and the Google Services Gradle plugin is applied.
 3. Without `google-services.json`, push registration is a no-op and the app still builds.
 
+The Worker sends **data-only** FCM messages, so the app always builds the notification itself
+(channel `inboxies_mail`, created at app start) and drops pushes while notifications are off,
+when signed out, or for a mailbox the user no longer has. With notifications on, the device
+token is registered for every mailbox the user has; turning them off unregisters all of them.
+
 ## Backend secrets for mobile
 
 | Secret | Purpose |
@@ -99,6 +104,32 @@ export ANDROID_HOME=/path/to/Android/Sdk
 
 Debug APK: `app/build/outputs/apk/debug/app-debug.apk`
 
+### Release (R8 + signing)
+
+`./gradlew :app:assembleRelease` (or `:app:bundleRelease`) minifies and shrinks with R8
+(`app/proguard-rules.pro`; the mapping lands in `app/build/outputs/mapping/release/`).
+
+Release signing uses the Play **upload key**, read from Gradle properties
+(`~/.gradle/gradle.properties` or `-P…`) or environment variables of the same name:
+
+| Name | Value |
+|------|-------|
+| `INBOXIES_UPLOAD_STORE_FILE` | Path to the upload keystore (`.jks`) |
+| `INBOXIES_UPLOAD_STORE_PASSWORD` | Keystore password |
+| `INBOXIES_UPLOAD_KEY_ALIAS` | Key alias |
+| `INBOXIES_UPLOAD_KEY_PASSWORD` | Key password |
+
+When any of them is missing the release still assembles, unsigned
+(`app-release-unsigned.apk`). Never commit a keystore. To smoke-test a release build on an
+emulator, sign the unsigned APK with the debug key:
+
+```bash
+$ANDROID_HOME/build-tools/<version>/apksigner sign --ks ~/.android/debug.keystore \
+  --ks-pass pass:android --ks-key-alias androiddebugkey \
+  --out /tmp/app-release-debugsigned.apk app/build/outputs/apk/release/app-release-unsigned.apk
+adb install -r /tmp/app-release-debugsigned.apk
+```
+
 ## DEBUG preview harness (emulator)
 
 Offline UI surfaces for review — same role as iOS Simulator launch args (`-previewDomainAdmin`, …). **DEBUG builds only.**
@@ -110,6 +141,9 @@ cd android
 ./scripts/run-debug-preview.sh passwordSignIn   # Password form on Sign In
 ./scripts/run-debug-preview.sh inviteAccept     # Accept-invite form
 ./scripts/run-debug-preview.sh mailbox          # Inbox New/Seen fixtures
+./scripts/run-debug-preview.sh loadMore         # Inbox with more pages (bottom skeleton row)
+./scripts/run-debug-preview.sh loadFailed       # First mailbox load failed (Retry / Sign out)
+./scripts/run-debug-preview.sh listError        # Inbox fetch failed, empty cache (Retry)
 ./scripts/run-debug-preview.sh screener         # Screener + detail
 ./scripts/run-debug-preview.sh replyLater       # Reply Later pile
 # Or: INSTALL=1 ./scripts/run-debug-preview.sh mailbox

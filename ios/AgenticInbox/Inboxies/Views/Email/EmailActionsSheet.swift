@@ -13,7 +13,7 @@ struct EmailActionsSheet: View {
     }
 
     private var availability: EmailActionAvailability {
-        EmailActionAvailability(email: source)
+        EmailActionAvailability(email: source, readOnly: app.isReadOnly)
     }
 
     private var fromList: Bool {
@@ -21,6 +21,7 @@ struct EmailActionsSheet: View {
     }
 
     private var moveTargets: [Folder] {
+        guard availability.showsMove else { return [] }
         let current = source.folderId
         return app.folders.filter { $0.id != current }
     }

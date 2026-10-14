@@ -166,9 +166,10 @@ fun EmailActionsSheet(
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     val folders by app.folders.collectAsState()
-    val availability = EmailActionAvailability(email)
+    val readOnly by app.selectedMailboxReadOnly.collectAsState()
+    val availability = EmailActionAvailability(email, readOnly)
     val fromList = onRemoveFromList != null
-    val moveTargets = folders.filter { it.id != email.folderId }
+    val moveTargets = if (availability.showsMove) folders.filter { it.id != email.folderId } else emptyList()
     // Your own messages are never judged as spam.
     val isSelfSender = app.selectedMailbox?.email?.equals(email.sender, ignoreCase = true) == true
     val showsSpamAction = !isSelfSender && (availability.showsReportSpam || availability.showsNotSpam)

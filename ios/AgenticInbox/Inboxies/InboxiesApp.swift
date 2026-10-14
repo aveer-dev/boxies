@@ -32,16 +32,21 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewScreener")
                 || ProcessInfo.processInfo.arguments.contains("-previewScreenerList")
                 || ProcessInfo.processInfo.arguments.contains("-previewSpam")
-                || ProcessInfo.processInfo.arguments.contains("-previewReplyLater") {
+                || ProcessInfo.processInfo.arguments.contains("-previewReplyLater")
+                || PreviewSupport.isServiceMailboxPreview {
                 PreviewMailboxRoot()
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewDomainAdmin")
+                || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminServiceEnded")
                 || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetail")
                 || ProcessInfo.processInfo.arguments.contains("-previewDomainAdminDetailUnassigned")
                 || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn")
                 || ProcessInfo.processInfo.arguments.contains("-previewAuthOptions")
                 || ProcessInfo.processInfo.arguments.contains("-previewInviteAccept")
-                || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods") {
+                || ProcessInfo.processInfo.arguments.contains("-previewInviteAcceptSignedIn")
+                || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods")
+                || ProcessInfo.processInfo.arguments.contains("-previewMembers")
+                || ProcessInfo.processInfo.arguments.contains("-previewSessions") {
                 PreviewAdminAuthRoot()
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewSplash") {

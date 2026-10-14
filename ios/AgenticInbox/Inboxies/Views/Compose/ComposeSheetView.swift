@@ -716,28 +716,8 @@ struct ComposeSheetView: View {
         form.commitPendingTokens()
         guard form.toTokens.isEmpty == false else { return }
         
-        let sessionToRestore = session
-        let formToRestore = form
-        
-        app.scheduleUndoableAction(
-            optimistic: {
-                app.closeCompose()
-            },
-            commit: { @Sendable in
-                let success = await formToRestore.performActualSend()
-                if success {
-                    await app.loadEmailsForCurrentTab()
-                } else {
-                    await app.restoreComposeAfterFailedSend(sessionToRestore)
-                }
-            },
-            rollback: { @MainActor in
-                app.composeSession = sessionToRestore
-                app.composeSession?.expand()
-            },
-            pendingMessage: "Sending...",
-            completedMessage: "Sent"
-        )
+        // Undo window, kill-safe persistence and failure docking live on AppModel.
+        app.scheduleSend(session)
     }
 
     private func deleteAndClose() async {

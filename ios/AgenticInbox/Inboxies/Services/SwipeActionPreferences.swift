@@ -41,6 +41,11 @@ enum SwipeQuickAction: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Flags still sync on a read-only mailbox; moving, deleting and replying don't.
+    var isAllowedWhenReadOnly: Bool {
+        self == .star || self == .toggleRead
+    }
+
     func label(for email: Email) -> String {
         switch self {
         case .star:
@@ -111,6 +116,20 @@ struct EmailSwipeLayout {
                 showsMore: true
             )
         }
+    }
+
+    /// Read-only mailbox (service ended): keep only flag toggles; More stays for star /
+    /// read / reply later / source.
+    func readOnly() -> EmailSwipeLayout {
+        let trailing = trailingActions.filter(\.isAllowedWhenReadOnly)
+        let leading = leadingActions.filter(\.isAllowedWhenReadOnly)
+        return EmailSwipeLayout(
+            trailingActions: trailing,
+            trailingAllowsFullSwipe: trailingAllowsFullSwipe && !trailing.isEmpty,
+            leadingActions: leading,
+            leadingAllowsFullSwipe: leadingAllowsFullSwipe && !leading.isEmpty,
+            showsMore: showsMore
+        )
     }
 }
 
@@ -242,24 +261,28 @@ struct SwipeActionPreferences: Equatable {
 /// Which actions are valid for a given message (options sheet + detail toolbar).
 struct EmailActionAvailability {
     let email: Email
+    /// The mailbox's domain service ended: only read / star / reply-later flags remain.
+    var readOnly: Bool = false
 
     var showsArchive: Bool {
-        !isInArchive && !email.isDraft
+        !readOnly && !isInArchive && !email.isDraft
     }
 
-    var showsDelete: Bool { true }
+    var showsDelete: Bool { !readOnly }
+
+    var showsMove: Bool { !readOnly }
 
     var showsReplyActions: Bool {
-        !email.isDraft
+        !readOnly && !email.isDraft
     }
 
-    /// Report Spam: received mail that isn't already in Spam.
+    /// Report Spam: received mail that isn't already in Spam. It's a move, so never read-only.
     var showsReportSpam: Bool {
-        !email.isDraft && !isInSpam && email.folderId != "sent" && email.folderId != "draft"
+        !readOnly && !email.isDraft && !isInSpam && email.folderId != "sent" && email.folderId != "draft"
     }
 
-    /// Not Spam: anything in Spam.
-    var showsNotSpam: Bool { isInSpam }
+    /// Not Spam: anything in Spam (also a move).
+    var showsNotSpam: Bool { !readOnly && isInSpam }
 
     private var isInSpam: Bool { email.folderId == "spam" }
 

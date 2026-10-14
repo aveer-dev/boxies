@@ -9,6 +9,15 @@ enum APIError: LocalizedError {
     case transport(Error)
     /// The bearer token was rejected as invalid or expired; the app signs out globally.
     case sessionExpired
+    /// 403 `code: "service_ended"`: the domain's subscription ended and its mailboxes are
+    /// read-only. Access is intact; never treat this as losing the mailbox or the session.
+    case serviceEnded(domain: String?, message: String)
+
+    /// True for a write refused because the domain's service ended.
+    var isServiceEnded: Bool {
+        if case .serviceEnded = self { return true }
+        return false
+    }
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +33,9 @@ enum APIError: LocalizedError {
             return "Cloudflare Access is blocking the API. Add a Bypass policy for <your-api-host>/api/* (and /agents/* for chat) in Zero Trust, or the Worker never sees Sign in with Apple."
         case .transport(let err): return err.localizedDescription
         case .sessionExpired: return "Your session has expired. Please sign in again."
+        case .serviceEnded(let domain, let message):
+            if !message.isEmpty { return message }
+            return "The subscription for \(domain ?? "this domain") has ended. Mail on it is read-only until it's renewed."
         }
     }
 }
@@ -53,7 +65,7 @@ final class APIClient: @unchecked Sendable {
         config.httpShouldSetCookies = false
         session = URLSession(configuration: config, delegate: redirectGuard, delegateQueue: nil)
         decoder = JSONDecoder()
-        storedAuthToken = SharedSession.token
+        storedAuthToken = KeychainStore.read(AuthStore.tokenKey, in: .app)
     }
 
     func request<T: Decodable>(
@@ -165,6 +177,12 @@ final class APIClient: @unchecked Sendable {
             }
             guard (200..<300).contains(http.statusCode) else {
                 let message = httpErrorMessage(from: data)
+                if let ended = Self.serviceEndedError(statusCode: http.statusCode, data: data) {
+                    if case .serviceEnded(let domain, let endedMessage) = ended {
+                        Self.postServiceEnded(domain: domain, message: endedMessage)
+                    }
+                    throw ended
+                }
                 if let sentToken, bearerToken == nil,
                    Self.isExpiredSessionResponse(statusCode: http.statusCode, message: message) {
                     Self.postSessionExpired(token: sentToken)
@@ -186,6 +204,25 @@ final class APIClient: @unchecked Sendable {
     static func isExpiredSessionResponse(statusCode: Int, message: String) -> Bool {
         guard statusCode == 401 || statusCode == 403 else { return false }
         return message.localizedCaseInsensitiveContains("invalid or expired mobile session token")
+    }
+
+    /// A write blocked because the domain's subscription ended: 403 with
+    /// `{ error, code: "service_ended", domain }`. Other 403s keep their meaning.
+    static func serviceEndedError(statusCode: Int, data: Data) -> APIError? {
+        guard statusCode == 403,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (obj["code"] as? String) == "service_ended" else { return nil }
+        let domain = (obj["domain"] as? String).flatMap { $0.isEmpty ? nil : $0.lowercased() }
+        return .serviceEnded(domain: domain, message: (obj["error"] as? String) ?? "")
+    }
+
+    /// AppModel marks the domain read-only once, whichever request found out first.
+    private static func postServiceEnded(domain: String?, message: String) {
+        DispatchQueue.main.async {
+            var info: [String: String] = ["message": message]
+            if let domain { info["domain"] = domain }
+            NotificationCenter.default.post(name: .inboxiesServiceEnded, object: nil, userInfo: info)
+        }
     }
 
     private static func postSessionExpired(token: String) {
@@ -220,20 +257,84 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Revokes this session on the server. `sessionToken` pins the outgoing
+    /// session during sign-out, after AuthStore has dropped it.
+    func logout(sessionToken: String?) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/auth/logout",
+            method: "POST",
+            body: [:] as [String: Any],
+            bearerToken: sessionToken
+        )
+    }
+
     func listIdentities() async throws -> IdentitiesResponse {
         try await request(path: "/api/v1/me/identities")
     }
 
-    func listAccounts() async throws -> [AccountSummary] {
-        try await request(path: "/api/v1/accounts")
-    }
-
-    func attachAppleIdentity(identityToken: String) async throws -> AttachIdentityResponse {
-        try await request(
+    func attachAppleIdentity(_ credential: AppleSignInCredential) async throws -> AttachIdentityResponse {
+        var body = credential.requestBody
+        body["provider"] = "apple"
+        return try await request(
             path: "/api/v1/me/identities/attach",
             method: "POST",
-            body: ["provider": "apple", "identityToken": identityToken]
+            body: body
         )
+    }
+
+    /// Disconnects a sign-in method (`apple`, `google`, `password`). The server
+    /// refuses to remove the last one.
+    func removeIdentity(type: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/me/identities/\(type.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
+    // MARK: Sessions
+
+    func listSessions() async throws -> [AccountSession] {
+        try await request(path: "/api/v1/me/sessions")
+    }
+
+    func revokeSession(id: String, sessionToken: String? = nil) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/me/sessions/\(id.urlPathEncoded)",
+            method: "DELETE",
+            bearerToken: sessionToken
+        )
+    }
+
+    func revokeOtherSessions() async throws -> RevokeSessionsResponse {
+        try await request(path: "/api/v1/me/sessions/revoke-others", method: "POST", body: [:] as [String: Any])
+    }
+
+    /// A scoped, revocable session for the AutoFill extension (private emails only).
+    func createAutofillSession() async throws -> ScopedSessionResponse {
+        try await request(
+            path: "/api/v1/me/extension-session",
+            method: "POST",
+            body: ["client": "ios-autofill"]
+        )
+    }
+
+    // MARK: Recovery email
+
+    func getRecoveryEmail() async throws -> RecoveryEmailStatus {
+        try await request(path: "/api/v1/me/recovery-email")
+    }
+
+    /// Sets (or replaces) the recovery email and mails it a 6-digit code.
+    func setRecoveryEmail(_ email: String) async throws -> RecoveryEmailStatus {
+        try await request(path: "/api/v1/me/recovery-email", method: "POST", body: ["email": email])
+    }
+
+    func verifyRecoveryEmail(code: String) async throws -> RecoveryEmailStatus {
+        try await request(path: "/api/v1/me/recovery-email/verify", method: "POST", body: ["code": code])
+    }
+
+    func removeRecoveryEmail() async throws {
+        let _: EmptyResponse = try await request(path: "/api/v1/me/recovery-email", method: "DELETE")
     }
 
     func attachGoogleIdentity(idToken: String) async throws -> AttachIdentityResponse {
@@ -267,18 +368,6 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func createIdentityLinkCode() async throws -> IdentityLinkCodeResponse {
-        try await request(path: "/api/v1/me/identity-link-codes", method: "POST", body: [:] as [String: Any])
-    }
-
-    func redeemIdentityLink(code: String) async throws -> RedeemIdentityLinkResponse {
-        try await request(
-            path: "/api/v1/auth/redeem-identity-link",
-            method: "POST",
-            body: ["code": code]
-        )
-    }
-
     func createMailbox(name: String, email: String) async throws -> Mailbox {
         try await request(
             path: "/api/v1/mailboxes",
@@ -292,13 +381,20 @@ final class APIClient: @unchecked Sendable {
     }
 
     func updateMailbox(mailboxId: String, settings: MailboxSettings) async throws -> Mailbox {
-        let settingsData = try JSONEncoder().encode(settings)
-        let settingsObject = try JSONSerialization.jsonObject(with: settingsData) as? [String: Any] ?? [:]
-        return try await request(
+        try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)",
             method: "PUT",
-            body: ["settings": settingsObject]
+            body: ["settings": try Self.settingsPayload(settings)]
         )
+    }
+
+    /// The PUT body's `settings`. `acl` is display-only (the server derives it
+    /// from members), so it is never sent back.
+    static func settingsPayload(_ settings: MailboxSettings) throws -> [String: Any] {
+        var settings = settings
+        settings.acl = nil
+        let data = try JSONEncoder().encode(settings)
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     }
 
     func deleteMailbox(mailboxId: String) async throws {
@@ -312,14 +408,27 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/invites/\(token.urlPathEncoded)", authed: false)
     }
 
-    func acceptInvite(token: String, password: String, displayName: String?) async throws -> InviteAcceptResponse {
-        var body: [String: Any] = ["password": password]
+    /// Mails a code to the invited address; accepting with it proves the invite reached them.
+    func sendInviteCode(token: String) async throws -> InviteCodeResponse {
+        try await request(
+            path: "/api/v1/invites/\(token.urlPathEncoded)/otp",
+            method: "POST",
+            body: [:] as [String: Any],
+            authed: false
+        )
+    }
+
+    /// Signed in (`password` nil): joins the current account; the session is unchanged.
+    /// Signed out: creates an account with `password` and returns its session.
+    func acceptInvite(token: String, code: String, password: String?, displayName: String?) async throws -> InviteAcceptResponse {
+        var body: [String: Any] = ["code": code]
+        if let password { body["password"] = password }
         if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
         return try await request(
             path: "/api/v1/invites/\(token.urlPathEncoded)/accept",
             method: "POST",
             body: body,
-            authed: false
+            authed: password == nil
         )
     }
 
@@ -594,6 +703,42 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    // MARK: Members
+
+    func listMembers(mailboxId: String) async throws -> [MailboxMember] {
+        try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/members")
+    }
+
+    func setMemberRole(mailboxId: String, userId: String, role: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/members/\(userId.urlPathEncoded)",
+            method: "PATCH",
+            body: ["role": role]
+        )
+    }
+
+    /// Owners remove anyone; anyone may remove themselves (leave the mailbox).
+    func removeMember(mailboxId: String, userId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/members/\(userId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
+    /// Owners and domain admins only.
+    func listMailboxInvites(mailboxId: String) async throws -> [MailboxInviteRow] {
+        try await request(path: "/api/v1/admin/mailboxes/\(mailboxId.urlPathEncoded)/invites")
+    }
+
+    /// `inviteId` is the id from `listMailboxInvites`.
+    func revokeInvite(inviteId: String) async throws {
+        let _: MailboxInviteRow = try await request(
+            path: "/api/v1/admin/invites/\(inviteId.urlPathEncoded)/revoke",
+            method: "POST",
+            body: [:] as [String: Any]
+        )
+    }
+
     func listFolders(mailboxId: String) async throws -> [Folder] {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders")
     }
@@ -775,10 +920,11 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func deleteEmail(mailboxId: String, id: String) async throws {
+    func deleteEmail(mailboxId: String, id: String, bearerToken: String? = nil) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)",
-            method: "DELETE"
+            method: "DELETE",
+            bearerToken: bearerToken
         )
     }
 
@@ -815,27 +961,30 @@ final class APIClient: @unchecked Sendable {
         return response.recipients
     }
 
-    func sendEmail(mailboxId: String, payload: [String: Any]) async throws -> SendEmailResponse {
+    func sendEmail(mailboxId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
             method: "POST",
-            body: payload
+            body: payload,
+            bearerToken: bearerToken
         )
     }
 
-    func replyToEmail(mailboxId: String, emailId: String, payload: [String: Any]) async throws -> SendEmailResponse {
+    func replyToEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/reply",
             method: "POST",
-            body: payload
+            body: payload,
+            bearerToken: bearerToken
         )
     }
 
-    func forwardEmail(mailboxId: String, emailId: String, payload: [String: Any]) async throws -> SendEmailResponse {
+    func forwardEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/forward",
             method: "POST",
-            body: payload
+            body: payload,
+            bearerToken: bearerToken
         )
     }
 
@@ -920,6 +1069,7 @@ final class APIClient: @unchecked Sendable {
         username: String? = nil,
         password: String? = nil,
         displayName: String? = nil,
+        backupEmail: String? = nil,
         returnUrl: String? = nil,
         client: String? = "ios"
     ) async throws -> DomainCheckoutResponse {
@@ -927,12 +1077,29 @@ final class APIClient: @unchecked Sendable {
         if let username { body["username"] = username }
         if let password { body["password"] = password }
         if let displayName { body["displayName"] = displayName }
+        // Domain owners need a recovery email for billing and renewal notices.
+        if let backupEmail, !backupEmail.isEmpty { body["backupEmail"] = backupEmail }
         if let returnUrl { body["returnUrl"] = returnUrl }
         if let client { body["client"] = client }
         return try await request(
             path: "/api/v1/billing/create-domain-checkout",
             method: "POST",
             body: body
+        )
+    }
+
+    /// Where a paid domain's subscription stands. Domain admins, or anyone with a
+    /// mailbox on the domain; 403 for anyone else.
+    func getDomainService(domain: String) async throws -> DomainService {
+        try await request(path: "/api/v1/billing/domains/\(domain.urlPathEncoded)/service")
+    }
+
+    /// Domain admins only: keeps an ending subscription, or opens a renewal Checkout.
+    func renewDomain(domain: String) async throws -> DomainRenewResponse {
+        try await request(
+            path: "/api/v1/billing/domains/\(domain.urlPathEncoded)/renew",
+            method: "POST",
+            body: ["client": "ios"]
         )
     }
 
@@ -1115,6 +1282,9 @@ extension Notification.Name {
     /// Posted on the main queue when the Worker rejects the current bearer token.
     /// `userInfo["token"]` is the rejected token, so a stale request cannot sign out a newer session.
     static let inboxiesSessionExpired = Notification.Name("inboxiesSessionExpired")
+    /// Posted on the main queue when a write is refused because a domain's subscription
+    /// ended. `userInfo["domain"]` (when sent) and `userInfo["message"]` are strings.
+    static let inboxiesServiceEnded = Notification.Name("inboxiesServiceEnded")
 }
 
 struct WorkflowPile: Decodable {

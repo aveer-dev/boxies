@@ -181,6 +181,49 @@ export async function createZone(
 }
 
 /**
+ * The zone for `domain` in the operator's account, if there is one.
+ */
+export async function findZoneByName(
+	env: CloudflareClientEnv,
+	domain: string,
+): Promise<CloudflareZone | null> {
+	const normalizedDomain = domain.trim().toLowerCase();
+
+	if (isMockEnv(env)) {
+		for (const zone of mockZones.values()) {
+			if (zone.name === normalizedDomain) return zone;
+		}
+		return null;
+	}
+
+	const params = new URLSearchParams({ name: normalizedDomain });
+	if (env.CF_ACCOUNT_ID) params.set("account.id", env.CF_ACCOUNT_ID);
+	const zones = await cfRequest<CloudflareZone[]>(env, `/zones?${params}`);
+	return zones.find((z) => z.name === normalizedDomain) ?? null;
+}
+
+/**
+ * The zone for `domain`, created if missing. Safe to repeat: Cloudflare
+ * Registrar may already have made the zone, and a webhook retry finds the
+ * zone an earlier attempt created.
+ */
+export async function ensureZone(
+	env: CloudflareClientEnv,
+	domain: string,
+): Promise<CloudflareZone> {
+	const existing = await findZoneByName(env, domain);
+	if (existing) return existing;
+	try {
+		return await createZone(env, domain);
+	} catch (e) {
+		// Lost a race with another attempt (or the registrar): use the zone that won.
+		const raced = await findZoneByName(env, domain);
+		if (raced) return raced;
+		throw e;
+	}
+}
+
+/**
  * Fetch zone details and status (active, pending, nameservers).
  */
 export async function getZone(
@@ -199,6 +242,18 @@ export async function getZone(
 	}
 
 	return cfRequest<CloudflareZone>(env, `/zones/${encodeURIComponent(zoneId)}`);
+}
+
+/**
+ * Delete a zone we created (a domain claim that was never completed).
+ */
+export async function deleteZone(env: CloudflareClientEnv, zoneId: string): Promise<void> {
+	if (isMockEnv(env)) {
+		mockZones.delete(zoneId);
+		mockDnsRecords.delete(zoneId);
+		return;
+	}
+	await cfRequest<unknown>(env, `/zones/${encodeURIComponent(zoneId)}`, { method: "DELETE" });
 }
 
 /**
