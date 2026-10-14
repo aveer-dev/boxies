@@ -133,15 +133,16 @@ export default function InviteAcceptRoute() {
 	};
 
 	const switchAccount = async () => {
+		setFormError(null);
 		try {
 			await api.logout();
 		} catch {
-			// Signed out already.
+			setFormError({ message: "Couldn't sign you out. Try again.", signInInstead: false });
+			return;
 		}
-		queryClient.removeQueries({ queryKey: queryKeys.account.me });
-		await me.refetch();
-		setCodeSentTo(null);
-		setCode("");
+		// Start clean: no cached account data from the previous user.
+		queryClient.clear();
+		window.location.reload();
 	};
 
 	if (invite.isLoading || me.isLoading) {

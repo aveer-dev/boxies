@@ -95,6 +95,7 @@ export default function SharingSettings() {
 	const { data: members, isLoading, error } = useMailboxMembers(mailboxId);
 	const [busyUserId, setBusyUserId] = useState<string | null>(null);
 	const [removing, setRemoving] = useState<MailboxMember | null>(null);
+	const [demotingSelf, setDemotingSelf] = useState<MailboxMember | null>(null);
 	const [confirmLeave, setConfirmLeave] = useState(false);
 	const [leaving, setLeaving] = useState(false);
 
@@ -188,7 +189,11 @@ export default function SharingSettings() {
 								member={member}
 								canManage={canManage}
 								busy={busyUserId === member.userId}
-								onRoleChange={(role) => void handleRoleChange(member, role)}
+								onRoleChange={(role) => {
+									// Only another owner can undo stepping yourself down.
+									if (member.you && role === "member") setDemotingSelf(member);
+									else void handleRoleChange(member, role);
+								}}
 								onRemove={() => setRemoving(member)}
 							/>
 						))}
@@ -228,6 +233,18 @@ export default function SharingSettings() {
 				busy={busyUserId !== null && busyUserId === removing?.userId}
 				onConfirm={() => void handleRemove()}
 				onCancel={() => setRemoving(null)}
+			/>
+			<ConfirmDialog
+				open={demotingSelf !== null}
+				title="Become a member?"
+				description="You'll stop managing members, forwarding, auto-reply, filters, and the agent prompt here. Only another owner can make you an owner again."
+				confirmLabel="Become a member"
+				busy={busyUserId !== null && busyUserId === demotingSelf?.userId}
+				onConfirm={() => {
+					if (!demotingSelf) return;
+					void handleRoleChange(demotingSelf, "member").finally(() => setDemotingSelf(null));
+				}}
+				onCancel={() => setDemotingSelf(null)}
 			/>
 			<ConfirmDialog
 				open={confirmLeave}

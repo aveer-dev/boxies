@@ -5,6 +5,8 @@
 
 import assert from "node:assert/strict";
 import { writableMailboxSettings } from "../../app/lib/mailbox-settings.ts";
+import { mailboxesPurgedOnDelete } from "../../app/lib/account-deletion.ts";
+import { safeRedirectPath } from "../../app/lib/safe-redirect.ts";
 import { describeSession, describeUserAgent } from "../../app/lib/session-label.ts";
 
 // ── writableMailboxSettings: never echo the synthesized ACL back ──
@@ -61,5 +63,58 @@ assert.equal(describeUserAgent(null), null);
 assert.equal(describeSession({ label: "Browser extension", userAgent: CHROME_MAC }), "Browser extension");
 assert.equal(describeSession({ label: "  ", userAgent: CHROME_MAC }), "Chrome on macOS");
 assert.equal(describeSession({ label: null, userAgent: null }), "Unknown device");
+
+// ── safeRedirectPath: ?next= stays on this origin ──
+
+{
+	const origin = "https://app.inboxies.email";
+	assert.equal(safeRedirectPath("/mailbox/a@b.c/emails/inbox", origin), "/mailbox/a@b.c/emails/inbox");
+	assert.equal(safeRedirectPath("/invite/abc?x=1#y", origin), "/invite/abc?x=1#y");
+	assert.equal(safeRedirectPath("/", origin), "/");
+	assert.equal(safeRedirectPath(null, origin), "/");
+	assert.equal(safeRedirectPath("", origin), "/");
+	// Open-redirect shapes.
+	assert.equal(safeRedirectPath("//evil.com", origin), "/");
+	assert.equal(safeRedirectPath("/\\evil.com", origin), "/");
+	assert.equal(safeRedirectPath(decodeURIComponent("/%5Cevil.com"), origin), "/");
+	assert.equal(safeRedirectPath("/\\/evil.com", origin), "/");
+	assert.equal(safeRedirectPath("https://evil.com", origin), "/");
+	assert.equal(safeRedirectPath("javascript:alert(1)", origin), "/");
+	assert.equal(safeRedirectPath("evil.com", origin), "/");
+	assert.equal(safeRedirectPath(" //evil.com", origin), "/");
+	// Encoded slashes stay inside the path.
+	assert.equal(safeRedirectPath("/%2F%2Fevil.com", origin), "/%2F%2Fevil.com");
+}
+
+// ── mailboxesPurgedOnDelete: sole-owner mailboxes go, whoever else uses them ──
+
+{
+	const mailboxes = [
+		{ id: "solo@x.com", role: "owner" },
+		{ id: "shared-sole@x.com", role: "owner" },
+		{ id: "co-owned@x.com", role: "owner" },
+		{ id: "member-of@x.com", role: "member" },
+		{ id: "unknown@x.com", role: "owner" },
+	];
+	const purged = mailboxesPurgedOnDelete(mailboxes, {
+		"solo@x.com": [{ role: "owner", you: true }],
+		"shared-sole@x.com": [
+			{ role: "owner", you: true },
+			{ role: "member", you: false },
+			{ role: "member", you: false },
+		],
+		"co-owned@x.com": [
+			{ role: "owner", you: true },
+			{ role: "owner", you: false },
+		],
+		// member-of: not fetched (not an owner); unknown: members failed to load.
+	});
+	assert.deepEqual(purged, [
+		{ mailboxId: "solo@x.com", othersLosingAccess: 0 },
+		{ mailboxId: "shared-sole@x.com", othersLosingAccess: 2 },
+		{ mailboxId: "unknown@x.com", othersLosingAccess: 0 },
+	]);
+	assert.deepEqual(mailboxesPurgedOnDelete([], {}), []);
+}
 
 console.log("web-account-helpers: ok");

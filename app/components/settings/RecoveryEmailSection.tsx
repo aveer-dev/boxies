@@ -101,6 +101,12 @@ export default function RecoveryEmailSection() {
 							Without a verified recovery email, you can't reset a forgotten password.
 						</p>
 					)}
+					{editing && status.verified && (
+						<p className="text-xs text-kumo-default rounded-md bg-kumo-warning-tint px-3 py-2">
+							Your current recovery email ({status.email}) stops working for password resets
+							as soon as we send the code, until you confirm the new one.
+						</p>
+					)}
 					<Input
 						label={status.email ? "New recovery email" : "Email"}
 						type="email"
