@@ -206,7 +206,7 @@ function EmptyRoom() {
 				{HINTS.map(([keys, label]) => (
 					<div key={label} className="contents">
 						<dt className="justify-self-end">
-							<kbd className="inline-block min-w-5 rounded-md bg-[var(--bg-badge)] px-1.5 text-center font-sans text-[11px] leading-[18px] text-[var(--text-muted)] shadow-[inset_0_0_0_1px_var(--border-card)]">
+							<kbd className="inline-block min-w-5 rounded-md bg-[var(--bg-badge)] px-1.5 text-center font-sans text-2xs leading-[18px] text-[var(--text-muted)] shadow-[inset_0_0_0_1px_var(--border-card)]">
 								{keys}
 							</kbd>
 						</dt>

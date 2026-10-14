@@ -172,7 +172,7 @@ function MessageBubble({
 						return (
 							<div
 								key={key}
-								className={`rounded-lg px-3 py-2 text-[13px] leading-relaxed break-words overflow-wrap-anywhere ${
+								className={`rounded-lg px-3 py-2 text-13 leading-relaxed break-words overflow-wrap-anywhere ${
 									isUser
 										? "bg-kumo-brand text-kumo-inverse rounded-br-sm"
 										: "bg-kumo-elevated text-kumo-default border border-kumo-line rounded-bl-sm overflow-hidden"
@@ -226,17 +226,17 @@ function MessageBubble({
 												</h3>
 											),
 											h2: ({ children }) => (
-												<h4 className="font-semibold text-[13px] mb-1">
+												<h4 className="font-semibold text-13 mb-1">
 													{children}
 												</h4>
 											),
 											h3: ({ children }) => (
-												<h5 className="font-semibold text-[13px] mb-0.5">
+												<h5 className="font-semibold text-13 mb-0.5">
 													{children}
 												</h5>
 											),
 											code: ({ children }) => (
-												<code className="bg-kumo-fill px-1 py-0.5 rounded text-[12px]">
+												<code className="bg-kumo-fill px-1 py-0.5 rounded text-xs">
 													{children}
 												</code>
 											),

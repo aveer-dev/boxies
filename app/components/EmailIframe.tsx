@@ -5,6 +5,7 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { scrollerFor } from "~/lib/scroll-axis";
+import { useTextSize } from "~/lib/text-size";
 import { useTheme } from "~/lib/theme";
 
 /** Colours for the iframe document (it can't read the app's CSS variables). */
@@ -69,11 +70,25 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const [height, setHeight] = useState(autoSize ? 100 : 0);
 	const [allowRemoteImages, setAllowRemoteImages] = useState(false);
+	/**
+	 * The sanitised document, and a version that remounts the iframe for each
+	 * new one: re-assigning `srcdoc` on a live sandboxed frame can leave it
+	 * stuck on its old (blank) document, while a fresh frame always loads.
+	 */
+	const [doc, setDoc] = useState<{ html: string; version: number } | null>(null);
 	const hasRemoteImages = REMOTE_IMAGE_PATTERN.test(body);
 	const dark = useTheme((s) => s.resolved) === "dark";
 	// Dark mode, but the email brings its own colours: show it on a light sheet.
 	const paper = dark && OWN_COLORS_PATTERN.test(body);
 	const palette = PALETTES[dark && !paper ? "dark" : "light"];
+	// Text size zooms the whole message (its own inline sizes included). Live
+	// changes are posted in, so dragging the wheel doesn't reload the frame.
+	const zoom = useTextSize((s) => s.percent) / 100;
+	const zoomRef = useRef(zoom);
+	zoomRef.current = zoom;
+	useEffect(() => {
+		iframeRef.current?.contentWindow?.postMessage({ __emailZoom: zoom }, "*");
+	}, [zoom]);
 
 	// A different message starts blocked again.
 	useEffect(() => {
@@ -116,8 +131,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 	}, [handleMessage]);
 
 	useEffect(() => {
-		const iframe = iframeRef.current;
-		if (!iframe || !body) return;
+		if (!body) return;
 
 		// Every link opens in a new tab instead of navigating the iframe or the app.
 		DOMPurify.addHook("afterSanitizeAttributes", (node) => {
@@ -146,7 +160,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 		const heightScript = autoSize
 			? `<script>
 				function reportHeight() {
-					var h = document.body.scrollHeight;
+					var h = Math.ceil(document.documentElement.getBoundingClientRect().height);
 					if (h > 0) parent.postMessage({ __emailIframeHeight: true, height: h }, "*");
 				}
 				reportHeight();
@@ -155,6 +169,14 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 				setTimeout(reportHeight, 400);
 			<\/script>`
 			: "";
+
+		const zoomScript = `<script>
+			window.addEventListener("message", function (e) {
+				if (e.source !== parent || !e.data || typeof e.data.__emailZoom !== "number") return;
+				document.documentElement.style.zoom = e.data.__emailZoom;
+				${autoSize ? "reportHeight();" : ""}
+			});
+		<\/script>`;
 
 		// Mostly-vertical wheels that drift sideways must not pan the app's
 		// columns. An auto-sized body doesn't scroll, so it hands the vertical
@@ -170,7 +192,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 
 		// Use srcdoc so the iframe is truly sandboxed (no same-origin access).
 		// We can't use doc.write() because that requires allow-same-origin.
-		iframe.srcdoc = `<!DOCTYPE html>
+		const html = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -179,6 +201,7 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 <style>
 * { box-sizing: border-box; }
 html {
+	zoom: ${zoomRef.current};
 	background: ${palette.bg};
 	color-scheme: ${palette.scheme};
 	scrollbar-width: thin;
@@ -223,13 +246,16 @@ h1, h2, h3 { margin: 8px 0 4px; }
 ul, ol { padding-left: 20px; margin: 4px 0; }
 </style>
 </head>
-<body>${cleanBody}${heightScript}${wheelScript}</body>
+<body>${cleanBody}${heightScript}${wheelScript}${zoomScript}</body>
 </html>`;
+		setDoc((prev) => ({ html, version: (prev?.version ?? 0) + 1 }));
 	}, [body, autoSize, allowRemoteImages, palette, paper]);
 
 	const iframe = (
 		<iframe
+			key={doc?.version ?? 0}
 			ref={iframeRef}
+			srcDoc={doc?.html}
 			className={`block w-full border-0 ${paper ? "rounded-xl" : ""}`}
 			style={autoSize ? { height: `${height}px` } : { height: "100%" }}
 			sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"

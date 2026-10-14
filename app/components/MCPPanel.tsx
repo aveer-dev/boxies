@@ -95,7 +95,7 @@ export default function MCPPanel() {
 						<div className="absolute right-1.5 top-1/2 -translate-y-1/2">
 							<CopyButton text={mcpUrl} />
 						</div>
-						<div className="bg-kumo-recessed text-kumo-default font-mono text-[11px] px-3 py-2.5 pr-10 rounded-lg border border-kumo-line break-all leading-relaxed">
+						<div className="bg-kumo-recessed text-kumo-default font-mono text-2xs px-3 py-2.5 pr-10 rounded-lg border border-kumo-line break-all leading-relaxed">
 							{mcpUrl}
 						</div>
 					</div>
@@ -122,7 +122,7 @@ export default function MCPPanel() {
 										{tool.name}
 									</span>
 								</div>
-								<span className="text-[11px] text-kumo-subtle shrink-0">
+								<span className="text-2xs text-kumo-subtle shrink-0">
 									{tool.desc}
 								</span>
 							</div>

@@ -97,7 +97,7 @@ export function ColumnHeader({
 					{counter !== undefined && counter !== null && counter !== 0 && (
 						<span
 							key={String(counter)}
-							className="shrink-0 min-w-5 px-1.5 rounded-full bg-[var(--bg-badge)] text-[11px] leading-[18px] text-center text-kumo-subtle tabular-nums animate-pop"
+							className="shrink-0 min-w-5 px-1.5 rounded-full bg-[var(--bg-badge)] text-2xs leading-[18px] text-center text-kumo-subtle tabular-nums animate-pop"
 						>
 							{counter}
 						</span>

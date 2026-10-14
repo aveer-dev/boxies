@@ -17,7 +17,7 @@ function TipContent({ label, shortcut }: { label: ReactNode; shortcut?: string }
 		<span className="tip-content inline-flex items-center gap-2 whitespace-nowrap">
 			{label}
 			{shortcut && (
-				<kbd className="rounded-md bg-[var(--bg-badge)] px-1.5 font-sans text-[11px] leading-[18px] text-kumo-subtle shadow-[inset_0_0_0_1px_var(--border-card)]">
+				<kbd className="rounded-md bg-[var(--bg-badge)] px-1.5 font-sans text-2xs leading-[18px] text-kumo-subtle shadow-[inset_0_0_0_1px_var(--border-card)]">
 					{shortcut}
 				</kbd>
 			)}

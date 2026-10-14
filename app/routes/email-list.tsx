@@ -293,11 +293,11 @@ export default function EmailListRoute() {
 										key={`section-${item.id}`}
 										className="sticky top-0 z-[1] flex items-center gap-2 bg-kumo-base/95 backdrop-blur-sm pl-10 pr-4 pt-4 pb-2"
 									>
-										<span className="text-[11px] font-medium tracking-wider uppercase text-kumo-subtle">
+										<span className="text-2xs font-medium tracking-wider uppercase text-kumo-subtle">
 											{item.label}
 										</span>
 										{item.count != null && (
-											<span className="text-[11px] text-kumo-subtle">· {item.count}</span>
+											<span className="text-2xs text-kumo-subtle">· {item.count}</span>
 										)}
 									</div>
 								);

@@ -2,9 +2,12 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { DesktopIcon, MoonIcon, SunIcon } from "@phosphor-icons/react";
+import { CaretRightIcon, DesktopIcon, MoonIcon, SunIcon, TextAaIcon } from "@phosphor-icons/react";
 import type { KeyboardEvent } from "react";
+import { useTextSizeWheel } from "~/components/TextSizeWheel";
 import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
+import { keysFor } from "~/lib/shortcuts";
+import { useTextSize } from "~/lib/text-size";
 import { THEME_PREFERENCES, type ThemePreference, useTheme } from "~/lib/theme";
 
 const THEME_ICONS = { system: DesktopIcon, light: SunIcon, dark: MoonIcon } as const;
@@ -66,6 +69,33 @@ function ThemeSwitch() {
 	);
 }
 
+/** Opens the text size wheel; shows the current size. */
+function TextSizeRow() {
+	const percent = useTextSize((s) => s.percent);
+	const show = useTextSizeWheel((s) => s.show);
+	return (
+		<button
+			type="button"
+			onClick={show}
+			className="group -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-kumo-tint"
+		>
+			<TextAaIcon size={18} className="shrink-0 text-kumo-subtle" />
+			<span className="min-w-0 flex-1">
+				<span className="block text-sm text-kumo-default">Text size</span>
+				<span className="block text-xs text-kumo-subtle">Scales every message, list and menu together</span>
+			</span>
+			<span className="text-sm tabular-nums text-kumo-strong">{Math.round(percent)}%</span>
+			<kbd className="rounded-md bg-[var(--bg-badge)] px-1.5 font-sans text-2xs leading-[18px] text-kumo-subtle shadow-[inset_0_0_0_1px_var(--border-card)]">
+				{keysFor("textSize")}
+			</kbd>
+			<CaretRightIcon
+				size={16}
+				className="shrink-0 text-kumo-subtle transition-transform duration-200 ease-[var(--ease-out)] group-hover:translate-x-0.5"
+			/>
+		</button>
+	);
+}
+
 /** Device-level look and feel (not per mailbox): saved in this browser. */
 export default function AppearanceCard() {
 	return (
@@ -75,13 +105,16 @@ export default function AppearanceCard() {
 				<div className="flex items-baseline justify-between gap-3">
 					<span className="text-sm text-kumo-default">Theme</span>
 					<kbd className="rounded-md bg-[var(--bg-badge)] px-1.5 font-sans text-2xs leading-[18px] text-kumo-subtle shadow-[inset_0_0_0_1px_var(--border-card)]">
-						⇧T
+						{keysFor("toggleTheme")}
 					</kbd>
 				</div>
 				<ThemeSwitch />
 				<p className="text-xs text-kumo-subtle">
 					System follows your device's light or dark setting.
 				</p>
+			</div>
+			<div className="mt-4 border-t border-kumo-line pt-3">
+				<TextSizeRow />
 			</div>
 		</div>
 	);

@@ -89,7 +89,7 @@ function FolderRow({
 function SectionLabel({ children, action }: { children: ReactNode; action?: ReactNode }) {
 	return (
 		<div className="flex items-center justify-between px-2.5 pt-6 pb-2">
-			<span className="text-[11px] font-medium uppercase tracking-wider text-kumo-subtle truncate">
+			<span className="text-2xs font-medium uppercase tracking-wider text-kumo-subtle truncate">
 				{children}
 			</span>
 			{action}

@@ -25,6 +25,7 @@ import {
 import { ApiError } from "~/services/api";
 import "./index.css";
 import { signOut } from "~/lib/sign-out";
+import { TEXT_SIZE_BOOT_SCRIPT, useTextSize } from "~/lib/text-size";
 import { THEME_BOOT_SCRIPT, useTheme } from "~/lib/theme";
 
 function makeQueryClient() {
@@ -79,11 +80,11 @@ const KumoLink = forwardRef<
 
 export function Layout({ children }: { children: React.ReactNode }) {
 	return (
-		// The boot script sets data-mode before hydration, so React must not undo it.
+		// The boot script sets data-mode and --font-scale before hydration, so React must not undo them.
 		<html lang="en" suppressHydrationWarning>
 			<head>
 				<meta charSet="UTF-8" />
-				<script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+				<script dangerouslySetInnerHTML={{ __html: `${THEME_BOOT_SCRIPT};${TEXT_SIZE_BOOT_SCRIPT}` }} />
 				<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 				<link
 					rel="icon"
@@ -134,6 +135,7 @@ export default function App() {
 	// browser reuses the same singleton across navigations.
 	const [queryClient] = useState(getQueryClient);
 	useEffect(() => useTheme.getState().hydrate(), []);
+	useEffect(() => useTextSize.getState().hydrate(), []);
 	return (
 		<QueryClientProvider client={queryClient}>
 			<LinkProvider component={KumoLink}>

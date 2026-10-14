@@ -12,6 +12,7 @@ import { AgentColumn, ComposeColumn, ExtraReaderColumn } from "~/components/colu
 import SettingsColumns from "~/components/settings/SettingsColumns";
 import { ContextMenuHost } from "~/components/ContextMenu";
 import PopOutReader from "~/components/PopOutReader";
+import TextSizeWheelHost from "~/components/TextSizeWheel";
 import ShortcutSheet from "~/components/ShortcutSheet";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -73,6 +74,7 @@ export default function MailboxRoute() {
 			<ShortcutSheet />
 			<ContextMenuHost />
 			<PopOutReader />
+			<TextSizeWheelHost />
 		</>
 	);
 }
