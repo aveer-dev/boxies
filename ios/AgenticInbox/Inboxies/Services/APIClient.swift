@@ -957,6 +957,7 @@ final class APIClient: @unchecked Sendable {
         username: String? = nil,
         password: String? = nil,
         displayName: String? = nil,
+        backupEmail: String? = nil,
         returnUrl: String? = nil,
         client: String? = "ios"
     ) async throws -> DomainCheckoutResponse {
@@ -964,6 +965,8 @@ final class APIClient: @unchecked Sendable {
         if let username { body["username"] = username }
         if let password { body["password"] = password }
         if let displayName { body["displayName"] = displayName }
+        // Domain owners need a recovery email for billing and renewal notices.
+        if let backupEmail, !backupEmail.isEmpty { body["backupEmail"] = backupEmail }
         if let returnUrl { body["returnUrl"] = returnUrl }
         if let client { body["client"] = client }
         return try await request(

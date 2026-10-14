@@ -1929,6 +1929,7 @@ struct MailboxOnboardingView: View {
                 username: username,
                 password: customPassword,
                 displayName: customName.isEmpty ? nil : customName,
+                backupEmail: customBackupEmail.trimmingCharacters(in: .whitespacesAndNewlines),
                 returnUrl: returnUrl,
                 client: "ios"
             )
