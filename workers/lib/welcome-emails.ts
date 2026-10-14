@@ -659,27 +659,9 @@ export async function seedWelcomeEmailsInDO(
 		await mailboxDO.createEmail(Folders.INBOX, email, []);
 	}
 
-	// Pre-approve platform senders in sender_triage so they are recognized
-	const senders = [
-		{ sender: emails[0].sender, name: emails[0].sender_name },
-		{ sender: emails[1].sender, name: emails[1].sender_name },
-		{ sender: emails[2].sender, name: emails[2].sender_name },
-	];
-
-	for (const { sender, name } of senders) {
-		try {
-			if (typeof mailboxDO.upsertSenderTriage === "function") {
-				await mailboxDO.upsertSenderTriage({
-					sender,
-					status: "allowed",
-					destination_folder_id: null,
-					display_name: name,
-				});
-			}
-		} catch {
-			/* best effort */
-		}
-	}
+	// The welcome senders are deliberately not pre-approved: an allowed sender
+	// skips the Screener and can override an AI spam verdict, and these
+	// addresses only ever appear here as seeded rows.
 
 	await mailboxDO.ctx.storage.put(WELCOME_FLAG_KEY, "1");
 	return { seeded: emails.length };

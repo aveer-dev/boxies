@@ -240,6 +240,18 @@ async function runTests() {
 		);
 		assert.equal(resDup.status, 409);
 
+		// Role addresses on the shared domain are reserved.
+		for (const username of ["postmaster", "Admin", "security", "noreply", "webmaster"]) {
+			const resReserved = await app.fetch(
+				new Request("https://inboxies.email/api/v1/auth/signup-personal", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ username, password: "supersecretpassword123" }),
+				}),
+			);
+			assert.equal(resReserved.status, 400, `${username} is reserved`);
+		}
+
 		// Password too short
 		const resShort = await app.fetch(
 			new Request("https://inboxies.email/api/v1/auth/signup-personal", {
@@ -662,6 +674,17 @@ async function runTests() {
 		const createdAlias = await createAliasRes.json();
 		assert.equal(createdAlias.alias.aliasEmail, "support@startup.dev");
 		assert.equal(createdAlias.alias.targetMailboxId, "alice@startup.dev");
+
+		// An alias can't deliver into a stranger's mailbox on another domain.
+		await bucket.put("mailboxes/victim@inboxies.email.json", JSON.stringify({ acl: { owners: ["email:victim@inboxies.email"], members: [] } }));
+		const hijackRes = await app.fetch(
+			new Request("https://inboxies.email/api/v1/admin/domains/startup.dev/aliases", {
+				method: "POST",
+				headers: { ...authHeader, "Content-Type": "application/json" },
+				body: JSON.stringify({ aliasLocal: "x", targetMailboxId: "victim@inboxies.email" }),
+			}),
+		);
+		assert.equal(hijackRes.status, 403);
 
 		// 7.3 Test alias resolution via routeInboundEnvelope
 		const { routeInboundEnvelope, aliasMetadataKey } = await import("../lib/mailbox-routing.ts");

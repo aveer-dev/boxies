@@ -21,6 +21,7 @@ import {
 import {
 	canonicalMailboxId,
 	isAddressTaken,
+	isReservedLocalPart,
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
 import { mailDomainConfig } from "../lib/mail-domain";
@@ -178,6 +179,12 @@ export function registerOnboardingRoutes(app: Hono<MailboxContext>) {
 		const fullEmail = `${username.toLowerCase()}@${mailDomain}`;
 		const canonical = canonicalMailboxId(fullEmail);
 		if (!canonical) return c.json({ error: "Invalid email address" }, 400);
+		// Role addresses (postmaster@, admin@, security@, noreply@ …) on the
+		// shared domain belong to the platform: certificate authorities and
+		// users trust them.
+		if (isReservedLocalPart(canonical.split("@")[0])) {
+			return c.json({ error: "This username is reserved" }, 400);
+		}
 
 		// Check if mailbox already exists in R2
 		if (await isAddressTaken(c.env.BUCKET, canonical)) {
