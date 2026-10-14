@@ -17,9 +17,9 @@ struct PendingSendRecord: Codable, Equatable {
     }
 
     var id: UUID
-    /// Signed-in account (AuthStore email). A record from another account is discarded.
+    /// Signed-in account (AuthStore email). Another account's record waits for that account.
     var accountKey: String
-    /// The From mailbox. A record for a mailbox this session can't see is discarded.
+    /// The From mailbox. A record for a mailbox this account can't see is discarded.
     var mailboxId: String
     var mode: String
     var to: [Address]
@@ -32,8 +32,17 @@ struct PendingSendRecord: Codable, Equatable {
     var draftId: String?
     var attachments: [AttachmentRecord]
     var createdAt: Date
-    /// Set when the commit starts. A kill after this point may or may not have sent it.
+    /// The commit started before the app died, so it may or may not have gone out.
+    /// Stored as a separate marker file, never in the JSON payload.
     var sendStarted = false
+
+    private enum CodingKeys: String, CodingKey {
+        case id, accountKey, mailboxId, mode, to, cc, bcc, subject, body
+        case originalEmailId, threadId, draftId, attachments, createdAt
+    }
+
+    /// Records older than this are dropped instead of restored.
+    static let maxAge: TimeInterval = 7 * 24 * 60 * 60
 
     var composeMode: ComposeMode {
         ComposeMode(rawValue: mode) ?? .new
@@ -42,15 +51,16 @@ struct PendingSendRecord: Codable, Equatable {
     enum RestoreDecision: Equatable {
         /// Put it back in the compose dock.
         case restore
-        /// Belongs to another account or a mailbox this session can't see.
+        /// Stale, or for a mailbox this account can't see.
         case discard
-        /// Mailboxes haven't loaded yet; keep the record and try again later.
-        case wait
+        /// Another account's message, or mailboxes haven't loaded: keep it on disk.
+        case keep
     }
 
-    func restoreDecision(accountKey current: String, mailboxIds: [String]) -> RestoreDecision {
-        guard accountKey == current else { return .discard }
-        guard !mailboxIds.isEmpty else { return .wait }
+    func restoreDecision(accountKey current: String, mailboxIds: [String], now: Date = Date()) -> RestoreDecision {
+        if now.timeIntervalSince(createdAt) > Self.maxAge { return .discard }
+        guard accountKey == current else { return .keep }
+        guard !mailboxIds.isEmpty else { return .keep }
         return mailboxIds.contains(mailboxId) ? .restore : .discard
     }
 
@@ -61,49 +71,91 @@ struct PendingSendRecord: Codable, Equatable {
     }
 }
 
-/// One JSON file in Application Support. Only one send can be in its undo window
-/// at a time (scheduling a second commits the first), so one record is enough.
+/// One file per pending send (`<id>.json`, plus `<id>.started` once the commit begins),
+/// so a new send never overwrites an older record and clearing touches only its own files.
+/// Writes go through one serial queue in call order: a clear issued after a save always
+/// lands after it, and the JSON encode of large attachments stays off the main thread.
 struct PendingSendStore: Sendable {
-    let fileURL: URL
+    let directory: URL
+    private let queue: DispatchQueue
 
     static let shared = PendingSendStore(
-        directory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     )
 
-    init(directory: URL) {
-        fileURL = directory
-            .appendingPathComponent("PendingSend", isDirectory: true)
-            .appendingPathComponent("pending-send.json")
+    init(root: URL) {
+        directory = root.appendingPathComponent("PendingSend", isDirectory: true)
+        queue = DispatchQueue(label: "co.inboxies.pending-send", qos: .utility)
     }
 
-    func load() -> PendingSendRecord? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? Self.decoder.decode(PendingSendRecord.self, from: data)
-    }
-
-    func save(_ record: PendingSendRecord) {
-        do {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let data = try Self.encoder.encode(record)
-            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-        } catch {
-            print("[PendingSendStore] save failed: \(error)")
+    /// Every record on disk, oldest first. Synchronous: call before any send can be scheduled.
+    func loadAll() -> [PendingSendRecord] {
+        queue.sync {
+            let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+            return files
+                .filter { $0.pathExtension == "json" }
+                .compactMap { url -> PendingSendRecord? in
+                    guard let data = try? Data(contentsOf: url),
+                          var record = try? Self.decoder.decode(PendingSendRecord.self, from: data) else {
+                        try? FileManager.default.removeItem(at: url)
+                        return nil
+                    }
+                    record.sendStarted = FileManager.default.fileExists(atPath: startedURL(record.id).path)
+                    return record
+                }
+                .sorted { $0.createdAt < $1.createdAt }
         }
     }
 
-    func markSendStarted(id: UUID) {
-        guard var record = load(), record.id == id else { return }
-        record.sendStarted = true
-        save(record)
+    func save(_ record: PendingSendRecord) {
+        queue.async {
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let data = try Self.encoder.encode(record)
+                try data.write(to: recordURL(record.id), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            } catch {
+                print("[PendingSendStore] save failed: \(error)")
+            }
+        }
     }
 
-    /// Clears the record, or only the given one so a newer send's record survives.
-    func clear(id: UUID? = nil) {
-        if let id, load()?.id != id { return }
-        try? FileManager.default.removeItem(at: fileURL)
+    /// Marks the commit as started without rewriting the (possibly multi-MB) payload.
+    func markSendStarted(id: UUID) {
+        queue.async {
+            guard FileManager.default.fileExists(atPath: recordURL(id).path) else { return }
+            FileManager.default.createFile(
+                atPath: startedURL(id).path,
+                contents: Data(),
+                attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+            )
+        }
+    }
+
+    /// The send definitely failed: a restore should say "wasn't sent", not "may not have".
+    func clearSendStarted(id: UUID) {
+        queue.async {
+            try? FileManager.default.removeItem(at: startedURL(id))
+        }
+    }
+
+    func clear(id: UUID) {
+        queue.async {
+            try? FileManager.default.removeItem(at: recordURL(id))
+            try? FileManager.default.removeItem(at: startedURL(id))
+        }
+    }
+
+    /// Waits for queued writes (tests, and before reading back in the same process).
+    func flush() {
+        queue.sync {}
+    }
+
+    private func recordURL(_ id: UUID) -> URL {
+        directory.appendingPathComponent("\(id.uuidString).json")
+    }
+
+    private func startedURL(_ id: UUID) -> URL {
+        directory.appendingPathComponent("\(id.uuidString).started")
     }
 
     private static let encoder: JSONEncoder = {

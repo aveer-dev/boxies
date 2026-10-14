@@ -14,6 +14,10 @@ struct EmailListPaging: Equatable {
     private(set) var hasMore = false
     /// Oldest row date across loaded pages; the cache read shows everything at or after it.
     private(set) var oldestLoadedDate: String?
+    /// Oldest row of page 1. Only that window is split into New / Seen.
+    private(set) var firstPageOldestDate: String?
+    /// Ids page 1 returned last time (Reply Later merges a background refresh by id).
+    private(set) var firstPageIds: Set<String> = []
     var isLoadingMore = false
     /// The last "load more" failed; the footer offers Retry instead of spinning.
     var loadMoreFailed = false
@@ -35,10 +39,18 @@ struct EmailListPaging: Equatable {
     /// Records a fetched page. Page 1 restarts the window (refresh); later pages must be
     /// the next one in sequence, so a late duplicate response is ignored.
     @discardableResult
-    mutating func apply(page: Int, receivedCount: Int, totalCount: Int, oldestDate: String?) -> Bool {
+    mutating func apply(
+        page: Int,
+        receivedCount: Int,
+        totalCount: Int,
+        oldestDate: String?,
+        ids: [String] = []
+    ) -> Bool {
         if page == 1 {
             loadedPages = 1
             oldestLoadedDate = oldestDate
+            firstPageOldestDate = oldestDate
+            firstPageIds = Set(ids)
         } else {
             guard page == loadedPages + 1 else { return false }
             loadedPages = page
@@ -66,6 +78,59 @@ struct EmailListPaging: Equatable {
         guard loadedPages > 0 else { return (Self.initialCacheLimit, nil) }
         guard hasMore else { return (nil, nil) }
         return (nil, oldestLoadedDate)
+    }
+
+    mutating func refreshFirstPageIds(_ ids: [String]) {
+        firstPageIds = Set(ids)
+    }
+
+    /// Inbox New / Seen only splits the first page's window. Once later pages load,
+    /// their rows stay below it in date order, so unread mail from page 2 never jumps
+    /// above what the reader is looking at.
+    var sectionFloor: String? {
+        loadedPages > 1 ? firstPageOldestDate : nil
+    }
+
+    /// Inbox display order: page-1 window as New then Seen, later rows after it by date.
+    static func inboxOrder(_ rows: [Email], sectionFloor: String?) -> [Email] {
+        let sections = inboxSections(rows, sectionFloor: sectionFloor)
+        return sections.new + sections.seen
+    }
+
+    static func inboxSections(_ rows: [Email], sectionFloor: String?) -> (new: [Email], seen: [Email]) {
+        let head = rows.filter { email in sectionFloor.map { email.date >= $0 } ?? true }
+        let tail = rows.filter { email in sectionFloor.map { email.date < $0 } ?? false }
+        let byDate: (Email, Email) -> Bool = { $0.date > $1.date }
+        let new = head.filter { $0.resolvedListSection == "new" }.sorted(by: byDate)
+        let seen = head.filter { $0.resolvedListSection != "new" }.sorted(by: byDate)
+        return (new, seen + tail.sorted(by: byDate))
+    }
+
+    /// Date range to prune after fetching page N > 1: rows strictly older than the pages
+    /// before it and at/after this page's oldest row. A short (final) page prunes
+    /// everything older. Nil when there is no safe upper bound.
+    static func pruneWindow(
+        receivedCount: Int,
+        oldestDate: String?,
+        previousOldestDate: String?
+    ) -> (olderThan: String, notOlderThan: String?)? {
+        guard let previousOldestDate else { return nil }
+        if receivedCount >= pageSize {
+            guard let oldestDate else { return nil }
+            return (previousOldestDate, oldestDate)
+        }
+        return (previousOldestDate, nil)
+    }
+
+    /// Reply Later background refresh: the fresh first page, then rows from later pages
+    /// (anything on screen that wasn't on the previous first page), matched by id.
+    static func mergingFirstPage(
+        _ fresh: [Email],
+        into existing: [Email],
+        previousFirstPageIds: Set<String>
+    ) -> [Email] {
+        let later = existing.filter { !previousFirstPageIds.contains($0.id) }
+        return appending(later, to: fresh)
     }
 
     /// Appends rows from a later page, skipping ids already on screen.

@@ -837,6 +837,54 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    /// Deletes cached folder rows dated in `[notOlderThan, olderThan)` that a later page
+    /// didn't return (moved or deleted elsewhere). `notOlderThan: nil` = no lower bound.
+    func pruneRemovedEmails(
+        mailboxId: String,
+        folderId: String,
+        keeping serverIDs: Set<String>,
+        olderThan upper: String,
+        notOlderThan lower: String?
+    ) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql = """
+            SELECT id FROM emails
+            WHERE mailbox_id = ? AND folder_id = ? AND date < ? AND (? IS NULL OR date >= ?);
+            """
+            var stale: [String] = []
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 2, (folderId as NSString).utf8String, -1, nil)
+                sqlite3_bind_text(stmt, 3, (upper as NSString).utf8String, -1, nil)
+                if let lower {
+                    sqlite3_bind_text(stmt, 4, (lower as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 5, (lower as NSString).utf8String, -1, nil)
+                } else {
+                    sqlite3_bind_null(stmt, 4)
+                    sqlite3_bind_null(stmt, 5)
+                }
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    let id = String(cString: sqlite3_column_text(stmt, 0))
+                    if !serverIDs.contains(id) { stale.append(id) }
+                }
+            }
+            sqlite3_finalize(stmt)
+            guard !stale.isEmpty else { return }
+            sqlite3_exec(db, "BEGIN TRANSACTION;", nil, nil, nil)
+            var delStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "DELETE FROM emails WHERE id = ?;", -1, &delStmt, nil) == SQLITE_OK {
+                for id in stale {
+                    sqlite3_reset(delStmt)
+                    sqlite3_bind_text(delStmt, 1, (id as NSString).utf8String, -1, nil)
+                    sqlite3_step(delStmt)
+                }
+            }
+            sqlite3_finalize(delStmt)
+            sqlite3_exec(db, "COMMIT;", nil, nil, nil)
+        }
+    }
+
     func pruneRemovedEmails(
         mailboxId: String,
         folderId: String,

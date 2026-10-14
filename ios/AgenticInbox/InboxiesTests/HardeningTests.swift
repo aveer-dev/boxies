@@ -97,10 +97,15 @@ final class HardeningTests: XCTestCase {
     private func tempStore() throws -> PendingSendStore {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
-        return PendingSendStore(directory: dir)
+        return PendingSendStore(root: dir)
     }
 
-    private func record(id: UUID = UUID(), account: String = "me@x.com", mailbox: String = "mb-1") -> PendingSendRecord {
+    private func record(
+        id: UUID = UUID(),
+        account: String = "me@x.com",
+        mailbox: String = "mb-1",
+        createdAt: Date = Date()
+    ) -> PendingSendRecord {
         PendingSendRecord(
             id: id,
             accountKey: account,
@@ -115,34 +120,167 @@ final class HardeningTests: XCTestCase {
             threadId: "t-1",
             draftId: "d-1",
             attachments: [.init(filename: "a.txt", mimeType: "text/plain", size: 3, base64: "YWJj")],
-            createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+            // Whole seconds: the store encodes ISO 8601 without fractions.
+            createdAt: Date(timeIntervalSince1970: createdAt.timeIntervalSince1970.rounded(.down))
         )
     }
 
     func testPendingSendStoreRoundTrip() throws {
         let store = try tempStore()
-        XCTAssertNil(store.load())
+        XCTAssertTrue(store.loadAll().isEmpty)
         let saved = record()
         store.save(saved)
-        XCTAssertEqual(store.load(), saved)
+        XCTAssertEqual(store.loadAll(), [saved])
 
         store.markSendStarted(id: saved.id)
-        XCTAssertEqual(store.load()?.sendStarted, true)
-        XCTAssertNotEqual(store.load()?.restoreToastMessage, saved.restoreToastMessage)
+        XCTAssertEqual(store.loadAll().first?.sendStarted, true, "Started marker is read back")
+        XCTAssertNotEqual(store.loadAll().first?.restoreToastMessage, saved.restoreToastMessage)
+        store.clearSendStarted(id: saved.id)
+        XCTAssertEqual(store.loadAll().first?.sendStarted, false)
 
-        store.clear(id: UUID())
-        XCTAssertNotNil(store.load(), "Clearing another send's id keeps this record")
         store.clear(id: saved.id)
-        XCTAssertNil(store.load())
+        XCTAssertTrue(store.loadAll().isEmpty)
+    }
+
+    /// A killed launch's record survives a new send's save and that send's clear.
+    func testPendingSendStoreNeverClobbersAnotherRecord() throws {
+        let store = try tempStore()
+        let leftover = record(createdAt: Date(timeIntervalSinceNow: -60))
+        store.save(leftover)
+        let newSend = record()
+        store.save(newSend)
+        XCTAssertEqual(store.loadAll().map(\.id), [leftover.id, newSend.id])
+
+        store.markSendStarted(id: newSend.id)
+        store.clear(id: newSend.id)
+        XCTAssertEqual(store.loadAll(), [leftover], "Clearing one id leaves the other record intact")
+        store.markSendStarted(id: newSend.id)
+        XCTAssertFalse(store.loadAll().contains { $0.id == newSend.id }, "A late marker never resurrects a record")
+    }
+
+    /// Writes from several threads land in call order per id and never touch other ids.
+    func testPendingSendStoreConcurrentWrites() throws {
+        let store = try tempStore()
+        let keep = (0..<5).map { _ in record() }
+        let drop = (0..<5).map { _ in record() }
+        for r in keep + drop { store.save(r) }
+        DispatchQueue.concurrentPerform(iterations: drop.count) { i in
+            store.markSendStarted(id: drop[i].id)
+            store.clear(id: drop[i].id)
+        }
+        store.flush()
+        XCTAssertEqual(Set(store.loadAll().map(\.id)), Set(keep.map(\.id)))
     }
 
     func testPendingSendRestoreDecision() {
         let r = record()
         XCTAssertEqual(r.restoreDecision(accountKey: "me@x.com", mailboxIds: ["mb-1"]), .restore)
-        XCTAssertEqual(r.restoreDecision(accountKey: "other@x.com", mailboxIds: ["mb-1"]), .discard)
+        XCTAssertEqual(r.restoreDecision(accountKey: "other@x.com", mailboxIds: ["mb-1"]), .keep,
+                       "Another account's message waits for that account")
         XCTAssertEqual(r.restoreDecision(accountKey: "me@x.com", mailboxIds: ["mb-2"]), .discard)
-        XCTAssertEqual(r.restoreDecision(accountKey: "me@x.com", mailboxIds: []), .wait,
+        XCTAssertEqual(r.restoreDecision(accountKey: "me@x.com", mailboxIds: []), .keep,
                        "Unloaded mailboxes never discard the message")
+        let stale = record(createdAt: Date(timeIntervalSinceNow: -(PendingSendRecord.maxAge + 60)))
+        XCTAssertEqual(stale.restoreDecision(accountKey: "me@x.com", mailboxIds: ["mb-1"]), .discard)
+    }
+
+    func testRecordJSONLeavesStartedFlagOut() throws {
+        var r = record()
+        r.sendStarted = true
+        let json = String(decoding: try JSONEncoder().encode(r), as: UTF8.self)
+        XCTAssertFalse(json.contains("sendStarted"))
+    }
+
+    // MARK: - Inbox sections across pages
+
+    private func inboxEmail(_ id: String, date: String, unread: Bool) throws -> Email {
+        try JSONDecoder().decode(Email.self, from: Data("""
+        {"id":"\(id)","folder_id":"inbox","subject":"S","sender":"a@x.com","recipient":"b@x.com",
+         "date":"\(date)","read":\(unread ? "false" : "true"),"starred":false}
+        """.utf8))
+    }
+
+    func testLaterPagesNeverJumpIntoNew() throws {
+        let rows = [
+            try inboxEmail("p1-seen", date: "2026-10-10", unread: false),
+            try inboxEmail("p1-new", date: "2026-10-09", unread: true),
+            try inboxEmail("p2-new", date: "2026-10-01", unread: true),
+            try inboxEmail("p2-seen", date: "2026-09-30", unread: false),
+        ]
+        // One page loaded: everything is sectioned as before.
+        XCTAssertEqual(EmailListPaging.inboxSections(rows, sectionFloor: nil).new.map(\.id), ["p1-new", "p2-new"])
+
+        var paging = EmailListPaging(key: "mb|inbox")
+        paging.apply(page: 1, receivedCount: 25, totalCount: 60, oldestDate: "2026-10-09")
+        XCTAssertNil(paging.sectionFloor)
+        paging.apply(page: 2, receivedCount: 25, totalCount: 60, oldestDate: "2026-09-30")
+        XCTAssertEqual(paging.sectionFloor, "2026-10-09")
+
+        let sections = EmailListPaging.inboxSections(rows, sectionFloor: paging.sectionFloor)
+        XCTAssertEqual(sections.new.map(\.id), ["p1-new"])
+        XCTAssertEqual(sections.seen.map(\.id), ["p1-seen", "p2-new", "p2-seen"],
+                       "Page 2 rows append by date at the end of Seen")
+        XCTAssertEqual(EmailListPaging.inboxOrder(rows, sectionFloor: paging.sectionFloor).map(\.id),
+                       ["p1-new", "p1-seen", "p2-new", "p2-seen"])
+    }
+
+    // MARK: - Pruning later pages
+
+    func testPruneWindowForLaterPages() {
+        XCTAssertNil(EmailListPaging.pruneWindow(receivedCount: 25, oldestDate: "b", previousOldestDate: nil))
+        let full = EmailListPaging.pruneWindow(receivedCount: 25, oldestDate: "2026-09-01", previousOldestDate: "2026-09-10")
+        XCTAssertEqual(full?.olderThan, "2026-09-10")
+        XCTAssertEqual(full?.notOlderThan, "2026-09-01")
+        let short = EmailListPaging.pruneWindow(receivedCount: 3, oldestDate: "2026-09-05", previousOldestDate: "2026-09-10")
+        XCTAssertEqual(short?.olderThan, "2026-09-10")
+        XCTAssertNil(short?.notOlderThan, "Final short page prunes everything older")
+    }
+
+    func testPruneRemovesOnlyStaleRowsInWindow() throws {
+        let db = DatabaseService.shared
+        let mailbox = "mb-prune-\(UUID().uuidString)"
+        func row(_ id: String, _ date: String) throws -> Email { try inboxEmail("\(mailbox)-\(id)", date: date, unread: false) }
+        let rows = [
+            try row("page1", "2026-09-20"),
+            try row("p2-kept", "2026-09-08"),
+            try row("p2-moved", "2026-09-07"),
+            try row("older", "2026-08-01"),
+        ]
+        db.upsertEmails(mailboxId: mailbox, emails: rows, defaultFolder: "inbox")
+        addTeardownBlock { for r in rows { db.deleteEmail(id: r.id) } }
+
+        db.pruneRemovedEmails(
+            mailboxId: mailbox, folderId: "inbox",
+            keeping: ["\(mailbox)-p2-kept"],
+            olderThan: "2026-09-10", notOlderThan: "2026-09-01"
+        )
+        XCTAssertEqual(
+            Set(db.getEmails(mailboxId: mailbox, folderId: "inbox", limit: nil).map(\.id)),
+            Set(["page1", "p2-kept", "older"].map { "\(mailbox)-\($0)" })
+        )
+
+        db.pruneRemovedEmails(
+            mailboxId: mailbox, folderId: "inbox",
+            keeping: ["\(mailbox)-p2-kept"],
+            olderThan: "2026-09-10", notOlderThan: nil
+        )
+        XCTAssertEqual(
+            Set(db.getEmails(mailboxId: mailbox, folderId: "inbox", limit: nil).map(\.id)),
+            Set(["page1", "p2-kept"].map { "\(mailbox)-\($0)" })
+        )
+    }
+
+    // MARK: - Reply Later merge
+
+    func testReplyLaterMergeIsById() throws {
+        let existing = [try email("a"), try email("b"), try email("c"), try email("d")]
+        // Old first page was a, b; c, d came from page 2. "b" was removed, "new" arrived on top.
+        let merged = EmailListPaging.mergingFirstPage(
+            [try email("new"), try email("a")],
+            into: existing,
+            previousFirstPageIds: ["a", "b"]
+        )
+        XCTAssertEqual(merged.map(\.id), ["new", "a", "c", "d"])
     }
 
     @MainActor

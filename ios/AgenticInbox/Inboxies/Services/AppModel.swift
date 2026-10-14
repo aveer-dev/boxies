@@ -73,6 +73,14 @@ final class AppModel {
     private(set) var accountKey: String?
     /// Bumped by `reset()` so late async work from a previous session can tell it is stale.
     private var sessionGeneration = 0
+    /// Records left on disk by an earlier launch, read before any send can be scheduled.
+    private var leftoverPendingSends: [PendingSendRecord] = []
+    /// Sends scheduled by this process. Their records are never restored here: they are
+    /// in flight (or already handled), not leftovers from a kill.
+    private var pendingSendIdsThisLaunch: Set<UUID> = []
+    private var isRestoringPendingSend = false
+
+    private var persistsPendingSends: Bool { persistsPreferences && !isDebugPreview }
 
     private let db = DatabaseService.shared
     private let syncService = MailboxSyncService.shared
@@ -117,10 +125,11 @@ final class AppModel {
     /// Cached rows for the loaded window: every loaded page, never a fixed 50.
     private func cachedFolderEmails(mailboxId: String, folderId: String) -> [Email] {
         let key = EmailListPaging.key(mailboxId: mailboxId, listId: folderId)
-        let window = (listPaging?.key == key ? listPaging : nil)?.cacheWindow
-            ?? EmailListPaging(key: key).cacheWindow
+        let paging = listPaging?.key == key ? listPaging : nil
+        let window = paging?.cacheWindow ?? EmailListPaging(key: key).cacheWindow
         let rows = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: window.limit, since: window.since)
-        return folderId == "inbox" ? Self.orderNewThenSeen(rows) : rows
+        guard folderId == "inbox" else { return rows }
+        return EmailListPaging.inboxOrder(rows, sectionFloor: paging?.sectionFloor)
     }
 
     /// Mirrors the active mailbox for the AutoFill extension. Previews never write.
@@ -181,6 +190,11 @@ final class AppModel {
             APIClient.shared.authToken = authToken
         }
         self.accountKey = accountKey
+        if persistsPendingSends {
+            // Synchronous on purpose: in memory before the UI can schedule another send.
+            leftoverPendingSends = pendingSendStore.loadAll()
+                .filter { !pendingSendIdsThisLaunch.contains($0.id) }
+        }
 
         // 1. Instant local read (0ms) — eliminate cold start spinners
         let cachedMailboxes = db.getMailboxes()
@@ -286,6 +300,9 @@ final class AppModel {
                 selectedMailboxId = mailboxes.first?.id
             }
             isMailboxLoading = false
+            if !leftoverPendingSends.isEmpty {
+                Task { await restorePendingSendIfNeeded() }
+            }
             if let id = selectedMailboxId {
                 await loadMailbox(id)
             } else {
@@ -626,13 +643,24 @@ final class AppModel {
     }
 
     private func applyReplyLaterFirstPage(_ response: EmailListResponse, resetPaging: Bool) {
+        let ids = response.emails.map(\.id)
         if resetPaging || (listPaging?.loadedPages ?? 0) <= 1 {
-            listPaging?.apply(page: 1, receivedCount: response.emails.count, totalCount: response.totalCount, oldestDate: nil)
+            listPaging?.apply(
+                page: 1,
+                receivedCount: response.emails.count,
+                totalCount: response.totalCount,
+                oldestDate: nil,
+                ids: ids
+            )
             emails = response.emails
         } else {
-            // Swap in the fresh first page; keep the rows of later pages after it.
-            let later = Array(emails.dropFirst(min(emails.count, EmailListPaging.pageSize)))
-            emails = EmailListPaging.appending(later, to: response.emails)
+            // Swap in the fresh first page; keep later pages' rows, matched by id.
+            emails = EmailListPaging.mergingFirstPage(
+                response.emails,
+                into: emails,
+                previousFirstPageIds: listPaging?.firstPageIds ?? []
+            )
+            listPaging?.refreshFirstPageIds(ids)
         }
     }
 
@@ -672,7 +700,8 @@ final class AppModel {
                 guard let page = try await syncService.syncFolderPage(
                     mailboxId: mailboxId,
                     folderId: folderId,
-                    page: next
+                    page: next,
+                    previousOldestDate: paging.oldestLoadedDate
                 ) else {
                     failed = true
                     return
@@ -1072,7 +1101,10 @@ final class AppModel {
         let store = pendingSendStore
         let record = form.pendingSendRecord(accountKey: accountKey ?? "")
         let generation = sessionGeneration
-        let persists = persistsPreferences && !isDebugPreview
+        let persists = persistsPendingSends
+        // The send keeps the session it was written in, even if sign-out clears it mid-flight.
+        let sessionToken = APIClient.shared.authToken
+        pendingSendIdsThisLaunch.insert(record.id)
 
         scheduleUndoableAction(
             optimistic: { [weak self] in
@@ -1080,12 +1112,12 @@ final class AppModel {
             },
             commit: { @Sendable [weak self] in
                 if persists { store.markSendStarted(id: record.id) }
-                let success = await form.performActualSend()
-                if persists { store.clear(id: record.id) }
+                let success = await form.performActualSend(sessionToken: sessionToken)
                 if success {
+                    if persists { store.clear(id: record.id) }
                     await self?.loadEmailsForCurrentTab(showLoading: false)
                 } else {
-                    await self?.restoreComposeAfterFailedSend(session, generation: generation)
+                    await self?.handleFailedSend(session, recordId: record.id, generation: generation)
                 }
             },
             rollback: { [weak self] in
@@ -1096,26 +1128,46 @@ final class AppModel {
             pendingMessage: "Sending...",
             completedMessage: "Sent"
         )
-        // After scheduling: that commits any earlier pending send, which clears only its own record.
         if persists { store.save(record) }
     }
 
-    /// Next launch after a kill inside the undo window: never send silently. Put the
-    /// message back in the compose dock as a draft and tell the reader.
-    func restorePendingSendIfNeeded() async {
-        guard persistsPreferences, !isDebugPreview,
-              composeSession == nil, pendingUndoAction == nil,
-              let record = pendingSendStore.load() else { return }
-        switch record.restoreDecision(accountKey: accountKey ?? "", mailboxIds: mailboxes.map(\.id)) {
-        case .wait:
+    private func handleFailedSend(_ session: ComposeSession, recordId: UUID, generation: Int) {
+        guard persistsPendingSends else {
+            restoreComposeAfterFailedSend(session, generation: generation)
             return
-        case .discard:
-            pendingSendStore.clear(id: record.id)
-            return
-        case .restore:
-            break
         }
-        guard let mailbox = mailboxes.first(where: { $0.id == record.mailboxId }) else { return }
+        if generation != sessionGeneration {
+            // Signed out while it was sending: keep the record (it definitely didn't go out)
+            // so the same account gets it back as a draft on its next sign-in.
+            pendingSendStore.clearSendStarted(id: recordId)
+            pendingSendIdsThisLaunch.remove(recordId)
+            return
+        }
+        pendingSendStore.clear(id: recordId)
+        restoreComposeAfterFailedSend(session, generation: generation)
+    }
+
+    /// After a kill inside the undo window: never send silently. Put the message back in
+    /// the compose dock as a draft and tell the reader. Retried when mailboxes load and
+    /// whenever compose closes, one record at a time.
+    func restorePendingSendIfNeeded() async {
+        guard persistsPendingSends, !isRestoringPendingSend, composeSession == nil,
+              !leftoverPendingSends.isEmpty else { return }
+        let account = accountKey ?? ""
+        let mailboxIds = mailboxes.map(\.id)
+        for record in leftoverPendingSends
+        where record.restoreDecision(accountKey: account, mailboxIds: mailboxIds) == .discard {
+            pendingSendStore.clear(id: record.id)
+        }
+        leftoverPendingSends.removeAll {
+            $0.restoreDecision(accountKey: account, mailboxIds: mailboxIds) == .discard
+        }
+        guard let record = leftoverPendingSends.first(where: {
+            $0.restoreDecision(accountKey: account, mailboxIds: mailboxIds) == .restore
+        }), let mailbox = mailboxes.first(where: { $0.id == record.mailboxId }) else { return }
+
+        isRestoringPendingSend = true
+        defer { isRestoringPendingSend = false }
         var original: Email?
         if let originalId = record.originalEmailId, !originalId.isEmpty {
             original = db.getEmail(id: originalId)
@@ -1123,15 +1175,20 @@ final class AppModel {
                 original = try? await APIClient.shared.getEmail(mailboxId: mailbox.id, id: originalId)
             }
         }
-        // The reader may have started composing while the original loaded.
-        guard composeSession == nil, pendingSendStore.load()?.id == record.id else { return }
+        // The reader may have started composing (or signed out) while the original loaded.
+        guard composeSession == nil, leftoverPendingSends.contains(where: { $0.id == record.id }) else { return }
+        leftoverPendingSends.removeAll { $0.id == record.id }
         let form = makeComposeForm(mode: record.composeMode, mailbox: mailbox, original: original, draft: nil)
         form.restore(from: record)
+        form.restoredPendingSendId = record.id
         composeSession = ComposeSession(form: form, presentation: .minimized)
-        pendingSendStore.clear(id: record.id)
         showToast(record.restoreToastMessage, isError: true, duration: 5)
+        let store = pendingSendStore
         Task { @MainActor in
-            await form.saveDraft(explicit: false)
+            // The server draft takes over from the disk record once it exists.
+            if await form.saveDraft(explicit: false) {
+                store.clear(id: record.id)
+            }
         }
     }
 
@@ -1467,9 +1524,8 @@ final class AppModel {
         emailListError = nil
         listPaging = nil
         accountKey = nil
-        if persistsPreferences && !isDebugPreview {
-            pendingSendStore.clear()
-        }
+        // Pending-send records stay on disk, keyed by account, for that account's next sign-in.
+        leftoverPendingSends = []
         isDebugPreview = false
         db.clearAll()
     }
@@ -1713,7 +1769,14 @@ final class AppModel {
 
     func closeCompose() {
         composeSession?.form.cancelAutoSave()
+        // Sent or discarded: a restored message's disk record is no longer needed.
+        if let restoredId = composeSession?.form.restoredPendingSendId {
+            pendingSendStore.clear(id: restoredId)
+        }
         composeSession = nil
+        if !leftoverPendingSends.isEmpty {
+            Task { await restorePendingSendIfNeeded() }
+        }
     }
 
     /// Send runs after compose closed (undo window), so a failure would vanish.

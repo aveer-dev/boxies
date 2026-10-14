@@ -14,7 +14,8 @@ actor MailboxSyncService {
 
     /// Tracks active background prefetch tasks to prevent duplicate downloads.
     private var inFlightPrefetches: Set<String> = []
-    private var inFlightSyncFolders: Set<String> = []
+    /// One shared fetch per mailbox/folder/page; a second caller awaits the first.
+    private var inFlightSyncFolders: [String: Task<FolderPage, Error>] = [:]
 
     init() {
         startNetworkMonitoring()
@@ -76,6 +77,7 @@ actor MailboxSyncService {
         let receivedCount: Int
         let totalCount: Int
         let oldestDate: String?
+        let emails: [Email]
     }
 
     /// Cached rows after syncing page 1 (callers that don't paginate).
@@ -88,57 +90,79 @@ actor MailboxSyncService {
         return db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: 50)
     }
 
-    /// Fetches one page into SQLite. Returns nil when offline or the same page is
-    /// already in flight (the caller keeps its cache). Only page 1 prunes.
+    /// Fetches one page into SQLite. Returns nil only when offline (the caller keeps its
+    /// cache); a caller that hits a page already in flight awaits that fetch's result.
+    /// `previousOldestDate` (the oldest row of the pages before this one) bounds pruning
+    /// for pages after the first.
     func syncFolderPage(
         mailboxId: String,
         folderId: String,
-        page: Int
+        page: Int,
+        previousOldestDate: String? = nil
     ) async throws -> FolderPage? {
         let syncKey = "\(mailboxId):\(folderId):\(page)"
-        guard !inFlightSyncFolders.contains(syncKey) else { return nil }
-
-        inFlightSyncFolders.insert(syncKey)
-        defer { inFlightSyncFolders.remove(syncKey) }
-
+        if let inFlight = inFlightSyncFolders[syncKey] {
+            return try await inFlight.value
+        }
         guard isOnline else { return nil }
 
-        let response = try await APIClient.shared.listEmails(
-            mailboxId: mailboxId,
-            folder: folderId,
-            page: page
-        )
+        let db = self.db
+        let task = Task<FolderPage, Error> {
+            let response = try await APIClient.shared.listEmails(
+                mailboxId: mailboxId,
+                folder: folderId,
+                page: page
+            )
 
-        // Atomic batch upsert into SQLite
-        db.upsertEmails(mailboxId: mailboxId, emails: response.emails, defaultFolder: folderId)
+            // Atomic batch upsert into SQLite
+            db.upsertEmails(mailboxId: mailboxId, emails: response.emails, defaultFolder: folderId)
 
-        // Prune server-deleted emails on page 1 within the fetched date window
-        if page == 1 {
             let serverIDs = Set(response.emails.map(\.id))
             let oldestDate = response.emails.last?.date
-            let isFullPage = response.emails.count >= 25
-            db.pruneRemovedEmails(
-                mailboxId: mailboxId,
-                folderId: folderId,
-                currentServerIDs: serverIDs,
+            if page == 1 {
+                // Prune server-deleted emails within the fetched date window
+                db.pruneRemovedEmails(
+                    mailboxId: mailboxId,
+                    folderId: folderId,
+                    currentServerIDs: serverIDs,
+                    oldestDate: oldestDate,
+                    isFullPage: response.emails.count >= EmailListPaging.pageSize
+                )
+            } else if let window = EmailListPaging.pruneWindow(
+                receivedCount: response.emails.count,
                 oldestDate: oldestDate,
-                isFullPage: isFullPage
+                previousOldestDate: previousOldestDate
+            ) {
+                // Later pages: rows in this page's date range it didn't return were moved
+                // or deleted elsewhere (everything older, on the final short page).
+                db.pruneRemovedEmails(
+                    mailboxId: mailboxId,
+                    folderId: folderId,
+                    keeping: serverIDs,
+                    olderThan: window.olderThan,
+                    notOlderThan: window.notOlderThan
+                )
+            }
+
+            return FolderPage(
+                page: page,
+                receivedCount: response.emails.count,
+                totalCount: response.totalCount,
+                oldestDate: oldestDate,
+                emails: response.emails
             )
         }
+        inFlightSyncFolders[syncKey] = task
+        defer { inFlightSyncFolders[syncKey] = nil }
+        let result = try await task.value
 
         // Proactively prefetch bodies for the top 15 emails of the first page in the background
         if page == 1 {
             Task { [weak self] in
-                await self?.prefetchEmailBodies(mailboxId: mailboxId, emails: Array(response.emails.prefix(15)))
+                await self?.prefetchEmailBodies(mailboxId: mailboxId, emails: Array(result.emails.prefix(15)))
             }
         }
-
-        return FolderPage(
-            page: page,
-            receivedCount: response.emails.count,
-            totalCount: response.totalCount,
-            oldestDate: response.emails.last?.date
-        )
+        return result
     }
 
     // MARK: - Proactive Background Body Prefetching

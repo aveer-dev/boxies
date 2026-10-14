@@ -82,6 +82,8 @@ final class ComposeFormModel {
     var originalEmailId: String?
     var threadId: String?
     var draftId: String?
+    /// Set when this form was rebuilt from a pending-send record left by a killed launch.
+    var restoredPendingSendId: UUID?
 
     var isSending = false
     var isSavingDraft = false
@@ -444,8 +446,14 @@ final class ComposeFormModel {
         }
     }
 
+    /// `sessionToken` pins the send to the session it was written in; it is only sent as an
+    /// override once the shared token has changed (sign-out during the undo window).
     @discardableResult
-    func performActualSend() async -> Bool {
+    func performActualSend(sessionToken: String? = nil) async -> Bool {
+        let pinnedToken: String? = {
+            guard let sessionToken, sessionToken != APIClient.shared.authToken else { return nil }
+            return sessionToken
+        }()
         cancelAutoSave()
         commitPendingTokens()
         guard !toTokens.isEmpty else {
@@ -512,7 +520,8 @@ final class ComposeFormModel {
                 _ = try await APIClient.shared.replyToEmail(
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
-                    payload: payload
+                    payload: payload,
+                    bearerToken: pinnedToken
                 )
             case .forward:
                 guard let originalEmailId else {
@@ -522,14 +531,15 @@ final class ComposeFormModel {
                 _ = try await APIClient.shared.forwardEmail(
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
-                    payload: payload
+                    payload: payload,
+                    bearerToken: pinnedToken
                 )
             case .new, .editDraft:
-                _ = try await APIClient.shared.sendEmail(mailboxId: fromMailboxId, payload: payload)
+                _ = try await APIClient.shared.sendEmail(mailboxId: fromMailboxId, payload: payload, bearerToken: pinnedToken)
             }
 
             if let draftId {
-                try? await APIClient.shared.deleteEmail(mailboxId: fromMailboxId, id: draftId)
+                try? await APIClient.shared.deleteEmail(mailboxId: fromMailboxId, id: draftId, bearerToken: pinnedToken)
                 onDraftDeleted?(draftId, threadId, originalEmailId)
             }
             return true

@@ -196,8 +196,10 @@ struct EmailListView: View {
     /// Prefer sectioned New / Seen when viewing Inbox (even with filters — empty sections hide).
     @ViewBuilder
     private var newSeenSections: some View {
-        let newEmails = visibleEmails.filter { $0.resolvedListSection == "new" }
-        let seenEmails = visibleEmails.filter { $0.resolvedListSection == "seen" }
+        // Only the first page's window is split; later pages stay at the end of Seen.
+        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: paging?.sectionFloor)
+        let newEmails = sections.new
+        let seenEmails = sections.seen
 
         Section {
             sectionHeader(title: "New", count: newEmails.count)

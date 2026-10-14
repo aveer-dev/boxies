@@ -775,10 +775,11 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func deleteEmail(mailboxId: String, id: String) async throws {
+    func deleteEmail(mailboxId: String, id: String, bearerToken: String? = nil) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)",
-            method: "DELETE"
+            method: "DELETE",
+            bearerToken: bearerToken
         )
     }
 
@@ -815,27 +816,30 @@ final class APIClient: @unchecked Sendable {
         return response.recipients
     }
 
-    func sendEmail(mailboxId: String, payload: [String: Any]) async throws -> SendEmailResponse {
+    func sendEmail(mailboxId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
             method: "POST",
-            body: payload
+            body: payload,
+            bearerToken: bearerToken
         )
     }
 
-    func replyToEmail(mailboxId: String, emailId: String, payload: [String: Any]) async throws -> SendEmailResponse {
+    func replyToEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/reply",
             method: "POST",
-            body: payload
+            body: payload,
+            bearerToken: bearerToken
         )
     }
 
-    func forwardEmail(mailboxId: String, emailId: String, payload: [String: Any]) async throws -> SendEmailResponse {
+    func forwardEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/forward",
             method: "POST",
-            body: payload
+            body: payload,
+            bearerToken: bearerToken
         )
     }
 
