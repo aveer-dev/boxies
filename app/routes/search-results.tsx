@@ -4,14 +4,18 @@
 
 import { Loader } from "@cloudflare/kumo";
 import { MagnifyingGlassIcon } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { displaySenderName } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { ListEmptyState, ListPagination } from "~/components/columns/ListParts";
+import { ListLoadError } from "~/components/ListLoadError";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import ThreadRow, { ThreadChip } from "~/components/columns/ThreadRow";
+import { useEmailActions } from "~/hooks/useEmailActions";
+import { useEmailMenu } from "~/hooks/useEmailMenu";
+import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { getSnippetText } from "~/lib/utils";
 import { useUpdateEmail } from "~/queries/emails";
@@ -31,7 +35,7 @@ function highlightTerms(text: string, query: string): React.ReactNode {
 		// Use case-insensitive string comparison instead of regex.test() with g flag,
 		// which has stateful lastIndex causing alternating true/false results.
 		const lowerEscaped = escaped.toLowerCase();
-		return parts.map((part, i) => part.toLowerCase() === lowerEscaped ? <mark key={i} className="bg-kumo-warning-tint text-kumo-default rounded-sm px-0.5">{part}</mark> : part);
+		return parts.map((part, i) => part.toLowerCase() === lowerEscaped ? <mark key={i} className="bg-[var(--border-card)] text-kumo-default font-medium rounded-sm px-0.5">{part}</mark> : part);
 	} catch { return text; }
 }
 
@@ -39,7 +43,7 @@ function highlightTerms(text: string, query: string): React.ReactNode {
 export default function SearchResultsRoute() {
 	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
 	const [searchParams] = useSearchParams();
-	const { emailId, openEmail, closeSearch } = useMailNavigation();
+	const { emailId, openEmail, closeEmail, closeSearch } = useMailNavigation();
 	const updateEmail = useUpdateEmail();
 	const { data: folders = [] } = useFolders(mailboxId);
 	const urlQuery = searchParams.get("q") || "";
@@ -55,9 +59,26 @@ export default function SearchResultsRoute() {
 		setPage(1);
 	}, [searchChanged, searchKey]);
 
-	const { data: searchData, isLoading } = useSearchEmails(mailboxId, urlQuery, currentPage);
+	const {
+		data: searchData,
+		isLoading,
+		error: searchError,
+		refetch,
+	} = useSearchEmails(mailboxId, urlQuery, currentPage);
 	const results = searchData?.results ?? [];
 	const totalCount = searchData?.totalCount ?? 0;
+	const emailIdRef = useRef(emailId);
+	emailIdRef.current = emailId;
+	const closeEmailRef = useRef(closeEmail);
+	closeEmailRef.current = closeEmail;
+	const actions = useEmailActions(
+		mailboxId,
+		useCallback((email: Email) => {
+			if (emailIdRef.current === email.id) closeEmailRef.current();
+		}, []),
+	);
+	const openMenu = useEmailMenu(mailboxId, actions);
+	useListShortcuts(results, actions);
 
 	const isUnread = (email: Email) => !email.read && email.folder_id !== Folders.DRAFT;
 	const handleOpen = (email: Email) => {
@@ -79,13 +100,13 @@ export default function SearchResultsRoute() {
 		<>
 			<ColumnPane
 				id="list"
+				revealKey={searchKey}
 				title={
-					<h2 className="text-xs font-medium text-kumo-subtle truncate">
+					<h2 className="text-sm font-medium text-kumo-subtle truncate">
 						Search{urlQuery ? <> · <span className="text-kumo-default">{urlQuery}</span></> : null}
 					</h2>
 				}
 				counter={isLoading ? undefined : totalCount}
-				widthClassName="md:w-[400px]"
 				onClose={closeSearch}
 				closeLabel="Close search"
 			>
@@ -93,6 +114,8 @@ export default function SearchResultsRoute() {
 					<div className="flex justify-center py-16">
 						<Loader size="lg" />
 					</div>
+				) : searchError && results.length === 0 ? (
+					<ListLoadError error={searchError} onRetry={() => void refetch()} />
 				) : results.length === 0 ? (
 					<ListEmptyState
 						icon={<MagnifyingGlassIcon size={40} weight="thin" className="text-kumo-subtle" />}
@@ -105,11 +128,13 @@ export default function SearchResultsRoute() {
 					/>
 				) : (
 					<>
-						{results.map((email) => {
+						{results.map((email, index) => {
 							const label = folderLabel(email);
 							return (
 								<ThreadRow
 									key={email.id}
+									onMenu={(from) => openMenu(email, from)}
+									index={index}
 									email={email}
 									isSelected={emailId === email.id}
 									isUnread={isUnread(email)}

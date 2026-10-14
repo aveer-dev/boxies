@@ -56,8 +56,16 @@ final class AppModel {
     var identities: [LinkedIdentity]?
     /// Cached domain admin mailboxes for settings navigation.
     var adminMailboxes: [AdminMailboxRow]?
+    /// Subscription state per domain from `/billing/domains/:domain/service` (read-only chrome).
+    var domainServices: [String: DomainService] = [:]
+    /// Domain whose renew / keep request is in flight.
+    var renewingDomain: String?
+    /// Domain whose renewal was paid and is waiting for the webhook to restore it.
+    var restoringDomain: String?
+    /// Retains the renewal `ASWebAuthenticationSession` while Checkout is open.
+    @ObservationIgnored var renewalAuthSession: AnyObject?
     private var toastDismissTask: Task<Void, Never>?
-    
+
     struct UndoableAction: Identifiable {
         let id = UUID()
         let message: String
@@ -130,6 +138,17 @@ final class AppModel {
         let rows = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: window.limit, since: window.since)
         guard folderId == "inbox" else { return rows }
         return EmailListPaging.inboxOrder(rows, sectionFloor: paging?.sectionFloor)
+    }
+
+    /// The active mailbox's domain service ended: read, flag and export only.
+    var isReadOnly: Bool {
+        selectedMailbox?.isReadOnly == true
+    }
+
+    /// Billing state for the active mailbox's domain; nil without Inboxies billing.
+    var selectedDomainService: DomainService? {
+        guard let mailbox = selectedMailbox else { return nil }
+        return domainServices[mailbox.domain] ?? mailbox.service
     }
 
     /// Mirrors the active mailbox for the AutoFill extension. Previews never write.
@@ -234,6 +253,10 @@ final class AppModel {
 
         // 3. A send interrupted by a kill inside its undo window comes back as a draft.
         await restorePendingSendIfNeeded()
+
+        if persistsPreferences, !isDebugPreview, APIClient.shared.authToken != nil {
+            await AutofillSession.refreshIfNeeded()
+        }
     }
 
     private func setupRealTimeStream() {
@@ -411,6 +434,7 @@ final class AppModel {
                 mailboxes[idx] = detailed
                 db.upsertMailboxes([detailed])
             }
+            syncDomainService(for: detailed)
             isMailboxLoading = false
             async let foldersTask = syncService.syncMailbox(mailboxId: id)
             async let conversationsTask = APIClient.shared.listConversations(mailboxId: id)
@@ -429,6 +453,13 @@ final class AppModel {
             // An expired session signs out globally (RootView); never treat it as
             // losing access to this one mailbox.
             if case .sessionExpired = error { return }
+            // A domain whose subscription ended is read-only, not lost: keep the mailbox.
+            if case .serviceEnded(let domain, let message) = error {
+                markServiceEnded(domain: domain ?? selectedMailbox?.domain, message: message)
+                isMailboxLoading = false
+                isLoading = false
+                return
+            }
             if case .http(let code, _) = error, code == 403 || code == 404 {
                 await dropInaccessibleMailbox(id)
                 return
@@ -858,8 +889,8 @@ final class AppModel {
     }
 
     func openEmail(_ email: Email) async {
-        // Drafts open in compose, not read-only detail
-        if email.isDraft || (selectedTab == .folder("draft")) {
+        // Drafts open in compose, not read-only detail — unless the mailbox is read-only.
+        if !isReadOnly, email.isDraft || (selectedTab == .folder("draft")) {
             await openDraft(email)
             return
         }
@@ -1027,6 +1058,11 @@ final class AppModel {
     ) async {
         guard let mailbox = selectedMailbox else {
             errorMessage = "No mailbox selected."
+            return
+        }
+        // Entry points hide compose when read-only; this catches the rest (deep links, drafts).
+        guard !mailbox.isReadOnly else {
+            showReadOnlyNotice()
             return
         }
 
@@ -1443,8 +1479,9 @@ final class AppModel {
         toastDismissTask = nil
     }
 
-    /// Every sign-out path: unregister this device's push token from each mailbox
-    /// (with the outgoing session), wipe local state, then drop the session.
+    /// Every sign-out path: unregister this device's push token from each mailbox,
+    /// revoke the AutoFill session and then this session on the server (all with
+    /// the outgoing token), wipe local state, then drop the session locally.
     func signOut(auth: AuthStore) {
         // A send still in its undo window goes out with the current session first.
         guard pendingUndoAction != nil else {
@@ -1458,10 +1495,22 @@ final class AppModel {
     }
 
     private func finishSignOut(auth: AuthStore) {
-        PushNotificationManager.shared.unregisterAll(
-            mailboxIds: mailboxes.map(\.id),
-            sessionToken: auth.token
-        )
+        let mailboxIds = mailboxes.map(\.id)
+        let sessionToken = auth.token
+        let revokesOnServer = auth.persistsSession && !isDebugPreview
+        // The extension loses its token now, even if the server calls fail.
+        let autofillToken = revokesOnServer ? AutofillSession.forget() : nil
+        Task {
+            await PushNotificationManager.shared.unregisterAllAndWait(
+                mailboxIds: mailboxIds,
+                sessionToken: sessionToken
+            )
+            guard revokesOnServer else { return }
+            await AutofillSession.end(autofillToken)
+            if let sessionToken {
+                try? await APIClient.shared.logout(sessionToken: sessionToken)
+            }
+        }
         reset()
         auth.signOut()
     }
@@ -1474,6 +1523,7 @@ final class AppModel {
         await push.unregisterAllAndWait(mailboxIds: mailboxIds, sessionToken: auth.token)
         do {
             let response = try await APIClient.shared.deleteAccount()
+            AutofillSession.forget()
             reset()
             auth.signOut()
             return response
@@ -1517,6 +1567,10 @@ final class AppModel {
         replyLaterCount = 0
         identities = nil
         adminMailboxes = nil
+        domainServices = [:]
+        renewingDomain = nil
+        restoringDomain = nil
+        renewalAuthSession = nil
         pendingUndoTask?.cancel()
         pendingUndoTask = nil
         pendingUndoAction = nil

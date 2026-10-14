@@ -62,6 +62,50 @@ export function canonicalMailboxId(address: string | null | undefined): string |
 	return `${baseLocal}@${domain}`;
 }
 
+/**
+ * Canonical mailbox id for ids that arrive from URLs, tool arguments or forms.
+ * Unlike `canonicalMailboxId` (which parses header values like
+ * `"Ada" <ada@x.com>`), this refuses anything that could canonicalize to a
+ * different address than it appears to name: escapes, brackets, whitespace or
+ * more than one `@`.
+ */
+export function strictMailboxId(raw: string | null | undefined): string | null {
+	if (typeof raw !== "string") return null;
+	const trimmed = raw.trim();
+	if (!trimmed || /[%<>\s"]/.test(trimmed)) return null;
+	if (trimmed.indexOf("@") !== trimmed.lastIndexOf("@")) return null;
+	return canonicalMailboxId(trimmed);
+}
+
+/**
+ * Local parts nobody may register on a shared domain: RFC 2142 role
+ * addresses (certificate authorities send domain validation mail to several
+ * of these) and the platform's own senders.
+ */
+export const RESERVED_LOCAL_PARTS: ReadonlySet<string> = new Set([
+	"abuse",
+	"admin",
+	"administrator",
+	"agent",
+	"billing",
+	"hostmaster",
+	"info",
+	"mailer-daemon",
+	"no-reply",
+	"noc",
+	"noreply",
+	"postmaster",
+	"root",
+	"security",
+	"support",
+	"webmaster",
+	"welcome",
+]);
+
+export function isReservedLocalPart(localPart: string): boolean {
+	return RESERVED_LOCAL_PARTS.has(localPart.trim().toLowerCase());
+}
+
 /** Decode a URL/path mailbox id, then canonicalize. */
 export function resolveMailboxParam(raw: string | undefined): string | null {
 	if (!raw) return null;

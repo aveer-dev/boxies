@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.LocalAuthStore
+import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.AuthStore
@@ -48,6 +49,8 @@ fun RootView(
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
     val pendingInvite by appModel.pendingInviteToken.collectAsState()
+    // The invitee chose to sign in first; the invite comes back once they have.
+    var inviteWaitsForSignIn by rememberSaveable { mutableStateOf(false) }
 
     // Saveable so a configuration change doesn't replay the splash.
     var isShowingSplash by rememberSaveable { mutableStateOf(!appModel.isDebugPreview) }
@@ -56,6 +59,18 @@ fun RootView(
         if (!isShowingSplash) return@LaunchedEffect
         delay(800)
         isShowingSplash = false
+    }
+
+    // An expired or revoked session signs out instead of looking like
+    // "no mailboxes" (the Worker answers 403 for it). Ignore late rejections
+    // of a token the user already replaced.
+    LaunchedEffect(Unit) {
+        ApiClient.shared.sessionExpired.collect { rejected ->
+            if (rejected == auth.token.value) {
+                appModel.reset()
+                auth.signOutExpired()
+            }
+        }
     }
 
     LaunchedEffect(token) {
@@ -78,14 +93,20 @@ fun RootView(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (pendingInvite != null) {
+        val inviteToken = pendingInvite
+        if (inviteToken != null && (isAuthenticated || !inviteWaitsForSignIn)) {
             CompositionLocalProvider(
                 LocalAuthStore provides auth,
                 LocalAppModel provides appModel,
             ) {
-                InviteAcceptView(token = pendingInvite!!) {
-                    appModel.setPendingInviteToken(null)
-                }
+                InviteAcceptView(
+                    token = inviteToken,
+                    onSignIn = { inviteWaitsForSignIn = true },
+                    onDone = {
+                        appModel.setPendingInviteToken(null)
+                        inviteWaitsForSignIn = false
+                    },
+                )
             }
         } else {
             RootViewContent(

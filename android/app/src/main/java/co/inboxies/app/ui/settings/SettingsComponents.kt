@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.theme.HomeChromeMetrics
@@ -249,13 +250,15 @@ internal fun SettingsChromeTextButton(
 @Composable
 internal fun SettingsFormGroup(
     modifier: Modifier = Modifier,
+    /** Edge inset; 0 inside a container that already pads (e.g. the admin console). */
+    horizontalInset: Dp = 16.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = inboxiesColors()
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
+            .padding(horizontal = horizontalInset)
             .clip(RoundedCornerShape(12.dp))
             .background(colors.surface)
             .border(1.dp, colors.line.copy(alpha = 0.65f), RoundedCornerShape(12.dp)),
@@ -264,7 +267,7 @@ internal fun SettingsFormGroup(
 }
 
 @Composable
-internal fun SettingsFormSectionHeader(title: String) {
+internal fun SettingsFormSectionHeader(title: String, horizontalInset: Dp = 20.dp) {
     val colors = inboxiesColors()
     Text(
         title.uppercase(),
@@ -275,13 +278,13 @@ internal fun SettingsFormSectionHeader(title: String) {
         letterSpacing = 0.4.sp,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = horizontalInset)
             .padding(top = 20.dp, bottom = 8.dp),
     )
 }
 
 @Composable
-internal fun SettingsFormFooter(text: String) {
+internal fun SettingsFormFooter(text: String, horizontalInset: Dp = 20.dp) {
     val colors = inboxiesColors()
     Text(
         text,
@@ -290,7 +293,7 @@ internal fun SettingsFormFooter(text: String) {
         color = colors.muted,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = horizontalInset)
             .padding(top = 8.dp, bottom = 4.dp),
     )
 }

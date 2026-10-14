@@ -25,7 +25,7 @@ struct EmailDetailView: View {
 
     private var actionAvailability: EmailActionAvailability? {
         guard let source else { return nil }
-        return EmailActionAvailability(email: source)
+        return EmailActionAvailability(email: source, readOnly: app.isReadOnly)
     }
 
     private var subjectText: String {
@@ -65,7 +65,7 @@ struct EmailDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if isScreenerEmail, let email {
+                    if isScreenerEmail, !app.isReadOnly, let email {
                         ScreenerTriageBar(email: email)
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
@@ -126,15 +126,17 @@ struct EmailDetailView: View {
                 }
 
                 ToolbarItemGroup(placement: .bottomBar) {
-                    Menu {
-                        Button("Delete Message", role: .destructive) {
-                            Task { await app.deleteCurrentEmail() }
+                    if actionAvailability?.showsDelete != false {
+                        Menu {
+                            Button("Delete Message", role: .destructive) {
+                                Task { await app.deleteCurrentEmail() }
+                            }
+                        } label: {
+                            Image(systemName: "trash")
                         }
-                    } label: {
-                        Image(systemName: "trash")
+                        .accessibilityLabel("Delete")
+                        .disabled(email == nil)
                     }
-                    .accessibilityLabel("Delete")
-                    .disabled(email == nil)
 
                     if actionAvailability?.showsArchive == true {
                         Button {
@@ -294,6 +296,7 @@ struct EmailDetailView: View {
         if message.isDraft {
             DraftMessageRow(
                 message: message,
+                isReadOnly: app.isReadOnly,
                 onOpen: {
                     Task { await app.openDraft(message) }
                 },
@@ -445,7 +448,7 @@ struct EmailDetailView: View {
 
     @ViewBuilder
     private func messageContextMenu(for message: Email) -> some View {
-        let availability = EmailActionAvailability(email: message)
+        let availability = EmailActionAvailability(email: message, readOnly: app.isReadOnly)
 
         if availability.showsReplyActions {
             Button {
@@ -509,6 +512,8 @@ private struct PersonSearch: Identifiable {
 /// Compact thread row for a saved draft: stays in timeline order, opens compose.
 private struct DraftMessageRow: View {
     let message: Email
+    /// Read-only mailbox: the draft is shown but can't be edited, sent or deleted.
+    var isReadOnly: Bool = false
     var onOpen: () -> Void
     var onDelete: () -> Void
 
@@ -548,21 +553,24 @@ private struct DraftMessageRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(isReadOnly)
             .accessibilityLabel("Draft")
             .accessibilityValue(preview)
-            .accessibilityHint("Opens draft in compose")
+            .accessibilityHint(isReadOnly ? "" : "Opens draft in compose")
 
-            Button {
-                showDeleteConfirm = true
-            } label: {
-                Image(systemName: "trash")
-                    .font(.inter(size: 14))
-                    .foregroundStyle(AppTheme.muted)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+            if !isReadOnly {
+                Button {
+                    showDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.inter(size: 14))
+                        .foregroundStyle(AppTheme.muted)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete draft")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Delete draft")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 16)

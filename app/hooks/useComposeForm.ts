@@ -36,7 +36,7 @@ import {
 } from "shared/outbound-limits";
 import { useDeleteEmail, useForwardEmail, useReplyToEmail, useSaveDraft, useSendEmail } from "~/queries/emails";
 import { useMailbox } from "~/queries/mailboxes";
-import { useUIStore } from "~/hooks/useUIStore";
+import { type ComposeOptions, useUIStore } from "~/hooks/useUIStore";
 import {
 	prepareComposeAttachment,
 	type PreparedAttachment,
@@ -61,7 +61,7 @@ const EMPTY_FIELDS: ComposeFormFields = {
 };
 
 function buildForwardBody(
-	original: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"]>,
+	original: NonNullable<ComposeOptions["originalEmail"]>,
 	sigBlock: string,
 ) {
 	const senderLabel = displaySenderName(original);
@@ -77,7 +77,7 @@ function buildForwardBody(
 }
 
 function buildReplyAllFields(
-	original: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"]>,
+	original: NonNullable<ComposeOptions["originalEmail"]>,
 	selfAddress?: string,
 	aliasEmail?: string | null,
 ) {
@@ -97,7 +97,7 @@ function buildReplyAllFields(
  * one, or a draft saved in such a thread. The server enforces the same rule.
  */
 function composeAliasEmail(
-	composeOptions: ReturnType<typeof useUIStore.getState>["composeOptions"],
+	composeOptions: ComposeOptions,
 ): string | null {
 	const { mode, originalEmail: original, draftEmail: draft } = composeOptions;
 	if (draft?.alias_email) return draft.alias_email.toLowerCase();
@@ -140,8 +140,8 @@ function isComposeDraftEmpty(
 }
 
 function draftToField(
-	draft: NonNullable<ReturnType<typeof useUIStore.getState>["composeOptions"]["draftEmail"]>,
-	original: ReturnType<typeof useUIStore.getState>["composeOptions"]["originalEmail"],
+	draft: NonNullable<ComposeOptions["draftEmail"]>,
+	original: ComposeOptions["originalEmail"],
 	mailboxEmail?: string,
 	aliasEmail?: string | null,
 ) {
@@ -153,7 +153,7 @@ function draftToField(
 }
 
 function buildInitialComposeFields(
-	composeOptions: ReturnType<typeof useUIStore.getState>["composeOptions"],
+	composeOptions: ComposeOptions,
 	mailboxEmail: string | undefined,
 	sigBlock: string,
 	aliasEmail: string | null = null,
@@ -217,9 +217,16 @@ function buildInitialComposeFields(
 
 export type DraftSaveStatus = "idle" | "saving" | "saved" | "error";
 
-export function useComposeForm(mailboxId?: string, _folder?: string) {
+/**
+ * State and actions for one compose column. `panelKey` identifies the column
+ * (several can be open); it reports whether the user has changed anything,
+ * so starting another compose never clears this one.
+ */
+export function useComposeForm(mailboxId: string | undefined, panelKey: string, composeOptions: ComposeOptions) {
 	const toastManager = useKumoToastManager();
-	const { composeOptions, closeCompose } = useUIStore();
+	const closeComposeColumn = useUIStore((s) => s.closeCompose);
+	const setComposeDirty = useUIStore((s) => s.setComposeDirty);
+	const closeCompose = () => closeComposeColumn(panelKey);
 	const { data: currentMailbox } = useMailbox(mailboxId);
 	const sendEmailMutation = useSendEmail();
 	const saveDraftMutation = useSaveDraft();
@@ -241,6 +248,9 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const [savedDraftId, setSavedDraftId] = useState<string | undefined>(composeOptions.draftEmail?.id);
 	const lastInitializedOptionsRef = useRef<typeof composeOptions | null>(null);
 	const lastSavedSnapshotRef = useRef<string>("");
+	/** The fields as the column opened with them: anything else is the user's work. */
+	const initialSnapshotRef = useRef<string>("");
+	const [addedFiles, setAddedFiles] = useState(false);
 	const saveGenerationRef = useRef(0);
 	const isSendingRef = useRef(false);
 	const isDraftEdit = !!composeOptions.draftEmail;
@@ -308,10 +318,21 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 			})();
 		}
 		lastSavedSnapshotRef.current = `${initialFields.to}|${initialFields.cc}|${initialFields.bcc}|${initialFields.subject}|${initialFields.body}`;
+		initialSnapshotRef.current = `${initialFields.to}|${initialFields.cc}|${initialFields.bcc}|${initialFields.subject}|${htmlToPlainText(initialFields.body)}`;
+		setAddedFiles(false);
 		setSaveStatus("idle");
 		saveGenerationRef.current += 1;
 		isSendingRef.current = false;
 	}, [composeOptions, currentMailbox?.email, sigBlock, mailboxId, aliasEmail]);
+
+	// Dirty = the user typed, edited or attached something since it opened.
+	// The body compares as text: the editor may re-serialise the starting HTML.
+	const isDirty =
+		addedFiles ||
+		`${to}|${cc}|${bcc}|${subject}|${htmlToPlainText(body)}` !== initialSnapshotRef.current;
+	useEffect(() => {
+		setComposeDirty(panelKey, isDirty);
+	}, [panelKey, isDirty, setComposeDirty]);
 
 	const resolvedDraftId = (res?: { id?: string; draft_id?: string } | null) =>
 		res?.draft_id || res?.id;
@@ -532,6 +553,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		}
 		if (next.length) {
 			setAttachments((current) => [...current, ...next]);
+			setAddedFiles(true);
 		}
 	};
 

@@ -33,6 +33,7 @@ struct HomeShellView: View {
     @State private var composePressToken = UUID()
     @State private var composeLastTapAt: Date?
     @State private var composeDoubleTapArmed = false
+    @State private var serviceBannerHeight: CGFloat = 0
     @GestureState private var isComposePressed = false
 
     private let folderTabs: [HomeTab] = [
@@ -61,12 +62,24 @@ struct HomeShellView: View {
         app.selectedTab == .folder("inbox") || app.selectedTab == .aiInbox
     }
 
+    /// Read-only (service ended) or, for admins, set-to-end notice for the active mailbox.
+    private var serviceNotice: ServiceNotice? {
+        ServiceNotice.make(mailbox: app.selectedMailbox, service: app.selectedDomainService)
+    }
+
+    private var hasServiceBanner: Bool {
+        serviceNotice != nil && !isSelectMode && !showComposeActions
+    }
+
     private var hasScreenerBanner: Bool {
-        isInboxTab && app.screenerSenderCount > 0 && !isSelectMode && !showComposeActions
+        // Screening moves mail, which a read-only mailbox can't do; the service banner wins.
+        isInboxTab && app.screenerSenderCount > 0 && !isSelectMode && !showComposeActions && !hasServiceBanner
     }
 
     private var listBottomInset: CGFloat {
-        HomeChromeMetrics.listBottomInset(hasMinimizedCompose: hasMinimizedCompose) + (hasScreenerBanner ? 48 : 0)
+        HomeChromeMetrics.listBottomInset(hasMinimizedCompose: hasMinimizedCompose)
+            + (hasScreenerBanner ? 48 : 0)
+            + (hasServiceBanner ? serviceBannerHeight + 8 : 0)
     }
 
     var body: some View {
@@ -74,6 +87,7 @@ struct HomeShellView: View {
             .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isComposeExpanded)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasMinimizedCompose)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasServiceBanner)
             .sheet(item: selectedEmailItem) { _ in
                 EmailDetailView()
             }
@@ -154,6 +168,7 @@ struct HomeShellView: View {
                 ComposeActionListOverlay(
                     highlightedID: highlightedComposeAction,
                     isClosing: isClosingComposeActions,
+                    hidesCompose: app.isReadOnly,
                     onSelect: { item in
                         performComposeAction(item)
                     },
@@ -176,7 +191,7 @@ struct HomeShellView: View {
         // Instant present — spring lives inside overlay rows, not a delayed container fade.
         .animation(nil, value: showComposeActions)
         .overlay(alignment: .bottomTrailing) {
-            if showComposeActions && composeDoubleTapArmed {
+            if showComposeActions && composeDoubleTapArmed && !app.isReadOnly {
                 Color.clear
                     .frame(
                         width: HomeChromeMetrics.actionBarHeight,
@@ -310,6 +325,21 @@ struct HomeShellView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
+                if hasServiceBanner, let serviceNotice {
+                    ServiceStatusBanner(notice: serviceNotice)
+                        .background {
+                            GeometryReader { proxy in
+                                Color.clear.preference(key: ServiceBannerHeightKey.self, value: proxy.size.height)
+                            }
+                        }
+                        .onPreferenceChange(ServiceBannerHeightKey.self) { height in
+                            serviceBannerHeight = height
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
                 if hasScreenerBanner {
                     screenerBanner
                 }
@@ -337,6 +367,7 @@ struct HomeShellView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.pendingUndoAction?.id)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.toast?.id)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasServiceBanner)
         .animation(tabSpring, value: app.selectedTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isSelectMode)
         .padding(.bottom, -12)
@@ -716,7 +747,12 @@ struct HomeShellView: View {
                 replyLaterPileButton
                     .transition(.scale.combined(with: .opacity))
             }
-            askAIButton
+            // The AI agent is part of the service; a read-only mailbox has no Ask AI.
+            if app.isReadOnly {
+                Spacer(minLength: 0)
+            } else {
+                askAIButton
+            }
             composeButton
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showReplyLaterButton)
@@ -766,8 +802,10 @@ struct HomeShellView: View {
             .contentShape(Rectangle())
             .gesture(composePressGesture)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Compose menu")
-            .accessibilityHint("Tap for folders and actions. Double tap or press briefly to compose.")
+            .accessibilityLabel(app.isReadOnly ? "Folders menu" : "Compose menu")
+            .accessibilityHint(app.isReadOnly
+                ? "Tap for folders and settings."
+                : "Tap for folders and actions. Double tap or press briefly to compose.")
             .accessibilityAddTraits(.isButton)
             .opacity(showComposeActions && !isClosingComposeActions ? 0 : 1)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showComposeActions && !isClosingComposeActions)
@@ -788,7 +826,9 @@ struct HomeShellView: View {
                 let now = Date()
 
                 // Double-tap → compose (menu may already be open from the first tap).
-                if let last = composeLastTapAt,
+                // Read-only mailboxes can't compose: every press just opens the menu.
+                if !app.isReadOnly,
+                   let last = composeLastTapAt,
                    now.timeIntervalSince(last) < HomeChromeMetrics.composeDoubleTapWindow {
                     composeDoubleTapArmed = false
                     composeLastTapAt = nil
@@ -810,7 +850,8 @@ struct HomeShellView: View {
                 ) {
                     guard composePressToken == token,
                           composeTouchBeganAt != nil,
-                          !composeDidTriggerCompose else { return }
+                          !composeDidTriggerCompose,
+                          !app.isReadOnly else { return }
                     composeDidTriggerCompose = true
                     composeDoubleTapArmed = false
                     composeLastTapAt = nil
@@ -927,7 +968,7 @@ struct HomeShellView: View {
 
     @ViewBuilder
     private var trailingToolbarItems: some View {
-        if case .chats = app.selectedTab {
+        if case .chats = app.selectedTab, !app.isReadOnly {
             Button {
                 openChat(resumeActive: false)
             } label: {
@@ -1246,47 +1287,55 @@ struct HomeShellView: View {
                 .disabled(selectedEmailIDs.isEmpty)
                 .accessibilityLabel("Star or unstar")
 
-                // Archive
-                Button {
-                    let ids = selectedEmailIDs
-                    Task {
-                        await app.archiveEmails(ids)
-                        selectedEmailIDs.removeAll()
-                    }
-                } label: {
-                    Image(systemName: "archivebox")
-                        .font(.inter(size: 15, weight: .medium))
-                        .foregroundStyle(AppTheme.ink)
-                        .frame(width: 38, height: 38)
-                        .background(AppTheme.pillFill, in: Circle())
+                // Read-only mailboxes keep read/star; moving and deleting are blocked.
+                if !app.isReadOnly {
+                    selectionMoveActions
                 }
-                .buttonStyle(.plain)
-                .disabled(selectedEmailIDs.isEmpty)
-                .accessibilityLabel("Archive")
-
-                // Delete
-                Button {
-                    let ids = selectedEmailIDs
-                    Task {
-                        await app.deleteEmails(ids)
-                        selectedEmailIDs.removeAll()
-                    }
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.inter(size: 15, weight: .medium))
-                        .foregroundStyle(Color.red)
-                        .frame(width: 38, height: 38)
-                        .background(AppTheme.pillFill, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .disabled(selectedEmailIDs.isEmpty)
-                .accessibilityLabel("Delete")
             }
             .opacity(selectedEmailIDs.isEmpty ? 0.35 : 1)
         }
         .padding(.horizontal, 14)
         .frame(height: 58)
         .liquidGlass(in: RoundedRectangle(cornerRadius: HomeChromeMetrics.chromeCornerRadius, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var selectionMoveActions: some View {
+        // Archive
+        Button {
+            let ids = selectedEmailIDs
+            Task {
+                await app.archiveEmails(ids)
+                selectedEmailIDs.removeAll()
+            }
+        } label: {
+            Image(systemName: "archivebox")
+                .font(.inter(size: 15, weight: .medium))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: 38, height: 38)
+                .background(AppTheme.pillFill, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(selectedEmailIDs.isEmpty)
+        .accessibilityLabel("Archive")
+
+        // Delete
+        Button {
+            let ids = selectedEmailIDs
+            Task {
+                await app.deleteEmails(ids)
+                selectedEmailIDs.removeAll()
+            }
+        } label: {
+            Image(systemName: "trash")
+                .font(.inter(size: 15, weight: .medium))
+                .foregroundStyle(Color.red)
+                .frame(width: 38, height: 38)
+                .background(AppTheme.pillFill, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(selectedEmailIDs.isEmpty)
+        .accessibilityLabel("Delete")
     }
 
     private var askAIButton: some View {

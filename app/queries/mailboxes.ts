@@ -8,6 +8,7 @@ import {
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
+import { writableMailboxSettings } from "~/lib/mailbox-settings";
 import api from "~/services/api";
 import type { Mailbox } from "~/types";
 import { queryKeys } from "./keys";
@@ -62,7 +63,8 @@ export function useUpdateMailbox() {
 			mailboxId,
 			settings,
 		}: { mailboxId: string; settings: unknown }) =>
-			api.updateMailbox(mailboxId, settings),
+			// `acl` is display-only (membership changes go through the members API).
+			api.updateMailbox(mailboxId, writableMailboxSettings(settings)),
 		onSuccess: (_data, { mailboxId }) => {
 			qc.invalidateQueries({ queryKey: queryKeys.mailboxes.detail(mailboxId) });
 			qc.invalidateQueries({ queryKey: queryKeys.mailboxes.all });

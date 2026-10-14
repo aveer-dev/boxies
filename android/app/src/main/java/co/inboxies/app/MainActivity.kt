@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
             handlePushIntent(intent)
             handleInviteIntent(intent)
             handleOnboardingIntent(intent)
+            handleBillingIntent(intent)
         }
         setContent {
             var themeMode by remember {
@@ -125,6 +126,23 @@ class MainActivity : ComponentActivity() {
         handlePushIntent(intent)
         handleInviteIntent(intent)
         handleOnboardingIntent(intent)
+        handleBillingIntent(intent)
+    }
+
+    /**
+     * `inboxies://billing/renewed?domain=` (paid; the webhook restores the domain, so
+     * AppModel polls briefly) or `inboxies://billing/renew-cancelled?domain=`.
+     */
+    private fun handleBillingIntent(intent: Intent?) {
+        if (intent == null) return
+        val data = intent.data ?: return
+        if (data.scheme != "inboxies" || data.host != "billing") return
+        val domain = data.getQueryParameter("domain")?.trim()?.lowercase()
+        when (data.pathSegments.firstOrNull()) {
+            "renewed" -> if (!domain.isNullOrBlank()) appModel.handleRenewalReturn(domain, cancelled = false)
+            "renew-cancelled" -> if (!domain.isNullOrBlank()) appModel.handleRenewalReturn(domain, cancelled = true)
+        }
+        intent.data = null
     }
 
     private fun handleOnboardingIntent(intent: Intent?) {

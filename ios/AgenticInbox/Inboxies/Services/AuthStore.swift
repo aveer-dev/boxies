@@ -5,7 +5,9 @@ import Observation
 @Observable
 @MainActor
 final class AuthStore {
-    private let tokenKey = SharedSession.tokenKey
+    /// The app's full session token, in the app-only keychain group.
+    nonisolated static let tokenKey = "mobileSessionToken"
+    private let tokenKey = AuthStore.tokenKey
     private let emailKey = "mobileUserEmail"
 
     var token: String?
@@ -18,16 +20,17 @@ final class AuthStore {
 
     init(persistsSession: Bool = true) {
         self.persistsSession = persistsSession
-        // The token moved to the shared keychain group the AutoFill extension reads.
+        // Older builds kept the full session in the shared group the AutoFill
+        // extension reads; the extension now gets its own scoped session.
         if persistsSession {
-            KeychainStore.migrateToSharedGroup(tokenKey)
+            KeychainStore.moveToAppGroup(tokenKey)
         }
-        token = KeychainStore.read(tokenKey)
+        token = KeychainStore.read(tokenKey, in: .app)
         userEmail = UserDefaults.standard.string(forKey: emailKey)
         APIClient.shared.authToken = token
     }
 
-    func signInWithApple(identityToken: String, email: String?) async {
+    func signInWithApple(_ credential: AppleSignInCredential) async {
         isBusy = true
         errorMessage = nil
         defer { isBusy = false }
@@ -35,10 +38,10 @@ final class AuthStore {
             let response: AuthResponse = try await APIClient.shared.request(
                 path: "/api/v1/auth/apple",
                 method: "POST",
-                body: ["identityToken": identityToken],
+                body: credential.requestBody,
                 authed: false
             )
-            persist(token: response.token, email: response.user.email ?? email)
+            persist(token: response.token, email: response.user.email ?? credential.email)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -112,7 +115,7 @@ final class AuthStore {
         userEmail = nil
         APIClient.shared.authToken = nil
         guard persistsSession else { return }
-        KeychainStore.delete(tokenKey)
+        KeychainStore.deleteEverywhere(tokenKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
         SharedSession.clear()
     }
@@ -123,7 +126,7 @@ final class AuthStore {
         // Set before any view reacts to `token`, so follow-up calls in the same flow are authed.
         APIClient.shared.authToken = token
         guard persistsSession else { return }
-        KeychainStore.write(tokenKey, value: token)
+        KeychainStore.write(tokenKey, value: token, in: .app)
         if let email {
             UserDefaults.standard.set(email, forKey: emailKey)
         }

@@ -2,97 +2,269 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Input, Loader, Text } from "@cloudflare/kumo";
-import { type FormEvent, useState } from "react";
-import { useNavigate, useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
-import api from "~/services/api";
+import { Button, Input, Loader, Text, useKumoToastManager } from "@cloudflare/kumo";
+import { type FormEvent, type ReactNode, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMe } from "~/queries/account";
+import { queryKeys } from "~/queries/keys";
+import api, { ApiError } from "~/services/api";
 
 export function meta() {
 	return [{ title: "Accept invite — Inboxies" }];
 }
 
-export default function InviteAcceptRoute() {
-	const { token } = useParams<{ token: string }>();
-	const navigate = useNavigate();
-	const { data, error, isLoading } = useQuery({
-		queryKey: ["invite", token],
-		queryFn: () => api.getInvite(token!),
-		enabled: Boolean(token),
-		retry: false,
-	});
+/** Why an invite can't be opened, from GET /invites/:token's 404/410. */
+function inviteUnavailableMessage(error: unknown): string {
+	if (error instanceof ApiError) {
+		const status = (error.body.invite as { status?: string } | undefined)?.status;
+		if (status === "accepted") return "This invite has already been accepted. Sign in to open the mailbox.";
+		if (status === "revoked") return "This invite was revoked. Ask the mailbox owner for a new one.";
+		if (status === "expired") return "This invite has expired. Ask the mailbox owner for a new one.";
+		if (error.status === 404) return "This invite link isn't valid. Check that you copied all of it.";
+	}
+	return error instanceof Error && error.message ? error.message : "This invite is invalid or expired.";
+}
 
-	const [password, setPassword] = useState("");
-	const [confirm, setConfirm] = useState("");
-	const [displayName, setDisplayName] = useState("");
-	const [submitting, setSubmitting] = useState(false);
-	const [formError, setFormError] = useState<string | null>(null);
-
-	const handleSubmit = async (e: FormEvent) => {
-		e.preventDefault();
-		if (!token) return;
-		setFormError(null);
-		if (password !== confirm) {
-			setFormError("Passwords do not match");
-			return;
+/** What went wrong accepting; 409 means the address already has an account. */
+function acceptErrorMessage(error: unknown): { message: string; signInInstead: boolean } {
+	if (error instanceof ApiError) {
+		if (error.status === 409) {
+			const message = /sign in/i.test(error.message)
+				? error.message
+				: `${error.message} Sign in to it, then open this invite again.`;
+			return { message, signInInstead: true };
 		}
-		if (password.length < 10) {
-			setFormError("Password must be at least 10 characters");
-			return;
-		}
-		setSubmitting(true);
-		try {
-			const result = await api.acceptInvite(token, {
-				password,
-				displayName: displayName.trim() || undefined,
-			});
-			navigate(`/mailbox/${encodeURIComponent(result.mailboxId)}`);
-		} catch (err: unknown) {
-			setFormError(err instanceof Error ? err.message : "Could not accept invite");
-		} finally {
-			setSubmitting(false);
-		}
+		if (error.status === 410) return { message: "This invite is no longer active.", signInInstead: false };
+	}
+	return {
+		message: error instanceof Error && error.message ? error.message : "Couldn't accept the invite",
+		signInInstead: false,
 	};
+}
 
+function Card({ children }: { children: ReactNode }) {
 	return (
 		<div className="min-h-screen bg-kumo-recessed flex items-center justify-center px-4">
 			<div className="w-full max-w-md rounded-xl border border-kumo-line bg-kumo-base p-6 md:p-8">
-				<h1 className="text-xl font-bold text-kumo-default mb-1">
-					Accept invite
-				</h1>
-				{isLoading ? (
-					<div className="flex justify-center py-10">
-						<Loader size="lg" />
-					</div>
-				) : error || !data ? (
-					<p className="text-sm text-kumo-subtle mt-4">
-						{(error as Error)?.message || "This invite is invalid or expired."}
+				<h1 className="text-xl font-bold text-kumo-default mb-1">Accept invite</h1>
+				{children}
+			</div>
+		</div>
+	);
+}
+
+export default function InviteAcceptRoute() {
+	const { token = "" } = useParams<{ token: string }>();
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const toastManager = useKumoToastManager();
+	const invite = useQuery({
+		queryKey: ["invite", token],
+		queryFn: () => api.getInvite(token),
+		enabled: Boolean(token),
+		retry: false,
+	});
+	// 401 when signed out; that decides which flow to show.
+	const me = useMe();
+	const signedInAs = me.data?.email ?? null;
+
+	const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
+	const [code, setCode] = useState("");
+	const [displayName, setDisplayName] = useState("");
+	const [password, setPassword] = useState("");
+	const [confirm, setConfirm] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [formError, setFormError] = useState<{ message: string; signInInstead: boolean } | null>(
+		null,
+	);
+
+	const signInHref = `/login?next=${encodeURIComponent(`/invite/${token}`)}`;
+
+	const sendCode = async () => {
+		setFormError(null);
+		setBusy(true);
+		try {
+			const res = await api.sendInviteCode(token);
+			setCodeSentTo(res.sentTo);
+			if (res.devCode) setCode(res.devCode);
+		} catch (err) {
+			setFormError(acceptErrorMessage(err));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const accept = async (e: FormEvent) => {
+		e.preventDefault();
+		setFormError(null);
+		if (code.trim().length < 6) {
+			setFormError({ message: "Enter the 6-digit code", signInInstead: false });
+			return;
+		}
+		if (!signedInAs) {
+			if (password.length < 10) {
+				setFormError({ message: "Password must be at least 10 characters", signInInstead: false });
+				return;
+			}
+			if (password !== confirm) {
+				setFormError({ message: "Passwords do not match", signInInstead: false });
+				return;
+			}
+		}
+		setBusy(true);
+		try {
+			const result = await api.acceptInvite(token, {
+				code: code.trim(),
+				...(signedInAs
+					? {}
+					: { password, displayName: displayName.trim() || undefined }),
+			});
+			if (!signedInAs && result.email) {
+				toastManager.add({ title: `You're in. Next time, sign in with ${result.email}.` });
+			}
+			await queryClient.invalidateQueries({ queryKey: queryKeys.account.me });
+			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
+			navigate(`/mailbox/${encodeURIComponent(result.mailboxId)}`);
+		} catch (err) {
+			setFormError(acceptErrorMessage(err));
+			setBusy(false);
+		}
+	};
+
+	const switchAccount = async () => {
+		setFormError(null);
+		try {
+			await api.logout();
+		} catch {
+			setFormError({ message: "Couldn't sign you out. Try again.", signInInstead: false });
+			return;
+		}
+		// Start clean: no cached account data from the previous user.
+		queryClient.clear();
+		window.location.reload();
+	};
+
+	if (invite.isLoading || me.isLoading) {
+		return (
+			<Card>
+				<div className="flex justify-center py-10">
+					<Loader size="lg" />
+				</div>
+			</Card>
+		);
+	}
+
+	if (invite.error || !invite.data) {
+		return (
+			<Card>
+				<p className="text-sm text-kumo-subtle mt-4">{inviteUnavailableMessage(invite.error)}</p>
+				<div className="mt-6 text-xs">
+					<Link to="/login" className="text-kumo-accent hover:underline">
+						Go to sign in
+					</Link>
+				</div>
+			</Card>
+		);
+	}
+
+	const { mailboxId, inviteeEmail, inviteeName, role } = invite.data;
+
+	return (
+		<Card>
+			<p className="text-sm text-kumo-subtle mb-6">
+				{inviteeName ? `${inviteeName}, you're` : "You're"} invited to{" "}
+				<strong className="text-kumo-default">{mailboxId}</strong> as{" "}
+				{role === "owner" ? "an owner" : "a member"}.
+			</p>
+
+			{formError && (
+				<div className="mb-4 space-y-1">
+					<Text variant="error" size="sm">
+						{formError.message}
+					</Text>
+					{formError.signInInstead && (
+						<Link to={signInHref} className="text-xs text-kumo-accent hover:underline">
+							Sign in
+						</Link>
+					)}
+				</div>
+			)}
+
+			{signedInAs && (
+				<div className="mb-4 flex items-center justify-between gap-2 text-xs text-kumo-subtle">
+					<span className="truncate">
+						Accept as <strong className="text-kumo-default">{signedInAs}</strong>
+					</span>
+					<button
+						type="button"
+						onClick={() => void switchAccount()}
+						className="text-kumo-accent hover:underline shrink-0 cursor-pointer"
+					>
+						Not you?
+					</button>
+				</div>
+			)}
+
+			{!codeSentTo ? (
+				<div className="space-y-4">
+					<p className="text-xs text-kumo-subtle">
+						To confirm the invite is yours, we'll email a 6-digit code to{" "}
+						<strong className="text-kumo-default">{inviteeEmail}</strong>.
 					</p>
-				) : (
-					<>
-						<p className="text-sm text-kumo-subtle mb-6">
-							Set a password for{" "}
-							<strong className="text-kumo-default">{data.mailboxId}</strong>
-							{data.inviteeName ? ` (${data.inviteeName})` : ""}.
+					<Button variant="primary" className="w-full" loading={busy} onClick={() => void sendCode()}>
+						Send code
+					</Button>
+					{!signedInAs && (
+						<p className="text-xs text-kumo-subtle text-center">
+							Already have an Inboxies account?{" "}
+							<Link to={signInHref} className="text-kumo-accent hover:underline">
+								Sign in first
+							</Link>
 						</p>
-						<form onSubmit={handleSubmit} className="space-y-4">
-							{formError && (
-								<Text variant="error" size="sm">
-									{formError}
-								</Text>
-							)}
+					)}
+				</div>
+			) : (
+				<form onSubmit={accept} className="space-y-4">
+					<p className="text-xs text-kumo-subtle">
+						Enter the code we sent to{" "}
+						<strong className="text-kumo-default">{codeSentTo}</strong>.{" "}
+						<button
+							type="button"
+							onClick={() => void sendCode()}
+							disabled={busy}
+							className="text-kumo-accent hover:underline cursor-pointer"
+						>
+							Resend
+						</button>
+					</p>
+					<Input
+						label="6-digit code"
+						size="sm"
+						value={code}
+						onChange={(e) => setCode(e.target.value)}
+						placeholder="123456"
+						maxLength={6}
+						inputMode="numeric"
+						autoComplete="one-time-code"
+						required
+					/>
+					{!signedInAs && (
+						<>
 							<Input
-								label="Display name (optional)"
+								label="Your name (optional)"
 								size="sm"
 								value={displayName}
 								onChange={(e) => setDisplayName(e.target.value)}
+								autoComplete="name"
 							/>
 							<Input
-								label="Password"
+								label="Choose a password"
 								type="password"
 								size="sm"
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
+								placeholder="At least 10 characters"
 								required
 								autoComplete="new-password"
 							/>
@@ -105,18 +277,13 @@ export default function InviteAcceptRoute() {
 								required
 								autoComplete="new-password"
 							/>
-							<Button
-								type="submit"
-								variant="primary"
-								className="w-full"
-								loading={submitting}
-							>
-								Create account
-							</Button>
-						</form>
-					</>
-				)}
-			</div>
-		</div>
+						</>
+					)}
+					<Button type="submit" variant="primary" className="w-full" loading={busy}>
+						{signedInAs ? "Accept invite" : "Create account & join"}
+					</Button>
+				</form>
+			)}
+		</Card>
 	);
 }
