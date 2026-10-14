@@ -6,6 +6,7 @@ struct HomeShellView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(AppModel.self) private var app
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showSearch = false
     @State private var showChat = false
@@ -126,6 +127,12 @@ struct HomeShellView: View {
             }
             .onChange(of: app.pendingUndoAction?.id) { _, newID in
                 registerUndoIfNeeded(newID)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // Leaving the app ends the undo window: send now rather than risk a kill.
+                if phase == .background {
+                    app.commitPendingActionForBackground()
+                }
             }
             .sensoryFeedback(.success, trigger: app.pendingUndoAction?.id)
             .sensoryFeedback(.selection, trigger: highlightedComposeAction)
@@ -631,7 +638,10 @@ struct HomeShellView: View {
                         }
                     },
                     filterChipsBar: filterState.isActive ? AnyView(activeFilterChipsBar) : nil,
-                    showsTags: true
+                    showsTags: true,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() }
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
@@ -652,7 +662,10 @@ struct HomeShellView: View {
                     isFiltered: false,
                     onClearFilters: nil,
                     filterChipsBar: nil,
-                    showsTags: false
+                    showsTags: false,
+                    loadError: app.emailListError,
+                    paging: app.visibleListPaging,
+                    onLoadMore: { await app.loadMoreEmails() }
                 ) { email in
                     Task { await app.openEmail(email) }
                 }

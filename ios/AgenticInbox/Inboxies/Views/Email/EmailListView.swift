@@ -23,10 +23,16 @@ struct EmailListView: View {
     var filterChipsBar: AnyView? = nil
     var folderLabel: String? = nil
     var showsTags: Bool = true
+    /// Fetch failed with nothing cached: show error + Retry instead of "This folder is empty".
+    var loadError: String? = nil
+    /// Infinite scroll for this list; nil hides the load-more footer.
+    var paging: EmailListPaging? = nil
+    var onLoadMore: (() async -> Void)? = nil
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
     @State private var actionsSheetEmail: ActionsSheetEmail?
+    @State private var isRetrying = false
 
     private var visibleEmails: [Email] {
         emails.filter { !hiddenEmailIDs.contains($0.id) }
@@ -63,7 +69,15 @@ struct EmailListView: View {
                     filterChipsBar
                 }
 
-                if isFiltered {
+                if let loadError, !isFiltered {
+                    LoadFailedContent(
+                        title: "Couldn’t load emails",
+                        message: loadError,
+                        isRetrying: isRetrying,
+                        onRetry: retryLoad
+                    )
+                    .padding(.top, 48)
+                } else if isFiltered {
                     ContentUnavailableView {
                         Label("No matching emails", systemImage: "line.3.horizontal.decrease.circle")
                     } description: {
@@ -113,6 +127,65 @@ struct EmailListView: View {
                     emailRow(for: email)
                 }
             }
+
+            if let paging, paging.hasMore || paging.isLoadingMore {
+                loadMoreFooter(paging)
+            }
+        }
+    }
+
+    /// Bottom row while more pages exist: a skeleton row that pulls the next page as it
+    /// scrolls into view, or a quiet Retry after a failed page.
+    @ViewBuilder
+    private func loadMoreFooter(_ paging: EmailListPaging) -> some View {
+        Group {
+            if paging.loadMoreFailed && !paging.isLoadingMore {
+                Button {
+                    Task { await onLoadMore?() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Couldn’t load more")
+                            .foregroundStyle(AppTheme.muted)
+                        Text("Retry")
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .font(.inter(size: AppTheme.List.preview, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, AppTheme.List.rowVerticalPadding)
+                }
+                .buttonStyle(.plain)
+            } else {
+                EmailRowSkeleton(index: 0)
+                    .skeletonPulse(true)
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Loading more emails")
+                    .onAppear {
+                        guard !paging.isLoadingMore else { return }
+                        Task { await onLoadMore?() }
+                    }
+            }
+        }
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .id("load-more-\(paging.loadedPages)")
+    }
+
+    /// Prefetch a few rows before the end so the footer rarely shows.
+    private func prefetchIfNearEnd(_ email: Email) {
+        guard let paging, paging.nextPage != nil, !paging.loadMoreFailed,
+              let index = visibleEmails.lastIndex(where: { $0.id == email.id }),
+              index >= visibleEmails.count - Self.prefetchDistance else { return }
+        Task { await onLoadMore?() }
+    }
+
+    private func retryLoad() {
+        guard !isRetrying else { return }
+        isRetrying = true
+        Task {
+            await onRefresh?()
+            isRetrying = false
         }
     }
 
@@ -123,8 +196,10 @@ struct EmailListView: View {
     /// Prefer sectioned New / Seen when viewing Inbox (even with filters — empty sections hide).
     @ViewBuilder
     private var newSeenSections: some View {
-        let newEmails = visibleEmails.filter { $0.resolvedListSection == "new" }
-        let seenEmails = visibleEmails.filter { $0.resolvedListSection == "seen" }
+        // Only the first page's window is split; later pages stay at the end of Seen.
+        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: paging?.sectionFloor)
+        let newEmails = sections.new
+        let seenEmails = sections.seen
 
         Section {
             sectionHeader(title: "New", count: newEmails.count)
@@ -225,6 +300,7 @@ struct EmailListView: View {
         }
         .background(AppTheme.background)
         .mailRowChrome()
+        .onAppear { prefetchIfNearEnd(email) }
         .contextMenu {
             if !isSelectMode {
                 emailContextMenu(for: email)
@@ -376,6 +452,7 @@ struct EmailListView: View {
     }
 
     private static let skeletonCount = 9
+    private static let prefetchDistance = 5
 }
 
 /// Loading placeholder matching the row geometry.

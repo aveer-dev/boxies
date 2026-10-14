@@ -177,10 +177,37 @@ enum PreviewSupport {
             app.emails = app.emails.filter { $0.folderId == "inbox" }
             app.replyLaterCount = emails.filter(\.replyLater).count
         }
+        applyLoadStateFixtures(to: app, args: args)
         if let service = previewDomainService(args: args) {
             applyPreviewService(service, to: app)
         }
         return app
+    }
+
+    /// Modifiers for `-previewMailbox`: first-load failure, list fetch failure, load-more footer.
+    @MainActor
+    private static func applyLoadStateFixtures(to app: AppModel, args: [String]) {
+        let offline = "The Internet connection appears to be offline."
+        if args.contains("-previewLoadFailed") {
+            app.mailboxes = []
+            app.selectedMailboxId = nil
+            app.emails = []
+            app.errorMessage = offline
+            app.mailboxesLoadFailed = true
+        } else if args.contains("-previewListError") {
+            app.emails = []
+            app.emailListError = offline
+        } else if args.contains("-previewLoadMore"), let key = app.currentListKey {
+            var paging = EmailListPaging(key: key)
+            paging.apply(
+                page: 1,
+                receivedCount: EmailListPaging.pageSize,
+                totalCount: EmailListPaging.pageSize * 4,
+                oldestDate: app.emails.last?.date
+            )
+            paging.isLoadingMore = true
+            app.listPaging = paging
+        }
     }
 
     static let previewServiceDomain = "acme.com"
