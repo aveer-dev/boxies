@@ -10,7 +10,7 @@
 // Left out on purpose: "Is my mail used to train AI?" (it depends on Cloudflare
 // Workers AI terms, §10 Q11), and any refund or renewal-price answer until the
 // owner writes those policies (§10 Q4).
-import { APP_STORE_URL, GITHUB_URL, IOS_BETA_MAILTO, IOS_STATUS, SIGN_UP_URL, SUPPORT_EMAIL, TESTFLIGHT_URL, flags } from "../config";
+import { APP_HOST, APP_STORE_URL, GITHUB_URL, IOS_BETA_MAILTO, IOS_STATUS, SIGN_UP_URL, SUPPORT_EMAIL, TESTFLIGHT_URL, flags } from "../config";
 import type { Faq, FaqGroup } from "./types";
 
 const MAIL_US = `[${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL})`;
@@ -125,7 +125,7 @@ const gettingStarted: Faq[] = [
 		group: "getting-started",
 		q: "How do I get an @inboxies.email address?",
 		a: [
-			(flags.webAppPublic ? `Open [inboxies.email](${SIGN_UP_URL}) and choose Get started` : "In the iPhone app, tap Get started") +
+			(flags.webAppPublic ? `Open [${APP_HOST}](${SIGN_UP_URL}) and choose Get started` : "In the iPhone app, tap Get started") +
 				", then Personal Address. Pick your name, a password of at least 10 characters, a backup email and a username. There’s no payment step." +
 				(flags.webAppPublic && IOS_STATUS !== "hidden" ? " Or tap Get started in the iPhone app." : ""),
 		],
@@ -139,11 +139,11 @@ const gettingStarted: Faq[] = [
 		a: [
 			{
 				list: [
-					...(flags.webAppPublic ? ["The web app at inboxies.email, in any modern browser."] : []),
+					...(flags.webAppPublic ? [`The web app at ${APP_HOST}, in any modern browser.`] : []),
 					...(iphoneAppLine() ? [iphoneAppLine() as string] : []),
 					flags.androidPublic
 						? "An Android app for Android 14 and later, on Google Play."
-						: "There’s also an Android app with most of the same features. It isn’t publicly available.",
+						: "An Android app with most of the same features is coming soon.",
 				],
 			},
 		],
