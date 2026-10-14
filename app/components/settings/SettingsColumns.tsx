@@ -15,6 +15,7 @@ import ColumnPane from "~/components/columns/ColumnPane";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import { signOut } from "~/lib/sign-out";
+import AppearanceCard from "./AppearanceCard";
 import { INCOMING_MAIL_PAGES, SETTINGS_PAGES, type SettingsPageId } from "./pages";
 
 // Placeholder shown in the textarea when no custom prompt is set.
@@ -78,6 +79,8 @@ function SettingsContent() {
 		<div className="px-4 py-4 md:px-6 md:py-5">
 
 			<div className="space-y-6">
+				<AppearanceCard />
+
 				{/* Account */}
 				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
 					<div className="text-sm font-medium text-kumo-default mb-4">

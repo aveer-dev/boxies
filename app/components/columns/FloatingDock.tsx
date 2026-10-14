@@ -15,6 +15,7 @@ import { IconButton, Tip } from "~/components/IconButton";
 import ProgressiveBlur from "~/components/ProgressiveBlur";
 import { useMailNavigation } from "~/hooks/useMailNavigation";
 import { useUIStore } from "~/hooks/useUIStore";
+import { useTheme } from "~/lib/theme";
 import { isModalOpen, isTypingTarget, revealColumn } from "./ColumnCanvas";
 
 const SEARCH_HINTS = ["from:", "is:unread", "is:starred", "has:attachment", "before:2025-01-01"];
@@ -95,15 +96,19 @@ export default function FloatingDock() {
 				inputRef.current?.focus();
 				inputRef.current?.select();
 			} else if (
-				e.key.toLowerCase() === "c" &&
 				!e.metaKey &&
 				!e.ctrlKey &&
 				!e.altKey &&
 				!isTypingTarget(e.target) &&
 				!isModalOpen()
 			) {
-				e.preventDefault();
-				startCompose();
+				if (e.key.toLowerCase() === "c" && !e.shiftKey) {
+					e.preventDefault();
+					startCompose();
+				} else if (e.key === "T" && e.shiftKey) {
+					e.preventDefault();
+					useTheme.getState().toggle();
+				}
 			}
 		};
 		window.addEventListener("keydown", onKey);
