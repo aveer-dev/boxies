@@ -618,10 +618,20 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const body = AcceptInviteBody.parse(await c.req.json().catch(() => ({})));
 		if (await isRateLimited(c.env, "otp-verify", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
 
+		const principal = c.get("principal");
+		// The new login: an owner signs in as the mailbox (as before), unless
+		// that address already belongs to someone; members use the invitee address.
+		// Decided before the code is used up, so a 409 leaves it valid for the
+		// accept that follows sign-in.
+		const ownerLogin = !principal && invite.role === "owner" && !(await findUserByEmail(db, invite.mailboxId));
+		const email = ownerLogin ? invite.mailboxId : invite.inviteeEmail;
+		if (!principal && !ownerLogin && (await findUserByEmail(db, email))) {
+			return c.json({ error: `An account already uses ${email}. Sign in to it, then open the invite again.` }, 409);
+		}
+
 		const verified = body.code ? (await consumeOtp(db, "invite", invite.tokenHash, body.code)).ok : false;
 		if (body.code && !verified) return c.json({ error: "Invalid or expired code" }, 400);
 
-		const principal = c.get("principal");
 		if (principal) {
 			if (!verified) {
 				return c.json({ error: "Enter the code we emailed to the invited address", codeRequired: true }, 400);
@@ -640,13 +650,6 @@ export function registerAdminAndInviteRoutes(app: App) {
 		const strength = validatePasswordStrength(body.password);
 		if (strength) return c.json({ error: strength }, 400);
 
-		// The new login: an owner signs in as the mailbox (as before), unless
-		// that address already belongs to someone; members use the invitee address.
-		const ownerLogin = invite.role === "owner" && !(await findUserByEmail(db, invite.mailboxId));
-		const email = ownerLogin ? invite.mailboxId : invite.inviteeEmail;
-		if (!ownerLogin && (await findUserByEmail(db, email))) {
-			return c.json({ error: `An account already uses ${email}. Sign in to it, then open the invite again.` }, 409);
-		}
 		const displayName = body.displayName?.trim() || invite.inviteeName || email.split("@")[0];
 		const { id: userId, statements } = await userRowStatements(db, {
 			email,

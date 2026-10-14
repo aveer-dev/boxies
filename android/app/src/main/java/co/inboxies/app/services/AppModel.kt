@@ -1265,13 +1265,22 @@ class AppModel {
     fun signOut(auth: AuthStore) {
         val mailboxIds = _mailboxes.value.map { it.id }
         scope.launch {
-            if (!isDebugPreview) {
+            val revokesOnServer = !isDebugPreview
+            if (revokesOnServer) {
                 withTimeoutOrNull(PUSH_UNREGISTER_TIMEOUT_MS) {
                     PushNotificationManager.shared.unregisterAll(mailboxIds)
                 }
             }
+            val sessionToken = auth.currentToken()
             auth.signOut()
             reset()
+            // After the local sign-out, so nothing in flight reads the revoked
+            // session as "expired"; pinned to the outgoing token.
+            if (revokesOnServer && sessionToken != null) {
+                withTimeoutOrNull(PUSH_UNREGISTER_TIMEOUT_MS) {
+                    runCatching { ApiClient.shared.logout(sessionToken) }
+                }
+            }
         }
     }
 
@@ -1308,7 +1317,8 @@ class AppModel {
         _isAdmin.value = false
         _administeredDomains.value = emptyList()
         _domainServices.value = emptyMap()
-        _pendingInviteToken.value = null
+        // A pending invite survives sign-out / a signed-out cold start: the
+        // invite screen clears it when it is accepted or closed.
         _errorMessage.value = null
         _toast.value = null
         isDebugPreview = false

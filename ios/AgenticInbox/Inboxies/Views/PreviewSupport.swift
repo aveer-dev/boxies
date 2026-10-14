@@ -342,12 +342,21 @@ struct PreviewAdminAuthRoot: View {
                     .environment(auth)
                     .environment(app)
             } else if args.contains("-previewInviteAccept") {
-                NavigationStack {
-                    InviteAcceptPreview()
-                }
+                InviteAcceptPreview(signedIn: false)
+            } else if args.contains("-previewInviteAcceptSignedIn") {
+                InviteAcceptPreview(signedIn: true)
             } else if args.contains("-previewSignInMethods") {
                 NavigationStack {
                     SignInMethodsPreview()
+                }
+            } else if args.contains("-previewMembers") {
+                NavigationStack {
+                    SharingSettingsView()
+                }
+                .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSessions") {
+                NavigationStack {
+                    SessionsSettingsView()
                 }
             } else if args.contains("-previewDomainAdminDetail") {
                 NavigationStack {
@@ -374,109 +383,52 @@ struct PreviewAdminAuthRoot: View {
     }
 }
 
+/// The real invite screen on a fixture invite (no network).
 private struct InviteAcceptPreview: View {
-    @State private var password = ""
-    @State private var confirm = ""
-    @State private var displayName = "Alex"
+    let signedIn: Bool
+    @State private var auth = AuthStore(persistsSession: false)
 
     var body: some View {
-        Form {
-            Section {
-                Text("You've been invited to you@inboxies.email.")
-                    .font(.inter(size: 14))
-                    .foregroundStyle(AppTheme.muted)
-            }
-            Section("Set password") {
-                SecureField("Password (10+ characters)", text: $password)
-                SecureField("Confirm password", text: $confirm)
-                TextField("Display name (optional)", text: $displayName)
-            }
-            Section {
-                Button("Create account") {}
-                    .font(.inter(size: 16, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .background(AppTheme.background)
-        .navigationTitle("Accept invite")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("Cancel") {}
+        InviteAcceptView(
+            token: "preview",
+            previewInvite: InvitePublic(
+                mailboxId: "team@inboxies.email",
+                role: "member",
+                inviteeEmail: "alex@example.com",
+                inviteeName: "Alex",
+                expiresAt: "2026-12-01T00:00:00.000Z",
+                status: "pending"
+            ),
+            onSignIn: {},
+            onDone: {}
+        )
+        .environment(auth)
+        .onAppear {
+            if signedIn {
+                auth.token = "preview-token"
+                auth.userEmail = "alex@example.com"
             }
         }
     }
 }
 
-/// Static Sign-in methods (Connected + Change password) for Simulator review.
+/// The real Sign-in & recovery screen on fixture identities (no network).
 private struct SignInMethodsPreview: View {
-    @State private var currentPassword = ""
-    @State private var password = ""
-    @State private var passwordConfirm = ""
+    @Environment(AppModel.self) private var app
+    @State private var ready = false
 
     var body: some View {
-        List {
-            Section {
-                Text(
-                    "Connected methods share this account. Connect Apple or Google on this device, add or change your password, or link another device."
-                )
-                .font(.inter(size: SettingsFormChrome.footerFontSize))
-                .foregroundStyle(AppTheme.muted)
-                .listRowBackground(Color.clear)
-            }
-
-            Section {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("emmanuel@example.com")
-                        .font(.inter(size: SettingsFormChrome.rowFontSize))
-                        .foregroundStyle(AppTheme.ink)
-                    Text("Access · this session")
-                        .font(.inter(size: SettingsFormChrome.footerFontSize))
-                        .foregroundStyle(AppTheme.muted)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Password · emmanuel@example.com")
-                        .font(.inter(size: SettingsFormChrome.rowFontSize))
-                        .foregroundStyle(AppTheme.ink)
-                    Text("Password")
-                        .font(.inter(size: SettingsFormChrome.footerFontSize))
-                        .foregroundStyle(AppTheme.muted)
-                }
-            } header: {
-                Text("Connected")
-            }
-
-            Section {
-                Text("Connect Google isn’t available on iPhone. Use Android, web, or Link another device.")
-                    .font(.inter(size: SettingsFormChrome.footerFontSize))
-                    .foregroundStyle(AppTheme.muted)
-                Text("Change password")
-                    .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                SecureField("Current password", text: $currentPassword)
-                SecureField("New password (10+ characters)", text: $password)
-                SecureField("Confirm new password", text: $passwordConfirm)
-                Button("Update password") {}
-                    .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                    .foregroundStyle(AppTheme.accent)
-            } header: {
-                Text("Connect on this device")
-            }
-
-            Section {
-                Button("Link another device") {}
-                    .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                    .foregroundStyle(AppTheme.muted)
-            } header: {
-                Text("Link another device")
+        if ready {
+            SignInMethodsSettingsView()
+        } else {
+            Color.clear.onAppear {
+                app.setIdentities([
+                    LinkedIdentity(type: "password", key: "user:preview", label: "Password (you@inboxies.email)", current: false),
+                    LinkedIdentity(type: "apple", key: "sub:preview", label: "Apple", current: false),
+                ])
+                ready = true
             }
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(AppTheme.background)
-        .navigationTitle("Sign-in methods")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 #endif

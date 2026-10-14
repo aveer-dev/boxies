@@ -6,6 +6,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var app
     @Bindable private var pushManager = PushNotificationManager.shared
     @State private var pendingInviteToken: String?
+    /// The invitee chose to sign in first; the invite comes back once they have.
+    @State private var inviteWaitsForSignIn = false
     @State private var isShowingSplash: Bool = {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
@@ -34,10 +36,13 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Group {
-                if let token = pendingInviteToken {
-                    InviteAcceptView(token: token) {
+                if let token = pendingInviteToken, auth.isAuthenticated || !inviteWaitsForSignIn {
+                    InviteAcceptView(token: token, onSignIn: {
+                        inviteWaitsForSignIn = true
+                    }, onDone: {
                         pendingInviteToken = nil
-                    }
+                        inviteWaitsForSignIn = false
+                    })
                 } else if auth.isAuthenticated {
                     if !app.isMailboxLoading && app.mailboxes.isEmpty {
                         MailboxOnboardingView(initialTrack: .select)
@@ -127,6 +132,10 @@ struct RootView: View {
             // Ignore a late rejection of a session the user already replaced.
             guard let rejected = note.userInfo?["token"] as? String,
                   rejected == auth.token else { return }
+            // AutoFill's session outlives this one; end it so the next account
+            // to sign in here can't inherit it.
+            let autofillToken = AutofillSession.forget()
+            Task { await AutofillSession.end(autofillToken) }
             app.reset()
             auth.signOut()
             auth.errorMessage = APIError.sessionExpired.errorDescription
@@ -179,116 +188,6 @@ struct RootView: View {
             return token.isEmpty ? nil : token
         }
         return nil
-    }
-}
-
-struct InviteAcceptView: View {
-    let token: String
-    var onDone: () -> Void
-
-    @Environment(AuthStore.self) private var auth
-    @Environment(AppModel.self) private var app
-
-    @State private var invite: InvitePublic?
-    @State private var loadError: String?
-    @State private var password = ""
-    @State private var confirm = ""
-    @State private var displayName = ""
-    @State private var isSubmitting = false
-    @State private var formError: String?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text("Accept invite")
-                        .font(.inter(size: 24, weight: .bold))
-                        .foregroundStyle(AppTheme.ink)
-                    if let invite {
-                        Text("Set a password for \(invite.mailboxId)")
-                            .font(.inter(size: 15))
-                            .foregroundStyle(AppTheme.muted)
-                    } else if let loadError {
-                        Text(loadError)
-                            .font(.inter(size: 14))
-                            .foregroundStyle(AppTheme.deepDarkRed)
-                    } else {
-                        ProgressView()
-                    }
-                }
-
-                if invite != nil {
-                    Section {
-                        TextField("Display name (optional)", text: $displayName)
-                        SecureField("Password", text: $password)
-                        SecureField("Confirm password", text: $confirm)
-                    }
-
-                    if let formError {
-                        Section {
-                            Text(formError)
-                                .foregroundStyle(AppTheme.deepDarkRed)
-                                .font(.inter(size: 13))
-                        }
-                    }
-
-                    Section {
-                        Button {
-                            Task { await accept() }
-                        } label: {
-                            HStack {
-                                Spacer()
-                                if isSubmitting { ProgressView() }
-                                else { Text("Create account").font(.inter(size: 16, weight: .medium)) }
-                                Spacer()
-                            }
-                        }
-                        .disabled(isSubmitting || password.count < 10)
-                    }
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { onDone() }
-                }
-            }
-            .task { await load() }
-        }
-    }
-
-    private func load() async {
-        do {
-            invite = try await APIClient.shared.getInvite(token: token)
-        } catch {
-            loadError = error.localizedDescription
-        }
-    }
-
-    private func accept() async {
-        formError = nil
-        guard password == confirm else {
-            formError = "Passwords do not match"
-            return
-        }
-        guard password.count >= 10 else {
-            formError = "Password must be at least 10 characters"
-            return
-        }
-        isSubmitting = true
-        defer { isSubmitting = false }
-        do {
-            let result = try await APIClient.shared.acceptInvite(
-                token: token,
-                password: password,
-                displayName: displayName.isEmpty ? nil : displayName
-            )
-            // RootView's `.task(id: auth.token)` bootstraps the new session.
-            auth.applySession(token: result.token, email: result.mailboxId)
-            onDone()
-        } catch {
-            formError = error.localizedDescription
-        }
     }
 }
 

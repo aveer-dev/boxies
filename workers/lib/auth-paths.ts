@@ -19,6 +19,8 @@ export function isPathAllowedForTokenScope(
 	if (verb === "GET" && (pathname === "/api/v1/mailboxes" || pathname === "/api/v1/me" || pathname === "/api/v1/config")) {
 		return true;
 	}
+	// A scoped session may end itself (the app revokes AutoFill's on sign-out).
+	if (verb === "POST" && pathname === "/api/v1/auth/logout") return true;
 	return (verb === "GET" || verb === "POST") && MAILBOX_ALIASES_PATH.test(pathname);
 }
 

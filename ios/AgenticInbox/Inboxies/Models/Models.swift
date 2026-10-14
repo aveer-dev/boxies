@@ -6,6 +6,8 @@ struct Mailbox: Identifiable, Codable, Hashable {
     let name: String
     var settings: MailboxSettings?
     var canManage: Bool?
+    /// `owner` or `member` for the signed-in user.
+    var role: String?
     /// The domain's subscription ended: the mailbox can be read and exported, not changed.
     var readOnly: Bool?
     /// Billing state of the mailbox's domain (detail GET only; nil without Inboxies billing).
@@ -20,7 +22,7 @@ struct Mailbox: Identifiable, Codable, Hashable {
 
 extension Mailbox {
     private enum CodingKeys: String, CodingKey {
-        case id, email, name, settings, canManage, readOnly, service
+        case id, email, name, settings, canManage, role, readOnly, service
     }
 
     /// Lenient: older Workers omit `readOnly` / `service`, and a malformed service
@@ -32,6 +34,7 @@ extension Mailbox {
         name = try c.decode(String.self, forKey: .name)
         settings = try c.decodeIfPresent(MailboxSettings.self, forKey: .settings)
         canManage = try? c.decodeIfPresent(Bool.self, forKey: .canManage)
+        role = try? c.decodeIfPresent(String.self, forKey: .role)
         readOnly = try? c.decodeIfPresent(Bool.self, forKey: .readOnly)
         service = try? c.decodeIfPresent(DomainService.self, forKey: .service)
     }
@@ -153,22 +156,73 @@ struct MailboxSettings: Codable, Hashable {
     var acl: MailboxAcl?
 }
 
+/// Read-only: the server derives it from mailbox members. Sharing changes go
+/// through members and invites, never through mailbox settings.
 struct MailboxAcl: Codable, Hashable {
     var owners: [String]?
     var members: [String]?
 }
 
-struct AccountSummary: Codable, Identifiable, Hashable {
-    var id: String
+struct MailboxMember: Codable, Identifiable, Hashable {
+    var userId: String
     var email: String
     var name: String?
+    var role: String
+    var you: Bool?
+
+    var id: String { userId }
+    var isOwner: Bool { role == "owner" }
+}
+
+struct MailboxInviteRow: Codable, Identifiable, Hashable {
+    var id: String
+    var mailboxId: String
+    var role: String
+    var inviteeEmail: String
+    var inviteeName: String?
+    var expiresAt: String
+    var status: String
+    var createdAt: String?
+}
+
+struct RecoveryEmailStatus: Codable, Hashable {
+    var email: String?
+    var verified: Bool
+    var devCode: String?
+}
+
+struct AccountSession: Codable, Identifiable, Hashable {
+    var id: String
+    var label: String?
+    var scope: String?
+    var userAgent: String?
+    var ipAddress: String?
+    var createdAt: String
+    var lastActiveAt: String
+    var expiresAt: String
+    var current: Bool
+}
+
+struct RevokeSessionsResponse: Codable {
+    var ok: Bool
+    var revoked: Int?
+}
+
+/// A scoped session (private emails only) for the AutoFill extension.
+struct ScopedSessionResponse: Codable {
+    var id: String
+    var token: String
+    var expiresAt: String
+    var label: String?
 }
 
 struct MeResponse: Codable {
+    var userId: String?
+    var name: String?
     var email: String?
     var sub: String?
     var linkedEmails: [String]?
-    var keys: [String]
+    var keys: [String]?
     var isAdmin: Bool?
     var administeredDomains: [String]?
     var mailDomain: String?
@@ -189,23 +243,6 @@ struct IdentitiesResponse: Codable {
     var identities: [LinkedIdentity]
     var keys: [String]?
     var linkedEmails: [String]?
-}
-
-struct IdentityLinkCodeResponse: Codable {
-    var code: String
-    var emails: [String]?
-    var principals: [String]?
-    var accountId: String?
-    var expiresAt: String
-}
-
-struct RedeemIdentityLinkResponse: Codable {
-    var ok: Bool
-    var accountId: String?
-    var linkedEmails: [String]?
-    var keys: [String]?
-    var isAdmin: Bool
-    var identities: [LinkedIdentity]?
 }
 
 struct AttachIdentityResponse: Codable {
@@ -1253,8 +1290,16 @@ struct InvitePublic: Codable {
 struct InviteAcceptResponse: Codable {
     var mailboxId: String
     var userId: String
-    var token: String
-    var expiresAt: String
+    /// New accounts only; accepting while signed in keeps the current session.
+    var token: String?
+    var expiresAt: String?
+    var email: String?
+}
+
+struct InviteCodeResponse: Codable {
+    var ok: Bool
+    var sentTo: String
+    var devCode: String?
 }
 
 struct PasswordLoginResponse: Codable {

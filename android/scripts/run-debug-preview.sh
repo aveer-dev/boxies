@@ -13,6 +13,9 @@
 #   ./scripts/run-debug-preview.sh passwordSignIn
 #   ./scripts/run-debug-preview.sh inviteAccept
 #   ./scripts/run-debug-preview.sh signInMethods
+#   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
+#   ./scripts/run-debug-preview.sh members
+#   ./scripts/run-debug-preview.sh sessions
 #   ./scripts/run-debug-preview.sh serviceEnded        # read-only inbox, admin "Renew"
 #   ./scripts/run-debug-preview.sh serviceEndedMember  # read-only inbox, "Ask an admin"
 #   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
@@ -37,6 +40,9 @@ case "$mode" in
   passwordSignIn|PasswordSignIn|password|previewPasswordSignIn) extra=previewPasswordSignIn; label=passwordSignIn ;;
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
+  inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
+  members|Members|previewMembers) extra=previewMembers; label=members ;;
+  sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
   screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;

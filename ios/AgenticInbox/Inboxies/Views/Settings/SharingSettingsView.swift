@@ -13,46 +13,39 @@ enum SharingRole: String, CaseIterable, Identifiable {
     }
 }
 
-/// Per-mailbox owners and members. Owners can edit this list.
+/// Who can use this mailbox. Owners invite people, change roles and remove
+/// members; anyone can leave. People join only by accepting an emailed invite.
 struct SharingSettingsView: View {
     @Environment(AppModel.self) private var app
-    @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
-    @State private var owners: [String] = []
-    @State private var members: [String] = []
-    @State private var viewerKeys: Set<String> = []
-    @State private var existingAccounts: [AccountSummary] = []
+    @State private var members: [MailboxMember] = []
+    @State private var invites: [MailboxInviteRow] = []
+    @State private var isLoading = true
+    @State private var loadError: String?
     @State private var showAddModal = false
+    @State private var showLeaveConfirm = false
+    @State private var memberToRemove: MailboxMember?
+    @State private var busyUserId: String?
+    @State private var isLeaving = false
     @State private var saveMessage: String?
 
+    private var mailboxId: String? { app.selectedMailboxId }
+
+    private var me: MailboxMember? { members.first { $0.you == true } }
+
     private var canManage: Bool {
-        if let flag = app.selectedMailbox?.canManage {
-            return flag
-        }
-        return owners.contains { key in
-            viewerKeys.contains(key) || viewerKeys.contains(Self.canonicalEmailKey(key) ?? "")
-        }
+        app.selectedMailbox?.canManage == true || me?.isOwner == true
     }
 
-    /// Owners list should only be a list of user accounts, not auth methods and sub ids.
-    private var visibleOwners: [String] {
-        owners.filter { Self.isUserAccountKey($0) }
-    }
-
-    /// Members list should also only display user accounts.
-    private var visibleMembers: [String] {
-        members.filter { Self.isUserAccountKey($0) }
-    }
-
-    private var allAccountKeys: Set<String> {
-        Set(owners + members)
-    }
+    private var owners: [MailboxMember] { members.filter(\.isOwner) }
+    private var plainMembers: [MailboxMember] { members.filter { !$0.isOwner } }
+    private var pendingInvites: [MailboxInviteRow] { invites.filter { $0.status == "pending" } }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                Text("People with access through their Inboxies account. Owners can manage this list. Members can use the mailbox but cannot change who has access.")
+                Text("People who can use this mailbox. Owners invite people and manage who has access. Members can read and send mail but can't change access.")
                     .font(.inter(size: 13))
                     .foregroundStyle(AppTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -60,75 +53,86 @@ struct SharingSettingsView: View {
                     .padding(.top, 16)
                     .padding(.bottom, 8)
 
-                // Owners section
-                Text("Owners")
-                    .font(.inter(size: 14, weight: .semibold))
-                    .foregroundStyle(AppTheme.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-
-                VStack(spacing: 0) {
-                    if visibleOwners.isEmpty {
-                        Text("No owners yet.")
+                if isLoading && members.isEmpty {
+                    ProgressView()
+                        .padding(.top, 40)
+                } else if let loadError, members.isEmpty {
+                    VStack(spacing: 12) {
+                        Text(loadError)
                             .font(.inter(size: 14))
                             .foregroundStyle(AppTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                    } else {
-                        ForEach(Array(visibleOwners.enumerated()), id: \.element) { index, key in
-                            accountRow(key: key, role: .owner, canDelete: canManage && visibleOwners.count > 1)
-                            if index < visibleOwners.count - 1 {
-                                Divider()
-                                    .overlay(AppTheme.line)
-                                    .padding(.leading, 16)
+                            .multilineTextAlignment(.center)
+                        Button("Try again") {
+                            Task { await load() }
+                        }
+                        .font(.inter(size: 14, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                    }
+                    .padding(.top, 40)
+                    .padding(.horizontal, 20)
+                } else {
+                    sectionHeader("Owners")
+                    card {
+                        rows(owners, empty: "No owners yet.")
+                    }
+
+                    sectionHeader("Members")
+                    card {
+                        rows(plainMembers, empty: "No members yet.")
+                    }
+
+                    if canManage && !pendingInvites.isEmpty {
+                        sectionHeader("Pending invites")
+                        card {
+                            ForEach(Array(pendingInvites.enumerated()), id: \.element.id) { index, invite in
+                                inviteRow(invite)
+                                if index < pendingInvites.count - 1 { rowDivider }
                             }
                         }
                     }
-                }
-                .background(AppTheme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
 
-                // Members section
-                Text("Members")
-                    .font(.inter(size: 14, weight: .semibold))
-                    .foregroundStyle(AppTheme.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20)
-
-                VStack(spacing: 0) {
-                    if visibleMembers.isEmpty {
-                        Text("No members yet.")
-                            .font(.inter(size: 14))
-                            .foregroundStyle(AppTheme.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                    } else {
-                        ForEach(Array(visibleMembers.enumerated()), id: \.element) { index, key in
-                            accountRow(key: key, role: .member, canDelete: canManage)
-                            if index < visibleMembers.count - 1 {
-                                Divider()
-                                    .overlay(AppTheme.line)
-                                    .padding(.leading, 16)
+                    if me != nil {
+                        Button(role: .destructive) {
+                            showLeaveConfirm = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isLeaving {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Text(isLeaving ? "Leaving…" : "Leave mailbox")
+                                    .font(.inter(size: 15, weight: .medium))
+                                    .foregroundStyle(.red)
                             }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(AppTheme.surface)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isLeaving)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 28)
+                        .confirmationDialog(
+                            "Leave this mailbox?",
+                            isPresented: $showLeaveConfirm,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Leave mailbox", role: .destructive) {
+                                Task { await leave() }
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("You'll lose access to \(app.selectedMailbox?.email ?? "this mailbox") until an owner invites you again.")
                         }
                     }
                 }
-                .background(AppTheme.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
 
                 Spacer(minLength: 32)
             }
         }
         .background(AppTheme.background)
-        .navigationTitle("Sharing")
+        .refreshable { await load() }
+        .navigationTitle("Members")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -141,6 +145,7 @@ struct SharingSettingsView: View {
                         .foregroundStyle(AppTheme.ink)
                         .frame(width: 32, height: 32)
                 }
+                .accessibilityLabel("Back")
             }
             if canManage {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -152,22 +157,35 @@ struct SharingSettingsView: View {
                             .foregroundStyle(AppTheme.ink)
                             .frame(width: 32, height: 32)
                     }
-                    .accessibilityLabel("Add member")
+                    .accessibilityLabel("Invite someone")
                 }
             }
         }
         .sheet(isPresented: $showAddModal) {
             AddMemberModalView(
-                existingAccounts: existingAccounts,
-                currentKeys: allAccountKeys,
+                existingEmails: Set(members.map { $0.email.lowercased() } + pendingInvites.map { $0.inviteeEmail.lowercased() }),
                 mailboxEmails: mailboxEmails,
-                onAddExisting: { email, role in
-                    await addExistingUser(email: email, role: role)
-                },
                 onSendInvite: { email, role in
                     await sendInvite(email: email, role: role)
                 }
             )
+        }
+        .confirmationDialog(
+            "Remove \(memberToRemove?.email ?? "member")?",
+            isPresented: Binding(
+                get: { memberToRemove != nil },
+                set: { if !$0 { memberToRemove = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let member = memberToRemove {
+                    Task { await remove(member) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("They lose access to this mailbox right away.")
         }
         .overlay(alignment: .bottom) {
             if let saveMessage {
@@ -181,48 +199,111 @@ struct SharingSettingsView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .onAppear {
-            let acl = app.selectedMailbox?.settings?.acl
-            owners = acl?.owners ?? []
-            members = acl?.members ?? []
-            Task {
-                await loadViewer()
-                await loadAccounts()
-            }
-        }
-        .onChange(of: app.selectedMailbox?.settings?.acl) { _, acl in
-            owners = acl?.owners ?? []
-            members = acl?.members ?? []
-        }
+        .task(id: mailboxId) { await load() }
         .applyThemeController()
     }
 
+    // MARK: Rows
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.inter(size: 14, weight: .semibold))
+            .foregroundStyle(AppTheme.ink)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+    }
+
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(spacing: 0) {
+            content()
+        }
+        .background(AppTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+    }
+
+    private var rowDivider: some View {
+        Divider()
+            .overlay(AppTheme.line)
+            .padding(.leading, 16)
+    }
+
     @ViewBuilder
-    private func accountRow(key: String, role: SharingRole, canDelete: Bool) -> some View {
-        let info = displayAccount(key: key, accounts: existingAccounts)
-        HStack(spacing: 12) {
+    private func rows(_ list: [MailboxMember], empty: String) -> some View {
+        if list.isEmpty {
+            Text(empty)
+                .font(.inter(size: 14))
+                .foregroundStyle(AppTheme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+        } else {
+            ForEach(Array(list.enumerated()), id: \.element.id) { index, member in
+                memberRow(member)
+                if index < list.count - 1 { rowDivider }
+            }
+        }
+    }
+
+    private func memberRow(_ member: MailboxMember) -> some View {
+        let name = member.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let showsName = !name.isEmpty && name.caseInsensitiveCompare(member.email) != .orderedSame
+        return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(info.title)
-                    .font(.inter(size: 15, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                if let subtitle = info.subtitle {
-                    Text(subtitle)
+                HStack(spacing: 6) {
+                    Text(showsName ? name : member.email)
+                        .font(.inter(size: 15, weight: .medium))
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                    if member.you == true {
+                        Text("You")
+                            .font(.inter(size: 11, weight: .medium))
+                            .foregroundStyle(AppTheme.muted)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(AppTheme.pillFill, in: Capsule())
+                    }
+                }
+                if showsName {
+                    Text(member.email)
                         .font(.inter(size: 12))
                         .foregroundStyle(AppTheme.muted)
+                        .lineLimit(1)
                 }
             }
             Spacer()
-            if canDelete {
-                Button {
-                    Task { await removeUser(key: key, role: role) }
+            if busyUserId == member.userId {
+                ProgressView().controlSize(.small)
+            } else if canManage && member.you != true {
+                Menu {
+                    if member.isOwner {
+                        Button {
+                            Task { await setRole(member, .member) }
+                        } label: {
+                            Label("Make member", systemImage: "person")
+                        }
+                    } else {
+                        Button {
+                            Task { await setRole(member, .owner) }
+                        } label: {
+                            Label("Make owner", systemImage: "person.badge.key")
+                        }
+                    }
+                    Button(role: .destructive) {
+                        memberToRemove = member
+                    } label: {
+                        Label("Remove", systemImage: "person.badge.minus")
+                    }
                 } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.red)
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AppTheme.muted)
                         .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Remove")
+                .accessibilityLabel("Manage \(member.email)")
             }
         }
         .padding(.horizontal, 16)
@@ -230,109 +311,135 @@ struct SharingSettingsView: View {
         .contentShape(Rectangle())
     }
 
-    private func loadViewer() async {
-        if let me = try? await APIClient.shared.getMe() {
-            viewerKeys = Set(me.keys)
-            return
+    private func inviteRow(_ invite: MailboxInviteRow) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(invite.inviteeEmail)
+                    .font(.inter(size: 15, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(1)
+                Text("\(SharingRole(rawValue: invite.role)?.label ?? invite.role) · expires \(Self.shortDate(invite.expiresAt))")
+                    .font(.inter(size: 12))
+                    .foregroundStyle(AppTheme.muted)
+            }
+            Spacer()
+            if busyUserId == invite.id {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Revoke") {
+                    Task { await revoke(invite) }
+                }
+                .font(.inter(size: 13, weight: .medium))
+                .foregroundStyle(.red)
+                .buttonStyle(.plain)
+            }
         }
-        if let email = auth.userEmail?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-           !email.isEmpty {
-            viewerKeys = Set(Self.keysForEmail(email))
-        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
+    // MARK: Actions
+
     private var mailboxEmails: Set<String> {
-        var set = Set<String>()
-        for mb in app.mailboxes {
-            set.insert(mb.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
-        }
-        if let adminRows = app.adminMailboxes {
-            for row in adminRows {
-                set.insert(row.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
-            }
+        var set = Set(app.mailboxes.map { $0.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        for row in app.adminMailboxes ?? [] {
+            set.insert(row.email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
         }
         return set
     }
 
-    private func loadAccounts() async {
-        var collected: [AccountSummary] = []
-        if let accounts = try? await APIClient.shared.listAccounts() {
-            collected.append(contentsOf: accounts.filter { !mailboxEmails.contains($0.email.lowercased()) })
-        }
-        // In debug preview, add fixture accounts if empty
-        if app.isDebugPreview && collected.isEmpty {
-            collected = [
-                AccountSummary(id: "acc-1", email: "admin@example.com", name: "Domain Admin"),
-                AccountSummary(id: "acc-2", email: "ada@example.com", name: "Ada Lovelace"),
-                AccountSummary(id: "acc-3", email: "jordan@example.com", name: "Jordan Hale"),
-                AccountSummary(id: "acc-4", email: "alex@example.com", name: "Alex Rivera"),
-                AccountSummary(id: "acc-5", email: "sam@example.com", name: "Sam Chen"),
-            ].filter { !mailboxEmails.contains($0.email.lowercased()) }
-        }
-        existingAccounts = collected
-    }
-
-    private func addExistingUser(email: String, role: SharingRole) async {
-        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !mailboxEmails.contains(trimmed) else {
-            showToast("Mailboxes cannot be added as members")
+    private func load() async {
+        guard let mailboxId else { return }
+        if app.isDebugPreview {
+            members = Self.previewMembers(mailboxEmail: app.selectedMailbox?.email ?? mailboxId)
+            invites = Self.previewInvites(mailboxId: mailboxId)
+            isLoading = false
             return
         }
-        guard Self.isUserAccountKey(trimmed) else {
-            showToast("Only user account emails can be added")
-            return
-        }
-        let key = Self.normalizeKey(trimmed) ?? "email:\(trimmed)"
-        let matchedId = existingAccounts.first(where: { $0.email.caseInsensitiveCompare(trimmed) == .orderedSame })?.id
-        let accountKey = matchedId.map { "account:\($0)" }
-        let isAlready = owners.contains(key) || members.contains(key) ||
-            (accountKey.map { owners.contains($0) || members.contains($0) } ?? false)
-        if isAlready {
-            showToast("That person is already listed")
-            return
-        }
-        let keyToAdd = accountKey ?? key
-        if role == .owner {
-            owners.append(keyToAdd)
-        } else {
-            members.append(keyToAdd)
-        }
-        await persistAcl()
-        showToast(role == .owner ? "Owner added" : "Member added")
-    }
-
-    private func removeUser(key: String, role: SharingRole) async {
-        if role == .owner {
-            guard visibleOwners.count > 1 else {
-                showToast("Mailbox must have at least one owner")
-                return
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let list = try await APIClient.shared.listMembers(mailboxId: mailboxId)
+            guard mailboxId == self.mailboxId else { return }
+            members = list
+            loadError = nil
+            if list.first(where: { $0.you == true })?.isOwner == true || app.selectedMailbox?.canManage == true {
+                invites = (try? await APIClient.shared.listMailboxInvites(mailboxId: mailboxId)) ?? []
+            } else {
+                invites = []
             }
-            owners.removeAll { $0 == key }
-        } else {
-            members.removeAll { $0 == key }
+        } catch {
+            loadError = "Couldn't load members. \(error.localizedDescription)"
         }
-        await persistAcl()
-        showToast(role == .owner ? "Owner removed" : "Member removed")
     }
 
-    private func persistAcl() async {
-        guard canManage else { return }
-        let nextOwners = owners
-        let nextMembers = members
-        _ = await app.updateMailboxSettings { settings in
-            settings.acl = MailboxAcl(owners: nextOwners, members: nextMembers)
+    private func setRole(_ member: MailboxMember, _ role: SharingRole) async {
+        guard let mailboxId else { return }
+        busyUserId = member.userId
+        defer { busyUserId = nil }
+        do {
+            try await APIClient.shared.setMemberRole(mailboxId: mailboxId, userId: member.userId, role: role.rawValue)
+            await load()
+            showToast(role == .owner ? "Now an owner" : "Now a member")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    private func remove(_ member: MailboxMember) async {
+        guard let mailboxId else { return }
+        busyUserId = member.userId
+        defer { busyUserId = nil }
+        do {
+            try await APIClient.shared.removeMember(mailboxId: mailboxId, userId: member.userId)
+            members.removeAll { $0.userId == member.userId }
+            showToast("Removed")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    private func revoke(_ invite: MailboxInviteRow) async {
+        busyUserId = invite.id
+        defer { busyUserId = nil }
+        do {
+            try await APIClient.shared.revokeInvite(inviteId: invite.id)
+            invites.removeAll { $0.id == invite.id }
+            showToast("Invite revoked")
+        } catch {
+            showToast(error.localizedDescription)
+        }
+    }
+
+    private func leave() async {
+        guard let mailboxId, let me else { return }
+        isLeaving = true
+        defer { isLeaving = false }
+        do {
+            try await APIClient.shared.removeMember(mailboxId: mailboxId, userId: me.userId)
+            dismiss()
+            await app.refreshMailboxes(showLoading: true)
+            app.showToast("You left \(mailboxId)")
+        } catch {
+            showToast(error.localizedDescription)
         }
     }
 
     private func sendInvite(email: String, role: SharingRole) async -> Bool {
-        guard let mailboxId = app.selectedMailbox?.id else { return false }
+        guard let mailboxId else { return false }
         do {
             let result = try await APIClient.shared.createMailboxInvite(
                 mailboxId: mailboxId,
                 inviteEmail: email.trimmingCharacters(in: .whitespacesAndNewlines),
                 role: role.rawValue
             )
-            showToast(result.emailSent ? "Invite emailed" : "Invite created")
+            if result.emailSent {
+                showToast("Invite emailed")
+            } else {
+                UIPasteboard.general.string = result.inviteUrl
+                showToast("Invite created — link copied")
+            }
+            await load()
             return true
         } catch {
             showToast(error.localizedDescription)
@@ -341,90 +448,50 @@ struct SharingSettingsView: View {
     }
 
     private func showToast(_ message: String) {
-        withAnimation { saveMessage = message }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { saveMessage = message }
         Task {
-            try? await Task.sleep(nanoseconds: 1_600_000_000)
-            withAnimation { saveMessage = nil }
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { saveMessage = nil }
         }
     }
 
-    /// Checks if a key represents a user account and not an auth method / sub id.
-    static func isUserAccountKey(_ key: String) -> Bool {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if trimmed.hasPrefix("sub:") { return false }
-        if trimmed.hasPrefix("user:") { return false }
-        return true
+    static func shortDate(_ iso: String) -> String {
+        guard let date = ISO8601DateFormatter.withFractionalSeconds.date(from: iso)
+            ?? ISO8601DateFormatter().date(from: iso) else { return iso }
+        return date.formatted(date: .abbreviated, time: .omitted)
     }
 
-    private func displayAccount(key: String, accounts: [AccountSummary]) -> (title: String, subtitle: String?) {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.lowercased().hasPrefix("email:") {
-            let email = String(trimmed.dropFirst(6))
-            if let match = accounts.first(where: { $0.email.caseInsensitiveCompare(email) == .orderedSame }),
-               let name = match.name, !name.isEmpty, name != email {
-                return (name, email)
-            }
-            return (email, nil)
-        }
-        if trimmed.lowercased().hasPrefix("account:") {
-            let id = String(trimmed.dropFirst(8))
-            if let match = accounts.first(where: { $0.id == id }) {
-                if let name = match.name, !name.isEmpty, name != match.email {
-                    return (name, match.email)
-                }
-                return (match.email, nil)
-            }
-            return ("Account \(id.prefix(8))…", nil)
-        }
-        if trimmed.contains("@") {
-            if let match = accounts.first(where: { $0.email.caseInsensitiveCompare(trimmed) == .orderedSame }),
-               let name = match.name, !name.isEmpty, name != trimmed {
-                return (name, trimmed)
-            }
-            return (trimmed, nil)
-        }
-        return (trimmed, nil)
+    // MARK: DEBUG preview fixtures
+
+    private static func previewMembers(mailboxEmail: String) -> [MailboxMember] {
+        [
+            MailboxMember(userId: "u-1", email: mailboxEmail, name: "Alex Rivera", role: "owner", you: true),
+            MailboxMember(userId: "u-2", email: "ada@example.com", name: "Ada Lovelace", role: "owner", you: false),
+            MailboxMember(userId: "u-3", email: "jordan@example.com", name: nil, role: "member", you: false),
+        ]
     }
 
-    static func canonicalEmailKey(_ key: String) -> String? {
-        guard key.hasPrefix("email:") else { return nil }
-        let email = String(key.dropFirst("email:".count))
-        guard let at = email.lastIndex(of: "@"), at > email.startIndex else { return nil }
-        let local = email[..<at]
-        let domain = email[email.index(after: at)...]
-        if let plus = local.firstIndex(of: "+"), plus > local.startIndex {
-            return "email:\(local[..<plus])@\(domain)"
-        }
-        return "email:\(email)"
-    }
-
-    static func keysForEmail(_ email: String) -> [String] {
-        let tagged = "email:\(email)"
-        if let canonical = canonicalEmailKey(tagged), canonical != tagged {
-            return [tagged, canonical]
-        }
-        return [tagged]
-    }
-
-    static func normalizeKey(_ raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if trimmed.isEmpty { return nil }
-        if trimmed.hasPrefix("email:") {
-            let email = String(trimmed.dropFirst("email:".count))
-            return email.contains("@") ? "email:\(email)" : nil
-        }
-        if trimmed.hasPrefix("sub:") { return trimmed }
-        return trimmed.contains("@") ? "email:\(trimmed)" : nil
+    private static func previewInvites(mailboxId: String) -> [MailboxInviteRow] {
+        [
+            MailboxInviteRow(
+                id: "inv-1",
+                mailboxId: mailboxId,
+                role: "member",
+                inviteeEmail: "sam@example.com",
+                inviteeName: nil,
+                expiresAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(6 * 86_400)),
+                status: "pending",
+                createdAt: nil
+            ),
+        ]
     }
 }
 
-/// Sheet for adding a new owner or member by selecting an existing account or inviting by email.
+/// Sheet for inviting someone by email as a member or owner.
 struct AddMemberModalView: View {
     @Environment(\.dismiss) private var dismiss
-    let existingAccounts: [AccountSummary]
-    let currentKeys: Set<String>
+    let existingEmails: Set<String>
     let mailboxEmails: Set<String>
-    let onAddExisting: (String, SharingRole) async -> Void
     let onSendInvite: (String, SharingRole) async -> Bool
 
     @State private var email = ""
@@ -443,49 +510,27 @@ struct AddMemberModalView: View {
         mailboxEmails.contains(trimmedEmail)
     }
 
-    private var isSubOrAuthKey: Bool {
-        trimmedEmail.hasPrefix("sub:") || trimmedEmail.hasPrefix("user:")
+    private var isAlreadyListed: Bool {
+        existingEmails.contains(trimmedEmail)
     }
 
     private var isValidEmail: Bool {
-        !isMailboxEmail && !isSubOrAuthKey && trimmedEmail.contains("@") && trimmedEmail.contains(".") && trimmedEmail.count >= 5
-    }
-
-    private var matchingAccounts: [AccountSummary] {
-        guard !trimmedEmail.isEmpty else { return [] }
-        return existingAccounts.filter { acc in
-            let emailLower = acc.email.lowercased()
-            guard !mailboxEmails.contains(emailLower) else { return false }
-            let matches = emailLower.contains(trimmedEmail) || (acc.name?.lowercased().contains(trimmedEmail) ?? false)
-            let alreadyAdded = currentKeys.contains("email:\(emailLower)")
-                || currentKeys.contains(emailLower)
-                || currentKeys.contains("account:\(acc.id)")
-            return matches && !alreadyAdded
-        }
-    }
-
-    private var matchedExistingAccount: AccountSummary? {
-        guard !isMailboxEmail && !isSubOrAuthKey else { return nil }
-        return existingAccounts.first { $0.email.caseInsensitiveCompare(trimmedEmail) == .orderedSame }
-    }
-
-    private var isExistingAccount: Bool {
-        matchedExistingAccount != nil
+        !isMailboxEmail && !isAlreadyListed && trimmedEmail.contains("@") && trimmedEmail.contains(".") && trimmedEmail.count >= 5
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    // Email input
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Email address")
                             .font(.inter(size: 13, weight: .semibold))
                             .foregroundStyle(AppTheme.muted)
 
-                        TextField("person@example.com", text: $email)
+                        TextField("Email address", text: $email, prompt: Text(verbatim: "person@example.com").foregroundStyle(AppTheme.muted))
                             .textInputAutocapitalization(.never)
                             .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
                             .autocorrectionDisabled()
                             .font(.inter(size: 16))
                             .padding(12)
@@ -495,112 +540,21 @@ struct AddMemberModalView: View {
                                     .stroke(AppTheme.line, lineWidth: 1)
                             )
 
-                        // Dropdown options of existing accounts
-                        if !matchingAccounts.isEmpty && matchedExistingAccount?.email != trimmedEmail {
-                            VStack(spacing: 0) {
-                                ForEach(Array(matchingAccounts.prefix(5).enumerated()), id: \.element.id) { index, acc in
-                                    Button {
-                                        email = acc.email
-                                    } label: {
-                                        HStack {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                if let name = acc.name, !name.isEmpty, name != acc.email {
-                                                    Text(name)
-                                                        .font(.inter(size: 14, weight: .medium))
-                                                        .foregroundStyle(AppTheme.ink)
-                                                    Text(acc.email)
-                                                        .font(.inter(size: 12))
-                                                        .foregroundStyle(AppTheme.muted)
-                                                } else {
-                                                    Text(acc.email)
-                                                        .font(.inter(size: 14, weight: .medium))
-                                                        .foregroundStyle(AppTheme.ink)
-                                                }
-                                            }
-                                            Spacer()
-                                            Text("Existing account")
-                                                .font(.inter(size: 11, weight: .medium))
-                                                .foregroundStyle(AppTheme.accent)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 3)
-                                                .background(AppTheme.pillFill, in: Capsule())
-                                        }
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 10)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    if index < min(matchingAccounts.count, 5) - 1 {
-                                        Divider()
-                                            .overlay(AppTheme.line)
-                                            .padding(.leading, 14)
-                                    }
-                                }
-                            }
-                            .background(AppTheme.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(AppTheme.line, lineWidth: 1)
-                            )
-                            .shadow(color: Color.black.opacity(0.04), radius: 6, y: 3)
-                        }
-
-                        // Status info text
                         if isMailboxEmail {
-                            HStack(spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(AppTheme.deepDarkRed)
-                                Text("Mailboxes cannot be added as members. Only user accounts can be added.")
-                                    .font(.inter(size: 12))
-                                    .foregroundStyle(AppTheme.deepDarkRed)
-                            }
-                            .padding(.top, 2)
-                        } else if isSubOrAuthKey {
-                            HStack(spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(AppTheme.deepDarkRed)
-                                Text("Sub IDs and auth methods cannot be added. Only user account emails can be added.")
-                                    .font(.inter(size: 12))
-                                    .foregroundStyle(AppTheme.deepDarkRed)
-                            }
-                            .padding(.top, 2)
+                            hint("Mailboxes can't be members. Invite the person who uses it.", systemImage: "exclamationmark.triangle", warning: true)
+                        } else if isAlreadyListed {
+                            hint("Already a member or invited.", systemImage: "exclamationmark.triangle", warning: true)
                         } else if isValidEmail {
-                            if isExistingAccount {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(AppTheme.accent)
-                                    Text("Existing Inboxies user — will be added directly")
-                                        .font(.inter(size: 12))
-                                        .foregroundStyle(AppTheme.muted)
-                                }
-                                .padding(.top, 2)
-                            } else {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "envelope.badge")
-                                        .font(.system(size: 13))
-                                        .foregroundStyle(AppTheme.muted)
-                                    Text("New user — an email invite link will be sent")
-                                        .font(.inter(size: 12))
-                                        .foregroundStyle(AppTheme.muted)
-                                }
-                                .padding(.top, 2)
-                            }
+                            hint("We'll email them an invite. They confirm it with a code sent to this address.", systemImage: "envelope.badge", warning: false)
                         }
                     }
 
-                    // Owner Role Toggle
                     Toggle(isOn: $isOwner) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Owner")
                                 .font(.inter(size: 15, weight: .medium))
                                 .foregroundStyle(AppTheme.ink)
-                            Text("Owners can manage mailbox settings, members, and permissions.")
+                            Text("Owners can manage mailbox settings and who has access.")
                                 .font(.inter(size: 12))
                                 .foregroundStyle(AppTheme.muted)
                         }
@@ -608,18 +562,11 @@ struct AddMemberModalView: View {
                     .tint(AppTheme.accent)
                     .padding(.vertical, 4)
 
-                    // Submit button
                     Button {
                         isSubmitting = true
                         Task {
-                            if isExistingAccount {
-                                await onAddExisting(trimmedEmail, role)
+                            if await onSendInvite(trimmedEmail, role) {
                                 dismiss()
-                            } else {
-                                let ok = await onSendInvite(trimmedEmail, role)
-                                if ok {
-                                    dismiss()
-                                }
                             }
                             isSubmitting = false
                         }
@@ -631,9 +578,7 @@ struct AddMemberModalView: View {
                                     .controlSize(.small)
                                     .tint(.white)
                             } else {
-                                Text(isExistingAccount
-                                     ? "Add \(role == .owner ? "owner" : "member")"
-                                     : "Send invite")
+                                Text("Send invite")
                                     .font(.inter(size: 15, weight: .semibold))
                                     .foregroundStyle(.white)
                             }
@@ -643,13 +588,13 @@ struct AddMemberModalView: View {
                         .background(isValidEmail && !isSubmitting ? AppTheme.accent : AppTheme.accent.opacity(0.4), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!isValidEmail || isMailboxEmail || isSubOrAuthKey || isSubmitting)
+                    .disabled(!isValidEmail || isSubmitting)
                     .padding(.top, 8)
                 }
                 .padding(20)
             }
             .background(AppTheme.background)
-            .navigationTitle("Add member")
+            .navigationTitle("Invite someone")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -668,5 +613,17 @@ struct AddMemberModalView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    private func hint(_ text: String, systemImage: String, warning: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 13))
+                .foregroundStyle(warning ? AppTheme.deepDarkRed : AppTheme.muted)
+            Text(text)
+                .font(.inter(size: 12))
+                .foregroundStyle(warning ? AppTheme.deepDarkRed : AppTheme.muted)
+        }
+        .padding(.top, 2)
     }
 }

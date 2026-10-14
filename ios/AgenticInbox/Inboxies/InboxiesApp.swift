@@ -42,7 +42,10 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn")
                 || ProcessInfo.processInfo.arguments.contains("-previewAuthOptions")
                 || ProcessInfo.processInfo.arguments.contains("-previewInviteAccept")
-                || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods") {
+                || ProcessInfo.processInfo.arguments.contains("-previewInviteAcceptSignedIn")
+                || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods")
+                || ProcessInfo.processInfo.arguments.contains("-previewMembers")
+                || ProcessInfo.processInfo.arguments.contains("-previewSessions") {
                 PreviewAdminAuthRoot()
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewSplash") {

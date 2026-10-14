@@ -40,6 +40,8 @@ data class Mailbox(
     val name: String,
     val settings: MailboxSettings? = null,
     val canManage: Boolean? = null,
+    /** `owner` or `member` for the signed-in user. */
+    val role: String? = null,
     /** The domain's subscription ended: read, flag and export only. Absent on older servers. */
     val readOnly: Boolean? = null,
     /** Detail only; null for domains without Inboxies billing (e.g. the shared platform domain). */
@@ -62,6 +64,10 @@ data class MailboxSettings(
     val acl: MailboxAcl? = null,
 )
 
+/**
+ * Read-only: the server derives it from mailbox members. Sharing changes go
+ * through members and invites, never through mailbox settings.
+ */
 @Serializable
 data class MailboxAcl(
     val owners: List<String>? = null,
@@ -69,14 +75,58 @@ data class MailboxAcl(
 )
 
 @Serializable
-data class AccountSummary(
-    val id: String,
+data class MailboxMember(
+    val userId: String,
     val email: String,
     val name: String? = null,
+    val role: String,
+    val you: Boolean = false,
+) {
+    val isOwner: Boolean get() = role == "owner"
+}
+
+@Serializable
+data class MailboxInviteRow(
+    val id: String,
+    val mailboxId: String,
+    val role: String,
+    val inviteeEmail: String,
+    val inviteeName: String? = null,
+    val expiresAt: String,
+    val status: String,
+    val createdAt: String? = null,
+)
+
+@Serializable
+data class RecoveryEmailStatus(
+    val email: String? = null,
+    val verified: Boolean = false,
+    val devCode: String? = null,
+)
+
+@Serializable
+data class AccountSession(
+    val id: String,
+    val label: String? = null,
+    val scope: String? = null,
+    val userAgent: String? = null,
+    val ipAddress: String? = null,
+    val createdAt: String,
+    val lastActiveAt: String,
+    val expiresAt: String,
+    val current: Boolean = false,
+)
+
+@Serializable
+data class RevokeSessionsResponse(
+    val ok: Boolean = false,
+    val revoked: Int = 0,
 )
 
 @Serializable
 data class MeResponse(
+    val userId: String? = null,
+    val name: String? = null,
     val email: String? = null,
     val sub: String? = null,
     val linkedEmails: List<String> = emptyList(),
@@ -101,25 +151,6 @@ data class IdentitiesResponse(
     val identities: List<LinkedIdentity> = emptyList(),
     val keys: List<String> = emptyList(),
     val linkedEmails: List<String> = emptyList(),
-)
-
-@Serializable
-data class IdentityLinkCodeResponse(
-    val code: String,
-    val emails: List<String> = emptyList(),
-    val principals: List<String> = emptyList(),
-    val accountId: String? = null,
-    val expiresAt: String,
-)
-
-@Serializable
-data class RedeemIdentityLinkResponse(
-    val ok: Boolean = false,
-    val accountId: String? = null,
-    val linkedEmails: List<String> = emptyList(),
-    val keys: List<String> = emptyList(),
-    val isAdmin: Boolean = false,
-    val identities: List<LinkedIdentity> = emptyList(),
 )
 
 @Serializable
@@ -165,8 +196,17 @@ data class InvitePublic(
 data class InviteAcceptResponse(
     val mailboxId: String,
     val userId: String,
-    val token: String,
-    val expiresAt: String,
+    /** New accounts only; accepting while signed in keeps the current session. */
+    val token: String? = null,
+    val expiresAt: String? = null,
+    val email: String? = null,
+)
+
+@Serializable
+data class InviteCodeResponse(
+    val ok: Boolean = false,
+    val sentTo: String,
+    val devCode: String? = null,
 )
 
 @Serializable

@@ -11,6 +11,7 @@ enum SettingsDestination: Hashable {
     case aliases
     case sharing
     case signInMethods
+    case sessions
     case domainAdmin
     case theme
     case support
@@ -80,10 +81,11 @@ struct SettingsSheetView: View {
                         settingsNavRow("Private email", destination: .aliases) {
                             PrivateEmailLogoView(size: 18, showTile: false)
                         }
-                        settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
+                        settingsNavRow("Members", systemImage: "person.2", destination: .sharing)
                     }
                     .lockedWhenReadOnly(app.isReadOnly)
-                    settingsNavRow("Sign-in methods", systemImage: "key", destination: .signInMethods)
+                    settingsNavRow("Sign-in & recovery", systemImage: "key", destination: .signInMethods)
+                    settingsNavRow("Devices & sessions", systemImage: "laptopcomputer.and.iphone", destination: .sessions)
 
                     if app.isAdmin {
                         settingsNavRow("Domain Admin", systemImage: "shield.lefthalf.filled", destination: .domainAdmin)
@@ -158,7 +160,7 @@ struct SettingsSheetView: View {
                         }
                         Button("Cancel", role: .cancel) {}
                     } message: {
-                        Text("Mailboxes only you own are permanently deleted with all their mail. Mailboxes shared with others stay for them; you are just removed. This cannot be undone.")
+                        Text("Mailboxes where you're the only owner are deleted with all their mail, for everyone who uses them. Mailboxes with another owner stay; you just lose access. This can't be undone.")
                     }
                 } header: {
                     Text("Account")
@@ -190,6 +192,8 @@ struct SettingsSheetView: View {
                     SharingSettingsView()
                 case .signInMethods:
                     SignInMethodsSettingsView()
+                case .sessions:
+                    SessionsSettingsView()
                 case .domainAdmin:
                     DomainAdminSettingsView(showsDismiss: false)
                 case .theme:

@@ -49,6 +49,8 @@ fun RootView(
     val mailboxes by appModel.mailboxes.collectAsState()
     val isMailboxLoading by appModel.isMailboxLoading.collectAsState()
     val pendingInvite by appModel.pendingInviteToken.collectAsState()
+    // The invitee chose to sign in first; the invite comes back once they have.
+    var inviteWaitsForSignIn by rememberSaveable { mutableStateOf(false) }
 
     // Saveable so a configuration change doesn't replay the splash.
     var isShowingSplash by rememberSaveable { mutableStateOf(!appModel.isDebugPreview) }
@@ -91,14 +93,20 @@ fun RootView(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        if (pendingInvite != null) {
+        val inviteToken = pendingInvite
+        if (inviteToken != null && (isAuthenticated || !inviteWaitsForSignIn)) {
             CompositionLocalProvider(
                 LocalAuthStore provides auth,
                 LocalAppModel provides appModel,
             ) {
-                InviteAcceptView(token = pendingInvite!!) {
-                    appModel.setPendingInviteToken(null)
-                }
+                InviteAcceptView(
+                    token = inviteToken,
+                    onSignIn = { inviteWaitsForSignIn = true },
+                    onDone = {
+                        appModel.setPendingInviteToken(null)
+                        inviteWaitsForSignIn = false
+                    },
+                )
             }
         } else {
             RootViewContent(

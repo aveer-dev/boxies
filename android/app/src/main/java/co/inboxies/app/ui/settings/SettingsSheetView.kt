@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Close
@@ -98,6 +99,7 @@ private sealed class SettingsPage {
     data object Aliases : SettingsPage()
     data object Sharing : SettingsPage()
     data object SignInMethods : SettingsPage()
+    data object Sessions : SettingsPage()
     data object DomainAdmin : SettingsPage()
     data object Support : SettingsPage()
     data class AddSwipeAction(val edge: SwipeEdge) : SettingsPage()
@@ -234,6 +236,7 @@ fun SettingsSheetView(
                     onOpenAliases = { page = SettingsPage.Aliases },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSignInMethods = { page = SettingsPage.SignInMethods },
+                    onOpenSessions = { page = SettingsPage.Sessions },
                     onOpenDomainAdmin = { page = SettingsPage.DomainAdmin },
                     onOpenSupport = { page = SettingsPage.Support },
                     onNotificationsChange = { enabled ->
@@ -277,6 +280,9 @@ fun SettingsSheetView(
                 SettingsPage.SignInMethods -> SignInMethodsSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
+                SettingsPage.Sessions -> SessionsSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
                 SettingsPage.DomainAdmin -> DomainAdminSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
@@ -309,6 +315,7 @@ private fun SettingsRootPage(
     onOpenAliases: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSignInMethods: () -> Unit,
+    onOpenSessions: () -> Unit,
     onOpenDomainAdmin: () -> Unit,
     onOpenSupport: () -> Unit,
     onNotificationsChange: (Boolean) -> Unit,
@@ -472,13 +479,13 @@ private fun SettingsRootPage(
                     },
                 )
                 SettingsNavRow(
-                    title = "Sharing",
+                    title = "Members",
                     icon = Icons.Outlined.Group,
                     onClick = onOpenSharing,
                 )
             }
             SettingsNavRow(
-                title = "Sign-in methods",
+                title = "Sign-in & recovery",
                 icon = Icons.Outlined.Key,
                 isLoading = loadingSignInMethods,
                 onClick = {
@@ -499,6 +506,11 @@ private fun SettingsRootPage(
                         }
                     }
                 },
+            )
+            SettingsNavRow(
+                title = "Devices & sessions",
+                icon = Icons.Outlined.Devices,
+                onClick = onOpenSessions,
             )
             if (isAdmin) {
                 SettingsNavRow(
@@ -725,8 +737,8 @@ private fun DeleteAccountDialog(
                     color = colors.ink,
                 )
                 Text(
-                    "Mailboxes you are the only owner of — and all of their mail — are deleted. " +
-                        "Mailboxes shared with other owners stay with them; you just lose access. " +
+                    "Mailboxes where you're the only owner are deleted with all their mail, " +
+                        "for everyone who uses them. Mailboxes with another owner stay; you just lose access. " +
                         "This can't be undone.",
                     fontFamily = InterFontFamily,
                     fontSize = 13.sp,
