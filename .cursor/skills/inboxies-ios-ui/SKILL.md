@@ -193,7 +193,11 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | --- | --- |
 | `-previewDomainAdmin` | Domain Admin console |
 | `-previewPasswordSignIn` | Password sign-in |
-| `-previewInviteAccept` | Invite accept form |
+| `-previewInviteAccept` | Invite accept (signed out: code + create account) |
+| `-previewInviteAcceptSignedIn` | Invite accept into the signed-in account |
+| `-previewSignInMethods` | Sign-in & recovery (methods + recovery email) |
+| `-previewMembers` | Mailbox members + pending invites |
+| `-previewSessions` | Devices & sessions |
 | `-previewMailbox` | Inbox New/Seen |
 | `-previewScreener` | Screener + detail |
 | `-previewReplyLater` | Reply Later pile |

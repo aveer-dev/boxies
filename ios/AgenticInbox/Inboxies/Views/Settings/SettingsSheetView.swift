@@ -11,6 +11,7 @@ enum SettingsDestination: Hashable {
     case aliases
     case sharing
     case signInMethods
+    case sessions
     case domainAdmin
     case theme
     case support
@@ -78,8 +79,9 @@ struct SettingsSheetView: View {
                     settingsNavRow("Private email", destination: .aliases) {
                         PrivateEmailLogoView(size: 18, showTile: false)
                     }
-                    settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
-                    settingsNavRow("Sign-in methods", systemImage: "key", destination: .signInMethods)
+                    settingsNavRow("Members", systemImage: "person.2", destination: .sharing)
+                    settingsNavRow("Sign-in & recovery", systemImage: "key", destination: .signInMethods)
+                    settingsNavRow("Devices & sessions", systemImage: "laptopcomputer.and.iphone", destination: .sessions)
 
                     if app.isAdmin {
                         settingsNavRow("Domain Admin", systemImage: "shield.lefthalf.filled", destination: .domainAdmin)
@@ -180,6 +182,8 @@ struct SettingsSheetView: View {
                     SharingSettingsView()
                 case .signInMethods:
                     SignInMethodsSettingsView()
+                case .sessions:
+                    SessionsSettingsView()
                 case .domainAdmin:
                     DomainAdminSettingsView(showsDismiss: false)
                 case .theme:

@@ -1,8 +1,9 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Account → Sign-in methods: connected methods, add Connect IdP / password,
-/// change password when present, link codes as secondary fallback.
+/// Account → Sign-in methods: connected methods (disconnect any but the last),
+/// add Apple / a password, change password, and the recovery email that
+/// password resets go to.
 struct SignInMethodsSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -12,19 +13,16 @@ struct SignInMethodsSettingsView: View {
     @State private var isConnectingApple = false
     @State private var isAddingPassword = false
     @State private var isChangingPassword = false
-    @State private var isMinting = false
-    @State private var isRedeeming = false
+    @State private var removingType: String?
+    @State private var identityToRemove: LinkedIdentity?
+    @State private var appleNonce = AppleSignInNonce.make()
     @State private var showPasswordForm = false
     @State private var showChangePassword = false
-    @State private var showAdvanced = false
     @State private var password = ""
     @State private var passwordConfirm = ""
     @State private var currentPassword = ""
     @State private var newPassword = ""
     @State private var newPasswordConfirm = ""
-    @State private var linkCode: String?
-    @State private var expiresAt: String?
-    @State private var redeemDraft = ""
     @State private var statusMessage: String?
     @State private var errorMessage: String?
 
@@ -44,7 +42,7 @@ struct SignInMethodsSettingsView: View {
         List {
             Section {
                 Text(
-                    "Ways you can sign in to this account. Connected shows Access, Apple, Google, or Password — not raw keys. Add Apple or a password here; every method reaches the same mailboxes."
+                    "Ways you can sign in to this account. Every method reaches the same mailboxes. Keep at least one."
                 )
                 .font(.inter(size: SettingsFormChrome.footerFontSize))
                 .foregroundStyle(AppTheme.muted)
@@ -66,13 +64,26 @@ struct SignInMethodsSettingsView: View {
                         .foregroundStyle(AppTheme.muted)
                 } else {
                     ForEach(identities) { identity in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(identity.label)
-                                .font(.inter(size: SettingsFormChrome.rowFontSize))
-                                .foregroundStyle(AppTheme.ink)
-                            Text(identityTypeLabel(identity.type) + (identity.current ? " · this session" : ""))
-                                .font(.inter(size: SettingsFormChrome.footerFontSize))
-                                .foregroundStyle(AppTheme.muted)
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(identity.label)
+                                    .font(.inter(size: SettingsFormChrome.rowFontSize))
+                                    .foregroundStyle(AppTheme.ink)
+                                Text(identityTypeLabel(identity.type) + (identity.current ? " · this session" : ""))
+                                    .font(.inter(size: SettingsFormChrome.footerFontSize))
+                                    .foregroundStyle(AppTheme.muted)
+                            }
+                            Spacer()
+                            if removingType == identity.type {
+                                ProgressView().controlSize(.small)
+                            } else if identities.count > 1 {
+                                Button("Disconnect") {
+                                    identityToRemove = identity
+                                }
+                                .font(.inter(size: 13, weight: .medium))
+                                .foregroundStyle(.red)
+                                .buttonStyle(.plain)
+                            }
                         }
                         .padding(.vertical, 2)
                     }
@@ -137,6 +148,7 @@ struct SignInMethodsSettingsView: View {
                     if !hasApple {
                         SignInWithAppleButton(.continue) { request in
                             request.requestedScopes = [.fullName, .email]
+                            request.nonce = AppleSignInNonce.sha256(appleNonce)
                         } onCompletion: { result in
                             Task { await handleConnectApple(result) }
                         }
@@ -188,70 +200,7 @@ struct SignInMethodsSettingsView: View {
                 }
             }
 
-            Section {
-                Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                        showAdvanced.toggle()
-                    }
-                } label: {
-                    Text(showAdvanced ? "Hide · Link another device" : "Link another device")
-                        .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                        .foregroundStyle(AppTheme.muted)
-                }
-
-                if showAdvanced {
-                    Text(
-                        "Secondary: link across devices when Connect isn’t available. Codes expire in 15 minutes."
-                    )
-                    .font(.inter(size: SettingsFormChrome.footerFontSize))
-                    .foregroundStyle(AppTheme.muted)
-
-                    Button {
-                        Task { await createCode() }
-                    } label: {
-                        Text(isMinting ? "Creating…" : "Generate link code")
-                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                            .foregroundStyle(AppTheme.accent)
-                    }
-                    .disabled(isMinting)
-
-                    if let linkCode {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(linkCode)
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundStyle(AppTheme.ink)
-                                .textSelection(.enabled)
-                            if let expiresAt {
-                                Text("Expires \(formatExpiry(expiresAt))")
-                                    .font(.inter(size: SettingsFormChrome.footerFontSize))
-                                    .foregroundStyle(AppTheme.muted)
-                            }
-                            Button("Copy code") {
-                                UIPasteboard.general.string = linkCode
-                                statusMessage = "Code copied"
-                            }
-                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                            .foregroundStyle(AppTheme.accent)
-                        }
-                    }
-
-                    TextField("Paste code", text: $redeemDraft)
-                        .font(.inter(size: SettingsFormChrome.rowFontSize))
-                        .foregroundStyle(AppTheme.ink)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button {
-                        Task { await redeem() }
-                    } label: {
-                        Text(isRedeeming ? "Linking…" : "Link to this account")
-                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
-                            .foregroundStyle(AppTheme.accent)
-                    }
-                    .disabled(isRedeeming || redeemDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            } header: {
-                Text("Link another device")
-            }
+            RecoveryEmailSection(statusMessage: $statusMessage)
 
             if let statusMessage {
                 Section {
@@ -269,7 +218,7 @@ struct SignInMethodsSettingsView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
-        .navigationTitle("Sign-in methods")
+        .navigationTitle("Sign-in & recovery")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if let cached = app.identities {
@@ -282,6 +231,23 @@ struct SignInMethodsSettingsView: View {
                 await reload()
             }
         }
+        .confirmationDialog(
+            "Disconnect \(identityToRemove.map { identityTypeLabel($0.type) } ?? "this method")?",
+            isPresented: Binding(
+                get: { identityToRemove != nil },
+                set: { if !$0 { identityToRemove = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Disconnect", role: .destructive) {
+                if let identity = identityToRemove {
+                    Task { await removeIdentity(identity) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You won't be able to sign in with it until you connect it again.")
+        }
     }
 
     private func identityTypeLabel(_ type: String) -> String {
@@ -291,17 +257,16 @@ struct SignInMethodsSettingsView: View {
         case "apple": return "Apple"
         case "google": return "Google"
         case "sub": return "Sign-in provider"
-        case "access": return "Access"
         default: return type
         }
     }
 
-    private func formatExpiry(_ iso: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: iso) else { return iso }
-        return date.formatted(date: .abbreviated, time: .shortened)
-    }
-
     private func reload() async {
+        // DEBUG previews show the cached fixture identities only.
+        guard !app.isDebugPreview else {
+            isLoading = false
+            return
+        }
         if identities.isEmpty {
             isLoading = true
         }
@@ -323,9 +288,10 @@ struct SignInMethodsSettingsView: View {
         case .failure(let error):
             errorMessage = error.localizedDescription
         case .success(let authorization):
-            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                  let tokenData = credential.identityToken,
-                  let token = String(data: tokenData, encoding: .utf8) else {
+            let nonce = appleNonce
+            // Each request gets a fresh nonce.
+            appleNonce = AppleSignInNonce.make()
+            guard let credential = AppleSignInCredential(authorization: authorization, nonce: nonce) else {
                 errorMessage = "Apple Sign In failed"
                 return
             }
@@ -333,7 +299,7 @@ struct SignInMethodsSettingsView: View {
             errorMessage = nil
             defer { isConnectingApple = false }
             do {
-                let res = try await APIClient.shared.attachAppleIdentity(identityToken: token)
+                let res = try await APIClient.shared.attachAppleIdentity(credential)
                 statusMessage = res.isAdmin
                     ? "Apple connected — Domain Admin access restored"
                     : "Apple connected"
@@ -419,41 +385,16 @@ struct SignInMethodsSettingsView: View {
         }
     }
 
-    private func createCode() async {
-        isMinting = true
+    private func removeIdentity(_ identity: LinkedIdentity) async {
+        removingType = identity.type
         errorMessage = nil
-        defer { isMinting = false }
+        defer { removingType = nil }
         do {
-            let res = try await APIClient.shared.createIdentityLinkCode()
-            linkCode = res.code
-            expiresAt = res.expiresAt
-            statusMessage = "Link code created — expires in 15 minutes"
+            try await APIClient.shared.removeIdentity(type: identity.type)
+            statusMessage = "\(identityTypeLabel(identity.type)) disconnected"
+            await reload()
         } catch {
-            errorMessage = "Could not create link code"
-        }
-    }
-
-    private func redeem() async {
-        let code = redeemDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !code.isEmpty else { return }
-        isRedeeming = true
-        errorMessage = nil
-        defer { isRedeeming = false }
-        do {
-            let res = try await APIClient.shared.redeemIdentityLink(code: code)
-            redeemDraft = ""
-            statusMessage = res.isAdmin
-                ? "Linked — Domain Admin access restored"
-                : "Sign-in method linked"
-            if let next = res.identities {
-                identities = next
-                app.setIdentities(next)
-            } else {
-                await reload()
-            }
-            await app.refreshMailboxes()
-        } catch {
-            errorMessage = "Invalid or expired code"
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -480,6 +421,188 @@ struct SignInMethodsSettingsView: View {
             return "New password must be at least 10 characters"
         }
         return "Could not change password"
+    }
+}
+
+/// Recovery email: where password reset codes go. It must be outside Inboxies
+/// (other members can read a mailbox) and confirmed with a code before resets use it.
+struct RecoveryEmailSection: View {
+    @Environment(AppModel.self) private var app
+    @Binding var statusMessage: String?
+
+    @State private var status: RecoveryEmailStatus?
+    @State private var isLoading = true
+    @State private var isEditing = false
+    @State private var emailDraft = ""
+    @State private var codeDraft = ""
+    @State private var isBusy = false
+    @State private var errorMessage: String?
+
+    private var hasEmail: Bool { status?.email?.isEmpty == false }
+    private var isVerified: Bool { status?.verified == true }
+
+    var body: some View {
+        Section {
+            if isLoading && status == nil {
+                HStack {
+                    Spacer()
+                    ProgressView()
+                    Spacer()
+                }
+                .listRowBackground(Color.clear)
+            } else if !hasEmail || isEditing {
+                TextField("Recovery email", text: $emailDraft, prompt: Text(verbatim: "you@example.com").foregroundStyle(AppTheme.muted))
+                    .font(.inter(size: SettingsFormChrome.rowFontSize))
+                    .foregroundStyle(AppTheme.ink)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button {
+                    Task { await sendCode() }
+                } label: {
+                    Text(isBusy ? "Sending…" : "Send code")
+                        .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                        .foregroundStyle(AppTheme.accent)
+                }
+                .disabled(isBusy || !emailDraft.contains("@"))
+                if isEditing {
+                    Button("Keep \(status?.email ?? "current address")") {
+                        isEditing = false
+                        emailDraft = ""
+                    }
+                    .font(.inter(size: SettingsFormChrome.rowFontSize))
+                    .foregroundStyle(AppTheme.muted)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Text(status?.email ?? "")
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                    Spacer()
+                    if isVerified {
+                        Label("Confirmed", systemImage: "checkmark.circle.fill")
+                            .labelStyle(.titleAndIcon)
+                            .font(.inter(size: 12, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
+                    } else {
+                        Text("Not confirmed")
+                            .font(.inter(size: 12, weight: .medium))
+                            .foregroundStyle(AppTheme.deepDarkRed)
+                    }
+                }
+                if !isVerified {
+                    TextField("Code", text: $codeDraft, prompt: Text("6-digit code").foregroundStyle(AppTheme.muted))
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.ink)
+                        .keyboardType(.numberPad)
+                        .textContentType(.oneTimeCode)
+                    Button {
+                        Task { await verify() }
+                    } label: {
+                        Text(isBusy ? "Confirming…" : "Confirm")
+                            .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                            .foregroundStyle(AppTheme.accent)
+                    }
+                    .disabled(isBusy || codeDraft.trimmingCharacters(in: .whitespaces).count < 6)
+                    Button("Resend code") {
+                        emailDraft = status?.email ?? ""
+                        Task { await sendCode() }
+                    }
+                    .font(.inter(size: SettingsFormChrome.rowFontSize))
+                    .foregroundStyle(AppTheme.muted)
+                    .disabled(isBusy)
+                }
+                Button("Change address") {
+                    emailDraft = ""
+                    isEditing = true
+                }
+                .font(.inter(size: SettingsFormChrome.rowFontSize))
+                .foregroundStyle(AppTheme.accent)
+                Button("Remove", role: .destructive) {
+                    Task { await remove() }
+                }
+                .font(.inter(size: SettingsFormChrome.rowFontSize))
+                .disabled(isBusy)
+            }
+            if let errorMessage {
+                SettingsFormErrorBanner(message: errorMessage)
+            }
+        } header: {
+            Text("Recovery email")
+        } footer: {
+            Text(footerText)
+        }
+        .task { await load() }
+    }
+
+    private var footerText: String {
+        if !hasEmail {
+            return "Password reset codes go only to a confirmed recovery email. Without one, you can't reset a forgotten password. Use an address outside Inboxies."
+        }
+        if !isVerified {
+            return "We sent a code to this address. Password resets won't reach it until you confirm."
+        }
+        return "Password reset codes go to this address."
+    }
+
+    private func load() async {
+        if app.isDebugPreview {
+            status = RecoveryEmailStatus(email: nil, verified: false)
+            isLoading = false
+            return
+        }
+        defer { isLoading = false }
+        if let loaded = try? await APIClient.shared.getRecoveryEmail() {
+            status = loaded
+        }
+    }
+
+    private func sendCode() async {
+        let email = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !email.isEmpty else { return }
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            let next = try await APIClient.shared.setRecoveryEmail(email)
+            status = RecoveryEmailStatus(email: next.email, verified: next.verified)
+            isEditing = false
+            emailDraft = ""
+            #if DEBUG
+            codeDraft = next.devCode ?? ""
+            #endif
+            statusMessage = "Code sent to \(next.email ?? email)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func verify() async {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            status = try await APIClient.shared.verifyRecoveryEmail(code: codeDraft.trimmingCharacters(in: .whitespaces))
+            codeDraft = ""
+            statusMessage = "Recovery email confirmed"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func remove() async {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            try await APIClient.shared.removeRecoveryEmail()
+            status = RecoveryEmailStatus(email: nil, verified: false)
+            statusMessage = "Recovery email removed"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

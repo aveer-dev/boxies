@@ -170,6 +170,10 @@ final class AppModel {
 
         // 2. Silent background sync
         await refreshMailboxes(showLoading: emails.isEmpty)
+
+        if persistsPreferences, !isDebugPreview, APIClient.shared.authToken != nil {
+            await AutofillSession.refreshIfNeeded()
+        }
     }
 
     private func setupRealTimeStream() {
@@ -1140,13 +1144,26 @@ final class AppModel {
         toastDismissTask = nil
     }
 
-    /// Every sign-out path: unregister this device's push token from each mailbox
-    /// (with the outgoing session), wipe local state, then drop the session.
+    /// Every sign-out path: unregister this device's push token from each mailbox,
+    /// revoke the AutoFill session and then this session on the server (all with
+    /// the outgoing token), wipe local state, then drop the session locally.
     func signOut(auth: AuthStore) {
-        PushNotificationManager.shared.unregisterAll(
-            mailboxIds: mailboxes.map(\.id),
-            sessionToken: auth.token
-        )
+        let mailboxIds = mailboxes.map(\.id)
+        let sessionToken = auth.token
+        let revokesOnServer = auth.persistsSession && !isDebugPreview
+        // The extension loses its token now, even if the server calls fail.
+        let autofillSessionId = revokesOnServer ? AutofillSession.forget() : nil
+        Task {
+            await PushNotificationManager.shared.unregisterAllAndWait(
+                mailboxIds: mailboxIds,
+                sessionToken: sessionToken
+            )
+            guard revokesOnServer, let sessionToken else { return }
+            if let autofillSessionId {
+                try? await APIClient.shared.revokeSession(id: autofillSessionId, sessionToken: sessionToken)
+            }
+            try? await APIClient.shared.logout(sessionToken: sessionToken)
+        }
         reset()
         auth.signOut()
     }
@@ -1159,6 +1176,7 @@ final class AppModel {
         await push.unregisterAllAndWait(mailboxIds: mailboxIds, sessionToken: auth.token)
         do {
             let response = try await APIClient.shared.deleteAccount()
+            AutofillSession.forget()
             reset()
             auth.signOut()
             return response
