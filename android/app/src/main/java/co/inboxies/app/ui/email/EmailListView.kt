@@ -363,10 +363,12 @@ private fun EmailRowItem(
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
 ) {
+    val readOnly by LocalAppModel.current.selectedMailboxReadOnly.collectAsState()
     val isSelected = selectedEmailIds.contains(email.id)
     val isScreener = fallbackFolderId == FolderIds.SCREENER || email.folderId == FolderIds.SCREENER
-    val layout = remember(email.id, email.folderId, fallbackFolderId, swipePreferences) {
+    val layout = remember(email.id, email.folderId, fallbackFolderId, swipePreferences, readOnly) {
         EmailSwipeLayout.resolve(email, fallbackFolderId, swipePreferences)
+            .let { if (readOnly) it.readOnly() else it }
     }
     MailRow(
         email = email,
@@ -377,6 +379,7 @@ private fun EmailRowItem(
         layout = layout,
         showsTags = showsTags,
         isScreener = isScreener,
+        readOnly = readOnly,
         onOpen = { onOpen(email) },
         onToggleSelect = { onToggleSelect?.invoke(email.id) },
         onMore = { onMore(email) },
@@ -394,6 +397,7 @@ private fun MailRow(
     layout: EmailSwipeLayout,
     showsTags: Boolean = true,
     isScreener: Boolean = false,
+    readOnly: Boolean = false,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onMore: () -> Unit,
@@ -477,7 +481,8 @@ private fun MailRow(
                             ),
                     )
 
-                    if (isScreener && !isSelectMode) {
+                    // Accept / decline moves mail: not on a read-only mailbox.
+                    if (isScreener && !isSelectMode && !readOnly) {
                         ScreenerActionButtons(
                             email = email,
                             onAccept = { dest ->
@@ -512,7 +517,7 @@ private fun MailRow(
                 expanded = showMenu,
                 onDismiss = { showMenu = false },
             ) {
-                val availability = EmailActionAvailability(email)
+                val availability = EmailActionAvailability(email, readOnly)
                 if (availability.showsReplyActions) {
                     InboxiesMenuItem(
                         text = "Reply",

@@ -80,6 +80,13 @@ interface UIState {
 
 	/** Close the columns that belong to one mailbox (mailbox switch). */
 	resetColumns: () => void;
+
+	/**
+	 * The open mailbox's subscription ended: no composing and no agent. Set by
+	 * the mailbox route; while true, compose and agent requests are ignored.
+	 */
+	isReadOnly: boolean;
+	setReadOnly: (readOnly: boolean) => void;
 }
 
 const without = (panels: Panel[], key: string) => panels.filter((p) => p.key !== key);
@@ -108,9 +115,11 @@ export const useUIStore = create<UIState>((set, get) => ({
 	isSettingsOpen: false,
 	settingsPage: null,
 	pendingAgentPrompt: null,
+	isReadOnly: false,
 
 	startCompose: (options) =>
 		set((s) => {
+			if (s.isReadOnly) return s;
 			const next = options || { mode: "new" as const, originalEmail: null };
 			// An empty compose is reused: a blank new message is just brought
 			// back into view, anything else takes it over. A compose holding the
@@ -154,7 +163,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 	closePopOut: () => set({ popOut: null }),
 
 	openAgentPanel: () =>
-		set((s) => ({ isAgentPanelOpen: true, ...opened(s, { kind: "agent", key: "agent" }) })),
+		set((s) => (s.isReadOnly ? s : { isAgentPanelOpen: true, ...opened(s, { kind: "agent", key: "agent" }) })),
 	closeAgentPanel: () =>
 		set((s) => ({ isAgentPanelOpen: false, panels: without(s.panels, "agent") })),
 	toggleAgentPanel: () =>
@@ -175,11 +184,15 @@ export const useUIStore = create<UIState>((set, get) => ({
 	closeSettingsPage: () => set({ settingsPage: null }),
 
 	askAgent: (prompt) =>
-		set((s) => ({
-			isAgentPanelOpen: true,
-			pendingAgentPrompt: prompt,
-			...opened(s, { kind: "agent", key: "agent" }),
-		})),
+		set((s) =>
+			s.isReadOnly
+				? s
+				: {
+						isAgentPanelOpen: true,
+						pendingAgentPrompt: prompt,
+						...opened(s, { kind: "agent", key: "agent" }),
+					},
+		),
 
 	consumeAgentPrompt: () => {
 		const prompt = get().pendingAgentPrompt;
@@ -194,6 +207,19 @@ export const useUIStore = create<UIState>((set, get) => ({
 			composeDirty: {},
 			panels: s.panels.filter((p) => p.kind !== "compose" && p.kind !== "reader"),
 		})),
+
+	setReadOnly: (readOnly) =>
+		set((s) =>
+			readOnly
+				? {
+						isReadOnly: true,
+						isAgentPanelOpen: false,
+						pendingAgentPrompt: null,
+						composeDirty: {},
+						panels: s.panels.filter((p) => p.kind !== "compose" && p.kind !== "agent"),
+					}
+				: { isReadOnly: false },
+		),
 }));
 
 /** Any compose column is open (Reply Later's Focus & Reply shows Skip). */

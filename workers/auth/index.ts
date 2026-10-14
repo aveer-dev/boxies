@@ -3,19 +3,21 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Better Auth on AUTH_DB. Built per request because Worker bindings only
- * exist inside a request.
+ * Better Auth on AUTH_DB.
  *
- * Identity rules (see docs in the auth plan):
+ * Identity rules:
  * - A user is `user.id`. Emails never link or unlock accounts: implicit
  *   linking is off, so an Apple/Google sign-in whose email matches an existing
  *   user is refused (`account_not_linked`) until that user links it while
  *   signed in.
  * - Sessions are rows: sign-out, password reset and "sign out everywhere"
- *   revoke them. Mobile, MCP and the extension send the session token as a
- *   Bearer header; the web app uses the HttpOnly cookie.
- * - Sign-up goes through our own onboarding routes (they also create the
- *   mailbox), so Better Auth's public sign-up is disabled.
+ *   revoke them, and revoking one also drops the push tokens it registered.
+ *   Mobile, MCP and the extension send the session token as a Bearer header;
+ *   the web app uses the HttpOnly cookie.
+ * - Password accounts are created by our onboarding and invite routes (they
+ *   also create the mailbox), so Better Auth's email sign-up is disabled.
+ *   Apple/Google sign-in may create a user, but never with an address on a
+ *   domain we host: that address would block (or impersonate) its mailbox.
  */
 
 import { betterAuth } from "better-auth";
@@ -24,10 +26,13 @@ import { bearer } from "better-auth/plugins";
 import { drizzle } from "drizzle-orm/d1";
 import { hashPassword, verifyPassword } from "../lib/password-auth";
 import type { Env } from "../types";
+import { isHostedEmailDomain, pruneSessionDeviceTokens } from "./hooks";
 import * as schema from "./schema";
 
 export const AUTH_BASE_PATH = "/api/auth";
 const DAY_SECONDS = 24 * 60 * 60;
+/** Social sign-ups whose provider email is on a domain we host get this instead. */
+export const PLACEHOLDER_EMAIL_DOMAIN = "users.inboxies.invalid";
 
 function splitList(value: string | undefined): string[] {
 	return (value ?? "")
@@ -48,9 +53,6 @@ function socialProviders(env: Env) {
 		providers.google = {
 			clientId: googleClientIds,
 			clientSecret: env.GOOGLE_CLIENT_SECRET ?? "",
-			// Users come from onboarding or the migration, never from a bare
-			// Google sign-in (that would let anyone pre-claim an email).
-			disableImplicitSignUp: true,
 		};
 	}
 	if (env.APPLE_CLIENT_ID) {
@@ -59,23 +61,16 @@ function socialProviders(env: Env) {
 			clientSecret: env.APPLE_CLIENT_SECRET ?? "",
 			// Native iOS ID tokens carry the bundle id as their audience.
 			appBundleIdentifier: env.APPLE_APP_BUNDLE_ID ?? env.APPLE_CLIENT_ID,
-			disableImplicitSignUp: true,
 		};
 	}
 	return providers;
 }
 
 export function isBetterAuthEnabled(env: Env): boolean {
-	return env.BETTER_AUTH_ENABLED === "true" && Boolean(env.AUTH_DB) && Boolean(env.BETTER_AUTH_SECRET);
+	return Boolean(env.AUTH_DB) && Boolean(env.BETTER_AUTH_SECRET);
 }
 
-/**
- * The handler-level surface the Worker uses. Spelled out because the fully
- * inferred Better Auth type can't be named outside the package (TS2742).
- */
-export type Auth = Pick<ReturnType<typeof betterAuth>, "handler" | "api" | "options">;
-
-export function createAuth(env: Env): Auth {
+export function createAuth(env: Env) {
 	if (!env.AUTH_DB) throw new Error("AUTH_DB binding is missing");
 	if (!env.BETTER_AUTH_SECRET) throw new Error("BETTER_AUTH_SECRET is not set");
 	const db = drizzle(env.AUTH_DB, { schema });
@@ -99,10 +94,11 @@ export function createAuth(env: Env): Auth {
 				verify: ({ hash, password }) => verifyPassword(password, hash),
 			},
 			revokeSessionsOnPasswordReset: true,
-			// Wired to the verified recovery email at cutover (R2). Until then
-			// nothing can request a reset through Better Auth.
+			// Resets go through /api/v1/auth/password/forgot, which only mails a
+			// verified recovery address. Better Auth's own reset routes are not
+			// routed (see `routes/better-auth.ts`).
 			sendResetPassword: async () => {
-				throw new Error("Password reset is not enabled yet");
+				throw new Error("Use /api/v1/auth/password/forgot");
 			},
 		},
 		socialProviders: socialProviders(env),
@@ -116,10 +112,60 @@ export function createAuth(env: Env): Auth {
 		session: {
 			expiresIn: 30 * DAY_SECONDS,
 			updateAge: DAY_SECONDS,
+			additionalFields: {
+				// Set only by our own routes (extension / AutoFill tokens).
+				scope: { type: "string", required: false, input: false },
+				label: { type: "string", required: false, input: false },
+			},
 		},
-		// No emailOTP yet: its reset and sign-in routes mail codes to
-		// user.email, which may be a shared mailbox. It returns in R2 wired to
-		// verified recovery emails only.
+		databaseHooks: {
+			user: {
+				create: {
+					// Only Apple/Google sign-up reaches this (our routes insert users
+					// directly). A provider email on a domain we host would claim
+					// that mailbox's login address, so it becomes a placeholder.
+					before: async (user) => {
+						const email = String(user.email ?? "").toLowerCase();
+						if (!(await isHostedEmailDomain(env, email))) return { data: user };
+						return {
+							data: {
+								...user,
+								email: `${crypto.randomUUID()}@${PLACEHOLDER_EMAIL_DOMAIN}`,
+								emailVerified: false,
+							},
+						};
+					},
+				},
+			},
+			session: {
+				delete: {
+					after: async (session) => {
+						await pruneSessionDeviceTokens(env, {
+							userId: String(session.userId),
+							sessionId: String(session.id),
+						});
+					},
+				},
+			},
+		},
+		// Workers isolates don't share memory, so Better Auth's in-memory limiter
+		// would only be per isolate; the Workers Rate Limiting bindings in front
+		// of the auth routes do this job (see `auth/rate-limit.ts`).
+		rateLimit: { enabled: false },
 		plugins: [bearer()],
 	});
+}
+
+export type Auth = ReturnType<typeof createAuth>;
+
+const authCache = new WeakMap<object, Auth>();
+
+/** One Better Auth instance per `env` object (Workers reuse it across requests). */
+export function getAuth(env: Env): Auth {
+	let auth = authCache.get(env);
+	if (!auth) {
+		auth = createAuth(env);
+		authCache.set(env, auth);
+	}
+	return auth;
 }

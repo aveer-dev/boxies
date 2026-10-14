@@ -81,7 +81,7 @@ export default function FloatingDock() {
 	const [searchParams] = useSearchParams();
 	const { isSearch, isSettings, search, closeSearch, openSettings, closeSettings } =
 		useMailNavigation();
-	const { startCompose, isAgentPanelOpen, openAgentPanel, closeAgentPanel } = useUIStore();
+	const { startCompose, isAgentPanelOpen, openAgentPanel, closeAgentPanel, isReadOnly } = useUIStore();
 	const urlQuery = isSearch ? searchParams.get("q") || "" : "";
 	const [query, setQuery] = useState(urlQuery);
 	const [isFocused, setIsFocused] = useState(false);
@@ -190,25 +190,30 @@ export default function FloatingDock() {
 					onClose={closeSettings}
 					icon={<GearSixIcon size={16} />}
 				/>
-				<PanelToggle
-					label="Assistant"
-					shortcut={keysFor("assistant")}
-					isOpen={isAgentPanelOpen}
-					columnId="agent"
-					onOpen={openAgentPanel}
-					onClose={closeAgentPanel}
-					icon={<RobotIcon size={16} />}
-				/>
-				<Tip label="New message" shortcut={keysFor("compose")} side="top">
-					<button
-						type="button"
-						onClick={() => startCompose()}
-						className={`${roundButton} bg-kumo-contrast text-kumo-inverse shadow-[0_4px_12px_rgba(0,0,0,0.16)] hover:bg-[color-mix(in_oklab,var(--text-primary)_84%,var(--accent))]`}
-						aria-label="Compose"
-					>
-						<NotePencilIcon size={16} />
-					</button>
-				</Tip>
+				{/* A read-only mailbox (its domain's subscription ended) has no agent or compose. */}
+				{!isReadOnly && (
+					<>
+						<PanelToggle
+							label="Assistant"
+							shortcut={keysFor("assistant")}
+							isOpen={isAgentPanelOpen}
+							columnId="agent"
+							onOpen={openAgentPanel}
+							onClose={closeAgentPanel}
+							icon={<RobotIcon size={16} />}
+						/>
+						<Tip label="New message" shortcut={keysFor("compose")} side="top">
+							<button
+								type="button"
+								onClick={() => startCompose()}
+								className={`${roundButton} bg-kumo-contrast text-kumo-inverse shadow-[0_4px_12px_rgba(0,0,0,0.16)] hover:bg-[color-mix(in_oklab,var(--text-primary)_84%,var(--accent))]`}
+								aria-label="Compose"
+							>
+								<NotePencilIcon size={16} />
+							</button>
+						</Tip>
+					</>
+				)}
 			</nav>
 		</div>
 	);

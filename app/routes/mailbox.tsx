@@ -8,6 +8,7 @@ import AccountsColumn from "~/components/columns/AccountsColumn";
 import ColumnCanvas from "~/components/columns/ColumnCanvas";
 import FloatingDock from "~/components/columns/FloatingDock";
 import FoldersColumn from "~/components/columns/FoldersColumn";
+import ServiceBanner from "~/components/ServiceBanner";
 import { AgentColumn, ComposeColumn, ExtraReaderColumn } from "~/components/columns/PlatformColumns";
 import SettingsColumns from "~/components/settings/SettingsColumns";
 import { ContextMenuHost } from "~/components/ContextMenu";
@@ -32,7 +33,14 @@ export default function MailboxRoute() {
 	const navigate = useNavigate();
 	const mailboxQuery = useMailbox(mailboxId);
 	useMailboxEvents(mailboxId);
-	const { panels, resetColumns } = useUIStore();
+	const { panels, resetColumns, setReadOnly } = useUIStore();
+	const readOnly = Boolean(mailboxQuery.data?.readOnly);
+
+	// A mailbox whose domain's subscription ended can't compose or use the agent.
+	useEffect(() => {
+		setReadOnly(readOnly);
+	}, [readOnly, setReadOnly]);
+	useEffect(() => () => setReadOnly(false), [setReadOnly]);
 	const prevMailboxIdRef = useRef<string | undefined>(undefined);
 
 	// Switching mailbox drops the compose and reader columns of the previous one.
@@ -70,6 +78,7 @@ export default function MailboxRoute() {
 					}
 				})}
 			</ColumnCanvas>
+			<ServiceBanner mailboxId={mailboxId} billed={Boolean(mailboxQuery.data?.service)} />
 			<FloatingDock />
 			<ShortcutSheet />
 			<ContextMenuHost />

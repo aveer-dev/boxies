@@ -6,7 +6,6 @@ import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { isDevRuntime } from "./lib/dev-runtime";
-import { clearPasswordSessionCookieHeader } from "./lib/password-auth";
 import PostalMime from "postal-mime";
 import { z } from "zod";
 import { sendEmail } from "./email-sender";
@@ -50,40 +49,31 @@ import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
-	applyIncomingAcl,
-	authorizeMailbox,
-	canManageAcl,
-	aclFromOwnerKeys,
-	filterMailboxesForPrincipal,
-	mailboxAccessPayload,
-	parseAcl,
-	principalKeys,
-	type RequestPrincipal,
-} from "./lib/mailbox-acl";
-import { isDomainAdmin } from "./lib/domain-admin";
+	authDb,
+	canCreateMailbox,
+	listMailboxMembers,
+	isDomainAdmin,
+	listMailboxesForUser,
+	type AuthDb,
+} from "./auth/authz";
+import { deviceTokenOwnerKeys } from "./auth/principal";
 import {
-	expandPrincipalWithLinks,
-	autoLinkSubIfAdminEmail,
-	deleteIdentityAccountData,
-	ensurePrincipalAccount,
-	resolveAclPrincipalsToAccounts,
-} from "./lib/identity-links";
-import {
-	canAdministerMailboxDomain,
-	registerAdminAndInviteRoutes,
-	resolveCreateGate,
-} from "./routes/admin-invites";
+	deleteMailboxRows,
+	mailboxPayload,
+	MailboxExistsError,
+	provisionMailbox,
+	stripAclFromSettings,
+} from "./auth/mailboxes";
+import type { MailboxRole } from "./auth/schema";
+import { registerAccountRoutes } from "./routes/account";
+import { registerAdminAndInviteRoutes } from "./routes/admin-invites";
 import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerDomainDnsRoutes } from "./routes/domain-dns";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
-import { getDomainMetadata, listDomainsForPrincipal } from "./lib/domain-registry";
-import {
-	issueMobileSessionToken,
-	verifyAppleIdentityToken,
-} from "./lib/apple-auth";
-import { verifyGoogleIdentityToken } from "./lib/google-auth";
+import { getDomainMetadata } from "./lib/domain-registry";
+import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
 import { sendFcmPush } from "./lib/fcm";
 import {
@@ -259,14 +249,7 @@ app.use("/api/*", cors({
 		return undefined;
 	},
 }));
-// Expand Apple/Google sub → linked Access / Domain Admin emails (R2).
-app.use("/api/*", async (c, next) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (principal?.sub && c.env.BUCKET) {
-		c.set("principal", await expandPrincipalWithLinks(c.env.BUCKET, principal));
-	}
-	await next();
-});
+// Also matches /api/v1/mailboxes/:mailboxId itself.
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
@@ -285,94 +268,7 @@ app.get("/api/v1/config", (c) => {
 	});
 });
 
-app.get("/api/v1/me", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal) return c.json({ error: "Unauthorized" }, 401);
-	const globalAdmin = await isDomainAdmin(c.env, principal);
-	const userDomains = await listDomainsForPrincipal(c.env.BUCKET, principal, globalAdmin);
-	const admin = globalAdmin || userDomains.length > 0;
-	const { mailDomain, domains } = mailDomainConfig(c.env);
-	return c.json({
-		email: principal.email ?? null,
-		sub: principal.sub ?? null,
-		linkedEmails: principal.linkedEmails ?? [],
-		keys: principalKeys(principal),
-		isAdmin: admin,
-		administeredDomains: userDomains.map((d) => d.domain),
-		mailDomain,
-		domains,
-	});
-});
-
-/**
- * Delete the signed-in account (App Store / Play requirement). Mailboxes the
- * user solely owns are purged; shared ones just drop the user from the ACL.
- * Body must be `{ "confirm": "DELETE" }`.
- */
-app.delete("/api/v1/me", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal || principalKeys(principal).length === 0) {
-		return c.json({ error: "Unauthorized" }, 401);
-	}
-	const body = (await c.req.json().catch(() => ({}))) as { confirm?: string };
-	if (body.confirm !== "DELETE") {
-		return c.json({ error: 'Confirm with { "confirm": "DELETE" }' }, 400);
-	}
-
-	const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-	const myKeys = new Set([...principalKeys(ensured.principal), ...ensured.ownerKeys]);
-	const deletedMailboxes: string[] = [];
-	const leftMailboxes: string[] = [];
-
-	for (const mailbox of await listMailboxes(c.env.BUCKET)) {
-		const settings = await loadMailboxSettingsRaw(c.env, mailbox.id);
-		const acl = parseAcl(settings);
-		const isOwner = acl.owners.some((k) => myKeys.has(k));
-		const isMember = acl.members.some((k) => myKeys.has(k));
-		if (!isOwner && !isMember) continue;
-
-		const owners = acl.owners.filter((k) => !myKeys.has(k));
-		if (isOwner && owners.length === 0) {
-			await purgeMailboxAndAgents(c.env, mailbox.id);
-			deletedMailboxes.push(mailbox.id);
-			continue;
-		}
-		const next = {
-			...settings,
-			acl: { owners, members: acl.members.filter((k) => !myKeys.has(k)) },
-		};
-		await c.env.BUCKET.put(mailboxMetadataKey(mailbox.id), JSON.stringify(next));
-		await pruneDeviceTokensToAcl(c.env, mailbox.id, next);
-		leftMailboxes.push(mailbox.id);
-	}
-
-	await deleteIdentityAccountData(c.env.BUCKET, ensured.principal);
-	c.header("Set-Cookie", clearPasswordSessionCookieHeader(!isDevRuntime()));
-	return c.json({ ok: true, deletedMailboxes, leftMailboxes });
-});
-
-/**
- * Mint a browser-extension session for the signed-in user. The token is
- * scoped to private emails (see isPathAllowedForTokenScope), so a leaked
- * extension token can create aliases but never read or send mail.
- */
-app.post("/api/v1/me/extension-session", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal?.email && !principal?.sub) return c.json({ error: "Unauthorized" }, 401);
-	const mobileSecret =
-		c.env.MOBILE_JWT_SECRET || (import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
-	if (!mobileSecret) {
-		return c.json({ error: "Mobile auth is not configured. Set MOBILE_JWT_SECRET." }, 500);
-	}
-	const session = await issueMobileSessionToken(mobileSecret, {
-		sub: principal.sub || `email:${principal.email}`,
-		email: principal.email,
-		auth: "extension",
-		scope: "aliases",
-	});
-	return c.json({ token: session.token, expiresAt: session.expiresAt });
-});
-
+registerAccountRoutes(app);
 registerAdminAndInviteRoutes(app);
 registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);
@@ -382,58 +278,63 @@ registerAliasRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
-async function pruneDeviceTokensToAcl(
-	env: Env,
-	mailboxId: string,
-	settings: Record<string, unknown>,
-): Promise<void> {
-	const acl = parseAcl(settings);
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
-	await (stub as any).pruneDeviceTokensToAcl([...acl.owners, ...acl.members]);
+/**
+ * `settings.acl` for app builds that still render it. Display only: the keys
+ * are `email:` strings clients know how to show, and PUT ignores `acl`
+ * (membership changes go through invites and the members routes).
+ */
+async function compatAcl(db: AuthDb, mailboxId: string) {
+	const members = await listMailboxMembers(db, mailboxId);
+	return {
+		owners: members.filter((m) => m.role === "owner").map((m) => `email:${m.email}`),
+		members: members.filter((m) => m.role === "member").map((m) => `email:${m.email}`),
+	};
 }
 
-/**
- * Operator mail domains (DOMAINS / MAIL_DOMAIN) are open to anyone the create
- * gate lets through, unless a tenant has registered that domain. Tenant custom
- * domains need that domain's admin (or a super-admin).
- */
-async function canCreateMailboxOnDomain(
+async function mailboxResponse(
 	env: Env,
-	principal: RequestPrincipal,
+	db: AuthDb,
 	mailboxId: string,
-): Promise<boolean> {
-	const domain = mailboxId.split("@")[1]?.toLowerCase();
-	if (!domain) return false;
-	if (await canAdministerMailboxDomain(env, principal, domain)) return true;
-	if (await getDomainMetadata(env.BUCKET, domain)) return false;
-	return mailDomainConfig(env).domains.includes(domain);
+	role: MailboxRole | null,
+	settings?: Record<string, unknown>,
+) {
+	const payload = mailboxPayload(mailboxId, settings ?? (await loadMailboxSettingsRaw(env, mailboxId)), role);
+	return { ...payload, settings: { ...payload.settings, acl: await compatAcl(db, mailboxId) } };
+}
+
+/** Purge a mailbox's DO + R2 data, its EmailAgent conversations and its AUTH_DB rows. */
+export async function purgeMailboxAndAgents(env: Env, mailboxId: string): Promise<void> {
+	// Purge DO + R2 and remove metadata inside the DO RPC (closes inbound HEAD).
+	const stub = getMailboxStub(env, mailboxId);
+	const { conversationIds } = await stub.purgeMailbox(mailboxId);
+	await purgeEmailAgents(env, mailboxId, conversationIds);
+	await deleteMailboxRows(authDb(env.AUTH_DB), mailboxId);
 }
 
 app.get("/api/v1/mailboxes", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal) return c.json({ error: "Forbidden" }, 403);
-	const allMailboxes = await listMailboxes(c.env.BUCKET);
-	const allowed = await filterMailboxesForPrincipal(c.env.BUCKET, allMailboxes, principal);
-	return c.json(allowed.map((m) => ({ ...m, name: m.id })));
+	const principal = c.get("principal");
+	if (!principal) return c.json({ error: "Unauthorized" }, 401);
+	const rows = await listMailboxesForUser(authDb(c.env.AUTH_DB), principal.userId);
+	const suspended = await suspendedDomains(
+		c.env,
+		rows.map(({ mailboxId }) => mailboxId.slice(mailboxId.lastIndexOf("@") + 1)),
+	);
+	return c.json(
+		rows.map(({ mailboxId, role }) => ({
+			id: mailboxId,
+			email: mailboxId,
+			name: mailboxId,
+			role,
+			canManage: role === "owner",
+			// The domain's subscription ended: read and export only.
+			readOnly: suspended.has(mailboxId.slice(mailboxId.lastIndexOf("@") + 1)),
+		})),
+	);
 });
 
 app.post("/api/v1/mailboxes", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal || principalKeys(principal).length === 0) {
-		return c.json({ error: "Forbidden" }, 403);
-	}
-	const createGate = await resolveCreateGate(c.env, principal);
-	if (!createGate.allowed) {
-		return c.json(
-			{
-				error:
-					createGate.policy === "admin_only"
-						? "Only domain admins can create mailboxes"
-						: "Forbidden",
-			},
-			403,
-		);
-	}
+	const principal = c.get("principal");
+	if (!principal) return c.json({ error: "Unauthorized" }, 401);
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = canonicalMailboxId(rawEmail);
 	if (!email) return c.json({ error: "Invalid mailbox email address" }, 400);
@@ -441,142 +342,79 @@ app.post("/api/v1/mailboxes", async (c) => {
 	if (allowed.size > 0 && !allowed.has(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
 	}
-	if (!(await canCreateMailboxOnDomain(c.env, principal, email))) {
-		return c.json({ error: "You can only create mailboxes on domains you administer" }, 403);
+	const db = authDb(c.env.AUTH_DB);
+	// `admin_only` keeps the shared platform domains closed: addresses there
+	// then come from sign-up or an operator (/ops).
+	const platformDomains =
+		c.env.MAILBOX_CREATE_POLICY?.trim().toLowerCase() === "admin_only" ? [] : mailDomainConfig(c.env).domains;
+	const check = await canCreateMailbox(db, { userId: principal.userId, address: email, platformDomains });
+	if (!check.ok) return c.json({ error: check.error }, check.status);
+	try {
+		const stored = await provisionMailbox(c.env, {
+			mailboxId: check.mailboxId,
+			ownerUserId: principal.userId,
+			name,
+			settings: settings ? stripAclFromSettings(settings) : undefined,
+		});
+		return c.json({ ...(await mailboxResponse(c.env, db, check.mailboxId, "owner", stored)), name }, 201);
+	} catch (e) {
+		if (e instanceof MailboxExistsError) return c.json({ error: "Address is already in use" }, 409);
+		throw e;
 	}
-	// Role addresses on the shared platform domain are reserved for operators.
-	const [localPart, domain] = email.split("@");
-	if (
-		mailDomainConfig(c.env).domains.includes(domain) &&
-		isReservedLocalPart(localPart) &&
-		!(await isDomainAdmin(c.env, principal))
-	) {
-		return c.json({ error: "That address is reserved" }, 400);
-	}
-	const key = mailboxMetadataKey(email);
-	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
-	if (await isAddressTaken(c.env.BUCKET, email)) {
-		return c.json({ error: "Address is already in use" }, 409);
-	}
-	const defaultSettings = {
-		fromName: name,
-		forwarding: { enabled: false, email: "" },
-		signature: { enabled: false, text: "" },
-		autoReply: { enabled: false, subject: "", message: "" },
-		screener: { enabled: true },
-	};
-
-	const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-	const finalSettings = {
-		...defaultSettings,
-		...settings,
-		acl: aclFromOwnerKeys(ensured.ownerKeys),
-	};
-	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
-	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
-	await stub.reviveMailbox();
-	await stub.getFolders();
-	await seedWelcomeEmailsForMailbox(c.env, email, name);
-	return c.json(
-		{ ...mailboxAccessPayload(email, finalSettings, ensured.principal), name },
-		201,
-	);
 });
 
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const authz = await authorizeMailbox(
-		c.env.BUCKET,
-		c.get("principal") as RequestPrincipal | undefined,
-		c.req.param("mailboxId"),
-	);
-	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	return c.json(
-		mailboxAccessPayload(authz.mailboxId, authz.settings, authz.principal),
-	);
+	const db = authDb(c.env.AUTH_DB);
+	const domain = c.var.mailboxId.slice(c.var.mailboxId.lastIndexOf("@") + 1);
+	const [mailbox, summary, canManage] = await Promise.all([
+		mailboxResponse(c.env, db, c.var.mailboxId, c.var.mailboxRole),
+		mailboxServiceSummary(c.env, c.var.mailboxId),
+		isDomainAdmin(db, c.get("principal")?.userId ?? "", domain),
+	]);
+	// canManage: whether this user may renew (domain owner/admin).
+	const service = summary ? { ...summary, canManage } : null;
+	// readOnly follows the same D1 status the write gates check.
+	return c.json({ ...mailbox, service, readOnly: await isMailboxSuspended(c.env, c.var.mailboxId) });
 });
 
 app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
-	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	const session = authz.principal;
-	if (!session) return c.json({ error: "Forbidden" }, 403);
+	const db = authDb(c.env.AUTH_DB);
+	const mailboxId = c.var.mailboxId;
+	const role = c.var.mailboxRole;
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
-	const existing = authz.settings;
-	const merged = mergeMailboxSettingsBlob(existing, settings);
+	const existing = await loadMailboxSettingsRaw(c.env, mailboxId);
+	// Clients send their cached `settings.acl` back on every save; membership
+	// lives in AUTH_DB, so it is ignored here (never a way to grant access).
+	const incoming =
+		settings && typeof settings === "object" && !Array.isArray(settings) ? stripAclFromSettings(settings) : {};
+	const next = stripAclFromSettings(mergeMailboxSettingsBlob(existing, incoming));
 	// Settings that send mail elsewhere or steer the agent are owner-only: a
 	// member could otherwise forward the mailbox to themselves and keep it after
 	// being removed. Clients PUT the whole blob, so compare against what's stored.
-	if (!canManageAcl(existing, session)) {
+	if (role !== "owner") {
 		const ownerOnlyKeys = ["forwarding", "autoReply", "filters", "agentSystemPrompt"] as const;
-		const existingRecord = (existing ?? {}) as Record<string, unknown>;
-		const mergedRecord = merged as Record<string, unknown>;
 		const changed = ownerOnlyKeys.filter(
-			(key) => JSON.stringify(existingRecord[key] ?? null) !== JSON.stringify(mergedRecord[key] ?? null),
+			(key) => JSON.stringify(existing[key] ?? null) !== JSON.stringify(next[key] ?? null),
 		);
 		if (changed.length > 0) {
 			return c.json({ error: `Only mailbox owners can change ${changed.join(", ")}` }, 403);
 		}
 	}
-	const aclResult = applyIncomingAcl(existing, merged, settings, session);
-	if (!aclResult.ok) return c.json({ error: aclResult.error }, 400);
-	let next = aclResult.settings;
-	if (
-		settings &&
-		typeof settings === "object" &&
-		!Array.isArray(settings) &&
-		"acl" in settings &&
-		canManageAcl(existing, session) &&
-		next.acl &&
-		typeof next.acl === "object" &&
-		!Array.isArray(next.acl)
-	) {
-		const aclBlob = next.acl as Record<string, unknown>;
-		const resolved = await resolveAclPrincipalsToAccounts(c.env.BUCKET, {
-			owners: Array.isArray(aclBlob.owners)
-				? aclBlob.owners.filter((k): k is string => typeof k === "string")
-				: [],
-			members: Array.isArray(aclBlob.members)
-				? aclBlob.members.filter((k): k is string => typeof k === "string")
-				: [],
-		});
-		next = { ...next, acl: resolved };
-	}
-	const automationError = automationSettingsError(
-		parseAutomationSettings(next),
-		authz.mailboxId,
-	);
+	const automationError = automationSettingsError(parseAutomationSettings(next), mailboxId);
 	if (automationError) return c.json({ error: automationError }, 400);
-	const filtersError = inboxFiltersError(parseInboxFilters(next), authz.mailboxId);
+	const filtersError = inboxFiltersError(parseInboxFilters(next), mailboxId);
 	if (filtersError) return c.json({ error: filtersError }, 400);
 	const screenerError = screenerSettingsError(next);
 	if (screenerError) return c.json({ error: screenerError }, 400);
-	await c.env.BUCKET.put(mailboxMetadataKey(authz.mailboxId), JSON.stringify(next));
-	if (settings && typeof settings === "object" && "acl" in settings) {
-		// People removed from the mailbox stop getting its push notifications.
-		await pruneDeviceTokensToAcl(c.env, authz.mailboxId, next);
-	}
-	return c.json(mailboxAccessPayload(authz.mailboxId, next, session));
+	await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
+	return c.json(await mailboxResponse(c.env, db, mailboxId, role, next));
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	const authz = await authorizeMailbox(c.env.BUCKET, principal, c.req.param("mailboxId"));
-	if (!authz.ok) return c.json({ error: authz.error }, authz.status);
-	if (!canManageAcl(authz.settings, authz.principal)) {
-		return c.json({ error: "Forbidden" }, 403);
-	}
-	await purgeMailboxAndAgents(c.env, authz.mailboxId);
+	if (c.var.mailboxRole !== "owner") return c.json({ error: "Forbidden" }, 403);
+	await purgeMailboxAndAgents(c.env, c.var.mailboxId);
 	return c.body(null, 204);
 });
-
-/** Purge a mailbox's DO + R2 data and every EmailAgent conversation it owns. */
-async function purgeMailboxAndAgents(env: Env, mailboxId: string): Promise<void> {
-	// Purge DO + R2 and remove metadata inside the DO RPC (closes inbound HEAD).
-	const stub = getMailboxStub(env, mailboxId);
-	const { conversationIds } = await stub.purgeMailbox(mailboxId);
-	await purgeEmailAgents(env, mailboxId, conversationIds);
-}
 
 // -- Emails ---------------------------------------------------------
 
@@ -1026,11 +864,11 @@ app.get("/api/v1/mailboxes/:mailboxId/events", async (c: AppContext) => {
 app.post("/api/v1/mailboxes/:mailboxId/device-token", async (c: AppContext) => {
 	const { token, platform } = (await c.req.json()) as { token: string; platform?: string };
 	if (!token) return c.json({ error: "Missing token" }, 400);
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	await (c.var.mailboxStub as any).registerDeviceToken(
+	const principal = c.get("principal");
+	await c.var.mailboxStub.registerDeviceToken(
 		token,
 		platform || "ios",
-		principalKeys(principal),
+		principal ? deviceTokenOwnerKeys(principal) : [],
 	);
 	return c.json({ status: "registered" });
 });
@@ -1394,144 +1232,6 @@ app.delete(
 	},
 );
 
-// -- Auth (mobile Sign in with Apple) --------------------------------
-
-const AppleAuthBody = z.object({
-	identityToken: z.string().min(1),
-	fullName: z
-		.object({
-			givenName: z.string().optional(),
-			familyName: z.string().optional(),
-		})
-		.optional(),
-});
-
-app.post("/api/v1/auth/apple", async (c) => {
-	const appleClientId = c.env.APPLE_CLIENT_ID;
-	const mobileSecret = c.env.MOBILE_JWT_SECRET;
-	if (!appleClientId || !mobileSecret) {
-		return c.json(
-			{
-				error:
-					"Apple Sign In is not configured. Set APPLE_CLIENT_ID and MOBILE_JWT_SECRET secrets.",
-			},
-			503,
-		);
-	}
-
-	const parsed = AppleAuthBody.safeParse(await c.req.json());
-	if (!parsed.success) {
-		return c.json({ error: "identityToken is required" }, 400);
-	}
-
-	try {
-		const claims = await verifyAppleIdentityToken(
-			parsed.data.identityToken,
-			appleClientId,
-		);
-		await autoLinkSubIfAdminEmail(c.env, {
-			sub: claims.sub,
-			email: claims.email,
-			provider: "apple",
-		});
-		const session = await issueMobileSessionToken(mobileSecret, {
-			sub: claims.sub,
-			email: claims.email,
-			auth: "apple",
-		});
-		return c.json({
-			token: session.token,
-			expiresAt: session.expiresAt,
-			user: {
-				id: claims.sub,
-				email: claims.email ?? null,
-				fullName: parsed.data.fullName ?? null,
-			},
-		});
-	} catch (e) {
-		console.error("Apple auth failed:", (e as Error).message);
-		return c.json({ error: "Invalid Apple identity token" }, 401);
-	}
-});
-
-const GoogleAuthBody = z.object({
-	idToken: z.string().min(1),
-});
-
-app.post("/api/v1/auth/google", async (c) => {
-	const googleClientId = c.env.GOOGLE_CLIENT_ID;
-	const mobileSecret = c.env.MOBILE_JWT_SECRET;
-	if (!googleClientId || !mobileSecret) {
-		return c.json(
-			{
-				error:
-					"Google Sign In is not configured. Set GOOGLE_CLIENT_ID and MOBILE_JWT_SECRET secrets.",
-			},
-			503,
-		);
-	}
-
-	const parsed = GoogleAuthBody.safeParse(await c.req.json());
-	if (!parsed.success) {
-		return c.json({ error: "idToken is required" }, 400);
-	}
-
-	try {
-		const claims = await verifyGoogleIdentityToken(
-			parsed.data.idToken,
-			googleClientId,
-		);
-		await autoLinkSubIfAdminEmail(c.env, {
-			sub: claims.sub,
-			email: claims.email,
-			provider: "google",
-		});
-		const session = await issueMobileSessionToken(mobileSecret, {
-			sub: claims.sub,
-			email: claims.email,
-			auth: "google",
-		});
-		return c.json({
-			token: session.token,
-			expiresAt: session.expiresAt,
-			user: {
-				id: claims.sub,
-				email: claims.email ?? null,
-				fullName: claims.name
-					? { givenName: claims.name, familyName: undefined }
-					: null,
-			},
-		});
-	} catch (e) {
-		console.error("Google auth failed:", (e as Error).message);
-		return c.json({ error: "Invalid Google identity token" }, 401);
-	}
-});
-
-/**
- * Local-only helper so the iOS simulator can exercise the app without a real
- * Apple identity token. Disabled outside development.
- */
-app.post("/api/v1/auth/dev", async (c) => {
-	if (!import.meta.env.DEV) {
-		return c.json({ error: "Dev auth is only available in local development" }, 404);
-	}
-	const mobileSecret =
-		c.env.MOBILE_JWT_SECRET || "dev-mobile-jwt-secret-change-me";
-	const body = (await c.req.json().catch(() => ({}))) as { email?: string };
-	const email = body.email?.trim() || "dev@example.com";
-	const session = await issueMobileSessionToken(mobileSecret, {
-		sub: `dev:${email}`,
-		email,
-		auth: "dev",
-	});
-	return c.json({
-		token: session.token,
-		expiresAt: session.expiresAt,
-		user: { id: `dev:${email}`, email, fullName: null },
-	});
-});
-
 // -- Recipients (people I've emailed) -------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/recipients", async (c: AppContext) => {
@@ -1852,12 +1552,10 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	// Email Routing catch-all still points at this Worker.
 	// Private aliases live on private.<domain>, which belongs to <domain>.
 	const recipientDomain = message.to.split("@")[1]?.toLowerCase().replace(/^private\./, "");
-	if (recipientDomain) {
-		const domainMeta = await getDomainMetadata(env.BUCKET, recipientDomain);
-		if (domainMeta?.status === "offboarding") {
-			message.setReject("Domain is no longer hosted here");
-			return;
-		}
+	const recipientDomainMeta = recipientDomain ? await getDomainMetadata(env.BUCKET, recipientDomain) : null;
+	if (recipientDomainMeta?.status === "offboarding") {
+		message.setReject("Domain is no longer hosted here");
+		return;
 	}
 
 	// Holder object: TS does not track assignments made inside the callback.
@@ -1884,6 +1582,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		return;
 	}
 	const mailboxId = route.mailboxId;
+	// A domain whose subscription ended receives nothing, whether the mail is
+	// addressed to it or reaches one of its mailboxes through an alias.
+	const mailboxDomain = mailboxId.slice(mailboxId.lastIndexOf("@") + 1);
+	const mailboxDomainMeta =
+		mailboxDomain === recipientDomain ? recipientDomainMeta : await getDomainMetadata(env.BUCKET, mailboxDomain);
+	if (recipientDomainMeta?.billing?.serviceEndedAt || mailboxDomainMeta?.billing?.serviceEndedAt) {
+		message.setReject("This mailbox is not accepting mail");
+		return;
+	}
 	const routedAliasMeta = route.resolvedViaAlias ? aliasMatch.meta : null;
 	const privateAlias = isPrivateAliasMeta(routedAliasMeta) ? routedAliasMeta : null;
 

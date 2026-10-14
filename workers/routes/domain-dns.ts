@@ -5,14 +5,25 @@
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../types";
-import type { RequestPrincipal } from "../lib/mailbox-acl";
+import { and, eq } from "drizzle-orm";
+import type { RequestPrincipal } from "../auth/principal";
 import type { MailboxContext } from "../lib/mailbox";
-import { isDomainAdmin } from "../lib/domain-admin";
+import {
+	authDb,
+	authorizeMailboxAccess,
+	canCreateMailbox,
+	isDomainAdmin,
+	isDomainOwner,
+	listDomainsForUser,
+} from "../auth/authz";
+import { MailboxExistsError, provisionMailbox } from "../auth/mailboxes";
+import { normalizeEmailAddress } from "../lib/mail-automations";
+import { mailDomainConfig } from "../lib/mail-domain";
+import * as schema from "../auth/schema";
+import { insertInviteRow } from "./admin-invites";
 import {
 	getDomainMetadata,
 	saveDomainMetadata,
-	listDomainsForPrincipal,
-	isPrincipalAdminForDomain,
 	saveEmailAlias,
 	deleteEmailAlias,
 	AddressInUseError,
@@ -34,17 +45,15 @@ import {
 	auditEmailHealth,
 	type NewDnsRecord,
 } from "../lib/cloudflare-client";
-import { canonicalMailboxId, isAddressTaken, mailboxMetadataKey } from "../lib/mailbox-routing";
-import { ensurePrincipalAccount } from "../lib/identity-links";
-import { aclFromOwnerKeys, authorizeMailbox, principalKeys } from "../lib/mailbox-acl";
-import { createInviteRecord, saveInvite, inviteAcceptUrl } from "../lib/invites";
-import { seedWelcomeEmailsForMailbox } from "../lib/welcome-emails";
+import { canonicalMailboxId, strictMailboxId } from "../lib/mailbox-routing";
 import { isDevRuntime } from "../lib/dev-runtime";
 import {
 	domainVerificationChallenge,
 	isDomainVerified,
 	verificationRequiredBody,
 } from "../lib/domain-verification";
+import { isDomainSuspended, serviceEndedError } from "../lib/domain-service";
+import { anyRecoveryEmail } from "../auth/users";
 
 /** Local dev with no Cloudflare credentials provisions mock zones; skip the DNS proof there. */
 function canSkipDomainVerification(env: Env): boolean {
@@ -67,48 +76,57 @@ const DnsRecordBody = z.object({
 export interface AuthorizedDomainContext {
 	principal: RequestPrincipal;
 	domainMeta: DomainMetadata;
-	isSuperAdmin: boolean;
 }
 
+/** The caller owns or administers this domain (AUTH_DB rows). */
 export async function authorizeDomainAdmin(
 	c: Context<MailboxContext>,
 	domainParam: string,
+	opts: { offboarding?: boolean } = {},
 ): Promise<AuthorizedDomainContext | Response> {
-	const principal = c.get("principal") as RequestPrincipal | undefined;
-	if (!principal) {
-		return c.json({ error: "Unauthorized" }, 401);
-	}
-
+	const principal = c.get("principal");
+	if (!principal) return c.json({ error: "Unauthorized" }, 401);
 	const normalizedDomain = domainParam.trim().toLowerCase();
-	const isSuperAdmin = await isDomainAdmin(c.env, principal);
-
-	const domainMeta = await getDomainMetadata(c.env.BUCKET, normalizedDomain);
+	const db = authDb(c.env.AUTH_DB);
+	const allowed =
+		(await isDomainAdmin(db, principal.userId, normalizedDomain)) ||
+		(opts.offboarding === true && (await isDomainOwner(db, principal.userId, normalizedDomain)));
+	const domainMeta = allowed ? await getDomainMetadata(c.env.BUCKET, normalizedDomain) : null;
+	// Missing and forbidden look the same, so domains can't be probed.
 	if (!domainMeta) {
-		return c.json({ error: `Domain '${normalizedDomain}' not found` }, 404);
+		return c.json({ error: `Forbidden: You do not have admin rights for '${normalizedDomain}'` }, 403);
 	}
-
-	const hasAccess = isPrincipalAdminForDomain(domainMeta, principal, isSuperAdmin);
-	if (!hasAccess) {
-		return c.json(
-			{ error: `Forbidden: You do not have admin rights for '${normalizedDomain}'` },
-			403,
-		);
-	}
-
-	return { principal, domainMeta, isSuperAdmin };
+	return { principal, domainMeta };
 }
 
+/**
+ * Domain changes an owner may still make after the subscription ended: get
+ * their mail out, or take the domain elsewhere.
+ */
+const ALLOWED_WHEN_ENDED = /^\/(export|decommission-preflight|decommission|transfer-lock)$/;
+
 export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
+	// A domain whose subscription ended is frozen: no DNS, alias or user changes.
+	app.use("/api/v1/admin/domains/:domain/*", async (c, next) => {
+		const method = c.req.method.toUpperCase();
+		if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+		const domain = c.req.param("domain").trim().toLowerCase();
+		const rest = c.req.path.slice(c.req.path.indexOf("/", "/api/v1/admin/domains/".length));
+		if (ALLOWED_WHEN_ENDED.test(rest)) return next();
+		if (await isDomainSuspended(c.env, domain)) return c.json(serviceEndedError(domain), 403);
+		return next();
+	});
+
 	/**
 	 * List all domains administered by the current user.
 	 */
 	app.get("/api/v1/admin/domains", async (c) => {
-		const principal = c.get("principal") as RequestPrincipal | undefined;
+		const principal = c.get("principal");
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
-
-		const isSuperAdmin = await isDomainAdmin(c.env, principal);
-		const domains = await listDomainsForPrincipal(c.env.BUCKET, principal, isSuperAdmin);
-
+		const names = await listDomainsForUser(authDb(c.env.AUTH_DB), principal.userId);
+		const domains = (await Promise.all(names.map((d) => getDomainMetadata(c.env.BUCKET, d)))).filter(
+			(d): d is DomainMetadata => Boolean(d),
+		);
 		return c.json({ domains });
 	});
 
@@ -116,12 +134,14 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 	 * Connect a custom domain directly in Domain Admin.
 	 */
 	app.post("/api/v1/admin/domains", async (c) => {
-		const principal = c.get("principal") as RequestPrincipal | undefined;
+		const principal = c.get("principal");
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
-
-		const isSuper = await isDomainAdmin(c.env, principal);
-		if (!isSuper && principalKeys(principal).length === 0) {
-			return c.json({ error: "Forbidden" }, 403);
+		// Domain owners need a recovery email outside Inboxies for domain and billing notices.
+		if (!(await anyRecoveryEmail(authDb(c.env.AUTH_DB), principal.userId))) {
+			return c.json(
+				{ error: "Add a recovery email in Settings before connecting a domain", code: "recovery_email_required" },
+				400,
+			);
 		}
 
 		const parsed = z
@@ -148,26 +168,27 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 		const domain = parsed.data.domain.toLowerCase();
 
 		// Check if domain is already registered in Inboxies
-		const existingDomain = await getDomainMetadata(c.env.BUCKET, domain);
-		if (existingDomain) {
+		const db = authDb(c.env.AUTH_DB);
+		const existingRow = await db
+			.select({ domain: schema.domain.domain })
+			.from(schema.domain)
+			.where(eq(schema.domain.domain, domain))
+			.get();
+		const existingDomain = existingRow || (await getDomainMetadata(c.env.BUCKET, domain));
+		if (existingDomain || mailDomainConfig(c.env).domains.includes(domain)) {
 			return c.json(
 				{ error: "This domain is already registered with Inboxies" },
 				409,
 			);
 		}
 
-		// The connecting account becomes this domain's admin.
-		const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-		const ownerKey = ensured.ownerKeys[0];
-
-		// Non-super-admins must prove DNS control before we create a zone for them.
-		if (!isSuper && !canSkipDomainVerification(c.env)) {
-			const secret =
-				c.env.MOBILE_JWT_SECRET || (isDevRuntime() ? "dev-mobile-jwt-secret-change-me" : "");
+		// The connecting user must prove DNS control before we create a zone.
+		if (!canSkipDomainVerification(c.env)) {
+			const secret = c.env.BETTER_AUTH_SECRET || (isDevRuntime() ? "dev-better-auth-secret-change-me" : "");
 			if (!secret) {
 				return c.json({ error: "Server authentication is not configured" }, 500);
 			}
-			const challenge = await domainVerificationChallenge(secret, domain, ownerKey);
+			const challenge = await domainVerificationChallenge(secret, domain, `user:${principal.userId}`);
 			if (!(await isDomainVerified(challenge))) {
 				return c.json(verificationRequiredBody(domain, challenge), 428);
 			}
@@ -196,16 +217,22 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 			zone.name_servers,
 		);
 
-		// Password sessions keep the plain user id (checkout/billing look it up);
-		// everyone else is recorded by their durable account key.
-		const ownerUserId = principal.sub?.startsWith("user:")
-			? principal.sub.slice("user:".length)
-			: ownerKey;
+		// Ownership is the AUTH_DB row; the R2 copy is informational.
+		try {
+			await db.insert(schema.domain).values({
+				domain,
+				ownerUserId: principal.userId,
+				status: zone.status === "active" ? "active" : "pending",
+				verifiedAt: new Date(),
+			});
+		} catch {
+			return c.json({ error: "This domain is already registered with Inboxies" }, 409);
+		}
 		const domainMetadata: DomainMetadata = {
 			domain,
 			zoneId: zone.id,
-			ownerUserId,
-			adminUserIds: [ownerKey],
+			ownerUserId: principal.userId,
+			adminUserIds: [principal.userId],
 			status: zone.status === "active" ? "active" : "pending_nameservers",
 			nameservers: zone.name_servers,
 			emailRoutingEnabled: true,
@@ -451,10 +478,18 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 		domain: string,
 		target: string,
 	): Promise<string | null> => {
-		const mailboxId = canonicalMailboxId(target);
+		const mailboxId = strictMailboxId(target);
 		if (!mailboxId) return null;
-		if (mailboxId.endsWith(`@${domain.toLowerCase()}`)) return mailboxId;
-		const access = await authorizeMailbox(c.env.BUCKET, c.get("principal"), mailboxId);
+		const db = authDb(c.env.AUTH_DB);
+		if (mailboxId.endsWith(`@${domain.toLowerCase()}`)) {
+			const row = await db
+				.select({ id: schema.mailbox.id })
+				.from(schema.mailbox)
+				.where(eq(schema.mailbox.id, mailboxId))
+				.get();
+			return row ? mailboxId : null;
+		}
+		const access = await authorizeMailboxAccess(db, c.get("principal")?.userId, mailboxId);
 		return access.ok ? access.mailboxId : null;
 	};
 
@@ -576,53 +611,56 @@ export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 			const canonical = canonicalMailboxId(fullEmail);
 			if (!canonical) continue;
 
-			const key = mailboxMetadataKey(canonical);
-			const exists = await c.env.BUCKET.head(key);
-			if (!exists && (await isAddressTaken(c.env.BUCKET, canonical))) {
-				results.push({
-					mailboxId: canonical,
-					name: u.fullName || username,
-					invite: null,
-					error: "Address is already in use by an alias",
+			const db = authDb(c.env.AUTH_DB);
+			const existing = await db
+				.select({ id: schema.mailbox.id })
+				.from(schema.mailbox)
+				.where(eq(schema.mailbox.id, canonical))
+				.get();
+			if (!existing) {
+				const check = await canCreateMailbox(db, {
+					userId: principal.userId,
+					address: canonical,
+					platformDomains: [],
 				});
-				continue;
-			}
-			if (!exists) {
-				const ensured = await ensurePrincipalAccount(c.env.BUCKET, principal);
-				const acl = aclFromOwnerKeys(ensured.ownerKeys);
-				const settings = {
-					fromName: u.fullName || username,
-					forwarding: { enabled: false, email: "" },
-					signature: { enabled: false, text: "" },
-					autoReply: { enabled: false, subject: "", message: "" },
-					screener: { enabled: true },
-					acl,
-				};
-				await c.env.BUCKET.put(key, JSON.stringify(settings));
-				const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(canonical));
-				await stub.reviveMailbox();
-				await stub.getFolders();
-				await seedWelcomeEmailsForMailbox(c.env, canonical, u.fullName || username);
+				if (!check.ok) {
+					results.push({ mailboxId: canonical, name: u.fullName || username, invite: null, error: check.error });
+					continue;
+				}
+				try {
+					await provisionMailbox(c.env, {
+						mailboxId: canonical,
+						ownerUserId: principal.userId,
+						name: u.fullName || username,
+					});
+				} catch (e) {
+					if (!(e instanceof MailboxExistsError)) throw e;
+					results.push({
+						mailboxId: canonical,
+						name: u.fullName || username,
+						invite: null,
+						error: "Address is already in use by an alias",
+					});
+					continue;
+				}
 			}
 
 			// If contactEmail provided, generate invite record
 			let inviteData: SetupUserInvite | null = null;
-			if (u.contactEmail && u.contactEmail.includes("@")) {
-				const invite = createInviteRecord({
+			const inviteeEmail = u.contactEmail ? normalizeEmailAddress(u.contactEmail) : null;
+			if (inviteeEmail) {
+				const invite = await insertInviteRow(db, {
 					mailboxId: canonical,
-					inviteeEmail: u.contactEmail.trim().toLowerCase(),
-					inviteeName: u.fullName || username,
 					role: "owner",
-					createdByKeys: principalKeys(principal),
+					inviteeEmail,
+					inviteeName: u.fullName || username,
+					createdBy: principal.userId,
 				});
-				if ("token" in invite) {
-					await saveInvite(c.env.BUCKET, invite);
-					inviteData = {
-						token: invite.token,
-						inviteUrl: inviteAcceptUrl(c.env.APP_BASE_URL || "", invite.token),
-						inviteeEmail: invite.inviteeEmail,
-					};
-				}
+				inviteData = {
+					token: invite.token,
+					inviteUrl: `${(c.env.APP_BASE_URL || new URL(c.req.url).origin).replace(/\/$/, "")}/invite/${invite.token}`,
+					inviteeEmail,
+				};
 			}
 
 			results.push({

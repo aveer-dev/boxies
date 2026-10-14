@@ -151,7 +151,150 @@ export async function canCreateMailbox(
 	}
 
 	if (await isDomainAdmin(db, opts.userId, domainName)) {
+		const row = await db
+			.select({ status: schema.domain.status })
+			.from(schema.domain)
+			.where(eq(schema.domain.domain, domainName))
+			.get();
+		if (row?.status === "suspended") {
+			return { ok: false, status: 403, error: "This domain's subscription has ended. Renew it to add addresses." };
+		}
 		return { ok: true, mailboxId, domain: domainName };
 	}
 	return { ok: false, status: 403, error: "You can't create addresses on that domain" };
+}
+
+// ── Membership changes ───────────────────────────────────────────
+
+export type MailboxMemberRow = {
+	userId: string;
+	email: string;
+	name: string;
+	role: MailboxRole;
+};
+
+/** Everyone on a live mailbox, owners first. */
+export async function listMailboxMembers(db: AuthDb, mailboxId: string): Promise<MailboxMemberRow[]> {
+	const rows = await db
+		.select({
+			userId: schema.mailboxMember.userId,
+			email: schema.user.email,
+			name: schema.user.name,
+			role: schema.mailboxMember.role,
+		})
+		.from(schema.mailboxMember)
+		.innerJoin(schema.user, eq(schema.user.id, schema.mailboxMember.userId))
+		.where(eq(schema.mailboxMember.mailboxId, mailboxId))
+		.all();
+	return rows.sort((a, b) => Number(b.role === "owner") - Number(a.role === "owner") || a.email.localeCompare(b.email));
+}
+
+/**
+ * Add `userId` to the mailbox, or raise them to `role`. Never demotes:
+ * accepting a member invite doesn't strip an existing owner.
+ */
+export async function grantMailboxRole(
+	db: AuthDb,
+	mailboxId: string,
+	userId: string,
+	role: MailboxRole,
+): Promise<void> {
+	await db
+		.insert(schema.mailboxMember)
+		.values({ mailboxId, userId, role })
+		.onConflictDoUpdate({
+			target: [schema.mailboxMember.mailboxId, schema.mailboxMember.userId],
+			set: { role: role === "owner" ? "owner" : schema.mailboxMember.role },
+		});
+}
+
+export type MembershipChange = { ok: true } | { ok: false; status: 400 | 404; error: string };
+
+async function ownerCount(db: AuthDb, mailboxId: string): Promise<number> {
+	const rows = await db
+		.select({ userId: schema.mailboxMember.userId })
+		.from(schema.mailboxMember)
+		.where(and(eq(schema.mailboxMember.mailboxId, mailboxId), eq(schema.mailboxMember.role, "owner")))
+		.all();
+	return rows.length;
+}
+
+/** Set an existing member's role. A mailbox always keeps at least one owner. */
+export async function setMailboxRole(
+	db: AuthDb,
+	mailboxId: string,
+	userId: string,
+	role: MailboxRole,
+): Promise<MembershipChange> {
+	const current = await mailboxRole(db, userId, mailboxId);
+	if (!current) return { ok: false, status: 404, error: "Not a member of this mailbox" };
+	if (current === role) return { ok: true };
+	if (current === "owner" && (await ownerCount(db, mailboxId)) <= 1) {
+		return { ok: false, status: 400, error: "A mailbox needs at least one owner" };
+	}
+	await db
+		.update(schema.mailboxMember)
+		.set({ role })
+		.where(and(eq(schema.mailboxMember.mailboxId, mailboxId), eq(schema.mailboxMember.userId, userId)));
+	return { ok: true };
+}
+
+/** Remove a member. The last owner can't be removed (delete the mailbox instead). */
+export async function removeMailboxMember(
+	db: AuthDb,
+	mailboxId: string,
+	userId: string,
+): Promise<MembershipChange> {
+	const current = await mailboxRole(db, userId, mailboxId);
+	if (!current) return { ok: false, status: 404, error: "Not a member of this mailbox" };
+	if (current === "owner" && (await ownerCount(db, mailboxId)) <= 1) {
+		return { ok: false, status: 400, error: "A mailbox needs at least one owner" };
+	}
+	await db
+		.delete(schema.mailboxMember)
+		.where(and(eq(schema.mailboxMember.mailboxId, mailboxId), eq(schema.mailboxMember.userId, userId)));
+	return { ok: true };
+}
+
+// ── Domains ──────────────────────────────────────────────────────
+
+/** Domains the user owns or administers (not decommissioned). */
+export async function listDomainsForUser(db: AuthDb, userId: string): Promise<string[]> {
+	const owned = await db
+		.select({ domain: schema.domain.domain })
+		.from(schema.domain)
+		.where(and(eq(schema.domain.ownerUserId, userId), ne(schema.domain.status, "decommissioned")))
+		.all();
+	const administered = await db
+		.select({ domain: schema.domain.domain })
+		.from(schema.domainAdmin)
+		.innerJoin(schema.domain, eq(schema.domain.domain, schema.domainAdmin.domain))
+		.where(and(eq(schema.domainAdmin.userId, userId), ne(schema.domain.status, "decommissioned")))
+		.all();
+	return [...new Set([...owned, ...administered].map((r) => r.domain))].sort();
+}
+
+/** Mailbox ids on `domain`, live only. */
+export async function listMailboxesOnDomain(db: AuthDb, domainName: string): Promise<string[]> {
+	const rows = await db
+		.select({ id: schema.mailbox.id })
+		.from(schema.mailbox)
+		.where(and(eq(schema.mailbox.domain, domainName.trim().toLowerCase()), isNull(schema.mailbox.deletedAt)))
+		.orderBy(schema.mailbox.id)
+		.all();
+	return rows.map((r) => r.id);
+}
+
+/**
+ * The domain's owner, whatever its status. Offboarding (export download,
+ * transfer code, registrar lock) still needs the owner after the domain is
+ * decommissioned and admin rights are gone.
+ */
+export async function isDomainOwner(db: AuthDb, userId: string, domainName: string): Promise<boolean> {
+	const row = await db
+		.select({ domain: schema.domain.domain })
+		.from(schema.domain)
+		.where(and(eq(schema.domain.domain, domainName.trim().toLowerCase()), eq(schema.domain.ownerUserId, userId)))
+		.get();
+	return Boolean(row);
 }

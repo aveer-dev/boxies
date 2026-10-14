@@ -3,10 +3,9 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 export interface Env extends Cloudflare.Env {
+	/** Cloudflare Access audience and team domain: operators on /ops/* only. */
 	POLICY_AUD: string;
 	TEAM_DOMAIN: string;
-	/** HS256 secret used to sign/verify iOS mobile session JWTs after Apple Sign In. */
-	MOBILE_JWT_SECRET?: string;
 	/** iOS app bundle ID — Apple identity token `aud` (e.g. com.example.AgenticInbox). */
 	APPLE_CLIENT_ID?: string;
 	/** Google OAuth Web client ID — Google ID token `aud` for Android Sign-In. */
@@ -21,15 +20,15 @@ export interface Env extends Cloudflare.Env {
 	/** Firebase service-account JSON string for FCM HTTP v1 (Android push). */
 	FCM_SERVICE_ACCOUNT_JSON?: string;
 	/**
-	 * Domain Admin allowlist: comma-separated emails and optional `sub:…` keys.
-	 * Matched against `principalKeys` from Access / mobile / password sessions.
-	 */
-	DOMAIN_ADMINS?: string;
-	/**
-	 * `open` (anyone authenticated may create) or `admin_only`.
-	 * When unset: `admin_only` if DOMAIN_ADMINS is non-empty, else `open`.
+	 * `admin_only` stops signed-in users creating extra addresses on the
+	 * shared platform domains (sign-up and /ops still can). Anything else: open.
 	 */
 	MAILBOX_CREATE_POLICY?: string;
+	/**
+	 * "false" requires the emailed code to accept an invite. Otherwise app
+	 * builds that predate invite codes can still create an account without one.
+	 */
+	LEGACY_INVITE_ACCEPT?: string;
 	/** From address for invite emails (defaults to noreply@`MAIL_DOMAIN` / first `DOMAINS` / fallback). */
 	INVITE_FROM_EMAIL?: string;
 	/** Public site origin for invite links (defaults to request origin). */
@@ -49,10 +48,10 @@ export interface Env extends Cloudflare.Env {
 	STRIPE_SECRET_KEY?: string;
 	/** Stripe Webhook Secret for validating checkout.session.completed signatures. */
 	STRIPE_WEBHOOK_SECRET?: string;
+	/** Optional: where operator alerts go (e.g. a renewed domain that must be renewed by hand at the registrar). */
+	OPS_ALERT_EMAIL?: string;
 	/** Better Auth signing secret (32+ random bytes). `AUTH_DB` comes from wrangler.jsonc. */
 	BETTER_AUTH_SECRET?: string;
-	/** "true" mounts Better Auth at /api/auth/*. Off until the cutover. */
-	BETTER_AUTH_ENABLED?: string;
 	/** Extra Google client ids (iOS, Android) accepted alongside GOOGLE_CLIENT_ID, comma-separated. */
 	GOOGLE_EXTRA_CLIENT_IDS?: string;
 	GOOGLE_CLIENT_SECRET?: string;
@@ -60,5 +59,12 @@ export interface Env extends Cloudflare.Env {
 	APPLE_CLIENT_SECRET?: string;
 	/** iOS bundle id, the `aud` of native Apple ID tokens (defaults to APPLE_CLIENT_ID). */
 	APPLE_APP_BUNDLE_ID?: string;
+	/**
+	 * Sign in with Apple key (Key ID + .p8 contents) and team id, used to
+	 * revoke Apple tokens when an account is deleted. Team falls back to APNS_TEAM_ID.
+	 */
+	APPLE_TEAM_ID?: string;
+	APPLE_SIGNIN_KEY_ID?: string;
+	APPLE_SIGNIN_PRIVATE_KEY?: string;
 }
 

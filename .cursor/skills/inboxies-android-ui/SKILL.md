@@ -192,6 +192,10 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
 | Screener | `previewScreener` | `screener` | Screener folder + detail open |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
+| Service ended (admin) | `previewServiceEnded` | `serviceEnded` | Read-only inbox + "Renew" banner |
+| Service ended (member) | `previewServiceEndedMember` | `serviceEndedMember` | Read-only inbox + "Ask an admin" |
+| Service ending | `previewServiceEnding` | `serviceEnding` | Admin "Keep subscription" notice |
+| DNS, service ended | `previewDomainDnsEnded` | `domainDnsEnded` | Subscription card, DNS edits frozen |
 
 Code: `ui/preview/PreviewMode.kt`, `PreviewSupport.kt`, `PreviewRoots.kt`. Wired from `MainActivity` when `BuildConfig.DEBUG` and an extra is present. Fixtures never persist session (`AuthStore.applyEphemeralSession`); normal launches call `resyncFromStorage()`.
 

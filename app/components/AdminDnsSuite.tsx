@@ -41,12 +41,15 @@ import type {
 	ExportJob,
 	NewDnsRecord,
 } from "~/types";
+import { DomainSubscriptionCard } from "./DomainSubscriptionCard";
 
 interface AdminDnsSuiteProps {
 	configuredDomains: string[];
 	mailDomain: string;
 	initialDomain?: string;
 	justPurchased?: boolean;
+	/** Back from a renewal checkout. */
+	justRenewed?: boolean;
 }
 
 const RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "MX", "NS"] as const;
@@ -75,6 +78,7 @@ export function AdminDnsSuite({
 	mailDomain,
 	initialDomain,
 	justPurchased,
+	justRenewed,
 }: AdminDnsSuiteProps) {
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
@@ -528,6 +532,8 @@ export function AdminDnsSuite({
 					</div>
 				</div>
 			)}
+
+			<DomainSubscriptionCard domain={selectedDomain} justRenewed={justRenewed} />
 
 			{/* Domain Selector & Zone Overview */}
 			<div className="rounded-xl border border-kumo-line bg-kumo-base p-6">

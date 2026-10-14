@@ -6,6 +6,7 @@ import { Button } from "@cloudflare/kumo";
 import { useCallback, useRef, useState } from "react";
 import FloatingPanel from "~/components/FloatingPanel";
 import { IconButton } from "~/components/IconButton";
+import { useUIStore } from "~/hooks/useUIStore";
 import { keysFor } from "~/lib/shortcuts";
 import {
 	ArchiveIcon,
@@ -84,13 +85,15 @@ export default function EmailPanelToolbar({
 	// Icons pop when switched on (not when a starred message first renders).
 	const [starPops, setStarPops] = useState(0);
 	const [laterPops, setLaterPops] = useState(0);
+	// Read-only mailbox (its domain's subscription ended): flags only, no send/move/delete.
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	return (
 		<div className="flex items-center gap-0.5 h-12 px-2 border-b border-kumo-line shrink-0 md:px-3">
 			{!inPopOut && (
 				<IconButton label="Back to list" icon={ArrowLeftIcon} size="md" onClick={onBack} className="md:hidden" />
 			)}
 
-			{isDraftFolder ? (
+			{isReadOnly ? null : isDraftFolder ? (
 				<div className="flex items-center gap-1.5 mr-1">
 					<Button
 						variant="primary"
@@ -118,7 +121,7 @@ export default function EmailPanelToolbar({
 				</>
 			)}
 
-			<div className="h-5 w-px bg-kumo-line mx-1" />
+			{!isReadOnly && <div className="h-5 w-px bg-kumo-line mx-1" />}
 
 			<IconButton
 				label={email.starred ? "Unstar" : "Star"}
@@ -155,12 +158,12 @@ export default function EmailPanelToolbar({
 				size="md"
 				onClick={onToggleRead}
 			/>
-			{onArchive && (
+			{onArchive && !isReadOnly && (
 				<IconButton label="Archive" shortcut={keysFor("archive")} icon={ArchiveIcon} size="md" onClick={onArchive} />
 			)}
-			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
+			{!isReadOnly && <MoveToFolderMenu folders={moveToFolders} onMove={onMove} />}
 
-			{spamAction && onSpamAction && (
+			{spamAction && onSpamAction && !isReadOnly && (
 				<IconButton
 					label={spamAction === "report" ? "Report spam" : "Not spam"}
 					icon={spamAction === "report" ? WarningIcon : ShieldCheckIcon}
@@ -181,7 +184,9 @@ export default function EmailPanelToolbar({
 					/>
 				)}
 				<IconButton label="View source" icon={CodeIcon} size="md" onClick={onViewSource} />
-				<IconButton label="Delete" shortcut={keysFor("delete")} icon={TrashIcon} size="md" onClick={onDelete} />
+				{!isReadOnly && (
+					<IconButton label="Delete" shortcut={keysFor("delete")} icon={TrashIcon} size="md" onClick={onDelete} />
+				)}
 				<IconButton
 					label={inPopOut ? "Back to column" : "Close"}
 					shortcut="Esc"

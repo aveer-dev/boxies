@@ -65,6 +65,11 @@ object PreviewHarness {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
             }
+            PreviewMode.DomainDnsEnded -> {
+                PreviewSupport.applyAuth(auth)
+                val service = PreviewSupport.domainServiceFixture(mode, PREVIEW_DNS_DOMAIN)!!
+                PreviewSupport.applyAdminPreview(appModel, mapOf(PREVIEW_DNS_DOMAIN to service))
+            }
             PreviewMode.Splash -> {
                 // Splash preview needs no extra session seeding.
             }
@@ -72,6 +77,9 @@ object PreviewHarness {
             PreviewMode.Screener,
             PreviewMode.ScreenerList,
             PreviewMode.ReplyLater,
+            PreviewMode.ServiceEnded,
+            PreviewMode.ServiceEndedMember,
+            PreviewMode.ServiceEnding,
             -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyMailboxPreview(appModel, mode)
@@ -79,6 +87,8 @@ object PreviewHarness {
         }
     }
 }
+
+private const val PREVIEW_DNS_DOMAIN = "example.com"
 
 @Composable
 fun PreviewRoot(
@@ -114,7 +124,7 @@ fun PreviewRoot(
                 }
             }
         }
-        PreviewMode.DomainDns -> {
+        PreviewMode.DomainDns, PreviewMode.DomainDnsEnded -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
                 Column(
                     modifier = Modifier
@@ -124,7 +134,7 @@ fun PreviewRoot(
                     DomainAdminDNSView(
                         previewDomains = listOf(
                             AdminDomainInfo(
-                                domain = "example.com",
+                                domain = PREVIEW_DNS_DOMAIN,
                                 zoneId = "preview-zone-123",
                                 status = "active",
                                 nameservers = listOf("ns1.cloudflare.com", "ns2.cloudflare.com"),
@@ -138,6 +148,9 @@ fun PreviewRoot(
         PreviewMode.Screener,
         PreviewMode.ScreenerList,
         PreviewMode.ReplyLater,
+        PreviewMode.ServiceEnded,
+        PreviewMode.ServiceEndedMember,
+        PreviewMode.ServiceEnding,
         -> HomeShellView(
             auth = auth,
             appModel = appModel,

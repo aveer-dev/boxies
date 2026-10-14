@@ -40,6 +40,7 @@ const bucket = pagedBucket({
 		id: "pu-ada",
 		contactEmail: "ada@gmail.com",
 		mailboxEmail: "ada@inboxies.email",
+		recoveryEmail: "Ada.Backup@Example.com",
 		passwordHash: adaHash,
 		linkedSubs: [],
 	},
@@ -167,6 +168,7 @@ assert.equal(dry.counts.providerAccounts, 4, "apple.ada, google.carol, frank (ap
 assert.equal(dry.counts.mailboxes, 4);
 assert.equal(dry.counts.domains, 3);
 assert.equal(dry.counts.invites, 1, "expired invites are not copied");
+assert.equal(dry.counts.recoveryEmails, 1);
 
 const kinds = (kind) => dry.issues.filter((i) => i.kind === kind).map((i) => i.detail).join("\n");
 assert.match(kinds("sign-in dropped"), /access sign-in access-ops/);
@@ -211,6 +213,9 @@ const bobUser = await row("select email, email_verified from user where id = 'pu
 assert.deepEqual(bobUser, { email: "bob@gmail.com", email_verified: 0 });
 const mallory = await d1.prepare("select email from user where id = 'pu-mallory'").first("email");
 assert.equal(mallory, "pu-mallory@no-email.invalid", "an email can only belong to one user");
+
+const recovery = await row("select email, verified_at from recovery_email where user_id = 'acct-ada'");
+assert.deepEqual(recovery, { email: "ada.backup@example.com", verified_at: null }, "legacy recovery emails stay unverified");
 
 const invite = await d1.prepare("select token_hash, created_by from invite").first();
 assert.notEqual(invite.token_hash, "tok-live", "tokens are stored hashed");

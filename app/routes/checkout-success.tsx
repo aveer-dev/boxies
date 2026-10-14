@@ -6,18 +6,23 @@ import { Button, Loader } from "@cloudflare/kumo";
 import {
 	CheckCircleIcon,
 	GlobeIcon,
+	HourglassIcon,
 	ShieldCheckIcon,
 	SparkleIcon,
 	EnvelopeIcon,
 	HardDrivesIcon,
+	WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 import api from "~/services/api";
 
 export function meta() {
-	return [{ title: "Domain Activated — Inboxies" }];
+	return [{ title: "Domain Checkout — Inboxies" }];
 }
+
+/** States that won't change by waiting: stop polling. */
+const FINAL_STATUSES = new Set(["ready", "failed", "refunded", "canceled"]);
 
 export default function CheckoutSuccessRoute() {
 	const [searchParams] = useSearchParams();
@@ -27,11 +32,19 @@ export default function CheckoutSuccessRoute() {
 	const { data: statusData, isLoading } = useQuery({
 		queryKey: ["checkout-status", sessionId, domain],
 		queryFn: () => api.getCheckoutStatus({ sessionId, domain }),
-		refetchInterval: (query) => (query.state.data?.status === "ready" ? false : 1500),
+		refetchInterval: (query) => {
+			const status = query.state.data?.status;
+			if (status && FINAL_STATUSES.has(status)) return false;
+			// A bank payment can take days to clear; no need to poll it every second.
+			return status === "awaiting_payment" ? 15000 : 1500;
+		},
 		staleTime: 1000,
 	});
 
-	const isReady = statusData?.status === "ready";
+	const status = statusData?.status;
+	const isReady = status === "ready";
+	const isAwaitingPayment = status === "awaiting_payment";
+	const isUnfulfilled = status === "failed" || status === "refunded" || status === "canceled";
 	const pricing = statusData?.pricing;
 	const domainFee = pricing?.domainFeeUsd ?? 10.44;
 	const platformFee = pricing?.platformFeeUsd ?? 9.56;
@@ -42,12 +55,26 @@ export default function CheckoutSuccessRoute() {
 			<div className="w-full max-w-lg bg-kumo-base rounded-2xl border border-kumo-line shadow-sm overflow-hidden p-6 sm:p-8 space-y-6">
 				{/* Header */}
 				<div className="flex items-center gap-3 border-b border-kumo-line pb-5">
-					<div className="p-2.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-						<CheckCircleIcon size={28} weight="fill" />
-					</div>
+					{isUnfulfilled ? (
+						<div className="p-2.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+							<WarningCircleIcon size={28} weight="fill" />
+						</div>
+					) : isAwaitingPayment ? (
+						<div className="p-2.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400">
+							<HourglassIcon size={28} weight="fill" />
+						</div>
+					) : (
+						<div className="p-2.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+							<CheckCircleIcon size={28} weight="fill" />
+						</div>
+					)}
 					<div>
 						<h1 className="text-lg font-bold text-kumo-default">
-							Subscription & Domain Activated
+							{isUnfulfilled
+								? "Your domain wasn't set up"
+								: isAwaitingPayment
+									? "Waiting for your payment"
+									: "Subscription & Domain Activated"}
 						</h1>
 						<p className="text-xs text-kumo-subtle font-mono mt-0.5">
 							{domain}
@@ -94,35 +121,53 @@ export default function CheckoutSuccessRoute() {
 					</div>
 				</div>
 
-				{/* Included Features */}
-				<div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 space-y-2.5 text-xs text-kumo-default">
-					<div className="font-semibold text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
-						<ShieldCheckIcon size={16} />
-						What is included with your subscription:
+				{/* Included Features (not for a checkout that didn't go through) */}
+				{!isUnfulfilled && (
+					<div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 space-y-2.5 text-xs text-kumo-default">
+						<div className="font-semibold text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
+							<ShieldCheckIcon size={16} />
+							What is included with your subscription:
+						</div>
+						<ul className="space-y-1.5 text-kumo-subtle pl-1">
+							<li className="flex items-center gap-2">
+								<SparkleIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
+								<span>Dedicated AI Email Agent (summaries, triage & smart drafting)</span>
+							</li>
+							<li className="flex items-center gap-2">
+								<HardDrivesIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
+								<span>Edge Server Realtime Sync & R2 encrypted storage</span>
+							</li>
+							<li className="flex items-center gap-2">
+								<GlobeIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
+								<span>Global Anycast DNS, SSL certificates & Email Routing</span>
+							</li>
+							<li className="flex items-center gap-2">
+								<EnvelopeIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
+								<span>Automated MX, SPF, DKIM & DMARC spam defense</span>
+							</li>
+						</ul>
 					</div>
-					<ul className="space-y-1.5 text-kumo-subtle pl-1">
-						<li className="flex items-center gap-2">
-							<SparkleIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
-							<span>Dedicated AI Email Agent (summaries, triage & smart drafting)</span>
-						</li>
-						<li className="flex items-center gap-2">
-							<HardDrivesIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
-							<span>Edge Server Realtime Sync & R2 encrypted storage</span>
-						</li>
-						<li className="flex items-center gap-2">
-							<GlobeIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
-							<span>Global Anycast DNS, SSL certificates & Email Routing</span>
-						</li>
-						<li className="flex items-center gap-2">
-							<EnvelopeIcon size={14} className="shrink-0 text-sky-600 dark:text-sky-400" />
-							<span>Automated MX, SPF, DKIM & DMARC spam defense</span>
-						</li>
-					</ul>
-				</div>
+				)}
 
 				{/* Provisioning Status */}
 				<div className="flex items-center gap-2.5 p-3 rounded-lg border border-kumo-line bg-kumo-base text-xs">
-					{isReady ? (
+					{isUnfulfilled ? (
+						<>
+							<WarningCircleIcon size={18} weight="fill" className="text-amber-500 shrink-0" />
+							<span className="text-kumo-default font-medium">
+								{statusData?.error || "This checkout didn't complete."}
+								{status === "refunded" && " Your payment has been refunded in full."}
+							</span>
+						</>
+					) : isAwaitingPayment ? (
+						<>
+							<HourglassIcon size={18} className="text-sky-500 shrink-0" />
+							<span className="text-kumo-subtle font-medium">
+								Your bank payment is processing. We'll set up {domain} as soon as it clears, which
+								can take a few business days.
+							</span>
+						</>
+					) : isReady ? (
 						<>
 							<CheckCircleIcon size={18} weight="fill" className="text-emerald-500 shrink-0" />
 							<span className="text-kumo-default font-medium">
@@ -140,21 +185,31 @@ export default function CheckoutSuccessRoute() {
 				</div>
 
 				{/* Action Buttons */}
-				<div className="flex flex-col sm:flex-row gap-3 pt-2">
-					<Link to="/" className="flex-1">
-						<Button variant="primary" className="w-full justify-center">
-							Open Mailbox
-						</Button>
-					</Link>
-					<Link
-						to={`/admin?tab=dns&domain=${encodeURIComponent(domain)}&purchased=true`}
-						className="flex-1"
-					>
-						<Button variant="secondary" className="w-full justify-center">
-							Manage Domain DNS
-						</Button>
-					</Link>
-				</div>
+				{isUnfulfilled ? (
+					<div className="flex flex-col sm:flex-row gap-3 pt-2">
+						<Link to="/" className="flex-1">
+							<Button variant="primary" className="w-full justify-center">
+								Back to Inboxies
+							</Button>
+						</Link>
+					</div>
+				) : (
+					<div className="flex flex-col sm:flex-row gap-3 pt-2">
+						<Link to="/" className="flex-1">
+							<Button variant="primary" className="w-full justify-center">
+								Open Mailbox
+							</Button>
+						</Link>
+						<Link
+							to={`/admin?tab=dns&domain=${encodeURIComponent(domain)}&purchased=true`}
+							className="flex-1"
+						>
+							<Button variant="secondary" className="w-full justify-center">
+								Manage Domain DNS
+							</Button>
+						</Link>
+					</div>
+				)}
 			</div>
 		</div>
 	);

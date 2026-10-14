@@ -4,24 +4,20 @@
 
 import { routeAgentRequest } from "agents";
 import { Hono, type Context } from "hono";
-import { jwtVerify, createRemoteJWKSet, type JWTPayload } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 import { EmailMCP } from "./mcp";
-import { verifyMobileSessionToken } from "./lib/apple-auth";
-import {
-	authorizeMailbox,
-	devWebPrincipal,
-	principalFromClaims,
-	type RequestPrincipal,
-} from "./lib/mailbox-acl";
-import { expandPrincipalWithLinks } from "./lib/identity-links";
 import { strictMailboxId } from "./lib/mailbox-routing";
-import { AUTH_BASE_PATH, createAuth, isBetterAuthEnabled } from "./auth";
-import { PASSWORD_SESSION_COOKIE } from "./lib/password-auth";
-import { passwordSessionIsCurrent } from "./lib/platform-users";
+import { authDb, authorizeMailboxAccess } from "./auth/authz";
+import type { RequestPrincipal } from "./auth/principal";
+import type { Operator } from "./auth/operators";
+import { operatorMiddleware, sessionMiddleware } from "./auth/middleware";
+import { handleBetterAuthRequest } from "./routes/better-auth";
+import { registerOpsRoutes } from "./routes/ops";
+import { runScheduledMaintenance } from "./lib/maintenance";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
+import { AUTH_BASE_PATH } from "./auth";
 import type { Env } from "./types";
 
 export { MailboxDO } from "./durableObject";
@@ -42,65 +38,12 @@ const requestHandler = createRequestHandler(
 	import.meta.env.MODE,
 );
 
-function getAccessUrls(teamDomain: string) {
-	const certsPath = "/cdn-cgi/access/certs";
-	const teamUrl = new URL(teamDomain);
-	const issuer = teamUrl.origin;
-	const certsUrl = teamUrl.pathname.endsWith(certsPath)
-		? teamUrl
-		: new URL(certsPath, issuer);
-
-	return { issuer, certsUrl };
-}
-
-import { isPathAllowedForTokenScope, isPublicAuthPath } from "./lib/auth-paths";
+import { isPublicAuthPath } from "./lib/auth-paths";
+import { serviceEndedErrorForMailbox } from "./lib/domain-service";
 
 export { isPublicAuthPath };
 
-function readCookie(header: string | undefined, name: string): string | undefined {
-	if (!header) return undefined;
-	for (const part of header.split(";")) {
-		const trimmed = part.trim();
-		const eq = trimmed.indexOf("=");
-		if (eq === -1) continue;
-		if (trimmed.slice(0, eq) !== name) continue;
-		try {
-			return decodeURIComponent(trimmed.slice(eq + 1));
-		} catch {
-			return trimmed.slice(eq + 1);
-		}
-	}
-	return undefined;
-}
-
-/** Access JWT from the edge header, or the CF_Authorization cookie after a path bypass. */
-function getAccessJwt(c: { req: { header: (name: string) => string | undefined } }): string | undefined {
-	return (
-		c.req.header("cf-access-jwt-assertion") ||
-		readCookie(c.req.header("cookie"), "CF_Authorization")
-	);
-}
-
-async function verifyCfAccessToken(
-	token: string,
-	env: Env,
-): Promise<JWTPayload | null> {
-	const { POLICY_AUD, TEAM_DOMAIN } = env;
-	if (!POLICY_AUD || !TEAM_DOMAIN) return null;
-	try {
-		const { issuer, certsUrl } = getAccessUrls(TEAM_DOMAIN);
-		const JWKS = createRemoteJWKSet(certsUrl);
-		const { payload } = await jwtVerify(token, JWKS, {
-			issuer,
-			audience: POLICY_AUD,
-		});
-		return payload;
-	} catch {
-		return null;
-	}
-}
-
-type AppVariables = { principal?: RequestPrincipal };
+type AppVariables = { principal?: RequestPrincipal; operator?: Operator };
 type ExecutionCtxWithProps = ExecutionContext & {
 	props?: { principal?: RequestPrincipal };
 };
@@ -108,118 +51,15 @@ type ExecutionCtxWithProps = ExecutionContext & {
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-// Better Auth (AUTH_DB). Registered before the legacy auth middleware so it
-// handles its own sessions. Dark until BETTER_AUTH_ENABLED=true at cutover.
-app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => {
-	if (!isBetterAuthEnabled(c.env)) return c.json({ error: "Not found" }, 404);
-	return createAuth(c.env).handler(c.req.raw);
-});
+// Better Auth (AUTH_DB): an allowlisted subset of its routes.
+app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw));
 
-// Auth middleware: Cloudflare Access (web) OR mobile Bearer JWT OR password session cookie.
-// Auth bootstrap + invite endpoints are public. DEV still attaches a principal so ACL is exercised.
-app.use("*", async (c, next) => {
-	const pathname = new URL(c.req.url).pathname;
-	if (isPublicAuthPath(pathname)) {
-		return next();
-	}
+// Operators: Cloudflare Access only, and only on /ops/*.
+app.use("/ops/*", operatorMiddleware);
+registerOpsRoutes(app);
 
-	const { POLICY_AUD, TEAM_DOMAIN, MOBILE_JWT_SECRET } = c.env;
-
-	const accessToken = getAccessJwt(c);
-	if (accessToken) {
-		if (!POLICY_AUD || !TEAM_DOMAIN) {
-			if (!import.meta.env.DEV) {
-				return c.text(
-					"Cloudflare Access must be configured in production. Set POLICY_AUD and TEAM_DOMAIN.",
-					500,
-				);
-			}
-			// Local wrangler often has no Access config; ignore leftover cookies.
-		} else {
-			const payload = await verifyCfAccessToken(accessToken, c.env);
-			if (!payload) {
-				return c.text("Invalid or expired Access token", 403);
-			}
-			const principal = await expandPrincipalWithLinks(
-				c.env.BUCKET,
-				principalFromClaims(payload),
-			);
-			c.set("principal", principal);
-			return next();
-		}
-	}
-
-	const authHeader = c.req.header("authorization");
-	const bearer = authHeader?.match(/^Bearer\s+(.+)$/i)?.[1];
-	const cookieSession = readCookie(c.req.header("cookie"), PASSWORD_SESSION_COOKIE);
-	const sessionToken = bearer || cookieSession;
-	if (sessionToken) {
-		const mobileSecret =
-			MOBILE_JWT_SECRET ||
-			(import.meta.env.DEV ? "dev-mobile-jwt-secret-change-me" : "");
-		if (!mobileSecret) {
-			return c.text(
-				"Mobile auth is not configured. Set MOBILE_JWT_SECRET.",
-				500,
-			);
-		}
-		try {
-			const claims = await verifyMobileSessionToken(sessionToken, mobileSecret);
-			if (claims.auth === "password" && claims.uid) {
-				// A password reset bumps tokenVersion and revokes older sessions.
-				if (!(await passwordSessionIsCurrent(c.env.BUCKET, claims.uid, claims.tv))) {
-					throw new Error("Password session revoked");
-				}
-			}
-			if (claims.scope && !isPathAllowedForTokenScope(claims.scope, c.req.method, pathname)) {
-				return c.text("This session can only manage private emails", 403);
-			}
-			const principal = await expandPrincipalWithLinks(
-				c.env.BUCKET,
-				principalFromClaims(claims),
-			);
-			c.set("principal", principal);
-			return next();
-		} catch {
-			if (bearer) {
-				return c.text("Invalid or expired mobile session token", 403);
-			}
-			// Invalid password cookie: fall through to Access / DEV / fail-closed.
-		}
-	}
-
-	if (import.meta.env.DEV) {
-		c.set("principal", await expandPrincipalWithLinks(c.env.BUCKET, devWebPrincipal()));
-		return next();
-	}
-
-	// A signed-out browser opening an app page gets the sign-in screen, not raw
-	// 403/500 text. API, agent and MCP callers still get the error below.
-	const wantsHtml = (c.req.header("accept") || "").includes("text/html");
-	const isAppPage =
-		c.req.method === "GET" &&
-		!pathname.startsWith("/api/") &&
-		!pathname.startsWith("/agents/") &&
-		!pathname.startsWith("/mcp");
-	if (wantsHtml && isAppPage) {
-		const url = new URL(c.req.url);
-		const next = `${url.pathname}${url.search}`;
-		return c.redirect(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`, 302);
-	}
-
-	// Fail closed: require Access config message if neither token present
-	if (!POLICY_AUD || !TEAM_DOMAIN) {
-		return c.text(
-			"Cloudflare Access must be configured in production. Set POLICY_AUD and TEAM_DOMAIN.",
-			500,
-		);
-	}
-
-	return c.text(
-		"Missing authentication. Provide cf-access-jwt-assertion or Authorization: Bearer <mobile-token>.",
-		403,
-	);
-});
+// Everyone else: a Better Auth session.
+app.use("*", sessionMiddleware);
 
 // MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)
 // Must be before API routes and React Router catch-all
@@ -243,10 +83,13 @@ app.all("/agents/*", async (c) => {
 	if (!mailboxId || strictMailboxId(mailboxId) !== mailboxId) {
 		return c.json({ error: "Forbidden" }, 403);
 	}
-	const authz = await authorizeMailbox(c.env.BUCKET, c.get("principal"), mailboxId);
+	const authz = await authorizeMailboxAccess(authDb(c.env.AUTH_DB), c.get("principal")?.userId, mailboxId);
 	if (!authz.ok) {
 		return c.json({ error: authz.error }, authz.status);
 	}
+	// The AI agent is part of the service, which ends with the subscription.
+	const ended = await serviceEndedErrorForMailbox(c.env, authz.mailboxId);
+	if (ended) return c.json(ended, 403);
 	const response = await routeAgentRequest(c.req.raw, c.env);
 	if (response) return response;
 	return c.text("Agent not found", 404);
@@ -278,5 +121,8 @@ export default {
 	},
 	async queue(batch: MessageBatch<unknown>, env: Env) {
 		await handleEmailSendingQueueBatch(batch, env);
+	},
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+		ctx.waitUntil(runScheduledMaintenance(env, new Date(controller.scheduledTime)));
 	},
 };

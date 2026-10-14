@@ -170,12 +170,14 @@ export default function FoldersColumn() {
 
 				<SectionLabel
 					action={
-						<IconButton
-							label="Create tag"
-							icon={PlusIcon}
-							onClick={() => setIsCreateOpen(true)}
-							className="-my-1.5 -mr-1"
-						/>
+						mailbox?.readOnly ? undefined : (
+							<IconButton
+								label="Create tag"
+								icon={PlusIcon}
+								onClick={() => setIsCreateOpen(true)}
+								className="-my-1.5 -mr-1"
+							/>
+						)
 					}
 				>
 					{displayName} tags

@@ -110,6 +110,8 @@ class ComposeFormModel(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var autoSaveJob: Job? = null
     private var toastDismissJob: Job? = null
+    /** Set once a save bounces with `service_ended`, so autosave stops retrying. */
+    private var writesBlocked = false
 
     val title: String
         get() = when (mode) {
@@ -361,6 +363,8 @@ class ComposeFormModel(
         cancelAutoSave()
         commitPendingTokens()
         if (isEmpty) return true
+        // The mailbox went read-only (service ended): saving again can't succeed.
+        if (writesBlocked) return false
         val snapshot = currentSnapshot
         if (draftId != null && snapshot == lastSavedSnapshot) return true
         // A save is already in flight; the next minimize/explicit save picks up any delta.
@@ -404,7 +408,13 @@ class ComposeFormModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w("ComposeFormModel", "saveDraft failed", e)
+            if (e is ApiException.ServiceEnded) {
+                // The domain's service ended: stop autosaving and say why, once.
+                writesBlocked = true
+                errorMessage = e.message ?: "This mailbox is read-only"
+            } else {
+                Log.w("ComposeFormModel", "saveDraft failed", e)
+            }
             return false
         } finally {
             isSavingDraft = false
@@ -426,6 +436,7 @@ class ComposeFormModel(
 
     fun scheduleAutoSave(onSave: () -> Unit) {
         autoSaveJob?.cancel()
+        if (writesBlocked) return
         autoSaveJob = scope.launch {
             delay(1200)
             if (!isEmpty) onSave()

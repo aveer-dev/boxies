@@ -437,7 +437,7 @@ function buildEmail3AdvancedAndSecurity(recipientEmail: string, displayName: str
         4. Granular Mailbox Sharing (ACL)
       </h2>
       <p style="font-size: 13.5px; color: #475569; margin: 0;">
-        Share mailbox access with team members, assistants, or family without sharing passwords. In <strong>Settings &rarr; Sharing</strong>, add authorized principals as owners or members. Authorized users see the shared mailbox appear directly in their sidebar account switcher.
+        Share mailbox access with team members, assistants, or family without sharing passwords. In <strong>Settings &rarr; Sharing</strong>, invite people as owners or members. Once they accept, they see the shared mailbox appear directly in their sidebar account switcher.
       </p>
     </div>
 

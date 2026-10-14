@@ -164,9 +164,10 @@ fun EmailActionsSheet(
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     val folders by app.folders.collectAsState()
-    val availability = EmailActionAvailability(email)
+    val readOnly by app.selectedMailboxReadOnly.collectAsState()
+    val availability = EmailActionAvailability(email, readOnly)
     val fromList = onRemoveFromList != null
-    val moveTargets = folders.filter { it.id != email.folderId }
+    val moveTargets = if (availability.showsMove) folders.filter { it.id != email.folderId } else emptyList()
 
     var screen by remember { mutableStateOf(ActionsScreen.Main) }
     var showDeleteMenu by remember { mutableStateOf(false) }

@@ -62,8 +62,19 @@ export const session = sqliteTable(
 		userId: text("user_id")
 			.notNull()
 			.references(() => user.id, { onDelete: "cascade" }),
+		/**
+		 * Null for a full app session. "aliases" for browser-extension and
+		 * AutoFill tokens, which may only list mailboxes and manage private
+		 * emails (see `lib/auth-paths.ts`).
+		 */
+		scope: text("scope"),
+		/** Name shown in the session list ("Browser extension", "iPhone AutoFill"). */
+		label: text("label"),
 	},
-	(t) => [index("session_user_id_idx").on(t.userId)],
+	(t) => [
+		index("session_user_id_idx").on(t.userId),
+		index("session_expires_at_idx").on(t.expiresAt),
+	],
 );
 
 export const account = sqliteTable(
@@ -144,7 +155,8 @@ export const mailboxMember = sqliteTable(
 	],
 );
 
-export const DOMAIN_STATUSES = ["pending", "active", "decommissioned"] as const;
+/** `suspended`: the domain's subscription ended; its mailboxes are read-only until renewed. */
+export const DOMAIN_STATUSES = ["pending", "active", "suspended", "decommissioned"] as const;
 export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
 
 /** A customer domain. Registrar/DNS details stay in R2 domain metadata. */
@@ -164,6 +176,29 @@ export const domain = sqliteTable(
 	},
 	(t) => [index("domain_owner_user_id_idx").on(t.ownerUserId)],
 );
+
+export const DOMAIN_RESERVATION_STATUSES = ["checkout", "awaiting_payment", "provisioning"] as const;
+export type DomainReservationStatus = (typeof DOMAIN_RESERVATION_STATUSES)[number];
+
+/**
+ * One in-flight purchase per domain, so two buyers can't both pay for it.
+ * The row goes away once the domain is provisioned, refunded or abandoned.
+ */
+export const domainReservation = sqliteTable("domain_reservation", {
+	domain: text("domain").primaryKey(),
+	/** Secret in the checkout's cancel URL; lets that browser give the hold back. */
+	holdId: text("hold_id"),
+	/** Stripe Checkout Session id; null until the session exists. */
+	sessionId: text("session_id"),
+	status: text("status", { enum: DOMAIN_RESERVATION_STATUSES }).notNull(),
+	/**
+	 * When the hold lapses: checkout expiry plus a grace period for late webhooks,
+	 * or the provisioning lease. Null while a delayed payment is pending.
+	 */
+	expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+	createdAt: createdAt(),
+	updatedAt: updatedAt(),
+});
 
 export const domainAdmin = sqliteTable(
 	"domain_admin",
@@ -198,6 +233,9 @@ export const invite = sqliteTable(
 		acceptedBy: text("accepted_by").references(() => user.id, { onDelete: "set null" }),
 		acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
 		revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+		/** Invite emails sent so far and when the last went out (resend throttle). */
+		emailCount: integer("email_count").notNull().default(1),
+		lastEmailedAt: integer("last_emailed_at", { mode: "timestamp_ms" }),
 		createdAt: createdAt(),
 	},
 	(t) => [index("invite_mailbox_id_idx").on(t.mailboxId)],

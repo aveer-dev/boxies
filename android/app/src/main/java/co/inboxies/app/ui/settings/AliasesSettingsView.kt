@@ -1048,7 +1048,7 @@ private fun CreateAliasSheet(
                 throw e
             } catch (e: Exception) {
                 // Server reasons (e.g. the per-mailbox limit) are worth showing as-is.
-                errorMessage = (e as? ApiException.Http)?.message?.takeIf { it.isNotBlank() }
+                errorMessage = (e as? ApiException)?.serverMessage
                     ?: "Failed to create private email"
             } finally {
                 isCreating = false
