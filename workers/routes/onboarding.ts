@@ -128,7 +128,8 @@ async function createSignupUser(
 		return { ok: false, status: 409, error: "This username is already taken" };
 	}
 	const backup = user.backupEmail?.trim().toLowerCase();
-	if (backup && (await isHostedEmailDomain(env, backup))) {
+	const ownDomain = user.mailboxId.slice(user.mailboxId.lastIndexOf("@") + 1);
+	if (backup && (backup.endsWith(`@${ownDomain}`) || (await isHostedEmailDomain(env, backup)))) {
 		return { ok: false, status: 400, error: "Use a backup email outside Inboxies" };
 	}
 	const { id: userId, statements } = await userRowStatements(db, {

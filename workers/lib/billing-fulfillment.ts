@@ -53,6 +53,7 @@ import {
 	releaseForSession,
 } from "./domain-reservations";
 import {
+	chargeKeysOnly,
 	endDomainService,
 	needsManualRegistrarRenewal,
 	scheduleRenewalCharge,
@@ -632,7 +633,9 @@ export async function fulfillRenewal(env: Env, session: StripeCheckoutSession, n
 		if (meta.billing?.checkoutSessionId !== session.id) {
 			await refreshRegistration(env, meta);
 			const summary = summarizeDomainService(meta, now);
-			if (summary.status !== "ended") {
+			// Renewable: ended, or still running out a cancelled subscription.
+			const runningOut = summary.status === "ending" && Boolean(meta.billing?.canceledAt);
+			if (summary.status !== "ended" && !runningOut) {
 				return await refundAndFail(env, db, session, record, `${domain} was already renewed.`);
 			}
 			if (summary.renewBy && now.getTime() >= Date.parse(summary.renewBy)) {
@@ -791,6 +794,21 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 	let serviceChange: "ending" | "resumed" | "ended" | "restored" | null = null;
 	let renewalPaid = false;
 	let renewalFailed = false;
+	/**
+	 * The subscription stopped. Payment trouble ends the service now. A
+	 * cancellation the customer asked for runs until what they paid for runs
+	 * out (the charge comes 60 days before the registration expires, so the
+	 * Stripe period ends before it); the hourly run ends it then.
+	 */
+	const stopOrRunOut = (sub: Record<string, any>): "ended" | "ending" | null => {
+		const asked = billing.cancelAtPeriodEnd || sub.cancellation_details?.reason === "cancellation_requested";
+		const until = paidThrough(meta);
+		if (!asked || !until || Date.parse(until) <= Date.now()) return "ended";
+		const wasEnding = Boolean(billing.cancelAtPeriodEnd);
+		billing.cancelAtPeriodEnd = true;
+		billing.serviceEndsAt = latest(billing.serviceEndsAt, until);
+		return wasEnding ? null : "ending";
+	};
 	const setStatus = (status: string, force = false) => {
 		if (!force && stale) return;
 		billing.status = status;
@@ -800,20 +818,26 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 	switch (type) {
 		case "invoice.paid":
 		case "invoice.payment_succeeded": {
-			billing.lastPaidAt = now;
-			billing.pastDueSince = undefined;
+			// Moving the charge date makes a $0 invoice: it's not a payment.
+			const zero = (obj.amount_paid ?? obj.total) === 0;
+			if (!zero) billing.lastPaidAt = now;
 			setStatus("active");
+			// An older event (e.g. a delivery delayed past a later failure) changes nothing else.
+			if (stale) break;
+			billing.pastDueSince = undefined;
 			// The paid period ends at the next charge.
 			const periodEnd = obj.lines?.data?.[0]?.period?.end;
 			if (typeof periodEnd === "number" && periodEnd * 1000 > Date.now()) {
 				billing.nextChargeAt = new Date(periodEnd * 1000).toISOString();
 			}
 			// An unpaid subscription that gets paid is back (a cancelled one can't be).
-			if (!stale && ended && !cancelled) serviceChange = "restored";
-			else if (!ended && !billing.cancelAtPeriodEnd) renewalPaid = true;
+			if (ended && !cancelled) serviceChange = "restored";
+			else if (!zero && !ended && !billing.cancelAtPeriodEnd) renewalPaid = true;
 			break;
 		}
 		case "invoice.payment_failed":
+			// A failure older than the latest payment (Stripe doesn't promise order) is history.
+			if (stale) break;
 			// First failure of this charge: stop the registrar renewing until it's paid, and say so.
 			if (!billing.pastDueSince && !ended) renewalFailed = true;
 			billing.pastDueSince ??= now;
@@ -824,7 +848,7 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 			if (typeof obj.status === "string") setStatus(obj.status);
 			if (ENDED_SUBSCRIPTION_STATUSES.has(obj.status)) {
 				if (obj.status === "canceled") billing.canceledAt ??= now;
-				if (!ended) serviceChange = "ended";
+				if (!ended) serviceChange = stopOrRunOut(obj);
 				break;
 			}
 			if (ended) {
@@ -834,7 +858,7 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 			const ending = Boolean(obj.cancel_at_period_end || obj.cancel_at);
 			const wasEnding = Boolean(billing.cancelAtPeriodEnd);
 			billing.cancelAtPeriodEnd = ending;
-			billing.serviceEndsAt = ending ? scheduledEnd(obj) : undefined;
+			billing.serviceEndsAt = ending ? latest(scheduledEnd(obj), paidThrough(meta)) : undefined;
 			if (!ending) {
 				const next = nextChargeOf(obj);
 				if (next) billing.nextChargeAt = next;
@@ -846,7 +870,7 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 		case "customer.subscription.deleted":
 			setStatus("canceled", true);
 			billing.canceledAt ??= now;
-			if (!ended) serviceChange = "ended";
+			if (!ended) serviceChange = stopOrRunOut(obj);
 			break;
 		case "charge.refunded":
 			billing.refundedAt = now;
@@ -860,7 +884,7 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 			break;
 	}
 
-	if (serviceChange === "ending" || serviceChange === "resumed") billing.remindersSent = [];
+	if (serviceChange === "ending" || serviceChange === "resumed") billing.remindersSent = chargeKeysOnly(billing.remindersSent);
 	billing.updatedAt = now;
 	meta.billing = billing;
 	meta.updatedAt = now;
@@ -868,7 +892,7 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 	// The service follows the subscription.
 	if (serviceChange === "restored") {
 		await restoreDomainService(env, meta);
-		await unwatchDomain(env, domain);
+		await watchDomain(env, domain);
 		await sendReminder(env, meta, summarizeDomainService(meta), { kind: "restored" }).catch((e) =>
 			console.error(`[billing] restored notice for ${domain} failed:`, (e as Error).message || e),
 		);
@@ -881,10 +905,20 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 		await refreshRegistration(env, meta);
 		await setAutoRenewBestEffort(env, meta, false);
 	}
+	if (renewalPaid) await refreshRegistration(env, meta);
 	if (serviceChange === "resumed" || renewalPaid) await setAutoRenewBestEffort(env, meta, true);
 	if (renewalFailed) await setAutoRenewBestEffort(env, meta, false);
-	if (type.startsWith("invoice.paid") || type === "invoice.payment_succeeded") await refreshRegistration(env, meta);
+	// Paid after the registrar's own auto-renew run: someone has to renew it by hand.
+	if (renewalPaid && needsManualRegistrarRenewal(meta)) {
+		await alertOps(
+			env,
+			`Renew ${domain} at the registrar by hand`,
+			`The renewal payment for ${domain} came in late; its registration expires ${meta.registration?.expiresAt}, ` +
+				"past the registrar's auto-renew run. Renew it in the Cloudflare dashboard.",
+		);
+	}
 	await saveDomainMetadata(env.BUCKET, meta);
+	if (billing.nextChargeAt) await watchDomain(env, domain);
 
 	if (serviceChange === "ended") await endDomainService(env, domain);
 	if (serviceChange === "ending" || serviceChange === "ended") {
@@ -909,6 +943,17 @@ function nextChargeOf(sub: Record<string, any>): string | undefined {
 			? sub.trial_end
 			: (sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end);
 	return typeof ts === "number" && ts * 1000 > Date.now() ? new Date(ts * 1000).toISOString() : undefined;
+}
+
+/** The end of what the customer has paid for: the registration their last payment covered. */
+function paidThrough(meta: DomainMetadata): string | undefined {
+	return meta.registration?.provider === "cloudflare_registrar" ? meta.registration.expiresAt : undefined;
+}
+
+function latest(a: string | undefined, b: string | undefined): string | undefined {
+	if (!a) return b;
+	if (!b) return a;
+	return Date.parse(a) >= Date.parse(b) ? a : b;
 }
 
 /** Statuses of a subscription that is collecting again. */

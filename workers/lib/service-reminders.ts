@@ -31,7 +31,7 @@ import * as schema from "../auth/schema";
 import { anyRecoveryEmail, findUserById } from "../auth/users";
 import { getDomainMetadata, saveDomainMetadata, type DomainMetadata } from "./domain-registry";
 import { escapeHtml } from "./email-helpers";
-import { refreshRegistration, summarizeDomainService, type DomainServiceSummary } from "./domain-service";
+import { endRunOutService, refreshRegistration, summarizeDomainService, type DomainServiceSummary } from "./domain-service";
 import { purgeExpiredDomain } from "./domain-purge";
 import { listAllR2Objects } from "./r2-list";
 
@@ -284,7 +284,7 @@ export async function sendReminder(
 ): Promise<{ recipients: number; sent: number }> {
 	const recipients = await reminderRecipients(env, meta, summary.status !== "ended");
 	if (recipients.length === 0) {
-		console.warn(`[ServiceReminders] ${meta.domain}: nobody to tell about "${reminder.kind}" (no verified recovery email)`);
+		console.warn(`[ServiceReminders] ${meta.domain}: nobody to tell about "${reminder.kind}" (no recovery email)`);
 		return { recipients: 0, sent: 0 };
 	}
 	const { subject, paragraphs, cta } = reminderContent(summary, reminder);
@@ -310,11 +310,8 @@ export async function remindIfDue(env: Env, domain: string, now = new Date()): P
 		return null;
 	}
 	const initial = summarizeDomainService(meta, now);
-	// In service with no charge date to announce: nothing to watch for.
-	if (initial.status === "active" && !initial.nextChargeAt) {
-		await unwatchDomain(env, domain);
-		return null;
-	}
+	// In service with no charge date yet: nothing to send, but keep watching.
+	if (initial.status === "active" && !initial.nextChargeAt) return null;
 	if (!dueReminder(summarizeDomainService(meta, now), meta.billing.remindersSent ?? [], now)) return null;
 
 	// The deadline comes from the registration's expiry, which moves when it renews.
@@ -356,7 +353,10 @@ export async function sendServiceReminders(
 	for (const obj of await listAllR2Objects(env.BUCKET, WATCH_PREFIX)) {
 		const domain = obj.key.slice(WATCH_PREFIX.length);
 		try {
-			if (await purgeExpiredDomain(env, domain, now)) {
+			if (await endRunOutService(env, domain, now)) {
+				await remindIfDue(env, domain, now);
+				reminded.push(domain);
+			} else if (await purgeExpiredDomain(env, domain, now)) {
 				purged.push(domain);
 				await unwatchDomain(env, domain);
 			} else if (await remindIfDue(env, domain, now)) {

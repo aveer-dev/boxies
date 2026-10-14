@@ -20,10 +20,12 @@ import { authDb, listMailboxesOnDomain } from "../auth/authz";
 import * as schema from "../auth/schema";
 import { billingCustomerKey } from "./billing-fulfillment";
 import { deleteZone } from "./cloudflare-client";
+import { getOwnedRegistration } from "./cloudflare-registrar";
 import { deleteDomainMetadata, deleteEmailAlias, getDomainMetadata } from "./domain-registry";
 import { purgeDate } from "./domain-service";
 import { purgeEmailAgents } from "./email-agent";
 import { mailboxMetadataKey } from "./mailbox-routing";
+import { alertOps } from "./ops-alert";
 
 /** Delete a released domain's mail if its retention has run out. Returns true when it did. */
 export async function purgeExpiredDomain(env: Env, domain: string, now = new Date()): Promise<boolean> {
@@ -35,6 +37,17 @@ export async function purgeExpiredDomain(env: Env, domain: string, now = new Dat
 	const db = authDb(env.AUTH_DB);
 	const row = await db.select({ status: schema.domain.status }).from(schema.domain).where(eq(schema.domain.domain, domain)).get();
 	if (row && row.status !== "suspended") return false;
+
+	// Only once the registrar has really let the name go: if we still hold it
+	// (e.g. restored by hand, or our stored expiry is stale), keep the mail.
+	let stillOurs: boolean;
+	try {
+		stillOurs = Boolean(await getOwnedRegistration(env, domain));
+	} catch (e) {
+		console.warn(`[DomainPurge] ${domain}: registrar lookup failed, not purging:`, (e as Error).message || e);
+		return false;
+	}
+	if (stillOurs) return false;
 
 	for (const mailboxId of await listMailboxesOnDomain(db, domain)) {
 		const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
@@ -48,7 +61,11 @@ export async function purgeExpiredDomain(env: Env, domain: string, now = new Dat
 	}
 	if (meta.zoneId) {
 		await deleteZone(env, meta.zoneId).catch((e) =>
-			console.warn(`[DomainPurge] couldn't delete the zone for ${domain}:`, (e as Error).message || e),
+			alertOps(
+				env,
+				`Delete the Cloudflare zone for ${domain} by hand`,
+				`${domain}'s mail was deleted after its retention ran out, but zone ${meta.zoneId} couldn't be deleted: ${(e as Error).message || e}`,
+			),
 		);
 	}
 	await db.delete(schema.domain).where(eq(schema.domain.domain, domain));

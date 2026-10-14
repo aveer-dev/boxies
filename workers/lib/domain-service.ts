@@ -43,6 +43,11 @@ export const REGISTRAR_AUTO_RENEW_LEAD_DAYS = 30;
  */
 export const RENEWAL_CHARGE_LEAD_DAYS = 60;
 
+/** Charge-notice keys survive a reset of the end-of-service reminders (one notice per charge). */
+export function chargeKeysOnly(keys: string[] | undefined): string[] {
+	return (keys ?? []).filter((k) => k.startsWith("charge-"));
+}
+
 /** Days after expiry until Cloudflare releases a lapsed domain (40 grace + 30 redemption + 5 pending delete). */
 export const REGISTRAR_RELEASE_DAYS = 75;
 
@@ -238,7 +243,7 @@ export async function endDomainService(env: Env, domain: string, now = new Date(
 		...meta.billing,
 		serviceEndedAt: meta.billing.serviceEndedAt ?? stamp,
 		// A fresh end of service gets a fresh set of reminders.
-		remindersSent: newlyEnded ? [] : meta.billing.remindersSent,
+		remindersSent: newlyEnded ? chargeKeysOnly(meta.billing.remindersSent) : meta.billing.remindersSent,
 		cancelAtPeriodEnd: false,
 		serviceEndsAt: undefined,
 		updatedAt: stamp,
@@ -254,6 +259,19 @@ export async function endDomainService(env: Env, domain: string, now = new Date(
 }
 
 /**
+ * A cancelled subscription ran out what the customer paid for: end the
+ * service now (the hourly run calls this). Returns true when it did.
+ */
+export async function endRunOutService(env: Env, domain: string, now = new Date()): Promise<boolean> {
+	const meta = await getDomainMetadata(env.BUCKET, domain);
+	const billing = meta?.billing;
+	if (!billing || billing.serviceEndedAt || !billing.canceledAt || !billing.cancelAtPeriodEnd) return false;
+	if (!billing.serviceEndsAt || Date.parse(billing.serviceEndsAt) > now.getTime()) return false;
+	await endDomainService(env, domain, now);
+	return true;
+}
+
+/**
  * Back in service (renewed, resumed, or an unpaid subscription got paid).
  * `meta.billing` already describes the paying subscription; this clears the
  * end of service, turns auto-renew back on and saves, R2 first then D1. Only
@@ -261,7 +279,12 @@ export async function endDomainService(env: Env, domain: string, now = new Date(
  */
 export async function restoreDomainService(env: Env, meta: DomainMetadata, now = new Date()): Promise<void> {
 	if (meta.billing) {
-		meta.billing = { ...meta.billing, serviceEndedAt: undefined, remindersSent: [], updatedAt: now.toISOString() };
+		meta.billing = {
+			...meta.billing,
+			serviceEndedAt: undefined,
+			remindersSent: chargeKeysOnly(meta.billing.remindersSent),
+			updatedAt: now.toISOString(),
+		};
 	}
 	await setAutoRenewBestEffort(env, meta, true);
 	meta.updatedAt = now.toISOString();

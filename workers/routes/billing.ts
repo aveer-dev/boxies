@@ -530,8 +530,9 @@ window.location.href = ${JSON.stringify(deepLink)};
 			);
 		}
 
-		// Set to end but still running: just take the cancellation back.
-		if (summary.status === "ending") {
+		// Set to end but still running: just take the cancellation back (unless
+		// Stripe already ended it and we're only running out what was paid for).
+		if (summary.status === "ending" && !meta.billing.canceledAt) {
 			const subscriptionId = meta.billing.subscriptionId;
 			if (c.env.STRIPE_SECRET_KEY && subscriptionId) {
 				try {

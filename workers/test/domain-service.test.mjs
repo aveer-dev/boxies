@@ -156,11 +156,12 @@ let inviteToken = "";
 	assert.equal(res.status, 200);
 	const meta = await getDomainMetadata(bucket, "acme.com");
 	assert.equal(meta.billing.cancelAtPeriodEnd, true);
-	assert.equal(meta.billing.serviceEndsAt, iso(Math.floor((NOW + 5 * DAY) / 1000) * 1000));
+	// It runs until the registration it paid for expires (20 days), not Stripe's cancel date (5).
+	assert.equal(meta.billing.serviceEndsAt, meta.registration.expiresAt);
 	assert.equal(await domainStatus("acme.com"), "active", "still in service until the end");
-	assert.equal(sentTo("ada@personal.test", /ends in 5 days/).length, 1, "the owner's recovery email hears first");
-	assert.equal(sentTo("ada@acme.com", /ends in 5 days/).length, 1, "their address on the domain still works, so it's told too");
-	assert.equal(sentTo("bob@gmail.com", /ends in 5 days/).length, 1, "domain admins are told");
+	assert.equal(sentTo("ada@personal.test", /service ends on /).length, 1, "the owner's recovery email hears first");
+	assert.equal(sentTo("ada@acme.com", /service ends on /).length, 1, "their address on the domain still works, so it's told too");
+	assert.equal(sentTo("bob@gmail.com", /service ends on /).length, 1, "domain admins are told");
 	assert.ok(await bucket.get("billing/service-watch/acme.com"), "watched for reminders");
 
 	// An invite sent while the domain still runs (used after it ends, below).
@@ -444,7 +445,7 @@ let inviteToken = "";
 	assert.equal(meta.billing.serviceEndedAt, undefined);
 	assert.equal(meta.registration.autoRenew, true);
 	assert.equal(sentTo("ada@personal.test", /back in service/).length, 1);
-	assert.equal(await bucket.get("billing/service-watch/delta.com"), null);
+	assert.ok(await bucket.get("billing/service-watch/delta.com"), "still watched for its charge notices");
 
 	// A cancelled subscription never comes back this way.
 	await webhook("customer.subscription.deleted", { id: "sub_delta.com", customer: "cus_delta.com", status: "canceled" }, t + 120);
@@ -476,18 +477,9 @@ let inviteToken = "";
 	await billedDomain("epsilon.com", { expiresInDays: -10 });
 	await indexCustomer("epsilon.com");
 
-	// Cancellation scheduled: auto-renew goes off right away, before the registrar's own renewal run.
-	await webhook("customer.subscription.updated", {
-		id: "sub_epsilon.com",
-		customer: "cus_epsilon.com",
-		status: "active",
-		cancel_at_period_end: true,
-		cancel_at: Math.floor((NOW + 20 * DAY) / 1000),
-	});
-	assert.equal((await getDomainMetadata(bucket, "epsilon.com")).registration.autoRenew, false);
-
+	// Stripe stops collecting: the service ends, and the deadline uses the refreshed expiry.
 	email.sent.length = 0;
-	await webhook("customer.subscription.deleted", { id: "sub_epsilon.com", customer: "cus_epsilon.com", status: "canceled" });
+	await webhook("customer.subscription.updated", { id: "sub_epsilon.com", customer: "cus_epsilon.com", status: "unpaid" });
 	const meta = await getDomainMetadata(bucket, "epsilon.com");
 	assert.equal(meta.registration.expiresAt, current.expiresAt, "expiry refreshed from the registrar");
 	const summary = summarizeDomainService(meta);
@@ -519,6 +511,14 @@ let inviteToken = "";
 		body: { domain: "own-domain.com", username: "me", password: "OwnDomainPassword1!" },
 	});
 	assert.equal(byo.status, 400, "signing up with your own domain needs one");
+	const byoSame = await request(env, {
+		method: "POST",
+		path: "/api/v1/auth/signup-domain",
+		body: { domain: "own-domain.com", username: "me", password: "OwnDomainPassword1!", backupEmail: "other@own-domain.com" },
+	});
+	assert.equal(byoSame.status, 400, "not an address on the domain being claimed");
+	const removeOwn = await request(env, { method: "DELETE", path: "/api/v1/me/recovery-email", principal: asAda });
+	assert.equal(removeOwn.payload.code, "recovery_email_required", "owners can replace it, not remove it");
 
 	// Paid: the new owner gets it as an (unverified) recovery email, with a code to confirm it.
 	const created = await checkout({ ...signup, backupEmail: "Zed@Personal.test" });
@@ -591,6 +591,75 @@ let inviteToken = "";
 	assert.equal(meta.registration.autoRenew, true, "paid: the registrar may renew");
 	assert.equal(meta.billing.nextChargeAt, iso(nextYear * 1000));
 	assert.equal(meta.billing.pastDueSince, undefined);
+
+	// A failure delivered late (older than the payment) changes nothing.
+	email.sent.length = 0;
+	await webhook("invoice.payment_failed", failed, t + 90);
+	meta = await getDomainMetadata(bucket, "theta.com");
+	assert.equal(meta.registration.autoRenew, true, "a stale failure doesn't stop the registrar renewing a paid domain");
+	assert.equal(meta.billing.pastDueSince, undefined);
+	assert.equal(email.sent.length, 0);
+
+	// The $0 invoice from moving the charge date isn't a payment.
+	const lastPaid = meta.billing.lastPaidAt;
+	await webhook("invoice.paid", { ...failed, billing_reason: "subscription_update", amount_paid: 0 }, t + 200);
+	assert.equal((await getDomainMetadata(bucket, "theta.com")).billing.lastPaidAt, lastPaid);
+}
+
+// ── Cancelling keeps what was paid for ───────────────────────────
+
+{
+	// Charged 60 days before expiry, so Stripe's period ends before the registration
+	// it paid for. A cancellation runs until that registration expires.
+	await billedDomain("iota.com", { expiresInDays: 70 });
+	await indexCustomer("iota.com");
+	const t = Math.floor(NOW / 1000);
+	await webhook("customer.subscription.updated", {
+		id: "sub_iota.com",
+		customer: "cus_iota.com",
+		status: "active",
+		cancel_at_period_end: true,
+		current_period_end: Math.floor((NOW + 10 * DAY) / 1000),
+	}, t);
+	let meta = await getDomainMetadata(bucket, "iota.com");
+	assert.equal(meta.billing.serviceEndsAt, iso(NOW + 70 * DAY), "ends when the paid-for registration does, not at Stripe's period end");
+	assert.equal(meta.registration.autoRenew, false, "the registrar won't renew a domain whose owner is leaving");
+
+	await webhook("customer.subscription.deleted", {
+		id: "sub_iota.com",
+		customer: "cus_iota.com",
+		status: "canceled",
+		cancellation_details: { reason: "cancellation_requested" },
+	}, t + 60);
+	assert.equal(await domainStatus("iota.com"), "active", "still in service: it's paid for");
+	meta = await getDomainMetadata(bucket, "iota.com");
+	assert.equal(summarizeDomainService(meta).status, "ending");
+
+	// The hourly run ends it once that runs out.
+	await sendServiceReminders(env, new Date(NOW + 69 * DAY));
+	assert.equal(await domainStatus("iota.com"), "active");
+	await sendServiceReminders(env, new Date(NOW + 71 * DAY));
+	assert.equal(await domainStatus("iota.com"), "suspended");
+
+	// A subscription stopped for non-payment ends the service straight away.
+	await billedDomain("omicron.com", { expiresInDays: 70 });
+	await indexCustomer("omicron.com");
+	await webhook("customer.subscription.deleted", {
+		id: "sub_omicron.com",
+		customer: "cus_omicron.com",
+		status: "canceled",
+		cancellation_details: { reason: "payment_failed" },
+	});
+	assert.equal(await domainStatus("omicron.com"), "suspended");
+
+	// Running out a cancelled subscription, the owner can still renew (a new subscription).
+	await billedDomain("pi.com", { expiresInDays: 70 });
+	await indexCustomer("pi.com");
+	await webhook("customer.subscription.updated", { id: "sub_pi.com", customer: "cus_pi.com", status: "active", cancel_at_period_end: true }, t);
+	await webhook("customer.subscription.deleted", { id: "sub_pi.com", customer: "cus_pi.com", status: "canceled" }, t + 60);
+	const renewed = await request(env, { method: "POST", path: "/api/v1/billing/domains/pi.com/renew", principal: asAda, body: {} });
+	assert.equal(renewed.payload.renewed, true, "a new subscription, not a resume of the cancelled one");
+	assert.equal(summarizeDomainService(await getDomainMetadata(bucket, "pi.com")).status, "active");
 }
 
 // ── 30 days after the name is released, the mail is deleted ─────
@@ -619,6 +688,15 @@ let inviteToken = "";
 	assert.equal(await getDomainMetadata(bucket, "kappa.com"), null);
 	assert.equal(await bucket.get("billing/service-watch/kappa.com"), null);
 	assert.ok(await db.select().from(schema.user).where(eq(schema.user.id, "ada")).get(), "accounts stay");
+
+	// The registrar still holds the name (e.g. restored by hand): the mail is kept.
+	const { registerDomain } = await import("../lib/cloudflare-registrar.ts");
+	await registerDomain({}, "xi.com");
+	await ended("xi.com", -110, ["ended", "renew-closed", "purge-7d", "purge-1d"]);
+	await db.update(schema.domain).set({ status: "suspended" }).where(eq(schema.domain.domain, "xi.com"));
+	await bucket.put("billing/service-watch/xi.com", "1");
+	assert.ok(!(await sendServiceReminders(env, new Date(NOW))).purged.includes("xi.com"));
+	assert.ok(await getDomainMetadata(bucket, "xi.com"));
 
 	// A domain renewed in time is never touched.
 	await billedDomain("mu.com", { expiresInDays: -110 });
