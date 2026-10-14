@@ -7,15 +7,21 @@ import {
 	RobotIcon,
 	ArrowCounterClockwiseIcon,
 	CaretRightIcon,
-	KeyIcon,
+	SignOutIcon,
 } from "@phosphor-icons/react";
 import { Suspense, useEffect, useState } from "react";
 import { useParams } from "react-router";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { useUIStore } from "~/hooks/useUIStore";
+import { useMe, useRecoveryEmail } from "~/queries/account";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import { signOut } from "~/lib/sign-out";
-import { INCOMING_MAIL_PAGES, SETTINGS_PAGES, type SettingsPageId } from "./pages";
+import {
+	ACCOUNT_PAGES,
+	INCOMING_MAIL_PAGES,
+	SETTINGS_PAGES,
+	type SettingsPageId,
+} from "./pages";
 
 // Placeholder shown in the textarea when no custom prompt is set.
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
@@ -78,10 +84,10 @@ function SettingsContent() {
 		<div className="px-4 py-4 md:px-6 md:py-5">
 
 			<div className="space-y-6">
-				{/* Account */}
+				{/* This mailbox */}
 				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
 					<div className="text-sm font-medium text-kumo-default mb-4">
-						Account
+						Mailbox
 					</div>
 					<div className="space-y-3">
 						<Input
@@ -90,28 +96,10 @@ function SettingsContent() {
 							onChange={(e) => setDisplayName(e.target.value)}
 						/>
 						<Input label="Email" type="email" value={mailbox.email} disabled />
-						<div className="pt-2 flex flex-wrap gap-2">
-							<Button
-								variant="secondary"
-								size="sm"
-								aria-pressed={settingsPage === "sign-in"}
-								onClick={() => openSettings("sign-in")}
-							>
-								<span className="inline-flex items-center gap-1.5">
-									<KeyIcon size={14} />
-									Sign-in methods
-								</span>
-							</Button>
-							<Button
-								variant="secondary"
-								size="sm"
-								onClick={() => void signOut()}
-							>
-								Log out
-							</Button>
-						</div>
 					</div>
 				</div>
+
+				<AccountCard settingsPage={settingsPage} openSettings={openSettings} />
 
 				{/* Mail automations */}
 				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
@@ -178,6 +166,62 @@ function SettingsContent() {
 						Save Changes
 					</Button>
 				</div>
+			</div>
+		</div>
+	);
+}
+
+/** The signed-in user (across mailboxes): sign-in, devices, deletion, log out. */
+function AccountCard({
+	settingsPage,
+	openSettings,
+}: {
+	settingsPage: SettingsPageId | null;
+	openSettings: (page: SettingsPageId) => void;
+}) {
+	const { data: me } = useMe();
+	const { data: recovery } = useRecoveryEmail();
+	// Reset codes go only to a verified recovery email; without one, "Forgot
+	// password" quietly sends nothing.
+	const needsRecovery = recovery !== undefined && !recovery.verified;
+	return (
+		<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+			<div className="flex items-baseline justify-between gap-3 mb-4">
+				<span className="text-sm font-medium text-kumo-default">Your account</span>
+				{me?.email && (
+					<span className="text-xs text-kumo-subtle truncate">{me.email}</span>
+				)}
+			</div>
+			{needsRecovery && (
+				<button
+					type="button"
+					onClick={() => openSettings("sign-in")}
+					className="w-full text-left rounded-md bg-kumo-warning-tint px-3 py-2 mb-3 text-xs text-kumo-default hover:opacity-90"
+				>
+					{recovery.email
+						? `Verify ${recovery.email} so you can reset your password if you forget it.`
+						: "Add a recovery email so you can reset your password if you forget it."}
+				</button>
+			)}
+			<div className="divide-y divide-kumo-line -mx-2">
+				{ACCOUNT_PAGES.map((id) => (
+					<SettingsLink
+						key={id}
+						id={id}
+						isOpen={settingsPage === id}
+						onOpen={() => openSettings(id)}
+					/>
+				))}
+			</div>
+			<div className="pt-3">
+				<Button
+					variant="secondary"
+					size="sm"
+					icon={<SignOutIcon size={14} />}
+					onClick={() => void signOut()}
+				>
+					Log out
+				</Button>
 			</div>
 		</div>
 	);
