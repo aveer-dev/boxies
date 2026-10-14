@@ -29,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +77,7 @@ fun SearchView(
     initialQuery: String = "",
 ) {
     val app = LocalAppModel.current
+    val readOnly by app.selectedMailboxReadOnly.collectAsState()
     val colors = inboxiesColors()
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -140,7 +142,8 @@ fun SearchView(
                     .weight(1f)
                     .fillMaxWidth(),
             ) {
-                if (trimmed.isNotEmpty()) {
+                // The AI agent ended with the service on a read-only mailbox.
+                if (trimmed.isNotEmpty() && !readOnly) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

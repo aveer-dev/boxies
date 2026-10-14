@@ -43,7 +43,8 @@ struct SearchView: View {
             AppTheme.background.ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 0) {
-                if !trimmedQuery.isEmpty {
+                // No AI agent on a read-only mailbox (its service ended).
+                if !trimmedQuery.isEmpty && !app.isReadOnly {
                     askAIButton
                         .padding(.horizontal, 16)
                         .padding(.top, 8)

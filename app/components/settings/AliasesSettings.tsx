@@ -13,7 +13,7 @@ import {
 import { useState } from "react";
 import { useParams } from "react-router";
 import PrivateEmailLogo from "~/components/PrivateEmailLogo";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import {
 	useAliases,
 	useCreateAlias,
@@ -274,7 +274,7 @@ function AliasListItem({ mailboxId, alias }: { mailboxId: string; alias: MaskedA
 	);
 }
 
-export default function AliasesSettingsRoute() {
+export default function AliasesSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: aliases = [], isLoading, isError, error, refetch } = useAliases(mailboxId);
@@ -349,7 +349,7 @@ export default function AliasesSettingsRoute() {
 			</div>
 
 			{creating && (
-				<div className="mb-4 space-y-3 rounded-lg border border-kumo-line bg-kumo-base p-4">
+				<div className="mb-4 space-y-3 rounded-2xl border border-kumo-line bg-kumo-base p-4">
 					<Input
 						label="Label (optional)"
 						placeholder="e.g. Airbnb, newsletter"
@@ -398,7 +398,7 @@ export default function AliasesSettingsRoute() {
 					<Loader size="lg" />
 				</div>
 			) : isError ? (
-				<div className="rounded-lg border border-kumo-line bg-kumo-base px-4 py-8 text-center" role="alert">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-8 text-center" role="alert">
 					<p className="text-sm text-kumo-default mb-1">Couldn't load private emails</p>
 					<p className="text-xs text-kumo-subtle mb-3">{error instanceof Error ? error.message : "Try again."}</p>
 					<Button variant="secondary" size="sm" onClick={() => refetch()}>
@@ -406,7 +406,7 @@ export default function AliasesSettingsRoute() {
 					</Button>
 				</div>
 			) : filteredAliases.length === 0 ? (
-				<div className="rounded-lg border border-kumo-line bg-kumo-base px-4 py-8 text-center">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-8 text-center">
 					<p className="text-sm text-kumo-default mb-1">
 						{q ? "No private emails match your search" : "No private emails yet"}
 					</p>
@@ -417,7 +417,7 @@ export default function AliasesSettingsRoute() {
 					)}
 				</div>
 			) : (
-				<ul className="divide-y divide-kumo-line rounded-lg border border-kumo-line bg-kumo-base">
+				<ul className="divide-y divide-kumo-line rounded-2xl border border-kumo-line bg-kumo-base">
 					{filteredAliases.map((alias) => (
 						<AliasListItem key={alias.id} mailboxId={mailboxId} alias={alias} />
 					))}

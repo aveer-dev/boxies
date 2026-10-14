@@ -7,6 +7,7 @@ import co.inboxies.app.models.ChatSession
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
+import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
@@ -21,8 +22,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -81,6 +85,22 @@ class AppModel {
 
     private val _administeredDomains = MutableStateFlow<List<String>>(emptyList())
     val administeredDomains: StateFlow<List<String>> = _administeredDomains.asStateFlow()
+
+    /** Billing service state per domain, from `GET /billing/domains/:domain/service`. */
+    private val _domainServices = MutableStateFlow<Map<String, DomainService>>(emptyMap())
+    val domainServices: StateFlow<Map<String, DomainService>> = _domainServices.asStateFlow()
+
+    /** The selected mailbox's domain service ended: hide every write but read/star flags. */
+    val selectedMailboxReadOnly: StateFlow<Boolean> =
+        combine(_mailboxes, _selectedMailboxId) { list, id ->
+            list.firstOrNull { it.id == id }?.isReadOnly == true
+        }.stateIn(scope, SharingStarted.Eagerly, false)
+
+    /** The selected mailbox's service: the full endpoint answer when fetched, else the detail summary. */
+    val selectedDomainService: StateFlow<DomainService?> =
+        combine(_mailboxes, _selectedMailboxId, _domainServices) { list, id, services ->
+            list.firstOrNull { it.id == id }?.let { services[it.domain] ?: it.service }
+        }.stateIn(scope, SharingStarted.Eagerly, null)
 
     private val _inboxDigest = MutableStateFlow<InboxDigest?>(null)
     val inboxDigest: StateFlow<InboxDigest?> = _inboxDigest.asStateFlow()
@@ -305,11 +325,11 @@ class AppModel {
             val previous = _mailboxes.value.associateBy { it.id }
             val merged = list.map { incoming ->
                 val existing = previous[incoming.id]
-                if (incoming.settings == null && existing?.settings != null) {
-                    incoming.copy(settings = existing.settings)
-                } else {
-                    incoming
-                }
+                // The list carries neither settings nor the service summary; keep the detail's.
+                incoming.copy(
+                    settings = incoming.settings ?: existing?.settings,
+                    service = incoming.service ?: existing?.service,
+                )
             }
             _mailboxes.value = merged
             db.upsertMailboxes(merged)
@@ -416,6 +436,14 @@ class AppModel {
                     list.map { if (it.id == detailed.id) detailed else it }
                 }
                 db.upsertMailboxes(listOf(detailed))
+                // Ended, or set to end: fetch who may renew and until when.
+                if (detailed.isReadOnly || detailed.service?.isEnding == true) {
+                    scope.launch { loadDomainService(detailed.domain) }
+                }
+            } catch (e: ApiException.ServiceEnded) {
+                // Reads aren't refused for this, but if one is, access is intact: keep the
+                // mailbox (read-only) rather than dropping it like a lost-access 403.
+                noteServiceEnded(e)
             } catch (e: ApiException.Http) {
                 if (e.code == 403 || e.code == 404) {
                     dropInaccessibleMailbox(id)
@@ -466,6 +494,124 @@ class AppModel {
             _activeConversationId.value = null
             _isLoading.value = false
         }
+    }
+
+    // MARK: - Domain service (subscription ended → read-only)
+
+    /** Fetch and cache [domain]'s service state; null when it can't be read (403, offline). */
+    suspend fun loadDomainService(domain: String): DomainService? {
+        val key = domain.lowercase()
+        if (isDebugPreview) return _domainServices.value[key]
+        return try {
+            val service = ApiClient.shared.getDomainService(key)
+            _domainServices.update { it + (key to service) }
+            service
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * A write bounced with `service_ended`: the domain went read-only mid-session. Mark
+     * its mailboxes read-only so the UI hides writes; never drop them or sign out.
+     */
+    fun noteServiceEnded(error: Throwable): Boolean {
+        val ended = error as? ApiException.ServiceEnded ?: return false
+        val domain = ended.domain?.lowercase() ?: selectedMailbox?.domain ?: return true
+        _mailboxes.update { list ->
+            list.map { if (it.domain == domain && !it.isReadOnly) it.copy(readOnly = true) else it }
+        }
+        db.upsertMailboxes(_mailboxes.value.filter { it.domain == domain })
+        scope.launch { loadDomainService(domain) }
+        return true
+    }
+
+    /** Writes are hidden for a read-only mailbox; this backs that up for any path that slips through. */
+    private fun blockIfReadOnly(): Boolean {
+        val mailbox = selectedMailbox ?: return false
+        if (!mailbox.isReadOnly) return false
+        showToast("${mailbox.domain} is read-only. Its subscription ended.", isError = true)
+        return true
+    }
+
+    sealed interface RenewOutcome {
+        /** A scheduled cancellation was taken back; still in service. */
+        data object Resumed : RenewOutcome
+        /** Local dev: renewed on the spot. */
+        data object Renewed : RenewOutcome
+        /** Open Stripe Checkout; it returns via `inboxies://billing/renewed|renew-cancelled`. */
+        data class Checkout(val url: String) : RenewOutcome
+        data class Failed(val message: String) : RenewOutcome
+    }
+
+    /** Renew an ended domain or keep one set to end (domain admins only). */
+    suspend fun renewDomain(domain: String): RenewOutcome {
+        val key = domain.lowercase()
+        if (isDebugPreview) return RenewOutcome.Failed("Renewal isn't available in previews.")
+        return try {
+            val res = ApiClient.shared.renewDomain(key)
+            when {
+                res.resumed == true -> {
+                    res.service?.let { s -> _domainServices.update { it + (key to s) } }
+                    refreshAfterRenewal(key)
+                    showToast("Subscription for $key kept")
+                    RenewOutcome.Resumed
+                }
+                !res.checkoutUrl.isNullOrBlank() -> RenewOutcome.Checkout(res.checkoutUrl)
+                res.renewed == true -> {
+                    refreshAfterRenewal(key)
+                    showToast("$key renewed")
+                    RenewOutcome.Renewed
+                }
+                else -> RenewOutcome.Failed("Couldn't start the renewal.")
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 409 (already active / window closed) carries the current state: show it.
+            if ((e as? ApiException.Http)?.code == 409) loadDomainService(key)
+            RenewOutcome.Failed((e as? ApiException)?.serverMessage ?: e.message ?: "Couldn't renew $key.")
+        }
+    }
+
+    /** `inboxies://billing/renewed|renew-cancelled?domain=` from the renewal checkout. */
+    fun handleRenewalReturn(domain: String, cancelled: Boolean) {
+        if (cancelled) {
+            showToast("Renewal for ${domain.lowercase()} cancelled")
+        } else {
+            // App scope, not the Activity's: the poll outlives a recreated Activity.
+            scope.launch { completeRenewal(domain) }
+        }
+    }
+
+    /**
+     * Back from a paid renewal checkout. The webhook restores the domain within seconds,
+     * so poll the service briefly before refreshing mailboxes.
+     */
+    private suspend fun completeRenewal(domain: String) {
+        val key = domain.lowercase()
+        showToast("Renewing $key…", isLoading = true, durationMs = 20_000)
+        var service: DomainService? = null
+        withTimeoutOrNull(20_000) {
+            while (true) {
+                service = loadDomainService(key)
+                if (service != null && service?.isEnded == false) break
+                delay(2_000)
+            }
+        }
+        refreshAfterRenewal(key)
+        if (service?.isEnded == false) {
+            showToast("$key renewed")
+        } else {
+            showToast("Payment received. $key will be back in a moment; pull to refresh.")
+        }
+    }
+
+    private suspend fun refreshAfterRenewal(domain: String) {
+        loadDomainService(domain)
+        refreshMailboxes(showLoading = false)
     }
 
     suspend fun deleteMailbox(id: String) {
@@ -879,6 +1025,7 @@ class AppModel {
             _errorMessage.value = "No mailbox selected."
             return
         }
+        if (blockIfReadOnly()) return
         if (mailbox.settings == null) {
             runCatching { ApiClient.shared.getMailbox(mailbox.id) }.getOrNull()?.let { detailed ->
                 mailbox = detailed
@@ -986,6 +1133,7 @@ class AppModel {
     suspend fun deleteThreadDraft(draft: Email) {
         if (!draft.isDraft) return
         val mailboxId = _selectedMailboxId.value ?: return
+        if (blockIfReadOnly()) return
         try {
             ApiClient.shared.deleteEmail(mailboxId, draft.id)
             db.deleteEmail(draft.id)
@@ -1168,6 +1316,7 @@ class AppModel {
         _isLoading.value = true
         _isAdmin.value = false
         _administeredDomains.value = emptyList()
+        _domainServices.value = emptyMap()
         // A pending invite survives sign-out / a signed-out cold start: the
         // invite screen clears it when it is accepted or closed.
         _errorMessage.value = null
@@ -1191,9 +1340,13 @@ class AppModel {
         threadEmails: List<Email>,
         replyLaterCount: Int,
         isAdmin: Boolean,
+        administeredDomains: List<String> = emptyList(),
+        domainServices: Map<String, DomainService> = emptyMap(),
     ) {
         streamClient.stop()
         isDebugPreview = true
+        _administeredDomains.value = administeredDomains
+        _domainServices.value = domainServices
         _mailboxes.value = mailboxes
         _selectedMailboxId.value = selectedMailboxId
         _folders.value = folders
@@ -1280,6 +1433,7 @@ class AppModel {
                 // Server errors (e.g. 409 `alias_inactive` for a paused private email) carry a
                 // readable `error` message; keep it on the form so the open sheet can show it.
                 val message = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "Send failed"
+                noteServiceEnded(it)
                 form.errorMessage = message
                 showToast(message, isError = true)
             }
@@ -1294,7 +1448,7 @@ class AppModel {
         if (form.saveDraft(explicit = true)) {
             showToast("Draft saved")
         } else if (!form.isSending) {
-            showToast(form.errorMessage ?: "Failed to save draft", isError = true)
+            showToast("Couldn't save draft", isError = true)
         }
     }
 
@@ -1480,6 +1634,7 @@ class AppModel {
      */
     suspend fun deleteEmail(email: Email) {
         val mailboxId = _selectedMailboxId.value ?: return
+        if (blockIfReadOnly()) return
         val isPermanent = email.isDraft || email.folderId == FolderIds.TRASH
         scheduleUndoableAction(
             optimistic = { removeEmailLocally(email) },
@@ -1489,7 +1644,8 @@ class AppModel {
                     if (isPermanent) db.deleteEmail(email.id) else db.moveEmail(email.id, FolderIds.TRASH)
                 } catch (e: Exception) {
                     loadEmailsForCurrentTab(showLoading = false)
-                    showToast("Couldn't delete", isError = true)
+                    val ended = noteServiceEnded(e)
+                    showToast(if (ended) e.message.orEmpty() else "Couldn't delete", isError = true)
                 }
             },
             rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
@@ -1500,6 +1656,7 @@ class AppModel {
 
     suspend fun archiveEmail(email: Email) {
         val mailboxId = _selectedMailboxId.value ?: return
+        if (blockIfReadOnly()) return
         scheduleUndoableAction(
             optimistic = { removeEmailLocally(email) },
             commit = {
@@ -1508,7 +1665,8 @@ class AppModel {
                     db.moveEmail(email.id, FolderIds.ARCHIVE)
                 } catch (e: Exception) {
                     loadEmailsForCurrentTab(showLoading = false)
-                    showToast("Couldn't archive", isError = true)
+                    val ended = noteServiceEnded(e)
+                    showToast(if (ended) e.message.orEmpty() else "Couldn't archive", isError = true)
                 }
             },
             rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
@@ -1523,6 +1681,7 @@ class AppModel {
         setSenderPreference: Boolean = false,
     ) {
         val mailboxId = _selectedMailboxId.value ?: return
+        if (blockIfReadOnly()) return
         db.moveEmail(email.id, folderId)
         removeEmailLocally(email)
         runCatching {
@@ -1533,7 +1692,12 @@ class AppModel {
                 setSenderPreference = setSenderPreference,
             )
         }.onFailure {
-            showToast("Couldn't sync move", isError = true)
+            if (noteServiceEnded(it)) {
+                loadEmailsForCurrentTab(showLoading = false)
+                showToast(it.message.orEmpty(), isError = true)
+            } else {
+                showToast("Couldn't sync move", isError = true)
+            }
         }
         if (folderId == "trash" || folderId == "spam") {
             refreshReplyLaterCount()
@@ -1545,6 +1709,7 @@ class AppModel {
 
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {
         val mailboxId = _selectedMailboxId.value ?: return
+        if (blockIfReadOnly()) return
         val sender = email.sender.trim().lowercase()
         if (sender.isEmpty()) return
         try {
@@ -1577,6 +1742,7 @@ class AppModel {
 
     suspend fun rejectScreenerSender(email: Email) {
         val mailboxId = _selectedMailboxId.value ?: return
+        if (blockIfReadOnly()) return
         val sender = email.sender.trim().lowercase()
         if (sender.isEmpty()) return
         try {
@@ -1676,14 +1842,21 @@ class AppModel {
 
     suspend fun updateMailboxSettings(transform: (MailboxSettings) -> MailboxSettings): Boolean {
         val mailboxId = _selectedMailboxId.value ?: return false
+        if (blockIfReadOnly()) return false
         val current = selectedMailbox?.settings ?: MailboxSettings()
         val next = transform(current)
         return try {
-            val updated = ApiClient.shared.updateMailbox(mailboxId, next)
+            val response = ApiClient.shared.updateMailbox(mailboxId, next)
+            val previous = _mailboxes.value.firstOrNull { it.id == response.id }
+            val updated = response.copy(
+                readOnly = response.readOnly ?: previous?.readOnly,
+                service = response.service ?: previous?.service,
+            )
             _mailboxes.update { list -> list.map { if (it.id == updated.id) updated else it } }
             db.upsertMailboxes(listOf(updated))
             true
         } catch (e: Exception) {
+            noteServiceEnded(e)
             _errorMessage.value = e.message
             false
         }

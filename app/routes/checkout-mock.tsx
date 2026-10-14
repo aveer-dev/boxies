@@ -5,7 +5,7 @@
 import { Button, Loader } from "@cloudflare/kumo";
 import { CreditCardIcon, GlobeIcon, ShieldCheckIcon, SparkleIcon } from "@phosphor-icons/react";
 import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 
 export function meta() {
 	return [{ title: "Mock Stripe Checkout — Inboxies" }];
@@ -34,10 +34,10 @@ export default function CheckoutMockRoute() {
 
 function CheckoutMockSimulator() {
 	const [searchParams] = useSearchParams();
-	const navigate = useNavigate();
 	const domain = searchParams.get("domain") || "example.com";
 	const sessionId = searchParams.get("session_id") || `mock_cs_${Date.now()}`;
 	const client = searchParams.get("client") || "";
+	const hold = searchParams.get("hold") || "";
 	const [completing, setCompleting] = useState(false);
 
 	const domainFee = 10.44;
@@ -89,7 +89,7 @@ function CheckoutMockSimulator() {
 							Stripe Checkout Simulator
 						</h1>
 					</div>
-					<span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+					<span className="text-2xs font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
 						Dev Mock
 					</span>
 				</div>
@@ -125,7 +125,7 @@ function CheckoutMockSimulator() {
 							</div>
 						</div>
 
-						<div className="text-[11px] text-kumo-subtle font-mono border-t border-kumo-line/50 pt-2">
+						<div className="text-2xs text-kumo-subtle font-mono border-t border-kumo-line/50 pt-2">
 							Domain: {domain}
 						</div>
 					</div>
@@ -156,7 +156,10 @@ function CheckoutMockSimulator() {
 					<Button
 						variant="secondary"
 						className="w-full justify-center"
-						onClick={() => navigate(`/checkout/cancel?domain=${encodeURIComponent(domain)}`)}
+						onClick={() => {
+							// Same cancel URL Stripe sends the buyer to: it gives the domain hold back.
+							window.location.href = `/api/v1/billing/checkout-cancel?domain=${encodeURIComponent(domain)}&hold=${encodeURIComponent(hold)}${client ? `&client=${encodeURIComponent(client)}` : ""}`;
+						}}
 						disabled={completing}
 					>
 						Cancel

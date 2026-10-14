@@ -5,10 +5,10 @@
 import { Button, Input, Loader, Switch, useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
-export default function AutoReplySettingsRoute() {
+export default function AutoReplySettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
@@ -67,7 +67,7 @@ export default function AutoReplySettingsRoute() {
 
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Auto-reply">
-			<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+			<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 				<p className="text-sm text-kumo-default leading-relaxed">
 					When this is on, people who email this mailbox get one automatic reply.
 					You still receive their message.
@@ -101,7 +101,7 @@ export default function AutoReplySettingsRoute() {
 						placeholder="Thanks for your email. I am away and will reply when I return."
 						rows={8}
 						disabled={!enabled}
-						className="w-full resize-y rounded-lg border border-kumo-line bg-kumo-recessed px-3 py-2 text-sm text-kumo-default placeholder:text-kumo-subtle focus:outline-none focus:ring-1 focus:ring-kumo-ring leading-relaxed disabled:opacity-50"
+						className="w-full resize-y rounded-2xl border border-kumo-line bg-kumo-recessed px-3 py-2 text-sm text-kumo-default placeholder:text-kumo-subtle focus:outline-none focus:ring-1 focus:ring-kumo-ring leading-relaxed disabled:opacity-50"
 					/>
 				</div>
 				<div className="flex justify-end pt-2">

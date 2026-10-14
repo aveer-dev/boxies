@@ -141,11 +141,15 @@ export interface DomainCheckoutResponse {
 }
 
 export interface CheckoutStatusResponse {
-	status: "pending" | "provisioning" | "ready" | "failed";
+	/**
+	 * `awaiting_payment`: a bank payment is still clearing (can take days).
+	 * `refunded`: the domain couldn't be bought, so the payment was returned.
+	 * `canceled`: the checkout was abandoned or expired.
+	 */
+	status: "pending" | "awaiting_payment" | "provisioning" | "ready" | "failed" | "refunded" | "canceled";
 	domain: string;
 	pricing?: DomainPricingBreakdown;
 	mailboxId?: string;
-	ownerUserId?: string;
 	error?: string;
 }
 
@@ -225,6 +229,41 @@ export interface Mailbox {
 	name: string;
 	settings?: MailboxSettings;
 	canManage?: boolean;
+	/** The domain's subscription ended: read and export only. */
+	readOnly?: boolean;
+	/** Billing state of the mailbox's domain; null for domains Inboxies doesn't bill. */
+	service?: DomainService | null;
+}
+
+/** Where a paid domain's service stands (GET /api/v1/billing/domains/:domain/service). */
+export interface DomainService {
+	domain: string;
+	status: "active" | "ending" | "ended";
+	/** When a subscription set to cancel ends. */
+	endsAt?: string;
+	endedAt?: string;
+	registrarManaged: boolean;
+	registrationExpiresAt?: string;
+	/** Last day the domain can be renewed (registrar grace period). */
+	renewBy?: string;
+	daysLeftToRenew?: number;
+	canRenew: boolean;
+	/** The caller is an owner/admin of the domain (only those can renew). */
+	canManage?: boolean;
+	billed?: boolean;
+	/** In service: the next yearly charge (60 days before the registration expires). */
+	nextChargeAt?: string;
+	nextChargeUsd?: number;
+	/** Ended: when the mail on the domain is deleted (30 days after the name is released). */
+	purgeAt?: string;
+}
+
+export interface RenewDomainResponse {
+	resumed?: boolean;
+	renewed?: boolean;
+	checkoutUrl?: string;
+	sessionId?: string;
+	service?: DomainService;
 }
 
 export interface EmailAuthSnapshot {

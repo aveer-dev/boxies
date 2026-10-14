@@ -16,6 +16,10 @@
 #   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
 #   ./scripts/run-debug-preview.sh members
 #   ./scripts/run-debug-preview.sh sessions
+#   ./scripts/run-debug-preview.sh serviceEnded        # read-only inbox, admin "Renew"
+#   ./scripts/run-debug-preview.sh serviceEndedMember  # read-only inbox, "Ask an admin"
+#   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
+#   ./scripts/run-debug-preview.sh domainDnsEnded      # DNS console, Subscription card
 #
 # Env:
 #   ANDROID_SERIAL  — optional adb device serial
@@ -48,13 +52,17 @@ case "$mode" in
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
+  serviceEnded|ServiceEnded|previewServiceEnded) extra=previewServiceEnded; label=serviceEnded ;;
+  serviceEndedMember|ServiceEndedMember|previewServiceEndedMember) extra=previewServiceEndedMember; label=serviceEndedMember ;;
+  serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
+  domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,22p' "$0"
+    sed -n '2,26p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | screener | replyLater" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | screener | replyLater | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
     exit 1
     ;;
 esac

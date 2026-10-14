@@ -1208,6 +1208,7 @@ fun MailboxOnboardingView(
                                                                 username = username,
                                                                 password = customPassword,
                                                                 displayName = customName.ifBlank { null },
+                                                                backupEmail = customBackupEmail.ifBlank { null },
                                                                 returnUrl = returnUrl,
                                                                 client = "android",
                                                             )

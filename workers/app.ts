@@ -39,6 +39,7 @@ const requestHandler = createRequestHandler(
 );
 
 import { isPublicAuthPath } from "./lib/auth-paths";
+import { serviceEndedErrorForMailbox } from "./lib/domain-service";
 
 export { isPublicAuthPath };
 
@@ -86,6 +87,9 @@ app.all("/agents/*", async (c) => {
 	if (!authz.ok) {
 		return c.json({ error: authz.error }, authz.status);
 	}
+	// The AI agent is part of the service, which ends with the subscription.
+	const ended = await serviceEndedErrorForMailbox(c.env, authz.mailboxId);
+	if (ended) return c.json(ended, 403);
 	const response = await routeAgentRequest(c.req.raw, c.env);
 	if (response) return response;
 	return c.text("Agent not found", 404);

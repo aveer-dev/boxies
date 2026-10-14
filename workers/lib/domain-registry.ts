@@ -31,6 +31,40 @@ export interface DomainRegistrationInfo {
 	retailPriceUsd?: number;
 }
 
+/** The Stripe subscription that pays for a purchased domain. */
+export interface DomainBillingInfo {
+	provider: "stripe";
+	checkoutSessionId: string;
+	customerId?: string;
+	subscriptionId?: string;
+	/** Stripe subscription status ("active", "past_due", "unpaid", "canceled", ...). */
+	status: string;
+	/** `created` (unix seconds) of the event that last set `status`; older events don't override it. */
+	statusEventAt?: number;
+	cancelAtPeriodEnd?: boolean;
+	lastPaidAt?: string;
+	pastDueSince?: string;
+	canceledAt?: string;
+	refundedAt?: string;
+	/** Amount refunded so far, in cents. */
+	amountRefunded?: number;
+	disputedAt?: string;
+	disputeStatus?: string;
+	/** The subscription is set to end at this time (cancel at period end). */
+	serviceEndsAt?: string;
+	/** The subscription ended: mailboxes on the domain are read-only. */
+	serviceEndedAt?: string;
+	/** When Stripe charges next (60 days before the registration it pays for expires). */
+	nextChargeAt?: string;
+	/** Reminder emails already sent for the current end of service, by key. */
+	remindersSent?: string[];
+	/** Annual price parts, reused when the owner renews. */
+	domainFeeUsd?: number;
+	platformFeeUsd?: number;
+	renewedAt?: string;
+	updatedAt: string;
+}
+
 export interface DomainAlias {
 	aliasLocal: string;
 	aliasEmail: string;
@@ -47,6 +81,7 @@ export interface DomainMetadata {
 	nameservers: string[];
 	emailRoutingEnabled: boolean;
 	registration?: DomainRegistrationInfo;
+	billing?: DomainBillingInfo;
 	aliases?: DomainAlias[];
 	createdAt: string;
 	updatedAt: string;

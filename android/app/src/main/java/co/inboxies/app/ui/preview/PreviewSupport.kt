@@ -2,6 +2,7 @@ package co.inboxies.app.ui.preview
 
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
+import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
@@ -16,6 +17,8 @@ import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.services.DatabaseService
 import java.net.URI
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * Shared DEBUG fixtures for emulator previews and Compose `@Preview`.
@@ -42,8 +45,43 @@ object PreviewSupport {
         )
     }
 
+    /**
+     * Subscription fixtures for the service-ended previews: ended 9 days ago with a
+     * registrar renew-by deadline 21 days out, or (ending) set to cancel in 6 days.
+     */
+    fun domainServiceFixture(mode: PreviewMode, domain: String = mailDomain()): DomainService? {
+        val now = Instant.now()
+        fun iso(days: Long) = now.plus(days, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS).toString()
+        return when (mode) {
+            PreviewMode.ServiceEnded, PreviewMode.ServiceEndedMember, PreviewMode.DomainDnsEnded -> DomainService(
+                domain = domain,
+                status = DomainService.STATUS_ENDED,
+                endedAt = iso(-9),
+                registrarManaged = true,
+                registrationExpiresAt = iso(-19),
+                renewBy = iso(21),
+                daysLeftToRenew = 21,
+                canRenew = true,
+                canManage = mode != PreviewMode.ServiceEndedMember,
+                billed = true,
+            )
+            PreviewMode.ServiceEnding -> DomainService(
+                domain = domain,
+                status = DomainService.STATUS_ENDING,
+                endsAt = iso(6),
+                registrarManaged = true,
+                registrationExpiresAt = iso(120),
+                canRenew = true,
+                canManage = true,
+                billed = true,
+            )
+            else -> null
+        }
+    }
+
     fun applyMailboxPreview(app: AppModel, mode: PreviewMode) {
         val you = addr("you")
+        val service = domainServiceFixture(mode)
         val mailbox = Mailbox(
             id = "mb-preview",
             email = you,
@@ -52,7 +90,12 @@ object PreviewSupport {
                 fromName = "Alex Rivera",
                 signature = SignatureSettings(enabled = true, text = "Alex"),
             ),
+            readOnly = service?.isEnded,
+            service = service,
         )
+        val serviceAdmin = service?.canManage == true
+        val administeredDomains = if (serviceAdmin) listOf(mailbox.domain) else emptyList()
+        val domainServices = service?.let { mapOf(mailbox.domain to it) } ?: emptyMap()
         val folders = listOf(
             Folder(id = FolderIds.INBOX, name = "Inbox", unreadCount = 3),
             Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 1),
@@ -123,6 +166,8 @@ object PreviewSupport {
                     threadEmails = emptyList(),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
+                    administeredDomains = administeredDomains,
+                    domainServices = domainServices,
                 )
             }
         }
@@ -142,7 +187,7 @@ object PreviewSupport {
         LinkedIdentity(type = "google", key = "sub:preview", label = "Google"),
     )
 
-    fun applyAdminPreview(app: AppModel) {
+    fun applyAdminPreview(app: AppModel, domainServices: Map<String, DomainService> = emptyMap()) {
         app.applyDebugPreview(
             mailboxes = emptyList(),
             selectedMailboxId = null,
@@ -153,6 +198,8 @@ object PreviewSupport {
             threadEmails = emptyList(),
             replyLaterCount = 0,
             isAdmin = true,
+            administeredDomains = domainServices.keys.toList(),
+            domainServices = domainServices,
         )
     }
 

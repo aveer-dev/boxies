@@ -198,3 +198,13 @@ export async function verifiedRecoveryEmail(db: AuthDb, userId: string): Promise
 		.get();
 	return row?.verifiedAt ? row.email : null;
 }
+
+/** The user's recovery email, verified or not (billing notices may use either). */
+export async function anyRecoveryEmail(db: AuthDb, userId: string): Promise<{ email: string; verified: boolean } | null> {
+	const row = await db
+		.select()
+		.from(schema.recoveryEmail)
+		.where(eq(schema.recoveryEmail.userId, userId))
+		.get();
+	return row ? { email: row.email, verified: Boolean(row.verifiedAt) } : null;
+}

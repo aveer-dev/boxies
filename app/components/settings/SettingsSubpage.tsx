@@ -4,7 +4,7 @@
 
 import type { ReactNode } from "react";
 import { ColumnHeader } from "~/components/columns/ColumnPane";
-import { useMailNavigation } from "~/hooks/useMailNavigation";
+import { useUIStore } from "~/hooks/useUIStore";
 
 /** Body of a settings sub-page column, opened beside the Settings column. */
 export default function SettingsSubpage({
@@ -15,7 +15,7 @@ export default function SettingsSubpage({
 	title: string;
 	children: ReactNode;
 }) {
-	const { closeSettingsPage } = useMailNavigation();
+	const closeSettingsPage = useUIStore((s) => s.closeSettingsPage);
 	return (
 		<>
 			<div className="sticky top-0 z-10">

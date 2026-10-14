@@ -23,6 +23,8 @@ import co.inboxies.app.models.DomainAvailabilityResponse
 import co.inboxies.app.models.DomainCheckoutResponse
 import co.inboxies.app.models.DomainEppCodeResponse
 import co.inboxies.app.models.DomainHealthResponse
+import co.inboxies.app.models.DomainService
+import co.inboxies.app.models.RenewDomainResponse
 import co.inboxies.app.models.DomainTransferLockResponse
 import co.inboxies.app.models.ExportJob
 import co.inboxies.app.models.ForgotPasswordResponse
@@ -95,6 +97,22 @@ sealed class ApiException(message: String) : Exception(message) {
     )
     class Transport(cause: Throwable) : ApiException(cause.message ?: "Network error")
     class SessionExpired : ApiException("Your session expired. Sign in again.")
+
+    /**
+     * 403 `{ code: "service_ended", domain }`: the domain's subscription ended and the
+     * mailbox is read-only. Deliberately not an [Http] so the "403 = lost access" paths
+     * (dropping a mailbox, clearing a saved one) never see it; access is intact.
+     */
+    class ServiceEnded(val domain: String?, message: String) : ApiException(
+        message.ifBlank { "This mailbox is read-only because its subscription ended." },
+    )
+
+    /** The server's readable `error` text, for paths that show it as-is. */
+    val serverMessage: String?
+        get() = when (this) {
+            is Http, is ServiceEnded -> message?.takeIf { it.isNotBlank() }
+            else -> null
+        }
 }
 
 @Serializable
@@ -161,17 +179,29 @@ class ApiClient private constructor() {
         fun isExpiredSessionResponse(code: Int, message: String): Boolean =
             (code == 401 || code == 403) &&
                 message.contains("invalid or expired mobile session token", ignoreCase = true)
+
+        /** `code` on the 403 the Worker returns for writes to a domain whose service ended. */
+        const val SERVICE_ENDED_CODE = "service_ended"
+
+        /** A 403 `{ error, code: "service_ended", domain }` body, else null. */
+        fun serviceEndedFailure(code: Int, body: String, message: String): ApiException.ServiceEnded? {
+            if (code != 403) return null
+            val obj = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+            if ((obj["code"] as? JsonPrimitive)?.content != SERVICE_ENDED_CODE) return null
+            return ApiException.ServiceEnded((obj["domain"] as? JsonPrimitive)?.content, message)
+        }
     }
 
     /** Tokens the server just rejected as expired; RootView signs out if it's still current. */
     val sessionExpired = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
-    private fun httpFailure(code: Int, message: String, sentToken: String?): ApiException {
+    private fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
+        val message = httpErrorMessage(body)
         if (sentToken != null && isExpiredSessionResponse(code, message)) {
             sessionExpired.tryEmit(sentToken)
             return ApiException.SessionExpired()
         }
-        return ApiException.Http(code, message)
+        return serviceEndedFailure(code, body, message) ?: ApiException.Http(code, message)
     }
 
     /**
@@ -245,7 +275,7 @@ class ApiClient private constructor() {
                 }
                 if (!response.isSuccessful) {
                     // A pinned outgoing session failing is not "the current session expired".
-                    throw httpFailure(response.code, httpErrorMessage(text), sentToken.takeIf { bearerToken == null })
+                    throw httpFailure(response.code, text, sentToken.takeIf { bearerToken == null })
                 }
                 return Triple(text, response.code, response.header("Content-Type").orEmpty())
             }
@@ -289,7 +319,7 @@ class ApiClient private constructor() {
             client.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     val text = response.body?.string().orEmpty()
-                    throw httpFailure(response.code, httpErrorMessage(text), sentToken)
+                    throw httpFailure(response.code, text, sentToken)
                 }
                 val source = response.body ?: throw ApiException.Http(response.code, "Empty download")
                 destination.parentFile?.mkdirs()
@@ -1161,6 +1191,7 @@ class ApiClient private constructor() {
         username: String? = null,
         password: String? = null,
         displayName: String? = null,
+        backupEmail: String? = null,
         returnUrl: String? = null,
         client: String? = "android",
     ): DomainCheckoutResponse = request(
@@ -1171,12 +1202,28 @@ class ApiClient private constructor() {
             if (username != null) put("username", username)
             if (password != null) put("password", password)
             if (displayName != null) put("displayName", displayName)
+            // Domain owners need a recovery email for billing and renewal notices.
+            if (!backupEmail.isNullOrBlank()) put("backupEmail", backupEmail)
             if (returnUrl != null) put("returnUrl", returnUrl)
             if (client != null) put("client", client)
         },
         // Send the Bearer token when signed in so the purchase links to this account;
         // signed-out checkout still works (no token → no Authorization header).
         authed = true,
+    )
+
+    /** Domain admins, or anyone with a mailbox on [domain]; 403 for anyone else. */
+    suspend fun getDomainService(domain: String): DomainService =
+        request("/api/v1/billing/domains/${pathEncode(domain)}/service")
+
+    /**
+     * Admins only. Resumes a subscription set to end, or returns a Stripe Checkout that
+     * comes back to `inboxies://billing/renewed|renew-cancelled?domain=`.
+     */
+    suspend fun renewDomain(domain: String): RenewDomainResponse = request(
+        "/api/v1/billing/domains/${pathEncode(domain)}/renew",
+        method = "POST",
+        body = buildJsonObject { put("client", "android") },
     )
 
     // MARK: - Email Export Engine

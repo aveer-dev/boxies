@@ -25,9 +25,9 @@ export function searchPath(mailboxId: string, query: string) {
  *   /mailbox/:id/emails/:folder/:emailId?   folder list → reader
  *   /mailbox/:id/reply-later/:emailId?      Reply Later → reader
  *   /mailbox/:id/search/:emailId?q=…        results → reader
- *   /mailbox/:id/settings/:page?            settings → sub-page
  *
- * Compose and agent columns are transient (`useUIStore`) and sit to the right.
+ * Compose, extra readers, agent and settings are side panels (`useUIStore`):
+ * they open to the right of these columns, in the order they were opened.
  */
 export function useMailNavigation() {
 	const { mailboxId = "", emailId } = useParams<{
@@ -36,8 +36,17 @@ export function useMailNavigation() {
 	}>();
 	const location = useLocation();
 	const navigate = useNavigate();
-	const { isComposing, closeCompose, isAgentPanelOpen, closeAgentPanel } =
-		useUIStore();
+	const {
+		panels,
+		closeCompose,
+		closeReader,
+		closeAgentPanel,
+		isSettingsOpen: isSettings,
+		settingsPage,
+		openSettings,
+		closeSettings,
+		closeSettingsPage,
+	} = useUIStore();
 
 	const listPath = useMemo(() => {
 		const path = location.pathname.replace(/\/+$/, "");
@@ -45,9 +54,6 @@ export function useMailNavigation() {
 		return path.slice(0, path.lastIndexOf("/"));
 	}, [location.pathname, emailId]);
 
-	const isSettings = location.pathname.startsWith(
-		`${mailboxPath(mailboxId)}/settings`,
-	);
 	const isSearch = location.pathname.startsWith(
 		`${mailboxPath(mailboxId)}/search`,
 	);
@@ -64,21 +70,6 @@ export function useMailNavigation() {
 		[navigate, listPath, location.search],
 	);
 
-	const openSettings = useCallback(
-		() => navigate(`${mailboxPath(mailboxId)}/settings`),
-		[navigate, mailboxId],
-	);
-
-	const closeSettings = useCallback(
-		() => navigate(inboxPath),
-		[navigate, inboxPath],
-	);
-
-	const closeSettingsPage = useCallback(
-		() => navigate(`${mailboxPath(mailboxId)}/settings`),
-		[navigate, mailboxId],
-	);
-
 	const search = useCallback(
 		(query: string) => navigate(searchPath(mailboxId, query)),
 		[navigate, mailboxId],
@@ -91,22 +82,24 @@ export function useMailNavigation() {
 
 	/** Esc / mobile back: close the right-most column that can be closed. */
 	const closeDeepest = useCallback((): boolean => {
-		if (isAgentPanelOpen) {
-			closeAgentPanel();
-			return true;
-		}
-		if (isComposing) {
-			closeCompose();
-			return true;
+		const panel = panels[panels.length - 1];
+		switch (panel?.kind) {
+			case "agent":
+				closeAgentPanel();
+				return true;
+			case "compose":
+				closeCompose(panel.key);
+				return true;
+			case "reader":
+				closeReader(panel.key);
+				return true;
+			case "settings":
+				if (settingsPage) closeSettingsPage();
+				else closeSettings();
+				return true;
 		}
 		if (emailId) {
 			closeEmail();
-			return true;
-		}
-		if (isSettings) {
-			const atRoot = /\/settings\/?$/.test(location.pathname);
-			if (atRoot) closeSettings();
-			else closeSettingsPage();
 			return true;
 		}
 		if (isSearch) {
@@ -115,16 +108,15 @@ export function useMailNavigation() {
 		}
 		return false;
 	}, [
-		isAgentPanelOpen,
+		panels,
 		closeAgentPanel,
-		isComposing,
 		closeCompose,
+		closeReader,
+		settingsPage,
+		closeSettingsPage,
+		closeSettings,
 		emailId,
 		closeEmail,
-		isSettings,
-		location.pathname,
-		closeSettings,
-		closeSettingsPage,
 		isSearch,
 		closeSearch,
 	]);
@@ -137,7 +129,7 @@ export function useMailNavigation() {
 		isSearch,
 		openEmail,
 		closeEmail,
-		openSettings,
+		openSettings: () => openSettings(),
 		closeSettings,
 		closeSettingsPage,
 		search,
