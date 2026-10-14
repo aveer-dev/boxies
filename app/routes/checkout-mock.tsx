@@ -89,7 +89,7 @@ function CheckoutMockSimulator() {
 							Stripe Checkout Simulator
 						</h1>
 					</div>
-					<span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+					<span className="text-2xs font-semibold px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
 						Dev Mock
 					</span>
 				</div>
@@ -125,7 +125,7 @@ function CheckoutMockSimulator() {
 							</div>
 						</div>
 
-						<div className="text-[11px] text-kumo-subtle font-mono border-t border-kumo-line/50 pt-2">
+						<div className="text-2xs text-kumo-subtle font-mono border-t border-kumo-line/50 pt-2">
 							Domain: {domain}
 						</div>
 					</div>

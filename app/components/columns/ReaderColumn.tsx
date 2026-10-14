@@ -12,16 +12,25 @@ import type { Email } from "~/types";
 import ColumnPane from "./ColumnPane";
 import QuickReplyBar from "./QuickReplyBar";
 import { ThreadChip } from "./ThreadRow";
-import { useUIStore } from "~/hooks/useUIStore";
 
 /**
  * Column 4 — the reading room for `:emailId`. Wraps the full `EmailPanel`
  * (toolbar, thread, attachments, triage) and docks the quick reply under it.
+ * Also used for a message opened in its own column (`columnId` + `onClose`).
  */
-export default function ReaderColumn({ emailId }: { emailId: string }) {
+export default function ReaderColumn({
+	emailId,
+	columnId = "reader",
+	onClose,
+}: {
+	emailId: string;
+	columnId?: string;
+	/** Closes this column; defaults to closing the route's reader. */
+	onClose?: () => void;
+}) {
 	const { mailboxId = "", folder } = useParams<{ mailboxId: string; folder?: string }>();
 	const { closeEmail } = useMailNavigation();
-	const isReadOnly = useUIStore((s) => s.isReadOnly);
+	const close = onClose ?? closeEmail;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: folders = [] } = useFolders(mailboxId);
 
@@ -47,22 +56,23 @@ export default function ReaderColumn({ emailId }: { emailId: string }) {
 
 	return (
 		<ColumnPane
-			id="reader"
+			id={columnId}
+			sizeId="reader"
 			title={email?.subject || "Message"}
+			revealKey={emailId}
 			hideHeader
 			scrollBody={false}
-			widthClassName="md:w-auto md:flex-1 md:min-w-[848px]"
 		>
 			<EmailPanel
 				key={emailId}
 				emailId={emailId}
 				mailboxId={mailboxId}
-				folder={folder}
-				onClose={closeEmail}
+				folder={onClose ? folderId : folder}
+				onClose={close}
 				chips={chips}
-				renderFooter={(replyTarget) =>
-					isReadOnly ? null : <QuickReplyBar mailboxId={mailboxId} replyTarget={replyTarget} />
-				}
+				renderFooter={(replyTarget) => (
+					<QuickReplyBar mailboxId={mailboxId} replyTarget={replyTarget} />
+				)}
 			/>
 		</ColumnPane>
 	);

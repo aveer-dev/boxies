@@ -1438,7 +1438,7 @@ class AppModel {
         if (form.saveDraft(explicit = true)) {
             showToast("Draft saved")
         } else if (!form.isSending) {
-            showToast(form.errorMessage ?: "Failed to save draft", isError = true)
+            showToast("Couldn't save draft", isError = true)
         }
     }
 

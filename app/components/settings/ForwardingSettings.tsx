@@ -5,10 +5,10 @@
 import { Button, Input, Loader, Switch, useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
-export default function ForwardingSettingsRoute() {
+export default function ForwardingSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
@@ -71,7 +71,7 @@ export default function ForwardingSettingsRoute() {
 
 	return (
 		<SettingsSubpage mailboxId={mailboxId} title="Forwarding">
-			<div className="rounded-lg border border-kumo-line bg-kumo-base p-5 space-y-4">
+			<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">
 				<p className="text-sm text-kumo-default leading-relaxed">
 					When this is on, a copy of each incoming message is sent to another
 					address. This mailbox still keeps the original.

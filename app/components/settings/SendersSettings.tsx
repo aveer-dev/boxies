@@ -11,14 +11,14 @@ import {
 	PURPOSE_FOLDER_IDS,
 	type PurposeFolderId,
 } from "shared/folders";
-import SettingsSubpage from "~/components/SettingsSubpage";
+import SettingsSubpage from "./SettingsSubpage";
 import {
 	useDeleteSenderPreference,
 	useSenderPreferences,
 	useUpsertSenderPreference,
 } from "~/queries/sender-preferences";
 
-export default function SendersSettingsRoute() {
+export default function SendersSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const [query, setQuery] = useState("");
@@ -100,7 +100,7 @@ export default function SendersSettingsRoute() {
 					<Loader size="lg" />
 				</div>
 			) : rows.length === 0 ? (
-				<div className="rounded-lg border border-kumo-line bg-kumo-base px-4 py-8 text-center">
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-8 text-center">
 					<p className="text-sm text-kumo-default mb-1">No sender defaults yet</p>
 					<p className="text-xs text-kumo-subtle">
 						When you move mail into Inbox, Promotions, or Updates, you can set
@@ -108,7 +108,7 @@ export default function SendersSettingsRoute() {
 					</p>
 				</div>
 			) : (
-				<ul className="divide-y divide-kumo-line rounded-lg border border-kumo-line bg-kumo-base">
+				<ul className="divide-y divide-kumo-line rounded-2xl border border-kumo-line bg-kumo-base">
 					{rows.map((pref) => (
 						<li
 							key={pref.address}
