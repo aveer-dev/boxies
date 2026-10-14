@@ -77,6 +77,7 @@ fun SearchView(
     initialQuery: String = "",
 ) {
     val app = LocalAppModel.current
+    val readOnly by app.selectedMailboxReadOnly.collectAsState()
     val colors = inboxiesColors()
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -153,7 +154,8 @@ fun SearchView(
                     .weight(1f)
                     .fillMaxWidth(),
             ) {
-                if (trimmed.isNotEmpty()) {
+                // The AI agent ended with the service on a read-only mailbox.
+                if (trimmed.isNotEmpty() && !readOnly) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

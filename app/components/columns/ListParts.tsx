@@ -9,7 +9,7 @@ export function ThreadListSkeleton() {
 	return (
 		<div className="animate-pulse">
 			{Array.from({ length: 6 }).map((_, i) => (
-				<div key={i} className="px-6 py-4 border-b border-kumo-line space-y-2">
+				<div key={i} className="mx-2 mb-0.5 px-4 py-4 rounded-xl space-y-2">
 					<div className="flex justify-between">
 						<div className="h-3 w-28 rounded bg-kumo-fill" />
 						<div className="h-3 w-12 rounded bg-kumo-fill" />
@@ -34,10 +34,10 @@ export function ListEmptyState({
 	action?: ReactNode;
 }) {
 	return (
-		<div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+		<div className="flex flex-col items-center justify-center py-20 px-6 text-center animate-reveal">
 			<div className="mb-3">{icon}</div>
-			<h3 className="text-sm font-semibold text-kumo-default mb-1">{title}</h3>
-			<p className="text-[13px] text-kumo-subtle max-w-xs mb-4">{description}</p>
+			<h3 className="text-sm font-medium text-kumo-default mb-1">{title}</h3>
+			<p className="text-sm text-kumo-subtle max-w-xs mb-4">{description}</p>
 			{action}
 		</div>
 	);
@@ -51,7 +51,7 @@ export function ListPagination(props: {
 }) {
 	if (props.totalCount <= props.perPage) return null;
 	return (
-		<div className="flex justify-center py-3 border-t border-kumo-line">
+		<div className="flex justify-center py-3 mt-2">
 			<Pagination {...props} />
 		</div>
 	);

@@ -151,6 +151,12 @@ class AuthStore(context: Context) {
         ApiClient.shared.authTokenProvider = { _token.value }
     }
 
+    /** The server rejected this session: sign out and say why on the sign-in screen. */
+    fun signOutExpired() {
+        signOut()
+        _errorMessage.value = "Your session expired. Sign in again."
+    }
+
     fun signOut() {
         _token.value = null
         _userEmail.value = null

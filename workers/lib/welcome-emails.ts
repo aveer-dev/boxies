@@ -437,7 +437,7 @@ function buildEmail3AdvancedAndSecurity(recipientEmail: string, displayName: str
         4. Granular Mailbox Sharing (ACL)
       </h2>
       <p style="font-size: 13.5px; color: #475569; margin: 0;">
-        Share mailbox access with team members, assistants, or family without sharing passwords. In <strong>Settings &rarr; Sharing</strong>, add authorized principals as owners or members. Authorized users see the shared mailbox appear directly in their sidebar account switcher.
+        Share mailbox access with team members, assistants, or family without sharing passwords. In <strong>Settings &rarr; Sharing</strong>, invite people as owners or members. Once they accept, they see the shared mailbox appear directly in their sidebar account switcher.
       </p>
     </div>
 
@@ -659,27 +659,9 @@ export async function seedWelcomeEmailsInDO(
 		await mailboxDO.createEmail(Folders.INBOX, email, []);
 	}
 
-	// Pre-approve platform senders in sender_triage so they are recognized
-	const senders = [
-		{ sender: emails[0].sender, name: emails[0].sender_name },
-		{ sender: emails[1].sender, name: emails[1].sender_name },
-		{ sender: emails[2].sender, name: emails[2].sender_name },
-	];
-
-	for (const { sender, name } of senders) {
-		try {
-			if (typeof mailboxDO.upsertSenderTriage === "function") {
-				await mailboxDO.upsertSenderTriage({
-					sender,
-					status: "allowed",
-					destination_folder_id: null,
-					display_name: name,
-				});
-			}
-		} catch {
-			/* best effort */
-		}
-	}
+	// The welcome senders are deliberately not pre-approved: an allowed sender
+	// skips the Screener and can override an AI spam verdict, and these
+	// addresses only ever appear here as seeded rows.
 
 	await mailboxDO.ctx.storage.put(WELCOME_FLAG_KEY, "1");
 	return { seeded: emails.length };

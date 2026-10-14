@@ -1321,8 +1321,8 @@ private fun EmailLoginScreen(
                 text = when (step) {
                     EmailStep.Email -> "Sign in or sign up with your email."
                     EmailStep.Password -> "Sign in with your email ${email.trim()}"
-                    EmailStep.ForgotPassword -> "Enter your email to receive a 6-digit reset code."
-                    EmailStep.ResetPassword -> "Enter the code sent to ${email.trim()}"
+                    EmailStep.ForgotPassword -> "Enter your sign-in email. We'll send a 6-digit code to the recovery email on your account."
+                    EmailStep.ResetPassword -> "If ${email.trim()} has a confirmed recovery email, we sent a code there. No recovery email? Ask a mailbox owner or your domain admin for help."
                 },
                 fontFamily = InterFontFamily,
                 fontSize = 14.sp,

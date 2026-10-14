@@ -16,19 +16,18 @@
         },
     ],
     "vars": {
-        // Production deploys must also define POLICY_AUD and TEAM_DOMAIN.
+        // POLICY_AUD and TEAM_DOMAIN (Cloudflare Access) gate operator routes under /ops/*
+        // only; without them /ops is closed. App users sign in through Better Auth
+        // (BETTER_AUTH_SECRET secret + AUTH_DB).
         // TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
-        // The worker now fails closed outside local development if Access is not configured.
         // Mailbox domain(s) for create-address UI and Email Routing.
         // Optional MAIL_DOMAIN overrides the primary suffix; DOMAINS is comma-separated.
         // When both unset, API falls back to inboxies.email (hosted SaaS default only).
         // "MAIL_DOMAIN": "mail.example.com",
         "DOMAINS": "inboxies.email",
         "EMAIL_ADDRESSES": [],
-        // Domain Admin allowlist (comma-separated Access emails and optional sub:…).
-        // Set via `wrangler secret put DOMAIN_ADMINS` or vars in non-prod.
-        // "DOMAIN_ADMINS": "you@example.com",
-        // Recommended once admins exist: "MAILBOX_CREATE_POLICY": "admin_only",
+        // "admin_only" keeps extra addresses on the shared domains to sign-up and /ops.
+        // "MAILBOX_CREATE_POLICY": "admin_only",
         "APNS_SANDBOX": "true",
         "APNS_TOPIC": "co.inboxies.app",
     },
@@ -48,6 +47,16 @@
     "ai": {
         "binding": "AI",
     },
+    // Identity and permissions (Better Auth + workers/auth/schema.ts).
+    // Apply schema changes with `pnpm auth:migrate:local` / `pnpm auth:migrate:remote`.
+    "d1_databases": [
+        {
+            "binding": "AUTH_DB",
+            "database_name": "inboxies-auth",
+            "database_id": "eba8651c-9e75-4615-be6d-90d39fd9438a",
+            "migrations_dir": "migrations/auth",
+        },
+    ],
     // Per-IP throttle on 6-digit password reset code guesses.
     // namespace_id must be unique among rate limiters in the Cloudflare account.
     "ratelimits": [
@@ -59,7 +68,39 @@
                 "period": 60,
             },
         },
+        // Per-inviter cap on invite emails (they go out from our noreply address).
+        {
+            "name": "INVITE_LIMITER",
+            "namespace_id": "1002",
+            "simple": {
+                "limit": 10,
+                "period": 60,
+            },
+        },
+        // Per-IP cap on sign-in, sign-up and sending account codes.
+        {
+            "name": "AUTH_LIMITER",
+            "namespace_id": "1003",
+            "simple": {
+                "limit": 10,
+                "period": 60,
+            },
+        },
+        // Per-IP cap on domain availability checks and checkout sessions.
+        {
+            "name": "PUBLIC_LIMITER",
+            "namespace_id": "1004",
+            "simple": {
+                "limit": 30,
+                "period": 60,
+            },
+        },
     ],
+    // Hourly upkeep: domain promotion, stale claims, expired exports and
+    // sessions (workers/lib/maintenance.ts).
+    "triggers": {
+        "crons": ["17 * * * *"],
+    },
     "queues": {
         "consumers": [
             {
@@ -69,8 +110,10 @@
             },
         ],
     },
-    "workers_dev": true,
-    "preview_urls": true,
+    // Serve only from the custom domain. Preview URLs would run old versions
+    // against production R2, Durable Objects and email sending.
+    "workers_dev": false,
+    "preview_urls": false,
     "durable_objects": {
         "bindings": [
             {

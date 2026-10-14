@@ -4,9 +4,10 @@
 
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
-import type { RequestPrincipal } from "../lib/mailbox-acl";
+import { eq } from "drizzle-orm";
 import type { MailboxContext } from "../lib/mailbox";
-import { authorizeMailbox } from "../lib/mailbox-acl";
+import { authDb, authorizeMailboxAccess } from "../auth/authz";
+import * as schema from "../auth/schema";
 import {
 	getExportJob,
 	runMailboxExportJob,
@@ -78,13 +79,12 @@ async function loadAuthorizedExportJob(
 	if (!job) return null;
 
 	if (job.targetType === "mailbox") {
-		const principal = c.get("principal") as RequestPrincipal | undefined;
-		const auth = await authorizeMailbox(c.env.BUCKET, principal, job.targetId);
+		const auth = await authorizeMailboxAccess(authDb(c.env.AUTH_DB), c.get("principal")?.userId, job.targetId);
 		return auth.ok ? job : null;
 	}
 
 	if (job.targetType === "domain") {
-		const authz = await authorizeDomainAdmin(c, job.targetId);
+		const authz = await authorizeDomainAdmin(c, job.targetId, { offboarding: true });
 		return authz instanceof Response ? null : job;
 	}
 
@@ -105,16 +105,16 @@ export function registerExportAndOffboardingRoutes(
 	 * Export a single mailbox to an RFC 4155 .mbox archive.
 	 */
 	app.post("/api/v1/mailboxes/:id/export", async (c) => {
-		const principal = c.get("principal") as RequestPrincipal | undefined;
 		const mailboxId = c.req.param("id");
 
-		const auth = await authorizeMailbox(c.env.BUCKET, principal, mailboxId);
+		const auth = await authorizeMailboxAccess(authDb(c.env.AUTH_DB), c.get("principal")?.userId, mailboxId);
 		if (!auth.ok) {
 			return c.json({ error: auth.error || "Unauthorized" }, auth.status as any);
 		}
 
 		try {
-			const job = await runMailboxExportJob(c.env, mailboxId);
+			// Export the mailbox that was authorized, not the raw path value.
+			const job = await runMailboxExportJob(c.env, auth.mailboxId);
 			return c.json(toExportResponse(job));
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : "Export failed";
@@ -126,7 +126,7 @@ export function registerExportAndOffboardingRoutes(
 	 * Export all mailboxes for an entire domain into a unified RFC 4155 .mbox archive.
 	 */
 	app.post("/api/v1/admin/domains/:domain/export", async (c) => {
-		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
 		if (authz instanceof Response) return authz;
 
 		const { domainMeta } = authz;
@@ -304,6 +304,11 @@ export function registerExportAndOffboardingRoutes(
 		domainMeta.updatedAt = new Date().toISOString();
 
 		await saveDomainMetadata(c.env.BUCKET, domainMeta);
+		// Admin rights end here; the owner keeps the offboarding routes.
+		await authDb(c.env.AUTH_DB)
+			.update(schema.domain)
+			.set({ status: "decommissioned" })
+			.where(eq(schema.domain.domain, domainMeta.domain));
 
 		return c.json({
 			success: true,
@@ -322,7 +327,7 @@ export function registerExportAndOffboardingRoutes(
 	 * Retrieve EPP Transfer Authorization Code for a registered domain.
 	 */
 	app.get("/api/v1/admin/domains/:domain/epp-code", async (c) => {
-		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
 		if (authz instanceof Response) return authz;
 
 		const { domainMeta } = authz;
@@ -340,7 +345,7 @@ export function registerExportAndOffboardingRoutes(
 	 * Toggle domain transfer lock on Cloudflare Registrar.
 	 */
 	app.post("/api/v1/admin/domains/:domain/transfer-lock", async (c) => {
-		const authz = await authorizeDomainAdmin(c, c.req.param("domain"));
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
 		if (authz instanceof Response) return authz;
 
 		const { domainMeta } = authz;

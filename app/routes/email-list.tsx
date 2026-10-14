@@ -24,26 +24,26 @@ import {
 	WarningIcon,
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
 import { formatParticipants } from "shared/sender";
 import ColumnMenu from "~/components/columns/ColumnMenu";
+import { IconButton } from "~/components/IconButton";
 import ColumnPane from "~/components/columns/ColumnPane";
 import ReaderColumn from "~/components/columns/ReaderColumn";
 import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components/columns/ListParts";
 import { ListLoadError } from "~/components/ListLoadError";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
 import { searchPath, useMailNavigation } from "~/hooks/useMailNavigation";
+import { hasUnread, useEmailActions } from "~/hooks/useEmailActions";
+import { useEmailMenu } from "~/hooks/useEmailMenu";
+import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useUIStore } from "~/hooks/useUIStore";
 import { buildInboxListItems } from "~/lib/list-sections";
+import { keysFor } from "~/lib/shortcuts";
 import { getSnippetText } from "~/lib/utils";
-import {
-	useDeleteEmail,
-	useEmails,
-	useMarkThreadRead,
-	useUpdateEmail,
-} from "~/queries/emails";
+import { useEmails } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
@@ -118,12 +118,6 @@ const FOLDER_EMPTY_STATES: Record<
 	},
 };
 
-function hasUnread(email: Email): boolean {
-	if (email.folder_id === Folders.DRAFT) return false;
-	if ((email.thread_unread_count ?? 0) > 0) return true;
-	return !email.read;
-}
-
 /** Column 3 for `/emails/:folder` (+ the reader for `:emailId`). */
 export default function EmailListRoute() {
 	const { mailboxId = "", folder = Folders.INBOX } = useParams<{
@@ -132,13 +126,22 @@ export default function EmailListRoute() {
 	}>();
 	const { emailId, openEmail, closeEmail } = useMailNavigation();
 	const startCompose = useUIStore((s) => s.startCompose);
+	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	const navigate = useNavigate();
 	const [page, setPage] = useState(1);
 
 	const queryClient = useQueryClient();
-	const updateEmail = useUpdateEmail();
-	const markThreadRead = useMarkThreadRead();
-	const deleteEmail = useDeleteEmail();
+	const emailIdRef = useRef(emailId);
+	emailIdRef.current = emailId;
+	const closeEmailRef = useRef(closeEmail);
+	closeEmailRef.current = closeEmail;
+	// A message leaving the list closes the reader if it was open there.
+	const actions = useEmailActions(
+		mailboxId,
+		useCallback((email: Email) => {
+			if (emailIdRef.current === email.id) closeEmailRef.current();
+		}, []),
+	);
 
 	const params = useMemo(
 		() => ({ folder, page: String(page), limit: String(PAGE_SIZE) }),
@@ -183,30 +186,13 @@ export default function EmailListRoute() {
 		prevFolderRef.current = key;
 	}, [mailboxId, folder]);
 
-	const markRead = (email: Email, read: boolean) => {
-		if (read && email.thread_id && (email.thread_count ?? 1) > 1) {
-			markThreadRead.mutate({ mailboxId, threadId: email.thread_id });
-		} else {
-			updateEmail.mutate({ mailboxId, id: email.id, data: { read } });
-		}
-	};
-
 	const handleOpen = (email: Email) => {
 		openEmail(email.id);
-		if (hasUnread(email)) markRead(email, true);
+		if (hasUnread(email)) actions.setRead(email, true);
 	};
 
-	const handleDelete = (email: Email) => {
-		// Outside Trash, delete just moves to Trash (restorable); only confirm the permanent one.
-		if (
-			folder === Folders.TRASH &&
-			!window.confirm("Permanently delete this email? This can't be undone.")
-		) {
-			return;
-		}
-		deleteEmail.mutate({ mailboxId, id: email.id });
-		if (emailId === email.id) closeEmail();
-	};
+	const openMenu = useEmailMenu(mailboxId, actions);
+	useListShortcuts(emails, actions);
 
 	const [emptyingTrash, setEmptyingTrash] = useState(false);
 	const handleEmptyTrash = async () => {
@@ -222,7 +208,7 @@ export default function EmailListRoute() {
 	};
 
 	const handleMarkAllRead = () => {
-		for (const email of emails) if (hasUnread(email)) markRead(email, true);
+		for (const email of emails) if (hasUnread(email)) actions.setRead(email, true);
 	};
 
 	const handleRefresh = () => {
@@ -245,50 +231,35 @@ export default function EmailListRoute() {
 		<>
 			<ColumnPane
 				id="list"
+				revealKey={`${mailboxId}/${folder}`}
 				title={folderName}
 				counter={unreadCount || undefined}
-				widthClassName="md:w-[400px]"
 				actions={
 					<>
-						<button
-							type="button"
+						<IconButton
+							label="Refresh"
+							icon={ArrowsClockwiseIcon}
+							iconClassName={isRefreshing ? "animate-spin" : ""}
 							onClick={handleRefresh}
 							disabled={isRefreshing}
-							className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint disabled:opacity-60"
-							aria-label="Refresh"
-							title="Refresh"
-						>
-							<ArrowsClockwiseIcon size={15} className={isRefreshing ? "animate-spin" : ""} />
-						</button>
-						<button
-							type="button"
-							onClick={handleMarkAllRead}
-							className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint"
-							aria-label="Mark all as read"
-							title="Mark all as read"
-						>
-							<ChecksIcon size={15} />
-						</button>
+						/>
+						<IconButton label="Mark all as read" icon={ChecksIcon} onClick={handleMarkAllRead} />
 						{folder === Folders.TRASH && totalCount > 0 && (
-							<button
-								type="button"
+							<IconButton
+								label="Empty Trash"
+								icon={TrashIcon}
 								onClick={handleEmptyTrash}
 								disabled={emptyingTrash}
-								className="p-1 rounded-md text-kumo-subtle hover:text-kumo-default hover:bg-kumo-tint disabled:opacity-60"
-								aria-label="Empty Trash"
-								title="Empty Trash"
-							>
-								<TrashIcon size={15} />
-							</button>
+							/>
 						)}
 						<ColumnMenu
 							label="Filter"
 							heading={`Filter ${folderName}`}
-							trigger={<SlidersHorizontalIcon size={15} />}
+							icon={SlidersHorizontalIcon}
 							items={[
-								{ label: "Unread", icon: <EnvelopeSimpleIcon size={15} />, onSelect: () => filterBy("is:unread") },
-								{ label: "Starred", icon: <StarIcon size={15} />, onSelect: () => filterBy("is:starred") },
-								{ label: "Has attachment", icon: <PaperclipIcon size={15} />, onSelect: () => filterBy("has:attachment") },
+								{ label: "Unread", icon: EnvelopeSimpleIcon, onSelect: () => filterBy("is:unread") },
+								{ label: "Starred", icon: StarIcon, onSelect: () => filterBy("is:starred") },
+								{ label: "Has attachment", icon: PaperclipIcon, onSelect: () => filterBy("has:attachment") },
 							]}
 						/>
 					</>
@@ -302,7 +273,7 @@ export default function EmailListRoute() {
 					<ListEmptyState
 						{...emptyState}
 						action={
-							"showCompose" in emptyState && emptyState.showCompose ? (
+							"showCompose" in emptyState && emptyState.showCompose && !isReadOnly ? (
 								<Button
 									variant="primary"
 									size="sm"
@@ -316,25 +287,25 @@ export default function EmailListRoute() {
 					/>
 				) : (
 					<>
-						{listItems.map((item) => {
+						{listItems.map((item, index) => {
 							if (item.type === "section") {
 								return (
 									<div
 										key={`section-${item.id}`}
-										className="sticky top-0 z-[1] flex items-center gap-2 bg-kumo-base/95 backdrop-blur-sm px-6 pt-3 pb-1.5 border-b border-kumo-line"
+										className="sticky top-0 z-[1] flex items-center gap-2 bg-kumo-base/95 backdrop-blur-sm pl-10 pr-4 pt-4 pb-2"
 									>
-										<span className="text-[10px] font-medium tracking-wider uppercase text-kumo-subtle">
+										<span className="text-2xs font-medium tracking-wider uppercase text-kumo-subtle">
 											{item.label}
 										</span>
 										{item.count != null && (
-											<span className="text-[10px] text-kumo-subtle">· {item.count}</span>
+											<span className="text-2xs text-kumo-subtle">· {item.count}</span>
 										)}
 									</div>
 								);
 							}
 							if (item.type === "empty-new") {
 								return (
-									<p key="empty-new" className="px-6 py-3 text-sm text-kumo-subtle border-b border-kumo-line">
+									<p key="empty-new" className="pl-10 pr-4 py-3 text-sm text-kumo-subtle">
 										You’re caught up
 									</p>
 								);
@@ -344,30 +315,28 @@ export default function EmailListRoute() {
 							return (
 								<ThreadRow
 									key={email.id}
+									onMenu={(from) => openMenu(email, from)}
+									index={index}
 									email={email}
 									isSelected={emailId === email.id}
 									isUnread={unread}
 									onOpen={() => handleOpen(email)}
 									sender={formatParticipants(email)}
 									snippet={getSnippetText(email.snippet)}
-									onToggleStar={() =>
-										updateEmail.mutate({
-											mailboxId,
-											id: email.id,
-											data: { starred: !email.starred },
-										})
-									}
+									onToggleStar={() => actions.toggleStar(email)}
 									hoverActions={
 										<>
 											<RowAction
-												label={email.read ? "Mark unread" : "Mark read"}
-												icon={email.read ? <EnvelopeSimpleIcon size={14} /> : <EnvelopeOpenIcon size={14} />}
-												onClick={() => markRead(email, !email.read)}
+												label={unread ? "Mark read" : "Mark unread"}
+												shortcut={keysFor("toggleRead")}
+												icon={unread ? EnvelopeOpenIcon : EnvelopeSimpleIcon}
+												onClick={() => actions.toggleRead(email)}
 											/>
 											<RowAction
 												label="Delete"
-												icon={<TrashIcon size={14} />}
-												onClick={() => handleDelete(email)}
+												shortcut={keysFor("delete")}
+												icon={TrashIcon}
+												onClick={() => actions.remove(email)}
 											/>
 										</>
 									}

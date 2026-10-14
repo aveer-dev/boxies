@@ -1,5 +1,6 @@
 package co.inboxies.app.services
 
+import android.util.Log
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.Email
@@ -23,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 class ComposeSession(
     val form: ComposeFormModel,
@@ -108,6 +110,8 @@ class ComposeFormModel(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var autoSaveJob: Job? = null
     private var toastDismissJob: Job? = null
+    /** Set once a save bounces with `service_ended`, so autosave stops retrying. */
+    private var writesBlocked = false
 
     val title: String
         get() = when (mode) {
@@ -352,13 +356,15 @@ class ComposeFormModel(
     /**
      * POST /drafts (mirrors iOS ComposeFormModel.performSaveDraft). Sends `draft_id`
      * once the server has assigned one so repeat saves update in place. Callers show
-     * the "Draft saved" toast only for explicit saves; returns false on failure with
-     * [errorMessage] set.
+     * the "Draft saved" toast only for explicit saves; returns false on failure. Never
+     * writes [errorMessage]: that inline slot is for send/validation errors.
      */
     suspend fun saveDraft(explicit: Boolean = true): Boolean {
         cancelAutoSave()
         commitPendingTokens()
         if (isEmpty) return true
+        // The mailbox went read-only (service ended): saving again can't succeed.
+        if (writesBlocked) return false
         val snapshot = currentSnapshot
         if (draftId != null && snapshot == lastSavedSnapshot) return true
         // A save is already in flight; the next minimize/explicit save picks up any delta.
@@ -373,7 +379,6 @@ class ComposeFormModel(
 
         isSavingDraft = true
         saveStatus = DraftSaveStatus.Saving
-        errorMessage = null
         try {
             val payload = buildJsonObject {
                 put("body", outgoingHtml())
@@ -400,8 +405,16 @@ class ComposeFormModel(
                 onDraftSaved?.invoke(resolved, threadId, originalEmailId, subject, outgoingHtml(), toJoined())
             }
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            errorMessage = e.message ?: "Failed to save draft"
+            if (e is ApiException.ServiceEnded) {
+                // The domain's service ended: stop autosaving and say why, once.
+                writesBlocked = true
+                errorMessage = e.message ?: "This mailbox is read-only"
+            } else {
+                Log.w("ComposeFormModel", "saveDraft failed", e)
+            }
             return false
         } finally {
             isSavingDraft = false
@@ -423,6 +436,7 @@ class ComposeFormModel(
 
     fun scheduleAutoSave(onSave: () -> Unit) {
         autoSaveJob?.cancel()
+        if (writesBlocked) return
         autoSaveJob = scope.launch {
             delay(1200)
             if (!isEmpty) onSave()

@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
+import { Button, useKumoToastManager } from "@cloudflare/kumo";
+import { CheckCircleIcon, HourglassIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
+import { useDomainService } from "~/queries/billing";
+import api, { ApiError } from "~/services/api";
+import { formatServiceDate, RenewButton, serviceMessage } from "./ServiceBanner";
+
+/**
+ * The domain's subscription on the admin page: active, ending (with "Keep
+ * subscription") or ended (with the renewal deadline and "Renew"). Back from
+ * a renewal checkout (`justRenewed`), it polls briefly while the payment
+ * webhook brings the domain back.
+ */
+export function DomainSubscriptionCard({ domain, justRenewed }: { domain: string; justRenewed?: boolean }) {
+	const { data: service, refetch } = useDomainService(domain || undefined);
+	const polls = useRef(0);
+
+	useEffect(() => {
+		if (!justRenewed || service?.status !== "ended" || polls.current >= 10) return;
+		const timer = setTimeout(() => {
+			polls.current += 1;
+			void refetch();
+		}, 2000);
+		return () => clearTimeout(timer);
+	}, [justRenewed, service, refetch]);
+
+	if (!service?.billed) return null;
+
+	const icon =
+		service.status === "ended" ? (
+			<WarningCircleIcon size={18} weight="fill" className="shrink-0 text-amber-500" />
+		) : service.status === "ending" ? (
+			<HourglassIcon size={18} className="shrink-0 text-sky-500" />
+		) : (
+			<CheckCircleIcon size={18} weight="fill" className="shrink-0 text-emerald-500" />
+		);
+	const nextCharge =
+		service.nextChargeAt &&
+		`Next charge${service.nextChargeUsd !== undefined ? ` of $${service.nextChargeUsd.toFixed(2)}` : ""} on ${formatServiceDate(service.nextChargeAt)}.`;
+	const detail =
+		service.status === "active"
+			? [
+					"Subscription active.",
+					nextCharge,
+					service.registrarManaged && service.registrationExpiresAt
+						? `The domain registration renews before ${formatServiceDate(service.registrationExpiresAt)}.`
+						: undefined,
+				]
+					.filter(Boolean)
+					.join(" ")
+			: serviceMessage(service);
+
+	return (
+		<div className="rounded-xl border border-kumo-line bg-kumo-base p-4 flex items-center gap-3">
+			{icon}
+			<div className="flex-1 min-w-0">
+				<div className="text-sm font-semibold text-kumo-default">Subscription</div>
+				<p className="text-xs text-kumo-subtle mt-0.5">
+					{justRenewed && service.status === "ended" ? "Finishing your renewal…" : detail}
+				</p>
+			</div>
+			{service.canManage && service.status !== "ended" && <ManageBillingButton domain={service.domain} />}
+			<RenewButton service={service} />
+		</div>
+	);
+}
+
+/** Stripe's billing portal: change the card, see invoices, cancel. */
+function ManageBillingButton({ domain }: { domain: string }) {
+	const toastManager = useKumoToastManager();
+	const [opening, setOpening] = useState(false);
+	return (
+		<Button
+			variant="secondary"
+			size="sm"
+			loading={opening}
+			onClick={async () => {
+				setOpening(true);
+				try {
+					const { url } = await api.openBillingPortal(domain);
+					window.location.href = url;
+				} catch (e) {
+					setOpening(false);
+					toastManager.add({
+						title: "Couldn't open billing settings",
+						description: e instanceof ApiError ? e.message : "Try again in a moment.",
+						variant: "error",
+					});
+				}
+			}}
+		>
+			Manage billing
+		</Button>
+	);
+}

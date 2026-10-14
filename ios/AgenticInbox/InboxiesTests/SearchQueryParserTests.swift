@@ -103,42 +103,86 @@ final class UserEmailsFromAclTests: XCTestCase {
     }
 }
 
-final class SharingSettingsViewTests: XCTestCase {
-    func testIsUserAccountKeyFiltersOutSubAndUser() {
-        XCTAssertTrue(SharingSettingsView.isUserAccountKey("email:admin@example.com"))
-        XCTAssertTrue(SharingSettingsView.isUserAccountKey("account:acc-1234"))
-        XCTAssertTrue(SharingSettingsView.isUserAccountKey("ada@example.com"))
-        XCTAssertFalse(SharingSettingsView.isUserAccountKey("sub:google-oauth2|1029384756"))
-        XCTAssertFalse(SharingSettingsView.isUserAccountKey("sub:apple|001122"))
-        XCTAssertFalse(SharingSettingsView.isUserAccountKey("user:usr-5678"))
+final class AccountSecurityTests: XCTestCase {
+    func testAppleNonceIsRandomAndHashedAsLowercaseHex() {
+        let first = AppleSignInNonce.make()
+        let second = AppleSignInNonce.make()
+        XCTAssertEqual(first.count, 32)
+        XCTAssertNotEqual(first, second)
+        // SHA-256("abc"), as the server compares it.
+        XCTAssertEqual(
+            AppleSignInNonce.sha256("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        )
+    }
+
+    func testSessionTitlesFromLabelsAndUserAgents() {
+        func session(label: String? = nil, agent: String?) -> AccountSession {
+            AccountSession(
+                id: "s", label: label, scope: nil, userAgent: agent, ipAddress: nil,
+                createdAt: "", lastActiveAt: "", expiresAt: "", current: false
+            )
+        }
+        XCTAssertEqual(SessionsSettingsView.title(session(label: "iPhone AutoFill", agent: nil)), "iPhone AutoFill")
+        XCTAssertEqual(SessionsSettingsView.title(session(agent: "Inboxies/1 CFNetwork/1490 Darwin/24.0.0")), "Inboxies for iPhone")
+        XCTAssertEqual(SessionsSettingsView.title(session(agent: "okhttp/4.12.0")), "Inboxies for Android")
+        XCTAssertEqual(
+            SessionsSettingsView.title(session(agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 Version/17.5 Safari/605.1.15")),
+            "Safari on Mac"
+        )
+        XCTAssertEqual(
+            SessionsSettingsView.title(session(agent: "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/129.0 Safari/537.36")),
+            "Chrome on Windows"
+        )
+        XCTAssertEqual(SessionsSettingsView.title(session(agent: nil)), "Unknown device")
+    }
+
+    func testSettingsSaveNeverSendsAcl() throws {
+        var settings = MailboxSettings()
+        settings.fromName = "Alex"
+        settings.acl = MailboxAcl(owners: ["email:a@example.com"], members: [])
+        let payload = try APIClient.settingsPayload(settings)
+        XCTAssertNil(payload["acl"])
+        XCTAssertEqual(payload["fromName"] as? String, "Alex")
+    }
+
+    func testInviteAcceptDecodesWithoutTokenWhenSignedIn() throws {
+        let json = Data(#"{"mailboxId":"team@inboxies.email","userId":"u1","accountId":"u1"}"#.utf8)
+        let decoded = try JSONDecoder().decode(InviteAcceptResponse.self, from: json)
+        XCTAssertNil(decoded.token)
+        XCTAssertEqual(decoded.mailboxId, "team@inboxies.email")
     }
 }
 
 final class SharedSessionTests: XCTestCase {
-    /// A token saved before the shared keychain group existed moves into it,
-    /// and the copy in the app's own group is removed.
-    func testKeychainMigrationMovesLegacyItemIntoSharedGroup() throws {
+    /// The app session saved by builds that kept it in the shared group (where
+    /// the AutoFill extension could read it) moves into the app's own group.
+    func testAppSessionMovesOutOfSharedGroup() throws {
         let shared = try XCTUnwrap(KeychainStore.accessGroup, "KeychainAccessGroup was not expanded in this build")
-        let prefix = String(shared.dropLast("co.inboxies.shared".count))
-        let legacyGroup = prefix + "co.inboxies.app"
+        // Unsigned builds (CI) have no team prefix, so there is no named app group.
+        // Throw the skip directly: inside XCTUnwrap's autoclosure it is reported as a failure.
+        guard let appGroup = KeychainStore.appAccessGroup else {
+            throw XCTSkip("No team prefix in this build")
+        }
         let key = "test-migration-\(UUID().uuidString)"
-        defer { KeychainStore.delete(key) }
+        defer { KeychainStore.deleteEverywhere(key) }
 
         let legacy: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
-            kSecAttrAccessGroup as String: legacyGroup,
+            kSecAttrAccessGroup as String: shared,
             kSecValueData as String: Data("legacy-token".utf8),
         ]
         let status = SecItemAdd(legacy as CFDictionary, nil)
         try XCTSkipIf(status == errSecMissingEntitlement, "Keychain access groups are unavailable on this host")
         XCTAssertEqual(status, errSecSuccess)
 
-        KeychainStore.migrateToSharedGroup(key)
+        KeychainStore.moveToAppGroup(key)
 
-        XCTAssertEqual(stored(key, group: shared), "legacy-token")
-        XCTAssertNil(stored(key, group: legacyGroup))
-        XCTAssertEqual(KeychainStore.read(key), "legacy-token")
+        XCTAssertEqual(stored(key, group: appGroup), "legacy-token")
+        XCTAssertNil(stored(key, group: shared))
+        XCTAssertEqual(KeychainStore.read(key, in: .app), "legacy-token")
+        XCTAssertNil(KeychainStore.read(key, in: .shared))
     }
 
     func testPublishMirrorsMailboxAndOnlyNonDefaultAPIOrigin() throws {

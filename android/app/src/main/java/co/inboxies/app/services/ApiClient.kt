@@ -1,7 +1,7 @@
 package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
-import co.inboxies.app.models.AccountSummary
+import co.inboxies.app.models.AccountSession
 import co.inboxies.app.models.AdminCreateMailboxResponse
 import co.inboxies.app.models.AdminDomainConnectResponse
 import co.inboxies.app.models.AdminDomainInfo
@@ -23,6 +23,8 @@ import co.inboxies.app.models.DomainAvailabilityResponse
 import co.inboxies.app.models.DomainCheckoutResponse
 import co.inboxies.app.models.DomainEppCodeResponse
 import co.inboxies.app.models.DomainHealthResponse
+import co.inboxies.app.models.DomainService
+import co.inboxies.app.models.RenewDomainResponse
 import co.inboxies.app.models.DomainTransferLockResponse
 import co.inboxies.app.models.ExportJob
 import co.inboxies.app.models.ForgotPasswordResponse
@@ -42,7 +44,7 @@ import co.inboxies.app.models.WorkflowPilesResponse
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.IdentitiesResponse
-import co.inboxies.app.models.IdentityLinkCodeResponse
+import co.inboxies.app.models.InviteCodeResponse
 import co.inboxies.app.models.InviteAcceptResponse
 import co.inboxies.app.models.InviteCreateResponse
 import co.inboxies.app.models.InvitePublic
@@ -50,7 +52,10 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.PasswordLoginResponse
-import co.inboxies.app.models.RedeemIdentityLinkResponse
+import co.inboxies.app.models.MailboxInviteRow
+import co.inboxies.app.models.MailboxMember
+import co.inboxies.app.models.RecoveryEmailStatus
+import co.inboxies.app.models.RevokeSessionsResponse
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -60,6 +65,7 @@ import co.inboxies.app.models.UpsertSenderPreferenceResponse
 import co.inboxies.app.util.ParsedSearch
 import co.inboxies.app.util.SearchQueryParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -90,6 +96,23 @@ sealed class ApiException(message: String) : Exception(message) {
             "(and /agents/* for chat) in Zero Trust.",
     )
     class Transport(cause: Throwable) : ApiException(cause.message ?: "Network error")
+    class SessionExpired : ApiException("Your session expired. Sign in again.")
+
+    /**
+     * 403 `{ code: "service_ended", domain }`: the domain's subscription ended and the
+     * mailbox is read-only. Deliberately not an [Http] so the "403 = lost access" paths
+     * (dropping a mailbox, clearing a saved one) never see it; access is intact.
+     */
+    class ServiceEnded(val domain: String?, message: String) : ApiException(
+        message.ifBlank { "This mailbox is read-only because its subscription ended." },
+    )
+
+    /** The server's readable `error` text, for paths that show it as-is. */
+    val serverMessage: String?
+        get() = when (this) {
+            is Http, is ServiceEnded -> message?.takeIf { it.isNotBlank() }
+            else -> null
+        }
 }
 
 @Serializable
@@ -147,16 +170,53 @@ class ApiClient private constructor() {
     companion object {
         val shared: ApiClient by lazy { ApiClient() }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * The Worker answers a bad or expired bearer with 401/403 "Invalid or
+         * expired mobile session token". Per-mailbox ACL denials are also 403
+         * but carry other text, so they keep their local handling.
+         */
+        fun isExpiredSessionResponse(code: Int, message: String): Boolean =
+            (code == 401 || code == 403) &&
+                message.contains("invalid or expired mobile session token", ignoreCase = true)
+
+        /** `code` on the 403 the Worker returns for writes to a domain whose service ended. */
+        const val SERVICE_ENDED_CODE = "service_ended"
+
+        /** A 403 `{ error, code: "service_ended", domain }` body, else null. */
+        fun serviceEndedFailure(code: Int, body: String, message: String): ApiException.ServiceEnded? {
+            if (code != 403) return null
+            val obj = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+            if ((obj["code"] as? JsonPrimitive)?.content != SERVICE_ENDED_CODE) return null
+            return ApiException.ServiceEnded((obj["domain"] as? JsonPrimitive)?.content, message)
+        }
     }
 
+    /** Tokens the server just rejected as expired; RootView signs out if it's still current. */
+    val sessionExpired = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    private fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
+        val message = httpErrorMessage(body)
+        if (sentToken != null && isExpiredSessionResponse(code, message)) {
+            sessionExpired.tryEmit(sentToken)
+            return ApiException.SessionExpired()
+        }
+        return serviceEndedFailure(code, body, message) ?: ApiException.Http(code, message)
+    }
+
+    /**
+     * [bearerToken] pins a request to a session that is being torn down
+     * (sign-out cleanup after the local session is cleared).
+     */
     suspend inline fun <reified T> request(
         path: String,
         method: String = "GET",
         query: Map<String, String> = emptyMap(),
         body: JsonObject? = null,
         authed: Boolean = true,
+        bearerToken: String? = null,
     ): T = withContext(Dispatchers.IO) {
-        val (data, code, contentType) = perform(path, method, query, body, authed)
+        val (data, code, contentType) = perform(path, method, query, body, authed, bearerToken = bearerToken)
         if (code == 204 && T::class == EmptyResponse::class) {
             @Suppress("UNCHECKED_CAST")
             return@withContext EmptyResponse() as T
@@ -189,13 +249,13 @@ class ApiClient private constructor() {
         body: JsonObject?,
         authed: Boolean,
         asBytes: Boolean = false,
+        bearerToken: String? = null,
     ): Triple<String, Int, String> {
         val builder = Request.Builder().url(buildUrl(path, query))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
-        if (authed) {
-            authTokenProvider()?.let { builder.header("Authorization", "Bearer $it") }
-        }
+        val sentToken = if (authed) bearerToken ?: authTokenProvider() else null
+        sentToken?.let { builder.header("Authorization", "Bearer $it") }
         val requestBody = body?.let { json.encodeToString(JsonObject.serializer(), it).toRequestBody(JSON_MEDIA) }
         builder.method(method, if (method == "GET" || method == "DELETE" && requestBody == null) null else requestBody
             ?: if (method == "POST" || method == "PUT" || method == "PATCH") "{}".toRequestBody(JSON_MEDIA) else null)
@@ -214,7 +274,8 @@ class ApiClient private constructor() {
                     throw ApiException.CloudflareAccess()
                 }
                 if (!response.isSuccessful) {
-                    throw ApiException.Http(response.code, httpErrorMessage(text))
+                    // A pinned outgoing session failing is not "the current session expired".
+                    throw httpFailure(response.code, text, sentToken.takeIf { bearerToken == null })
                 }
                 return Triple(text, response.code, response.header("Content-Type").orEmpty())
             }
@@ -252,12 +313,13 @@ class ApiClient private constructor() {
      */
     suspend fun downloadToFile(path: String, destination: java.io.File) = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(buildUrl(path)).get()
-        authTokenProvider()?.let { builder.header("Authorization", "Bearer $it") }
+        val sentToken = authTokenProvider()
+        sentToken?.let { builder.header("Authorization", "Bearer $it") }
         try {
             client.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     val text = response.body?.string().orEmpty()
-                    throw ApiException.Http(response.code, httpErrorMessage(text))
+                    throw httpFailure(response.code, text, sentToken)
                 }
                 val source = response.body ?: throw ApiException.Http(response.code, "Empty download")
                 destination.parentFile?.mkdirs()
@@ -291,17 +353,57 @@ class ApiClient private constructor() {
         body = buildJsonObject { put("confirm", "DELETE") },
     )
 
-    suspend fun listIdentities(): IdentitiesResponse = request("/api/v1/me/identities")
-    suspend fun listAccounts(): List<AccountSummary> = request("/api/v1/accounts")
+    /** Revokes the session on the server. [sessionToken] pins the outgoing session at sign-out. */
+    suspend fun logout(sessionToken: String) {
+        request<EmptyResponse>(
+            "/api/v1/auth/logout",
+            method = "POST",
+            body = buildJsonObject {},
+            bearerToken = sessionToken,
+        )
+    }
 
-    suspend fun attachAppleIdentity(identityToken: String): AttachIdentityResponse = request(
-        "/api/v1/me/identities/attach",
+    suspend fun listIdentities(): IdentitiesResponse = request("/api/v1/me/identities")
+
+    /** Disconnects a sign-in method (`google`, `apple`, `password`); the server keeps the last one. */
+    suspend fun removeIdentity(type: String) {
+        request<EmptyResponse>("/api/v1/me/identities/${pathEncode(type)}", method = "DELETE")
+    }
+
+    // ── Sessions ──
+
+    suspend fun listSessions(): List<AccountSession> = request("/api/v1/me/sessions")
+
+    suspend fun revokeSession(id: String) {
+        request<EmptyResponse>("/api/v1/me/sessions/${pathEncode(id)}", method = "DELETE")
+    }
+
+    suspend fun revokeOtherSessions(): RevokeSessionsResponse = request(
+        "/api/v1/me/sessions/revoke-others",
         method = "POST",
-        body = buildJsonObject {
-            put("provider", "apple")
-            put("identityToken", identityToken)
-        },
+        body = buildJsonObject {},
     )
+
+    // ── Recovery email ──
+
+    suspend fun getRecoveryEmail(): RecoveryEmailStatus = request("/api/v1/me/recovery-email")
+
+    /** Sets (or replaces) the recovery email and mails it a 6-digit code. */
+    suspend fun setRecoveryEmail(email: String): RecoveryEmailStatus = request(
+        "/api/v1/me/recovery-email",
+        method = "POST",
+        body = buildJsonObject { put("email", email) },
+    )
+
+    suspend fun verifyRecoveryEmail(code: String): RecoveryEmailStatus = request(
+        "/api/v1/me/recovery-email/verify",
+        method = "POST",
+        body = buildJsonObject { put("code", code) },
+    )
+
+    suspend fun removeRecoveryEmail() {
+        request<EmptyResponse>("/api/v1/me/recovery-email", method = "DELETE")
+    }
 
     suspend fun attachGoogleIdentity(idToken: String): AttachIdentityResponse = request(
         "/api/v1/me/identities/attach",
@@ -337,18 +439,6 @@ class ApiClient private constructor() {
         },
     )
 
-    suspend fun createIdentityLinkCode(): IdentityLinkCodeResponse = request(
-        "/api/v1/me/identity-link-codes",
-        method = "POST",
-        body = buildJsonObject {},
-    )
-
-    suspend fun redeemIdentityLink(code: String): RedeemIdentityLinkResponse = request(
-        "/api/v1/auth/redeem-identity-link",
-        method = "POST",
-        body = buildJsonObject { put("code", code) },
-    )
-
     suspend fun createMailbox(name: String, email: String): Mailbox = request(
         "/api/v1/mailboxes",
         method = "POST",
@@ -361,14 +451,18 @@ class ApiClient private constructor() {
     suspend fun getMailbox(mailboxId: String): Mailbox =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}")
 
-    suspend fun updateMailbox(mailboxId: String, settings: MailboxSettings): Mailbox {
-        val settingsElement = json.encodeToJsonElement(MailboxSettings.serializer(), settings)
-        return request(
-            "/api/v1/mailboxes/${pathEncode(mailboxId)}",
-            method = "PUT",
-            body = buildJsonObject { put("settings", settingsElement) },
-        )
-    }
+    suspend fun updateMailbox(mailboxId: String, settings: MailboxSettings): Mailbox = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}",
+        method = "PUT",
+        body = buildJsonObject { put("settings", settingsPayload(settings)) },
+    )
+
+    /**
+     * The PUT body's `settings`. `acl` is display-only (the server derives it
+     * from members), so it is never sent back.
+     */
+    fun settingsPayload(settings: MailboxSettings): JsonElement =
+        json.encodeToJsonElement(MailboxSettings.serializer(), settings.copy(acl = null))
 
     suspend fun deleteMailbox(mailboxId: String) {
         request<EmptyResponse>("/api/v1/mailboxes/${pathEncode(mailboxId)}", method = "DELETE")
@@ -377,18 +471,32 @@ class ApiClient private constructor() {
     suspend fun getInvite(token: String): InvitePublic =
         request("/api/v1/invites/${pathEncode(token)}", method = "GET", authed = false)
 
+    /** Mails a code to the invited address; accepting with it proves the invite reached them. */
+    suspend fun sendInviteCode(token: String): InviteCodeResponse = request(
+        "/api/v1/invites/${pathEncode(token)}/otp",
+        method = "POST",
+        body = buildJsonObject {},
+        authed = false,
+    )
+
+    /**
+     * Signed in ([password] null): joins the current account; the session is unchanged.
+     * Signed out: creates an account with [password] and returns its session.
+     */
     suspend fun acceptInvite(
         token: String,
-        password: String,
+        code: String,
+        password: String?,
         displayName: String? = null,
     ): InviteAcceptResponse = request(
         "/api/v1/invites/${pathEncode(token)}/accept",
         method = "POST",
         body = buildJsonObject {
-            put("password", password)
+            put("code", code)
+            if (password != null) put("password", password)
             if (!displayName.isNullOrBlank()) put("displayName", displayName)
         },
-        authed = false,
+        authed = password == null,
     )
 
     suspend fun passwordLogin(email: String, password: String): PasswordLoginResponse = request(
@@ -666,6 +774,40 @@ class ApiClient private constructor() {
             put("role", role)
         },
     )
+
+    // ── Members ──
+
+    suspend fun listMembers(mailboxId: String): List<MailboxMember> =
+        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/members")
+
+    suspend fun setMemberRole(mailboxId: String, userId: String, role: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/members/${pathEncode(userId)}",
+            method = "PATCH",
+            body = buildJsonObject { put("role", role) },
+        )
+    }
+
+    /** Owners remove anyone; anyone may remove themselves (leave the mailbox). */
+    suspend fun removeMember(mailboxId: String, userId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/members/${pathEncode(userId)}",
+            method = "DELETE",
+        )
+    }
+
+    /** Owners and domain admins only. */
+    suspend fun listMailboxInvites(mailboxId: String): List<MailboxInviteRow> =
+        request("/api/v1/admin/mailboxes/${pathEncode(mailboxId)}/invites")
+
+    /** [inviteId] is the id from [listMailboxInvites]. */
+    suspend fun revokeInvite(inviteId: String) {
+        request<MailboxInviteRow>(
+            "/api/v1/admin/invites/${pathEncode(inviteId)}/revoke",
+            method = "POST",
+            body = buildJsonObject {},
+        )
+    }
 
     suspend fun listFolders(mailboxId: String): List<Folder> =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders")
@@ -1049,6 +1191,7 @@ class ApiClient private constructor() {
         username: String? = null,
         password: String? = null,
         displayName: String? = null,
+        backupEmail: String? = null,
         returnUrl: String? = null,
         client: String? = "android",
     ): DomainCheckoutResponse = request(
@@ -1059,12 +1202,28 @@ class ApiClient private constructor() {
             if (username != null) put("username", username)
             if (password != null) put("password", password)
             if (displayName != null) put("displayName", displayName)
+            // Domain owners need a recovery email for billing and renewal notices.
+            if (!backupEmail.isNullOrBlank()) put("backupEmail", backupEmail)
             if (returnUrl != null) put("returnUrl", returnUrl)
             if (client != null) put("client", client)
         },
         // Send the Bearer token when signed in so the purchase links to this account;
         // signed-out checkout still works (no token → no Authorization header).
         authed = true,
+    )
+
+    /** Domain admins, or anyone with a mailbox on [domain]; 403 for anyone else. */
+    suspend fun getDomainService(domain: String): DomainService =
+        request("/api/v1/billing/domains/${pathEncode(domain)}/service")
+
+    /**
+     * Admins only. Resumes a subscription set to end, or returns a Stripe Checkout that
+     * comes back to `inboxies://billing/renewed|renew-cancelled?domain=`.
+     */
+    suspend fun renewDomain(domain: String): RenewDomainResponse = request(
+        "/api/v1/billing/domains/${pathEncode(domain)}/renew",
+        method = "POST",
+        body = buildJsonObject { put("client", "android") },
     )
 
     // MARK: - Email Export Engine

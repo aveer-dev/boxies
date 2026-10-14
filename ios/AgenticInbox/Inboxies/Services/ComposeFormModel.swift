@@ -92,7 +92,12 @@ final class ComposeFormModel {
     private let signature: String
     private let initialSnapshot: String
     private var lastSavedSnapshot: String
+    /// Debounce only. Keystrokes cancel this, never the request in `inFlightSave`.
     private var autoSaveTask: Task<Void, Never>?
+    /// The POST on the wire. Unstructured so a cancelled caller can't abort it: a
+    /// cancelled request can still land server-side, and losing its response loses
+    /// the new draft id (the next save would then create a duplicate).
+    private var inFlightSave: Task<Bool, Never>?
     private var toastDismissTask: Task<Void, Never>?
     private var consecutiveFailures = 0
     private let continuousFailureThreshold = 3
@@ -367,6 +372,11 @@ final class ComposeFormModel {
     private func performSaveDraft(explicit: Bool) async -> Bool {
         commitPendingTokens()
 
+        // Queue behind a save already on the wire; it clears `inFlightSave` when done.
+        while let pending = inFlightSave {
+            _ = await pending.value
+        }
+
         guard !isEmpty else {
             return true
         }
@@ -376,15 +386,25 @@ final class ComposeFormModel {
             }
             return true
         }
-        guard !isSavingDraft else {
-            return false
+
+        let save = Task { @MainActor in
+            let saved = await self.writeDraft(explicit: explicit)
+            self.inFlightSave = nil
+            return saved
         }
+        inFlightSave = save
+        return await save.value
+    }
+
+    private func writeDraft(explicit: Bool) async -> Bool {
+        // Taken before the request: edits made while it's in flight stay unsaved.
+        let snapshot = currentSnapshot
 
         // Preview support: simulate successful draft save in Xcode Previews / canvas mock fixtures
         if ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1" || fromMailboxId.hasPrefix("mb-") {
             try? await Task.sleep(for: .milliseconds(300))
             if draftId == nil { draftId = UUID().uuidString }
-            lastSavedSnapshot = currentSnapshot
+            lastSavedSnapshot = snapshot
             saveStatus = .saved(Date())
             consecutiveFailures = 0
             if explicit {
@@ -422,7 +442,7 @@ final class ComposeFormModel {
                 return false
             }
             draftId = resolved
-            lastSavedSnapshot = currentSnapshot
+            lastSavedSnapshot = snapshot
             saveStatus = .saved(Date())
             consecutiveFailures = 0
             if explicit {
@@ -433,13 +453,18 @@ final class ComposeFormModel {
             }
             return true
         } catch {
+            // Draft saves stay out of `errorMessage` (the inline send/validation slot):
+            // a background hiccup shouldn't put red text under the body while typing.
             print("[ComposeFormModel] saveDraft error: \(error)")
-            errorMessage = error.localizedDescription
             saveStatus = .failed(error.localizedDescription)
             consecutiveFailures += 1
-            if explicit || consecutiveFailures >= continuousFailureThreshold {
-                showToast("Failed to save draft", isError: true)
+            if explicit || consecutiveFailures == continuousFailureThreshold {
+                showToast("Couldn’t save draft", isError: true)
             }
+            // Retry on its own so a failure isn't stranded until the next edit.
+            // 5s, 10s, 20s, … capped at 60s; a keystroke resets to the normal debounce.
+            let backoff = min(5.0 * pow(2.0, Double(consecutiveFailures - 1)), 60.0)
+            scheduleAutoSave(debounceSeconds: backoff)
             return false
         }
     }

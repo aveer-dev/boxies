@@ -11,6 +11,7 @@ enum SettingsDestination: Hashable {
     case aliases
     case sharing
     case signInMethods
+    case sessions
     case domainAdmin
     case theme
     case support
@@ -70,16 +71,21 @@ struct SettingsSheetView: View {
 
                 Section {
                     settingsNavRow("Swipe settings", systemImage: "arrow.left.arrow.right", destination: .swipe)
-                    settingsNavRow("AI prompt", systemImage: "sparkles", destination: .agentPrompt)
-                    settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
-                    settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
-                    settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
-                    settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
-                    settingsNavRow("Private email", destination: .aliases) {
-                        PrivateEmailLogoView(size: 18, showTile: false)
+                    // Mailbox configuration freezes when the domain's service ends.
+                    Group {
+                        settingsNavRow("AI prompt", systemImage: "sparkles", destination: .agentPrompt)
+                        settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
+                        settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
+                        settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
+                        settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
+                        settingsNavRow("Private email", destination: .aliases) {
+                            PrivateEmailLogoView(size: 18, showTile: false)
+                        }
+                        settingsNavRow("Members", systemImage: "person.2", destination: .sharing)
                     }
-                    settingsNavRow("Sharing", systemImage: "person.2", destination: .sharing)
-                    settingsNavRow("Sign-in methods", systemImage: "key", destination: .signInMethods)
+                    .lockedWhenReadOnly(app.isReadOnly)
+                    settingsNavRow("Sign-in & recovery", systemImage: "key", destination: .signInMethods)
+                    settingsNavRow("Devices & sessions", systemImage: "laptopcomputer.and.iphone", destination: .sessions)
 
                     if app.isAdmin {
                         settingsNavRow("Domain Admin", systemImage: "shield.lefthalf.filled", destination: .domainAdmin)
@@ -87,8 +93,13 @@ struct SettingsSheetView: View {
 
                     notificationsToggle
                     signatureToggle
+                        .lockedWhenReadOnly(app.isReadOnly)
                 } header: {
                     Text("Preferences")
+                } footer: {
+                    if let mailbox, mailbox.isReadOnly {
+                        Text("The subscription for \(mailbox.domain) ended, so this mailbox's settings are read-only until it's renewed.")
+                    }
                 }
                 .listRowSeparator(.hidden)
 
@@ -118,6 +129,7 @@ struct SettingsSheetView: View {
                             .font(.inter(size: 16, weight: .medium))
                             .foregroundStyle(.red)
                     }
+                    .lockedWhenReadOnly(app.isReadOnly)
                 }
 
                 Section {
@@ -148,7 +160,7 @@ struct SettingsSheetView: View {
                         }
                         Button("Cancel", role: .cancel) {}
                     } message: {
-                        Text("Mailboxes only you own are permanently deleted with all their mail. Mailboxes shared with others stay for them; you are just removed. This cannot be undone.")
+                        Text("Mailboxes where you're the only owner are deleted with all their mail, for everyone who uses them. Mailboxes with another owner stay; you just lose access. This can't be undone.")
                     }
                 } header: {
                     Text("Account")
@@ -180,6 +192,8 @@ struct SettingsSheetView: View {
                     SharingSettingsView()
                 case .signInMethods:
                     SignInMethodsSettingsView()
+                case .sessions:
+                    SessionsSettingsView()
                 case .domainAdmin:
                     DomainAdminSettingsView(showsDismiss: false)
                 case .theme:
@@ -267,6 +281,7 @@ struct SettingsSheetView: View {
             }
             .buttonStyle(.plain)
             .padding(.top, 2)
+            .lockedWhenReadOnly(app.isReadOnly)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)

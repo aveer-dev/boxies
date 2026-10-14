@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Loader, Tooltip } from "@cloudflare/kumo";
+import { Badge, Button, Loader } from "@cloudflare/kumo";
 import {
 	ArrowUpIcon,
 	RobotIcon,
@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { UIMessage } from "ai";
 
@@ -171,7 +172,7 @@ function MessageBubble({
 						return (
 							<div
 								key={key}
-								className={`rounded-lg px-3 py-2 text-[13px] leading-relaxed break-words overflow-wrap-anywhere ${
+								className={`rounded-lg px-3 py-2 text-13 leading-relaxed break-words overflow-wrap-anywhere ${
 									isUser
 										? "bg-kumo-brand text-kumo-inverse rounded-br-sm"
 										: "bg-kumo-elevated text-kumo-default border border-kumo-line rounded-bl-sm overflow-hidden"
@@ -225,17 +226,17 @@ function MessageBubble({
 												</h3>
 											),
 											h2: ({ children }) => (
-												<h4 className="font-semibold text-[13px] mb-1">
+												<h4 className="font-semibold text-13 mb-1">
 													{children}
 												</h4>
 											),
 											h3: ({ children }) => (
-												<h5 className="font-semibold text-[13px] mb-0.5">
+												<h5 className="font-semibold text-13 mb-0.5">
 													{children}
 												</h5>
 											),
 											code: ({ children }) => (
-												<code className="bg-kumo-fill px-1 py-0.5 rounded text-[12px]">
+												<code className="bg-kumo-fill px-1 py-0.5 rounded text-xs">
 													{children}
 												</code>
 											),
@@ -364,20 +365,15 @@ function AgentChatConnected({
 				<div className="flex items-center gap-1">
 					{isStreaming && <Loader size="sm" />}
 					{messages.length > 0 && (
-						<Tooltip content="Clear chat" asChild>
-							<Button
-								variant="ghost"
-								shape="square"
-								size="sm"
-								icon={<TrashIcon size={14} />}
-								onClick={() => {
-									if (window.confirm("Clear chat history?")) {
-										setMessages([]);
-									}
-								}}
-								aria-label="Clear chat"
-							/>
-						</Tooltip>
+						<IconButton
+							label="Clear chat"
+							icon={TrashIcon}
+							onClick={() => {
+								if (window.confirm("Clear chat history?")) {
+									setMessages([]);
+								}
+							}}
+						/>
 					)}
 				</div>
 			</div>

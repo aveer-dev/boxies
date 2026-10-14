@@ -582,21 +582,19 @@ struct SignInView: View {
         }
     }
 
-    private func handleApple(_ result: Result<ASAuthorization, Error>) async {
-        switch result {
+    private func handleApple(_ result: AppleAuthCoordinator.Outcome) async {
+        switch result.authorization {
         case .failure(let error):
             if let authError = error as? ASAuthorizationError, authError.code == .canceled {
                 return
             }
             auth.errorMessage = error.localizedDescription
         case .success(let authorization):
-            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                  let tokenData = credential.identityToken,
-                  let token = String(data: tokenData, encoding: .utf8) else {
+            guard let credential = AppleSignInCredential(authorization: authorization, nonce: result.nonce) else {
                 auth.errorMessage = "Apple Sign In failed"
                 return
             }
-            await auth.signInWithApple(identityToken: token, email: credential.email)
+            await auth.signInWithApple(credential)
         }
     }
 
@@ -1117,10 +1115,12 @@ private struct EmailLoginScreen: View {
                         .foregroundStyle(AppTheme.ink)
                         .padding(.top, 14)
 
-                    Text("Enter your email to receive a 6-digit reset code.")
+                    Text("Enter your sign-in email. We'll send a 6-digit code to the recovery email on your account.")
                         .font(.inter(size: 14))
                         .foregroundStyle(AppTheme.muted)
-                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
                         .padding(.top, 4)
 
                     TextField("Email Address", text: $email)
@@ -1199,10 +1199,12 @@ private struct EmailLoginScreen: View {
                         .foregroundStyle(AppTheme.ink)
                         .padding(.top, 14)
 
-                    Text("Enter the code sent to \(email.trimmingCharacters(in: .whitespacesAndNewlines))")
+                    Text("If \(email.trimmingCharacters(in: .whitespacesAndNewlines)) has a confirmed recovery email, we sent a code there. No recovery email? Ask a mailbox owner or your domain admin for help.")
                         .font(.inter(size: 14))
                         .foregroundStyle(AppTheme.muted)
-                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
                         .padding(.top, 4)
 
                     VStack(spacing: 14) {
@@ -1363,24 +1365,33 @@ private struct SafariView: UIViewControllerRepresentable {
 /// Coordinates native Apple Sign In authorization using ASAuthorizationController.
 @MainActor
 final class AppleAuthCoordinator: NSObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    /// The authorization plus the raw nonce whose hash went into the request.
+    struct Outcome {
+        let authorization: Result<ASAuthorization, Error>
+        let nonce: String
+    }
+
     private var continuation: CheckedContinuation<Result<ASAuthorization, Error>, Never>?
 
-    func authenticate() async -> Result<ASAuthorization, Error> {
+    func authenticate() async -> Outcome {
+        let nonce = AppleSignInNonce.make()
         if continuation != nil {
-            return .failure(ASAuthorizationError(.canceled))
+            return Outcome(authorization: .failure(ASAuthorizationError(.canceled)), nonce: nonce)
         }
 
-        return await withCheckedContinuation { continuation in
+        let result = await withCheckedContinuation { continuation in
             self.continuation = continuation
             let provider = ASAuthorizationAppleIDProvider()
             let request = provider.createRequest()
             request.requestedScopes = [.fullName, .email]
+            request.nonce = AppleSignInNonce.sha256(nonce)
 
             let controller = ASAuthorizationController(authorizationRequests: [request])
             controller.delegate = self
             controller.presentationContextProvider = self
             controller.performRequests()
         }
+        return Outcome(authorization: result, nonce: nonce)
     }
 
     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {

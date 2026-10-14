@@ -130,8 +130,11 @@ class PrivateEmailAutofillActivity : ComponentActivity() {
                 throw e
             } catch (_: SignInRequired) {
                 openInboxies()
+            } catch (_: ApiException.SessionExpired) {
+                // The app signs out on the same event; opening it shows sign-in.
+                openInboxies()
             } catch (e: Exception) {
-                failureMessage = (e as? ApiException.Http)?.message?.takeIf { it.isNotBlank() }
+                failureMessage = (e as? ApiException)?.serverMessage
                     ?: getString(R.string.autofill_create_failed)
             }
         }
@@ -144,6 +147,8 @@ class PrivateEmailAutofillActivity : ComponentActivity() {
             try {
                 return api.createAlias(mailboxId, label = label, pausedAction = MaskedAlias.PAUSED_DROP).alias.aliasEmail
             } catch (e: ApiException.Http) {
+                // A `service_ended` 403 is ApiException.ServiceEnded, not Http: it propagates
+                // with its message and the saved mailbox stays (access is intact, just read-only).
                 when (e.code) {
                     401 -> throw SignInRequired()
                     403, 404 -> AutofillMailboxPreference.clear()
