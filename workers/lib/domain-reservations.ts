@@ -24,7 +24,7 @@ const t = schema.domainReservation;
 export const PROVISIONING_LEASE_MS = 5 * 60 * 1000;
 
 /** Grace after the Checkout Session expires, for a completion webhook still in flight. */
-export const CHECKOUT_GRACE_MS = 15 * 60 * 1000;
+export const CHECKOUT_GRACE_MS = 10 * 60 * 1000;
 
 export type DomainReservation = typeof t.$inferSelect;
 
@@ -52,6 +52,25 @@ export async function holdForCheckout(
 			set: { holdId, sessionId: null, status: "checkout", expiresAt, updatedAt: now },
 			setWhere: and(eq(t.status, "checkout"), isNotNull(t.expiresAt), lt(t.expiresAt, now)),
 		})
+		.returning({ domain: t.domain });
+	return rows.length > 0;
+}
+
+/**
+ * Move a live checkout hold to a new checkout by the same buyer. The caller has
+ * already expired the old session, so it can't be paid.
+ */
+export async function takeOverCheckoutHold(
+	db: AuthDb,
+	domain: string,
+	oldHoldId: string,
+	newHoldId: string,
+	expiresAt: Date,
+): Promise<boolean> {
+	const rows = await db
+		.update(t)
+		.set({ holdId: newHoldId, sessionId: null, expiresAt, updatedAt: new Date() })
+		.where(and(eq(t.domain, domain), eq(t.holdId, oldHoldId), eq(t.status, "checkout")))
 		.returning({ domain: t.domain });
 	return rows.length > 0;
 }

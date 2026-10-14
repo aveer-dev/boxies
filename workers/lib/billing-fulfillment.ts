@@ -194,47 +194,83 @@ function isTerminalRegistrarError(e: unknown): boolean {
 	);
 }
 
-/** Paid (card, or a delayed method that has now settled): buy and set up the domain. */
-export async function fulfillPaidCheckout(env: Env, session: StripeCheckoutSession): Promise<WebhookOutcome> {
-	const domain = checkoutDomain(session);
-	if (!domain) return { status: 400, body: { error: "No domain metadata in checkout session" } };
-
+/**
+ * Where this checkout stands, read fresh: an outcome when there's nothing to
+ * do (or only a refund), otherwise the record and any domain metadata.
+ */
+async function loadFulfillmentState(
+	env: Env,
+	db: AuthDb,
+	session: StripeCheckoutSession,
+	domain: string,
+): Promise<WebhookOutcome | { record: BillingSessionRecord; existing: DomainMetadata | null }> {
 	const loaded = await loadRecordFor(env, session, domain);
 	if (isOutcome(loaded)) return loaded;
 	const record = loaded;
 	if (record.status === "ready") {
+		// A run that saved the record but died before releasing its claim.
+		await releaseForSession(db, domain, session.id).catch(() => {});
 		return { status: 200, body: { received: true, domain, status: "already_provisioned" } };
 	}
 	if (record.status === "refunded") {
 		return { status: 200, body: { received: true, domain, status: "refunded" } };
 	}
-
-	const db = authDb(env.AUTH_DB);
 	if (record.terminalError) return refundAndFail(env, db, session, record, record.terminalError);
 
 	const existing = await getDomainMetadata(env.BUCKET, domain);
 	if (existing && existing.billing?.checkoutSessionId !== session.id) {
 		return refundAndFail(env, db, session, record, DOMAIN_TAKEN_MESSAGE);
 	}
+	return { record, existing };
+}
+
+/** Paid (card, or a delayed method that has now settled): buy and set up the domain. */
+export async function fulfillPaidCheckout(env: Env, session: StripeCheckoutSession): Promise<WebhookOutcome> {
+	const domain = checkoutDomain(session);
+	if (!domain) return { status: 400, body: { error: "No domain metadata in checkout session" } };
+	const db = authDb(env.AUTH_DB);
+
+	const before = await loadFulfillmentState(env, db, session, domain);
+	if (isOutcome(before)) return before;
+	await indexCustomer(env, session, domain);
 
 	const leaseEnd = new Date(Date.now() + PROVISIONING_LEASE_MS);
 	if (!(await claimForSession(db, domain, session.id, "provisioning", leaseEnd))) {
 		const holder = await getReservation(db, domain);
-		if (holder?.sessionId === session.id) {
+		// Only another checkout's hold means the domain is theirs. Our own attempt in
+		// flight, or one that just finished and let go, means: try again later.
+		if (!holder || holder.sessionId === session.id) {
 			return { status: 409, body: { error: "Provisioning is already in progress" } };
 		}
-		return refundAndFail(env, db, session, record, DOMAIN_HELD_MESSAGE);
+		return refundAndFail(env, db, session, before.record, DOMAIN_HELD_MESSAGE);
 	}
 
+	// Another attempt may have got further while we waited for the claim.
+	const state = await loadFulfillmentState(env, db, session, domain);
+	if (isOutcome(state)) return state;
+
 	try {
-		return await provision(env, db, session, record, domain, existing);
+		return await provision(env, db, session, state.record, domain, state.existing);
 	} catch (e) {
 		await endProvisioningLease(db, domain, session.id).catch(() => {});
-		if (e instanceof TerminalFulfillmentError) return refundAndFail(env, db, session, record, e.message);
+		if (e instanceof TerminalFulfillmentError) return refundAndFail(env, db, session, state.record, e.message);
 		const msg = e instanceof Error ? e.message : "Provisioning failed";
 		console.error(`[billing] provisioning ${domain} failed, Stripe will retry:`, msg);
 		return { status: 502, body: { error: `Provisioning failed: ${msg}` } };
 	}
+}
+
+/**
+ * Remember which domain this checkout's customer pays for, before anything
+ * else: subscription events can arrive while provisioning is still retrying.
+ */
+async function indexCustomer(env: Env, session: StripeCheckoutSession, domain: string): Promise<void> {
+	const customerId = stripeId(session.customer);
+	if (!customerId) return;
+	await env.BUCKET.put(
+		billingCustomerKey(customerId),
+		JSON.stringify({ customerId, domain, sessionId: session.id, subscriptionId: stripeId(session.subscription) }),
+	);
 }
 
 async function provision(
@@ -252,7 +288,9 @@ async function provision(
 		try {
 			registration = await registerDomain(env, domain);
 		} catch (e) {
-			const owned = await getOwnedRegistration(env, domain).catch(() => null);
+			// A lookup error is retried (502), never read as "not ours": refunding a
+			// domain we did buy would leave the operator paying for it.
+			const owned = await getOwnedRegistration(env, domain);
 			if (owned) registration = owned;
 			else if (isTerminalRegistrarError(e)) throw new TerminalFulfillmentError(DOMAIN_TAKEN_MESSAGE);
 			else throw e;
@@ -325,12 +363,6 @@ async function provision(
 		updatedAt: now,
 	};
 	await saveDomainMetadata(env.BUCKET, domainMetadata);
-	if (customerId) {
-		await env.BUCKET.put(
-			billingCustomerKey(customerId),
-			JSON.stringify({ customerId, domain, sessionId: session.id, subscriptionId }),
-		);
-	}
 
 	// 6. Done: the password hash has served its purpose.
 	record.status = "ready";
@@ -433,6 +465,14 @@ async function refundAndFail(
 	record: BillingSessionRecord,
 	reason: string,
 ): Promise<WebhookOutcome> {
+	// Last check before giving money back: never refund a checkout that owns its domain.
+	const latest = await loadBillingSession(env.BUCKET, session.id);
+	if (latest?.status === "ready") {
+		return { status: 200, body: { received: true, domain: record.domain, status: "already_provisioned" } };
+	}
+	if ((await getDomainMetadata(env.BUCKET, record.domain))?.billing?.checkoutSessionId === session.id) {
+		return { status: 409, body: { error: "Provisioning is finishing; retry" } };
+	}
 	if (record.terminalError !== reason) {
 		record.terminalError = reason;
 		await saveBillingSession(env.BUCKET, record);
@@ -471,6 +511,7 @@ export async function markAwaitingPayment(env: Env, session: StripeCheckoutSessi
 		return { status: 200, body: { received: true, domain, status: record.status } };
 	}
 
+	await indexCustomer(env, session, domain);
 	// If another buyer took the domain meanwhile, a later success is refunded.
 	await claimForSession(authDb(env.AUTH_DB), domain, session.id, "awaiting_payment", null);
 	record.status = "awaiting_payment";
@@ -521,16 +562,22 @@ export const LIFECYCLE_EVENT_TYPES = new Set([
 	"charge.dispute.closed",
 ]);
 
-async function domainForCustomer(env: Env, customerId: string | undefined): Promise<string | null> {
+async function checkoutForCustomer(
+	env: Env,
+	customerId: string | undefined,
+): Promise<{ domain: string; sessionId?: string } | null> {
 	if (!customerId) return null;
 	const obj = await env.BUCKET.get(billingCustomerKey(customerId));
 	if (!obj) return null;
 	try {
-		return ((await obj.json()) as { domain?: string }).domain ?? null;
+		const entry = (await obj.json()) as { domain?: string; sessionId?: string };
+		return entry.domain ? { domain: entry.domain, sessionId: entry.sessionId } : null;
 	} catch {
 		return null;
 	}
 }
+
+const IN_FLIGHT_STATUSES = new Set<BillingSessionStatus>(["pending", "awaiting_payment", "provisioning"]);
 
 /** Disputes name the charge, not the customer. */
 async function customerForCharge(env: Env, chargeId: string | undefined): Promise<string | undefined> {
@@ -562,9 +609,18 @@ export async function applyLifecycleEvent(env: Env, event: StripeEvent): Promise
 	const customerId = type.startsWith("charge.dispute.")
 		? await customerForCharge(env, stripeId(obj.charge))
 		: stripeId(obj.customer);
-	const domain = await domainForCustomer(env, customerId);
-	const meta = domain ? await getDomainMetadata(env.BUCKET, domain) : null;
-	if (!domain || !meta?.billing) return { status: 200, body: { received: true, ignored: true } };
+	const checkout = await checkoutForCustomer(env, customerId);
+	if (!checkout) return { status: 200, body: { received: true, ignored: true } };
+	const { domain } = checkout;
+	const meta = await getDomainMetadata(env.BUCKET, domain);
+	if (!meta?.billing || (checkout.sessionId && meta.billing.checkoutSessionId !== checkout.sessionId)) {
+		// The checkout is still being paid for or set up: have Stripe deliver this again later.
+		const record = checkout.sessionId ? await loadBillingSession(env.BUCKET, checkout.sessionId) : null;
+		if (record && IN_FLIGHT_STATUSES.has(record.status)) {
+			return { status: 409, body: { error: "Checkout is not provisioned yet" } };
+		}
+		return { status: 200, body: { received: true, ignored: true } };
+	}
 
 	const now = new Date().toISOString();
 	const billing: DomainBillingInfo = { ...meta.billing };

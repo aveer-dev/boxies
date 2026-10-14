@@ -11,7 +11,7 @@ import {
 	computeDomainPricing,
 } from "../lib/cloudflare-registrar";
 import { getDomainMetadata } from "../lib/domain-registry";
-import { hashPassword } from "../lib/password-auth";
+import { hashPassword, verifyPassword } from "../lib/password-auth";
 import { authDb } from "../auth/authz";
 import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
 import { createSessionForUser, findUserById, sessionCookieHeader } from "../auth/users";
@@ -36,6 +36,7 @@ import {
 	getReservation,
 	holdForCheckout,
 	releaseCheckoutHold,
+	takeOverCheckoutHold,
 } from "../lib/domain-reservations";
 import {
 	canCallStripeFor,
@@ -74,8 +75,11 @@ interface StripeSessionResponse {
 	url: string;
 }
 
-/** How long a Checkout Session stays payable (Stripe's minimum is 30 minutes). */
-const CHECKOUT_TTL_MS = 30 * 60 * 1000;
+/**
+ * How long a Checkout Session stays payable. Stripe's minimum is 30 minutes
+ * from when it creates the session, so leave room for the round trip.
+ */
+const CHECKOUT_TTL_MS = 35 * 60 * 1000;
 
 /** Stripe statuses that mean the customer actually owes nothing more. */
 const SETTLED_PAYMENT_STATUSES = new Set(["paid", "no_payment_required"]);
@@ -249,7 +253,10 @@ export function registerBillingRoutes(app: Hono<MailboxContext>) {
 		const holdId = crypto.randomUUID();
 		const checkoutExpiresAt = new Date(Date.now() + CHECKOUT_TTL_MS);
 		const holdUntil = new Date(checkoutExpiresAt.getTime() + CHECKOUT_GRACE_MS);
-		if (!(await holdForCheckout(db, domain, holdId, holdUntil))) {
+		const held =
+			(await holdForCheckout(db, domain, holdId, holdUntil)) ||
+			(await takeOverOwnCheckout(c.env, domain, holdId, holdUntil, { callerUserId, username, password }));
+		if (!held) {
 			return c.json(
 				{ error: "Someone is already checking out this domain. Try again in a few minutes." },
 				409,
@@ -612,6 +619,52 @@ window.location.href = ${JSON.stringify(deepLink)};
 		}
 		return c.json(outcome.body, outcome.status);
 	});
+}
+
+/**
+ * A buyer starting over (closed the Stripe tab, dismissed the in-app browser)
+ * gets their own hold back instead of a 409. Same buyer means the same signed-in
+ * account, or the same username with the password the earlier checkout hashed.
+ */
+async function takeOverOwnCheckout(
+	env: Env,
+	domain: string,
+	newHoldId: string,
+	holdUntil: Date,
+	buyer: { callerUserId?: string; username?: string; password?: string },
+): Promise<boolean> {
+	const db = authDb(env.AUTH_DB);
+	const hold = await getReservation(db, domain);
+	if (!hold || hold.status !== "checkout" || !hold.holdId || !hold.sessionId) return false;
+	const previous = await loadBillingSession(env.BUCKET, hold.sessionId);
+	if (!previous || previous.status !== "pending") return false;
+
+	const sameAccount = Boolean(buyer.callerUserId && previous.ownerUserId === buyer.callerUserId);
+	const sameLogin = Boolean(
+		buyer.username &&
+			buyer.password &&
+			previous.passwordHash &&
+			previous.username === buyer.username.toLowerCase() &&
+			(await verifyPassword(buyer.password, previous.passwordHash)),
+	);
+	if (!sameAccount && !sameLogin) return false;
+
+	// Once the hold moves, the old session must not be payable. Stripe refuses
+	// to expire a session that was already paid: then the hold stays put.
+	if (canCallStripeFor(env, hold.sessionId)) {
+		try {
+			await expireCheckoutSession(env, hold.sessionId);
+		} catch {
+			return false;
+		}
+	}
+	if (!(await takeOverCheckoutHold(db, domain, hold.holdId, newHoldId, holdUntil))) return false;
+
+	previous.status = "canceled";
+	previous.error = "Replaced by a newer checkout.";
+	previous.passwordHash = undefined;
+	await saveBillingSession(env.BUCKET, previous);
+	return true;
 }
 
 /**

@@ -496,7 +496,7 @@ async function runTests() {
 		assert.equal(capturedStripePayload.get("metadata[passwordHash]"), null, "No password hash in Stripe metadata");
 		assert.equal(capturedStripePayload.get("subscription_data[metadata][domain]"), "my-live-company.com");
 		const expiresAt = Number(capturedStripePayload.get("expires_at"));
-		assert.ok(expiresAt - Date.now() / 1000 >= 29 * 60, "checkout expires no sooner than Stripe allows");
+		assert.ok(expiresAt - Date.now() / 1000 >= 34 * 60, "checkout expiry leaves room above Stripe's 30-minute minimum");
 		assert.ok(new URL(capturedStripePayload.get("cancel_url")).searchParams.get("hold"), "cancel URL can release the hold");
 		assert.equal(capturedStripeHeaders["Stripe-Version"], STRIPE_API_VERSION, "Stripe API version is pinned");
 		const liveRecord = await (await bucket.get(billingSessionKey("cs_stripe_live_test_777"))).json();
@@ -1300,6 +1300,106 @@ async function runTests() {
 		await lifecycle("evt_unknown_cus", "invoice.payment_failed", t0 + 60, { customer: "cus_nobody", billing_reason: "subscription_cycle" })
 	).json();
 	assert.equal(unknownCustomer.ignored, true);
+
+	// 8i. Race: our claim fails because our own earlier delivery holds the lease, and that
+	// delivery finishes (releasing the row) before we look at who holds it. That must be a
+	// retry, never a refund of a purchase that just succeeded.
+	await d1
+		.prepare("insert into domain_reservation (domain, session_id, status, expires_at) values (?, ?, 'provisioning', ?)")
+		.bind("race-domain.com", "cs_live_race", Date.now() + 60_000)
+		.run();
+	await saveRecordFixture("cs_live_race", "race-domain.com");
+	const racyD1 = {
+		...d1,
+		prepare(sql) {
+			const stmt = d1.prepare(sql);
+			if (!/^insert into "domain_reservation"/i.test(sql)) return stmt;
+			// The other delivery finishes right after our claim fails.
+			const releaseAfter = (fn) => async (...args) => {
+				const out = await fn(...args);
+				d1.sqlite.prepare("delete from domain_reservation where domain = 'race-domain.com'").run();
+				return out;
+			};
+			return {
+				bind: (...params) => {
+					const bound = stmt.bind(...params);
+					return { all: releaseAfter(() => bound.all()), raw: releaseAfter(() => bound.raw()), run: releaseAfter(() => bound.run()), first: (c) => bound.first(c) };
+				},
+			};
+		},
+		batch: (s) => d1.batch(s),
+	};
+	await withFakeStripe({}, async (calls) => {
+		const res = await signedPost(
+			checkoutEvent("evt_race_1", "checkout.session.completed", "cs_live_race", "race-domain.com", {
+				subscription: "sub_race",
+				invoice: "in_race",
+			}),
+			{ ...stripeSecureEnv, AUTH_DB: racyD1 },
+		);
+		assert.equal(res.status, 409, "no holder after a failed claim means retry");
+		assert.equal(calls.length, 0, "no Stripe cancel or refund");
+	});
+	assert.equal((await readRecord("cs_live_race")).status, "pending");
+
+	// 8j. The registrar refuses and then can't tell us whether we own the name:
+	// retry, don't refund (an earlier attempt may have bought it).
+	{
+		await saveRecordFixture("cs_live_lookup", "lookup-error.com");
+		const calls = [];
+		const prevFetch = globalThis.fetch;
+		globalThis.fetch = async (url, init = {}) => {
+			const u = new URL(String(url));
+			calls.push(`${init.method || "GET"} ${u.hostname}${u.pathname}`);
+			if (u.hostname === "api.cloudflare.com" && (init.method || "GET") === "POST") {
+				return { ok: false, status: 400, json: async () => ({ success: false, errors: [{ code: 1, message: "not available" }] }) };
+			}
+			if (u.hostname === "api.cloudflare.com") {
+				return { ok: false, status: 500, json: async () => ({ success: false, errors: [{ code: 2, message: "registrar down" }] }) };
+			}
+			throw new Error(`unexpected fetch ${url}`);
+		};
+		try {
+			const res = await signedPost(
+				checkoutEvent("evt_lookup_1", "checkout.session.completed", "cs_live_lookup", "lookup-error.com", { subscription: "sub_lookup" }),
+				{ ...stripeSecureEnv, CF_API_TOKEN: "t", CF_ACCOUNT_ID: "a" },
+			);
+			assert.equal(res.status, 502, "an ownership lookup error is retried");
+		} finally {
+			globalThis.fetch = prevFetch;
+		}
+		assert.ok(!calls.some((c) => c.includes("api.stripe.com")), "no refund while ownership is unknown");
+		assert.equal((await readRecord("cs_live_lookup")).terminalError, undefined);
+	}
+
+	// 8k. Same buyer starting over (closed the Stripe tab) gets their hold back; others don't.
+	const startFirst = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "MyOwnPassword123!" }));
+	assert.equal(startFirst.status, 200);
+	const firstSession = (await startFirst.json()).sessionId;
+	const stranger = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "NotMyPassword1234!" }));
+	assert.equal(stranger.status, 409, "the wrong password can't take the hold");
+	const startOver = await withDevRuntime(() => postCheckout({ domain: "start-over.com", username: "me", password: "MyOwnPassword123!" }));
+	assert.equal(startOver.status, 200, "the same buyer can start over");
+	const secondSession = (await startOver.json()).sessionId;
+	assert.equal((await reservationOf("start-over.com")).session_id, secondSession);
+	const replaced = await readRecord(firstSession);
+	assert.equal(replaced.status, "canceled");
+	assert.equal(replaced.passwordHash, undefined);
+
+	// 8l. A subscription event for a checkout still awaiting its bank payment is retried, not dropped.
+	await saveRecordFixture("cs_bank_customer", "bank-customer.com");
+	await signedPost(
+		checkoutEvent("evt_bank_1", "checkout.session.completed", "cs_bank_customer", "bank-customer.com", {
+			payment_status: "unpaid",
+			customer: "cus_bank",
+		}),
+		secureEnv,
+	);
+	const earlyEvent = await signedPost(
+		{ id: "evt_bank_sub_deleted", type: "customer.subscription.deleted", created: t0 + 70, data: { object: { customer: "cus_bank", status: "canceled" } } },
+		secureEnv,
+	);
+	assert.equal(earlyEvent.status, 409, "Stripe redelivers once the domain is set up");
 
 	console.log("✔ Delayed payment, retry, refund & lifecycle tests passed");
 
