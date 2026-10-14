@@ -188,6 +188,22 @@ class AppModel {
 
     private fun isSelected(mailboxId: String) = _selectedMailboxId.value == mailboxId
 
+    /** Ids on page 1 of the list [firstPageScope] last synced; only they get the New/Seen split. */
+    private var firstPageIds: Set<String>? = null
+    private var firstPageScope: EmailListScope? = null
+
+    private fun rememberFirstPage(scope: EmailListScope, ids: Set<String>) {
+        firstPageScope = scope
+        firstPageIds = ids
+    }
+
+    /** Inbox: New/Seen with later pages appended to Seen; other folders: as cached (newest first). */
+    private fun displayOrder(folderId: String, emails: List<Email>): List<Email> {
+        if (folderId != FolderIds.INBOX) return emails
+        val ids = firstPageIds.takeIf { firstPageScope != null && firstPageScope == currentListScope }
+        return EmailPaging.orderInbox(emails, ids)
+    }
+
     fun updateSwipePreferences(transform: (SwipeActionPreferences) -> SwipeActionPreferences) {
         val current = _swipePreferences.value
         val next = transform(current).let { prefs ->
@@ -333,6 +349,8 @@ class AppModel {
             if (target.equals(currentFolder, ignoreCase = true)) {
                 db.upsertEmails(mailboxId, listOf(email), defaultFolder = target)
                 if (_emails.value.none { it.id == email.id }) {
+                    // Newest mail belongs to page 1 (and its New/Seen split).
+                    firstPageIds = firstPageIds?.plus(email.id)
                     _emails.value = listOf(email) + _emails.value
                 }
             }
@@ -376,14 +394,23 @@ class AppModel {
             _mailboxesLoadFailed.value = false
             db.upsertMailboxes(merged)
             val selected = _selectedMailboxId.value
-            if (selected != null && list.none { it.id == selected }) {
-                _selectedMailboxId.value = list.firstOrNull()?.id
-            }
-            if (_selectedMailboxId.value == null) {
-                _selectedMailboxId.value = list.firstOrNull()?.id
-            }
+            // Keep the selection if it's still listed; otherwise fall back to the first one.
+            // loadMailbox does the switch itself, so the old mailbox's rows are cleared.
+            val target = selected?.takeIf { id -> list.any { it.id == id } } ?: list.firstOrNull()?.id
             _isMailboxLoading.value = false
-            _selectedMailboxId.value?.let { loadMailbox(it) } ?: run { _isLoading.value = false }
+            if (target != null) {
+                loadMailbox(target)
+            } else {
+                // No mailboxes left (or none yet): nothing to stream or show.
+                streamClient.stop()
+                _selectedMailboxId.value = null
+                _emails.value = emptyList()
+                _folders.value = emptyList()
+                _selectedEmail.value = null
+                _threadEmails.value = emptyList()
+                _paging.value = _paging.value.cleared()
+                _isLoading.value = false
+            }
         } catch (e: Exception) {
             _errorMessage.value = e.message
             // Only "the server returned zero mailboxes" leads to onboarding; a failed
@@ -453,7 +480,7 @@ class AppModel {
             _folders.value = emptyList()
             _selectedEmail.value = null
             _threadEmails.value = emptyList()
-            _paging.value = EmailPagingState()
+            _paging.value = _paging.value.cleared()
             _emailListError.value = null
             _isLoading.value = true
         }
@@ -551,7 +578,7 @@ class AppModel {
             _inboxDigest.value = null
             _conversations.value = emptyList()
             _activeConversationId.value = null
-            _paging.value = EmailPagingState()
+            _paging.value = _paging.value.cleared()
             _isLoading.value = false
             _isSyncing.value = false
         }
@@ -582,7 +609,7 @@ class AppModel {
     fun selectTab(tab: HomeTab) {
         _selectedTab.value = tab
         _selectedEmail.value = null
-        _paging.value = EmailPagingState()
+        _paging.value = _paging.value.cleared()
         _emailListError.value = null
 
         if (tab is HomeTab.ReplyLater) {
@@ -649,7 +676,8 @@ class AppModel {
             _isLoading.value = false
             return
         }
-        val keepLoadedPages = !resetPaging && _paging.value.scope == listScope && _paging.value.page > 1
+        // Whether deeper pages survive is decided once the response is in (paging may have
+        // moved on meanwhile): Reply Later merges, folders pick the prune mode in syncFolder.
 
         if (listScope.replyLater) {
             if (showLoading && _emails.value.isEmpty()) _isLoading.value = true
@@ -660,11 +688,11 @@ class AppModel {
                 ifStillSelected(mailboxId) { _replyLaterCount.value = response.totalCount }
                 ifStillShowing(listScope) {
                     _emailListError.value = null
-                    if (keepLoadedPages && _paging.value.scope == listScope) {
+                    if (!resetPaging && _paging.value.keepsLoadedPages(listScope)) {
                         _emails.value = EmailPaging.mergeFirstPage(response.emails, _emails.value)
                     } else {
                         _emails.value = response.emails
-                        _paging.value = EmailPagingState.afterFirstPage(
+                        _paging.value = _paging.value.restarted(
                             listScope,
                             received = response.emails.size,
                             totalCount = response.totalCount,
@@ -698,13 +726,19 @@ class AppModel {
         }
         _isSyncing.value = true
         try {
-            // Pruning page 1 would also evict the older pages infinite scroll loaded.
-            val synced = MailboxSyncService.syncFolder(mailboxId, folderId, page = 1, prune = !keepLoadedPages)
+            // A full prune would also evict the older pages infinite scroll loaded (or one
+            // landing right now), so keep them unless this is an explicit restart.
+            var restart = true
+            val synced = MailboxSyncService.syncFolder(mailboxId, folderId, page = 1) {
+                restart = resetPaging || !_paging.value.keepsLoadedPages(listScope)
+                if (restart) FolderPrune.Full else FolderPrune.Window
+            }
             ifStillShowing(listScope) {
+                rememberFirstPage(listScope, synced.pageIds)
                 _emails.value = displayOrder(folderId, synced.emails)
                 _emailListError.value = null
-                if (!keepLoadedPages || _paging.value.scope != listScope) {
-                    _paging.value = EmailPagingState.afterFirstPage(
+                if (restart || _paging.value.scope != listScope) {
+                    _paging.value = _paging.value.restarted(
                         listScope,
                         received = synced.received,
                         totalCount = synced.totalCount,
@@ -736,6 +770,7 @@ class AppModel {
     suspend fun loadMoreEmails() {
         val listScope = currentListScope ?: return
         val page = _paging.value.nextPage(listScope) ?: return
+        val generation = _paging.value.generation
         _paging.value = _paging.value.beginLoadMore()
         // Fixture: no network; leave the bottom skeleton row visible for the emulator preview.
         if (isDebugPreview) return
@@ -743,7 +778,7 @@ class AppModel {
             if (listScope.replyLater) {
                 val response = ApiClient.shared.listReplyLaterEmails(listScope.mailboxId, page = page)
                 db.upsertEmails(listScope.mailboxId, response.emails)
-                ifStillShowing(listScope) {
+                if (ifStillShowing(listScope) { _paging.value.accepts(listScope, generation) } == true) {
                     val known = _emails.value.map { it.id }.toSet()
                     val appended = _emails.value + response.emails.filterNot { it.id in known }
                     _emails.value = appended
@@ -757,7 +792,9 @@ class AppModel {
             } else {
                 val folderId = listScope.folderId ?: return
                 val synced = MailboxSyncService.syncFolder(listScope.mailboxId, folderId, page = page)
-                ifStillShowing(listScope) {
+                // A restart (pull-to-refresh, tab switch, pruning reload) since this page was
+                // requested means it no longer follows what's on screen: drop it.
+                if (ifStillShowing(listScope) { _paging.value.accepts(listScope, generation) } == true) {
                     _emails.value = displayOrder(folderId, synced.emails)
                     _paging.value = _paging.value.afterPage(
                         page,
@@ -769,9 +806,9 @@ class AppModel {
             }
         } catch (_: Exception) {
             // hasMore stays set; the footer swaps to "Couldn't load more · Retry".
-            if (_paging.value.scope == listScope) _paging.value = _paging.value.failLoad()
+            if (_paging.value.accepts(listScope, generation)) _paging.value = _paging.value.failLoad()
         } finally {
-            if (_paging.value.scope == listScope && _paging.value.isLoadingMore) {
+            if (_paging.value.accepts(listScope, generation) && _paging.value.isLoadingMore) {
                 _paging.value = _paging.value.cancelLoad()
             }
         }
@@ -797,7 +834,7 @@ class AppModel {
             ifStillSelected(mailboxId) { _replyLaterCount.value = response.totalCount }
             ifStillShowing(replyLaterScope) {
                 // Only page 1 came back; don't collapse a pile infinite scroll extended.
-                _emails.value = if (_paging.value.scope == replyLaterScope && _paging.value.page > 1) {
+                _emails.value = if (_paging.value.keepsLoadedPages(replyLaterScope)) {
                     EmailPaging.mergeFirstPage(response.emails, _emails.value)
                 } else {
                     response.emails
@@ -829,11 +866,28 @@ class AppModel {
         val listScope = currentListScope
         val folderId = listScope?.folderId
         if (listScope != null && folderId != null) {
-            val keepLoadedPages = _paging.value.scope == listScope && _paging.value.page > 1
+            var restart = false
             runCatching {
-                MailboxSyncService.syncFolder(mailboxId, folderId, page = 1, prune = !keepLoadedPages)
+                // Decided once the response is in: a next page loaded (or loading) by then stays.
+                MailboxSyncService.syncFolder(mailboxId, folderId, page = 1) {
+                    restart = !_paging.value.keepsLoadedPages(listScope)
+                    if (restart) FolderPrune.Full else FolderPrune.Window
+                }
             }.getOrNull()?.let { synced ->
-                ifStillShowing(listScope) { _emails.value = displayOrder(folderId, synced.emails) }
+                ifStillShowing(listScope) {
+                    rememberFirstPage(listScope, synced.pageIds)
+                    _emails.value = displayOrder(folderId, synced.emails)
+                    // A full prune left exactly page 1; say so, which also voids any page
+                    // request started against the old list.
+                    if (restart && _paging.value.scope == listScope) {
+                        _paging.value = _paging.value.restarted(
+                            listScope,
+                            received = synced.received,
+                            totalCount = synced.totalCount,
+                            loadedCount = synced.emails.size,
+                        )
+                    }
+                }
             }
             if (isSelected(mailboxId) && _selectedTab.value is HomeTab.AiInbox) {
                 loadInboxDigest(showLoading = false)
@@ -1036,7 +1090,7 @@ class AppModel {
             // Assign tab directly — `selectTab` clears selected email and awaits folder sync.
             if (_selectedTab.value != tab) {
                 _selectedTab.value = tab
-                _paging.value = EmailPagingState()
+                _paging.value = _paging.value.cleared()
                 scope.launch { loadEmailsForCurrentTab(showLoading = false, resetPaging = true) }
             }
         }
@@ -1409,9 +1463,10 @@ class AppModel {
     ) {
         streamClient.stop()
         isDebugPreview = true
+        val generation = _paging.value.generation + 1
         _paging.value = EmailListScope.of(selectedMailboxId, selectedTab)
-            ?.let { EmailPagingState(scope = it, page = 1, hasMore = hasMorePages) }
-            ?: EmailPagingState()
+            ?.let { EmailPagingState(scope = it, page = 1, hasMore = hasMorePages, generation = generation) }
+            ?: EmailPagingState(generation = generation)
         _mailboxesLoadFailed.value = mailboxesLoadFailed
         _emailListError.value = emailListError
         _mailboxes.value = mailboxes
@@ -2154,14 +2209,7 @@ class AppModel {
         private fun visibleConversations(conversations: List<AgentConversation>) =
             conversations.filter { it.id != AUTO_CONVERSATION_ID }
 
-        private fun displayOrder(folderId: String, emails: List<Email>): List<Email> =
-            if (folderId == FolderIds.INBOX) orderNewThenSeen(emails) else emails
-
-        /** Inbox New (unread) then Seen, each by date DESC. */
-        fun orderNewThenSeen(emails: List<Email>): List<Email> {
-            val (newEmails, seenEmails) = emails.partition { it.isUnread }
-            fun byDateDesc(a: Email, b: Email) = b.date.compareTo(a.date)
-            return newEmails.sortedWith(::byDateDesc) + seenEmails.sortedWith(::byDateDesc)
-        }
+        /** Inbox New then Seen (by list section), each by date DESC. */
+        fun orderNewThenSeen(emails: List<Email>): List<Email> = EmailPaging.orderNewThenSeen(emails)
     }
 }

@@ -11,8 +11,19 @@ data class FolderPage(
     val emails: List<Email>,
     /** Rows the server returned for [page] — a short page means the end. */
     val received: Int,
+    /** Ids the server returned for [page]. */
+    val pageIds: Set<String>,
     val totalCount: Int,
 )
+
+/** How a page-1 sync reconciles the cache with the fresh page. */
+enum class FolderPrune {
+    /** The list restarts at page 1: drop every cached row not on the page (older pages too). */
+    Full,
+
+    /** Deeper pages stay loaded: drop only rows the page proves stale (its date window). */
+    Window,
+}
 
 /** Online sync helpers used by AppModel (in-memory cache updated via DatabaseService). */
 object MailboxSyncService {
@@ -23,29 +34,51 @@ object MailboxSyncService {
     }
 
     /**
-     * Fetch one page of [folderId]. With [prune] (page 1 only), cached rows the server no
-     * longer lists on that page are dropped — which also drops any older pages, so callers
-     * prune only when the list is (re)starting at page 1. Later pages just append.
+     * Fetch one page of [folderId]. Page 1 reconciles the cache per [prune], which is
+     * asked **after** the response arrives (on the caller's dispatcher) so it reflects
+     * paging state at that moment — e.g. a next page that landed meanwhile. Later pages
+     * just append.
      */
     suspend fun syncFolder(
         mailboxId: String,
         folderId: String,
         page: Int = 1,
-        prune: Boolean = page == 1,
+        prune: () -> FolderPrune = { FolderPrune.Full },
     ): FolderPage {
         val response = ApiClient.shared.listEmails(mailboxId, folder = folderId, page = page, threaded = true)
-        DatabaseService.shared.upsertEmails(mailboxId, response.emails, defaultFolder = folderId)
-        if (prune && page == 1) {
+        val db = DatabaseService.shared
+        val mode = if (page == 1) prune() else null
+        if (mode == FolderPrune.Window) {
+            val stale = EmailPaging.staleRowIds(
+                cached = db.getEmailRows(mailboxId, folderId),
+                freshFirstPage = response.emails,
+                sectioned = folderId == "inbox",
+            )
+            stale.forEach { db.deleteEmail(it) }
+        }
+        if (page > 1) {
+            // Mail archived / deleted elsewhere inside this page's range (or past the end).
+            val stale = EmailPaging.pageStaleRowIds(
+                cached = db.getEmailRows(mailboxId, folderId),
+                page = response.emails,
+                sectioned = folderId == "inbox",
+                isLastPage = response.emails.size < EmailPaging.PAGE_SIZE,
+            )
+            stale.forEach { db.deleteEmail(it) }
+        }
+        db.upsertEmails(mailboxId, response.emails, defaultFolder = folderId)
+        if (mode == FolderPrune.Full) {
             // Drop local ghosts that the server no longer lists in this folder.
             val serverIds = response.emails.map { it.id }.toSet()
-            DatabaseService.shared.pruneEmailsNotInFolder(mailboxId, folderId, serverIds)
+            db.pruneEmailsNotInFolder(mailboxId, folderId, serverIds)
         } else {
-            DatabaseService.shared.dropSupersededThreadRows(mailboxId, folderId, response.emails)
+            db.dropSupersededThreadRows(mailboxId, folderId, response.emails)
         }
         return FolderPage(
             page = page,
             emails = DatabaseService.shared.getEmails(mailboxId, folderId),
             received = response.emails.size,
+            pageIds = response.emails.map { it.id }.toSet(),
             totalCount = response.totalCount,
         )
     }

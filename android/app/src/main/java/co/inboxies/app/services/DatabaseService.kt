@@ -60,12 +60,22 @@ class DatabaseService private constructor() {
     private fun emailsIn(mailboxId: String): Sequence<Email> =
         emails.values.asSequence().filter { emailMailboxIds[it.id] == mailboxId }
 
-    /** Every cached row for the folder (all pages loaded so far), newest first. */
-    fun getEmails(mailboxId: String, folderId: String, limit: Int = Int.MAX_VALUE): List<Email> =
+    /**
+     * The folder's list rows (all pages loaded so far), newest first, one per conversation:
+     * messages cached by opening a thread don't become extra rows. Drafts are grouped per
+     * reply target, not per thread, so they are never collapsed.
+     */
+    fun getEmails(mailboxId: String, folderId: String, limit: Int = Int.MAX_VALUE): List<Email> {
+        val rows = getEmailRows(mailboxId, folderId)
+        val listRows = if (folderId == "draft" || folderId == "drafts") rows else EmailPaging.collapseThreads(rows)
+        return listRows.take(limit)
+    }
+
+    /** Every cached message filed in the folder, newest first (not collapsed). */
+    fun getEmailRows(mailboxId: String, folderId: String): List<Email> =
         emailsIn(mailboxId)
             .filter { it.folderId == folderId || (it.folderId == null && folderId == "inbox") }
             .sortedByDescending { it.date }
-            .take(limit)
             .toList()
 
     fun getReplyLaterEmails(mailboxId: String, limit: Int = Int.MAX_VALUE): List<Email> =

@@ -50,7 +50,7 @@ class ListSelectionTest {
 
     @Test
     fun pagingAllowsOneLoadAtATimeForItsOwnScope() {
-        val first = EmailPagingState.afterFirstPage(inboxA, received = 25, totalCount = 80, loadedCount = 25)
+        val first = EmailPagingState().restarted(inboxA, received = 25, totalCount = 80, loadedCount = 25)
         assertEquals(2, first.nextPage(inboxA))
         assertNull(first.nextPage(EmailListScope("a@x.com", "sent")))
         assertNull(first.nextPage(null))
@@ -72,7 +72,7 @@ class ListSelectionTest {
 
     @Test
     fun failedPageWaitsForRetry() {
-        val failed = EmailPagingState.afterFirstPage(inboxA, received = 25, totalCount = 80, loadedCount = 25)
+        val failed = EmailPagingState().restarted(inboxA, received = 25, totalCount = 80, loadedCount = 25)
             .beginLoadMore()
             .failLoad()
         assertTrue(failed.loadMoreFailed)
