@@ -13,6 +13,9 @@
 #   ./scripts/run-debug-preview.sh passwordSignIn
 #   ./scripts/run-debug-preview.sh inviteAccept
 #   ./scripts/run-debug-preview.sh signInMethods
+#   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
+#   ./scripts/run-debug-preview.sh members
+#   ./scripts/run-debug-preview.sh sessions
 #
 # Env:
 #   ANDROID_SERIAL  — optional adb device serial
@@ -33,6 +36,9 @@ case "$mode" in
   passwordSignIn|PasswordSignIn|password|previewPasswordSignIn) extra=previewPasswordSignIn; label=passwordSignIn ;;
   inviteAccept|InviteAccept|invite|previewInviteAccept) extra=previewInviteAccept; label=inviteAccept ;;
   signInMethods|SignInMethods|signinmethods|previewSignInMethods) extra=previewSignInMethods; label=signInMethods ;;
+  inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
+  members|Members|previewMembers) extra=previewMembers; label=members ;;
+  sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
   screenerList|ScreenerList|previewScreenerList) extra=previewScreenerList; label=screenerList ;;

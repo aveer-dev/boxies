@@ -6,6 +6,8 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
+import co.inboxies.app.models.InvitePublic
+import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxAcl
 import co.inboxies.app.models.MailboxSettings
@@ -125,6 +127,20 @@ object PreviewSupport {
             }
         }
     }
+
+    fun invite() = InvitePublic(
+        mailboxId = addr("team"),
+        role = "member",
+        inviteeEmail = "alex@example.com",
+        inviteeName = "Alex",
+        expiresAt = "2026-12-01T00:00:00.000Z",
+        status = "pending",
+    )
+
+    fun identities() = listOf(
+        LinkedIdentity(type = "password", key = "user:preview", label = "Password (${addr("you")})"),
+        LinkedIdentity(type = "google", key = "sub:preview", label = "Google"),
+    )
 
     fun applyAdminPreview(app: AppModel) {
         app.applyDebugPreview(

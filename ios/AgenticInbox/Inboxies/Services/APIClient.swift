@@ -53,7 +53,7 @@ final class APIClient: @unchecked Sendable {
         config.httpShouldSetCookies = false
         session = URLSession(configuration: config, delegate: redirectGuard, delegateQueue: nil)
         decoder = JSONDecoder()
-        storedAuthToken = SharedSession.token
+        storedAuthToken = KeychainStore.read(AuthStore.tokenKey, in: .app)
     }
 
     func request<T: Decodable>(
@@ -220,20 +220,84 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Revokes this session on the server. `sessionToken` pins the outgoing
+    /// session during sign-out, after AuthStore has dropped it.
+    func logout(sessionToken: String?) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/auth/logout",
+            method: "POST",
+            body: [:] as [String: Any],
+            bearerToken: sessionToken
+        )
+    }
+
     func listIdentities() async throws -> IdentitiesResponse {
         try await request(path: "/api/v1/me/identities")
     }
 
-    func listAccounts() async throws -> [AccountSummary] {
-        try await request(path: "/api/v1/accounts")
-    }
-
-    func attachAppleIdentity(identityToken: String) async throws -> AttachIdentityResponse {
-        try await request(
+    func attachAppleIdentity(_ credential: AppleSignInCredential) async throws -> AttachIdentityResponse {
+        var body = credential.requestBody
+        body["provider"] = "apple"
+        return try await request(
             path: "/api/v1/me/identities/attach",
             method: "POST",
-            body: ["provider": "apple", "identityToken": identityToken]
+            body: body
         )
+    }
+
+    /// Disconnects a sign-in method (`apple`, `google`, `password`). The server
+    /// refuses to remove the last one.
+    func removeIdentity(type: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/me/identities/\(type.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
+    // MARK: Sessions
+
+    func listSessions() async throws -> [AccountSession] {
+        try await request(path: "/api/v1/me/sessions")
+    }
+
+    func revokeSession(id: String, sessionToken: String? = nil) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/me/sessions/\(id.urlPathEncoded)",
+            method: "DELETE",
+            bearerToken: sessionToken
+        )
+    }
+
+    func revokeOtherSessions() async throws -> RevokeSessionsResponse {
+        try await request(path: "/api/v1/me/sessions/revoke-others", method: "POST", body: [:] as [String: Any])
+    }
+
+    /// A scoped, revocable session for the AutoFill extension (private emails only).
+    func createAutofillSession() async throws -> ScopedSessionResponse {
+        try await request(
+            path: "/api/v1/me/extension-session",
+            method: "POST",
+            body: ["client": "ios-autofill"]
+        )
+    }
+
+    // MARK: Recovery email
+
+    func getRecoveryEmail() async throws -> RecoveryEmailStatus {
+        try await request(path: "/api/v1/me/recovery-email")
+    }
+
+    /// Sets (or replaces) the recovery email and mails it a 6-digit code.
+    func setRecoveryEmail(_ email: String) async throws -> RecoveryEmailStatus {
+        try await request(path: "/api/v1/me/recovery-email", method: "POST", body: ["email": email])
+    }
+
+    func verifyRecoveryEmail(code: String) async throws -> RecoveryEmailStatus {
+        try await request(path: "/api/v1/me/recovery-email/verify", method: "POST", body: ["code": code])
+    }
+
+    func removeRecoveryEmail() async throws {
+        let _: EmptyResponse = try await request(path: "/api/v1/me/recovery-email", method: "DELETE")
     }
 
     func attachGoogleIdentity(idToken: String) async throws -> AttachIdentityResponse {
@@ -267,18 +331,6 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func createIdentityLinkCode() async throws -> IdentityLinkCodeResponse {
-        try await request(path: "/api/v1/me/identity-link-codes", method: "POST", body: [:] as [String: Any])
-    }
-
-    func redeemIdentityLink(code: String) async throws -> RedeemIdentityLinkResponse {
-        try await request(
-            path: "/api/v1/auth/redeem-identity-link",
-            method: "POST",
-            body: ["code": code]
-        )
-    }
-
     func createMailbox(name: String, email: String) async throws -> Mailbox {
         try await request(
             path: "/api/v1/mailboxes",
@@ -292,13 +344,20 @@ final class APIClient: @unchecked Sendable {
     }
 
     func updateMailbox(mailboxId: String, settings: MailboxSettings) async throws -> Mailbox {
-        let settingsData = try JSONEncoder().encode(settings)
-        let settingsObject = try JSONSerialization.jsonObject(with: settingsData) as? [String: Any] ?? [:]
-        return try await request(
+        try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)",
             method: "PUT",
-            body: ["settings": settingsObject]
+            body: ["settings": try Self.settingsPayload(settings)]
         )
+    }
+
+    /// The PUT body's `settings`. `acl` is display-only (the server derives it
+    /// from members), so it is never sent back.
+    static func settingsPayload(_ settings: MailboxSettings) throws -> [String: Any] {
+        var settings = settings
+        settings.acl = nil
+        let data = try JSONEncoder().encode(settings)
+        return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     }
 
     func deleteMailbox(mailboxId: String) async throws {
@@ -312,14 +371,27 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/invites/\(token.urlPathEncoded)", authed: false)
     }
 
-    func acceptInvite(token: String, password: String, displayName: String?) async throws -> InviteAcceptResponse {
-        var body: [String: Any] = ["password": password]
+    /// Mails a code to the invited address; accepting with it proves the invite reached them.
+    func sendInviteCode(token: String) async throws -> InviteCodeResponse {
+        try await request(
+            path: "/api/v1/invites/\(token.urlPathEncoded)/otp",
+            method: "POST",
+            body: [:] as [String: Any],
+            authed: false
+        )
+    }
+
+    /// Signed in (`password` nil): joins the current account; the session is unchanged.
+    /// Signed out: creates an account with `password` and returns its session.
+    func acceptInvite(token: String, code: String, password: String?, displayName: String?) async throws -> InviteAcceptResponse {
+        var body: [String: Any] = ["code": code]
+        if let password { body["password"] = password }
         if let displayName, !displayName.isEmpty { body["displayName"] = displayName }
         return try await request(
             path: "/api/v1/invites/\(token.urlPathEncoded)/accept",
             method: "POST",
             body: body,
-            authed: false
+            authed: password == nil
         )
     }
 
@@ -591,6 +663,42 @@ final class APIClient: @unchecked Sendable {
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/invites",
             method: "POST",
             body: ["inviteEmail": inviteEmail, "role": role]
+        )
+    }
+
+    // MARK: Members
+
+    func listMembers(mailboxId: String) async throws -> [MailboxMember] {
+        try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/members")
+    }
+
+    func setMemberRole(mailboxId: String, userId: String, role: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/members/\(userId.urlPathEncoded)",
+            method: "PATCH",
+            body: ["role": role]
+        )
+    }
+
+    /// Owners remove anyone; anyone may remove themselves (leave the mailbox).
+    func removeMember(mailboxId: String, userId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/members/\(userId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
+    /// Owners and domain admins only.
+    func listMailboxInvites(mailboxId: String) async throws -> [MailboxInviteRow] {
+        try await request(path: "/api/v1/admin/mailboxes/\(mailboxId.urlPathEncoded)/invites")
+    }
+
+    /// `inviteId` is the id from `listMailboxInvites`.
+    func revokeInvite(inviteId: String) async throws {
+        let _: MailboxInviteRow = try await request(
+            path: "/api/v1/admin/invites/\(inviteId.urlPathEncoded)/revoke",
+            method: "POST",
+            body: [:] as [String: Any]
         )
     }
 

@@ -603,6 +603,8 @@ export function registerAccountRoutes(app: App) {
 			identityToken?: string;
 			idToken?: string;
 			nonce?: string;
+			/** Apple only: exchanged so account deletion can revoke the grant. */
+			authorizationCode?: string;
 			password?: string;
 		};
 		const db = authDb(c.env.AUTH_DB);
@@ -629,6 +631,11 @@ export function registerAccountRoutes(app: App) {
 				}
 				console.error("[Auth] Link failed:", message);
 				return c.json({ error: "Couldn't verify that sign-in. Try again." }, 400);
+			}
+			if (body.provider === "apple" && body.authorizationCode) {
+				c.executionCtx.waitUntil(
+					storeAppleRefreshToken(c.env, db, { userId: user.id, authorizationCode: body.authorizationCode }),
+				);
 			}
 		} else {
 			return c.json({ error: "provider must be apple, google or password" }, 400);

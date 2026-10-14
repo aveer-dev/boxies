@@ -130,6 +130,9 @@ class PrivateEmailAutofillActivity : ComponentActivity() {
                 throw e
             } catch (_: SignInRequired) {
                 openInboxies()
+            } catch (_: ApiException.SessionExpired) {
+                // The app signs out on the same event; opening it shows sign-in.
+                openInboxies()
             } catch (e: Exception) {
                 failureMessage = (e as? ApiException.Http)?.message?.takeIf { it.isNotBlank() }
                     ?: getString(R.string.autofill_create_failed)

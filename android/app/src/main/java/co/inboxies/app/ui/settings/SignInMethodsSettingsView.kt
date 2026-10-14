@@ -13,7 +13,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -28,11 +32,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +44,7 @@ import androidx.credentials.GetCredentialRequest
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.LinkedIdentity
+import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
@@ -50,10 +53,6 @@ import co.inboxies.app.theme.inboxiesColors
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.launch
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 
 @Composable
 fun SignInMethodsSettingsView(
@@ -62,7 +61,6 @@ fun SignInMethodsSettingsView(
     val app = LocalAppModel.current
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
     val cachedIdentities by app.identities.collectAsState()
@@ -71,19 +69,15 @@ fun SignInMethodsSettingsView(
     var isConnectingGoogle by remember { mutableStateOf(false) }
     var isAddingPassword by remember { mutableStateOf(false) }
     var isChangingPassword by remember { mutableStateOf(false) }
-    var isMinting by remember { mutableStateOf(false) }
-    var isRedeeming by remember { mutableStateOf(false) }
+    var removingType by remember { mutableStateOf<String?>(null) }
+    var identityToRemove by remember { mutableStateOf<LinkedIdentity?>(null) }
     var showPasswordForm by remember { mutableStateOf(false) }
     var showChangePassword by remember { mutableStateOf(false) }
-    var showAdvanced by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
     var passwordConfirm by remember { mutableStateOf("") }
     var currentPassword by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var newPasswordConfirm by remember { mutableStateOf("") }
-    var linkCode by remember { mutableStateOf<String?>(null) }
-    var expiresAt by remember { mutableStateOf<String?>(null) }
-    var redeemDraft by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -92,6 +86,11 @@ fun SignInMethodsSettingsView(
     val canAddMethod = !hasGoogle || !hasPassword
 
     fun reload() {
+        // DEBUG previews show the cached fixture identities only.
+        if (app.isDebugPreview) {
+            isLoading = false
+            return
+        }
         scope.launch {
             if (identities.isEmpty()) {
                 isLoading = true
@@ -183,7 +182,7 @@ fun SignInMethodsSettingsView(
                 onClick = onBack,
             )
             Text(
-                "Sign-in methods",
+                "Sign-in & recovery",
                 modifier = Modifier.padding(start = 4.dp),
                 fontFamily = InterFontFamily,
                 fontWeight = FontWeight.SemiBold,
@@ -193,7 +192,7 @@ fun SignInMethodsSettingsView(
         }
 
         Text(
-            "Ways you can sign in to this account. Connected shows Access, Apple, Google, or Password — not raw keys. Add Google or a password here; every method reaches the same mailboxes.",
+            "Ways you can sign in to this account. Every method reaches the same mailboxes. Keep at least one.",
             modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 8.dp),
             fontFamily = InterFontFamily,
             fontSize = 12.sp,
@@ -223,23 +222,37 @@ fun SignInMethodsSettingsView(
             }
             else -> {
                 identities.forEach { identity ->
-                    Column(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 8.dp),
+                            .padding(start = HomeChromeMetrics.chromeHorizontalPadding, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            identity.label,
-                            fontFamily = InterFontFamily,
-                            fontSize = 15.sp,
-                            color = colors.ink,
-                        )
-                        Text(
-                            identityTypeLabel(identity.type) + if (identity.current) " · this session" else "",
-                            fontFamily = InterFontFamily,
-                            fontSize = 12.sp,
-                            color = colors.muted,
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                identity.label,
+                                fontFamily = InterFontFamily,
+                                fontSize = 15.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                identityTypeLabel(identity.type) + if (identity.current) " · this session" else "",
+                                fontFamily = InterFontFamily,
+                                fontSize = 12.sp,
+                                color = colors.muted,
+                            )
+                        }
+                        if (removingType == identity.type) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.padding(end = 12.dp).size(18.dp),
+                                color = colors.muted,
+                                strokeWidth = 2.dp,
+                            )
+                        } else if (identities.size > 1) {
+                            TextButton(onClick = { identityToRemove = identity }) {
+                                Text("Disconnect", fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.deepDarkRed)
+                            }
+                        }
                     }
                 }
             }
@@ -521,126 +534,7 @@ fun SignInMethodsSettingsView(
             }
         }
 
-        SettingsSectionHeader("Link another device")
-        TextButton(
-            onClick = { showAdvanced = !showAdvanced },
-            modifier = Modifier.padding(horizontal = 4.dp),
-        ) {
-            Text(
-                if (showAdvanced) "Hide · Link another device" else "Link another device",
-                fontFamily = InterFontFamily,
-                color = colors.muted,
-            )
-        }
-
-        if (showAdvanced) {
-            Text(
-                "Secondary: link across devices when Connect isn’t available. Codes expire in 15 minutes.",
-                modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 4.dp),
-                fontFamily = InterFontFamily,
-                fontSize = 12.sp,
-                color = colors.muted,
-            )
-            TextButton(
-                onClick = {
-                    scope.launch {
-                        isMinting = true
-                        errorMessage = null
-                        runCatching { ApiClient.shared.createIdentityLinkCode() }
-                            .onSuccess {
-                                linkCode = it.code
-                                expiresAt = it.expiresAt
-                                statusMessage = "Link code created — expires in 15 minutes"
-                            }
-                            .onFailure { errorMessage = "Could not create link code" }
-                        isMinting = false
-                    }
-                },
-                enabled = !isMinting,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            ) {
-                Text(
-                    if (isMinting) "Creating…" else "Generate link code",
-                    fontFamily = InterFontFamily,
-                    color = colors.accent,
-                )
-            }
-
-            linkCode?.let { code ->
-                Column(
-                    modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(
-                        code,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 18.sp,
-                        color = colors.ink,
-                    )
-                    expiresAt?.let { exp ->
-                        Text(
-                            "Expires ${formatExpiry(exp)}",
-                            fontFamily = InterFontFamily,
-                            fontSize = 12.sp,
-                            color = colors.muted,
-                        )
-                    }
-                    TextButton(
-                        onClick = {
-                            clipboard.setText(AnnotatedString(code))
-                            statusMessage = "Code copied"
-                        },
-                    ) {
-                        Text("Copy code", fontFamily = InterFontFamily, color = colors.accent)
-                    }
-                }
-            }
-
-            OutlinedTextField(
-                value = redeemDraft,
-                onValueChange = { redeemDraft = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
-                label = { Text("Link code", fontFamily = InterFontFamily) },
-                singleLine = true,
-            )
-            TextButton(
-                onClick = {
-                    val code = redeemDraft.trim()
-                    if (code.isEmpty()) return@TextButton
-                    scope.launch {
-                        isRedeeming = true
-                        errorMessage = null
-                        runCatching { ApiClient.shared.redeemIdentityLink(code) }
-                            .onSuccess { res ->
-                                redeemDraft = ""
-                                applyAttach(
-                                    co.inboxies.app.models.AttachIdentityResponse(
-                                        ok = res.ok,
-                                        accountId = res.accountId,
-                                        linkedEmails = res.linkedEmails,
-                                        keys = res.keys,
-                                        isAdmin = res.isAdmin,
-                                        identities = res.identities,
-                                    ),
-                                    "Sign-in method linked",
-                                )
-                            }
-                            .onFailure { errorMessage = "Invalid or expired code" }
-                        isRedeeming = false
-                    }
-                },
-                enabled = !isRedeeming && redeemDraft.trim().isNotEmpty(),
-                modifier = Modifier.padding(horizontal = 4.dp),
-            ) {
-                Text(
-                    if (isRedeeming) "Linking…" else "Link to this account",
-                    fontFamily = InterFontFamily,
-                    color = colors.accent,
-                )
-            }
-        }
+        RecoveryEmailSection(onStatus = { statusMessage = it })
 
         statusMessage?.let {
             Text(
@@ -663,6 +557,43 @@ fun SignInMethodsSettingsView(
 
         Spacer(modifier = Modifier.height(16.dp))
     }
+
+    identityToRemove?.let { identity ->
+        AlertDialog(
+            onDismissRequest = { identityToRemove = null },
+            containerColor = colors.surface,
+            title = {
+                Text("Disconnect ${identityTypeLabel(identity.type)}?", fontFamily = InterFontFamily, fontSize = 17.sp)
+            },
+            text = {
+                Text("You won't be able to sign in with it until you connect it again.", fontFamily = InterFontFamily)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    identityToRemove = null
+                    scope.launch {
+                        removingType = identity.type
+                        errorMessage = null
+                        runCatching { ApiClient.shared.removeIdentity(identity.type) }
+                            .onSuccess {
+                                statusMessage = "${identityTypeLabel(identity.type)} disconnected"
+                                identities = identities.filterNot { it.type == identity.type }
+                                app.setIdentities(identities)
+                            }
+                            .onFailure { errorMessage = it.message }
+                        removingType = null
+                    }
+                }) {
+                    Text("Disconnect", fontFamily = InterFontFamily, color = colors.deepDarkRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { identityToRemove = null }) {
+                    Text("Cancel", fontFamily = InterFontFamily, color = colors.muted)
+                }
+            },
+        )
+    }
 }
 
 private fun identityTypeLabel(type: String): String = when (type) {
@@ -671,13 +602,196 @@ private fun identityTypeLabel(type: String): String = when (type) {
     "apple" -> "Apple"
     "google" -> "Google"
     "sub" -> "Sign-in provider"
-    "access" -> "Access"
     else -> type
 }
 
-private fun formatExpiry(iso: String): String = runCatching {
-    val instant = Instant.parse(iso)
-    DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM)
-        .withZone(ZoneId.systemDefault())
-        .format(instant)
-}.getOrDefault(iso)
+/**
+ * Recovery email: where password reset codes go. It must be outside Inboxies
+ * (other members can read a mailbox) and confirmed with a code before resets use it.
+ */
+@Composable
+private fun RecoveryEmailSection(onStatus: (String) -> Unit) {
+    val app = LocalAppModel.current
+    val colors = inboxiesColors()
+    val scope = rememberCoroutineScope()
+    var status by remember { mutableStateOf<RecoveryEmailStatus?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var isEditing by remember { mutableStateOf(false) }
+    var emailDraft by remember { mutableStateOf("") }
+    var codeDraft by remember { mutableStateOf("") }
+    var isBusy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val email = status?.email?.takeIf { it.isNotBlank() }
+    val verified = status?.verified == true
+
+    LaunchedEffect(Unit) {
+        if (app.isDebugPreview) {
+            status = RecoveryEmailStatus()
+        } else {
+            runCatching { ApiClient.shared.getRecoveryEmail() }.onSuccess { status = it }
+        }
+        isLoading = false
+    }
+
+    fun sendCode(address: String) {
+        val trimmed = address.trim()
+        if (trimmed.isEmpty()) return
+        scope.launch {
+            isBusy = true
+            error = null
+            runCatching { ApiClient.shared.setRecoveryEmail(trimmed) }
+                .onSuccess {
+                    status = RecoveryEmailStatus(email = it.email, verified = it.verified)
+                    isEditing = false
+                    emailDraft = ""
+                    if (BuildConfig.DEBUG) codeDraft = it.devCode.orEmpty()
+                    onStatus("Code sent to ${it.email ?: trimmed}")
+                }
+                .onFailure { error = it.message }
+            isBusy = false
+        }
+    }
+
+    SettingsSectionHeader("Recovery email")
+    when {
+        isLoading && status == null -> Text(
+            "Loading…",
+            modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
+            fontFamily = InterFontFamily,
+            fontSize = 14.sp,
+            color = colors.muted,
+        )
+        email == null || isEditing -> {
+            OutlinedTextField(
+                value = emailDraft,
+                onValueChange = { emailDraft = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
+                placeholder = { Text("you@example.com", fontFamily = InterFontFamily) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            )
+            Row(modifier = Modifier.padding(horizontal = 4.dp)) {
+                TextButton(onClick = { sendCode(emailDraft) }, enabled = !isBusy && emailDraft.contains("@")) {
+                    Text(if (isBusy) "Sending…" else "Send code", fontFamily = InterFontFamily, color = colors.accent)
+                }
+                if (isEditing) {
+                    TextButton(onClick = {
+                        isEditing = false
+                        emailDraft = ""
+                    }) {
+                        Text("Keep $email", fontFamily = InterFontFamily, color = colors.muted)
+                    }
+                }
+            }
+        }
+        else -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    email,
+                    modifier = Modifier.weight(1f),
+                    fontFamily = InterFontFamily,
+                    fontSize = 15.sp,
+                    color = colors.ink,
+                    maxLines = 1,
+                )
+                Text(
+                    if (verified) "Confirmed" else "Not confirmed",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 12.sp,
+                    color = if (verified) colors.accent else colors.deepDarkRed,
+                )
+            }
+            if (!verified) {
+                OutlinedTextField(
+                    value = codeDraft,
+                    onValueChange = { codeDraft = it.filter(Char::isDigit).take(8) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding),
+                    label = { Text("6-digit code", fontFamily = InterFontFamily) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                )
+            }
+            Row(modifier = Modifier.padding(horizontal = 4.dp)) {
+                if (!verified) {
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                isBusy = true
+                                error = null
+                                runCatching { ApiClient.shared.verifyRecoveryEmail(codeDraft.trim()) }
+                                    .onSuccess {
+                                        status = it
+                                        codeDraft = ""
+                                        onStatus("Recovery email confirmed")
+                                    }
+                                    .onFailure { error = it.message }
+                                isBusy = false
+                            }
+                        },
+                        enabled = !isBusy && codeDraft.trim().length >= 6,
+                    ) {
+                        Text(if (isBusy) "Confirming…" else "Confirm", fontFamily = InterFontFamily, color = colors.accent)
+                    }
+                    TextButton(onClick = { sendCode(email) }, enabled = !isBusy) {
+                        Text("Resend", fontFamily = InterFontFamily, color = colors.muted)
+                    }
+                }
+                TextButton(onClick = {
+                    emailDraft = ""
+                    isEditing = true
+                }) {
+                    Text("Change", fontFamily = InterFontFamily, color = colors.accent)
+                }
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            isBusy = true
+                            error = null
+                            runCatching { ApiClient.shared.removeRecoveryEmail() }
+                                .onSuccess {
+                                    status = RecoveryEmailStatus()
+                                    onStatus("Recovery email removed")
+                                }
+                                .onFailure { error = it.message }
+                            isBusy = false
+                        }
+                    },
+                    enabled = !isBusy,
+                ) {
+                    Text("Remove", fontFamily = InterFontFamily, color = colors.deepDarkRed)
+                }
+            }
+        }
+    }
+    error?.let {
+        Text(
+            it,
+            modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 4.dp),
+            fontFamily = InterFontFamily,
+            fontSize = 13.sp,
+            color = colors.deepDarkRed,
+        )
+    }
+    Text(
+        when {
+            email == null -> "Password reset codes go only to a confirmed recovery email. Without one, you can't reset a forgotten password. Use an address outside Inboxies."
+            !verified -> "We sent a code to this address. Password resets won't reach it until you confirm."
+            else -> "Password reset codes go to this address."
+        },
+        modifier = Modifier.padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding, vertical = 4.dp),
+        fontFamily = InterFontFamily,
+        fontSize = 12.sp,
+        color = colors.muted,
+    )
+}

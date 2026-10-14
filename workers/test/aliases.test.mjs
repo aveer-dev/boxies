@@ -598,6 +598,10 @@ test("extension tokens are scoped to private emails", async () => {
 	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/me"), true);
 	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes/alex%40example.com/aliases"), true);
 	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/mailboxes/alex@example.com/aliases"), true);
+	// It may end itself, but not other sessions.
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/auth/logout"), true);
+	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/me/sessions/revoke-others"), false);
+	assert.equal(isPathAllowedForTokenScope("aliases", "DELETE", "/api/v1/me/sessions/s1"), false);
 	// Never mail, sends, alias edits/deletes, token minting, agents or MCP
 	assert.equal(isPathAllowedForTokenScope("aliases", "GET", "/api/v1/mailboxes/alex@example.com/emails"), false);
 	assert.equal(isPathAllowedForTokenScope("aliases", "POST", "/api/v1/mailboxes/alex@example.com/emails"), false);
