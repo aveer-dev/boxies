@@ -60,6 +60,7 @@ import co.inboxies.app.models.UpsertSenderPreferenceResponse
 import co.inboxies.app.util.ParsedSearch
 import co.inboxies.app.util.SearchQueryParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -90,6 +91,7 @@ sealed class ApiException(message: String) : Exception(message) {
             "(and /agents/* for chat) in Zero Trust.",
     )
     class Transport(cause: Throwable) : ApiException(cause.message ?: "Network error")
+    class SessionExpired : ApiException("Your session expired. Sign in again.")
 }
 
 @Serializable
@@ -147,6 +149,26 @@ class ApiClient private constructor() {
     companion object {
         val shared: ApiClient by lazy { ApiClient() }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+        /**
+         * The Worker answers a bad or expired bearer with 401/403 "Invalid or
+         * expired mobile session token". Per-mailbox ACL denials are also 403
+         * but carry other text, so they keep their local handling.
+         */
+        fun isExpiredSessionResponse(code: Int, message: String): Boolean =
+            (code == 401 || code == 403) &&
+                message.contains("invalid or expired mobile session token", ignoreCase = true)
+    }
+
+    /** Tokens the server just rejected as expired; RootView signs out if it's still current. */
+    val sessionExpired = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    private fun httpFailure(code: Int, message: String, sentToken: String?): ApiException {
+        if (sentToken != null && isExpiredSessionResponse(code, message)) {
+            sessionExpired.tryEmit(sentToken)
+            return ApiException.SessionExpired()
+        }
+        return ApiException.Http(code, message)
     }
 
     suspend inline fun <reified T> request(
@@ -193,9 +215,8 @@ class ApiClient private constructor() {
         val builder = Request.Builder().url(buildUrl(path, query))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
-        if (authed) {
-            authTokenProvider()?.let { builder.header("Authorization", "Bearer $it") }
-        }
+        val sentToken = if (authed) authTokenProvider() else null
+        sentToken?.let { builder.header("Authorization", "Bearer $it") }
         val requestBody = body?.let { json.encodeToString(JsonObject.serializer(), it).toRequestBody(JSON_MEDIA) }
         builder.method(method, if (method == "GET" || method == "DELETE" && requestBody == null) null else requestBody
             ?: if (method == "POST" || method == "PUT" || method == "PATCH") "{}".toRequestBody(JSON_MEDIA) else null)
@@ -214,7 +235,7 @@ class ApiClient private constructor() {
                     throw ApiException.CloudflareAccess()
                 }
                 if (!response.isSuccessful) {
-                    throw ApiException.Http(response.code, httpErrorMessage(text))
+                    throw httpFailure(response.code, httpErrorMessage(text), sentToken)
                 }
                 return Triple(text, response.code, response.header("Content-Type").orEmpty())
             }
@@ -252,12 +273,13 @@ class ApiClient private constructor() {
      */
     suspend fun downloadToFile(path: String, destination: java.io.File) = withContext(Dispatchers.IO) {
         val builder = Request.Builder().url(buildUrl(path)).get()
-        authTokenProvider()?.let { builder.header("Authorization", "Bearer $it") }
+        val sentToken = authTokenProvider()
+        sentToken?.let { builder.header("Authorization", "Bearer $it") }
         try {
             client.newCall(builder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     val text = response.body?.string().orEmpty()
-                    throw ApiException.Http(response.code, httpErrorMessage(text))
+                    throw httpFailure(response.code, httpErrorMessage(text), sentToken)
                 }
                 val source = response.body ?: throw ApiException.Http(response.code, "Empty download")
                 destination.parentFile?.mkdirs()

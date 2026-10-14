@@ -2402,8 +2402,9 @@ export class MailboxDO extends DurableObject<Env> {
 		if (cleaned.length === 0) return null;
 
 		// Each ref is bound 3x and DO SQLite allows 100 bound params, so keep the
-		// 33 most recent refs (In-Reply-To / the newest References come last).
-		const refs = cleaned.slice(-33);
+		// 33 most recent refs. Callers pass In-Reply-To first, then References
+		// newest to oldest, so the most recent are at the front.
+		const refs = cleaned.slice(0, 33);
 		const n = refs.length;
 		const p1 = refs.map((_, i) => `?${i + 1}`).join(",");
 		const p2 = refs.map((_, i) => `?${n + i + 1}`).join(",");
@@ -2508,6 +2509,18 @@ export class MailboxDO extends DurableObject<Env> {
 			new Date(now).toISOString(),
 		);
 		return null;
+	}
+
+	/**
+	 * Give back a slot reserved by checkSendRateLimit when the message was
+	 * refused before it was accepted (too large, failed validation, storage
+	 * error, or an auto-reply that wasn't due). Otherwise mail the user never
+	 * sent would use up their quota.
+	 */
+	async releaseSendSlot(): Promise<void> {
+		this.ctx.storage.sql.exec(
+			`DELETE FROM send_log WHERE rowid = (SELECT MAX(rowid) FROM send_log)`,
+		);
 	}
 
 	/**

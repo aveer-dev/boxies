@@ -27,6 +27,7 @@ import {
 	createInviteRecord,
 	inviteAcceptUrl,
 	inviteIsActive,
+	inviteResendBlocked,
 	listInviteTokensForMailbox,
 	loadInvite,
 	publicInvitePayload,
@@ -46,6 +47,7 @@ import {
 	attachIdpToSessionAccount,
 	attachPasswordToSessionAccount,
 	ensurePrincipalAccount,
+	findAccountIdByPrincipalKey,
 	IdentityAlreadyLinkedError,
 	listAllIdentityAccounts,
 	listIdentitiesForPrincipal,
@@ -65,7 +67,7 @@ import {
 	mailboxMetadataKey,
 } from "../lib/mailbox-routing";
 import { resolveMailDomain } from "../lib/mail-domain";
-import { listMailboxes, getMailboxStub } from "../lib/email-helpers";
+import { escapeHtml, listMailboxes, getMailboxStub } from "../lib/email-helpers";
 import {
 	clearPasswordSessionCookieHeader,
 	hashPassword,
@@ -194,6 +196,45 @@ async function passwordResetCodeRateLimited(c: C): Promise<boolean> {
 	}
 }
 
+/**
+ * Where a password reset code may go. Whoever reads it owns the account, so a
+ * mailbox address only qualifies while nobody but this user can read that
+ * mailbox; addresses outside the platform (recovery / contact) always do.
+ */
+async function resetCodeRecipients(
+	bucket: R2Bucket,
+	user: PlatformUser,
+	inputEmail: string,
+): Promise<string[]> {
+	const accountId = await findAccountIdByPrincipalKey(bucket, `user:${user.id}`);
+	const ownKeys = new Set([
+		`user:${user.id}`,
+		`sub:user:${user.id}`,
+		...(accountId ? [`account:${accountId}`] : []),
+	]);
+	const out = new Set<string>();
+	for (const raw of [user.recoveryEmail, user.contactEmail, user.mailboxEmail, inputEmail]) {
+		const email = raw?.trim();
+		if (!email || !email.includes("@")) continue;
+		const mailboxId = canonicalMailboxId(email);
+		const settings = mailboxId ? await loadMailboxSettingsRaw(bucket, mailboxId) : null;
+		if (settings === null) {
+			out.add(email);
+			continue;
+		}
+		const acl = parseAcl(settings);
+		const readers = [...acl.owners, ...acl.members];
+		// `email:<mailbox>` means "whoever logs in as this mailbox": that's
+		// this user only if this is their own mailbox login.
+		const isOwnLogin = canonicalMailboxId(user.mailboxEmail) === mailboxId;
+		const onlyThisUser =
+			readers.length > 0 &&
+			readers.every((k) => ownKeys.has(k) || (isOwnLogin && k === `email:${mailboxId}`));
+		if (onlyThisUser) out.add(email);
+	}
+	return [...out];
+}
+
 async function trySendInviteEmail(
 	c: C,
 	invite: {
@@ -205,9 +246,13 @@ async function trySendInviteEmail(
 ): Promise<{ sent: boolean; inviteUrl: string; error?: string }> {
 	const inviteUrl = inviteAcceptUrl(appBaseUrl(c), invite.token);
 	const from = inviteFromAddress(c);
-	const name = invite.inviteeName ? ` ${invite.inviteeName}` : "";
+	// The inviter chooses the name; it goes out from our noreply address, so
+	// it must never become markup (links, fake warnings).
+	const name = invite.inviteeName ? ` ${escapeHtml(invite.inviteeName)}` : "";
+	const mailbox = escapeHtml(invite.mailboxId);
+	const url = escapeHtml(inviteUrl);
 	const text = `You've been invited to ${invite.mailboxId} on Inboxies.\n\nOpen this link to set your password and get started:\n${inviteUrl}\n`;
-	const html = `<p>Hi${name},</p><p>You've been invited to <strong>${invite.mailboxId}</strong> on Inboxies.</p><p><a href="${inviteUrl}">Accept invite and set your password</a></p><p>Or copy this link:<br/>${inviteUrl}</p>`;
+	const html = `<p>Hi${name},</p><p>You've been invited to <strong>${mailbox}</strong> on Inboxies.</p><p><a href="${url}">Accept invite and set your password</a></p><p>Or copy this link:<br/>${url}</p>`;
 	try {
 		if (!c.env.EMAIL) {
 			return { sent: false, inviteUrl, error: "EMAIL binding unavailable" };
@@ -229,6 +274,23 @@ async function trySendInviteEmail(
 	}
 }
 
+/**
+ * Invites send mail from the platform's own address to anyone, so cap how
+ * fast one principal can send them (Workers Rate Limiting, per sub/email).
+ */
+async function inviteRateLimited(c: C, principal: RequestPrincipal): Promise<boolean> {
+	const limiter = c.env.INVITE_LIMITER;
+	if (!limiter) return false;
+	const key = principal.sub ?? principal.email ?? "anonymous";
+	try {
+		const { success } = await limiter.limit({ key: `invite:${key}` });
+		return !success;
+	} catch (e) {
+		console.error("[Invites] Rate limiter failed:", (e as Error).message || e);
+		return false;
+	}
+}
+
 async function createPendingInvite(
 	c: C,
 	principal: RequestPrincipal,
@@ -247,6 +309,9 @@ async function createPendingInvite(
 		createdByKeys: principalKeys(principal),
 	});
 	if ("error" in record) return { ok: false as const, error: record.error };
+	if (await inviteRateLimited(c, principal)) {
+		return { ok: false as const, error: "Too many invites; try again in a minute", status: 429 as const };
+	}
 	await saveInvite(c.env.BUCKET, record);
 	const delivery = await trySendInviteEmail(c, record);
 	await appendAdminAudit(c.env.BUCKET, {
@@ -395,7 +460,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 				role: assignTo.role ?? "owner",
 			});
 			if (!inviteResult.ok) {
-				return c.json({ error: inviteResult.error }, 400);
+				return c.json({ error: inviteResult.error }, inviteResult.status ?? 400);
 			}
 		}
 
@@ -456,7 +521,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.assignTo.inviteeName,
 			role: body.assignTo.role ?? "owner",
 		});
-		if (!inviteResult.ok) return c.json({ error: inviteResult.error }, 400);
+		if (!inviteResult.ok) return c.json({ error: inviteResult.error }, inviteResult.status ?? 400);
 		return c.json({
 			mailboxId,
 			invite: {
@@ -541,7 +606,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.inviteeName,
 			role: body.role ?? "owner",
 		});
-		if (!inviteResult.ok) return c.json({ error: inviteResult.error }, 400);
+		if (!inviteResult.ok) return c.json({ error: inviteResult.error }, inviteResult.status ?? 400);
 		return c.json(
 			{
 				token: inviteResult.invite.token,
@@ -613,7 +678,14 @@ export function registerAdminAndInviteRoutes(app: App) {
 		if (!inviteIsActive(invite)) {
 			return c.json({ error: "Invite is not active" }, 400);
 		}
+		const blocked = inviteResendBlocked(invite);
+		if (blocked) return c.json({ error: blocked }, 429);
 		const delivery = await trySendInviteEmail(c, invite);
+		await saveInvite(c.env.BUCKET, {
+			...invite,
+			emailCount: (invite.emailCount ?? 1) + 1,
+			lastEmailedAt: new Date().toISOString(),
+		});
 		return c.json({
 			...publicInvitePayload(invite),
 			token: invite.token,
@@ -648,7 +720,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 			inviteeName: body.inviteeName,
 			role: body.role ?? "member",
 		});
-		if (!inviteResult.ok) return c.json({ error: inviteResult.error }, 400);
+		if (!inviteResult.ok) return c.json({ error: inviteResult.error }, inviteResult.status ?? 400);
 		return c.json(
 			{
 				token: inviteResult.invite.token,
@@ -883,14 +955,7 @@ export function registerAdminAndInviteRoutes(app: App) {
 				const text = `Hi,\n\nWe received a request to reset your password on Inboxies.\n\nYour 6-digit reset code is:\n${reset.code}\n\nOr click this link to reset your password:\n${resetUrl}\n\nThis code and link will expire in 1 hour. If you didn't request this reset, you can safely ignore this email.\n`;
 				const html = `<p>Hi,</p><p>We received a request to reset your password on Inboxies.</p><p>Your 6-digit reset code is:</p><p style="font-size: 26px; font-weight: bold; letter-spacing: 4px; margin: 16px 0; color: #1e293b;">${reset.code}</p><p><a href="${resetUrl}">Reset your password</a></p><p>Or copy this link:<br/>${resetUrl}</p><p style="color: #64748b; font-size: 13px;">This code and link will expire in 1 hour. If you didn't request a password reset, you can safely ignore this email.</p>`;
 
-				// Deliver to all associated emails (personal recovery email and mailbox email)
-				const targetEmails = Array.from(
-					new Set(
-						[user.contactEmail, user.mailboxEmail, user.recoveryEmail, inputEmail]
-							.map((e) => e?.trim())
-							.filter((e): e is string => !!e && e.includes("@")),
-					),
-				);
+				const targetEmails = await resetCodeRecipients(c.env.BUCKET, user, inputEmail);
 
 				if (c.env.EMAIL) {
 					for (const dest of targetEmails) {

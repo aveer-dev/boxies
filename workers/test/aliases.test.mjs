@@ -17,7 +17,9 @@ import {
 } from "../lib/alias-utils.ts";
 import {
 	ALIAS_INACTIVE_ERROR,
+	findInboundThreadId,
 	findThreadAliasId,
+	isInboundEmail,
 	resolveOutboundSender,
 } from "../lib/alias-sender.ts";
 import { isAddressTaken, mailboxMetadataKey } from "../lib/mailbox-routing.ts";
@@ -216,6 +218,56 @@ test("resolveOutboundSender binds alias conversations to the alias", async () =>
 	// Original message alias wins over thread lookup
 	assert.equal(await findThreadAliasId(stub, { aliasId: "alias-2", threadId: "thread-a" }), "alias-2");
 	assert.equal(await findThreadAliasId(stub, { threadId: "unbound" }), null);
+});
+
+test("a reply to mail at the real address never goes out from a private email", async () => {
+	const stub = senderStub([aliasRow()], { "thread-a": "alias-1" });
+	// Someone who knows the alias mails the real address into the alias thread.
+	const received = { folder_id: "inbox", alias_id: null };
+	assert.equal(isInboundEmail(received), true);
+	assert.equal(
+		await findThreadAliasId(stub, { aliasId: received.alias_id, threadId: "thread-a", originalIsInbound: true }),
+		null,
+		"reply from the real address, not the thread's alias",
+	);
+	// Replying to our own sent alias mail still continues on the alias.
+	const ownSent = { folder_id: "sent", alias_id: null };
+	assert.equal(
+		await findThreadAliasId(stub, { threadId: "thread-a", originalIsInbound: isInboundEmail(ownSent) }),
+		"alias-1",
+	);
+});
+
+test("inbound mail to an alias and to the real address never share a thread", async () => {
+	const threads = { "alias-thread": "alias-1", "real-thread": null };
+	const stub = {
+		findThreadIdByReferences: async (refs) => refs[0] ?? null,
+		findThreadBySubject: async (subject) => (subject === "Order #42" ? "alias-thread" : null),
+		getThreadAliasId: async (id) => threads[id] ?? null,
+	};
+	// Real-address mail that references, or shares a subject with, an alias thread starts its own thread.
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["alias-thread"], subject: "x", aliasId: null }),
+		null,
+	);
+	assert.equal(
+		await findInboundThreadId(stub, { references: [], subject: "Order #42", aliasId: null }),
+		null,
+	);
+	// Alias mail can't join a real-address thread either.
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["real-thread"], subject: "y", aliasId: "alias-1" }),
+		null,
+	);
+	// Matching addresses still thread normally.
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["alias-thread"], subject: "x", aliasId: "alias-1" }),
+		"alias-thread",
+	);
+	assert.equal(
+		await findInboundThreadId(stub, { references: ["real-thread"], subject: "y", aliasId: null }),
+		"real-thread",
+	);
 });
 
 test("resolveOutboundSender for unbound messages", async () => {
