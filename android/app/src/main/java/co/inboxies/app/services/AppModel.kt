@@ -2008,6 +2008,18 @@ class AppModel {
         }
     }
 
+    /** Move to Spam and reject the sender: their future mail is screened out. */
+    suspend fun reportSpam(email: Email) {
+        moveEmailToFolder(email, "spam", setSenderPreference = true)
+        showToast("Reported as spam")
+    }
+
+    /** Move back to Inbox and allow the sender. */
+    suspend fun markNotSpam(email: Email) {
+        moveEmailToFolder(email, "inbox", setSenderPreference = true)
+        showToast("Moved to Inbox")
+    }
+
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (blockIfReadOnly()) return

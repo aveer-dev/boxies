@@ -276,6 +276,16 @@ struct EmailActionAvailability {
         !readOnly && !email.isDraft
     }
 
+    /// Report Spam: received mail that isn't already in Spam. It's a move, so never read-only.
+    var showsReportSpam: Bool {
+        !readOnly && !email.isDraft && !isInSpam && email.folderId != "sent" && email.folderId != "draft"
+    }
+
+    /// Not Spam: anything in Spam (also a move).
+    var showsNotSpam: Bool { !readOnly && isInSpam }
+
+    private var isInSpam: Bool { email.folderId == "spam" }
+
     private var isInArchive: Bool {
         EmailFolderContext.kind(for: email, fallbackFolderId: nil) == .archive
     }

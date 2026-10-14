@@ -68,14 +68,17 @@ for (const [id, title] of [
 
 assert.match(
 	overlay,
-	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*Updates,[\s\S]*Promotions,[\s\S]*Screener,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
-	"long-press overlay contains all 11 action items",
+	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Spam,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*Updates,[\s\S]*Promotions,[\s\S]*Screener,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
+	"long-press overlay lists every folder, Spam between Trash and Archive",
 );
-assert.doesNotMatch(
-	overlay,
-	/\bSpam\b/,
-	"spam folder remains a swipe tab, not a long-press row",
+assert.match(overlay, /Spam -> HomeTab\.Folder\(FolderIds\.SPAM\)/, "the Spam row opens the Spam tab");
+
+// iOS twin: same row, same place.
+const iosOverlay = readFileSync(
+	join(root, "..", "ios", "AgenticInbox", "Inboxies", "Views/Home/ComposeActionListOverlay.swift"),
+	"utf8",
 );
+assert.match(iosOverlay, /case trash\s+case spam\s+case archive/, "iOS overlay has Spam between Trash and Archive");
 
 assert.match(fcm, /putExtra\("folderId", folderId\)/);
 assert.match(fcm, /message\.data\["folderId"\] \?: "inbox"/);

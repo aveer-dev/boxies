@@ -37,6 +37,7 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Screener("screener", "previewScreener"),
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
+    Spam("spam", "previewSpam"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),

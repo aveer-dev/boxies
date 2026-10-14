@@ -13,6 +13,7 @@
 #   ./scripts/run-debug-preview.sh domainDns
 #   ./scripts/run-debug-preview.sh forgotPassword
 #   ./scripts/run-debug-preview.sh replyLater
+#   ./scripts/run-debug-preview.sh spam
 #   ./scripts/run-debug-preview.sh passwordSignIn
 #   ./scripts/run-debug-preview.sh inviteAccept
 #   ./scripts/run-debug-preview.sh signInMethods
@@ -55,6 +56,7 @@ case "$mode" in
   domainDns|DomainDns|dns|previewDomainDns) extra=previewDomainDns; label=domainDns ;;
   forgotPassword|ForgotPassword|forgot|previewForgotPassword) extra=previewForgotPassword; label=forgotPassword ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
+  spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
@@ -68,7 +70,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | loadFailed | listError | screener | replyLater | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | loadFailed | listError | screener | replyLater | spam | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
     exit 1
     ;;
 esac

@@ -154,6 +154,15 @@ data class EmailActionAvailability(val email: Email, val readOnly: Boolean = fal
     val showsMove: Boolean get() = !readOnly
 
     val showsReplyActions: Boolean get() = !readOnly && !email.isDraft
+
+    /** Report Spam: received mail that isn't already in Spam. It's a move, so never read-only. */
+    val showsReportSpam: Boolean
+        get() = !readOnly && !email.isDraft && !isInSpam && email.folderId != "sent" && email.folderId != "draft"
+
+    /** Not Spam: anything in Spam (also a move). */
+    val showsNotSpam: Boolean get() = !readOnly && isInSpam
+
+    private val isInSpam: Boolean get() = email.folderId == "spam"
 }
 
 data class SwipeActionPreferences(

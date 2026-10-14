@@ -27,7 +27,9 @@ enum PreviewSupport {
             Folder(id: "updates", name: "Updates", unreadCount: 0),
             Folder(id: "sent", name: "Sent", unreadCount: 0),
             Folder(id: "archive", name: "Archive", unreadCount: 0),
+            Folder(id: "spam", name: "Spam", unreadCount: 1),
             Folder(id: "screened_out", name: "Screened out", unreadCount: 0),
+            Folder(id: "trash", name: "Trash", unreadCount: 0),
         ]
         DatabaseService.shared.upsertMailboxes(app.mailboxes)
         DatabaseService.shared.upsertFolders(mailboxId: "mb-preview", folders: app.folders)
@@ -118,6 +120,20 @@ enum PreviewSupport {
             folderName: "Screener"
         ),
         Email(
+            id: "preview-spam-1",
+            folderId: "spam",
+            subject: "You've won a $500 gift card",
+            sender: "prizes@winner.example",
+            senderName: "Rewards Center",
+            recipient: "you@inboxies.email",
+            date: "2026-09-20T07:15:00.000Z",
+            read: false,
+            starred: false,
+            body: "<p>Claim your reward before it expires.</p>",
+            snippet: "Claim your reward before it expires.",
+            folderName: "Spam"
+        ),
+        Email(
             id: "preview-rl-2",
             folderId: "inbox",
             subject: "Can you review the contract?",
@@ -165,6 +181,12 @@ enum PreviewSupport {
                 app.selectedEmail = screener
                 app.threadEmails = [screener]
             }
+        } else if args.contains("-previewSpam"),
+                  let spam = app.emails.first(where: { $0.folderId == "spam" }) {
+            app.selectedTab = .folder("spam")
+            app.emails = app.emails.filter { $0.folderId == "spam" }
+            app.selectedEmail = spam
+            app.threadEmails = [spam]
         } else if args.contains("-previewReplyLater") {
             app.selectedTab = .replyLater
             app.emails = app.emails.filter(\.replyLater)

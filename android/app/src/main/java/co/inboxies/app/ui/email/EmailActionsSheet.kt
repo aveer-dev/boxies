@@ -41,11 +41,13 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.GppGood
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -168,6 +170,9 @@ fun EmailActionsSheet(
     val availability = EmailActionAvailability(email, readOnly)
     val fromList = onRemoveFromList != null
     val moveTargets = if (availability.showsMove) folders.filter { it.id != email.folderId } else emptyList()
+    // Your own messages are never judged as spam.
+    val isSelfSender = app.selectedMailbox?.email?.equals(email.sender, ignoreCase = true) == true
+    val showsSpamAction = !isSelfSender && (availability.showsReportSpam || availability.showsNotSpam)
 
     var screen by remember { mutableStateOf(ActionsScreen.Main) }
     var showDeleteMenu by remember { mutableStateOf(false) }
@@ -342,6 +347,19 @@ fun EmailActionsSheet(
                         trailing = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                     ) {
                         screen = ActionsScreen.Move
+                    }
+                }
+                if (showsSpamAction) {
+                    ActionRow(
+                        if (availability.showsNotSpam) "Not Spam" else "Report Spam",
+                        if (availability.showsNotSpam) Icons.Outlined.GppGood else Icons.Outlined.WarningAmber,
+                    ) {
+                        scope.launch {
+                            onDismiss()
+                            if (availability.showsNotSpam) app.markNotSpam(email) else app.reportSpam(email)
+                            if (fromList) onRemoveFromList?.invoke(email.id)
+                            else onDone()
+                        }
                     }
                 }
                 ActionRow(

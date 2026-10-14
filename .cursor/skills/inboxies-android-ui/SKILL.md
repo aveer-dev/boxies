@@ -198,6 +198,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
 | Screener | `previewScreener` | `screener` | Screener folder + detail open |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
+| Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Load more | `previewLoadMore` | `loadMore` | Inbox with more pages; scroll down for the pulsing skeleton footer row |
 | Load failed | `previewLoadFailed` | `loadFailed` | Signed in, first mailbox load failed, nothing cached: Retry + Sign out (never onboarding) |
 | List error | `previewListError` | `listError` | Inbox fetch failed with an empty cache: "Couldn’t load emails" + Retry |
@@ -217,6 +218,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ./scripts/run-debug-preview.sh mailbox
 ./scripts/run-debug-preview.sh screener
 ./scripts/run-debug-preview.sh replyLater
+./scripts/run-debug-preview.sh spam
 ./scripts/run-debug-preview.sh passwordSignIn
 ./scripts/run-debug-preview.sh inviteAccept
 ```

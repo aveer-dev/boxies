@@ -31,6 +31,7 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewChat")
                 || ProcessInfo.processInfo.arguments.contains("-previewScreener")
                 || ProcessInfo.processInfo.arguments.contains("-previewScreenerList")
+                || ProcessInfo.processInfo.arguments.contains("-previewSpam")
                 || ProcessInfo.processInfo.arguments.contains("-previewReplyLater")
                 || PreviewSupport.isServiceMailboxPreview {
                 PreviewMailboxRoot()
