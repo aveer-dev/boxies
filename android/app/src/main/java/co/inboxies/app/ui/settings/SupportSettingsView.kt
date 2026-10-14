@@ -69,6 +69,11 @@ fun SupportSettingsView(
     }
 
     fun composeToSupport(name: String) {
+        // A read-only mailbox can't send: hand off to another mail app instead.
+        if (app.selectedMailboxReadOnly.value) {
+            openUrl("mailto:support@$mailDomain")
+            return
+        }
         onCloseSettings()
         scope.launch {
             app.startCompose(

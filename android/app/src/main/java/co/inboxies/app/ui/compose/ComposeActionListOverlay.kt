@@ -185,13 +185,17 @@ fun ComposeActionListOverlay(
     dismissEnabled: Boolean,
     isClosingExternal: Boolean = false,
     onDismissStarted: () -> Unit = {},
+    /** False for a read-only mailbox (service ended): folders and Settings only. */
+    showCompose: Boolean = true,
 ) {
     val colors = inboxiesColors()
     val density = LocalDensity.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val reduceMotion = rememberReduceMotion()
-    val actions = ComposeActionItem.entries
+    val actions = remember(showCompose) {
+        if (showCompose) ComposeActionItem.entries else ComposeActionItem.entries - ComposeActionItem.Compose
+    }
     val rowFrames = remember { mutableMapOf<ComposeActionItem, Rect>() }
     var publishedFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
     val backdropAlpha = remember { Animatable(0f) }
@@ -200,7 +204,7 @@ fun ComposeActionListOverlay(
     val hoverFill = lerp(colors.pillActive, colors.surface, 0.45f)
     var isClosing by remember { mutableStateOf(false) }
 
-    val appearedAnimatables = remember {
+    val appearedAnimatables = remember(actions) {
         List(actions.size) { Animatable(0f) }
     }
 

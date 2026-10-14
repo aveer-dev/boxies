@@ -101,6 +101,7 @@ import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
+import co.inboxies.app.ui.components.rememberDomainRenewal
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
@@ -138,11 +139,19 @@ fun DomainAdminDNSView(
     var recordToDelete by remember { mutableStateOf<CloudflareDnsRecord?>(null) }
     var domainMenuExpanded by remember { mutableStateOf(false) }
 
+    // Subscription ended: DNS edits are frozen; export and transfer stay available.
+    val domainServices by app.domainServices.collectAsState()
+    val service = domainServices[selectedDomain.lowercase()]
+    val serviceEnded = service?.isEnded == true
+    val renewal = rememberDomainRenewal()
+
     suspend fun loadDomainData(domain: String) {
         if (domain.isBlank()) return
         errorMessage = null
         try {
             coroutineScope {
+                // Best effort: null (and no Subscription section) for unbilled domains or errors.
+                launch { app.loadDomainService(domain) }
                 val healthDef = async { ApiClient.shared.getDomainDnsHealth(domain) }
                 val recordsDef = async { ApiClient.shared.listDomainDnsRecords(domain) }
                 healthResponse = healthDef.await()
@@ -305,6 +314,12 @@ fun DomainAdminDNSView(
                         }
                     }
                 }
+
+                DomainSubscriptionSection(
+                    domain = selectedDomain,
+                    service = service,
+                    renewal = renewal,
+                )
 
                 if (justPurchased) {
                     SettingsFormGroup {
@@ -603,10 +618,9 @@ fun DomainAdminDNSView(
                         }
                     }
 
-                    HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
-
-                    // Fix & Auto-configure button
-                    Box(
+                    // Fix & Auto-configure button (DNS is frozen once the service ended)
+                    if (!serviceEnded) HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                    if (!serviceEnded) Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable(enabled = !isFixing) {
@@ -663,31 +677,33 @@ fun DomainAdminDNSView(
                 // DNS Records List Card
                 SettingsFormSectionHeader("DNS Records (${dnsRecords.size})")
                 SettingsFormGroup {
-                    // Add record action
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showAddRecord = true }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Default.Add,
-                            contentDescription = null,
-                            tint = colors.accent,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "Add DNS Record",
-                            fontFamily = InterFontFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 15.sp,
-                            color = colors.accent,
-                        )
-                    }
+                    // Add record action (frozen once the service ended)
+                    if (!serviceEnded) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showAddRecord = true }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Add DNS Record",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 15.sp,
+                                color = colors.accent,
+                            )
+                        }
 
-                    HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                        HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                    }
 
                     if (dnsRecords.isEmpty()) {
                         Text(
@@ -704,7 +720,7 @@ fun DomainAdminDNSView(
                             }
                             DnsRecordRow(
                                 record = rec,
-                                onDelete = { recordToDelete = rec },
+                                onDelete = if (serviceEnded) null else ({ recordToDelete = rec }),
                             )
                         }
                     }
@@ -918,7 +934,8 @@ private fun HealthStatusPill(status: String) {
 @Composable
 private fun DnsRecordRow(
     record: CloudflareDnsRecord,
-    onDelete: () -> Unit,
+    /** Null while the domain's service has ended (DNS is frozen). */
+    onDelete: (() -> Unit)?,
 ) {
     val colors = inboxiesColors()
 
@@ -983,16 +1000,18 @@ private fun DnsRecordRow(
                 )
             }
 
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(28.dp).padding(start = 4.dp),
-            ) {
-                Icon(
-                    Icons.Outlined.Delete,
-                    contentDescription = "Delete Record",
-                    tint = colors.deepDarkRed,
-                    modifier = Modifier.size(16.dp),
-                )
+            if (onDelete != null) {
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(28.dp).padding(start = 4.dp),
+                ) {
+                    Icon(
+                        Icons.Outlined.Delete,
+                        contentDescription = "Delete Record",
+                        tint = colors.deepDarkRed,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
         }
 
