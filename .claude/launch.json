@@ -4,14 +4,38 @@
     {
       "name": "site",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "inboxies-site", "dev", "--port", "4321", "--ignore-lock"],
+      "runtimeArgs": [
+        "--filter",
+        "inboxies-site",
+        "dev",
+        "--port",
+        "4321",
+        "--ignore-lock"
+      ],
       "port": 4321
     },
     {
       "name": "site-preview",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "inboxies-site", "preview", "--port", "8787"],
+      "runtimeArgs": [
+        "--filter",
+        "inboxies-site",
+        "preview",
+        "--port",
+        "8787"
+      ],
       "port": 8787
+    },
+    {
+      "name": "app",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev",
+        "--port",
+        "5173",
+        "--strictPort"
+      ],
+      "port": 5173
     }
   ]
 }

@@ -4,15 +4,15 @@
 
 import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useParams } from "react-router";
+import { GoogleSignInButton } from "~/components/GoogleSignInButton";
 import ConfirmDialog from "./ConfirmDialog";
 import RecoveryEmailSection from "./RecoveryEmailSection";
 import SettingsSubpage from "./SettingsSubpage";
 import { useIdentities } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
-import { loadGoogleIdentityScript } from "~/lib/google-identity";
 
 function identityTypeLabel(type: string): string {
 	switch (type) {
@@ -33,7 +33,6 @@ export default function SignInSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
-	const googleBtnRef = useRef<HTMLDivElement>(null);
 
 	const { data, isLoading, refetch } = useIdentities();
 
@@ -98,38 +97,6 @@ export default function SignInSettings() {
 		},
 		[refreshAfterAttach, toastManager],
 	);
-
-	useEffect(() => {
-		if (!googleClientId || hasGoogle || !googleBtnRef.current) return;
-		let cancelled = false;
-		(async () => {
-			try {
-				await loadGoogleIdentityScript();
-				if (cancelled || !window.google?.accounts?.id || !googleBtnRef.current)
-					return;
-				window.google.accounts.id.initialize({
-					client_id: googleClientId,
-					callback: (response) => {
-						void handleGoogleCredential(response.credential);
-					},
-					auto_select: false,
-					cancel_on_tap_outside: true,
-				});
-				googleBtnRef.current.innerHTML = "";
-				window.google.accounts.id.renderButton(googleBtnRef.current, {
-					theme: "outline",
-					size: "large",
-					text: "continue_with",
-					width: 280,
-				});
-			} catch {
-				/* GIS unavailable: Google can still be connected from the apps */
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, [googleClientId, hasGoogle, handleGoogleCredential, data?.identities]);
 
 	const handleDisconnect = async () => {
 		if (!disconnecting) return;
@@ -382,10 +349,14 @@ export default function SignInSettings() {
 								<div className="space-y-2">
 									{googleClientId ? (
 										<>
-											<div ref={googleBtnRef} />
-											{isConnectingGoogle && (
-												<p className="text-xs text-kumo-subtle">Connecting…</p>
-											)}
+											<GoogleSignInButton
+												clientId={googleClientId}
+												onCredential={(idToken) => void handleGoogleCredential(idToken)}
+												busy={isConnectingGoogle}
+												label="Connect Google"
+												size="sm"
+												className="w-max"
+											/>
 										</>
 									) : (
 										<p className="text-xs text-kumo-subtle">
