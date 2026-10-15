@@ -2,8 +2,10 @@ import AuthenticationServices
 import SwiftUI
 import UIKit
 
-/// AutoFill entry point: creates a private email through the Inboxies API.
-/// iOS 18+ inserts it into the focused field; the password-list flow copies it.
+/// AutoFill entry point: pick or create a private email, then type it into
+/// the focused field. Both iOS entry points land here: the password list
+/// (QuickType bar), which names the site, and iOS 18+'s edit-menu text
+/// insertion, which doesn't.
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     private let model = PrivateEmailRequest()
 
@@ -13,7 +15,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         AppTheme.configureGlobalAppearance()
         view.backgroundColor = AppTheme.uiBackground
 
-        model.onInsert = { [weak self] text in self?.insert(text) }
+        model.onFill = { [weak self] address in self?.fill(address) }
         model.onCancel = { [weak self] in self?.cancel() }
 
         let host = UIHostingController(rootView: PrivateEmailRequestView(model: model))
@@ -30,23 +32,27 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         host.didMove(toParent: self)
     }
 
-    /// Password-list flow (from the QuickType bar). There is no text-insertion
-    /// path here and an empty-password credential is not allowed, so the new
-    /// address is copied to the pasteboard and the request is cancelled on Done.
+    /// Password-list flow (QuickType bar → Inboxies): the site is known.
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
-        model.configure(mode: .copyToPasteboard, host: Self.host(from: serviceIdentifiers))
+        model.configure(host: Self.host(from: serviceIdentifiers))
     }
 
-    /// iOS 18+: AutoFill → Inboxies from a text field's edit menu.
+    /// iOS 18+: AutoFill → Passwords → Inboxies from a field's edit menu. iOS
+    /// passes no site here, so there are no suggestions, only the full list.
     @available(iOS 18.0, *)
     override func prepareInterfaceForUserChoosingTextToInsert() {
-        model.configure(mode: .insertText, host: nil)
+        model.configure(host: nil)
     }
 
-    private func insert(_ text: String) {
+    private func fill(_ address: String) {
         if #available(iOS 18.0, *) {
-            extensionContext.completeRequest(withTextToInsert: text, completionHandler: nil)
+            // Text insertion works from both flows and types into the focused
+            // field. A password credential doesn't: Safari puts its *password*
+            // into the focused field and ignores the username.
+            extensionContext.completeRequest(withTextToInsert: address, completionHandler: nil)
         } else {
+            // iOS 17 has no text insertion, so the address goes on the pasteboard.
+            UIPasteboard.general.string = address
             cancel()
         }
     }

@@ -1,59 +1,92 @@
 import SwiftUI
 import UIKit
 
-/// State for one AutoFill request: create a private email, then insert or copy it.
+/// State for one AutoFill request: pick an existing private email or create
+/// one, then hand the address back to fill the focused field.
 @Observable
 @MainActor
 final class PrivateEmailRequest {
-    enum Mode {
-        /// iOS 18+ text insertion: the address goes straight into the field.
-        case insertText
-        /// Password-list flow: nothing to insert into, so copy to the pasteboard.
-        case copyToPasteboard
-    }
-
-    enum Phase: Equatable {
-        case ready
-        case creating
-        case copied(String)
+    enum LoadState: Equatable {
+        case loading
+        case loaded
         case failed(String)
         case signedOut
     }
 
-    private(set) var mode: Mode = .copyToPasteboard
+    /// The site being filled, when iOS says (password-list flow only).
     private(set) var host: String?
-    private(set) var phase: Phase
+    private(set) var matcher: PrivateEmailMatcher?
+    private(set) var state: LoadState = .loading
+    private(set) var emails: [PrivateEmail] = []
+    private(set) var isCreating = false
+    private(set) var createError: String?
+    var query = ""
 
-    var onInsert: ((String) -> Void)?
+    var onFill: ((String) -> Void)?
     var onCancel: (() -> Void)?
 
-    init() {
-        phase = PrivateEmailClient.isSignedIn ? .ready : .signedOut
+    func configure(host: String?) {
+        self.host = host
+        matcher = PrivateEmailMatcher(host: host)
+        load()
     }
 
-    func configure(mode: Mode, host: String?) {
-        self.mode = mode
-        self.host = host
-        phase = PrivateEmailClient.isSignedIn ? .ready : .signedOut
+    func load() {
+        guard PrivateEmailClient.isSignedIn else {
+            state = .signedOut
+            return
+        }
+        state = .loading
+        Task {
+            do {
+                let now = Date()
+                emails = try await PrivateEmailClient.listAliases().filter { $0.isUsable(now: now) }
+                state = .loaded
+            } catch PrivateEmailClient.Failure.signedOut {
+                state = .signedOut
+            } catch {
+                state = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private var searched: [PrivateEmail] {
+        PrivateEmailSearch.filter(emails, query: query)
+    }
+
+    /// Emails that belong to the site being filled.
+    var suggested: [PrivateEmail] {
+        guard let matcher else { return [] }
+        return searched.filter(matcher.matches)
+    }
+
+    /// Everything else, in server order (newest first).
+    var others: [PrivateEmail] {
+        guard let matcher else { return searched }
+        return searched.filter { !matcher.matches($0) }
+    }
+
+    var isSearching: Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func select(_ email: PrivateEmail) {
+        onFill?(email.address)
     }
 
     func create() {
-        guard phase != .creating else { return }
-        phase = .creating
+        guard !isCreating else { return }
+        isCreating = true
+        createError = nil
         Task {
+            defer { isCreating = false }
             do {
-                let address = try await PrivateEmailClient.createAlias(label: host)
-                switch mode {
-                case .insertText:
-                    onInsert?(address)
-                case .copyToPasteboard:
-                    UIPasteboard.general.string = address
-                    phase = .copied(address)
-                }
+                let created = try await PrivateEmailClient.createAlias(label: host)
+                onFill?(created.address)
             } catch PrivateEmailClient.Failure.signedOut {
-                phase = .signedOut
+                state = .signedOut
             } catch {
-                phase = .failed(error.localizedDescription)
+                createError = error.localizedDescription
             }
         }
     }
@@ -64,130 +97,272 @@ final class PrivateEmailRequest {
 }
 
 /// AutoFill sheet in the app's chrome: Inter, AppTheme tokens, xmark close.
+/// iOS always presents credential-provider UI as a full-height card, so the
+/// content is a searchable list of card sections rather than a short panel.
 struct PrivateEmailRequestView: View {
-    let model: PrivateEmailRequest
-
-    private var title: String {
-        if let host = model.host {
-            return "Create private email for \(host)"
-        }
-        return "Create private email"
-    }
+    @Bindable var model: PrivateEmailRequest
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                content
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(AppTheme.background)
-            .navigationTitle("Private email")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        model.cancel()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.inter(size: 13, weight: .semibold))
-                            .foregroundStyle(AppTheme.ink)
-                            .frame(width: 32, height: 32)
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppTheme.background)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if model.state != .signedOut {
+                        searchBar
+                            .padding(.horizontal, HomeChromeMetrics.chromeHorizontalPadding)
+                            .padding(.top, 8)
+                            .padding(.bottom, 8)
                     }
-                    .accessibilityLabel("Close")
                 }
-            }
+                .navigationTitle("Inboxies: Private email")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            model.cancel()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.inter(size: 13, weight: .semibold))
+                                .foregroundStyle(AppTheme.ink)
+                                .frame(width: 32, height: 32)
+                        }
+                        .accessibilityLabel("Close")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        createButton
+                    }
+                }
         }
         .font(.inter(size: 14))
         .tint(AppTheme.accent)
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: "shield.lefthalf.filled")
-                .font(.inter(size: 22, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
-            Text(title)
-                .font(.inter(size: AppTheme.FontSize.largeTitle, weight: .bold))
-                .foregroundStyle(AppTheme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("A random address on your domain that delivers to your Inboxies mailbox. Your real address stays private.")
-                .font(.inter(size: 13))
-                .foregroundStyle(AppTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
+    // MARK: - Toolbar
+
+    private var createButton: some View {
+        Button {
+            searchFocused = false
+            model.create()
+        } label: {
+            ZStack {
+                Image(systemName: "plus")
+                    .font(.inter(size: 15, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .opacity(model.isCreating ? 0 : 1)
+                if model.isCreating {
+                    ProgressView()
+                }
+            }
+            .frame(width: 32, height: 32)
         }
+        .disabled(model.isCreating || model.state == .signedOut)
+        .accessibilityLabel(model.isCreating ? "Creating private email" : "Create new private email")
+        .accessibilityHint(model.host.map { "Labelled \($0), then filled in" } ?? "Creates an address and fills it in")
     }
+
+    // MARK: - Search
+
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(AppTheme.muted)
+            TextField("Search private emails", text: $model.query)
+                .font(.inter(size: 15))
+                .foregroundStyle(AppTheme.ink)
+                .focused($searchFocused)
+                .submitLabel(.search)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textContentType(.none)
+            if model.isSearching {
+                Button {
+                    model.query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(AppTheme.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(height: HomeChromeMetrics.actionBarHeight)
+        .liquidGlass(in: RoundedRectangle(cornerRadius: HomeChromeMetrics.chromeCornerRadius, style: .continuous))
+    }
+
+    // MARK: - Content
 
     @ViewBuilder
     private var content: some View {
-        switch model.phase {
+        switch model.state {
         case .signedOut:
-            Text("Open Inboxies and sign in first")
-                .font(.inter(size: 15, weight: .medium))
-                .foregroundStyle(AppTheme.ink)
-            primaryButton("Done") { model.cancel() }
-        case .ready:
-            primaryButton("Create") { model.create() }
-        case .creating:
-            primaryButton("Create", isBusy: true) {}
+            ContentUnavailableView {
+                Label("Sign in to Inboxies", systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.inter(size: 17, weight: .semibold))
+            } description: {
+                Text("Open Inboxies and sign in first, then come back here.")
+                    .font(.inter(size: 13))
+            }
         case .failed(let message):
-            Text(message)
-                .font(.inter(size: 13, weight: .medium))
-                .foregroundStyle(AppTheme.deepDarkRed)
-                .fixedSize(horizontal: false, vertical: true)
-            primaryButton("Try Again") { model.create() }
-        case .copied(let address):
-            copiedCard(address)
-            primaryButton("Done") { model.cancel() }
+            ContentUnavailableView {
+                Label("Couldn’t load private emails", systemImage: "exclamationmark.triangle")
+                    .font(.inter(size: 17, weight: .semibold))
+            } description: {
+                Text(message)
+                    .font(.inter(size: 13))
+            } actions: {
+                Button("Retry") { model.load() }
+                    .font(.inter(size: 14, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+            }
+        case .loading, .loaded:
+            list
         }
     }
 
-    private func copiedCard(_ address: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Copied", systemImage: "checkmark.circle.fill")
-                .font(.inter(size: 13, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
-            Text(address)
-                .font(.inter(size: 15, weight: .medium))
-                .foregroundStyle(AppTheme.ink)
-                .textSelection(.enabled)
-            Text("Paste it into the email field.")
-                .font(.inter(size: 13))
-                .foregroundStyle(AppTheme.muted)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(AppTheme.line, lineWidth: 0.5)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Copied \(address). Paste it into the email field.")
-    }
-
-    private func primaryButton(_ title: String, isBusy: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                Text(title)
-                    .opacity(isBusy ? 0 : 1)
-                if isBusy {
-                    ProgressView()
-                        .tint(.white)
+    private var list: some View {
+        List {
+            if let createError = model.createError {
+                Section {
+                    Label(createError, systemImage: "exclamationmark.circle")
+                        .font(.inter(size: 13, weight: .medium))
+                        .foregroundStyle(AppTheme.deepDarkRed)
+                        .cardRow()
                 }
             }
-            .font(.inter(size: 15, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity)
-            .frame(height: 48)
-            .background(AppTheme.accent, in: Capsule())
-            .contentShape(Capsule())
+
+            if model.state == .loading {
+                Section {
+                    ForEach(0..<5, id: \.self) { index in
+                        PrivateEmailRowSkeleton(index: index)
+                            .cardRow()
+                    }
+                } header: {
+                    sectionHeader("Private emails")
+                }
+                .skeletonPulse(true)
+            } else if model.suggested.isEmpty && model.others.isEmpty {
+                Section {
+                    Text(model.isSearching
+                         ? "No private emails match “\(model.query.trimmingCharacters(in: .whitespacesAndNewlines))”."
+                         : "No private emails yet. Tap + to create one.")
+                        .font(.inter(size: 13))
+                        .foregroundStyle(AppTheme.muted)
+                        .cardRow()
+                } footer: {
+                    copyNote
+                }
+            } else {
+                if !model.suggested.isEmpty, let matcher = model.matcher {
+                    Section {
+                        ForEach(model.suggested) { email in
+                            row(email)
+                        }
+                    } header: {
+                        sectionHeader("For \(matcher.domain)")
+                    } footer: {
+                        if model.others.isEmpty { copyNote }
+                    }
+                }
+                if !model.others.isEmpty {
+                    Section {
+                        ForEach(model.others) { email in
+                            row(email)
+                        }
+                    } header: {
+                        sectionHeader(model.suggested.isEmpty ? "Private emails" : "Other private emails")
+                    } footer: {
+                        copyNote
+                    }
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(isBusy)
-        .accessibilityLabel(isBusy ? "Creating private email" : title)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.immediately)
+        .listSectionSpacing(20)
+        .contentMargins(.top, 8, for: .scrollContent)
+    }
+
+    private func row(_ email: PrivateEmail) -> some View {
+        Button {
+            model.select(email)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(email.label?.isEmpty == false ? email.label! : email.address)
+                    .font(.inter(size: AppTheme.List.title, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(1)
+                if email.label?.isEmpty == false {
+                    Text(email.address)
+                        .font(.inter(size: AppTheme.List.subject))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressedRowStyle())
+        .cardRow()
+        .accessibilityLabel(email.label.map { "\($0), \(email.address)" } ?? email.address)
+        .accessibilityHint("Fills this address")
+    }
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.inter(size: AppTheme.List.sectionHeader, weight: .medium))
+            .tracking(AppTheme.List.tracking)
+            .foregroundStyle(AppTheme.muted)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    /// iOS 17 can't type into the field, so picking an email copies it instead.
+    @ViewBuilder
+    private var copyNote: some View {
+        if #unavailable(iOS 18.0) {
+            Text("Choosing an email copies it. Paste it into the field.")
+                .font(.inter(size: 12))
+                .foregroundStyle(AppTheme.muted)
+        }
+    }
+}
+
+/// Pressed rows dim to 0.55, as elsewhere in the app.
+private struct PressedRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1)
+    }
+}
+
+/// Loading placeholder matching the private email row geometry.
+private struct PrivateEmailRowSkeleton: View {
+    let index: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            bar(width: [132, 168, 112, 150, 124][index % 5], height: AppTheme.List.title)
+            bar(width: [210, 236, 188, 224, 200][index % 5], height: AppTheme.List.subject)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func bar(width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+            .fill(AppTheme.pillActive)
+            .frame(width: width, height: height)
+    }
+}
+
+private extension View {
+    /// A row in an inset-grouped card: surface fill, hairline separators.
+    func cardRow() -> some View {
+        listRowInsets(EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 16))
+            .listRowBackground(AppTheme.surface)
+            .listRowSeparatorTint(AppTheme.line)
     }
 }

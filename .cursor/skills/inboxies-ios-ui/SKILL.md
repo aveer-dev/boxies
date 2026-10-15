@@ -208,6 +208,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMailbox -previewListError` | Folder fetch failed with an empty cache (error + Retry, not "This folder is empty") |
 | `-previewMailbox -previewLoadMore` | Inbox with the infinite-scroll skeleton footer (scroll to the bottom) |
 | `-htmlHardenFixture` | Sanitizer / link-policy fixture + quoted-replies sheet |
+| `-previewAutofill` | AutoFill extension lists fixture private emails (no sign-in or API). Enable the provider with `xcrun simctl spawn <udid> pluginkit -e use -i co.inboxies.app.credential-provider`, then in Safari tap an email field → QuickType **Passwords** → Inboxies. iOS always shows credential-provider UI as a full-height sheet. |
 
 ## Hard don'ts
 
