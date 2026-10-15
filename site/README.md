@@ -1,6 +1,6 @@
 # inboxies.co
 
-The marketing site for Inboxies: a landing page with a scroll-pinned phone tour, Pricing, Roadmap and Support (with a contact form). It's Astro 7 with `@astrojs/cloudflare`, plain CSS and a few small TypeScript modules, deployed as one Cloudflare Worker at https://inboxies.co. The web app is at https://inboxies.app; mail addresses stay @inboxies.email.
+The marketing site for Inboxies: a landing page with a scroll-pinned phone tour, Pricing, Roadmap, Support (with a contact form) and Legal. It's Astro 7 with `@astrojs/cloudflare`, plain CSS and a few small TypeScript modules, deployed as one Cloudflare Worker at https://inboxies.co. The web app is at https://inboxies.app; mail addresses stay @inboxies.email.
 
 Every page is prerendered except `POST /api/contact`, so the Worker mostly serves static assets. Its entry, `src/worker.ts`, wraps Astro's handler: it answers byte-range requests for `/media/*` (the static asset server ignores `Range`, and Safari and iOS won't play video without `206`s) and adds the security headers that `public/_headers` can't reach (Worker responses: the 404 page, `/api/contact`, `/media`).
 
@@ -77,7 +77,8 @@ Also before launch: reserve the role usernames on inboxies.email (question 17) a
 3. The build writes `dist/server/wrangler.json` and a redirect in `.wrangler/deploy/config.json`. Plain `wrangler dev` / `wrangler deploy` from `site/` pick it up.
 4. After the first deploy, smoke test:
    - `/` returns 200 and `/does-not-exist` returns 404 with the Screener line.
-   - `/sitemap.xml` lists `/`, `/pricing`, `/roadmap` and `/support`.
+   - `/sitemap.xml` lists `/`, `/pricing`, `/roadmap`, `/support` and `/legal`.
+   - `/terms` and `/privacy` answer `301` to `/legal#terms` and `/legal#privacy` (`_redirects`, from `redirects` in `astro.config.mjs`).
    - `curl -sI -H "Range: bytes=0-1" https://inboxies.co/media/inbox-open.mp4` answers `206` with `Content-Range: bytes 0-1/330088`. Without it, Safari and every iOS browser keep the clips on their posters. `pnpm preview` answers the same locally.
    - A signed-out visit to the sign-up link reaches “Get started”, not an Access login (open question 1).
 5. Once `https://inboxies.co` serves, set `"workers_dev": false` and `"preview_urls": false` in `wrangler.jsonc` and deploy again, so the site and `/api/contact` live on one host (behind the zone's WAF and rate-limiting rules).
@@ -176,7 +177,7 @@ Spec §10. The site ships with each default until it's answered.
 - [ ] **15.** Fix the in-app price display before launch? `app/components/OnboardingFlow.tsx:935` shows $10.46 for every TLD, and iOS/Android label the retail total “Wholesale price”. Default: “Where the $20 goes” ships with the $10.44 worked example; fix the app before launch.
 - [ ] **16. Launch blocker.** Contact form: onboard inboxies.co to Email Service (From `site@inboxies.co`; it needs the zone first) and verify `support@inboxies.email` as a destination? Is that mailbox monitored? Default: binding configured; until it works, the 503 → mailto fallback carries the form.
 - [ ] **17. Launch blocker.** Reserve `support@`, `security@`, `admin@`, `postmaster@`, `abuse@`, `noreply@`, `billing@`, `privacy@`, `welcome@` and `agent@` on inboxies.email. Anyone can claim them today, and the site publishes support@.
-- [ ] **18.** Terms and privacy policy? The apps link `inboxies.email/terms`, which 404s, and the form says “We use it only to reply”. Default: no legal links on the site; the form line ships.
+- [ ] **18. Launch blocker.** Legal. `/legal` now carries a privacy policy, terms of service and acceptable use policy written from the code (`src/data/legal.ts`; `legalUpdated` is its date), linked from the colophon, with `/privacy` and `/terms` redirecting to it. Before it's binding the owner must supply or approve every `ownerConfirm` in that file, chiefly: the operator's legal name and address (and an EU/UK representative if needed), governing law and venue (the Disputes clause names none), the minimum age (13 by default), the refund line beyond failed registrations (Q4), and the no-ads, no-sale and no-training lines (Q9, Q11). It's worth a lawyer's read. App-side: the iPhone and Android sign-in screens link `inboxies.email/terms`, which redirects signed-out visitors to `/login`; point them at `https://inboxies.co/terms`, add a Privacy link beside it, and use `https://inboxies.co/privacy` as the store privacy URL. Reserve `privacy@` and `legal@` too (not in `RESERVED_LOCAL_PARTS`).
 - [ ] **19.** www → apex. Default: the owner adds a 301 Redirect Rule on the zone; canonical tags point to `https://inboxies.co`.
 - [ ] **20.** Redirect `inboxies.email/help` (the in-app Help Center, a 404 today) to `https://inboxies.co/support`. This is an owner change in the app repo.
 - [ ] **21. Launch blocker.** Security before launch: password-reset throttling and binding codes to the email, the Stripe webhook failing closed in production, and export authorization (PR #48). The site never describes these gaps.

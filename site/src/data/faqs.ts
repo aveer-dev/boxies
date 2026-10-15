@@ -63,9 +63,9 @@ export const billing: Faq[] = visible([
 		id: "cancel",
 		group: "billing",
 		q: "How do I cancel?",
-		a: [`There’s no billing page in the apps yet. Write to ${MAIL_US} from the address on your account and we’ll help.`],
+		a: [`A domain admin can cancel from the domain’s Subscription card in Admin on the web: Manage billing opens Stripe, where you can also change the card and see invoices. Cancelling stops the next renewal, and the domain keeps working until the paid year ends. You can also write to ${MAIL_US} from the address on your account.`],
 		hidden: !flags.domainPurchaseLive,
-		src: "PS#3 (no customer portal, no in-app cancel)",
+		src: "DomainSubscriptionCard.tsx ManageBillingButton (Stripe billing portal: card, invoices, cancel); routes/billing.ts:602-630; legal.ts terms-billing",
 		ownerConfirm: "REQUIRED — confirm the manual process and what happens to the domain",
 	},
 	{
@@ -503,9 +503,9 @@ const account: Faq[] = [
 		q: "How do I delete a mailbox or my account?",
 		a: [
 			`Owners can delete a mailbox in Settings → Delete email in the iPhone app${flags.webAppPublic ? ", or from the mailbox list on the web" : ""}. It’s permanent: messages, attachments and assistant history are erased.`,
-			`To delete your account, go to Settings → Account → Delete account in the iPhone app${flags.androidPublic ? " or the Android app" : ""}. Mailboxes where you’re the only owner are erased with all their mail, even for people you shared them with. From mailboxes that have other owners, you’re just removed. Your sign-in methods go too, and it can’t be undone.${flags.webAppPublic ? " The web app doesn’t have this yet." : ""}${flags.domainPurchaseLive ? ` Deleting your account doesn’t stop a domain’s yearly bill; write to ${MAIL_US} for that.` : ""}`,
+			`To delete your account, go to Settings → Account → Delete account in the iPhone app${flags.androidPublic ? " or the Android app" : ""}${flags.webAppPublic ? ", or Settings → Delete account on the web" : ""}. Mailboxes where you’re the only owner are erased with all their mail, even for people you shared them with. From mailboxes that have other owners, you’re just removed. Your sign-in methods go too, and it can’t be undone.${flags.domainPurchaseLive ? ` Deleting your account doesn’t stop a domain’s yearly bill; write to ${MAIL_US} for that.` : ""}`,
 		],
-		src: "PS#5 (deleting a mailbox); dev eda481f + cb0b217: index.ts DELETE /api/v1/me (sole owner → purgeMailboxAndAgents; else removed from the ACL; deleteIdentityAccountData; no Stripe call); SettingsSheetView.swift / .kt (Account → Delete account); no web caller",
+		src: "PS#5 (deleting a mailbox); dev eda481f + cb0b217: index.ts DELETE /api/v1/me (sole owner → purgeMailboxAndAgents; else removed from the ACL; deleteIdentityAccountData; no Stripe call); SettingsSheetView.swift / .kt (Account → Delete account); app/components/settings/pages.tsx:102-107 + DeleteAccountSettings.tsx (web)",
 		ownerConfirm: "what happens to a registered domain's subscription and registration when its owner deletes their account",
 	},
 ];
