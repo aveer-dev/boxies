@@ -27,7 +27,12 @@ android {
 
         val localProps = Properties()
         rootProject.file("local.properties").takeIf { it.exists() }?.reader()?.use { localProps.load(it) }
-        val webClientId = localProps.getProperty("GOOGLE_WEB_CLIENT_ID") ?: ""
+        // local.properties, then a Gradle property (-P or ~/.gradle/gradle.properties), then
+        // an env var, so release and CI builds can set it too. It's a public OAuth client id.
+        val webClientId = localProps.getProperty("GOOGLE_WEB_CLIENT_ID")?.takeIf { it.isNotBlank() }
+            ?: (project.findProperty("GOOGLE_WEB_CLIENT_ID") as String?)?.takeIf { it.isNotBlank() }
+            ?: System.getenv("GOOGLE_WEB_CLIENT_ID")?.takeIf { it.isNotBlank() }
+            ?: ""
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$webClientId\"")
     }
 

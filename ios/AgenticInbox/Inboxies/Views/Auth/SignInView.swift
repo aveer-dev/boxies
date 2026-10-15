@@ -7,7 +7,7 @@ import SwiftUI
 /// 1. Splash handoff transition with logo gliding up.
 /// 2. 3-line headline ("Your \n Personal \n email app") + circular downward arrow button.
 /// 3. Auth buttons reveal by moving the welcome view UP (not a modal).
-/// 4. Continue with Apple (Google sign-in is web/Android only, so iOS does not offer it).
+/// 4. Apple and Google side by side (logo-only glass capsules, matching Android).
 /// 5. Email login screen pushes entire view UP from below, with interactive drag-down return.
 struct SignInView: View {
     var isShowingSplash: Bool = false
@@ -142,6 +142,12 @@ struct SignInView: View {
                                     commitAPIBaseURL()
                                     let result = await appleCoordinator.authenticate()
                                     await handleApple(result)
+                                }
+                            },
+                            onGoogleSignIn: {
+                                Task {
+                                    commitAPIBaseURL()
+                                    await handleGoogle()
                                 }
                             },
                             onOpenTerms: {
@@ -598,6 +604,15 @@ struct SignInView: View {
         }
     }
 
+    private func handleGoogle() async {
+        do {
+            guard let credential = try await GoogleSignInFlow.signIn() else { return }
+            await auth.signInWithGoogle(credential)
+        } catch {
+            auth.errorMessage = error.localizedDescription
+        }
+    }
+
     #if DEBUG
     private var devConfigView: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -640,12 +655,13 @@ struct SignInView: View {
 /// 1. "Get started" (fully rounded primary pill)
 /// 2. "or" divider
 /// 3. "Continue with Email" (liquid glass capsule)
-/// 4. "Continue with Apple" liquid glass capsule
+/// 4. Apple and Google logo-only liquid glass capsules, side by side
 /// 5. Terms of Use fine print
 private struct AuthButtonsSection: View {
     var onGetStarted: () -> Void
     var onContinueWithEmail: () -> Void
     var onAppleSignIn: () -> Void
+    var onGoogleSignIn: () -> Void
     var onOpenTerms: () -> Void
     var commitAPIBaseURL: () -> Void
 
@@ -690,23 +706,35 @@ private struct AuthButtonsSection: View {
             }
             .buttonStyle(.plain)
 
-            // Secondary: Apple (liquid glass capsule). Google sign-in has no native
-            // iOS flow, so it is not offered here; linked Google accounts still sign
-            // in on web/Android.
-            Button(action: onAppleSignIn) {
-                HStack(spacing: 8) {
+            // Secondary: Apple and Google side by side (logo-only liquid glass
+            // capsules, same as Android). Equal size keeps Apple at least as
+            // prominent as Google (App Review 4.8).
+            HStack(spacing: 12) {
+                Button(action: onAppleSignIn) {
                     Image(systemName: "apple.logo")
-                        .font(.system(size: 18))
-                    Text("Continue with Apple")
-                        .font(.inter(size: 16, weight: .semibold))
+                        .font(.system(size: 20))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .liquidGlass(in: Capsule())
                 }
-                .foregroundStyle(AppTheme.ink)
-                .frame(maxWidth: .infinity)
-                .frame(height: 52)
-                .liquidGlass(in: Capsule())
+                .buttonStyle(.plain)
+                .accessibilityLabel("Sign in with Apple")
+
+                Button(action: onGoogleSignIn) {
+                    Image("GoogleLogo")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .liquidGlass(in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Sign in with Google")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Sign in with Apple")
 
             #if DEBUG
             if AppConfig.isLocalDevelopmentAPI {

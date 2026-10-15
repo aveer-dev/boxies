@@ -41,11 +41,13 @@ import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.services.ApiClient
+import co.inboxies.app.services.googleCredentialErrorMessage
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
@@ -424,6 +426,8 @@ fun SignInMethodsSettingsView(
                                 } else {
                                     errorMessage = "Google Sign-In failed"
                                 }
+                            } catch (e: GetCredentialException) {
+                                errorMessage = googleCredentialErrorMessage(e)
                             } catch (e: Exception) {
                                 errorMessage = friendlyAttachError(e.message)
                             } finally {

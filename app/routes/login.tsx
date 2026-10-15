@@ -4,10 +4,11 @@
 
 import { Button, Input, useKumoToastManager } from "@cloudflare/kumo";
 import { ArrowLeftIcon, EyeIcon, EyeSlashIcon } from "@phosphor-icons/react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
 import { OnboardingFlow } from "~/components/OnboardingFlow";
+import { loadGoogleIdentityScript } from "~/lib/google-identity";
 import { safeRedirectPath } from "~/lib/safe-redirect";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
@@ -79,6 +80,61 @@ export default function PasswordLoginRoute() {
 		}
 		setStep("password");
 	};
+
+	const googleClientId = config?.googleClientId ?? null;
+	const googleBtnRef = useRef<HTMLDivElement>(null);
+
+	const handleGoogleCredential = useCallback(
+		async (idToken: string) => {
+			setSubmitting(true);
+			try {
+				await api.googleLogin(idToken);
+				navigate(afterSignIn);
+			} catch (err: unknown) {
+				toastManager.add({
+					title: err instanceof Error ? err.message : "Google sign-in failed",
+					variant: "error",
+				});
+			} finally {
+				setSubmitting(false);
+			}
+		},
+		[afterSignIn, navigate, toastManager],
+	);
+
+	// The button only shows on the email step, so it re-renders each time that step mounts.
+	useEffect(() => {
+		if (!googleClientId || step !== "email" || !googleBtnRef.current) return;
+		let cancelled = false;
+		(async () => {
+			try {
+				await loadGoogleIdentityScript();
+				const container = googleBtnRef.current;
+				if (cancelled || !window.google?.accounts?.id || !container) return;
+				window.google.accounts.id.initialize({
+					client_id: googleClientId,
+					callback: (response) => {
+						void handleGoogleCredential(response.credential);
+					},
+					auto_select: false,
+					cancel_on_tap_outside: true,
+				});
+				container.innerHTML = "";
+				window.google.accounts.id.renderButton(container, {
+					theme: "outline",
+					size: "large",
+					text: "continue_with",
+					// GIS takes a fixed pixel width (max 400).
+					width: Math.min(400, Math.max(200, container.offsetWidth)),
+				});
+			} catch {
+				/* GIS unavailable (blocked or offline): email sign-in still works */
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [googleClientId, step, handleGoogleCredential]);
 
 	const handlePasswordLogin = async (e: FormEvent) => {
 		e.preventDefault();
@@ -242,6 +298,21 @@ export default function PasswordLoginRoute() {
 						>
 							Next
 						</Button>
+
+						{googleClientId && (
+							<>
+								<div className="flex items-center my-4 text-xs text-kumo-subtle">
+									<div className="flex-1 border-t border-kumo-line" />
+									<span className="px-3">or</span>
+									<div className="flex-1 border-t border-kumo-line" />
+								</div>
+								<div
+									ref={googleBtnRef}
+									className="flex justify-center min-h-10"
+									aria-busy={submitting}
+								/>
+							</>
+						)}
 					</form>
 				)}
 

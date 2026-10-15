@@ -17,11 +17,12 @@
 		177299CC08FA33CB30438B85 /* WebKitLinkageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C1FB146E802AF1FE45C344C /* WebKitLinkageTests.swift */; };
 		19FF107330BBB6FAE09E8D8E /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 535A10A47F117AD7E23E77B5 /* AppDelegate.swift */; };
 		1B8052C319418C877DA65E00 /* PaymentCallback.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED60F739533D7F2E3DCC74F6 /* PaymentCallback.swift */; };
-		1EEE9157E1D9DCD331AF96E6 /* HardeningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB26EA100736B5C531C2586D /* HardeningTests.swift */; };
 		1E150E5F5DCA4F586ED99CD2 /* AppleSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF4FD5C59586C8DB4C992196 /* AppleSignIn.swift */; };
+		1EEE9157E1D9DCD331AF96E6 /* HardeningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB26EA100736B5C531C2586D /* HardeningTests.swift */; };
 		1F20522DD4AA7068625488CC /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3485CC457F14D933E111031 /* FlowLayout.swift */; };
 		1FF89C133F0D2DA9611A319F /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37786A9610B8F787C5525CA8 /* AppConfig.swift */; };
 		21C19EA017DB404F992CC4A0 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF79D0DACA9A8F34DE960EEA /* SearchView.swift */; };
+		223BE547E2D07AD581660067 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = 725FC12D65B817DA42096FA7 /* GoogleSignIn */; };
 		24E9E69BBBB6ED3A014112F3 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = 12C50370F1B39D0A2745664E /* SwiftSoup */; };
 		28DE88037753A1734FAF6782 /* Inter-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6156B7AE9A5687DE90359781 /* Inter-Italic.ttf */; };
 		2900CC74846725C9FB38A4F0 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7511C9AC4F3FA8F57CC1883C /* PrivacyInfo.xcprivacy */; };
@@ -45,6 +46,7 @@
 		47889E308407CEA2EBEB6704 /* ForwardingSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23EB17929E91ADAAE7BAC902 /* ForwardingSettingsView.swift */; };
 		4A9AA670A55D6114A8355823 /* InboxiesApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 596607AFA8E6FA8BF2D371D9 /* InboxiesApp.swift */; };
 		4BB746CC01943E75D6A9B48A /* EmailDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7ACA3D7A218207D8E3BE44 /* EmailDetailView.swift */; };
+		4F2A3F99634F03CF0A219758 /* GoogleSignInFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24BE3AFF4CF6238AE60BB1A8 /* GoogleSignInFlow.swift */; };
 		5132C35E8D5354EEEC478D83 /* OutboundAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F163A3B34A0B9617C93664 /* OutboundAttachments.swift */; };
 		514638234040FDFA6017B5D3 /* AppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37786A9610B8F787C5525CA8 /* AppConfig.swift */; };
 		5510A17A43A4EE36F6302D8D /* SwipeActionPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF5F4BC153BCF0682C4D007 /* SwipeActionPreferences.swift */; };
@@ -155,13 +157,14 @@
 		1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Regular.ttf"; sourceTree = "<group>"; };
 		1D9BCCA2D7465A3A3E00D1BC /* ComposeSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeSheetView.swift; sourceTree = "<group>"; };
 		23EB17929E91ADAAE7BAC902 /* ForwardingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForwardingSettingsView.swift; sourceTree = "<group>"; };
+		24BE3AFF4CF6238AE60BB1A8 /* GoogleSignInFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignInFlow.swift; sourceTree = "<group>"; };
 		26D571C6F679098DC92D5978 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		273A93AC90119EF2F433C2D5 /* AutoReplySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoReplySettingsView.swift; sourceTree = "<group>"; };
 		2A2645A47707A5FB83AB692C /* ThemeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeSettingsView.swift; sourceTree = "<group>"; };
 		2F5E3708A0F74752B1E1E925 /* ComposeFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFormModel.swift; sourceTree = "<group>"; };
 		37786A9610B8F787C5525CA8 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
-		45D197C214C0E3D8CB2DABD2 /* SessionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsSettingsView.swift; sourceTree = "<group>"; };
 		41B3D8693D204D7862C6350E /* ServiceStatusBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceStatusBanner.swift; sourceTree = "<group>"; };
+		45D197C214C0E3D8CB2DABD2 /* SessionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsSettingsView.swift; sourceTree = "<group>"; };
 		469EBA3B54DC4C3853D04061 /* PrivateEmailClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailClient.swift; sourceTree = "<group>"; };
 		49649C28917B9CFF9BDA12B5 /* DomainAdminDNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainAdminDNSView.swift; sourceTree = "<group>"; };
 		4967C5636D2A7E39ACE3E337 /* AttachmentListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentListView.swift; sourceTree = "<group>"; };
@@ -244,6 +247,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				24E9E69BBBB6ED3A014112F3 /* SwiftSoup in Frameworks */,
+				223BE547E2D07AD581660067 /* GoogleSignIn in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -278,6 +282,7 @@
 				E3D367BF95650BA4DB33A884 /* EmailActionExecutor.swift */,
 				8658FB20162E4931296C3338 /* EmailHTMLSanitizer.swift */,
 				0D3FB43AA59F2D94AC315734 /* EmailListPaging.swift */,
+				24BE3AFF4CF6238AE60BB1A8 /* GoogleSignInFlow.swift */,
 				8304F69E9D1C222B8C2D1D6F /* MailboxSyncService.swift */,
 				C0F163A3B34A0B9617C93664 /* OutboundAttachments.swift */,
 				B6EAA3D3B4846476CC7EC8A5 /* OutboxQueueWorker.swift */,
@@ -550,6 +555,7 @@
 			name = Inboxies;
 			packageProductDependencies = (
 				12C50370F1B39D0A2745664E /* SwiftSoup */,
+				725FC12D65B817DA42096FA7 /* GoogleSignIn */,
 			);
 			productName = Inboxies;
 			productReference = E5B552040CD478646C9DD689 /* Inboxies.app */;
@@ -606,6 +612,7 @@
 			mainGroup = 0E2C48B95C27F6CBFBB0C114;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				32CA8DB0A85B05F11F6CA50D /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
 				91975146B580DF00B70C2968 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -694,6 +701,7 @@
 				09E0D6A7C881D7F76F6C9D9F /* FiltersSettingsView.swift in Sources */,
 				1F20522DD4AA7068625488CC /* FlowLayout.swift in Sources */,
 				47889E308407CEA2EBEB6704 /* ForwardingSettingsView.swift in Sources */,
+				4F2A3F99634F03CF0A219758 /* GoogleSignInFlow.swift in Sources */,
 				88944A707FD0A19F995EF96B /* HomeShellView.swift in Sources */,
 				3770413860D08C5653807FD5 /* InboxDigestView.swift in Sources */,
 				4A9AA670A55D6114A8355823 /* InboxiesApp.swift in Sources */,
@@ -714,8 +722,8 @@
 				06A3BD86E3512DAC2AEADEB2 /* SearchQueryParser.swift in Sources */,
 				21C19EA017DB404F992CC4A0 /* SearchView.swift in Sources */,
 				5C1AC64643194A4F397B7200 /* SendersSettingsView.swift in Sources */,
-				771CBD6B9F378E887DAB6817 /* SessionsSettingsView.swift in Sources */,
 				002CC1ACF165AB0DB15C4C30 /* ServiceStatusBanner.swift in Sources */,
+				771CBD6B9F378E887DAB6817 /* SessionsSettingsView.swift in Sources */,
 				1286013798CAD42988C193AF /* SettingsSheetView.swift in Sources */,
 				5A7F7E5E7E706B871C00DD32 /* SharedSession.swift in Sources */,
 				F40535151517BD2E4A487227 /* SharingSettingsView.swift in Sources */,
@@ -783,6 +791,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
+				GOOGLE_IOS_CLIENT_ID = "958946711798-fvtno41jorj97frv61ig4uhb0d0486rd.apps.googleusercontent.com";
+				GOOGLE_IOS_REVERSED_CLIENT_ID = "com.googleusercontent.apps.958946711798-fvtno41jorj97frv61ig4uhb0d0486rd";
+				GOOGLE_SERVER_CLIENT_ID = "958946711798-21t2gjrqodotju01isg9k58gtme6bko0.apps.googleusercontent.com";
 				INFOPLIST_FILE = Inboxies/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Inboxies;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -1034,6 +1045,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
+				GOOGLE_IOS_CLIENT_ID = "958946711798-fvtno41jorj97frv61ig4uhb0d0486rd.apps.googleusercontent.com";
+				GOOGLE_IOS_REVERSED_CLIENT_ID = "com.googleusercontent.apps.958946711798-fvtno41jorj97frv61ig4uhb0d0486rd";
+				GOOGLE_SERVER_CLIENT_ID = "958946711798-21t2gjrqodotju01isg9k58gtme6bko0.apps.googleusercontent.com";
 				INFOPLIST_FILE = Inboxies/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Inboxies;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
@@ -1094,6 +1108,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		32CA8DB0A85B05F11F6CA50D /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.2.0;
+			};
+		};
 		91975146B580DF00B70C2968 /* XCRemoteSwiftPackageReference "SwiftSoup" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/scinfu/SwiftSoup.git";
@@ -1109,6 +1131,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 91975146B580DF00B70C2968 /* XCRemoteSwiftPackageReference "SwiftSoup" */;
 			productName = SwiftSoup;
+		};
+		725FC12D65B817DA42096FA7 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 32CA8DB0A85B05F11F6CA50D /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
