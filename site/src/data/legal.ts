@@ -12,7 +12,7 @@ import { APP_HOST, GITHUB_URL, SUPPORT_EMAIL, flags } from "../config";
 import type { LegalDoc } from "./types";
 
 /** The date these documents last changed. Bump it with any edit to the copy below. */
-export const legalUpdated = "2026-10-14";
+export const legalUpdated = "2026-10-15";
 
 const MAIL_US = `[${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL})`;
 
@@ -74,6 +74,17 @@ export const privacy: LegalDoc = {
 			],
 			src: "workers/index.ts (inbound pipeline); workers/lib/classify-email.ts; workers/lib/sender-triage.ts; workers/auth/rate-limit.ts; workers/lib/service-reminders.ts; workers/auth/mail.ts; no analytics/crash SDKs in app/, ios/, android/, extension/, site/ (ios PrivacyInfo.xcprivacy NSPrivacyTracking false)",
 			ownerConfirm: "no sale / no ads as a standing commitment (README Q9); lawful bases",
+		},
+		{
+			id: "privacy-google",
+			title: "Sign in with Google",
+			body: [
+				"If you choose Sign in with Google, or connect Google in Settings, Google shares your name, email address, profile picture and an account identifier with us. That’s all we ask for: the basic sign-in permissions (openid, email and profile). Inboxies gets no access to your Gmail, Drive, contacts or anything else in your Google account.",
+				"We use that information only to sign you in and to show you which Google account is connected. We don’t use it for advertising, we don’t sell it, and we share it only as [Who else handles your data](#privacy-sharing) describes.",
+				"Inboxies’ use and transfer of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.",
+				"To stop using it, disconnect Google in Settings → Sign-in methods, or remove Inboxies from your Google account’s third-party connections. Deleting your Inboxies account erases the link, as described in [How long we keep it](#privacy-retention).",
+			],
+			src: "workers/auth/index.ts socialProviders (ID token only, default openid/email/profile; no Google API scopes); app/lib/google-identity.ts (GIS credential); ios GoogleSignIn signIn(withPresenting:) without additionalScopes; android GetGoogleIdOption; workers/routes/account.ts:604-702 (identities list/attach/detach)",
 		},
 		{
 			id: "privacy-ai",

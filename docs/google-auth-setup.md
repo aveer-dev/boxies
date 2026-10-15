@@ -31,12 +31,25 @@ Use Firebase only as a **console**: the Firebase project behind FCM is a Google 
 ### 1. Pick the project and set up the consent screen (once)
 
 1. Open the Firebase project that already serves FCM for `co.inboxies.app`. Click its **Google Cloud** link so you're in the same project.
-2. Go to **Google Auth Platform → Branding**:
-   - Fill in the app name, support email and logo.
-   - Add the authorized domain `inboxies.email`.
-   - Add privacy policy and terms URLs.
-3. Under **Audience**, choose **External** and click **Publish app**. While the app is in *Testing*, only listed test users can sign in.
-4. Under **Data access**, add only `openid`, `email` and `profile`. These scopes are non-sensitive, so they need brand verification but no security review.
+2. Prove you own the domains. In [Google Search Console](https://search.google.com/search-console), signed in as an **Owner or Editor of this Cloud project**, add a **Domain** property for each of `inboxies.co` and `inboxies.email` (and `inboxies.app` once the web app serves there). Search Console gives you a `google-site-verification=…` TXT record; add it at the zone apex in Cloudflare DNS (or use Search Console's Cloudflare shortcut), then click **Verify**. Wait 24 hours before asking Google to re-check branding.
+3. Go to **Google Auth Platform → Branding** and use exactly these values:
+
+   | Field | Value |
+   | --- | --- |
+   | App name | `Inboxies` (the name the home page shows) |
+   | User support email | `support@inboxies.email` |
+   | Application home page | `https://inboxies.co` |
+   | Privacy policy | `https://inboxies.co/privacy` |
+   | Terms of service | `https://inboxies.co/terms` |
+   | Authorized domains | `inboxies.co`, `inboxies.email` (add `inboxies.app` when it serves) |
+
+   Why these values:
+   - The home page must load for a signed-out visitor, say what the app does, and link the privacy policy. `inboxies.co` does all three; the web app doesn't (it's behind Cloudflare Access).
+   - The home page and privacy policy must be on the same domain, and that domain must be in **Authorized domains** and verified in Search Console. Otherwise Google reports "not a valid domain" or "not registered to you".
+   - The privacy policy has a [Sign in with Google](https://inboxies.co/legal#privacy-google) clause, with the Limited Use statement reviewers look for.
+4. Under **Audience**, choose **External** and click **Publish app**. While the app is in *Testing*, only listed test users can sign in.
+5. Under **Data access**, add only `openid`, `email` and `profile`. These scopes are non-sensitive, so they need brand verification but no security review.
+6. Under **Verification Center**, request verification. If it fails, fix what it lists and wait 24 hours after any Search Console change before retrying.
 
 ### 2. Create the Web client (the server audience)
 
