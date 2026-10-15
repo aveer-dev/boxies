@@ -14,6 +14,7 @@
 		06A3BD86E3512DAC2AEADEB2 /* SearchQueryParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC0DB4217B5E980F772323B7 /* SearchQueryParser.swift */; };
 		09E0D6A7C881D7F76F6C9D9F /* FiltersSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76573DB9DE17A066E6E6FDD9 /* FiltersSettingsView.swift */; };
 		0DF13F17817F75C157DDDDD0 /* PrivateEmailMatchingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B74F632D521C5EC45A24A89 /* PrivateEmailMatchingTests.swift */; };
+		11EBC9EC88AD1BADA1516DE8 /* PrivateEmailIdentitiesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B7767906DCD7E6E8C605D88 /* PrivateEmailIdentitiesTests.swift */; };
 		1286013798CAD42988C193AF /* SettingsSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 789C13DE076FDF45C432F26B /* SettingsSheetView.swift */; };
 		177299CC08FA33CB30438B85 /* WebKitLinkageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C1FB146E802AF1FE45C344C /* WebKitLinkageTests.swift */; };
 		1872BF500A8D151560642771 /* PrivateEmailMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB32F69932FAFD095B9C54C /* PrivateEmailMatching.swift */; };
@@ -36,6 +37,7 @@
 		3374A76051D224709C7CDC9F /* InboxiesCredentialProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8E1D02CCA12F69B381CB7809 /* InboxiesCredentialProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		35EE2809BF15F0492A030F22 /* LoadFailedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6602B0CDD566F14EDA4F3E1B /* LoadFailedViews.swift */; };
 		3770413860D08C5653807FD5 /* InboxDigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FB6663712D0C7C547997049 /* InboxDigestView.swift */; };
+		39FD6C1B1F5B07A3F1370DDD /* PrivateEmailIdentities.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */; };
 		3C0C180D74BFB7BBF094FC71 /* RealTimeStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F692AD79040A16E97A770F3F /* RealTimeStreamClient.swift */; };
 		3C72EC4E0AB026763B5FD0CA /* OutboxQueueWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6EAA3D3B4846476CC7EC8A5 /* OutboxQueueWorker.swift */; };
 		3DC940505BA0CE48B10AD127 /* SwipeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F4A9BE28CD5C12A238585ED /* SwipeSettingsView.swift */; };
@@ -80,6 +82,7 @@
 		926F05AFFEC794982B75F395 /* Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C891EC430F44EBFDE4AAEB69 /* Inter-Medium.ttf */; };
 		9488898F1174B55B2CA31011 /* AgentChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4DA859650B3CC11EE116D0A /* AgentChatClient.swift */; };
 		948E2D2999B88A52F4313B1A /* Inter-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */; };
+		9A0E7A45F0E194C5BF1E4E60 /* PrivateEmailIdentities.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */; };
 		9FD1E22569C1571649608A34 /* ComposeActionListOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7739FB6CD5F7B4E10AFE9A6 /* ComposeActionListOverlay.swift */; };
 		9FF2F71614D6DD643F80844E /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A458C487170DA657BC2E771 /* APIClient.swift */; };
 		A2394072D38F90C76FA94A72 /* ComposeDockBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F26FD269635314B4336F3D84 /* ComposeDockBar.swift */; };
@@ -169,6 +172,7 @@
 		469EBA3B54DC4C3853D04061 /* PrivateEmailClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailClient.swift; sourceTree = "<group>"; };
 		49649C28917B9CFF9BDA12B5 /* DomainAdminDNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainAdminDNSView.swift; sourceTree = "<group>"; };
 		4967C5636D2A7E39ACE3E337 /* AttachmentListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentListView.swift; sourceTree = "<group>"; };
+		4B7767906DCD7E6E8C605D88 /* PrivateEmailIdentitiesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailIdentitiesTests.swift; sourceTree = "<group>"; };
 		4BB32F69932FAFD095B9C54C /* PrivateEmailMatching.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailMatching.swift; sourceTree = "<group>"; };
 		4D03BF25CB75DAA494A700AA /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		4DF5F4BC153BCF0682C4D007 /* SwipeActionPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeActionPreferences.swift; sourceTree = "<group>"; };
@@ -227,6 +231,7 @@
 		CCD95D2B6409E0F2FA0959D7 /* Inter-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Bold.ttf"; sourceTree = "<group>"; };
 		CF4FD5C59586C8DB4C992196 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		CF9E023F2D3695A19FF9DC25 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailIdentities.swift; sourceTree = "<group>"; };
 		D66D985868B2CF54D7FF7966 /* InviteAcceptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InviteAcceptView.swift; sourceTree = "<group>"; };
 		D7739FB6CD5F7B4E10AFE9A6 /* ComposeActionListOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeActionListOverlay.swift; sourceTree = "<group>"; };
 		DB0B99DD9B98999CB20A18B0 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
@@ -443,6 +448,7 @@
 		7C56F3986C4F60B334D0E6A9 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */,
 				4BB32F69932FAFD095B9C54C /* PrivateEmailMatching.swift */,
 				850C4C597D07AFD8C475B162 /* SharedSession.swift */,
 			);
@@ -454,6 +460,7 @@
 			children = (
 				048F9C0790FD14781DE293EE /* ClientContractTests.swift */,
 				AB26EA100736B5C531C2586D /* HardeningTests.swift */,
+				4B7767906DCD7E6E8C605D88 /* PrivateEmailIdentitiesTests.swift */,
 				9B74F632D521C5EC45A24A89 /* PrivateEmailMatchingTests.swift */,
 				7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */,
 				9C1FB146E802AF1FE45C344C /* WebKitLinkageTests.swift */,
@@ -716,6 +723,7 @@
 				1B8052C319418C877DA65E00 /* PaymentCallback.swift in Sources */,
 				E13D469BDB3E71F4FA615F96 /* PendingSendStore.swift in Sources */,
 				BEABE6117A87AF07E976CF2E /* PreviewSupport.swift in Sources */,
+				9A0E7A45F0E194C5BF1E4E60 /* PrivateEmailIdentities.swift in Sources */,
 				D58FC4EC78BF9FB8BCACB858 /* PrivateEmailMatching.swift in Sources */,
 				4036CA43F66EEBABB7EBDD60 /* PushNotificationManager.swift in Sources */,
 				3C0C180D74BFB7BBF094FC71 /* RealTimeStreamClient.swift in Sources */,
@@ -747,6 +755,7 @@
 			files = (
 				43BDF0A5517B4663A83AD4A7 /* ClientContractTests.swift in Sources */,
 				1EEE9157E1D9DCD331AF96E6 /* HardeningTests.swift in Sources */,
+				11EBC9EC88AD1BADA1516DE8 /* PrivateEmailIdentitiesTests.swift in Sources */,
 				0DF13F17817F75C157DDDDD0 /* PrivateEmailMatchingTests.swift in Sources */,
 				FFCDD7CFD3A77A3C7BB29D37 /* SearchQueryParserTests.swift in Sources */,
 				177299CC08FA33CB30438B85 /* WebKitLinkageTests.swift in Sources */,
@@ -762,6 +771,7 @@
 				DBC178DEC913BB9FBBC95E36 /* CredentialProviderViewController.swift in Sources */,
 				F77157DDCC45943C4BECC699 /* LiquidGlass.swift in Sources */,
 				E61ADC2996F8521E2CCC68C6 /* PrivateEmailClient.swift in Sources */,
+				39FD6C1B1F5B07A3F1370DDD /* PrivateEmailIdentities.swift in Sources */,
 				1872BF500A8D151560642771 /* PrivateEmailMatching.swift in Sources */,
 				C08F4C03E2FD7A5DEB6A55CB /* PrivateEmailRequestView.swift in Sources */,
 				DA0FACBDA64ED71EC7577126 /* SharedSession.swift in Sources */,

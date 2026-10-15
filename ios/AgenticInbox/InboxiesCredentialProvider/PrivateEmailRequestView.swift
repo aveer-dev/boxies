@@ -40,8 +40,11 @@ final class PrivateEmailRequest {
         Task {
             do {
                 let now = Date()
-                emails = try await PrivateEmailClient.listAliases().filter { $0.isUsable(now: now) }
+                let all = try await PrivateEmailClient.listAliases()
+                emails = all.filter { $0.isUsable(now: now) }
                 state = .loaded
+                // Fresh list in hand: resync the QuickType suggestions too.
+                await PrivateEmailIdentities.replace(with: all)
             } catch PrivateEmailClient.Failure.signedOut {
                 state = .signedOut
             } catch {
@@ -82,6 +85,8 @@ final class PrivateEmailRequest {
             defer { isCreating = false }
             do {
                 let created = try await PrivateEmailClient.createAlias(label: host)
+                // Before filling: completing the request ends the extension.
+                await PrivateEmailIdentities.add(created)
                 onFill?(created.address)
             } catch PrivateEmailClient.Failure.signedOut {
                 state = .signedOut

@@ -17,7 +17,15 @@ struct InboxiesApp: App {
             UserDefaults.standard.removeObject(forKey: "apiBaseURL")
         }
         #if DEBUG
+        let wasPreviewingAutofill = SharedSession.previewAutofill
         SharedSession.previewAutofill = ProcessInfo.processInfo.arguments.contains("-previewAutofill")
+        if SharedSession.previewAutofill {
+            // QuickType suggestions need identities registered by the app itself.
+            Task { await PrivateEmailIdentities.replace(with: PrivateEmail.previewFixtures) }
+        } else if wasPreviewingAutofill {
+            // Leaving the preview: the fixture identities go with it.
+            Task { await PrivateEmailIdentities.removeAll() }
+        }
         #endif
     }
 

@@ -44,6 +44,31 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         model.configure(host: nil)
     }
 
+    /// QuickType bar: the user tapped a private email the app registered for
+    /// this site (`PrivateEmailIdentities`). No sheet; the identity carries the address.
+    ///
+    /// Measured in Safari (iOS 18.5 and 27 simulators):
+    /// - iOS offers these identities on login forms only (QuickType bar and the
+    ///   "Sign in to … with your password" card). Sign-up forms with
+    ///   `new-password` get none, so creating there still goes through the sheet.
+    /// - A credential with an empty password puts the address in the
+    ///   username/email field and leaves the password field empty. iOS asks
+    ///   for Face ID first, and Safari then tries to submit the form, which
+    ///   stops at a required password field.
+    /// - Any non-empty password is filled into the password field, so none is sent.
+    /// - `completeRequest(withTextToInsert:)` is not allowed here: Safari aborts.
+    override func provideCredentialWithoutUserInteraction(for credentialRequest: any ASCredentialRequest) {
+        guard let identity = credentialRequest.credentialIdentity as? ASPasswordCredentialIdentity,
+              !identity.user.isEmpty else {
+            extensionContext.cancelRequest(withError: ASExtensionError(.credentialIdentityNotFound))
+            return
+        }
+        extensionContext.completeRequest(
+            withSelectedCredential: ASPasswordCredential(user: identity.user, password: ""),
+            completionHandler: nil
+        )
+    }
+
     private func fill(_ address: String) {
         if #available(iOS 18.0, *) {
             // Text insertion works from both flows and types into the focused

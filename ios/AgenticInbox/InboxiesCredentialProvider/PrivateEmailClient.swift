@@ -45,7 +45,7 @@ enum PrivateEmailClient {
     /// `GET /api/v1/mailboxes/{id}/aliases`; newest first, as the server sends them.
     static func listAliases() async throws -> [PrivateEmail] {
         #if DEBUG
-        if SharedSession.previewAutofill { return PreviewFixture.emails }
+        if SharedSession.previewAutofill { return PrivateEmail.previewFixtures }
         #endif
         let data = try await send(method: "GET", body: nil)
         guard let list = try? JSONDecoder().decode(ListResponse.self, from: data) else {
@@ -120,19 +120,3 @@ enum PrivateEmailClient {
         return message
     }
 }
-
-#if DEBUG
-/// Fixture data while the app was launched with `-previewAutofill`.
-private enum PreviewFixture {
-    static let emails: [PrivateEmail] = [
-        PrivateEmail(id: "a1", address: "m2xk7d@private.inboxies.dev", label: "localhost"),
-        PrivateEmail(id: "a2", address: "netflix.r8q1@private.inboxies.dev", label: "Netflix"),
-        PrivateEmail(id: "a3", address: "p0w3nb@private.inboxies.dev", label: "github.com"),
-        PrivateEmail(id: "a4", address: "t7hs2c@private.inboxies.dev", label: "Newsletter: Stratechery"),
-        PrivateEmail(id: "a5", address: "z9c4ve@private.inboxies.dev", label: "shop.example.co.uk"),
-        PrivateEmail(id: "a6", address: "j5dl0a@private.inboxies.dev", label: nil),
-        PrivateEmail(id: "a7", address: "q1ub8f@private.inboxies.dev", label: "airbnb.com"),
-        PrivateEmail(id: "a8", address: "paused.x3@private.inboxies.dev", label: "Old store", isActive: false),
-    ]
-}
-#endif
