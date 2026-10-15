@@ -1,0 +1,72 @@
+---
+// /legal: the privacy policy, terms of service and acceptable use policy on
+// one page, each clause with its own anchor. /privacy and /terms redirect
+// here (astro.config.mjs), so the apps and store listings get stable URLs.
+// Copy lives in src/data/legal.ts.
+// src: site/README.md Q18 (no legal page; apps link a Terms of Use that 404s)
+import Callout from "../components/Callout.astro";
+import MicroLine from "../components/MicroLine.astro";
+import PageIntro from "../components/PageIntro.astro";
+import LegalDoc from "../components/legal/LegalDoc.astro";
+import { SUPPORT_EMAIL } from "../config";
+import { legalDocs, legalUpdated } from "../data/legal";
+import Base from "../layouts/Base.astro";
+import { date } from "../lib/format";
+
+const jumps = [
+	...legalDocs.map((d) => ({ label: d.title, href: `#${d.id}` })),
+	{ label: "Contact", href: "#legal-contact" },
+];
+---
+
+<Base
+	title="Legal"
+	description="The Inboxies privacy policy, terms of service and acceptable use policy: what we collect, who handles it, how long it’s kept, and the rules for using the service."
+>
+	<PageIntro
+		title="Legal"
+		description="How Inboxies handles your data, and the agreement for using it, in plain words where we could manage it."
+		meta={`Updated ${date(legalUpdated)}`}
+	>
+		<MicroLine parts={jumps} />
+	</PageIntro>
+
+	{/* src: legal.ts privacy-use, privacy-ai, privacy-access, privacy-rights */}
+	<div class="section summary" data-claim="negated">
+		<Callout title="The short version">
+			<ul class="summary-list">
+				<li>Your mail is yours. We store it on Cloudflare only to run Inboxies for you.</li>
+				<li>No ads, no selling your data, no analytics or trackers in the apps or on this site.</li>
+				<li>AI on Cloudflare Workers AI checks incoming mail for spam and drafts replies. The assistant only drafts; sending is always your call.</li>
+				<li>Mail isn’t end-to-end encrypted, so it’s readable by the service that stores it, as with most hosted email.</li>
+				<li>Deleting a mailbox in Settings erases its mail. Deleting your account erases every mailbox only you own.</li>
+			</ul>
+		</Callout>
+	</div>
+
+	{legalDocs.map((doc) => <LegalDoc doc={doc} />)}
+
+	<section class="section" aria-labelledby="legal-contact">
+		<h2 id="legal-contact" class="sr-only">Contact</h2>
+		<Callout icon="none" title="Questions about any of this?">
+			<p>
+				Write to <a class="inline-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> or use the
+				<a class="inline-link" href="/support#contact">contact form</a>. Put “Privacy”, “Security” or “Abuse” in the subject so we can find it
+				quickly.
+			</p>
+		</Callout>
+	</section>
+</Base>
+
+<style>
+	.summary {
+		margin-top: 40px;
+	}
+
+	.summary-list {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding-left: 1rem;
+	}
+</style>

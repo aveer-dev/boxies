@@ -92,7 +92,7 @@ if (!flags.androidPublic) {
 if (!flags.domainPurchaseLive) bannedFull.push(/\$20\b/);
 // While the web app isn't public (D1), "Web" leaves every platform and
 // availability line. Capitalised only: prose about the web app may stay.
-if (!flags.webAppPublic) bannedFull.push(/\bWeb\b(?! Store)/, /web app at inboxies\.email/i);
+if (!flags.webAppPublic) bannedFull.push(/\bWeb\b(?! Store)/, new RegExp(`web app at ${appHost.replace(/\./g, "\\.")}`, "i"));
 // Private email: allowed in plain copy once it's on dev (the site ships with
 // dev); until then only roadmap copy may name it.
 if (!flags.privateEmailShipped) bannedOutsideRoadmap.push(/private (email|address)/i);

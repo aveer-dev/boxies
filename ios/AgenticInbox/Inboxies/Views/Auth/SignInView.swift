@@ -50,7 +50,7 @@ struct SignInView: View {
     @State private var emailDragOffset: CGFloat = 0
     @State private var onboardingDragOffset: CGFloat = 0
     @State private var emailRefocusTrigger: Int = 0
-    @State private var showTermsBrowser = false
+    @State private var legalBrowserLink: LegalLink?
     @State private var isEmailAtRoot: Bool = true
     @State private var isOnboardingAtRoot: Bool = true
     @State private var emailPastThreshold: Bool = false
@@ -150,8 +150,8 @@ struct SignInView: View {
                                     await handleGoogle()
                                 }
                             },
-                            onOpenTerms: {
-                                showTermsBrowser = true
+                            onOpenLegal: { url in
+                                legalBrowserLink = LegalLink(url: url)
                             },
                             commitAPIBaseURL: commitAPIBaseURL
                         )
@@ -495,11 +495,9 @@ struct SignInView: View {
         }
     }
     .animation(.spring(response: 0.32, dampingFraction: 0.86), value: auth.errorMessage)
-    .sheet(isPresented: $showTermsBrowser) {
-        if let termsURL = URL(string: "https://inboxies.email/terms") {
-            SafariView(url: termsURL)
-                .ignoresSafeArea()
-        }
+    .sheet(item: $legalBrowserLink) { link in
+        SafariView(url: link.url)
+            .ignoresSafeArea()
     }
     .onChange(of: auth.isAuthenticated) { _, authed in
         if authed {
@@ -656,13 +654,13 @@ struct SignInView: View {
 /// 2. "or" divider
 /// 3. "Continue with Email" (liquid glass capsule)
 /// 4. Apple and Google logo-only liquid glass capsules, side by side
-/// 5. Terms of Use fine print
+/// 5. Terms of Use + Privacy Policy fine print
 private struct AuthButtonsSection: View {
     var onGetStarted: () -> Void
     var onContinueWithEmail: () -> Void
     var onAppleSignIn: () -> Void
     var onGoogleSignIn: () -> Void
-    var onOpenTerms: () -> Void
+    var onOpenLegal: (URL) -> Void
     var commitAPIBaseURL: () -> Void
 
     @Environment(AuthStore.self) private var auth
@@ -752,22 +750,34 @@ private struct AuthButtonsSection: View {
             }
             #endif
 
-            // Fine print: Terms of Use
-            HStack(spacing: 3) {
-                Text("By continuing, you agree to Inboxies'")
-                    .font(.inter(size: 12))
-                    .foregroundStyle(AppTheme.muted)
-
-                Button(action: onOpenTerms) {
-                    Text("Terms of Use")
-                        .font(.inter(size: 12, weight: .medium))
-                        .foregroundStyle(AppTheme.accent)
-                        .underline()
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.top, 2)
+            // Fine print: Terms of Use + Privacy Policy
+            Text(legalFinePrint)
+                .font(.inter(size: 12))
+                .foregroundStyle(AppTheme.muted)
+                .tint(AppTheme.accent)
+                .multilineTextAlignment(.center)
+                .environment(\.openURL, OpenURLAction { url in
+                    onOpenLegal(url)
+                    return .handled
+                })
+                .padding(.top, 2)
         }
+    }
+
+    private var legalFinePrint: AttributedString {
+        func link(_ title: String, to url: URL) -> AttributedString {
+            // Non-breaking spaces keep each link on one line.
+            var text = AttributedString(title.replacingOccurrences(of: " ", with: "\u{00A0}"))
+            text.link = url
+            text.font = .inter(size: 12, weight: .medium)
+            text.underlineStyle = .single
+            return text
+        }
+        var text = AttributedString("By continuing, you agree to Inboxies' ")
+        text += link("Terms of Use", to: AppConfig.termsURL)
+        text += AttributedString(" and ")
+        text += link("Privacy Policy", to: AppConfig.privacyURL)
+        return text
     }
 }
 
@@ -1377,7 +1387,13 @@ private struct EmailLoginScreen: View {
     }
 }
 
-/// Native SFSafariViewController wrapper to display dummy link in-app.
+/// Legal page opened in-app from the sign-in fine print.
+private struct LegalLink: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// Native SFSafariViewController wrapper to display legal pages in-app.
 private struct SafariView: UIViewControllerRepresentable {
     let url: URL
 
