@@ -19,7 +19,7 @@ Use Firebase only as a **console**: the Firebase project behind FCM is a Google 
 
 | Where | State |
 | --- | --- |
-| Worker | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_EXTRA_CLIENT_IDS` are stored, but only in Worker versions that haven't been deployed. The live version doesn't have them, so `/api/v1/auth/google` still returns 503 until a version with them is deployed. `/api/v1/auth/google` now also sets the web session cookie. |
+| Worker | Live: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_EXTRA_CLIENT_IDS` are in the deployed version, and `/api/v1/auth/google` (which also sets the web session cookie) rejects bad tokens with 401. Signed-out web visitors still hit Cloudflare Access before `/login`; bypass `/login`, `/assets/*`, `/*.data`, `/__manifest` and `/favicon.ico` (see `site/README.md`) to let them reach the Google button. |
 | Android | Firebase project `inboxies-app` has the Android client (debug SHA-1) and the Web client. `GOOGLE_WEB_CLIENT_ID` can now come from `local.properties`, `-P` or an env var. Credential Manager failures are now shown instead of ignored. |
 | iOS | Built: GoogleSignIn-iOS 9.x, a Google button beside Apple, and Settings → Connect Google. The client IDs are in `ios/AgenticInbox/project.yml` (they're public). |
 | Web | Built: "Continue with Google" on `app/routes/login.tsx` (email step) and Settings → Connect Google. Both need `GOOGLE_CLIENT_ID` on the Worker. |
