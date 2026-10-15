@@ -38,6 +38,11 @@ import {
 	deleteR2Keys,
 } from "../lib/attachments";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import {
+	agentConversationIdsToPurge,
+	clearAgentConversationTombstone,
+	tombstoneAgentConversation,
+} from "../lib/agent-conversation-tombstones";
 import { isAliasUsable, type AliasRow } from "../lib/alias-utils";
 import {
 	FTS_BACKFILL_BATCH_SIZE,
@@ -1558,11 +1563,8 @@ export class MailboxDO extends DurableObject<Env> {
 			.from(schema.attachments)
 			.all();
 
-		const conversationRows = this.db
-			.select({ id: schema.agentConversations.id })
-			.from(schema.agentConversations)
-			.all();
-		const conversationIds = conversationRows.map((row) => row.id);
+		// Includes deleted conversations whose agent purge never completed.
+		const conversationIds = agentConversationIdsToPurge(this.ctx.storage.sql);
 
 		const aliasEmails = [
 			...this.ctx.storage.sql.exec(`SELECT alias_email FROM aliases`),
@@ -1586,6 +1588,7 @@ export class MailboxDO extends DurableObject<Env> {
 			sql.exec(`DELETE FROM emails`);
 			sql.exec(`DELETE FROM folders`);
 			sql.exec(`DELETE FROM agent_conversations`);
+			sql.exec(`DELETE FROM agent_conversation_tombstones`);
 			sql.exec(`DELETE FROM device_tokens`);
 			sql.exec(`DELETE FROM dismissed_todos`);
 			sql.exec(`DELETE FROM auto_reply_receipts`);
@@ -1856,16 +1859,23 @@ export class MailboxDO extends DurableObject<Env> {
 		return result;
 	}
 
+	/**
+	 * Drop a conversation from the registry and leave a tombstone: its
+	 * EmailAgent DO still holds the chat until the caller purges it and calls
+	 * `clearAgentConversationTombstone`. Mailbox purge sweeps leftovers.
+	 */
 	async deleteAgentConversation(id: string) {
 		const existing = await this.getAgentConversation(id);
 		if (!existing) return false;
 
-		this.db
-			.delete(schema.agentConversations)
-			.where(eq(schema.agentConversations.id, id))
-			.run();
-
+		this.ctx.storage.transactionSync(() =>
+			tombstoneAgentConversation(this.ctx.storage.sql, id),
+		);
 		return true;
+	}
+
+	async clearAgentConversationTombstone(id: string) {
+		clearAgentConversationTombstone(this.ctx.storage.sql, id);
 	}
 
 	/**

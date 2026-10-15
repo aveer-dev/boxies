@@ -21,8 +21,24 @@ export function getEmailAgent(env: Env, name: string) {
 }
 
 /**
+ * Wipe one EmailAgent's chat storage. Resolves false instead of throwing so
+ * callers can keep a tombstone and retry (the mailbox purge sweeps them).
+ */
+export async function purgeEmailAgent(env: Env, name: string): Promise<boolean> {
+	try {
+		const agent = await getEmailAgent(env, name);
+		await agent.purge();
+		return true;
+	} catch (e) {
+		console.error(`EmailAgent purge failed for ${name}:`, (e as Error).message);
+		return false;
+	}
+}
+
+/**
  * Best-effort chat wipe for a deleted mailbox: the legacy single-chat
- * instance plus every multi-chat conversation the MailboxDO knew about.
+ * instance plus every multi-chat conversation the MailboxDO knew about
+ * (live registry rows and tombstones of deleted ones).
  */
 export async function purgeEmailAgents(
 	env: Env,
@@ -33,14 +49,6 @@ export async function purgeEmailAgents(
 		mailboxId, // legacy single-chat EmailAgent name
 		...conversationIds.map((id) => agentInstanceName(mailboxId, id)),
 	]);
-	for (const name of names) {
-		try {
-			const agent = await getEmailAgent(env, name);
-			await agent.purge();
-		} catch (e) {
-			// Best-effort: conversation ids are already captured; chat storage
-			// orphans are lower impact than blocking mailbox delete.
-			console.error(`EmailAgent purge failed for ${name}:`, (e as Error).message);
-		}
-	}
+	// Best-effort: chat storage orphans are lower impact than blocking mailbox delete.
+	for (const name of names) await purgeEmailAgent(env, name);
 }

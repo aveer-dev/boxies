@@ -8,6 +8,7 @@ import {
 	allowedMailboxSet,
 	canonicalMailboxId,
 	isDuplicateInbound,
+	isReservedLocalPart,
 	mailboxMetadataKey,
 	resolveMailboxParam,
 	routeInboundEnvelope,
@@ -228,5 +229,14 @@ await assert.rejects(
 	}),
 	{ message: "R2 unavailable" },
 );
+
+// ── Reserved local parts ─────────────────────────────────────────
+
+// The legal pages tell people to write to privacy@ and legal@; nobody may claim them.
+for (const local of ["privacy", "legal", "Privacy", " LEGAL ", "abuse", "postmaster"]) {
+	assert.equal(isReservedLocalPart(local), true, `${local} is reserved`);
+}
+assert.equal(isReservedLocalPart("privacy.team"), false);
+assert.equal(isReservedLocalPart("ada"), false);
 
 console.log("mailbox-routing helpers: ok");

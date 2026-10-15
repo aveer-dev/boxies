@@ -455,5 +455,16 @@ export const mailboxMigrations: Migration[] = [
 		name: "27_device_token_owner",
 		sql: txn(`ALTER TABLE device_tokens ADD COLUMN owner_keys TEXT;`),
 	},
+	{
+		// Deleted Ask AI conversations whose EmailAgent chat storage may not be
+		// wiped yet. Mailbox purge sweeps these along with the live registry.
+		name: "28_agent_conversation_tombstones",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS agent_conversation_tombstones (
+                id TEXT PRIMARY KEY,
+                deleted_at TEXT NOT NULL
+            );
+        `),
+	},
 ];
 

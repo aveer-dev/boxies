@@ -26,6 +26,16 @@ import * as schema from "./schema";
 
 type Bucketish = Pick<R2Bucket, "get" | "list">;
 
+// Where the pre-D1 identity store kept users, logins and invites. Nothing
+// reads these after the migration; `cleanupLegacyIdentity` and account
+// deletion remove them. (`platform/domains/` is still the live domain
+// registry and is not identity data.)
+const PASSWORD_PREFIXES = ["platform/identity/passwords/", "platform/users/"];
+const ACCOUNT_PREFIXES = ["platform/identity/accounts/", "platform/identity-accounts/"];
+const SUB_LINK_PREFIX = "platform/identity-links/by-sub/";
+const INVITE_PREFIX = "platform/invites/";
+export const LEGACY_IDENTITY_PREFIXES = [...PASSWORD_PREFIXES, ...ACCOUNT_PREFIXES, SUB_LINK_PREFIX, INVITE_PREFIX];
+
 type LegacyPlatformUser = {
 	id: string;
 	contactEmail?: string;
@@ -166,24 +176,14 @@ type PlannedUser = {
 	createdAt: Date;
 };
 
-export async function migrateAuthFromR2(
-	bucket: Bucketish,
-	d1: D1Database,
-	opts: { dryRun: boolean; now?: Date },
-): Promise<MigrationReport> {
-	const now = opts.now ?? new Date();
+/** Everything the migration would write, worked out from R2 alone. */
+async function planAuthMigration(bucket: Bucketish, now: Date) {
 	const issues: MigrationIssue[] = [];
 	const issue = (kind: string, detail: string) => issues.push({ kind, detail });
 
-	const platformUsers = await loadRecords<LegacyPlatformUser>(bucket, [
-		"platform/identity/passwords/",
-		"platform/users/",
-	]);
-	const accounts = await loadRecords<LegacyAccount>(bucket, [
-		"platform/identity/accounts/",
-		"platform/identity-accounts/",
-	]);
-	const subLinks = await loadRecords<LegacySubLink>(bucket, ["platform/identity-links/by-sub/"]);
+	const platformUsers = await loadRecords<LegacyPlatformUser>(bucket, PASSWORD_PREFIXES);
+	const accounts = await loadRecords<LegacyAccount>(bucket, ACCOUNT_PREFIXES);
+	const subLinks = await loadRecords<LegacySubLink>(bucket, [SUB_LINK_PREFIX]);
 
 	const users = new Map<string, PlannedUser>();
 	const credentials = new Map<string, string>(); // userId → password hash
@@ -395,7 +395,7 @@ export async function migrateAuthFromR2(
 
 	// Pending invites (tokens are stored hashed).
 	const invites: Array<typeof schema.invite.$inferInsert> = [];
-	for (const [, inv] of await loadRecords<LegacyInvite>(bucket, ["platform/invites/"])) {
+	for (const [, inv] of await loadRecords<LegacyInvite>(bucket, [INVITE_PREFIX])) {
 		const expiresAt = toDate(inv.expiresAt, now);
 		const mailboxId = canonicalMailboxId(inv.mailboxId);
 		if (inv.status !== "pending" || expiresAt <= now || !mailboxId) continue;
@@ -414,6 +414,17 @@ export async function migrateAuthFromR2(
 		});
 	}
 
+	return { users, credentials, providerAccounts, mailboxes, memberships, domains, domainAdmins, invites, recoveryEmails, issues };
+}
+
+export async function migrateAuthFromR2(
+	bucket: Bucketish,
+	d1: D1Database,
+	opts: { dryRun: boolean; now?: Date },
+): Promise<MigrationReport> {
+	const now = opts.now ?? new Date();
+	const { users, credentials, providerAccounts, mailboxes, memberships, domains, domainAdmins, invites, recoveryEmails, issues } =
+		await planAuthMigration(bucket, now);
 	const report: MigrationReport = {
 		dryRun: opts.dryRun,
 		counts: {
@@ -483,4 +494,116 @@ export async function migrateAuthFromR2(
 		await db.batch(chunk as [typeof chunk[number], ...typeof chunk]);
 	}
 	return report;
+}
+
+// ── Legacy identity cleanup ──────────────────────────────────────
+
+type DeletableBucket = Bucketish & Pick<R2Bucket, "delete">;
+
+async function deleteKeys(bucket: DeletableBucket, keys: string[]): Promise<void> {
+	// R2 deletes at most 1000 keys per call.
+	for (let i = 0; i < keys.length; i += 1000) await bucket.delete(keys.slice(i, i + 1000));
+}
+
+/** Both spellings a record id may have been stored under. */
+function recordKeys(prefix: string, id: string): string[] {
+	return [...new Set([`${prefix}${id}.json`, `${prefix}${encodeURIComponent(id)}.json`])];
+}
+
+async function readRecord<T>(bucket: Bucketish, prefixes: string[], id: string): Promise<T[]> {
+	const out: T[] = [];
+	for (const prefix of prefixes) {
+		for (const key of recordKeys(prefix, id)) {
+			const record = await readJson<T>(bucket, key);
+			if (record) out.push(record);
+		}
+	}
+	return out;
+}
+
+/**
+ * Delete the legacy R2 identity records behind one D1 user (account
+ * deletion). The migration kept ids, so the user id is the identity account
+ * id or the password user id; `subs` are the user's Apple/Google subs from
+ * AUTH_DB. Returns the keys that existed.
+ */
+export async function deleteLegacyIdentityForUser(
+	bucket: DeletableBucket,
+	userId: string,
+	subs: string[] = [],
+): Promise<string[]> {
+	const passwordIds = new Set([userId]);
+	const allSubs = new Set(subs);
+	const legacySub = /^legacy_(?:apple|google)_(.+)$/.exec(userId)?.[1];
+	if (legacySub) allSubs.add(legacySub);
+
+	for (const account of await readRecord<LegacyAccount>(bucket, ACCOUNT_PREFIXES, userId)) {
+		for (const key of account.principals ?? []) {
+			if (key.startsWith("sub:user:")) passwordIds.add(key.slice("sub:user:".length));
+			else if (key.startsWith("user:")) passwordIds.add(key.slice("user:".length));
+			else if (key.startsWith("sub:")) allSubs.add(key.slice("sub:".length));
+		}
+	}
+	for (const pid of passwordIds) {
+		for (const pu of await readRecord<LegacyPlatformUser>(bucket, PASSWORD_PREFIXES, pid)) {
+			for (const sub of pu.linkedSubs ?? []) allSubs.add(sub);
+		}
+	}
+
+	const candidates = [
+		...ACCOUNT_PREFIXES.flatMap((p) => recordKeys(p, userId)),
+		...[...passwordIds].flatMap((pid) => PASSWORD_PREFIXES.flatMap((p) => recordKeys(p, pid))),
+		...[...allSubs].flatMap((sub) => recordKeys(SUB_LINK_PREFIX, sub)),
+	];
+	const existing: string[] = [];
+	for (const key of new Set(candidates)) if (await readJson(bucket, key)) existing.push(key);
+	await deleteKeys(bucket, existing);
+	return existing;
+}
+
+export type LegacyCleanupReport = {
+	dryRun: boolean;
+	/** Legacy users with no AUTH_DB row and no deletion record; nothing is deleted while any remain. */
+	unmigratedUserIds: string[];
+	keys: number;
+	byPrefix: Record<string, number>;
+	deleted: boolean;
+};
+
+/**
+ * Delete every legacy identity record in R2 (contact and recovery emails,
+ * password hashes, sign-in links, old invites) once AUTH_DB has them.
+ *
+ * Safe by construction: it re-plans the migration from R2 and refuses to
+ * delete anything unless every user the migration would create exists in
+ * AUTH_DB or was since deleted (a `user.delete` audit entry).
+ */
+export async function cleanupLegacyIdentity(
+	bucket: DeletableBucket,
+	d1: D1Database,
+	opts: { dryRun: boolean },
+): Promise<LegacyCleanupReport> {
+	const { users } = await planAuthMigration(bucket, new Date());
+	const unmigratedUserIds: string[] = [];
+	for (const id of [...users.keys()].sort()) {
+		const present = await d1
+			.prepare(
+				"select 1 as ok from user where id = ? union all select 1 from audit_log where action = 'user.delete' and target = ? limit 1",
+			)
+			.bind(id, id)
+			.first("ok");
+		if (!present) unmigratedUserIds.push(id);
+	}
+
+	const byPrefix: Record<string, number> = {};
+	const keys: string[] = [];
+	for (const prefix of LEGACY_IDENTITY_PREFIXES) {
+		const found = await listKeys(bucket, prefix);
+		byPrefix[prefix] = found.length;
+		keys.push(...found);
+	}
+
+	const deleted = !opts.dryRun && unmigratedUserIds.length === 0 && keys.length > 0;
+	if (deleted) await deleteKeys(bucket, keys);
+	return { dryRun: opts.dryRun, unmigratedUserIds, keys: keys.length, byPrefix, deleted };
 }
