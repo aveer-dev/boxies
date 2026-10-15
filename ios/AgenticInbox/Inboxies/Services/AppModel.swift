@@ -9,7 +9,11 @@ final class AppModel {
     var mailboxes: [Mailbox] = []
     var selectedMailboxId: String? {
         didSet {
-            if selectedMailboxId != oldValue { publishSharedSession() }
+            if selectedMailboxId != oldValue {
+                publishSharedSession()
+                // A switch, not the first pick on launch or the reset on sign-out.
+                if oldValue != nil, selectedMailboxId != nil { refreshAutofillIdentities() }
+            }
         }
     }
     var folders: [Folder] = []
@@ -157,6 +161,13 @@ final class AppModel {
         SharedSession.publish(mailboxId: selectedMailboxId, apiBaseURL: AppConfig.apiBaseURL)
     }
 
+    /// QuickType suggestions follow the active mailbox. Bootstrap covers launch.
+    private func refreshAutofillIdentities() {
+        guard persistsPreferences, !isDebugPreview, APIClient.shared.authToken != nil else { return }
+        let mailboxId = selectedMailboxId
+        Task { await AutofillSession.refreshIdentities(mailboxId: mailboxId) }
+    }
+
     func updateSwipePreferences(_ transform: (inout SwipeActionPreferences) -> Void) {
         var prefs = swipePreferences
         transform(&prefs)
@@ -256,6 +267,7 @@ final class AppModel {
 
         if persistsPreferences, !isDebugPreview, APIClient.shared.authToken != nil {
             await AutofillSession.refreshIfNeeded()
+            await AutofillSession.refreshIdentities(mailboxId: selectedMailboxId)
         }
     }
 

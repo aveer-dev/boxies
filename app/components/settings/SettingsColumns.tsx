@@ -26,6 +26,10 @@ import {
 
 // Placeholder shown in the textarea when no custom prompt is set.
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
+// Legal pages live on the marketing site (site/src/pages/legal.astro); these redirect to its anchors.
+const TERMS_URL = "https://inboxies.co/terms";
+const PRIVACY_URL = "https://inboxies.co/privacy";
+
 const PROMPT_PLACEHOLDER = `You are an email assistant that helps manage this inbox. You read emails, draft replies, and help organize conversations.\n\nWrite like a real person. Short, direct, flowing prose. Plain text only.\n\n(Leave empty to use the full built-in default prompt)`;
 
 function SettingsContent() {
@@ -168,6 +172,26 @@ function SettingsContent() {
 					<Button variant="primary" onClick={handleSave} loading={isSaving}>
 						Save Changes
 					</Button>
+				</div>
+
+				{/* Legal */}
+				<div className="flex justify-center gap-4 text-xs text-kumo-subtle">
+					<a
+						href={TERMS_URL}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="hover:text-kumo-default hover:underline underline-offset-2"
+					>
+						Terms of Use
+					</a>
+					<a
+						href={PRIVACY_URL}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="hover:text-kumo-default hover:underline underline-offset-2"
+					>
+						Privacy Policy
+					</a>
 				</div>
 			</div>
 		</div>

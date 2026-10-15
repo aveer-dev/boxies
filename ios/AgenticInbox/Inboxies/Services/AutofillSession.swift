@@ -1,3 +1,4 @@
+import AuthenticationServices
 import Foundation
 
 /// The AutoFill extension's own session: scoped to private emails, listed (and
@@ -55,14 +56,52 @@ enum AutofillSession {
     }
 
     /// Drops the extension's session locally and returns its token, so the
-    /// caller can end it on the server with `end(_:)`.
+    /// caller can end it on the server with `end(_:)`. Also empties the
+    /// QuickType identities: every sign-out path comes through here.
     @discardableResult
     static func forget() -> String? {
         let token = SharedSession.token
         SharedSession.setToken(nil)
         UserDefaults.standard.removeObject(forKey: idKey)
         UserDefaults.standard.removeObject(forKey: expiresAtKey)
+        enqueueIdentityUpdate { await PrivateEmailIdentities.removeAll() }
         return token
+    }
+
+    // MARK: QuickType identities
+
+    /// Store writes run one after another, so a late snapshot can't overwrite
+    /// a newer one or refill the store after sign-out.
+    private static var identityUpdate: Task<Void, Never>?
+
+    private static func enqueueIdentityUpdate(_ update: @escaping @MainActor () async -> Void) {
+        let previous = identityUpdate
+        identityUpdate = Task {
+            await previous?.value
+            await update()
+        }
+    }
+
+    /// Registers the active mailbox's private emails as QuickType suggestions.
+    static func publishIdentities(_ aliases: [MaskedAlias]) {
+        #if DEBUG
+        // `-previewAutofill` keeps the fixture identities from launch.
+        if SharedSession.previewAutofill { return }
+        #endif
+        let emails = aliases.map(PrivateEmail.init(alias:))
+        enqueueIdentityUpdate { await PrivateEmailIdentities.replace(with: emails) }
+    }
+
+    /// Launch and mailbox switch: reloads the mailbox's private emails for the
+    /// store. Skips the request while Inboxies isn't the AutoFill provider.
+    static func refreshIdentities(mailboxId: String?) async {
+        #if DEBUG
+        if SharedSession.previewAutofill { return }
+        #endif
+        guard let mailboxId,
+              await ASCredentialIdentityStore.shared.state().isEnabled,
+              let aliases = try? await APIClient.shared.listAliases(mailboxId: mailboxId) else { return }
+        publishIdentities(aliases)
     }
 
     /// Ends a forgotten extension session on the server. The session logs
@@ -70,6 +109,18 @@ enum AutofillSession {
     nonisolated static func end(_ token: String?) async {
         guard let token else { return }
         try? await APIClient.shared.logout(sessionToken: token)
+    }
+}
+
+extension PrivateEmail {
+    init(alias: MaskedAlias) {
+        self.init(
+            id: alias.id,
+            address: alias.aliasEmail,
+            label: alias.label,
+            isActive: alias.isActive,
+            expiresAt: alias.expiresAt
+        )
     }
 }
 

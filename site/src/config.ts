@@ -1,6 +1,7 @@
 // src: BRIEF (fixed values), PS#6 (support address, X handle), PS#7 (repo), FC#8 (TestFlight, no store listing)
 export const SITE_URL = "https://inboxies.co";
-export const APP_URL = "https://inboxies.email";           // the web app's origin; never a link target on its own
+export const APP_URL = "https://inboxies.app";             // the web app's origin; never a link target on its own (mail addresses stay @inboxies.email)
+export const APP_HOST = new URL(APP_URL).host;
 // Sign-up and sign-in both start on /login. The root sits behind Cloudflare
 // Access, so a signed-out visitor sent there hits a login wall (D1).
 export const SIGN_UP_URL = `${APP_URL}/login`;
@@ -8,7 +9,7 @@ export const SIGN_IN_URL = SIGN_UP_URL;
 export type IosStatus = "hidden" | "testflight" | "appstore";
 export const IOS_STATUS: IosStatus = "testflight";
 export const APP_STORE_URL: string | null = null;           // set with IOS_STATUS = "appstore"
-export const TESTFLIGHT_URL: string | null = null;          // a public TestFlight link, if one ever exists
+export const TESTFLIGHT_URL: string | null = "https://testflight.apple.com/join/YBtPfDaT"; // public TestFlight link (AVE-54)
 export const SUPPORT_EMAIL = "support@inboxies.email";
 export const IOS_BETA_MAILTO =
   `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("iPhone beta invite")}` +
@@ -17,7 +18,7 @@ export const GITHUB_URL = "https://github.com/aveer-dev/boxies";
 export const X_URL: string | null = "https://x.com/inboxies_app"; // [OWNER: handle live and owned] — null hides every X link
 
 export const flags = {
-  webAppPublic: true,          // false while signed-out visitors can't reach inboxies.email/login (Access): drops "Web" from platform and availability lines, and the CTAs become the iPhone beta
+  webAppPublic: true,          // false while signed-out visitors can't reach inboxies.app/login (Access): drops "Web" from platform and availability lines, and the CTAs become the iPhone beta
   privateEmailShipped: true,   // on dev since PR #46 (8 Oct): Settings → Private email on the web, iPhone and Android, addresses that receive mail
   autoDraftsFromDayOne: true,  // on dev since PR #49 (9 Oct): auto-drafts run from a new mailbox's first email
   iosAutofillInBeta: false,    // true once a TestFlight build carries the InboxiesCredentialProvider extension (App Group + AutoFill on both App IDs, d5df670)

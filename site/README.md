@@ -1,6 +1,6 @@
 # inboxies.co
 
-The marketing site for Inboxies: a landing page with a scroll-pinned phone tour, Pricing, Roadmap and Support (with a contact form). It's Astro 7 with `@astrojs/cloudflare`, plain CSS and a few small TypeScript modules, deployed as one Cloudflare Worker at https://inboxies.co. The app itself stays at https://inboxies.email.
+The marketing site for Inboxies: a landing page with a scroll-pinned phone tour, Pricing, Roadmap, Support (with a contact form) and Legal. It's Astro 7 with `@astrojs/cloudflare`, plain CSS and a few small TypeScript modules, deployed as one Cloudflare Worker at https://inboxies.co. The web app is at https://inboxies.app; mail addresses stay @inboxies.email.
 
 Every page is prerendered except `POST /api/contact`, so the Worker mostly serves static assets. Its entry, `src/worker.ts`, wraps Astro's handler: it answers byte-range requests for `/media/*` (the static asset server ignores `Range`, and Safari and iOS won't play video without `206`s) and adds the security headers that `public/_headers` can't reach (Worker responses: the 404 page, `/api/contact`, `/media`).
 
@@ -34,7 +34,7 @@ From `site/` (`pnpm <script>`):
 ## Checks that fail the build
 
 - `src/data/validate.ts` (runs inside every page render): every data entry has a `src`, ids are unique, nothing Available carries an owner gate, no changelog date is after `asOf`, and private email isn't described as shipped while `privateEmailShipped` is false. It warns when `asOf` is more than 45 days old.
-- `scripts/check-claims.mjs`: scans the built HTML for banned phrases (“unlimited”, “end-to-end encrypted”, “24/7”, any claim that mail sorts itself…), and for phrases allowed only inside `data-claim` (unbuilt work), plus flag-dependent ones (`$20` when domain purchase is off, “App Store” before an App Store listing, Android before it's public, “Web” while the web app isn't). It checks links into the app too: while `webAppPublic` is true every link to `inboxies.email` must go to `/login`, and while it's false there may be none. It also fails on duplicate element ids.
+- `scripts/check-claims.mjs`: scans the built HTML for banned phrases (“unlimited”, “end-to-end encrypted”, “24/7”, any claim that mail sorts itself…), and for phrases allowed only inside `data-claim` (unbuilt work), plus flag-dependent ones (`$20` when domain purchase is off, “App Store” before an App Store listing, Android before it's public, “Web” while the web app isn't). It checks links into the app too: while `webAppPublic` is true every link to the web app's host (`APP_URL`) must go to `/login`, and while it's false there may be none. It also fails on duplicate element ids.
 - `scripts/check-budget.mjs`: at most 20KB of JS and 30KB of CSS (gzip) per page. It also fails if anything built points at an `/_astro/*.png`: those are unused image originals, and `public/.assetsignore` keeps them out of the deploy.
 
 ## Config (`src/config.ts`)
@@ -44,14 +44,14 @@ Every switchable claim reads from here. Flip a value and rebuild; the checks re-
 | Setting | Default | Effect |
 |---|---|---|
 | `IOS_STATUS` | `"testflight"` | `"hidden"` drops iPhone everywhere. `"testflight"` shows “Ask for the iPhone beta” (a mailto), or “Join the iPhone beta ↗” when `TESTFLIGHT_URL` is set. `"appstore"` plus `APP_STORE_URL` shows “Download for iPhone ↗” |
-| `flags.webAppPublic` | `true` | `false` while signed-out visitors can't reach `inboxies.email/login` (Cloudflare Access): drops “Web” from platform and availability lines, hides Sign in and “Open the app”, and the main CTA becomes the iPhone beta |
+| `flags.webAppPublic` | `true` | `false` while signed-out visitors can't reach `inboxies.app/login` (Cloudflare Access): drops “Web” from platform and availability lines, hides Sign in and “Open the app”, and the main CTA becomes the iPhone beta |
 | `flags.privateEmailShipped` | `false` | `true` moves Private email into “And the rest” and removes the roadmap callout. Flip when PR #46 reaches main |
 | `flags.autoDraftsFromDayOne` | `false` | `true` marks “Drafts from day one” Available on the roadmap, drops it from Coming next and updates the matching Support answer. Flip when PR #49 (merged to dev) reaches main |
 | `flags.domainPurchaseLive` | `true` | `false` removes every `$20` surface (the third plan, “How the price works”, the price lines) |
-| `flags.androidPublic` | `false` | `true` adds Android to platform lines, the sign-in copy and the apps answer |
+| `flags.androidPublic` | `false` | `true` adds Android to platform lines, the sign-in copy and the apps answer, and turns its roadmap row from “Coming soon” to available |
 | `asOf` | `"2026-10-09"` | “Updated …” date on the roadmap, and the sitemap `lastmod` |
 | `X_URL` | `https://x.com/inboxies_app` | `null` hides every X link |
-| `SIGN_UP_URL` (= `SIGN_IN_URL`), `SUPPORT_EMAIL`, `GITHUB_URL` | | Link targets used site-wide. Sign-up and sign-in both go to `https://inboxies.email/login`; the app's root sits behind Access. `primaryCta()` picks the main button |
+| `SIGN_UP_URL` (= `SIGN_IN_URL`), `SUPPORT_EMAIL`, `GITHUB_URL` | | Link targets used site-wide. Sign-up and sign-in both go to `https://inboxies.app/login`; the app's root sits behind Access. `primaryCta()` picks the main button |
 
 Copy lives in `src/data/*.ts`, one module per surface, and each entry carries its source in `src`.
 
@@ -59,7 +59,7 @@ Copy lives in `src/data/*.ts`, one module per surface, and each entry carries it
 
 Three things outside this folder decide whether the site works on day one. Until each is done, the site stays honest by its defaults, but visitors hit a wall.
 
-1. **The web app's Access wall.** `inboxies.email` sits behind Cloudflare Access, so a signed-out visitor sent to sign up gets an Access login instead. Add an Access bypass for `/login`, `/assets/*`, `/*.data`, `/__manifest` and `/favicon.ico`, and check that signing in from `/login` lands in the app. Until then, build with `flags.webAppPublic = false` (the CTAs become the iPhone beta). Open question 1.
+1. **The web app's Access wall.** `inboxies.app` sits behind Cloudflare Access, so a signed-out visitor sent to sign up gets an Access login instead. Add an Access bypass for `/login`, `/assets/*`, `/*.data`, `/__manifest` and `/favicon.ico`, and check that signing in from `/login` lands in the app. Until then, build with `flags.webAppPublic = false` (the CTAs become the iPhone beta). Open question 1.
 2. **The `inboxies.co` zone.** It's still on Namecheap DNS, and the custom domains, the www redirect and Email Service all need an active Cloudflare zone. Deploying, step 0.
 3. **Contact form delivery.** Onboard `inboxies.co` to Email Service and verify `support@inboxies.email` as an Email Routing destination (Contact form, steps 1–2). Until then the form answers 503 and falls back to the visitor's email app.
 
@@ -77,7 +77,8 @@ Also before launch: reserve the role usernames on inboxies.email (question 17) a
 3. The build writes `dist/server/wrangler.json` and a redirect in `.wrangler/deploy/config.json`. Plain `wrangler dev` / `wrangler deploy` from `site/` pick it up.
 4. After the first deploy, smoke test:
    - `/` returns 200 and `/does-not-exist` returns 404 with the Screener line.
-   - `/sitemap.xml` lists `/`, `/pricing`, `/roadmap` and `/support`.
+   - `/sitemap.xml` lists `/`, `/pricing`, `/roadmap`, `/support` and `/legal`.
+   - `/terms` and `/privacy` answer `301` to `/legal#terms` and `/legal#privacy` (`_redirects`, from `redirects` in `astro.config.mjs`).
    - `curl -sI -H "Range: bytes=0-1" https://inboxies.co/media/inbox-open.mp4` answers `206` with `Content-Range: bytes 0-1/330088`. Without it, Safari and every iOS browser keep the clips on their posters. `pnpm preview` answers the same locally.
    - A signed-out visit to the sign-up link reaches “Get started”, not an Access login (open question 1).
 5. Once `https://inboxies.co` serves, set `"workers_dev": false` and `"preview_urls": false` in `wrangler.jsonc` and deploy again, so the site and `/api/contact` live on one host (behind the zone's WAF and rate-limiting rules).
@@ -159,13 +160,13 @@ Alt text and clip lengths live in `src/data/media.ts`. Update them if what's on 
 
 Spec §10. The site ships with each default until it's answered.
 
-- [ ] **1. Launch blocker.** Does a signed-out visitor to `https://inboxies.email/login` reach “Get started”, not a Cloudflare Access wall? The owner has to open it to signed-out visitors: an Access bypass for `/login`, `/assets/*`, `/*.data`, `/__manifest` and `/favicon.ico` (the page won't load its scripts without them), and a check that a new sign-in from `/login` gets into the app. Should CTAs deep-link (e.g. `?start=personal`)? Default: every CTA goes to `SIGN_UP_URL`; set `flags.webAppPublic = false` until it passes.
+- [ ] **1. Launch blocker.** Does a signed-out visitor to `https://inboxies.app/login` reach “Get started”, not a Cloudflare Access wall? The owner has to open it to signed-out visitors: an Access bypass for `/login`, `/assets/*`, `/*.data`, `/__manifest` and `/favicon.ico` (the page won't load its scripts without them), and a check that a new sign-in from `/login` gets into the app. Should CTAs deep-link (e.g. `?start=personal`)? Default: every CTA goes to `SIGN_UP_URL`; set `flags.webAppPublic = false` until it passes.
 - [ ] **2.** Is the personal @inboxies.email address free long-term? Default: “No charge today”, the CTA says “Get started — free”, never “free forever”.
 - [ ] **3.** Does connecting your own domain stay $0? Default: “No charge today”.
 - [ ] **4.** Cancelling a registered domain: is “write to support and we'll help” OK, and what happens to the domain? Refund and renewal-price policy? Default: the cancel FAQ shows that line, with no refund or renewal answer.
 - [ ] **5.** Account deletion by request until there's an in-app path (App Store 5.1.1(v))? Default: shown (“write to us and we'll help”).
-- [ ] **6.** Who answers “Ask for the iPhone beta” mails? Is there a public TestFlight link? Default: `IOS_BETA_MAILTO`. Set `TESTFLIGHT_URL` to switch to “Join the iPhone beta ↗”.
-- [ ] **7.** When does Android go public, and where? Default: `androidPublic: false`, so Android is mentioned once, in the Support apps answer.
+- [x] **6.** Is there a public TestFlight link? Yes (AVE-54): `TESTFLIGHT_URL` is set, so the site shows “Join the iPhone beta ↗”. Clear it to fall back to the `IOS_BETA_MAILTO` request.
+- [ ] **7.** When does Android go public, and where? Default: `androidPublic: false`, so Android shows only as coming soon: in the Support apps answer and as a “next” row on /roadmap.
 - [ ] **8.** Is @inboxies_app on X live and owned? Default: shown in the colophon and Other ways. `X_URL = null` hides both.
 - [ ] **9.** OK to state “There are no ads in Inboxies today” as a plain fact? Default: shown, in the present tense, with no business-model claim.
 - [ ] **10.** Approve the candid lines (the Plainly callout, encryption, who can read my mail, tracking pixels, AI reads)? Default: shown.
@@ -176,7 +177,7 @@ Spec §10. The site ships with each default until it's answered.
 - [ ] **15.** Fix the in-app price display before launch? `app/components/OnboardingFlow.tsx:935` shows $10.46 for every TLD, and iOS/Android label the retail total “Wholesale price”. Default: “Where the $20 goes” ships with the $10.44 worked example; fix the app before launch.
 - [ ] **16. Launch blocker.** Contact form: onboard inboxies.co to Email Service (From `site@inboxies.co`; it needs the zone first) and verify `support@inboxies.email` as a destination? Is that mailbox monitored? Default: binding configured; until it works, the 503 → mailto fallback carries the form.
 - [ ] **17. Launch blocker.** Reserve `support@`, `security@`, `admin@`, `postmaster@`, `abuse@`, `noreply@`, `billing@`, `privacy@`, `welcome@` and `agent@` on inboxies.email. Anyone can claim them today, and the site publishes support@.
-- [ ] **18.** Terms and privacy policy? The apps link `inboxies.email/terms`, which 404s, and the form says “We use it only to reply”. Default: no legal links on the site; the form line ships.
+- [ ] **18. Launch blocker.** Legal. `/legal` now carries a privacy policy, terms of service and acceptable use policy written from the code (`src/data/legal.ts`; `legalUpdated` is its date), linked from the colophon, with `/privacy` and `/terms` redirecting to it. Before it's binding the owner must supply or approve every `ownerConfirm` in that file, chiefly: the operator's legal name and address (and an EU/UK representative if needed), governing law and venue (the Disputes clause names none), the minimum age (13 by default), the refund line beyond failed registrations (Q4), and the no-ads, no-sale and no-training lines (Q9, Q11). It's worth a lawyer's read. App-side: the iPhone and Android sign-in screens link `inboxies.email/terms`, which redirects signed-out visitors to `/login`; point them at `https://inboxies.co/terms`, add a Privacy link beside it, and use `https://inboxies.co/privacy` as the store privacy URL. Reserve `privacy@` and `legal@` too (not in `RESERVED_LOCAL_PARTS`).
 - [ ] **19.** www → apex. Default: the owner adds a 301 Redirect Rule on the zone; canonical tags point to `https://inboxies.co`.
 - [ ] **20.** Redirect `inboxies.email/help` (the in-app Help Center, a 404 today) to `https://inboxies.co/support`. This is an owner change in the app repo.
 - [ ] **21. Launch blocker.** Security before launch: password-reset throttling and binding codes to the email, the Stripe webhook failing closed in production, and export authorization (PR #48). The site never describes these gaps.

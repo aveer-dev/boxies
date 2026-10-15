@@ -12,4 +12,7 @@ export default defineConfig({
 	prefetch: false, // speculation rules in Base.astro do this
 	image: { responsiveStyles: false },
 	devToolbar: { enabled: false },
+	// Stable URLs for the apps and store listings (the iPhone and Android sign-in
+	// screens link a Terms of Use); both land on the matching part of /legal.
+	redirects: { "/privacy": "/legal#privacy", "/terms": "/legal#terms" },
 });

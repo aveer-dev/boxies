@@ -1,0 +1,179 @@
+---
+// One legal document on /legal: a section head, then numbered clauses as
+// plain prose (h3 + blocks), each with its own anchor so support answers and
+// the apps can link straight to a clause (/legal#privacy-ai).
+import type { LegalDoc } from "../../data/types";
+import { renderInline } from "../../lib/inline";
+import Records from "../Records.astro";
+import SectionHead from "../SectionHead.astro";
+
+interface Props {
+	doc: LegalDoc;
+}
+
+const { doc } = Astro.props;
+
+// renderInline plus **bold**, for the lead-ins that name what a paragraph is
+// about. Split first, so the bold markers never reach the escaper.
+const rich = (s: string) =>
+	s
+		.split(/\*\*(.+?)\*\*/g)
+		.map((part, i) => (i % 2 ? `<strong>${renderInline(part)}</strong>` : renderInline(part)))
+		.join("");
+---
+
+<section class="section legal-doc" aria-labelledby={doc.id}>
+	<SectionHead id={doc.id} title={doc.title} meta={doc.meta} />
+	{doc.lead && <p class="legal-lead" set:html={rich(doc.lead)} />}
+	<ol class="clauses">
+		{
+			doc.clauses.map((c, i) => (
+				<li class="clause" data-claim={c.claim}>
+					<h3 id={c.id} class="clause-title">
+						<span class="clause-num" aria-hidden="true">{i + 1}.</span>
+						{c.title}
+					</h3>
+					<div class="clause-body">
+						{c.body.map((b) =>
+							typeof b === "string" ? (
+								<p set:html={rich(b)} />
+							) : "list" in b ? (
+								<ul>
+									{b.list.map((li) => (
+										<li set:html={rich(li)} />
+									))}
+								</ul>
+							) : "records" in b ? (
+								<Records rows={b.records.map(([label, value]) => ({ label, value, src: c.src }))} />
+							) : (
+								<table class="legal-table">
+									<tbody>
+										{b.table.map(([k, v]) => (
+											<tr>
+												<th scope="row" set:html={rich(k)} />
+												<td set:html={rich(v)} />
+											</tr>
+										))}
+									</tbody>
+								</table>
+							),
+						)}
+					</div>
+				</li>
+			))
+		}
+	</ol>
+</section>
+
+<style>
+	.legal-lead {
+		max-width: 62ch;
+		margin-bottom: 24px;
+		font-size: var(--fs-body);
+		line-height: 1.375rem;
+		color: var(--text-muted);
+	}
+
+	.clauses {
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: 28px;
+	}
+
+	/* Jumping to a clause leaves room for the fixed header. */
+	.clause-title {
+		scroll-margin-top: 96px;
+		display: flex;
+		gap: 8px;
+		font-size: var(--fs-title);
+		font-weight: 400;
+		line-height: 1.25rem;
+		letter-spacing: -0.005em;
+		color: var(--text-primary);
+	}
+
+	.clause-num {
+		flex: none;
+		min-width: 1.25rem;
+		color: var(--text-subtle);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.clause-body {
+		margin-top: 8px;
+		padding-left: calc(1.25rem + 8px);
+		max-width: calc(62ch + 1.25rem + 8px);
+		font-size: var(--fs-body);
+		line-height: 1.375rem;
+		color: var(--text-muted);
+		overflow-wrap: anywhere;
+	}
+
+	.clause-body > :global(* + *) {
+		margin-top: 10px;
+	}
+
+	.clause-body ul {
+		padding-left: 1rem;
+	}
+
+	.clause-body ul > li + li {
+		margin-top: 4px;
+	}
+
+	.clause-body :global(strong) {
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+
+	.legal-table {
+		width: 100%;
+		border-collapse: collapse;
+		border-top: 1px solid var(--border-subtle);
+	}
+
+	.legal-table th,
+	.legal-table td {
+		padding: 8px 12px 8px 0;
+		border-bottom: 1px solid var(--border-subtle);
+		text-align: left;
+		vertical-align: baseline;
+		font-size: 0.75rem;
+		line-height: 1.125rem;
+	}
+
+	.legal-table th {
+		width: 34%;
+		font-weight: 400;
+		color: var(--text-primary);
+	}
+
+	.legal-table td {
+		color: var(--text-muted);
+	}
+
+	@media (max-width: 480px) {
+		.clause-body {
+			padding-left: 0;
+		}
+
+		.legal-table th,
+		.legal-table td {
+			display: block;
+			width: auto;
+			padding-right: 0;
+		}
+
+		.legal-table th {
+			padding-bottom: 0;
+			border-bottom: 0;
+		}
+	}
+
+	@media print {
+		.clause {
+			break-inside: avoid-page;
+		}
+	}
+</style>

@@ -584,6 +584,22 @@ struct SupportSettingsView: View {
             } header: {
                 Text("Help & Support")
             }
+
+            Section {
+                Button {
+                    openURL(AppConfig.termsURL)
+                } label: {
+                    settingsActionLabel("Terms of Use", systemImage: "doc.text")
+                }
+
+                Button {
+                    openURL(AppConfig.privacyURL)
+                } label: {
+                    settingsActionLabel("Privacy Policy", systemImage: "hand.raised")
+                }
+            } header: {
+                Text("Legal")
+            }
             
             Section {
                 Button {

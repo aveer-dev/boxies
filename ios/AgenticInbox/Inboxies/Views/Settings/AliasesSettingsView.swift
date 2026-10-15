@@ -199,6 +199,11 @@ struct AliasesSettingsView: View {
         .refreshable {
             await loadAliases()
         }
+        .onChange(of: aliases) { _, aliases in
+            // Loads, creates, pauses, relabels and deletes all land here.
+            guard !app.isDebugPreview else { return }
+            AutofillSession.publishIdentities(aliases)
+        }
         .applyThemeController()
     }
 

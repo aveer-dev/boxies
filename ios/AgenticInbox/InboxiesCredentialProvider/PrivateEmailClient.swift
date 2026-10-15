@@ -1,8 +1,8 @@
 import Foundation
 
-/// The one API call the extension makes, on its own scoped session (private
-/// emails only), which the app mints and shares through the keychain group.
-/// The server picks the address; the extension never invents one.
+/// The extension's API calls, on its own scoped session (private emails only),
+/// which the app mints and shares through the keychain group. The server picks
+/// new addresses; the extension never invents one.
 enum PrivateEmailClient {
     enum Failure: LocalizedError {
         case signedOut
@@ -21,19 +21,20 @@ enum PrivateEmailClient {
         let mailboxId: String
     }
 
-    private struct CreateResponse: Decodable {
-        struct Alias: Decodable {
-            let aliasEmail: String
-
-            enum CodingKeys: String, CodingKey {
-                case aliasEmail = "alias_email"
-            }
-        }
-
-        let alias: Alias
+    private struct ListResponse: Decodable {
+        let aliases: [PrivateEmail]
     }
 
-    static var isSignedIn: Bool { session != nil }
+    private struct CreateResponse: Decodable {
+        let alias: PrivateEmail
+    }
+
+    static var isSignedIn: Bool {
+        #if DEBUG
+        if SharedSession.previewAutofill { return true }
+        #endif
+        return session != nil
+    }
 
     private static var session: Session? {
         guard let token = SharedSession.token,
@@ -41,8 +42,40 @@ enum PrivateEmailClient {
         return Session(token: token, mailboxId: mailboxId)
     }
 
-    /// `POST /api/v1/mailboxes/{id}/aliases`; returns the new address.
-    static func createAlias(label: String?) async throws -> String {
+    /// `GET /api/v1/mailboxes/{id}/aliases`; newest first, as the server sends them.
+    static func listAliases() async throws -> [PrivateEmail] {
+        #if DEBUG
+        if SharedSession.previewAutofill { return PrivateEmail.previewFixtures }
+        #endif
+        let data = try await send(method: "GET", body: nil)
+        guard let list = try? JSONDecoder().decode(ListResponse.self, from: data) else {
+            throw Failure.server("Unexpected response from Inboxies.")
+        }
+        return list.aliases
+    }
+
+    /// `POST /api/v1/mailboxes/{id}/aliases`; returns the new private email.
+    static func createAlias(label: String?) async throws -> PrivateEmail {
+        var body: [String: Any] = ["pausedAction": "drop"]
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let trimmed, !trimmed.isEmpty {
+            body["label"] = String(trimmed.prefix(100))
+        }
+        #if DEBUG
+        if SharedSession.previewAutofill {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            return PrivateEmail(id: UUID().uuidString, address: "k4v9q2@private.inboxies.dev", label: trimmed)
+        }
+        #endif
+        let data = try await send(method: "POST", body: body)
+        guard let created = try? JSONDecoder().decode(CreateResponse.self, from: data),
+              !created.alias.address.isEmpty else {
+            throw Failure.server("Unexpected response from Inboxies.")
+        }
+        return created.alias
+    }
+
+    private static func send(method: String, body: [String: Any]?) async throws -> Data {
         guard let session else { throw Failure.signedOut }
 
         let base = SharedSession.apiBaseURL
@@ -56,29 +89,25 @@ enum PrivateEmailClient {
         components.percentEncodedPath = (basePath.isEmpty ? "" : "/\(basePath)") + "/api/v1/mailboxes/\(mailbox)/aliases"
         guard let url = components.url else { throw Failure.server("Invalid API URL") }
 
-        var body: [String: Any] = ["pausedAction": "drop"]
-        if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
-            body["label"] = String(label.prefix(100))
-        }
-
         var request = URLRequest(url: url, timeoutInterval: 30)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpMethod = method
         request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         // A missing, expired or revoked session: the app mints a new one when opened.
         if status == 401 || (status == 403 && isExpiredSession(data)) { throw Failure.signedOut }
         guard (200..<300).contains(status) else {
-            throw Failure.server(serverMessage(from: data) ?? "Couldn’t create a private email (HTTP \(status)).")
+            let fallback = method == "GET"
+                ? "Couldn’t load your private emails (HTTP \(status))."
+                : "Couldn’t create a private email (HTTP \(status))."
+            throw Failure.server(serverMessage(from: data) ?? fallback)
         }
-        guard let created = try? JSONDecoder().decode(CreateResponse.self, from: data),
-              !created.alias.aliasEmail.isEmpty else {
-            throw Failure.server("Unexpected response from Inboxies.")
-        }
-        return created.alias.aliasEmail
+        return data
     }
 
     private static func isExpiredSession(_ data: Data) -> Bool {
