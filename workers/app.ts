@@ -18,6 +18,7 @@ import { registerOpsRoutes } from "./routes/ops";
 import { runScheduledMaintenance } from "./lib/maintenance";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import { AUTH_BASE_PATH } from "./auth";
+import { webHostRedirect } from "./lib/web-host-redirect";
 import type { Env } from "./types";
 
 export { MailboxDO } from "./durableObject";
@@ -50,6 +51,9 @@ type ExecutionCtxWithProps = ExecutionContext & {
 
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
+
+// The web app lives on APP_BASE_URL; old hosts (inboxies.email) send browsers there.
+app.use("*", async (c, next) => webHostRedirect(c.env, c.req.raw) ?? next());
 
 // Better Auth (AUTH_DB): an allowlisted subset of its routes.
 app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw));

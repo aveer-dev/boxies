@@ -4,7 +4,9 @@
 // and re-renders when the background worker's storage changes (pairing
 // finished in another tab, a private email created from a sign-up form).
 
-const DEFAULT_API_URL = "https://inboxies.email";
+const DEFAULT_API_URL = "https://inboxies.app";
+// The web app moved here; inboxies.email pages redirect, so pair with the new home.
+const LEGACY_API_URL = "https://inboxies.email";
 const $ = (id) => document.getElementById(id);
 
 const COPY_ICON =
@@ -189,6 +191,7 @@ $("connect").addEventListener("click", async () => {
 	let origin;
 	try {
 		origin = new URL($("apiUrl").value.trim() || DEFAULT_API_URL).origin;
+		if (origin === LEGACY_API_URL) origin = DEFAULT_API_URL;
 	} catch {
 		showText($("connectError"), "Enter your Inboxies server address.");
 		return;

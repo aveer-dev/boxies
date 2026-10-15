@@ -10,7 +10,10 @@
 importScripts("site-match.js");
 const { siteOf, labelMatchesSite } = globalThis.InboxiesSiteMatch;
 
-const DEFAULT_API_URL = "https://inboxies.email";
+const DEFAULT_API_URL = "https://inboxies.app";
+// The web app moved here; inboxies.email pages redirect, so pair with the new home.
+// Installs paired earlier keep calling the inboxies.email API, which still works.
+const LEGACY_API_URL = "https://inboxies.email";
 const PAIR_WINDOW_MS = 10 * 60 * 1000;
 const RECENT_LIMIT = 50;
 const ALIAS_CACHE_MS = 5 * 60 * 1000;
@@ -67,7 +70,8 @@ async function publicStatus() {
 }
 
 async function startPair(apiUrl) {
-	const origin = originOf(apiUrl || DEFAULT_API_URL);
+	let origin = originOf(apiUrl || DEFAULT_API_URL);
+	if (origin === LEGACY_API_URL) origin = DEFAULT_API_URL;
 	if (!origin) return { ok: false, error: "Use an https:// server address." };
 	await chrome.storage.local.set({ pendingPair: { origin, at: Date.now() } });
 	await chrome.tabs.create({ url: `${origin}/extension/connect` });

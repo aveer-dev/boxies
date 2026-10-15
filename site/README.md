@@ -59,7 +59,7 @@ Copy lives in `src/data/*.ts`, one module per surface, and each entry carries it
 
 Three things outside this folder decide whether the site works on day one. Until each is done, the site stays honest by its defaults, but visitors hit a wall.
 
-1. **The web app's Access wall.** `inboxies.app` sits behind Cloudflare Access, so a signed-out visitor sent to sign up gets an Access login instead. Add an Access bypass for `/login`, `/assets/*`, `/*.data`, `/__manifest` and `/favicon.ico`, and check that signing in from `/login` lands in the app. Until then, build with `flags.webAppPublic = false` (the CTAs become the iPhone beta). Open question 1.
+1. **The web app's Access wall.** Done (15 Oct 2026): signed-out visitors reach `https://inboxies.app/login`, and the app's assets, invite, reset and checkout pages load without an Access login. A signed-out visit to any other app page lands on `/login`. inboxies.email web pages redirect to inboxies.app.
 2. **The `inboxies.co` zone.** It's still on Namecheap DNS, and the custom domains, the www redirect and Email Service all need an active Cloudflare zone. Deploying, step 0.
 3. **Contact form delivery.** Onboard `inboxies.co` to Email Service and verify `support@inboxies.email` as an Email Routing destination (Contact form, steps 1–2). Until then the form answers 503 and falls back to the visitor's email app.
 
@@ -160,7 +160,7 @@ Alt text and clip lengths live in `src/data/media.ts`. Update them if what's on 
 
 Spec §10. The site ships with each default until it's answered.
 
-- [ ] **1. Launch blocker.** Does a signed-out visitor to `https://inboxies.app/login` reach “Get started”, not a Cloudflare Access wall? The owner has to open it to signed-out visitors: an Access bypass for `/login`, `/assets/*`, `/*.data`, `/__manifest` and `/favicon.ico` (the page won't load its scripts without them), and a check that a new sign-in from `/login` gets into the app. Should CTAs deep-link (e.g. `?start=personal`)? Default: every CTA goes to `SIGN_UP_URL`; set `flags.webAppPublic = false` until it passes.
+- [x] **1.** Can a signed-out visitor to `https://inboxies.app/login` reach “Get started”? Yes (15 Oct 2026): the Access bypass is live. Should CTAs deep-link (e.g. `?start=personal`)? Default: every CTA goes to `SIGN_UP_URL`. If Access ever walls `/login` again, set `flags.webAppPublic = false`.
 - [ ] **2.** Is the personal @inboxies.email address free long-term? Default: “No charge today”, the CTA says “Get started — free”, never “free forever”.
 - [ ] **3.** Does connecting your own domain stay $0? Default: “No charge today”.
 - [ ] **4.** Cancelling a registered domain: is “write to support and we'll help” OK, and what happens to the domain? Refund and renewal-price policy? Default: the cancel FAQ shows that line, with no refund or renewal answer.
