@@ -13,12 +13,13 @@
  */
 
 import type { Context, Hono } from "hono";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getAuth } from "../auth";
 import { revokeAppleTokens, storeAppleRefreshToken } from "../auth/apple";
 import { authDb, listDomainsForUser, listMailboxesForUser, removeMailboxMember, type AuthDb } from "../auth/authz";
 import { isHostedEmailDomain } from "../auth/hooks";
+import { deleteLegacyIdentityForUser } from "../auth/migrate";
 import { appBaseUrl, codeEmail, sendSystemEmail } from "../auth/mail";
 import { deleteMailboxRows, pruneDeviceTokensToMembership } from "../auth/mailboxes";
 import { consumeLinkToken, consumeOtp, issueLinkToken, issueOtp, revokeLinkTokens } from "../auth/otp";
@@ -176,8 +177,9 @@ async function purgeMailbox(env: Env, db: AuthDb, mailboxId: string): Promise<vo
 
 /**
  * Delete the user: mailboxes they solely own are purged, shared ones just
- * lose them; Apple tokens are revoked; sessions, accounts and memberships go
- * with the user row.
+ * lose them; Apple tokens are revoked; pre-D1 identity records in R2
+ * (contact/recovery emails, password hash, sign-in links) are deleted;
+ * sessions, accounts and memberships go with the user row.
  */
 export async function deleteUserAccount(env: Env, userId: string) {
 	const db = authDb(env.AUTH_DB);
@@ -201,6 +203,14 @@ export async function deleteUserAccount(env: Env, userId: string) {
 		leftMailboxes.push(mailboxId);
 	}
 	await revokeAppleTokens(env, db, userId);
+	// Before the account rows go: they hold the Apple/Google subs the legacy
+	// sign-in links are keyed by.
+	const socialSubs = await db
+		.select({ sub: schema.account.accountId })
+		.from(schema.account)
+		.where(and(eq(schema.account.userId, userId), inArray(schema.account.providerId, ["apple", "google"])))
+		.all();
+	const legacyKeys = await deleteLegacyIdentityForUser(env.BUCKET, userId, socialSubs.map((a) => a.sub));
 	const ctx = await getAuth(env).$context;
 	await ctx.internalAdapter.deleteUser(userId);
 	await db.insert(schema.auditLog).values({
@@ -208,7 +218,7 @@ export async function deleteUserAccount(env: Env, userId: string) {
 		actorUserId: userId,
 		action: "user.delete",
 		target: userId,
-		detail: JSON.stringify({ deletedMailboxes, leftMailboxes }),
+		detail: JSON.stringify({ deletedMailboxes, leftMailboxes, legacyIdentityRecords: legacyKeys.length }),
 	});
 	return { deletedMailboxes, leftMailboxes };
 }

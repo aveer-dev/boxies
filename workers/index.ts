@@ -42,7 +42,7 @@ import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
 } from "../shared/agent-conversations";
-import { getEmailAgent, purgeEmailAgents } from "./lib/email-agent";
+import { getEmailAgent, purgeEmailAgent, purgeEmailAgents } from "./lib/email-agent";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
@@ -1271,7 +1271,14 @@ app.delete(
 		}
 		const stub = c.var.mailboxStub as any;
 		const ok = await stub.deleteAgentConversation(conversationId);
-		return ok ? c.body(null, 204) : c.json({ error: "Conversation not found" }, 404);
+		if (!ok) return c.json({ error: "Conversation not found" }, 404);
+		// The registry row is gone; wipe the chat itself. On failure the
+		// tombstone stays and mailbox purge retries it.
+		const name = agentInstanceName(c.var.mailboxId, conversationId);
+		if (await purgeEmailAgent(c.env, name)) {
+			await stub.clearAgentConversationTombstone(conversationId);
+		}
+		return c.body(null, 204);
 	},
 );
 
