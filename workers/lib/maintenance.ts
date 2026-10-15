@@ -28,7 +28,7 @@ import * as schema from "../auth/schema";
 import type { Env } from "../types";
 import { deleteZone, getZone } from "./cloudflare-client";
 import { deleteDomainMetadata, getDomainMetadata, saveDomainMetadata } from "./domain-registry";
-import { EXPORTS_JOB_PREFIX, type ExportJob } from "./email-exporter";
+import { EXPORTS_JOB_PREFIX, deleteExportScratch, type ExportJob } from "./email-exporter";
 import { listAllR2Objects } from "./r2-list";
 import { sendServiceReminders } from "./service-reminders";
 
@@ -147,6 +147,8 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 			}
 			if (new Date(job.expiresAt).getTime() >= now.getTime()) continue;
 			if (job.downloadKey) await env.BUCKET.delete(job.downloadKey);
+			// Scratch data a stalled background export left behind.
+			if (job.status !== "completed") await deleteExportScratch(env.BUCKET, job.id);
 			await env.BUCKET.delete(obj.key);
 			report.exportsDeleted++;
 		}
