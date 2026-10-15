@@ -31,7 +31,7 @@ Use Firebase only as a **console**: the Firebase project behind FCM is a Google 
 ### 1. Pick the project and set up the consent screen (once)
 
 1. Open the Firebase project that already serves FCM for `co.inboxies.app`. Click its **Google Cloud** link so you're in the same project.
-2. Prove you own the domains. In [Google Search Console](https://search.google.com/search-console), signed in as an **Owner or Editor of this Cloud project**, add a **Domain** property for each of `inboxies.co` and `inboxies.email` (and `inboxies.app` once the web app serves there). Search Console gives you a `google-site-verification=…` TXT record; add it at the zone apex in Cloudflare DNS (or use Search Console's Cloudflare shortcut), then click **Verify**. Wait 24 hours before asking Google to re-check branding.
+2. Prove you own the domains. In [Google Search Console](https://search.google.com/search-console), signed in as an **Owner or Editor of this Cloud project**, add a **Domain** property for each of `inboxies.co`, `inboxies.app` (the web app) and `inboxies.email`. Search Console gives you a `google-site-verification=…` TXT record; add it at the zone apex in Cloudflare DNS (or use Search Console's Cloudflare shortcut), then click **Verify**. Wait 24 hours before asking Google to re-check branding.
 3. Go to **Google Auth Platform → Branding** and use exactly these values:
 
    | Field | Value |
@@ -41,10 +41,10 @@ Use Firebase only as a **console**: the Firebase project behind FCM is a Google 
    | Application home page | `https://inboxies.co` |
    | Privacy policy | `https://inboxies.co/privacy` |
    | Terms of service | `https://inboxies.co/terms` |
-   | Authorized domains | `inboxies.co`, `inboxies.email` (add `inboxies.app` when it serves) |
+   | Authorized domains | `inboxies.co`, `inboxies.app`, `inboxies.email` |
 
    Why these values:
-   - The home page must load for a signed-out visitor, say what the app does, and link the privacy policy. `inboxies.co` does all three; the web app doesn't (it's behind Cloudflare Access).
+   - The home page must load for a signed-out visitor, say what the app does, and link the privacy policy. `inboxies.co` does all three; the web app at `inboxies.app` doesn't (it's behind Cloudflare Access).
    - The home page and privacy policy must be on the same domain, and that domain must be in **Authorized domains** and verified in Search Console. Otherwise Google reports "not a valid domain" or "not registered to you".
    - The privacy policy has a [Sign in with Google](https://inboxies.co/legal#privacy-google) clause, with the Limited Use statement reviewers look for.
 4. Under **Audience**, choose **External** and click **Publish app**. While the app is in *Testing*, only listed test users can sign in.
@@ -57,10 +57,11 @@ Use Firebase only as a **console**: the Firebase project behind FCM is a Google 
    - Enabling this provider is only a shortcut that creates *"Web client (auto created by Google Service)"*. Nothing calls Firebase Auth.
    - Instead, you can create it directly in **Cloud Console → APIs & Services → Credentials → Create OAuth client → Web application**.
 2. Edit that client in Cloud Console. Under **Authorized JavaScript origins**, add these (GIS needs them):
+   - `https://inboxies.app`
    - `https://inboxies.email`
    - `http://localhost:5173`
    - `http://localhost`
-3. Under **Authorized redirect URIs**, add `https://inboxies.email/api/auth/callback/google`. This is only needed if you ever use Better Auth's redirect flow. The ID-token flow doesn't use it, but adding it costs nothing.
+3. Under **Authorized redirect URIs**, add `https://inboxies.app/api/auth/callback/google` and `https://inboxies.email/api/auth/callback/google`. This is only needed if you ever use Better Auth's redirect flow. The ID-token flow doesn't use it, but adding it costs nothing.
 
 ### 3. Configure the Worker
 
