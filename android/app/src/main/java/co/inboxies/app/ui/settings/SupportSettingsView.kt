@@ -13,8 +13,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.AlternateEmail
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Lightbulb
+import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -126,6 +128,18 @@ fun SupportSettingsView(
                 title = "Send Feedback",
                 icon = Icons.Outlined.Lightbulb,
                 onClick = { composeToSupport("Inboxies Feedback") },
+            )
+
+            SettingsSectionHeader("Legal")
+            SettingsActionRow(
+                title = "Terms of Use",
+                icon = Icons.Outlined.Description,
+                onClick = { openUrl(AppConfig.TERMS_URL) },
+            )
+            SettingsActionRow(
+                title = "Privacy Policy",
+                icon = Icons.Outlined.PanTool,
+                onClick = { openUrl(AppConfig.PRIVACY_URL) },
             )
 
             SettingsSectionHeader("Community")
