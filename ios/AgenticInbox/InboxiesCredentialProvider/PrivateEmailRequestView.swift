@@ -19,7 +19,9 @@ final class PrivateEmailRequest {
     private(set) var state: LoadState = .loading
     private(set) var emails: [PrivateEmail] = []
     private(set) var isCreating = false
-    private(set) var createError: String?
+    /// Transient explanation when an action can't go ahead (signed out, create failed).
+    private(set) var toast: Toast?
+    private var toastDismissTask: Task<Void, Never>?
     var query = ""
 
     var onFill: ((String) -> Void)?
@@ -79,8 +81,11 @@ final class PrivateEmailRequest {
 
     func create() {
         guard !isCreating else { return }
+        guard PrivateEmailClient.isSignedIn else {
+            showSignedOutToast()
+            return
+        }
         isCreating = true
-        createError = nil
         Task {
             defer { isCreating = false }
             do {
@@ -90,15 +95,39 @@ final class PrivateEmailRequest {
                 onFill?(created.address)
             } catch PrivateEmailClient.Failure.signedOut {
                 state = .signedOut
+                showSignedOutToast()
             } catch {
-                createError = error.localizedDescription
+                showToast(Toast(title: "Couldn’t create a private email", message: error.localizedDescription))
             }
+        }
+    }
+
+    private func showSignedOutToast() {
+        showToast(Toast(
+            title: "You’re signed out of Inboxies",
+            message: "Open the Inboxies app and sign in, then try again."
+        ))
+    }
+
+    private func showToast(_ toast: Toast) {
+        toastDismissTask?.cancel()
+        self.toast = toast
+        toastDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.toast = nil
         }
     }
 
     func cancel() {
         onCancel?()
     }
+}
+
+struct Toast: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 /// AutoFill sheet in the app's chrome: Inter, AppTheme tokens, xmark close.
@@ -113,6 +142,14 @@ struct PrivateEmailRequestView: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(AppTheme.background)
+                // Inside the search inset, so the toast sits just above the bar.
+                .overlay(alignment: .bottom) {
+                    if let toast = model.toast {
+                        toastView(toast)
+                    }
+                }
+                .animation(.spring(response: 0.32, dampingFraction: 0.86), value: model.toast?.id)
+                .sensoryFeedback(.warning, trigger: model.toast?.id) { _, new in new != nil }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     if model.state != .signedOut {
                         searchBar
@@ -162,9 +199,45 @@ struct PrivateEmailRequestView: View {
             }
             .frame(width: 32, height: 32)
         }
-        .disabled(model.isCreating || model.state == .signedOut)
+        // Never disabled while signed out: tapping explains why it can't create.
+        .disabled(model.isCreating)
         .accessibilityLabel(model.isCreating ? "Creating private email" : "Create new private email")
         .accessibilityHint(model.host.map { "Labelled \($0), then filled in" } ?? "Creates an address and fills it in")
+    }
+
+    // MARK: - Toast
+
+    /// Same chrome as the app's toasts (material, hairline, soft shadow), two
+    /// lines so it can say what to do next.
+    private func toastView(_ toast: Toast) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.inter(size: 15, weight: .semibold))
+                .foregroundStyle(AppTheme.ink)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toast.title)
+                    .font(.inter(size: 14, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                Text(toast.message)
+                    .font(.inter(size: 13))
+                    .foregroundStyle(AppTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isStaticText)
     }
 
     // MARK: - Search
@@ -229,15 +302,6 @@ struct PrivateEmailRequestView: View {
 
     private var list: some View {
         List {
-            if let createError = model.createError {
-                Section {
-                    Label(createError, systemImage: "exclamationmark.circle")
-                        .font(.inter(size: 13, weight: .medium))
-                        .foregroundStyle(AppTheme.deepDarkRed)
-                        .cardRow()
-                }
-            }
-
             if model.state == .loading {
                 Section {
                     ForEach(0..<5, id: \.self) { index in
