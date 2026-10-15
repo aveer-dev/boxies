@@ -466,5 +466,21 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		// Inbound dedup: a delivery claims its Message-ID before writing R2 or
+		// classifying, so concurrent deliveries of one message insert one row.
+		// Additive only; existing `emails` rows are left as they are.
+		name: "29_inbound_message_claims",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS inbound_message_claims (
+                message_id TEXT PRIMARY KEY,
+                claimed_at INTEGER NOT NULL,
+                claim_id TEXT NOT NULL,
+                email_id TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_inbound_message_claims_claimed_at
+                ON inbound_message_claims(claimed_at);
+        `),
+	},
 ];
 
