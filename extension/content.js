@@ -46,7 +46,7 @@
 	}
 
 	// Never decorate Inboxies itself.
-	if (location.hostname === "inboxies.email") return;
+	if (location.hostname === "inboxies.app" || location.hostname === "inboxies.email") return;
 
 	// The side panel follows the active tab, whose URL it can't always read.
 	chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

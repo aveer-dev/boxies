@@ -31,8 +31,12 @@ export interface Env extends Cloudflare.Env {
 	LEGACY_INVITE_ACCEPT?: string;
 	/** From address for invite emails (defaults to noreply@`MAIL_DOMAIN` / first `DOMAINS` / fallback). */
 	INVITE_FROM_EMAIL?: string;
-	/** Public site origin for invite links (defaults to request origin). */
-	APP_BASE_URL?: string;
+	/*
+	 * `APP_BASE_URL` (the web app's origin: Better Auth's base URL and trusted
+	 * origin, invite/reset links, Stripe returns; defaults to the request origin)
+	 * and `WEB_REDIRECT_HOSTS` (hosts whose web pages 301 there, see
+	 * `lib/web-host-redirect.ts`) are wrangler vars, so their types come from `Cloudflare.Env`.
+	 */
 	/** Primary mailbox domain suffix (e.g. `mail.example.com`).
 	 * Wins over the first `DOMAINS` entry for create-address UI and invite From.
 	 * When unset, falls back to first `DOMAINS` entry, then `inboxies.email`.

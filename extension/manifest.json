@@ -24,7 +24,7 @@
     "service_worker": "background.js"
   },
   "permissions": ["storage", "activeTab", "sidePanel"],
-  "host_permissions": ["https://inboxies.email/*"],
+  "host_permissions": ["https://inboxies.app/*", "https://inboxies.email/*"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "content_scripts": [
     {
