@@ -78,6 +78,7 @@ targets:
       - path: Inboxies/Shared
       - path: Inboxies/Config/AppConfig.swift
       - path: Inboxies/Theme/AppTheme.swift
+      - path: Inboxies/Theme/LiquidGlass.swift
       - path: Inboxies/Fonts
         buildPhase: resources
     settings:
