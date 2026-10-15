@@ -18,6 +18,10 @@ object AppConfig {
     val agentPathPrefix: String get() = AGENT_PATH_PREFIX
     const val PACKAGE_ID = "co.inboxies.app"
 
+    /** Legal pages live on the marketing site (`site/src/pages/legal.astro`); these redirect to its anchors. */
+    const val TERMS_URL = "https://inboxies.co/terms"
+    const val PRIVACY_URL = "https://inboxies.co/privacy"
+
     fun wsBaseURL(context: Context? = null): String {
         if (context != null) init(context)
         val http = apiBaseURL
