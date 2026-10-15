@@ -318,7 +318,7 @@ function AgentChatConnected({
 	}, [pendingAgentPrompt, consumeAgentPrompt]);
 
 	const agent = useAgent({ agent: "EmailAgent", name: mailboxId });
-	const { messages, sendMessage, status, setMessages, stop } =
+	const { messages, sendMessage, status, clearHistory, stop } =
 		useAgentChat({ agent });
 	const isStreaming = status === "streaming" || status === "submitted";
 
@@ -369,8 +369,10 @@ function AgentChatConnected({
 							label="Clear chat"
 							icon={TrashIcon}
 							onClick={() => {
+								// clearHistory wipes the agent's stored chat;
+								// setMessages([]) only upserts an empty list.
 								if (window.confirm("Clear chat history?")) {
-									setMessages([]);
+									clearHistory();
 								}
 							}}
 						/>
