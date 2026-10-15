@@ -1,10 +1,10 @@
 // Inboxies Private Email — background service worker.
 //
-// Holds the only copy of the session token. Content scripts and the popup
+// Holds the only copy of the session token. Content scripts and the side panel
 // talk to it through messages; content scripts never read storage.
 //
 // Session tokens come from <server>/extension/connect after the user presses
-// Connect in the popup, and are scoped by the Worker to private emails only
+// Connect in the side panel, and are scoped by the Worker to private emails only
 // (list mailboxes, list/create aliases).
 
 importScripts("site-match.js");
@@ -22,6 +22,8 @@ let aliasCache = null; // { key, at, aliases }
 
 // Keep storage away from content scripts (Chrome 120+ for storage.local).
 chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => {});
+// The toolbar button opens the side panel; there is no popup.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
 function originOf(url) {
 	try {
@@ -60,7 +62,7 @@ async function publicStatus() {
 		apiUrl: state.apiUrl,
 		mailboxes: state.mailboxes,
 		mailboxId: state.mailboxId ?? null,
-		recentAliases: state.recentAliases.slice(0, 5),
+		recentAliases: state.recentAliases.slice(0, 8),
 	};
 }
 
@@ -216,11 +218,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 	let work = null;
 	switch (message.action) {
 		case "CREATE_ALIAS":
-			// From the popup (active tab host) or a sign-up form's pill.
+			// From the side panel (active tab host) or a sign-up form's pill.
 			work = createAlias(message.host);
 			break;
 		case "SITE_ALIASES":
-			// A sign-up form's pill asks about its own page; the popup about the active tab.
+			// A sign-up form's pill asks about its own page; the side panel about the active tab.
 			work = siteAliases(isOurContentScript(sender) ? hostOf(sender.url) : message.host);
 			break;
 		case "PAIR":

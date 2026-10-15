@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Inboxies Private Email</title>
+		<style>
+			/* Brand tokens: the web client's monochrome palette (app/index.css). */
+			@font-face { font-family: "Inter"; font-weight: 400; font-display: swap; src: url("fonts/Inter-Regular.woff") format("woff"); }
+			@font-face { font-family: "Inter"; font-weight: 500; font-display: swap; src: url("fonts/Inter-Medium.woff") format("woff"); }
+			@font-face { font-family: "Inter"; font-weight: 600; font-display: swap; src: url("fonts/Inter-SemiBold.woff") format("woff"); }
+			:root {
+				--bg: #fcfcfc;
+				--bg-card: #f6f6f6;
+				--bg-card-hover: #f0f0f0;
+				--control: #ffffff;
+				--text-primary: #171717;
+				--text-strong: #404040;
+				--text-muted: #6b6b6b;
+				--text-subtle: #949494;
+				--border-subtle: #ebebeb;
+				--border-card: #e2e2e2;
+				--border-control: #d9d9d9;
+				--accent: #171717;
+				--accent-hover: #333333;
+				--accent-ink: #fcfcfc;
+				--accent-soft: rgba(0, 0, 0, 0.06);
+				--focus-ring: #8a8a8a;
+				--danger: #c4362f;
+				--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+				--spring: linear(0, 0.062, 0.197, 0.355, 0.506, 0.638, 0.745, 0.828, 0.889, 0.933, 0.962, 0.981, 0.993, 1, 1.003, 1.005, 1.005, 1.005, 1.004, 1.003, 1.002, 1.002, 1);
+				color-scheme: light;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--bg: #111111;
+					--bg-card: #191919;
+					--bg-card-hover: #222222;
+					--control: #171717;
+					--text-primary: #ececec;
+					--text-strong: #c4c4c4;
+					--text-muted: #969696;
+					--text-subtle: #6f6f6f;
+					--border-subtle: #212121;
+					--border-card: #2a2a2a;
+					--border-control: #363636;
+					--accent: #ececec;
+					--accent-hover: #d0d0d0;
+					--accent-ink: #111111;
+					--accent-soft: rgba(255, 255, 255, 0.08);
+					--focus-ring: #7d7d7d;
+					--danger: #f07a73;
+					color-scheme: dark;
+				}
+			}
+
+			* { box-sizing: border-box; margin: 0; padding: 0; }
+			[hidden] { display: none !important; }
+			html {
+				-webkit-font-smoothing: antialiased;
+				font-feature-settings: "cv11", "ss01";
+			}
+			body {
+				min-height: 100vh;
+				display: flex;
+				flex-direction: column;
+				background: var(--bg);
+				color: var(--text-primary);
+				font: 400 13px/1.45 Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+			}
+			::selection { background: var(--accent-soft); }
+
+			header.top { display: flex; align-items: center; gap: 6px; padding: 16px 16px 12px; }
+			.logo { width: 36px; height: 36px; margin: -4px -4px -4px -6px; flex-shrink: 0; color: var(--text-primary); }
+			header.top h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+			main { flex: 1; padding: 4px 16px 16px; display: flex; flex-direction: column; gap: 16px; }
+
+			.card { border: 1px solid var(--border-subtle); border-radius: 18px; background: var(--bg); padding: 14px; }
+			.muted { color: var(--text-muted); font-size: 12px; }
+			.lead { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+			.eyebrow { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+			h2 { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 6px; padding: 0 4px; }
+			label { display: block; font-size: 12px; font-weight: 500; color: var(--text-muted); margin: 14px 0 6px; }
+
+			input, select {
+				width: 100%; height: 36px; padding: 0 10px; border-radius: 9px; border: 0;
+				box-shadow: inset 0 0 0 1px var(--border-control); background: var(--control);
+				color: var(--text-primary); font: inherit; transition: box-shadow 160ms var(--ease-out);
+			}
+			input::placeholder { color: var(--text-subtle); }
+			input:focus, select:focus { outline: none; box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px var(--accent-soft); }
+
+			button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+			button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+			button:not(:disabled) { transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 150ms var(--ease-out); }
+			button:not(:disabled):active { transform: scale(0.97); }
+			button:disabled { opacity: 0.5; cursor: default; }
+			.btn {
+				display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 36px;
+				margin-top: 12px; padding: 0 12px; border-radius: 9px; font-weight: 500;
+			}
+			.btn.primary { background: var(--accent); color: var(--accent-ink); }
+			.btn.primary:not(:disabled):hover { background: var(--accent-hover); }
+			.link { color: var(--text-muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+			.link:hover { color: var(--text-primary); }
+
+			.site-host { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+			.site-empty { margin-top: 6px; }
+
+			.list { list-style: none; }
+			.site .list { margin-top: 10px; border-top: 1px solid var(--border-subtle); }
+			.list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+			.site .list li:last-child { border-bottom: 0; padding-bottom: 0; }
+			.list.boxed { border: 1px solid var(--border-subtle); border-radius: 18px; padding: 0 6px 0 14px; }
+			.list.boxed li:last-child { border-bottom: 0; }
+			.list .text { flex: 1; min-width: 0; }
+			.list .email { font-weight: 500; overflow-wrap: anywhere; }
+			.list .sub { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
+			.list li.fresh { animation: menu-in 220ms var(--ease-out) backwards; }
+
+			.icon-btn {
+				position: relative; isolation: isolate; flex-shrink: 0; width: 32px; height: 32px;
+				display: grid; place-items: center; border-radius: 9px; color: var(--text-muted);
+			}
+			.icon-btn::before {
+				content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: var(--bg-card-hover);
+				opacity: 0; transform: scale(0.7); transition: opacity 160ms var(--ease-out), transform 280ms var(--spring);
+			}
+			.icon-btn:hover { color: var(--text-primary); }
+			.icon-btn:hover::before { opacity: 1; transform: scale(1); }
+			.icon-btn svg { width: 16px; height: 16px; transition: transform 280ms var(--spring); }
+			.icon-btn:hover svg { transform: translateY(-1px) scale(1.08); }
+			.icon-btn.copied { color: var(--text-primary); }
+			.icon-btn.copied svg { animation: pop 360ms var(--spring) backwards; }
+
+			.status { margin-top: 8px; font-size: 12px; color: var(--text-muted); min-height: 0; }
+			.error { margin-top: 8px; font-size: 12px; color: var(--danger); }
+
+			footer {
+				display: flex; align-items: center; justify-content: space-between; gap: 12px;
+				padding: 12px 16px 16px; border-top: 1px solid var(--border-subtle);
+			}
+			footer .who { min-width: 0; }
+			footer .who div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+			#footMailbox { font-size: 12px; font-weight: 500; }
+
+			@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
+			@keyframes pop { 0% { transform: scale(0.6); } 60% { transform: scale(1.18); } }
+			@media (prefers-reduced-motion: reduce) {
+				*, *::before { animation: none !important; transition: none !important; }
+			}
+		</style>
+	</head>
+	<body>
+		<header class="top">
+			<svg class="logo" aria-hidden="true" viewBox="0 0 512 512">
+				<path fill="currentColor" fill-rule="evenodd" d="M 384.7,107.2 L 398.9,109.1 L 409.2,117.2 L 413.5,128.5 L 412.1,141.7 L 308.2,391.1 L 303.0,400.0 L 294.0,404.8 L 288.8,404.8 L 281.7,401.9 L 228.4,357.5 L 195.3,399.6 L 187.8,403.3 L 177.4,400.5 L 172.2,393.0 L 154.2,289.1 L 102.3,238.1 L 98.5,230.5 L 99.0,221.5 L 104.6,213.5 L 112.7,209.7 L 371.9,111.0 L 384.2,107.7 Z M 404.5,115.7 L 400.7,112.4 L 393.2,109.6 L 380.9,110.1 L 106.5,214.9 L 101.3,221.5 L 101.3,225.8 L 124.9,228.1 L 396.5,122.3 L 404.1,116.2 Z M 407.8,119.5 L 406.4,117.6 L 405.0,118.1 L 397.0,128.0 L 290.7,375.5 L 294.5,401.9 L 299.7,400.0 L 304.9,393.4 L 409.2,143.1 L 411.1,137.0 L 411.1,127.1 L 408.3,120.0 Z M 387.1,129.0 L 388.0,128.5 L 386.6,128.0 L 130.6,227.2 L 244.4,228.1 L 386.6,129.4 Z M 393.2,132.3 L 386.1,137.9 L 272.8,257.9 L 290.2,372.2 L 392.7,132.7 Z M 385.6,133.7 L 385.2,132.7 L 378.6,137.0 L 247.3,228.1 L 245.8,230.0 L 248.2,242.8 L 244.9,231.4 L 240.7,229.6 L 126.8,231.0 L 176.4,274.9 L 177.8,273.9 L 176.9,275.4 L 180.7,300.9 L 184.0,357.5 L 184.0,354.7 L 182.6,354.2 L 176.0,278.2 L 158.5,288.6 L 159.9,285.8 L 174.1,276.8 L 174.1,275.4 L 124.0,230.5 L 100.9,227.7 L 103.2,235.7 L 150.9,281.5 L 156.1,288.1 L 174.1,391.5 L 179.3,399.1 L 183.0,401.0 L 184.0,400.0 L 199.6,332.0 L 214.2,316.9 L 223.2,319.8 L 259.5,354.2 L 278.0,368.9 L 287.9,374.1 L 270.4,259.8 L 230.7,301.8 L 218.0,312.7 L 269.9,257.4 L 269.5,246.6 L 201.0,313.1 L 196.3,321.6 L 193.4,335.8 L 192.5,334.4 L 191.5,349.5 L 191.1,348.1 L 190.1,350.0 L 190.6,343.4 L 195.3,320.2 L 202.4,308.9 L 222.2,289.1 L 341.7,174.3 L 340.3,175.7 L 341.7,176.7 L 271.3,244.7 L 272.3,255.1 L 380.0,141.7 L 379.0,140.8 L 374.3,144.1 L 367.7,152.1 L 363.9,155.4 L 363.0,154.0 L 361.6,155.4 L 385.2,134.2 Z M 236.9,233.3 L 239.2,233.8 L 223.2,245.1 L 200.0,260.7 L 197.2,260.7 L 196.7,263.1 L 195.8,261.7 L 195.8,263.6 L 193.0,263.6 L 236.4,233.8 Z M 271.3,367.5 L 271.3,375.5 L 263.3,383.5 L 282.7,400.0 L 288.4,402.4 L 292.6,401.9 L 288.8,376.9 L 270.9,367.0 Z" />
+				<g transform="translate(44, 40) scale(0.40)" stroke="currentColor" stroke-width="16" stroke-linejoin="round">
+					<path d="M 108,36 C 96,46 62,56 46,60 L 46,122 C 46,162 80,188 108,198 L 108,36 Z" fill="#ffffff" />
+					<path d="M 108,36 L 108,198 C 136,188 170,162 170,122 L 170,60 C 154,56 120,46 108,36 Z" fill="#000000" />
+				</g>
+			</svg>
+			<h1>Private email</h1>
+		</header>
+
+		<main>
+			<section id="disconnected" hidden>
+				<div class="card">
+					<p class="lead">Give every site its own address</p>
+					<p class="muted">
+						Connect your Inboxies account to create private emails from any sign-up form. The extension can
+						create private emails but can't read or send your mail.
+					</p>
+					<label for="apiUrl">Server</label>
+					<input id="apiUrl" type="url" placeholder="https://inboxies.email" spellcheck="false" autocomplete="off" />
+					<button id="connect" class="btn primary" type="button">Connect to Inboxies</button>
+					<p id="connectNote" class="status" role="status" hidden>Finish connecting in the tab that just opened.</p>
+					<p id="connectError" class="error" role="alert" hidden></p>
+				</div>
+			</section>
+
+			<section id="connected" hidden>
+				<div class="card site">
+					<div class="eyebrow">This site</div>
+					<div id="siteHost" class="site-host"></div>
+					<p id="siteEmpty" class="muted site-empty" hidden></p>
+					<ul id="siteAliases" class="list"></ul>
+					<div id="mailboxField" hidden>
+						<label for="mailbox">Create in</label>
+						<select id="mailbox"></select>
+					</div>
+					<button id="create" class="btn primary" type="button">Create private email</button>
+					<p id="createStatus" class="status" role="status" hidden></p>
+					<p id="createError" class="error" role="alert" hidden></p>
+				</div>
+			</section>
+
+			<section id="recentSection" hidden>
+				<h2>Recent</h2>
+				<ul id="recent" class="list boxed"></ul>
+				<p id="recentEmpty" class="muted">Private emails you create show up here.</p>
+			</section>
+		</main>
+
+		<footer id="footer" hidden>
+			<div class="who">
+				<div id="footMailbox"></div>
+				<div id="server" class="muted"></div>
+			</div>
+			<button id="disconnect" class="link" type="button">Disconnect</button>
+		</footer>
+
+		<script src="sidepanel.js"></script>
+	</body>
+</html>

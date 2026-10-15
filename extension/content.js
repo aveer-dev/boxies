@@ -3,7 +3,8 @@
 // 1. On sign-up forms, shows a "Private email" pill next to email fields. If
 //    the site already has private emails it offers those first; otherwise it
 //    creates one and fills it in.
-// 2. On <server>/extension/connect, relays the pairing message from the page
+// 2. Tells the side panel which site the tab is on.
+// 3. On <server>/extension/connect, relays the pairing message from the page
 //    to the background worker (which checks the origin the user chose).
 (function () {
 	const PING = "inboxies:extension-ping";
@@ -46,6 +47,13 @@
 
 	// Never decorate Inboxies itself.
 	if (location.hostname === "inboxies.email") return;
+
+	// The side panel follows the active tab, whose URL it can't always read.
+	chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+		if (sender.id !== chrome.runtime.id || message?.action !== "PAGE_HOST") return false;
+		sendResponse({ host: location.hostname });
+		return false;
+	});
 
 	const TEXT_TYPES = new Set(["", "email", "text"]);
 	const attached = new Map(); // input -> cleanup()
@@ -102,43 +110,59 @@
 		const shadow = host.attachShadow({ mode: "closed" });
 		shadow.innerHTML = `
 			<style>
-				:host { all: initial; }
-				.pill {
-					display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 6px;
-					border-radius: 9999px; border: 1px solid #e3e2e0; background: #ffffff; color: #37352f;
-					font: 500 12px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-					box-shadow: 0 1px 3px rgba(15, 15, 15, 0.12); cursor: pointer; white-space: nowrap;
+				/* Brand tokens from the web client (app/index.css), monochrome. */
+				:host {
+					all: initial;
+					--bg: #fcfcfc; --control: #ffffff; --hover: #f0f0f0; --text: #171717; --muted: #6b6b6b;
+					--line: #ebebeb; --border: #d9d9d9; --focus: #8a8a8a;
+					--shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+					--shadow-menu: 0px .8px 2.925px 0px #00000005, 0px 2.025px 7.847px 0px #00000007, 0px 4px 18px 0px #0000000a, 0 0 0 1px rgba(0, 0, 0, 0.06);
+					--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+					--font: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 				}
-				.pill:hover { border-color: #2383e2; }
-				.pill:focus-visible { outline: 2px solid #2383e2; outline-offset: 2px; }
+				@media (prefers-color-scheme: dark) {
+					:host {
+						--bg: #1a1a1a; --control: #171717; --hover: #222222; --text: #ececec; --muted: #969696;
+						--line: #2a2a2a; --border: #363636; --focus: #7d7d7d;
+						--shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+						--shadow-menu: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.5);
+					}
+				}
+				.pill {
+					display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 4px;
+					border-radius: 9999px; border: 1px solid var(--border); background: var(--control); color: var(--text);
+					font: 500 12px/1 var(--font); font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
+					box-shadow: var(--shadow); cursor: pointer; white-space: nowrap;
+					transition: background-color 150ms var(--ease-out), transform 150ms var(--ease-out);
+				}
+				.pill:hover { background: var(--hover); }
+				.pill:active { transform: scale(0.97); }
+				.pill:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 				.pill[aria-busy="true"] { cursor: progress; opacity: 0.7; }
-				.icon { width: 16px; height: 16px; flex-shrink: 0; border-radius: 4px; overflow: hidden; }
-				.chevron { display: none; width: 10px; height: 10px; margin-left: -2px; color: #787774; }
+				.icon { width: 16px; height: 16px; flex-shrink: 0; }
+				.chevron { display: none; width: 10px; height: 10px; margin-left: -2px; color: var(--muted); }
 				.pill[aria-haspopup] .chevron { display: block; }
 				[hidden] { display: none !important; }
 				.menu {
 					position: absolute; top: 30px; right: 0; min-width: 240px; max-width: 320px; padding: 4px;
-					border-radius: 10px; border: 1px solid #e3e2e0; background: #ffffff; color: #37352f;
-					font: 400 13px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-					box-shadow: 0 8px 24px rgba(15, 15, 15, 0.16), 0 1px 3px rgba(15, 15, 15, 0.08);
+					border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: var(--shadow-menu);
+					font: 400 13px/1.4 var(--font); font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
+					transform-origin: top right; animation: menu-in 160ms var(--ease-out) backwards;
 				}
-				.menu.up { top: auto; bottom: 30px; }
+				.menu.up { top: auto; bottom: 30px; transform-origin: bottom right; }
 				.menu.left { right: auto; left: 0; }
-				.heading { padding: 6px 8px 4px; font-size: 11px; font-weight: 600; color: #787774; }
+				.heading { padding: 6px 8px 4px; font-size: 11px; font-weight: 500; color: var(--muted); }
 				.item {
-					display: block; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none;
-					color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere;
+					display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
+					background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere;
 				}
-				.item:hover, .item:focus-visible { background: #f1f1ef; outline: none; }
-				.item.create { color: #2383e2; font-weight: 500; }
-				.sep { height: 1px; margin: 4px 0; background: #e9e9e7; }
-				@media (prefers-color-scheme: dark) {
-					.pill { background: #252525; color: #e6e6e5; border-color: #3a3a3a; }
-					.chevron, .heading { color: #9b9a97; }
-					.menu { background: #252525; color: #e6e6e5; border-color: #3a3a3a; }
-					.item:hover, .item:focus-visible { background: #2f2f2f; }
-					.item.create { color: #529cca; }
-					.sep { background: #2f2f2f; }
+				.item:hover, .item:focus-visible { background: var(--hover); outline: none; }
+				.item.create { font-weight: 500; }
+				.item.create svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--muted); }
+				.sep { height: 1px; margin: 4px 0; background: var(--line); }
+				@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
+				@media (prefers-reduced-motion: reduce) {
+					.pill, .menu { transition: none; animation: none; }
 				}
 			</style>
 			<button type="button" class="pill" aria-label="Create a private email for this site">
@@ -160,7 +184,10 @@
 				<div class="heading"></div>
 				<div class="items"></div>
 				<div class="sep" role="separator"></div>
-				<button type="button" class="item create" role="menuitem">Create new private email</button>
+				<button type="button" class="item create" role="menuitem">
+					<svg aria-hidden="true" viewBox="0 0 14 14"><path d="M7 2.5v9M2.5 7h9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+					Create new private email
+				</button>
 			</div>
 		`;
 		const btn = shadow.querySelector(".pill");
