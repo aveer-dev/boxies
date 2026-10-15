@@ -1,18 +1,32 @@
 // Inboxies Private Email — background service worker.
 //
-// Holds the only copy of the session token. Content scripts and the popup
+// Holds the only copy of the session token. Content scripts and the side panel
 // talk to it through messages; content scripts never read storage.
 //
 // Session tokens come from <server>/extension/connect after the user presses
-// Connect in the popup, and are scoped by the Worker to private emails only
+// Connect in the side panel, and are scoped by the Worker to private emails only
 // (list mailboxes, list/create aliases).
 
-const DEFAULT_API_URL = "https://inboxies.email";
+importScripts("site-match.js");
+const { siteOf, labelMatchesSite } = globalThis.InboxiesSiteMatch;
+
+const DEFAULT_API_URL = "https://inboxies.app";
+// The web app moved here; inboxies.email pages redirect, so pair with the new home.
+// Installs paired earlier keep calling the inboxies.email API, which still works.
+const LEGACY_API_URL = "https://inboxies.email";
 const PAIR_WINDOW_MS = 10 * 60 * 1000;
 const RECENT_LIMIT = 50;
+const ALIAS_CACHE_MS = 5 * 60 * 1000;
+const SITE_ALIAS_LIMIT = 5;
+
+// Every mailbox's private emails, for matching sites. Memory only: a restarted
+// worker just lists them again.
+let aliasCache = null; // { key, at, aliases }
 
 // Keep storage away from content scripts (Chrome 120+ for storage.local).
 chrome.storage.local.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" }).catch(() => {});
+// The toolbar button opens the side panel; there is no popup.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
 function originOf(url) {
 	try {
@@ -51,12 +65,13 @@ async function publicStatus() {
 		apiUrl: state.apiUrl,
 		mailboxes: state.mailboxes,
 		mailboxId: state.mailboxId ?? null,
-		recentAliases: state.recentAliases.slice(0, 5),
+		recentAliases: state.recentAliases.slice(0, 8),
 	};
 }
 
 async function startPair(apiUrl) {
-	const origin = originOf(apiUrl || DEFAULT_API_URL);
+	let origin = originOf(apiUrl || DEFAULT_API_URL);
+	if (origin === LEGACY_API_URL) origin = DEFAULT_API_URL;
 	if (!origin) return { ok: false, error: "Use an https:// server address." };
 	await chrome.storage.local.set({ pendingPair: { origin, at: Date.now() } });
 	await chrome.tabs.create({ url: `${origin}/extension/connect` });
@@ -92,6 +107,7 @@ async function completePair(payload, sender) {
 }
 
 async function disconnect() {
+	aliasCache = null;
 	await chrome.storage.local.remove(["token", "expiresAt", "mailboxes", "mailboxId", "pendingPair"]);
 	return { ok: true };
 }
@@ -101,6 +117,66 @@ async function selectMailbox(mailboxId) {
 	if (!state.mailboxes.includes(mailboxId)) return { ok: false, error: "Unknown mailbox." };
 	await chrome.storage.local.set({ mailboxId });
 	return { ok: true };
+}
+
+function hostOf(url) {
+	try {
+		return new URL(url).hostname;
+	} catch {
+		return null;
+	}
+}
+
+class SessionExpired extends Error {}
+
+async function listMailboxAliases(state, mailboxId) {
+	const res = await fetch(`${state.apiUrl}/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases`, {
+		credentials: "omit",
+		headers: { Authorization: `Bearer ${state.token}` },
+	});
+	if (res.status === 401 || res.status === 403) throw new SessionExpired();
+	if (!res.ok) throw new Error(`Request failed (${res.status})`);
+	const { aliases } = await res.json();
+	return Array.isArray(aliases) ? aliases.map((alias) => ({ ...alias, mailbox_id: mailboxId })) : [];
+}
+
+async function listAllAliases(state) {
+	const key = [state.apiUrl, state.token, ...state.mailboxes].join("\n");
+	if (aliasCache?.key === key && Date.now() - aliasCache.at < ALIAS_CACHE_MS) return aliasCache.aliases;
+	const lists = await Promise.all(state.mailboxes.map((mailboxId) => listMailboxAliases(state, mailboxId)));
+	aliasCache = { key, at: Date.now(), aliases: lists.flat() };
+	return aliasCache.aliases;
+}
+
+const isUsable = (alias) => alias.is_active && (!alias.expires_at || Date.parse(alias.expires_at) > Date.now());
+
+/** Private emails already handed to this site, newest first. */
+async function siteAliases(host) {
+	const state = await getState();
+	if (!isConnected(state)) {
+		return { ok: false, error: state.token ? "session_expired" : "not_connected" };
+	}
+	const site = siteOf(host);
+	if (!site) return { ok: true, aliases: [] };
+
+	let matches;
+	try {
+		matches = (await listAllAliases(state))
+			.filter((alias) => isUsable(alias) && labelMatchesSite(alias.label, site))
+			.map((alias) => ({ email: alias.alias_email, mailboxId: alias.mailbox_id, createdAt: alias.created_at }));
+	} catch (err) {
+		if (err instanceof SessionExpired) return { ok: false, error: "session_expired" };
+		// Offline or server trouble: fall back to what this browser created.
+		matches = state.recentAliases
+			.filter((item) => labelMatchesSite(item.host, site))
+			.map((item) => ({ email: item.email, mailboxId: null, createdAt: item.createdAt }));
+	}
+	const seen = new Set();
+	const aliases = matches
+		.filter((alias) => alias.email && !seen.has(alias.email) && seen.add(alias.email))
+		.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+		.slice(0, SITE_ALIAS_LIMIT);
+	return { ok: true, site: site.domain, aliases };
 }
 
 async function createAlias(host) {
@@ -131,6 +207,7 @@ async function createAlias(host) {
 		return { ok: false, error: body.error || `Request failed (${res.status})` };
 	}
 	const { alias } = await res.json();
+	aliasCache = null;
 	const recents = [{ email: alias.alias_email, host: label || "", createdAt: alias.created_at }, ...state.recentAliases];
 	await chrome.storage.local.set({ recentAliases: recents.slice(0, RECENT_LIMIT) });
 	return { ok: true, email: alias.alias_email };
@@ -145,8 +222,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 	let work = null;
 	switch (message.action) {
 		case "CREATE_ALIAS":
-			// From the popup (active tab host) or a sign-up form's pill.
+			// From the side panel (active tab host) or a sign-up form's pill.
 			work = createAlias(message.host);
+			break;
+		case "SITE_ALIASES":
+			// A sign-up form's pill asks about its own page; the side panel about the active tab.
+			work = siteAliases(isOurContentScript(sender) ? hostOf(sender.url) : message.host);
 			break;
 		case "PAIR":
 			if (isOurContentScript(sender)) work = completePair(message.payload, sender);

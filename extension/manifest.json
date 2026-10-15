@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Inboxies Private Email",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Create Inboxies private emails from any sign-up form, so sites never see your real address.",
   "minimum_chrome_version": "120",
   "icons": {
@@ -10,7 +10,6 @@
     "128": "icons/icon-128.png"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_title": "Inboxies Private Email",
     "default_icon": {
       "16": "icons/icon-16.png",
@@ -18,11 +17,14 @@
       "128": "icons/icon-128.png"
     }
   },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage", "activeTab"],
-  "host_permissions": ["https://inboxies.email/*"],
+  "permissions": ["storage", "activeTab", "sidePanel"],
+  "host_permissions": ["https://inboxies.app/*", "https://inboxies.email/*"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
   "content_scripts": [
     {
