@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Inboxies Private Email",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Create Inboxies private emails from any sign-up form, so sites never see your real address.",
   "minimum_chrome_version": "120",
   "icons": {

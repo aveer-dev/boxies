@@ -1,7 +1,8 @@
 // Inboxies Private Email — content script.
 //
-// 1. On sign-up forms, shows a "Private email" pill next to email fields that
-//    creates a private email and fills it in.
+// 1. On sign-up forms, shows a "Private email" pill next to email fields. If
+//    the site already has private emails it offers those first; otherwise it
+//    creates one and fills it in.
 // 2. On <server>/extension/connect, relays the pairing message from the page
 //    to the background worker (which checks the origin the user chose).
 (function () {
@@ -49,6 +50,25 @@
 	const TEXT_TYPES = new Set(["", "email", "text"]);
 	const attached = new Map(); // input -> cleanup()
 
+	// Private emails this site already has. Asked once per page (the background
+	// worker caches the list), again after creating one or if asking failed.
+	let siteAliasesRequest = null;
+	let siteAliasesSite = null;
+	function loadSiteAliases() {
+		siteAliasesRequest ??= chrome.runtime
+			.sendMessage({ action: "SITE_ALIASES" })
+			.catch(() => null)
+			.then((res) => {
+				if (!res?.ok || !Array.isArray(res.aliases)) {
+					siteAliasesRequest = null;
+					return [];
+				}
+				siteAliasesSite = res.site || null;
+				return res.aliases;
+			});
+		return siteAliasesRequest;
+	}
+
 	function isEmailInput(el) {
 		if (!(el instanceof HTMLInputElement)) return false;
 		const type = (el.getAttribute("type") || "").toLowerCase();
@@ -93,8 +113,32 @@
 				.pill:focus-visible { outline: 2px solid #2383e2; outline-offset: 2px; }
 				.pill[aria-busy="true"] { cursor: progress; opacity: 0.7; }
 				.icon { width: 16px; height: 16px; flex-shrink: 0; border-radius: 4px; overflow: hidden; }
+				.chevron { display: none; width: 10px; height: 10px; margin-left: -2px; color: #787774; }
+				.pill[aria-haspopup] .chevron { display: block; }
+				[hidden] { display: none !important; }
+				.menu {
+					position: absolute; top: 30px; right: 0; min-width: 240px; max-width: 320px; padding: 4px;
+					border-radius: 10px; border: 1px solid #e3e2e0; background: #ffffff; color: #37352f;
+					font: 400 13px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+					box-shadow: 0 8px 24px rgba(15, 15, 15, 0.16), 0 1px 3px rgba(15, 15, 15, 0.08);
+				}
+				.menu.up { top: auto; bottom: 30px; }
+				.menu.left { right: auto; left: 0; }
+				.heading { padding: 6px 8px 4px; font-size: 11px; font-weight: 600; color: #787774; }
+				.item {
+					display: block; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; background: none;
+					color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere;
+				}
+				.item:hover, .item:focus-visible { background: #f1f1ef; outline: none; }
+				.item.create { color: #2383e2; font-weight: 500; }
+				.sep { height: 1px; margin: 4px 0; background: #e9e9e7; }
 				@media (prefers-color-scheme: dark) {
 					.pill { background: #252525; color: #e6e6e5; border-color: #3a3a3a; }
+					.chevron, .heading { color: #9b9a97; }
+					.menu { background: #252525; color: #e6e6e5; border-color: #3a3a3a; }
+					.item:hover, .item:focus-visible { background: #2f2f2f; }
+					.item.create { color: #529cca; }
+					.sep { background: #2f2f2f; }
 				}
 			</style>
 			<button type="button" class="pill" aria-label="Create a private email for this site">
@@ -108,10 +152,23 @@
 					</g>
 				</svg>
 				<span class="label">Private email</span>
+				<svg class="chevron" aria-hidden="true" viewBox="0 0 10 10">
+					<path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
 			</button>
+			<div class="menu" role="menu" aria-label="Private emails for this site" hidden>
+				<div class="heading"></div>
+				<div class="items"></div>
+				<div class="sep" role="separator"></div>
+				<button type="button" class="item create" role="menuitem">Create new private email</button>
+			</div>
 		`;
 		const btn = shadow.querySelector(".pill");
 		const label = shadow.querySelector(".label");
+		const menu = shadow.querySelector(".menu");
+		const menuHeading = shadow.querySelector(".heading");
+		const menuItems = shadow.querySelector(".items");
+		const createItem = shadow.querySelector(".create");
 		let hideTimer = null;
 		let busy = false;
 
@@ -129,15 +186,33 @@
 		function show() {
 			clearTimeout(hideTimer);
 			position();
+			// Learn whether this site already has private emails before the pill is pressed.
+			loadSiteAliases().then((aliases) => setHasMatches(aliases.length > 0));
 		}
+		const focusInside = () => document.activeElement === input || document.activeElement === host;
 		function scheduleHide() {
 			clearTimeout(hideTimer);
 			hideTimer = setTimeout(() => {
-				if (!busy && document.activeElement !== input) host.style.display = "none";
+				if (busy || focusInside()) return;
+				closeMenu();
+				host.style.display = "none";
 			}, 300);
 		}
 		function reposition() {
 			if (host.style.display !== "none") position();
+		}
+		function setHasMatches(hasMatches) {
+			if (hasMatches === btn.hasAttribute("aria-haspopup")) return;
+			if (hasMatches) {
+				btn.setAttribute("aria-haspopup", "menu");
+				btn.setAttribute("aria-expanded", "false");
+				btn.setAttribute("aria-label", "Choose a private email for this site");
+			} else {
+				btn.removeAttribute("aria-haspopup");
+				btn.removeAttribute("aria-expanded");
+				btn.setAttribute("aria-label", "Create a private email for this site");
+			}
+			reposition();
 		}
 		function resetLabel(delay) {
 			setTimeout(() => {
@@ -148,11 +223,64 @@
 			}, delay);
 		}
 
-		async function onClick(event) {
-			// Pages can't script a closed shadow root, but refuse synthetic clicks anyway.
-			if (!event.isTrusted || busy) return;
+		function onOutsidePointer(event) {
+			if (!event.composedPath().includes(host)) closeMenu();
+		}
+		function openMenu(aliases, site, focusFirst) {
+			menuHeading.textContent = site ? `Used on ${site}` : "Used on this site";
+			menuItems.replaceChildren(
+				...aliases.map((alias) => {
+					const item = document.createElement("button");
+					item.type = "button";
+					item.className = "item";
+					item.setAttribute("role", "menuitem");
+					item.textContent = alias.email;
+					item.addEventListener("click", (event) => {
+						if (!event.isTrusted) return;
+						closeMenu();
+						setInputValue(input, alias.email);
+						label.textContent = "Filled";
+						busy = true;
+						resetLabel(1200);
+					});
+					return item;
+				}),
+			);
+			menu.classList.remove("up", "left");
+			menu.hidden = false;
+			btn.setAttribute("aria-expanded", "true");
+			const rect = menu.getBoundingClientRect();
+			if (rect.bottom > window.innerHeight - 8 && rect.height + 40 < host.getBoundingClientRect().top) {
+				menu.classList.add("up");
+			}
+			if (rect.left < 8) menu.classList.add("left");
+			document.addEventListener("pointerdown", onOutsidePointer, true);
+			if (focusFirst) shadow.querySelector(".item")?.focus();
+		}
+		function closeMenu() {
+			if (menu.hidden) return;
+			menu.hidden = true;
+			btn.setAttribute("aria-expanded", "false");
+			document.removeEventListener("pointerdown", onOutsidePointer, true);
+		}
+		function onMenuKeydown(event) {
+			if (menu.hidden) return;
+			if (event.key === "Escape") {
+				event.preventDefault();
+				event.stopPropagation();
+				closeMenu();
+				input.focus();
+				return;
+			}
+			if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
 			event.preventDefault();
-			event.stopPropagation();
+			const items = [...shadow.querySelectorAll(".item")];
+			const at = items.indexOf(shadow.activeElement);
+			const step = event.key === "ArrowDown" ? 1 : -1;
+			items[(at + step + items.length) % items.length]?.focus();
+		}
+
+		async function createAndFill() {
 			busy = true;
 			btn.setAttribute("aria-busy", "true");
 			label.textContent = "Creating…";
@@ -163,6 +291,7 @@
 				res = { ok: false, error: "unavailable" };
 			}
 			if (res?.ok && res.email) {
+				siteAliasesRequest = null;
 				setInputValue(input, res.email);
 				label.textContent = "Filled";
 				resetLabel(1200);
@@ -175,18 +304,43 @@
 			}
 		}
 
+		async function onClick(event) {
+			// Pages can't script a closed shadow root, but refuse synthetic clicks anyway.
+			if (!event.isTrusted || busy) return;
+			event.preventDefault();
+			event.stopPropagation();
+			if (!menu.hidden) {
+				closeMenu();
+				return;
+			}
+			// Addresses this site already has come first; creating another is the last option.
+			const aliases = await loadSiteAliases();
+			setHasMatches(aliases.length > 0);
+			if (aliases.length) openMenu(aliases, siteAliasesSite, event.detail === 0);
+			else createAndFill();
+		}
+		function onCreateItem(event) {
+			if (!event.isTrusted || busy) return;
+			closeMenu();
+			createAndFill();
+		}
+
 		input.addEventListener("focus", show);
 		input.addEventListener("mouseenter", show);
 		input.addEventListener("mouseleave", scheduleHide);
 		input.addEventListener("blur", scheduleHide);
 		host.addEventListener("mouseenter", show);
 		host.addEventListener("mouseleave", scheduleHide);
+		host.addEventListener("focusout", scheduleHide);
 		btn.addEventListener("click", onClick);
+		createItem.addEventListener("click", onCreateItem);
+		shadow.addEventListener("keydown", onMenuKeydown);
 		window.addEventListener("resize", reposition, { passive: true });
 		window.addEventListener("scroll", reposition, { passive: true, capture: true });
 
 		return function cleanup() {
 			clearTimeout(hideTimer);
+			closeMenu();
 			input.removeEventListener("focus", show);
 			input.removeEventListener("mouseenter", show);
 			input.removeEventListener("mouseleave", scheduleHide);

@@ -22,10 +22,8 @@ async function copy(text, button) {
 	}
 }
 
-function renderRecent(items) {
-	const list = $("recent");
+function renderEmails(list, items) {
 	list.replaceChildren();
-	$("recentEmpty").hidden = items.length > 0;
 	for (const item of items) {
 		const li = document.createElement("li");
 		const text = document.createElement("div");
@@ -45,6 +43,24 @@ function renderRecent(items) {
 		li.append(text, button);
 		list.appendChild(li);
 	}
+}
+
+function renderRecent(items) {
+	renderEmails($("recent"), items);
+	$("recentEmpty").hidden = items.length > 0;
+}
+
+/** Addresses this site already has go first, above creating another. */
+async function renderSiteAliases(host, showMailbox) {
+	const res = host ? await send({ action: "SITE_ALIASES", host }).catch(() => null) : null;
+	const aliases = res?.ok && Array.isArray(res.aliases) ? res.aliases : [];
+	$("siteSection").hidden = aliases.length === 0;
+	$("siteTitle").textContent = `Used on ${res?.site || host}`;
+	renderEmails(
+		$("siteAliases"),
+		aliases.map((alias) => ({ email: alias.email, host: showMailbox ? alias.mailboxId : "" })),
+	);
+	return aliases.length > 0;
 }
 
 async function activeTabHost() {
@@ -82,8 +98,9 @@ async function render() {
 	renderRecent(status.recentAliases);
 
 	const host = await activeTabHost();
-	$("create").textContent = host ? `Create private email for ${host}` : "Create private email";
 	$("create").dataset.host = host || "";
+	$("create").textContent = host ? `Create private email for ${host}` : "Create private email";
+	if (await renderSiteAliases(host, status.mailboxes.length > 1)) $("create").textContent = `Create another for ${host}`;
 }
 
 $("connect").addEventListener("click", async () => {
