@@ -276,6 +276,8 @@ export function registerAccountRoutes(app: App) {
 		if (!parsed.success) return c.json({ error: "idToken is required" }, 400);
 		const result = await socialSignIn(c, "google", parsed.data.idToken, parsed.data.nonce);
 		if (!result.ok) return c.json({ error: result.error }, result.status as 401);
+		// The web login page uses this too; it needs the session cookie (mobile uses the token).
+		c.header("Set-Cookie", await sessionCookieHeader(c.env, result.session));
 		return c.json({
 			token: result.session.token,
 			expiresAt: result.session.expiresAt.toISOString(),

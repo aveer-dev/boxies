@@ -29,6 +29,9 @@ packages:
   SwiftSoup:
     url: https://github.com/scinfu/SwiftSoup.git
     from: 2.7.6
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS.git
+    from: 9.2.0
 targets:
   Inboxies:
     type: application
@@ -37,6 +40,8 @@ targets:
       - path: Inboxies
     dependencies:
       - package: SwiftSoup
+      - package: GoogleSignIn
+        product: GoogleSignIn
       - target: InboxiesCredentialProvider
     settings:
       groups:
@@ -58,6 +63,12 @@ targets:
         ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: false
         SWIFT_EMIT_LOC_STRINGS: true
         ENABLE_TESTABILITY: true
+        # Google Sign-In (Firebase project inboxies-app). OAuth client ids are public.
+        # The iOS client signs in; the Web client is the ID token audience the Worker
+        # checks (GOOGLE_CLIENT_ID). Info.plist reads these.
+        GOOGLE_IOS_CLIENT_ID: 958946711798-fvtno41jorj97frv61ig4uhb0d0486rd.apps.googleusercontent.com
+        GOOGLE_IOS_REVERSED_CLIENT_ID: com.googleusercontent.apps.958946711798-fvtno41jorj97frv61ig4uhb0d0486rd
+        GOOGLE_SERVER_CLIENT_ID: 958946711798-21t2gjrqodotju01isg9k58gtme6bko0.apps.googleusercontent.com
   InboxiesCredentialProvider:
     type: app-extension
     platform: iOS

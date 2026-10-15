@@ -128,15 +128,18 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.R
 import co.inboxies.app.config.AppConfig
+import co.inboxies.app.services.googleCredentialErrorMessage
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.theme.liquidGlass
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -461,7 +464,7 @@ fun SignInView(
                                         try {
                                             val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID
                                             if (webClientId.isBlank()) {
-                                                auth.clearError()
+                                                auth.setError("Google Sign-In isn’t set up in this build.")
                                                 return@launch
                                             }
                                             val googleIdOption = GetGoogleIdOption.Builder()
@@ -480,9 +483,14 @@ fun SignInView(
                                             ) {
                                                 val google = GoogleIdTokenCredential.createFrom(credential.data)
                                                 auth.signInWithGoogle(google.idToken)
+                                            } else {
+                                                auth.setError("Google Sign-In failed")
                                             }
-                                        } catch (_: Exception) {
-                                            // Handled in AuthStore
+                                        } catch (e: GetCredentialException) {
+                                            // Server errors are set by AuthStore; these never reach it.
+                                            auth.setError(googleCredentialErrorMessage(e))
+                                        } catch (_: GoogleIdTokenParsingException) {
+                                            auth.setError("Google Sign-In failed")
                                         }
                                     }
                                 },
