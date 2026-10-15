@@ -55,6 +55,17 @@ enum SharedSession {
         }
     }
 
+    #if DEBUG
+    private static let previewAutofillKey = "previewAutofill"
+
+    /// DEBUG: the app was launched with `-previewAutofill`, so the extension
+    /// shows fixture private emails instead of calling the API.
+    static var previewAutofill: Bool {
+        get { defaults?.bool(forKey: previewAutofillKey) ?? false }
+        set { defaults?.set(newValue, forKey: previewAutofillKey) }
+    }
+    #endif
+
     /// App only: sign-out leaves nothing for the extension to act on.
     static func clear() {
         setToken(nil)

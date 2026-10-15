@@ -6,6 +6,7 @@ import { daysBetween, parseDay } from "../lib/format";
 import * as changelog from "./changelog";
 import * as faqs from "./faqs";
 import * as features from "./features";
+import * as legal from "./legal";
 import * as media from "./media";
 import * as parity from "./parity";
 import * as pricing from "./pricing";
@@ -19,6 +20,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	changelog,
 	faqs,
 	features,
+	legal,
 	media,
 	parity,
 	pricing,

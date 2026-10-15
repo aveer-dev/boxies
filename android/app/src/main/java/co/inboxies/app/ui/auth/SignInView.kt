@@ -106,7 +106,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -123,15 +128,18 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.R
 import co.inboxies.app.config.AppConfig
+import co.inboxies.app.services.googleCredentialErrorMessage
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.theme.liquidGlass
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -175,7 +183,7 @@ fun SignInView(
     var activeSubscreen by remember {
         mutableStateOf(if (expandPasswordForm || expandForgotPassword) AuthSubscreen.Email else AuthSubscreen.None)
     }
-    var showTermsBrowser by remember { mutableStateOf(false) }
+    var legalBrowserPage by remember { mutableStateOf<LegalPage?>(null) }
 
     LaunchedEffect(auth.isAuthenticated) {
         if (auth.isAuthenticated) {
@@ -456,7 +464,7 @@ fun SignInView(
                                         try {
                                             val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID
                                             if (webClientId.isBlank()) {
-                                                auth.clearError()
+                                                auth.setError("Google Sign-In isn’t set up in this build.")
                                                 return@launch
                                             }
                                             val googleIdOption = GetGoogleIdOption.Builder()
@@ -475,9 +483,14 @@ fun SignInView(
                                             ) {
                                                 val google = GoogleIdTokenCredential.createFrom(credential.data)
                                                 auth.signInWithGoogle(google.idToken)
+                                            } else {
+                                                auth.setError("Google Sign-In failed")
                                             }
-                                        } catch (_: Exception) {
-                                            // Handled in AuthStore
+                                        } catch (e: GetCredentialException) {
+                                            // Server errors are set by AuthStore; these never reach it.
+                                            auth.setError(googleCredentialErrorMessage(e))
+                                        } catch (_: GoogleIdTokenParsingException) {
+                                            auth.setError("Google Sign-In failed")
                                         }
                                     }
                                 },
@@ -511,27 +524,33 @@ fun SignInView(
                         }
                     }
 
-                    // Fine print: Terms of Use
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            "By continuing, you agree to Inboxies' ",
-                            fontFamily = InterFontFamily,
-                            fontSize = 12.sp,
-                            color = colors.muted,
-                        )
-                        Text(
-                            "Terms of Use",
-                            fontFamily = InterFontFamily,
+                    // Fine print: Terms of Use + Privacy Policy
+                    val legalLinkStyle = TextLinkStyles(
+                        style = SpanStyle(
                             fontWeight = FontWeight.Medium,
-                            fontSize = 12.sp,
                             color = colors.accent,
                             textDecoration = TextDecoration.Underline,
-                            modifier = Modifier.clickable { showTermsBrowser = true },
-                        )
+                        ),
+                    )
+                    val legalFinePrint = buildAnnotatedString {
+                        append("By continuing, you agree to Inboxies' ")
+                        for ((index, page) in LegalPage.entries.withIndex()) {
+                            if (index > 0) append(" and ")
+                            withLink(
+                                LinkAnnotation.Clickable(page.name, legalLinkStyle) {
+                                    legalBrowserPage = page
+                                },
+                            ) { append(page.title.replace(' ', '\u00A0')) } // Keep each link on one line.
+                        }
                     }
+                    Text(
+                        legalFinePrint,
+                        fontFamily = InterFontFamily,
+                        fontSize = 12.sp,
+                        color = colors.muted,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
 
@@ -1033,12 +1052,12 @@ fun SignInView(
             }
         }
 
-        // Terms of Use In-App Browser Dialog
-        if (showTermsBrowser) {
+        // Terms of Use / Privacy Policy In-App Browser Dialog
+        legalBrowserPage?.let { page ->
             InAppBrowserDialog(
-                url = "https://inboxies.email/terms",
-                title = "Terms of Use",
-                onDismiss = { showTermsBrowser = false },
+                url = page.url,
+                title = page.title,
+                onDismiss = { legalBrowserPage = null },
             )
         }
 
@@ -1765,8 +1784,14 @@ private enum class EmailStep {
     ResetPassword,
 }
 
+/** Legal pages linked from the sign-in fine print, in sentence order. */
+private enum class LegalPage(val title: String, val url: String) {
+    Terms("Terms of Use", AppConfig.TERMS_URL),
+    Privacy("Privacy Policy", AppConfig.PRIVACY_URL),
+}
+
 /**
- * In-app WebView dialog to open terms link cleanly.
+ * In-app WebView dialog to open legal links cleanly.
  */
 @Composable
 private fun InAppBrowserDialog(

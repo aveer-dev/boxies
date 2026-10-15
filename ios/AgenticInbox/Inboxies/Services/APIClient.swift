@@ -337,11 +337,13 @@ final class APIClient: @unchecked Sendable {
         let _: EmptyResponse = try await request(path: "/api/v1/me/recovery-email", method: "DELETE")
     }
 
-    func attachGoogleIdentity(idToken: String) async throws -> AttachIdentityResponse {
-        try await request(
+    func attachGoogleIdentity(_ credential: GoogleSignInCredential) async throws -> AttachIdentityResponse {
+        var body = credential.requestBody
+        body["provider"] = "google"
+        return try await request(
             path: "/api/v1/me/identities/attach",
             method: "POST",
-            body: ["provider": "google", "idToken": idToken]
+            body: body
         )
     }
 

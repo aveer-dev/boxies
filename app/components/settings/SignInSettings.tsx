@@ -12,6 +12,7 @@ import SettingsSubpage from "./SettingsSubpage";
 import { useIdentities } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
+import { loadGoogleIdentityScript } from "~/lib/google-identity";
 
 function identityTypeLabel(type: string): string {
 	switch (type) {
@@ -26,64 +27,6 @@ function identityTypeLabel(type: string): string {
 		default:
 			return type;
 	}
-}
-
-declare global {
-	interface Window {
-		google?: {
-			accounts: {
-				id: {
-					initialize: (config: {
-						client_id: string;
-						callback: (response: { credential: string }) => void;
-						auto_select?: boolean;
-						cancel_on_tap_outside?: boolean;
-					}) => void;
-					prompt: (
-						momentListener?: (notification: {
-							isNotDisplayed: () => boolean;
-							isSkippedMoment: () => boolean;
-							getNotDisplayedReason: () => string;
-						}) => void,
-					) => void;
-					renderButton: (
-						parent: HTMLElement,
-						options: {
-							theme?: string;
-							size?: string;
-							text?: string;
-							width?: number;
-						},
-					) => void;
-				};
-			};
-		};
-	}
-}
-
-function loadGoogleIdentityScript(): Promise<void> {
-	if (window.google?.accounts?.id) return Promise.resolve();
-	const existing = document.querySelector<HTMLScriptElement>(
-		'script[data-google-gis="1"]',
-	);
-	if (existing) {
-		return new Promise((resolve, reject) => {
-			existing.addEventListener("load", () => resolve());
-			existing.addEventListener("error", () =>
-				reject(new Error("Failed to load Google Sign-In")),
-			);
-		});
-	}
-	return new Promise((resolve, reject) => {
-		const script = document.createElement("script");
-		script.src = "https://accounts.google.com/gsi/client";
-		script.async = true;
-		script.defer = true;
-		script.dataset.googleGis = "1";
-		script.onload = () => resolve();
-		script.onerror = () => reject(new Error("Failed to load Google Sign-In"));
-		document.head.appendChild(script);
-	});
 }
 
 export default function SignInSettings() {

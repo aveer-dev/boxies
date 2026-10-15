@@ -8,7 +8,7 @@
 //
 // Left out on purpose: "Offline on Android", which has no plan behind it.
 // (The export fixes, PRs #47 and #48, are on dev and in the changelog.)
-import { IOS_STATUS, asOf, flags } from "../config";
+import { APP_HOST, IOS_STATUS, asOf, flags } from "../config";
 import { onSomePublicPlatform } from "../lib/platforms";
 import type { CalloutCopy, ComingNext, RoadmapGroup, RoadmapRow } from "./types";
 
@@ -142,7 +142,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	},
 
 	// ── Apps and sync ──
-	{ id: "web-app", group: "apps", name: "Web app", status: "available", platforms: ["web"], note: "inboxies.email", src: "FSW (scope)" },
+	{ id: "web-app", group: "apps", name: "Web app", status: "available", platforms: ["web"], note: APP_HOST, src: "FSW (scope)" },
 	{
 		id: "iphone-app",
 		group: "apps",
@@ -157,11 +157,11 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 		id: "android-app",
 		group: "apps",
 		name: "Android app",
-		status: "available",
+		// Shown as coming soon until it's public (AVE-54).
+		status: flags.androidPublic ? "available" : "next",
 		platforms: ["android"],
-		note: "On Google Play.",
-		hidden: !flags.androidPublic,
-		src: "FC#1 (Android 14+); FC#8.5",
+		note: flags.androidPublic ? "On Google Play." : "Coming soon.",
+		src: "FC#1 (Android 14+); FC#8.5; AVE-54 (Android coming soon)",
 	},
 	{ id: "push", group: "apps", name: "Push notifications", status: "available", lineage: "Gmail", platforms: ["ios", "android"], note: "Tap to open the exact email.", src: "RM#2" },
 	{ id: "live", group: "apps", name: "Live updates", status: "available", platforms: ["ios", "android", "web"], note: "New mail appears as it arrives.", src: "FSW#supporting-features" },

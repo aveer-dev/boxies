@@ -347,6 +347,9 @@ const api = {
 			"/api/v1/auth/password",
 			{ email, password },
 		),
+	/** Google ID token from the GIS button; sets the session cookie like passwordLogin. */
+	googleLogin: (idToken: string) =>
+		post<{ token: string; expiresAt: string }>("/api/v1/auth/google", { idToken }),
 	forgotPassword: (email: string) =>
 		post<{
 			ok: boolean;

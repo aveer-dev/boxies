@@ -80,7 +80,8 @@ export function strictMailboxId(raw: string | null | undefined): string | null {
 /**
  * Local parts nobody may register on a shared domain: RFC 2142 role
  * addresses (certificate authorities send domain validation mail to several
- * of these) and the platform's own senders.
+ * of these), the platform's own senders, and the contacts the legal pages
+ * publish (privacy@, legal@).
  */
 export const RESERVED_LOCAL_PARTS: ReadonlySet<string> = new Set([
 	"abuse",
@@ -90,11 +91,13 @@ export const RESERVED_LOCAL_PARTS: ReadonlySet<string> = new Set([
 	"billing",
 	"hostmaster",
 	"info",
+	"legal",
 	"mailer-daemon",
 	"no-reply",
 	"noc",
 	"noreply",
 	"postmaster",
+	"privacy",
 	"root",
 	"security",
 	"support",

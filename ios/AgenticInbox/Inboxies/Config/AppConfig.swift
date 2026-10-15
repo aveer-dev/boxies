@@ -24,6 +24,10 @@ enum AppConfig {
 
     static let defaultAPIBaseURL = URL(string: "https://inboxies.email")!
 
+    /// Legal pages live on the marketing site (`site/src/pages/legal.astro`); these redirect to its anchors.
+    static let termsURL = URL(string: "https://inboxies.co/terms")!
+    static let privacyURL = URL(string: "https://inboxies.co/privacy")!
+
     /// Must match APPLE_CLIENT_ID / Xcode bundle identifier.
     static let bundleID = "co.inboxies.app"
 

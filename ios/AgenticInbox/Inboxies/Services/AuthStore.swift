@@ -47,6 +47,23 @@ final class AuthStore {
         }
     }
 
+    func signInWithGoogle(_ credential: GoogleSignInCredential) async {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            let response: AuthResponse = try await APIClient.shared.request(
+                path: "/api/v1/auth/google",
+                method: "POST",
+                body: credential.requestBody,
+                authed: false
+            )
+            persist(token: response.token, email: response.user.email ?? credential.email)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// Local-dev shortcut when Apple Sign In isn't configured in the simulator.
     func signInDev(email: String = "dev@example.com") async {
         guard AppConfig.isLocalDevelopmentAPI else {

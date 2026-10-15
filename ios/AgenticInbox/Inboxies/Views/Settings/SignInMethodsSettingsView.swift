@@ -2,7 +2,7 @@ import AuthenticationServices
 import SwiftUI
 
 /// Account → Sign-in methods: connected methods (disconnect any but the last),
-/// add Apple / a password, change password, and the recovery email that
+/// add Apple / Google / a password, change password, and the recovery email that
 /// password resets go to.
 struct SignInMethodsSettingsView: View {
     @Environment(AppModel.self) private var app
@@ -11,6 +11,7 @@ struct SignInMethodsSettingsView: View {
     @State private var identities: [LinkedIdentity] = []
     @State private var isLoading = true
     @State private var isConnectingApple = false
+    @State private var isConnectingGoogle = false
     @State private var isAddingPassword = false
     @State private var isChangingPassword = false
     @State private var removingType: String?
@@ -30,12 +31,16 @@ struct SignInMethodsSettingsView: View {
         identities.contains { $0.type == "apple" }
     }
 
+    private var hasGoogle: Bool {
+        identities.contains { $0.type == "google" }
+    }
+
     private var hasPassword: Bool {
         identities.contains { $0.type == "password" }
     }
 
     private var canAddMethod: Bool {
-        !hasApple || !hasPassword
+        !hasApple || !hasGoogle || !hasPassword
     }
 
     var body: some View {
@@ -156,6 +161,24 @@ struct SignInMethodsSettingsView: View {
                         .frame(height: 44)
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                         .disabled(isConnectingApple)
+                    }
+
+                    if !hasGoogle {
+                        Button {
+                            Task { await connectGoogle() }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image("GoogleLogo")
+                                    .renderingMode(.template)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 15, height: 15)
+                                Text(isConnectingGoogle ? "Connecting…" : "Continue with Google")
+                                    .font(.inter(size: SettingsFormChrome.rowFontSize, weight: .medium))
+                            }
+                            .foregroundStyle(AppTheme.ink)
+                        }
+                        .disabled(isConnectingGoogle)
                     }
 
                     if !hasPassword {
@@ -313,6 +336,30 @@ struct SignInMethodsSettingsView: View {
             } catch {
                 errorMessage = friendlyAttachError(error)
             }
+        }
+    }
+
+    private func connectGoogle() async {
+        errorMessage = nil
+        isConnectingGoogle = true
+        defer { isConnectingGoogle = false }
+        do {
+            guard let credential = try await GoogleSignInFlow.signIn() else { return }
+            let res = try await APIClient.shared.attachGoogleIdentity(credential)
+            statusMessage = res.isAdmin
+                ? "Google connected — Domain Admin access restored"
+                : "Google connected"
+            if let next = res.identities {
+                identities = next
+                app.setIdentities(next)
+            } else {
+                await reload()
+            }
+            await app.refreshMailboxes()
+        } catch let error as GoogleSignInFlow.FlowError {
+            errorMessage = error.localizedDescription
+        } catch {
+            errorMessage = friendlyAttachError(error)
         }
     }
 
