@@ -441,14 +441,25 @@ class AppModel {
         }
     }
 
-    suspend fun createMailbox(name: String, email: String) {
-        try {
+    /** True once the server created the mailbox; failures are toasted here. */
+    suspend fun createMailbox(name: String, email: String): Boolean {
+        val mailbox = try {
             ApiClient.shared.createMailbox(name, email)
-            refreshMailboxes(showLoading = true)
-            showToast("Mailbox created")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             showToast("Failed to create mailbox: ${e.message}", isError = true)
+            return false
         }
+        // List the new mailbox right away. The full refresh also reloads the selected
+        // mailbox's mail, so it reconciles in the background instead of holding the dialog.
+        if (_mailboxes.value.none { it.id == mailbox.id }) {
+            _mailboxes.value = _mailboxes.value + mailbox
+            db.upsertMailboxes(listOf(mailbox))
+        }
+        showToast("Mailbox created")
+        scope.launch { refreshMailboxes(showLoading = false) }
+        return true
     }
 
     suspend fun loadIdentities(forceRefresh: Boolean = false): List<LinkedIdentity> {

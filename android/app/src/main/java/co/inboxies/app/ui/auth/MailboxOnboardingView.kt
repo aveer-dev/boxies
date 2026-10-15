@@ -793,11 +793,14 @@ fun MailboxOnboardingView(
                                                     onDismiss?.invoke()
                                                 } else {
                                                     val fullEmail = "$personalUsername@$mailDomain"
-                                                    app.createMailbox(
-                                                        personalName.ifBlank { personalUsername },
-                                                        fullEmail,
-                                                    )
-                                                    onDismiss?.invoke()
+                                                    // Failures are toasted by AppModel; stay open to retry.
+                                                    if (app.createMailbox(
+                                                            personalName.ifBlank { personalUsername },
+                                                            fullEmail,
+                                                        )
+                                                    ) {
+                                                        onDismiss?.invoke()
+                                                    }
                                                 }
                                             } catch (e: Exception) {
                                                 errorMessage = e.message ?: "Failed to create personal address"
