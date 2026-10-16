@@ -1329,9 +1329,21 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 // -- Receive inbound email ------------------------------------------
 
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
+/** SMTP reply for mail over MAX_EMAIL_SIZE (RFC 3463 5.3.4: message too big for system). */
+const OVERSIZE_REJECT_REASON = "552 5.3.4 Message size exceeds fixed limit";
+
+/** Thrown when an inbound message is (or turns out to be) larger than MAX_EMAIL_SIZE. */
+class EmailTooLargeError extends Error {
+	readonly size: number;
+	constructor(size: number) {
+		super(`Email too large: ${size} bytes exceeds ${MAX_EMAIL_SIZE} byte limit`);
+		this.name = "EmailTooLargeError";
+		this.size = size;
+	}
+}
 
 async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
-	if (streamSize > MAX_EMAIL_SIZE) throw new Error(`Email too large: ${streamSize} bytes exceeds ${MAX_EMAIL_SIZE} byte limit`);
+	if (streamSize > MAX_EMAIL_SIZE) throw new EmailTooLargeError(streamSize);
 	if (streamSize <= 0) throw new Error(`Invalid stream size: ${streamSize}`);
 	const result = new Uint8Array(streamSize);
 	let bytesRead = 0;
@@ -1339,7 +1351,13 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	while (true) {
 		const { done, value } = await reader.read();
 		if (done) break;
-		if (bytesRead + value.length > streamSize) { reader.cancel(); throw new Error(`Stream exceeds declared size`); }
+		if (bytesRead + value.length > streamSize) {
+			reader.cancel();
+			// rawSize under-reported the message; if the real size is over the
+			// limit, treat it as oversize (clean 552) rather than a failure.
+			if (bytesRead + value.length > MAX_EMAIL_SIZE) throw new EmailTooLargeError(bytesRead + value.length);
+			throw new Error(`Stream exceeds declared size`);
+		}
 		result.set(value, bytesRead);
 		bytesRead += value.length;
 	}
@@ -1598,6 +1616,14 @@ export async function sendInboundAutoReply(options: {
 }
 
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
+	// Oversize mail gets a clean SMTP rejection, not a thrown error (which the
+	// email handler would rethrow, causing retries and a generic bounce).
+	if (message.rawSize > MAX_EMAIL_SIZE) {
+		console.log(`Rejecting email for ${message.to}: ${message.rawSize} bytes exceeds ${MAX_EMAIL_SIZE} byte limit`);
+		message.setReject(OVERSIZE_REJECT_REASON);
+		return;
+	}
+
 	// A decommissioned custom domain no longer receives mail here, even if its
 	// Email Routing catch-all still points at this Worker.
 	// Private aliases live on private.<domain>, which belongs to <domain>.
@@ -1659,7 +1685,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		}
 	}
 
-	const rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
+	let rawEmail: Uint8Array;
+	try {
+		rawEmail = await streamToArrayBuffer(message.raw, message.rawSize);
+	} catch (e) {
+		if (!(e instanceof EmailTooLargeError)) throw e;
+		console.log(`Rejecting email for ${message.to}: ${e.message}`);
+		message.setReject(OVERSIZE_REJECT_REASON);
+		return;
+	}
 	const parsedEmail = await new PostalMime().parse(rawEmail);
 
 	const allRecipients = (parsedEmail.to || []).map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
