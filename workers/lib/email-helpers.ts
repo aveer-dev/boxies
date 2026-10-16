@@ -106,6 +106,35 @@ export function generateMessageId(fromDomain: string): {
 // ── Threading ──────────────────────────────────────────────────────
 
 /**
+ * Most-recent Message-IDs kept in an outbound References header, in addition
+ * to the thread root. RFC 5322 §3.6.4 lets senders trim the middle of a long
+ * chain; root + ~20 recent ids is the common choice and keeps the header well
+ * under the line/length limits some MTAs enforce.
+ */
+export const MAX_RECENT_REFERENCES = 20;
+
+/**
+ * Bound a References chain: drop empties and duplicates, always keep the first
+ * id (thread root) and the most recent `MAX_RECENT_REFERENCES` ids (which
+ * include the direct parent, the last entry). Short chains without duplicates
+ * come back unchanged.
+ */
+export function trimReferences(refs: readonly string[]): string[] {
+	const clean = refs.filter((r): r is string => typeof r === "string" && r.length > 0);
+	if (clean.length === 0) return [];
+	const root = clean[0];
+	const seen = new Set<string>([root]);
+	const recent: string[] = [];
+	for (let i = clean.length - 1; i > 0 && recent.length < MAX_RECENT_REFERENCES; i--) {
+		const ref = clean[i];
+		if (seen.has(ref)) continue;
+		seen.add(ref);
+		recent.push(ref);
+	}
+	return [root, ...recent.reverse()];
+}
+
+/**
  * Build the References chain and In-Reply-To from an original email.
  */
 export function buildReferencesChain(original: EmailFull): {
@@ -123,12 +152,13 @@ export function buildReferencesChain(original: EmailFull): {
 	let existingRefs: string[] = [];
 	if (original.email_references) {
 		try {
-			existingRefs = JSON.parse(original.email_references);
+			const parsed: unknown = JSON.parse(original.email_references);
+			if (Array.isArray(parsed)) existingRefs = parsed;
 		} catch {
 			// Malformed JSON in email_references — treat as empty
 		}
 	}
-	const references = [...existingRefs, originalMsgId].filter(Boolean);
+	const references = trimReferences([...existingRefs, originalMsgId]);
 	const threadId = original.thread_id || original.id;
 	return { originalMsgId, references, threadId };
 }
@@ -140,6 +170,8 @@ export function buildThreadingHeaders(
 	originalMsgId: string,
 	references: string[],
 ): Record<string, string> {
+	// Callers may pass client-supplied chains (draft send), so trim here too.
+	references = trimReferences(references);
 	return {
 		"In-Reply-To": `<${originalMsgId}>`,
 		...(references.length > 0
