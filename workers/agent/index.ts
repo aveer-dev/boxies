@@ -13,6 +13,7 @@ import { createWorkersAI } from "workers-ai-provider";
 import { z } from "zod";
 import type { EmailFull, EmailMetadata } from "../lib/schemas";
 import { verifyDraft, isPromptInjection } from "../lib/ai";
+import { buildSystemPrompt, guardEmailToolResult } from "../lib/agent-safety";
 import {
 	getMailboxStub,
 	stripHtmlToText,
@@ -50,7 +51,8 @@ function defineTool(def: {
 
 /**
  * Default system prompt used when no custom prompt is configured for a mailbox.
- * Users can override this on a per-mailbox basis via the Settings UI.
+ * Users can override this on a per-mailbox basis via the Settings UI. Either
+ * way, SAFETY_PREAMBLE (lib/agent-safety.ts) is always prepended.
  */
 const DEFAULT_SYSTEM_PROMPT = `You are an email assistant that helps manage this inbox. You read emails, draft replies, and help organize conversations.
 
@@ -90,26 +92,31 @@ You can ONLY draft emails. You do NOT have the ability to send emails directly.
 Use discard_draft to delete drafts that the operator rejects or that are no longer needed.`;
 
 /**
- * Fetch the custom system prompt for a mailbox from its R2 settings.
- * Falls back to DEFAULT_SYSTEM_PROMPT if none is configured.
+ * Build the system prompt for a mailbox: the fixed safety preamble, then the
+ * custom prompt from its R2 settings or DEFAULT_SYSTEM_PROMPT.
  */
 async function getSystemPrompt(env: Env, mailboxId: string): Promise<string> {
+	let customPrompt: string | null = null;
 	try {
 		const key = mailboxMetadataKey(mailboxId);
 		const obj = await env.BUCKET.get(key);
 		if (obj) {
 			const settings = await obj.json<Record<string, unknown>>();
-			if (typeof settings.agentSystemPrompt === "string" && settings.agentSystemPrompt.trim()) {
-				return settings.agentSystemPrompt;
+			if (typeof settings.agentSystemPrompt === "string") {
+				customPrompt = settings.agentSystemPrompt;
 			}
 		}
 	} catch {
 		// Fall through to default
 	}
-	return DEFAULT_SYSTEM_PROMPT;
+	return buildSystemPrompt(DEFAULT_SYSTEM_PROMPT, customPrompt);
 }
 
 function createEmailTools(env: Env, mailboxId: string) {
+	// Email text reaching the model through tools is untrusted: wrap it, and
+	// withhold anything the heuristic or the LLM scanner (one call per result)
+	// flags as a prompt injection.
+	const scan = (text: string) => isPromptInjection(env.AI, text);
 	return {
 		list_emails: defineTool({
 			description:
@@ -129,7 +136,10 @@ function createEmailTools(env: Env, mailboxId: string) {
 					.describe("Page number for pagination"),
 			}),
 			execute: async ({ folder, limit, page }): Promise<unknown> => {
-				return toolListEmails(env, mailboxId, { folder, limit, page });
+				// Metadata only (subjects, names): heuristic check, no AI call.
+				return guardEmailToolResult(
+					await toolListEmails(env, mailboxId, { folder, limit, page }),
+				);
 			},
 		}),
 
@@ -140,7 +150,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 				emailId: z.string().describe("The email ID to retrieve"),
 			}),
 			execute: async ({ emailId }): Promise<unknown> => {
-				return toolGetEmail(env, mailboxId, emailId);
+				return guardEmailToolResult(await toolGetEmail(env, mailboxId, emailId), { scan });
 			},
 		}),
 
@@ -155,7 +165,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 					),
 			}),
 			execute: async ({ threadId }): Promise<unknown> => {
-				return toolGetThread(env, mailboxId, threadId);
+				return guardEmailToolResult(await toolGetThread(env, mailboxId, threadId), { scan });
 			},
 		}),
 
@@ -174,7 +184,10 @@ function createEmailTools(env: Env, mailboxId: string) {
 					.describe("Optional folder to restrict search to"),
 			}),
 			execute: async ({ query, folder }): Promise<unknown> => {
-				return toolSearchEmails(env, mailboxId, { query, folder });
+				return guardEmailToolResult(
+					await toolSearchEmails(env, mailboxId, { query, folder }),
+					{ scan },
+				);
 			},
 		}),
 
@@ -227,6 +240,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 					body,
 					isPlainText: true,
 					runVerifyDraft: true,
+					restrictRecipientsToThread: true,
 				});
 			},
 		}),
