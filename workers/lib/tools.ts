@@ -27,6 +27,12 @@ import {
 	buildThreadingHeaders,
 } from "./email-helpers";
 import { verifyDraft } from "./ai";
+import {
+	collectThreadParticipants,
+	findNonParticipantRecipients,
+	nonParticipantError,
+	type ParticipantMessage,
+} from "./agent-safety";
 import { sendEmail } from "../email-sender";
 import {
 	assertOutboundMessageSize,
@@ -50,6 +56,10 @@ type MailboxSearchStub = {
 		query: string;
 		folder?: string;
 	}) => Promise<unknown>;
+};
+
+type ThreadReaderStub = {
+	getThreadEmails: (threadId: string) => Promise<ParticipantMessage[]>;
 };
 
 type RateLimitStub = {
@@ -128,6 +138,10 @@ export async function toolSearchEmails(
  * @param options.runVerifyDraft - If true, runs AI verifyDraft on the body.
  *   The agent and MCP both do this, but the agent does it on plain text
  *   while MCP does it on HTML.
+ * @param options.restrictRecipientsToThread - If true (the in-app agent),
+ *   refuse any `to` address that isn't the original sender, a To/Cc/Bcc of a
+ *   thread message, or the mailbox itself. Keeps injected mail from steering
+ *   a reply to an attacker-chosen address.
  */
 export async function toolDraftReply(
 	env: Env,
@@ -139,12 +153,33 @@ export async function toolDraftReply(
 		body: string;
 		isPlainText?: boolean;
 		runVerifyDraft?: boolean;
+		restrictRecipientsToThread?: boolean;
 	},
 ): Promise<
 	| { status: "draft_saved"; draftId: string; message: string; draft: Record<string, string> }
 	| { error: string }
 > {
 	const stub = getMailboxStub(env, mailboxId);
+
+	// Check recipients before any AI work so a refused draft costs nothing.
+	let original: EmailFull | null | undefined;
+	if (params.restrictRecipientsToThread) {
+		original = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
+		if (!original) {
+			return { error: "Original email not found — cannot draft a reply to it." };
+		}
+		const threadMessages = original.thread_id
+			? await (stub as unknown as ThreadReaderStub).getThreadEmails(original.thread_id)
+			: [];
+		const participants = collectThreadParticipants(
+			[original, ...threadMessages],
+			[mailboxId],
+		);
+		const outsiders = findNonParticipantRecipients(params.to, participants);
+		if (outsiders.length > 0) {
+			return { error: nonParticipantError(outsiders) };
+		}
+	}
 
 	// Verify/sanitize if requested
 	let processedBody = params.body.trim();
@@ -164,7 +199,9 @@ export async function toolDraftReply(
 	const draftId = crypto.randomUUID();
 
 	// Get the original email for thread_id and quoted text
-	const original = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
+	if (original === undefined) {
+		original = (await stub.getEmail(params.originalEmailId)) as EmailFull | null;
+	}
 	const threadId = original?.thread_id || params.originalEmailId;
 	const rewrittenTo = original
 		? rewriteSelfReplyTo(params.to, original, mailboxId)
