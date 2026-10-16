@@ -482,5 +482,31 @@ export const mailboxMigrations: Migration[] = [
                 ON inbound_message_claims(claimed_at);
         `),
 	},
+	{
+		// Notes to self on threads (sticky) and messages (inline), private to
+		// their author. Additive only: a new table and its indexes.
+		name: "31_thread_notes_to_self",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS thread_notes (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                email_id TEXT,
+                note_type TEXT NOT NULL CHECK (note_type IN ('sticky', 'inline')),
+                body TEXT NOT NULL,
+                pos_x REAL,
+                pos_y REAL,
+                author_user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK (note_type != 'inline' OR email_id IS NOT NULL)
+            );
+            CREATE INDEX IF NOT EXISTS idx_thread_notes_thread_author
+                ON thread_notes(thread_id, author_user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_thread_notes_author_type
+                ON thread_notes(author_user_id, note_type, thread_id);
+            CREATE INDEX IF NOT EXISTS idx_thread_notes_email
+                ON thread_notes(email_id);
+        `),
+	},
 ];
 
