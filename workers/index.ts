@@ -1615,6 +1615,45 @@ export async function sendInboundAutoReply(options: {
 	console.log(`Sent auto-reply from ${sentFrom} to ${sender}`);
 }
 
+type InboundClaimStub = {
+	abandonInboundDelivery(
+		emailId: string,
+		messageId: string | null,
+	): Promise<"stored" | "not_stored">;
+};
+
+/**
+ * Inbound delivery failed before its row was stored: give the Message-ID
+ * claim back so an Email Routing retry can redeliver, and delete the R2 blobs
+ * this delivery wrote. If the DO says the row was stored after all, or can't
+ * be asked, the blobs stay (a stuck claim goes stale on its own).
+ */
+async function abandonUnstoredInbound(
+	env: Pick<Env, "BUCKET">,
+	stub: InboundClaimStub,
+	options: {
+		emailId: string;
+		originalMessageId: string | null;
+		blobKeys: string[];
+		/** The DO refused the write, so the row is certainly not stored. */
+		knownUnstored?: boolean;
+	},
+): Promise<void> {
+	let outcome: "stored" | "not_stored" | null = null;
+	try {
+		outcome = await stub.abandonInboundDelivery(options.emailId, options.originalMessageId);
+	} catch (e) {
+		console.error("Releasing inbound claim failed:", (e as Error).message);
+	}
+	if (outcome === "stored") return;
+	if (outcome === null && !options.knownUnstored) return;
+	try {
+		await deleteR2Keys(env.BUCKET, options.blobKeys);
+	} catch (e) {
+		console.error("Deleting orphaned inbound blobs failed:", (e as Error).message);
+	}
+}
+
 async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) {
 	// Oversize mail gets a clean SMTP rejection, not a thrown error (which the
 	// email handler would rethrow, causing retries and a generic bounce).
@@ -1714,14 +1753,16 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 
 	// Same mailbox is one Durable Object, so concurrent hello@ + hello+tag@
-	// (or a retry after a successful write) serialize here. Skip duplicates
-	// instead of inserting a second copy.
+	// deliveries and Email Routing retries of one message all meet here. Claim
+	// the Message-ID before any R2 write or AI call: the DO checks `emails` and
+	// inserts the claim with no await in between, so only one delivery stores
+	// the message. Different mailboxes are different DOs and each keeps a copy.
 	if (originalMessageId) {
-		const existing = await stub.findEmailByMessageId(originalMessageId);
+		const claimed = await stub.claimInboundMessageId(originalMessageId, messageId);
 		if (
 			!shouldClassifyInbound({
 				routeAction: "deliver",
-				isDuplicate: isDuplicateInbound(originalMessageId, Boolean(existing)),
+				isDuplicate: isDuplicateInbound(originalMessageId, !claimed),
 			})
 		) {
 			console.log(`Skipping duplicate inbound message ${originalMessageId} for ${mailboxId}`);
@@ -1730,293 +1771,321 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 	}
 
 	const attachmentData: StoredAttachment[] = [];
-	if (parsedEmail.attachments) {
-		for (const att of parsedEmail.attachments) {
-			const attId = crypto.randomUUID();
-			const filename = sanitizeAttachmentFilename(att.filename);
-			await env.BUCKET.put(attachmentKey(messageId, attId, filename), att.content);
-			attachmentData.push({ id: attId, email_id: messageId, filename, mimetype: att.mimeType,
-				size: typeof att.content === "string" ? att.content.length : att.content.byteLength,
-				content_id: att.contentId || null, disposition: att.disposition || "attachment" });
+	const inboundBlobKeys = () => [
+		...emailContentKeys(messageId),
+		...attachmentData.map((att) => attachmentKey(messageId, att.id, att.filename)),
+	];
+	// Until `createEmail` succeeds, a failure gives the claim back (so a retry
+	// can redeliver) and deletes this delivery's R2 blobs.
+	let stored = false;
+	try {
+		if (parsedEmail.attachments) {
+			for (const att of parsedEmail.attachments) {
+				const attId = crypto.randomUUID();
+				const filename = sanitizeAttachmentFilename(att.filename);
+				await env.BUCKET.put(attachmentKey(messageId, attId, filename), att.content);
+				attachmentData.push({ id: attId, email_id: messageId, filename, mimetype: att.mimeType,
+					size: typeof att.content === "string" ? att.content.length : att.content.byteLength,
+					content_id: att.contentId || null, disposition: att.disposition || "attachment" });
+			}
 		}
-	}
 
-	const inReplyTo = parsedEmail.inReplyTo ? extractMsgId(parsedEmail.inReplyTo) : null;
-	const emailReferences = parsedEmail.references ? parsedEmail.references.split(/\s+/).filter(Boolean).map(extractMsgId) : [];
+		const inReplyTo = parsedEmail.inReplyTo ? extractMsgId(parsedEmail.inReplyTo) : null;
+		const emailReferences = parsedEmail.references ? parsedEmail.references.split(/\s+/).filter(Boolean).map(extractMsgId) : [];
 
-	// Build candidate message IDs to find an existing thread (newest to oldest)
-	const candidateReferences: string[] = [];
-	if (inReplyTo) candidateReferences.push(inReplyTo);
-	for (let i = emailReferences.length - 1; i >= 0; i--) {
-		const ref = emailReferences[i];
-		if (ref && !candidateReferences.includes(ref)) {
-			candidateReferences.push(ref);
+		// Build candidate message IDs to find an existing thread (newest to oldest)
+		const candidateReferences: string[] = [];
+		if (inReplyTo) candidateReferences.push(inReplyTo);
+		for (let i = emailReferences.length - 1; i >= 0; i--) {
+			const ref = emailReferences[i];
+			if (ref && !candidateReferences.includes(ref)) {
+				candidateReferences.push(ref);
+			}
 		}
-	}
 
-	let threadId = await findInboundThreadId(stub as unknown as InboundThreadStub, {
-		references: candidateReferences,
-		subject: parsedEmail.subject || "",
-		from: parsedEmail.from?.address || undefined,
-		aliasId: privateAlias?.aliasId ?? null,
-	});
+		let threadId = await findInboundThreadId(stub as unknown as InboundThreadStub, {
+			references: candidateReferences,
+			subject: parsedEmail.subject || "",
+			from: parsedEmail.from?.address || undefined,
+			aliasId: privateAlias?.aliasId ?? null,
+		});
 
-	if (!threadId) {
-		threadId = messageId;
-	}
+		if (!threadId) {
+			threadId = messageId;
+		}
 
-	const auth = parseAuthSignals({
-		mimeHeaders: parsedEmail.headers,
-		envelopeHeaders: message.headers,
-		headerFrom: parsedEmail.from?.address || fromAddress,
-		envelopeFrom: message.from,
-	});
-	const storedHeaders = mergeTrustedAuthHeaders(
-		parsedEmail.headers,
-		message.headers,
-	);
-	const fromHeaders = JSON.stringify(storedHeaders);
-	const senderName =
-		normalizeDisplayName(parsedEmail.from?.name) ??
-		senderNameFromRawHeaders(fromHeaders);
-
-	let classification = await classifyInboundEmail(
-		{
-			headers: storedHeaders,
-			subject: parsedEmail.subject,
-			sender: fromAddress,
-			bodyText: parsedEmail.text,
-			bodyHtml: parsedEmail.html,
-			auth,
-		},
-		env.AI as ClassifyAi,
-	);
-	console.log(
-		`Classified inbound mail for ${mailboxId} as ${classification.class} (${classification.folderId}): ${classification.reason}`,
-	);
-
-	const bodyText = parsedEmail.html || parsedEmail.text || "";
-	// Store HTML + original MIME in R2 before the DO row (metadata + snippet only).
-	await storeEmailContent(env.BUCKET, messageId, {
-		htmlOrText: bodyText,
-		rawMime: rawEmail,
-	});
-
-	const inboundEmail = {
-		id: messageId, subject: parsedEmail.subject || "",
-		sender: fromAddress, sender_name: senderName, recipient,
-		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
-		date: new Date().toISOString(), // uses receive time, not the email's Date header
-		snippet: computeSnippet(bodyText),
-		search_text: computeSearchText(bodyText, { plainText: parsedEmail.text }),
-		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
-		thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
-		auth: serializeEmailAuth(auth),
-		alias_id: privateAlias?.aliasId || null,
-	};
-
-	const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
-	const automationSettings = parseAutomationSettings(rawMailboxSettings);
-	const filterHit = applyInboxFilters(parseInboxFilters(rawMailboxSettings), {
-		sender: fromAddress,
-		subject: parsedEmail.subject || "",
-		headers: storedHeaders,
-		auth,
-	});
-	if (filterHit) {
-		console.log(
-			`Inbox filter ${filterHit.ruleId} matched for ${mailboxId}` +
-				(filterHit.folderId ? ` -> ${filterHit.folderId}` : ""),
+		const auth = parseAuthSignals({
+			mimeHeaders: parsedEmail.headers,
+			envelopeHeaders: message.headers,
+			headerFrom: parsedEmail.from?.address || fromAddress,
+			envelopeFrom: message.from,
+		});
+		const storedHeaders = mergeTrustedAuthHeaders(
+			parsedEmail.headers,
+			message.headers,
 		);
-	}
+		const fromHeaders = JSON.stringify(storedHeaders);
+		const senderName =
+			normalizeDisplayName(parsedEmail.from?.name) ??
+			senderNameFromRawHeaders(fromHeaders);
 
-	const screenerEnabled = parseScreenerEnabled(rawMailboxSettings);
-	if (screenerEnabled) {
-		try {
-			await (stub as any).bootstrapSenderTriage();
-		} catch (e) {
-			console.error(
-				`Sender triage bootstrap failed for ${mailboxId}:`,
-				(e as Error).message,
+		let classification = await classifyInboundEmail(
+			{
+				headers: storedHeaders,
+				subject: parsedEmail.subject,
+				sender: fromAddress,
+				bodyText: parsedEmail.text,
+				bodyHtml: parsedEmail.html,
+				auth,
+			},
+			env.AI as ClassifyAi,
+		);
+		console.log(
+			`Classified inbound mail for ${mailboxId} as ${classification.class} (${classification.folderId}): ${classification.reason}`,
+		);
+
+		const bodyText = parsedEmail.html || parsedEmail.text || "";
+		// Store HTML + original MIME in R2 before the DO row (metadata + snippet only).
+		await storeEmailContent(env.BUCKET, messageId, {
+			htmlOrText: bodyText,
+			rawMime: rawEmail,
+		});
+
+		const inboundEmail = {
+			id: messageId, subject: parsedEmail.subject || "",
+			sender: fromAddress, sender_name: senderName, recipient,
+			cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
+			date: new Date().toISOString(), // uses receive time, not the email's Date header
+			snippet: computeSnippet(bodyText),
+			search_text: computeSearchText(bodyText, { plainText: parsedEmail.text }),
+			in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
+			thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
+			auth: serializeEmailAuth(auth),
+			alias_id: privateAlias?.aliasId || null,
+		};
+
+		const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
+		const automationSettings = parseAutomationSettings(rawMailboxSettings);
+		const filterHit = applyInboxFilters(parseInboxFilters(rawMailboxSettings), {
+			sender: fromAddress,
+			subject: parsedEmail.subject || "",
+			headers: storedHeaders,
+			auth,
+		});
+		if (filterHit) {
+			console.log(
+				`Inbox filter ${filterHit.ruleId} matched for ${mailboxId}` +
+					(filterHit.folderId ? ` -> ${filterHit.folderId}` : ""),
 			);
 		}
-	}
-	const triageSender = normalizeTriageSender(fromAddress);
-	const triageRow = triageSender
-		? await (stub as any).getSenderTriage(triageSender)
-		: null;
-	const purposePref =
-		classification.folderId === Folders.SPAM && !isAiSpam(classification)
-			? null
-			: await stub.getSenderPreference(fromAddress);
-	// People you've emailed, accepted, or sorted can't be junked by the AI
-	// guess alone. Everything below files, notifies, and drafts on this verdict.
-	const vouchedClassification = overrideAiSpamForVouchedSender(classification, {
-		vouched: isVouchedSender(triageRow, purposePref?.folderId),
-		auth,
-	});
-	if (vouchedClassification !== classification) {
-		console.log(
-			`Vouched sender ${fromAddress} overrode AI spam verdict for ${mailboxId}`,
-		);
-		classification = vouchedClassification;
-	}
-	const triageDecision = resolveInboundFolder({
-		classification,
-		triage: triageRow,
-		filterHit,
-		screenerEnabled,
-		preferenceFolderId: purposePref?.folderId ?? null,
-	});
-	console.log(
-		`Triage for ${mailboxId} sender=${fromAddress}: action=${triageDecision.triageAction} -> ${triageDecision.folderId}`,
-	);
-	if (purposePref && triageDecision.folderId === purposePref.folderId) {
-		console.log(
-			`Sender preference filed ${fromAddress} → ${purposePref.folderId} for ${mailboxId}`,
-		);
-	}
 
-	const targetFolder = triageDecision.folderId;
-	let filedFolder: string = targetFolder;
-	try {
-		await stub.createEmail(targetFolder, inboundEmail, attachmentData);
-		if (privateAlias) {
-			await (stub as any).recordAliasInbound(privateAlias.aliasEmail, false);
+		const screenerEnabled = parseScreenerEnabled(rawMailboxSettings);
+		if (screenerEnabled) {
+			try {
+				await (stub as any).bootstrapSenderTriage();
+			} catch (e) {
+				console.error(
+					`Sender triage bootstrap failed for ${mailboxId}:`,
+					(e as Error).message,
+				);
+			}
 		}
-	} catch (e) {
-		if ((e as Error).message === "Mailbox has been deleted") {
-			console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
-			await deleteR2Keys(env.BUCKET, [
-				...emailContentKeys(messageId),
-				...attachmentData.map((att) =>
-					attachmentKey(messageId, att.id, att.filename),
-				),
-			]);
-			return;
+		const triageSender = normalizeTriageSender(fromAddress);
+		const triageRow = triageSender
+			? await (stub as any).getSenderTriage(triageSender)
+			: null;
+		const purposePref =
+			classification.folderId === Folders.SPAM && !isAiSpam(classification)
+				? null
+				: await stub.getSenderPreference(fromAddress);
+		// People you've emailed, accepted, or sorted can't be junked by the AI
+		// guess alone. Everything below files, notifies, and drafts on this verdict.
+		const vouchedClassification = overrideAiSpamForVouchedSender(classification, {
+			vouched: isVouchedSender(triageRow, purposePref?.folderId),
+			auth,
+		});
+		if (vouchedClassification !== classification) {
+			console.log(
+				`Vouched sender ${fromAddress} overrode AI spam verdict for ${mailboxId}`,
+			);
+			classification = vouchedClassification;
 		}
-		if (!shouldFallbackToInbox(targetFolder, e)) throw e;
-		console.error(
-			`Failed to file inbound mail to ${targetFolder}, falling back to inbox:`,
-			(e as Error).message,
+		const triageDecision = resolveInboundFolder({
+			classification,
+			triage: triageRow,
+			filterHit,
+			screenerEnabled,
+			preferenceFolderId: purposePref?.folderId ?? null,
+		});
+		console.log(
+			`Triage for ${mailboxId} sender=${fromAddress}: action=${triageDecision.triageAction} -> ${triageDecision.folderId}`,
 		);
+		if (purposePref && triageDecision.folderId === purposePref.folderId) {
+			console.log(
+				`Sender preference filed ${fromAddress} → ${purposePref.folderId} for ${mailboxId}`,
+			);
+		}
+
+		const targetFolder = triageDecision.folderId;
+		let filedFolder: string = targetFolder;
 		try {
-			await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
-		} catch (inboxErr) {
-			if ((inboxErr as Error).message === "Mailbox has been deleted") {
+			await stub.createEmail(targetFolder, inboundEmail, attachmentData);
+			stored = true;
+			if (privateAlias) {
+				await (stub as any).recordAliasInbound(privateAlias.aliasEmail, false);
+			}
+		} catch (e) {
+			if ((e as Error).message === "Mailbox has been deleted") {
 				console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
-				await deleteR2Keys(env.BUCKET, [
-					...emailContentKeys(messageId),
-					...attachmentData.map((att) =>
-						attachmentKey(messageId, att.id, att.filename),
-					),
-				]);
+				await abandonUnstoredInbound(env, stub, {
+					emailId: messageId,
+					originalMessageId,
+					blobKeys: inboundBlobKeys(),
+					knownUnstored: true,
+				});
 				return;
 			}
-			throw inboxErr;
+			if (!shouldFallbackToInbox(targetFolder, e)) throw e;
+			console.error(
+				`Failed to file inbound mail to ${targetFolder}, falling back to inbox:`,
+				(e as Error).message,
+			);
+			try {
+				await stub.createEmail(Folders.INBOX, inboundEmail, attachmentData);
+				stored = true;
+			} catch (inboxErr) {
+				if ((inboxErr as Error).message === "Mailbox has been deleted") {
+					console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+					await abandonUnstoredInbound(env, stub, {
+						emailId: messageId,
+						originalMessageId,
+						blobKeys: inboundBlobKeys(),
+						knownUnstored: true,
+					});
+					return;
+				}
+				throw inboxErr;
+			}
+			filedFolder = Folders.INBOX;
 		}
-		filedFolder = Folders.INBOX;
-	}
+		if (originalMessageId) {
+			// Best effort: the stored row already blocks redelivery.
+			await stub
+				.completeInboundMessageClaim(originalMessageId, messageId)
+				.catch((e: unknown) =>
+					console.error(`Inbound claim completion failed for ${mailboxId}:`, (e as Error).message),
+				);
+		}
 
-	try {
-		if (!triageDecision.skipForward) {
-			await applyInboundForward({
-				message,
-				mailboxId,
-				sender: fromAddress,
-				settings: automationSettings,
-				classification,
-				headers: message.headers,
-				forwardToOverride: filterHit?.forwardTo,
-			});
-		}
-		// Private emails never auto-reply; domain aliases reply as themselves.
-		const replyPlan = autoReplySender(routedAliasMeta, mailboxId);
-		if (!triageDecision.skipAutoReply && !replyPlan.skip) {
-			ctx.waitUntil(
-				sendInboundAutoReply({
-					env,
-					stub: stub as unknown as AutomationStub,
+		try {
+			if (!triageDecision.skipForward) {
+				await applyInboundForward({
+					message,
 					mailboxId,
 					sender: fromAddress,
-					fromName: automationSettings.fromName,
-					subject: parsedEmail.subject || "",
-					originalMessageId,
-					threadId: threadId ?? messageId,
 					settings: automationSettings,
 					classification,
 					headers: message.headers,
-					replyFrom: replyPlan.from,
-					replyFallback: replyPlan.fallback,
-				}).catch((e) =>
-					console.error("Auto-reply failed:", (e as Error).message),
+					forwardToOverride: filterHit?.forwardTo,
+				});
+			}
+			// Private emails never auto-reply; domain aliases reply as themselves.
+			const replyPlan = autoReplySender(routedAliasMeta, mailboxId);
+			if (!triageDecision.skipAutoReply && !replyPlan.skip) {
+				ctx.waitUntil(
+					sendInboundAutoReply({
+						env,
+						stub: stub as unknown as AutomationStub,
+						mailboxId,
+						sender: fromAddress,
+						fromName: automationSettings.fromName,
+						subject: parsedEmail.subject || "",
+						originalMessageId,
+						threadId: threadId ?? messageId,
+						settings: automationSettings,
+						classification,
+						headers: message.headers,
+						replyFrom: replyPlan.from,
+						replyFallback: replyPlan.fallback,
+					}).catch((e) =>
+						console.error("Auto-reply failed:", (e as Error).message),
+					),
+				);
+			}
+		} catch (e) {
+			console.error(
+				`Inbound automations failed for ${mailboxId}:`,
+				(e as Error).message,
+			);
+		}
+
+		// Auto-draft personal ham only. Spam, bulk, and Screener skip the agent.
+		if (
+			!triageDecision.skipAutoDraft &&
+			shouldAutoDraft(classification, auth) &&
+			!filterHit?.skipAutoDraft
+		) {
+			ctx.waitUntil(
+				(async () => {
+					await stub.ensureAutoAgentConversation();
+					const agent = await getEmailAgent(
+						env,
+						agentInstanceName(mailboxId, AUTO_CONVERSATION_ID),
+					);
+					await agent.handleNewEmail({
+						mailboxId,
+						emailId: messageId,
+						sender: (parsedEmail.from?.address || "").toLowerCase(),
+						subject: parsedEmail.subject || "",
+						threadId,
+					});
+				})().catch((e) =>
+					console.error("Auto-draft trigger failed:", (e as Error).message),
 				),
 			);
 		}
-	} catch (e) {
-		console.error(
-			`Inbound automations failed for ${mailboxId}:`,
-			(e as Error).message,
-		);
-	}
 
-	// Auto-draft personal ham only. Spam, bulk, and Screener skip the agent.
-	if (
-		!triageDecision.skipAutoDraft &&
-		shouldAutoDraft(classification, auth) &&
-		!filterHit?.skipAutoDraft
-	) {
+		if (triageDecision.skipPush || !shouldSendPush(classification)) {
+			return;
+		}
+
+		// Send push notifications to registered iOS (APNs) and Android (FCM) devices
 		ctx.waitUntil(
 			(async () => {
-				await stub.ensureAutoAgentConversation();
-				const agent = await getEmailAgent(
-					env,
-					agentInstanceName(mailboxId, AUTO_CONVERSATION_ID),
-				);
-				await agent.handleNewEmail({
-					mailboxId,
-					emailId: messageId,
-					sender: (parsedEmail.from?.address || "").toLowerCase(),
-					subject: parsedEmail.subject || "",
-					threadId,
-				});
+				const rows = await (stub as any).getDeviceTokens();
+				console.log(`[Push] Inbound email for "${mailboxId}". Registered device tokens: ${rows?.length ?? 0}`);
+				if (rows && rows.length > 0) {
+					const alert = composePushAlert({
+						subject: parsedEmail.subject,
+						snippet: inboundEmail.snippet,
+					});
+					const result = await dispatchPushToDevices(env, stub as any, {
+						title: senderName || fromAddress,
+						body: alert.body,
+						fcmBody: alert.fcmBody,
+						subtitle: alert.subtitle,
+						mailboxId,
+						emailId: messageId,
+						folderId: filedFolder,
+					});
+					console.log(
+						`[Push] Results for "${mailboxId}": ios=${JSON.stringify(result.ios)} android=${JSON.stringify(result.android)}`,
+					);
+				}
 			})().catch((e) =>
-				console.error("Auto-draft trigger failed:", (e as Error).message),
+				console.error("[Push] Push notification trigger failed:", (e as Error).message),
 			),
 		);
+	} catch (e) {
+		if (!stored) {
+			await abandonUnstoredInbound(env, stub, {
+				emailId: messageId,
+				originalMessageId,
+				blobKeys: inboundBlobKeys(),
+			});
+		}
+		throw e;
 	}
-
-	if (triageDecision.skipPush || !shouldSendPush(classification)) {
-		return;
-	}
-
-	// Send push notifications to registered iOS (APNs) and Android (FCM) devices
-	ctx.waitUntil(
-		(async () => {
-			const rows = await (stub as any).getDeviceTokens();
-			console.log(`[Push] Inbound email for "${mailboxId}". Registered device tokens: ${rows?.length ?? 0}`);
-			if (rows && rows.length > 0) {
-				const alert = composePushAlert({
-					subject: parsedEmail.subject,
-					snippet: inboundEmail.snippet,
-				});
-				const result = await dispatchPushToDevices(env, stub as any, {
-					title: senderName || fromAddress,
-					body: alert.body,
-					fcmBody: alert.fcmBody,
-					subtitle: alert.subtitle,
-					mailboxId,
-					emailId: messageId,
-					folderId: filedFolder,
-				});
-				console.log(
-					`[Push] Results for "${mailboxId}": ios=${JSON.stringify(result.ios)} android=${JSON.stringify(result.android)}`,
-				);
-			}
-		})().catch((e) =>
-			console.error("[Push] Push notification trigger failed:", (e as Error).message),
-		),
-	);
 }
 
 export { app, receiveEmail };
