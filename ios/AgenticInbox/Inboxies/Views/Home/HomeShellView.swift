@@ -21,6 +21,7 @@ struct HomeShellView: View {
     @State private var showAddMailboxSheet = false
     @State private var newMailboxName = ""
     @State private var newMailboxEmail = ""
+    @State private var isCreatingMailbox = false
     @FocusState private var isNameFocused: Bool
     @AppStorage("app_theme") private var appTheme: ThemeMode = .system
     @State private var showComposeSheet = false
@@ -516,24 +517,39 @@ struct HomeShellView: View {
                         }
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Create") {
-                            Task {
-                                let fullEmail = "\(newMailboxEmail)@\(app.mailDomain)"
-                                do {
-                                    try await app.createMailbox(name: newMailboxName, email: fullEmail)
-                                    showAddMailboxSheet = false
-                                    newMailboxName = ""
-                                    newMailboxEmail = ""
-                                } catch {
-                                    // Toast already presented by AppModel
-                                }
+                        Button {
+                            Task { await createMailbox() }
+                        } label: {
+                            if isCreatingMailbox {
+                                ProgressView()
+                            } else {
+                                Text("Create")
                             }
                         }
-                        .disabled(newMailboxEmail.isEmpty || newMailboxName.isEmpty)
+                        .disabled(isCreatingMailbox || newMailboxEmail.isEmpty || newMailboxName.isEmpty)
+                        .accessibilityLabel(isCreatingMailbox ? "Creating mailbox" : "Create")
                     }
                 }
+                .disabled(isCreatingMailbox)
             }
             .presentationDetents([.medium, .large])
+            .interactiveDismissDisabled(isCreatingMailbox)
+        }
+    }
+
+    private func createMailbox() async {
+        // A second tap while the request is in flight would create (or 409 on) the same address.
+        guard !isCreatingMailbox else { return }
+        isCreatingMailbox = true
+        defer { isCreatingMailbox = false }
+        let fullEmail = "\(newMailboxEmail)@\(app.mailDomain)"
+        do {
+            try await app.createMailbox(name: newMailboxName, email: fullEmail)
+            showAddMailboxSheet = false
+            newMailboxName = ""
+            newMailboxEmail = ""
+        } catch {
+            // Toast already presented by AppModel
         }
     }
 
