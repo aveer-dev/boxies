@@ -22,6 +22,7 @@ import { webHostRedirect } from "./lib/web-host-redirect";
 import type { Env } from "./types";
 
 export { MailboxDO } from "./durableObject";
+export { ExportJobDO } from "./durableObject/export-job";
 export { EmailAgent } from "./agent";
 export { EmailMCP } from "./mcp";
 

@@ -43,6 +43,7 @@ import {
 	deleteR2Keys,
 } from "../lib/attachments";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import type { ExportEmailRow } from "../lib/email-exporter";
 import {
 	agentConversationIdsToPurge,
 	clearAgentConversationTombstone,
@@ -652,6 +653,26 @@ export class MailboxDO extends DurableObject<Env> {
 			.limit(Math.min(limit, 500))
 			.offset(Math.max(offset, 0))
 			.all();
+	}
+
+	/**
+	 * Keyset page of email rows for the background .mbox export, in rowid
+	 * order. Unlike OFFSET paging, mail arriving or being deleted between
+	 * pages never shifts the cursor, so nothing is skipped or duplicated.
+	 */
+	async getExportPage(afterRowId = 0, limit = 100): Promise<ExportEmailRow[]> {
+		return this.ctx.storage.sql
+			.exec<ExportEmailRow>(
+				`SELECT rowid, id, subject, sender, sender_name, recipient, cc, bcc, date,
+				        folder_id, in_reply_to, provider_message_id, snippet
+				 FROM emails
+				 WHERE rowid > ?
+				 ORDER BY rowid
+				 LIMIT ?`,
+				Math.max(Number(afterRowId) || 0, 0),
+				Math.min(Math.max(Number(limit) || 100, 1), 500),
+			)
+			.toArray();
 	}
 
 	/**
