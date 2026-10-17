@@ -483,6 +483,23 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// List-query indexes (AVE-52). Additive only: no table or data changes.
+		// - attachments(email_id): thread view, list has_attachment flag,
+		//   attachment counts, and the ON DELETE CASCADE from emails all looked
+		//   attachments up by email_id with a full table scan.
+		// - emails(folder_id, read): covers the folder unread badge (getFolders
+		//   reads it from the index alone) and `folder_id = ? AND read = 0`.
+		// - emails(thread_id, read): mark-thread-read and per-thread unread lookups.
+		// Numbered 30 so it does not collide with 29_inbound_message_claims
+		// (AVE-48); the runner tracks by name, so either can apply first.
+		name: "30_list_query_indexes",
+		sql: txn(`
+            CREATE INDEX IF NOT EXISTS idx_attachments_email_id ON attachments(email_id);
+            CREATE INDEX IF NOT EXISTS idx_emails_folder_read ON emails(folder_id, read);
+            CREATE INDEX IF NOT EXISTS idx_emails_thread_read ON emails(thread_id, read);
+        `),
+	},
+	{
 		// Notes to self on threads (sticky) and messages (inline), private to
 		// their author. Additive only: a new table and its indexes.
 		name: "31_thread_notes_to_self",

@@ -10,12 +10,18 @@ import {
 	formatAsctime,
 	fromQuote,
 	formatMboxEntry,
-	exportMailboxToMbox,
 	runMailboxExportJob,
 	runDomainExportJob,
+	runExportInline,
+	runExportSlice,
+	createExportJob,
+	failExportJob,
+	MboxBodyEncoder,
 	hasRecentExportForDomain,
 	exportDataKey,
+	getExportJob,
 } from "../lib/email-exporter.ts";
+import { getFolderDisplayName } from "../../shared/folders.ts";
 import {
 	saveDomainMetadata,
 	getDomainMetadata,
@@ -46,45 +52,132 @@ async function addMailboxRow(env, mailboxId, ownerUserId) {
 	await db.insert(schema.mailboxMember).values({ mailboxId, userId: ownerUserId, role: "owner" }).onConflictDoNothing();
 }
 
-function mockBucket(initial = {}) {
-	const store = new Map(
-		Object.entries(initial).map(([key, value]) => [
-			key,
-			typeof value === "string" ? value : JSON.stringify(value),
-		]),
-	);
-	return {
+const te = new TextEncoder();
+const td = new TextDecoder();
+
+function toBytes(value) {
+	if (typeof value === "string") return te.encode(value);
+	if (value instanceof Uint8Array) return value.slice();
+	if (value instanceof ArrayBuffer) return new Uint8Array(value.slice(0));
+	if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+	return te.encode(JSON.stringify(value));
+}
+
+/** Stream bytes in small chunks so readers see realistic chunk boundaries. */
+function chunkedStream(bytes, chunkSize = 7) {
+	let offset = 0;
+	return new ReadableStream({
+		pull(controller) {
+			if (offset >= bytes.length) return controller.close();
+			controller.enqueue(bytes.slice(offset, offset + chunkSize));
+			offset += chunkSize;
+		},
+	});
+}
+
+/**
+ * In-memory R2 stand-in, including multipart uploads with R2's part rules
+ * (non-final parts >= minPartSize and all the same size).
+ */
+function mockBucket(initial = {}, { minPartSize = 1 } = {}) {
+	const store = new Map(Object.entries(initial).map(([key, value]) => [key, toBytes(value)]));
+	const uploads = new Map();
+	const multipartCompletes = [];
+	let nextUpload = 1;
+
+	const bucket = {
 		store,
+		uploads,
+		multipartCompletes,
 		async get(key) {
 			if (!store.has(key)) return null;
-			const val = store.get(key);
+			const bytes = store.get(key);
 			return {
-				text: async () => (typeof val === "string" ? val : JSON.stringify(val)),
-				json: async () => (typeof val === "string" ? JSON.parse(val) : val),
-				body: typeof val === "string" ? val : JSON.stringify(val),
+				size: bytes.length,
+				text: async () => td.decode(bytes),
+				json: async () => JSON.parse(td.decode(bytes)),
+				arrayBuffer: async () => bytes.slice().buffer,
+				get body() {
+					return chunkedStream(bytes);
+				},
 			};
 		},
 		async put(key, value) {
-			store.set(key, typeof value === "string" ? value : JSON.stringify(value));
+			store.set(key, toBytes(value));
+			return { key };
 		},
 		async head(key) {
 			return store.has(key) ? { key } : null;
 		},
 		async list({ prefix = "" } = {}) {
 			return {
-				objects: [...store.keys()]
-					.filter((key) => key.startsWith(prefix))
-					.map((key) => ({ key })),
+				objects: [...store.keys()].filter((key) => key.startsWith(prefix)).map((key) => ({ key })),
+				truncated: false,
 			};
 		},
 		async delete(key) {
 			store.delete(key);
 		},
+		async createMultipartUpload(key) {
+			const uploadId = `upload-${nextUpload++}`;
+			uploads.set(uploadId, { key, parts: new Map(), aborted: false });
+			return bucket.resumeMultipartUpload(key, uploadId);
+		},
+		resumeMultipartUpload(key, uploadId) {
+			return {
+				key,
+				uploadId,
+				async uploadPart(partNumber, value) {
+					const upload = uploads.get(uploadId);
+					if (!upload || upload.aborted) throw new Error("NoSuchUpload");
+					const bytes = toBytes(value);
+					upload.parts.set(partNumber, bytes);
+					return { partNumber, etag: `etag-${partNumber}-${bytes.length}` };
+				},
+				async abort() {
+					const upload = uploads.get(uploadId);
+					if (upload) upload.aborted = true;
+				},
+				async complete(parts) {
+					const upload = uploads.get(uploadId);
+					if (!upload || upload.aborted) throw new Error("NoSuchUpload");
+					const sorted = [...parts].sort((x, y) => x.partNumber - y.partNumber);
+					const chunks = sorted.map((p, i) => {
+						assert.equal(p.partNumber, i + 1, "parts are numbered 1..n");
+						const bytes = upload.parts.get(p.partNumber);
+						assert.ok(bytes, `part ${p.partNumber} was uploaded`);
+						assert.equal(p.etag, `etag-${p.partNumber}-${bytes.length}`, "etag matches the uploaded part");
+						return bytes;
+					});
+					for (let i = 0; i < chunks.length - 1; i++) {
+						assert.ok(chunks[i].length >= minPartSize, "non-final parts meet the minimum size");
+						assert.equal(chunks[i].length, chunks[0].length, "non-final parts are the same size");
+					}
+					const total = chunks.reduce((n, c) => n + c.length, 0);
+					const out = new Uint8Array(total);
+					let offset = 0;
+					for (const c of chunks) {
+						out.set(c, offset);
+						offset += c.length;
+					}
+					store.set(key, out);
+					multipartCompletes.push({ key, parts: chunks.map((c) => c.length) });
+					return { key, size: total };
+				},
+			};
+		},
 	};
+	return bucket;
 }
 
-function mockEnv(bucket, sampleEmails = []) {
-	return {
+/** Rows as `MailboxDO.getExportPage` returns them: rowid keyset order. */
+function exportRows(emails) {
+	return emails.map((email, i) => ({ rowid: email.rowid ?? i + 1, ...email }));
+}
+
+function mockEnv(bucket, sampleEmails = [], { runExports = true } = {}) {
+	const startedExports = [];
+	const env = {
 		BUCKET: bucket,
 		EMAIL_ADDRESSES: [],
 		DOMAINS: "inboxies.email",
@@ -103,9 +196,11 @@ function mockEnv(bucket, sampleEmails = []) {
 				return {
 					id,
 					reviveMailbox: async () => {},
-					getBatchForExport: async (offset = 0, limit = 200) => {
-						return sampleEmails.slice(offset, offset + limit);
-					},
+					getExportPage: async (afterRowId = 0, limit = 100) =>
+						exportRows(sampleEmails)
+							.filter((row) => row.rowid > afterRowId)
+							.sort((x, y) => x.rowid - y.rowid)
+							.slice(0, limit),
 					getEmails: async () => sampleEmails,
 					getTotalEmailCountForExport: async () => sampleEmails.length,
 				};
@@ -119,7 +214,25 @@ function mockEnv(bucket, sampleEmails = []) {
 				return { purge: async () => {} };
 			},
 		},
+		// ExportJobDO stand-in: records the start and (by default) runs the
+		// export to completion, standing in for the alarm loop.
+		EXPORT_JOBS: {
+			startedExports,
+			idFromName(name) {
+				return name;
+			},
+			get(id) {
+				return {
+					start: async (state) => {
+						startedExports.push({ id, state });
+						if (runExports) await runExportInline(env, state);
+					},
+					kick: async () => true,
+				};
+			},
+		},
 	};
+	return env;
 }
 
 import { Hono } from "hono";
@@ -216,12 +329,6 @@ async function runTests() {
 
 	const env = mockEnv(bucket, sampleEmails);
 
-	// Run single mailbox export
-	const mailboxResult = await exportMailboxToMbox(env, "you@acme.com");
-	assert.equal(mailboxResult.totalEmails, 2, "Should export 2 emails");
-	assert.ok(mailboxResult.mboxContent.includes("From bob@example.com "), "MBOX should contain Bob's message");
-	assert.ok(mailboxResult.mboxContent.includes("From carol@example.com "), "MBOX should contain Carol's reconstructed message");
-
 	// Run export job packaged to R2
 	const job = await runMailboxExportJob(env, "you@acme.com");
 	assert.equal(job.status, "completed");
@@ -232,6 +339,15 @@ async function runTests() {
 	// Verify MBOX file stored in R2
 	const storedMbox = await bucket.get(job.downloadKey);
 	assert.ok(storedMbox, "MBOX file must exist in R2");
+	const storedText = await storedMbox.text();
+	assert.ok(storedText.includes("From bob@example.com "), "MBOX should contain Bob's message");
+	assert.ok(storedText.includes("From carol@example.com "), "MBOX should contain Carol's reconstructed message");
+	assert.equal(job.fileSizeBytes, storedMbox.size, "fileSizeBytes is the archive size");
+	assert.equal(
+		[...bucket.store.keys()].filter((k) => k.startsWith("exports/tmp/")).length,
+		0,
+		"no scratch data is left behind",
+	);
 
 	const mailboxOnlyCheck = await hasRecentExportForDomain(bucket, "acme.com");
 	assert.equal(mailboxOnlyCheck.hasExport, false, "A single-mailbox export must not count as a domain backup");
@@ -286,6 +402,158 @@ async function runTests() {
 	console.log("✔ Mailbox & Domain export execution tests passed");
 
 	// ---------------------------------------------------------
+	// 2b. Streaming export: chunked From-quoting, multipart, resumable slices
+	// ---------------------------------------------------------
+	console.log("\n2b. Testing streaming export engine...");
+
+	assert.equal(bucket.multipartCompletes.length, 0, "small archives are a single put, not a multipart upload");
+
+	// The byte encoder matches fromQuote(...).trimEnd() for every chunking.
+	const encoderCases = [
+		"",
+		"From start of message\r\nbody\r\n",
+		"Subject: x\r\n\r\nFrom here\r\n>From quoted\r\n>>From twice\r\nFromage\r\nFrom\r\n",
+		"a\rFrom lone CR\nFrom LF\r\nnot From mid-line\r\n",
+		"trailing whitespace\r\n \t \r\n\r\n",
+		">>>",
+		"line\nFro",
+		"x\n>>>>From deep\n",
+	];
+	for (const text of encoderCases) {
+		const expected = fromQuote(text).trimEnd();
+		const input = te.encode(text);
+		for (const chunkSize of [1, 2, 3, 5, 7, 64]) {
+			const out = [];
+			const enc = new MboxBodyEncoder(async (bytes) => {
+				out.push(bytes.slice());
+			});
+			for (let i = 0; i < input.length; i += chunkSize) await enc.write(input.subarray(i, i + chunkSize));
+			await enc.end();
+			const got = td.decode(Buffer.concat(out));
+			assert.equal(got, expected, `encoder output for ${JSON.stringify(text)} in ${chunkSize}-byte chunks`);
+		}
+	}
+
+	// A mailbox exported over many slices with a tiny part size is byte-identical
+	// to the classic in-memory formatter, even when a slice is retried.
+	const PART = 64;
+	const streamBucket = mockBucket({}, { minPartSize: PART });
+	const streamEmails = [];
+	const addEmail = (n, size, folder = "inbox") => {
+		const id = `stream-${n}`;
+		const raw =
+			`From: sender${n}@example.com\r\nSubject: Message ${n}\r\n\r\n` +
+			`From the body of ${n}\r\n` +
+			"x".repeat(size) +
+			"\r\n\r\n";
+		streamBucket.store.set(`emails/${id}/raw.eml`, te.encode(raw));
+		const row = {
+			rowid: n,
+			id,
+			subject: `Message ${n}`,
+			sender: `sender${n}@example.com`,
+			sender_name: null,
+			recipient: "big@acme.com",
+			date: `2026-09-${String(n).padStart(2, "0")}T10:00:00Z`,
+			folder_id: folder,
+		};
+		streamEmails.push(row);
+		return { row, raw };
+	};
+	const expectedEntry = ({ row, raw }) =>
+		formatMboxEntry(row.sender, row.date, raw, getFolderDisplayName(row.folder_id));
+
+	const e1 = addEmail(1, 10);
+	const e2 = addEmail(2, 300, "sent");
+	const e3 = addEmail(3, 0);
+	const e4 = addEmail(4, 129, "archive");
+	const streamEnv = mockEnv(streamBucket, streamEmails, { runExports: false });
+
+	const created = await createExportJob(streamEnv, { targetType: "mailbox", targetId: "big@acme.com" }, { partSize: PART });
+	assert.equal(created.job.status, "pending");
+	let state = created.state;
+	let slices = 0;
+	let sawCarry = false;
+	let retried = false;
+	let mutated = false;
+	let e5;
+	while (true) {
+		let result = await runExportSlice(streamEnv, state, { deadline: Date.now() + 60_000, maxEmails: 1 });
+		if (!retried && result.state.parts.length > 0 && !result.done) {
+			// Crash before the state was persisted: run the same slice again.
+			retried = true;
+			result = await runExportSlice(streamEnv, state, { deadline: Date.now() + 60_000, maxEmails: 1 });
+		}
+		assert.notEqual(result.state, state, "slices never mutate their input state");
+		state = result.state;
+		if (result.obsoleteCarryKey) await streamBucket.delete(result.obsoleteCarryKey);
+		slices++;
+		if (state.carryKey) {
+			sawCarry = true;
+			assert.ok(streamBucket.store.has(state.carryKey), "the persisted carry exists");
+			assert.ok(streamBucket.store.get(state.carryKey).length < PART, "carry is less than one part");
+		}
+		if (result.done) break;
+		if (!mutated && state.processedEmails === 2) {
+			// Mail moves on mid-export: an exported email is deleted and a new one
+			// arrives. Keyset paging neither skips nor duplicates.
+			mutated = true;
+			streamEmails.splice(0, 1);
+			e5 = addEmail(5, 70);
+			const mid = await getExportJob(streamBucket, state.jobId);
+			assert.equal(mid.status, "processing");
+			assert.equal(mid.processedEmails, 2);
+			assert.equal(mid.totalEmails, 4);
+			assert.ok(mid.progress > 0 && mid.progress < 100);
+		}
+		assert.ok(slices < 50, "export terminates");
+	}
+	assert.ok(retried, "the retry path was exercised");
+	assert.ok(sawCarry, "a part tail was carried between slices");
+	assert.ok(slices >= 5, "one email per slice");
+
+	const streamJob = await getExportJob(streamBucket, state.jobId);
+	assert.equal(streamJob.status, "completed");
+	assert.equal(streamJob.processedEmails, 5);
+	const archiveBytes = streamBucket.store.get(streamJob.downloadKey);
+	const expectedArchive = [e1, e2, e3, e4, e5].map(expectedEntry).join("");
+	assert.equal(td.decode(archiveBytes), expectedArchive, "streamed archive is byte-identical to formatMboxEntry");
+	assert.equal(streamJob.fileSizeBytes, archiveBytes.length);
+	const completed = streamBucket.multipartCompletes.at(-1);
+	assert.ok(completed.parts.length > 3, "large archives use a multipart upload");
+	assert.ok(completed.parts.slice(0, -1).every((n) => n === PART), "non-final parts are exactly one part size");
+	assert.ok(Date.parse(streamJob.expiresAt) > Date.parse(streamJob.completedAt), "download window starts at completion");
+
+	// 8-bit message bytes survive untouched (no UTF-8 decode/re-encode).
+	const binBucket = mockBucket();
+	const binRaw = new Uint8Array([...te.encode("Subject: caf"), 0xe9, 0xff, 0x0d, 0x0a, 0x0d, 0x0a, 0x80, 0x41]);
+	binBucket.store.set("emails/bin-1/raw.eml", binRaw);
+	const binEnv = mockEnv(binBucket, [{ id: "bin-1", sender: "a@b.c", date: "2026-01-01T00:00:00Z", folder_id: "inbox" }]);
+	const binJob = await runMailboxExportJob(binEnv, "bin@acme.com");
+	const binArchive = binBucket.store.get(binJob.downloadKey);
+	const needle = Buffer.from([0xe9, 0xff, 0x0d, 0x0a, 0x0d, 0x0a, 0x80, 0x41]);
+	assert.ok(Buffer.from(binArchive).includes(needle), "raw 8-bit bytes are preserved");
+
+	// A failed export aborts its upload, drops scratch data and says why.
+	const failBucket = mockBucket();
+	const failEnv = mockEnv(failBucket, streamEmails, { runExports: false });
+	for (const e of streamEmails) failBucket.store.set(`emails/${e.id}/raw.eml`, streamBucket.store.get(`emails/${e.id}/raw.eml`));
+	const failCreated = await createExportJob(failEnv, { targetType: "mailbox", targetId: "big@acme.com" }, { partSize: PART });
+	const firstSlice = await runExportSlice(failEnv, failCreated.state, { deadline: Date.now() + 60_000, maxEmails: 2 });
+	assert.ok(firstSlice.state.uploadId, "multipart upload started");
+	assert.ok(firstSlice.state.carryKey, "carry written");
+	await failExportJob(failEnv, firstSlice.state, new Error("boom"));
+	const failedJob = await getExportJob(failBucket, failCreated.job.id);
+	assert.equal(failedJob.status, "failed");
+	assert.equal(failedJob.error, "boom");
+	assert.equal(failBucket.uploads.get(firstSlice.state.uploadId).aborted, true, "multipart upload aborted");
+	assert.equal([...failBucket.store.keys()].filter((k) => k.startsWith("exports/tmp/")).length, 0, "scratch removed");
+	const afterFail = await runExportSlice(failEnv, firstSlice.state, { deadline: Date.now() + 60_000 });
+	assert.equal(afterFail.done, true, "a failed job is never resumed");
+
+	console.log("✔ Streaming export engine tests passed");
+
+	// ---------------------------------------------------------
 	// 3. HTTP Endpoints: Export API & Download
 	// ---------------------------------------------------------
 	console.log("\n3. Testing Export API & Download streaming...");
@@ -325,8 +593,16 @@ async function runTests() {
 
 	assert.equal(adminDomainExportRes.status, 200);
 	const exportData = await adminDomainExportRes.json();
-	assert.equal(exportData.status, "completed");
+	assert.equal(exportData.status, "pending", "POST answers immediately with the queued job");
 	assert.ok(exportData.exportId);
+	assert.equal(exportData.id, exportData.exportId);
+	assert.equal(env.EXPORT_JOBS.startedExports.at(-1).id, exportData.id, "the background runner was started");
+
+	// Polling reports completion once the runner is done.
+	const polled = await (await client.request(`/api/v1/exports/${exportData.exportId}`)).json();
+	assert.equal(polled.status, "completed");
+	assert.equal(polled.progress.percent, 100);
+	assert.ok(polled.downloadUrl.endsWith(`/api/v1/exports/${exportData.exportId}/download`));
 
 	// Download exported .mbox stream
 	const downloadRes = await client.request(
@@ -384,7 +660,8 @@ async function runTests() {
 	);
 	assert.equal(mailboxExportRes.status, 200);
 	const mailboxExport = await mailboxExportRes.json();
-	assert.equal(mailboxExport.status, "completed");
+	assert.equal(mailboxExport.status, "pending");
+	assert.equal(mailboxExport.mailboxId, "you@acme.com");
 
 	const ownerJobRes = await client.request(
 		`/api/v1/exports/${mailboxExport.exportId}`,
@@ -392,6 +669,7 @@ async function runTests() {
 	);
 	assert.equal(ownerJobRes.status, 200);
 	const ownerJobData = await ownerJobRes.json();
+	assert.equal(ownerJobData.status, "completed");
 	assert.equal(ownerJobData.targetType, "mailbox");
 	assert.equal(ownerJobData.targetId, "you@acme.com");
 

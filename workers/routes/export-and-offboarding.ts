@@ -9,11 +9,12 @@ import type { MailboxContext } from "../lib/mailbox";
 import { authDb, authorizeMailboxAccess } from "../auth/authz";
 import * as schema from "../auth/schema";
 import {
+	createExportJob,
+	failExportJob,
 	getExportJob,
-	runMailboxExportJob,
-	runDomainExportJob,
 	hasRecentExportForDomain,
 	type ExportJob,
+	type ExportTarget,
 } from "../lib/email-exporter";
 import {
 	authorizeDomainAdmin,
@@ -91,6 +92,39 @@ async function loadAuthorizedExportJob(
 	return null;
 }
 
+/** A running job whose record hasn't moved for this long gets its runner re-armed. */
+const STALE_EXPORT_MS = 2 * 60 * 1000;
+
+/**
+ * Record the job and hand it to its background runner (`ExportJobDO`). The
+ * response is immediate; clients poll `GET /api/v1/exports/:id`.
+ */
+async function startExport(c: ExportContext, target: ExportTarget): Promise<Response> {
+	const { job, state } = await createExportJob(c.env, target);
+	try {
+		const ns = c.env.EXPORT_JOBS;
+		await ns.get(ns.idFromName(job.id)).start(state);
+	} catch (err: unknown) {
+		await failExportJob(c.env, state, err);
+		const msg = err instanceof Error ? err.message : "Export failed";
+		return c.json({ error: msg }, 500);
+	}
+	return c.json(toExportResponse(job));
+}
+
+/** Re-arm the runner of a job that looks stuck (lost alarm). Best effort. */
+async function kickIfStale(c: ExportContext, job: ExportJob): Promise<void> {
+	if (job.status !== "pending" && job.status !== "processing") return;
+	const touched = Date.parse(job.updatedAt ?? job.createdAt);
+	if (!(Date.now() - touched > STALE_EXPORT_MS)) return;
+	try {
+		const ns = c.env.EXPORT_JOBS;
+		await ns.get(ns.idFromName(job.id)).kick();
+	} catch (err: unknown) {
+		console.error("[export] kick failed", job.id, err instanceof Error ? err.message : err);
+	}
+}
+
 /** Expired exports are gone: drop the archive and answer 410. Null while still valid. */
 async function expiredExportResponse(c: ExportContext, job: ExportJob): Promise<Response | null> {
 	if (new Date(job.expiresAt).getTime() >= Date.now()) return null;
@@ -102,7 +136,8 @@ export function registerExportAndOffboardingRoutes(
 	app: Hono<MailboxContext>,
 ) {
 	/**
-	 * Export a single mailbox to an RFC 4155 .mbox archive.
+	 * Start exporting a single mailbox to an RFC 4155 .mbox archive. Returns
+	 * the pending job at once; the archive is built in the background.
 	 */
 	app.post("/api/v1/mailboxes/:id/export", async (c) => {
 		const mailboxId = c.req.param("id");
@@ -112,32 +147,19 @@ export function registerExportAndOffboardingRoutes(
 			return c.json({ error: auth.error || "Unauthorized" }, auth.status as any);
 		}
 
-		try {
-			// Export the mailbox that was authorized, not the raw path value.
-			const job = await runMailboxExportJob(c.env, auth.mailboxId);
-			return c.json(toExportResponse(job));
-		} catch (err: unknown) {
-			const msg = err instanceof Error ? err.message : "Export failed";
-			return c.json({ error: msg }, 500);
-		}
+		// Export the mailbox that was authorized, not the raw path value.
+		return startExport(c, { targetType: "mailbox", targetId: auth.mailboxId });
 	});
 
 	/**
-	 * Export all mailboxes for an entire domain into a unified RFC 4155 .mbox archive.
+	 * Start exporting all mailboxes of a domain into one RFC 4155 .mbox archive
+	 * (background job, same contract as the mailbox export).
 	 */
 	app.post("/api/v1/admin/domains/:domain/export", async (c) => {
 		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
 		if (authz instanceof Response) return authz;
 
-		const { domainMeta } = authz;
-
-		try {
-			const job = await runDomainExportJob(c.env, domainMeta.domain);
-			return c.json(toExportResponse(job));
-		} catch (err: unknown) {
-			const msg = err instanceof Error ? err.message : "Domain export failed";
-			return c.json({ error: msg }, 500);
-		}
+		return startExport(c, { targetType: "domain", targetId: authz.domainMeta.domain });
 	});
 
 	/**
@@ -152,6 +174,7 @@ export function registerExportAndOffboardingRoutes(
 		const expired = await expiredExportResponse(c, job);
 		if (expired) return expired;
 
+		await kickIfStale(c, job);
 		return c.json(toExportResponse(job));
 	});
 
