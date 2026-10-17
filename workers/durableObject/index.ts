@@ -75,6 +75,18 @@ import {
 	seedWelcomeEmailsInDO,
 	WELCOME_FLAG_KEY,
 } from "../lib/welcome-emails";
+import {
+	createThreadNote,
+	deleteThreadNote,
+	deleteThreadNotesForDeletedEmail,
+	listThreadNotes,
+	updateThreadNote,
+	withThreadNoteFields,
+	type CreateThreadNoteInput,
+	type CreateThreadNoteResult,
+	type UpdateThreadNoteInput,
+} from "../lib/thread-notes";
+import type { ThreadNote } from "../../shared/thread-notes";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -150,6 +162,8 @@ interface GetEmailsOptions {
 	reply_later?: boolean;
 	/** Include trash/spam/draft in Reply Later pile (default false). */
 	include_junk?: boolean;
+	/** Threaded lists: whose notes to summarize on each row (notes are private). */
+	userId?: string;
 }
 
 export type DeliveryStatus =
@@ -867,16 +881,20 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 
 			const rows = [...result];
-			return this.#withFileAttachmentFlag(
-				rows.map((row: any) => this.#withDecodedAuth({
-					...row,
-					read: !!row.read,
-					starred: !!row.starred,
-					reply_later: !!row.reply_later,
-					thread_count: row.thread_count || 1,
-					thread_unread_count: row.thread_unread_count || 0,
-					participants: row.participants || row.sender,
-				})),
+			return withThreadNoteFields(
+				this.ctx.storage.sql,
+				this.#withFileAttachmentFlag(
+					rows.map((row: any) => this.#withDecodedAuth({
+						...row,
+						read: !!row.read,
+						starred: !!row.starred,
+						reply_later: !!row.reply_later,
+						thread_count: row.thread_count || 1,
+						thread_unread_count: row.thread_unread_count || 0,
+						participants: row.participants || row.sender,
+					})),
+				),
+				options.userId,
 			);
 		}
 
@@ -982,8 +1000,10 @@ export class MailboxDO extends DurableObject<Env> {
 			needs_reply: !!row.needs_reply,
 			has_draft: !!row.has_draft,
 		}));
-		return this.#withFileAttachmentFlag(
-			annotateListSections(mapped, useNewSeen),
+		return withThreadNoteFields(
+			this.ctx.storage.sql,
+			this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
+			options.userId,
 		);
 	}
 
@@ -1210,6 +1230,36 @@ export class MailboxDO extends DurableObject<Env> {
 				attachments: attachmentsByEmail.get(email.id) || [],
 			})),
 		);
+	}
+
+	// ── Notes to self (private to their author; see lib/thread-notes) ──
+	// No broadcast: SSE subscribers are every member of the mailbox, and a
+	// note (even its existence) is only for its author.
+
+	async getThreadNotes(threadId: string, userId: string): Promise<ThreadNote[]> {
+		return listThreadNotes(this.ctx.storage.sql, threadId, userId);
+	}
+
+	async createThreadNote(
+		threadId: string,
+		userId: string,
+		input: CreateThreadNoteInput,
+	): Promise<CreateThreadNoteResult> {
+		await this.#assertMailboxWritable();
+		return createThreadNote(this.ctx.storage.sql, threadId, userId, input);
+	}
+
+	async updateThreadNote(
+		noteId: string,
+		userId: string,
+		input: UpdateThreadNoteInput,
+	): Promise<ThreadNote | null> {
+		await this.#assertMailboxWritable();
+		return updateThreadNote(this.ctx.storage.sql, noteId, userId, input);
+	}
+
+	async deleteThreadNote(noteId: string, userId: string): Promise<boolean> {
+		return deleteThreadNote(this.ctx.storage.sql, noteId, userId) !== null;
 	}
 
 	async updateEmail(
@@ -1532,7 +1582,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 	async deleteEmail(id: string) {
 		const email = this.db
-			.select({ id: schema.emails.id })
+			.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
 			.from(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.get();
@@ -1554,6 +1604,11 @@ export class MailboxDO extends DurableObject<Env> {
 			.run();
 
 		this.#deleteEmailFts(id);
+		deleteThreadNotesForDeletedEmail(
+			this.ctx.storage.sql,
+			id,
+			email.thread_id || id,
+		);
 
 		await deleteEmailContent(this.env.BUCKET, id);
 		await deleteEmailAttachments(this.env.BUCKET, id, emailAttachments);
@@ -1651,6 +1706,7 @@ export class MailboxDO extends DurableObject<Env> {
 			sql.exec(`DELETE FROM sender_triage`);
 			sql.exec(`DELETE FROM sender_preferences`);
 			sql.exec(`DELETE FROM inbound_message_claims`);
+			sql.exec(`DELETE FROM thread_notes`);
 
 			for (const folderId of SYSTEM_FOLDER_IDS) {
 				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;
