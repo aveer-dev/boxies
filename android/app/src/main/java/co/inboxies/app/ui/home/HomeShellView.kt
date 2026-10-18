@@ -75,6 +75,7 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
@@ -197,6 +198,7 @@ fun HomeShellView(
     var previousTabBeforeReplyLater by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
     var newMailboxName by remember { mutableStateOf("") }
     var newMailboxEmail by remember { mutableStateOf("") }
+    var isCreatingMailbox by remember { mutableStateOf(false) }
 
     val isAdmin by appModel.isAdmin.collectAsState()
     var pendingDomain by remember { mutableStateOf<AdminDomainInfo?>(null) }
@@ -1107,11 +1109,12 @@ fun HomeShellView(
     }
 
     if (showAddMailbox) {
-        Dialog(onDismissRequest = { showAddMailbox = false }) {
+        Dialog(onDismissRequest = { if (!isCreatingMailbox) showAddMailbox = false }) {
             AddMailboxDialog(
                 name = newMailboxName,
                 emailLocal = newMailboxEmail,
                 mailDomain = mailDomain,
+                isCreating = isCreatingMailbox,
                 onNameChange = { newMailboxName = it },
                 onEmailChange = { value ->
                     newMailboxEmail = value.substringBefore("@")
@@ -1122,11 +1125,20 @@ fun HomeShellView(
                     newMailboxEmail = ""
                 },
                 onCreate = {
-                    scope.launch {
-                        appModel.createMailbox(newMailboxName, "$newMailboxEmail@$mailDomain")
-                        showAddMailbox = false
-                        newMailboxName = ""
-                        newMailboxEmail = ""
+                    // A second tap while the request is in flight would create (or 409 on) the same address.
+                    if (!isCreatingMailbox) {
+                        isCreatingMailbox = true
+                        scope.launch {
+                            try {
+                                if (appModel.createMailbox(newMailboxName, "$newMailboxEmail@$mailDomain")) {
+                                    showAddMailbox = false
+                                    newMailboxName = ""
+                                    newMailboxEmail = ""
+                                }
+                            } finally {
+                                isCreatingMailbox = false
+                            }
+                        }
                     }
                 },
             )
@@ -1696,6 +1708,7 @@ private fun AddMailboxDialog(
     name: String,
     emailLocal: String,
     mailDomain: String,
+    isCreating: Boolean,
     onNameChange: (String) -> Unit,
     onEmailChange: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -1722,6 +1735,7 @@ private fun AddMailboxDialog(
             onValueChange = onNameChange,
             label = { Text("Full Name") },
             singleLine = true,
+            enabled = !isCreating,
             modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
@@ -1729,6 +1743,7 @@ private fun AddMailboxDialog(
             onValueChange = onEmailChange,
             label = { Text("Username") },
             singleLine = true,
+            enabled = !isCreating,
             trailingIcon = {
                 Text("@$mailDomain", color = colors.muted, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp))
             },
@@ -1744,14 +1759,24 @@ private fun AddMailboxDialog(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End,
         ) {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = onDismiss, enabled = !isCreating) {
                 Text("Cancel", color = colors.muted)
             }
             TextButton(
                 onClick = onCreate,
-                enabled = name.isNotBlank() && emailLocal.isNotBlank(),
+                enabled = !isCreating && name.isNotBlank() && emailLocal.isNotBlank(),
             ) {
-                Text("Create", color = colors.accent)
+                if (isCreating) {
+                    CircularProgressIndicator(
+                        color = colors.accent,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .semantics { contentDescription = "Creating mailbox" },
+                    )
+                } else {
+                    Text("Create", color = colors.accent)
+                }
             }
         }
     }
