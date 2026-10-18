@@ -5,7 +5,8 @@
 /**
  * User-defined inbound filter rules (Gmail-style).
  *
- * Match on sender / mailing list / subject, then file to a folder,
+ * Match on sender / mailing list / subject / private email recipient,
+ * then file to a folder,
  * skip auto-draft, and/or forward. First enabled matching rule wins.
  */
 
@@ -28,6 +29,8 @@ export interface InboxFilterRule {
 	list?: string;
 	/** Subject contains (case-insensitive). */
 	subject?: string;
+	/** Delivered via this private email (exact address, case-insensitive). */
+	toAlias?: string;
 	folderId?: string;
 	skipAutoDraft?: boolean;
 	forwardTo?: string;
@@ -38,6 +41,8 @@ export interface InboxFilterMatchInput {
 	subject?: string | null;
 	headers?: HeaderSource;
 	auth?: EmailAuth | null;
+	/** Private email the message was routed through, when any. */
+	aliasEmail?: string | null;
 }
 
 export interface InboxFilterHit {
@@ -121,11 +126,22 @@ export function matchSubjectCondition(
 	return (subject ?? "").toLowerCase().includes(needle);
 }
 
+/** Match the private email a message arrived through. */
+export function matchToAliasCondition(
+	condition: string,
+	aliasEmail: string | null | undefined,
+): boolean {
+	const needle = normalizeEmailAddress(condition);
+	if (!needle) return false;
+	return normalizeEmailAddress(aliasEmail) === needle;
+}
+
 function hasCondition(rule: InboxFilterRule): boolean {
 	return Boolean(
 		asTrimmedString(rule.from) ||
 			asTrimmedString(rule.list) ||
-			asTrimmedString(rule.subject),
+			asTrimmedString(rule.subject) ||
+			asTrimmedString(rule.toAlias),
 	);
 }
 
@@ -145,6 +161,10 @@ export function parseInboxFilterRule(raw: unknown): InboxFilterRule | null {
 	const from = asTrimmedString(raw.from) || undefined;
 	const list = asTrimmedString(raw.list) || undefined;
 	const subject = asTrimmedString(raw.subject) || undefined;
+	const toAliasRaw = asTrimmedString(raw.toAlias);
+	const toAlias = toAliasRaw
+		? (normalizeEmailAddress(toAliasRaw) ?? toAliasRaw)
+		: undefined;
 	const folderId = asTrimmedString(raw.folderId) || undefined;
 	const forwardTo = asTrimmedString(raw.forwardTo) || undefined;
 	const name = asTrimmedString(raw.name) || undefined;
@@ -157,6 +177,7 @@ export function parseInboxFilterRule(raw: unknown): InboxFilterRule | null {
 		from,
 		list,
 		subject,
+		toAlias,
 		folderId,
 		skipAutoDraft: skipAutoDraft || undefined,
 		forwardTo,
@@ -195,7 +216,10 @@ export function inboxFiltersError(
 		ids.add(rule.id);
 
 		if (!hasCondition(rule)) {
-			return "Each filter needs at least one condition (from, list, or subject)";
+			return "Each filter needs at least one condition (from, list, subject, or private email)";
+		}
+		if (rule.toAlias && !normalizeEmailAddress(rule.toAlias)) {
+			return "Enter a valid private email for the filter";
 		}
 		if (!hasAction(rule)) {
 			return "Each filter needs at least one action (folder, skip auto-draft, or forward)";
@@ -233,6 +257,9 @@ export function matchInboxFilter(
 	}
 	if (rule.subject) {
 		if (!matchSubjectCondition(rule.subject, input.subject)) return false;
+	}
+	if (rule.toAlias) {
+		if (!matchToAliasCondition(rule.toAlias, input.aliasEmail)) return false;
 	}
 	return true;
 }

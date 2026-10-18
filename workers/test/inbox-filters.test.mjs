@@ -11,6 +11,7 @@ import {
 	matchFromCondition,
 	matchListCondition,
 	matchSubjectCondition,
+	matchToAliasCondition,
 	parseInboxFilters,
 } from "../lib/inbox-filters.ts";
 import { mergeMailboxSettingsBlob } from "../lib/mail-automations.ts";
@@ -163,7 +164,7 @@ assert.equal(matchSubjectCondition("invoice", "Hello there"), false);
 	const parsed = parseInboxFilters([{ id: "x", folderId: "archive" }]);
 	assert.equal(
 		inboxFiltersError(parsed, "me@inbox.test"),
-		"Each filter needs at least one condition (from, list, or subject)",
+		"Each filter needs at least one condition (from, list, subject, or private email)",
 	);
 }
 
@@ -243,6 +244,66 @@ assert.equal(matchSubjectCondition("invoice", "Hello there"), false);
 		headers: [],
 	});
 	assert.equal(hit?.folderId, "archive");
+}
+
+// ── Private email (toAlias) condition ────────────────────────────
+assert.equal(matchToAliasCondition("k8m2p9v4@example.com", "K8M2P9V4@example.com"), true);
+assert.equal(matchToAliasCondition("k8m2p9v4@example.com", "other@example.com"), false);
+assert.equal(matchToAliasCondition("k8m2p9v4@example.com", null), false);
+assert.equal(matchToAliasCondition("not-an-email", "not-an-email"), false);
+
+{
+	const rules = parseInboxFilters([
+		{ id: "shop", toAlias: " Shop1234@Example.com ", folderId: "archive" },
+		{ id: "shop-subject", toAlias: "news5678@example.com", subject: "sale", skipAutoDraft: true },
+	]);
+	assert.equal(rules[0].toAlias, "shop1234@example.com");
+	assert.equal(inboxFiltersError(rules, "hello@example.com"), null);
+
+	// Mail to the mailbox itself never matches an alias rule.
+	assert.equal(
+		applyInboxFilters(rules, { sender: "a@b.com", subject: "Hi", headers: [], aliasEmail: null }),
+		null,
+	);
+	const hit = applyInboxFilters(rules, {
+		sender: "a@b.com",
+		subject: "Hi",
+		headers: [],
+		aliasEmail: "shop1234@example.com",
+	});
+	assert.equal(hit?.ruleId, "shop");
+	assert.equal(hit?.folderId, "archive");
+
+	// Combined with subject: all conditions must hold.
+	assert.equal(
+		applyInboxFilters(rules, { sender: "a@b.com", subject: "Hi", headers: [], aliasEmail: "news5678@example.com" }),
+		null,
+	);
+	assert.equal(
+		applyInboxFilters(rules, { sender: "a@b.com", subject: "Big SALE", headers: [], aliasEmail: "news5678@example.com" })?.ruleId,
+		"shop-subject",
+	);
+
+	// Spoofed sender auth does not block a recipient-only rule.
+	assert.equal(
+		applyInboxFilters(rules, {
+			sender: "a@b.com",
+			subject: "Hi",
+			headers: [],
+			aliasEmail: "shop1234@example.com",
+			auth: { spoofed: true, source: "authentication-results", aligned: false, headerFrom: "a@b.com", envelopeFrom: "x" },
+		})?.ruleId,
+		"shop",
+	);
+
+	assert.equal(
+		inboxFiltersError(parseInboxFilters([{ id: "bad", toAlias: "nope", folderId: "archive" }]), "hello@example.com"),
+		"Enter a valid private email for the filter",
+	);
+	assert.equal(
+		inboxFiltersError(parseInboxFilters([{ id: "alias-only", toAlias: "x1@example.com", skipAutoDraft: true }]), "hello@example.com"),
+		null,
+	);
 }
 
 console.log("inbox-filters tests passed");
