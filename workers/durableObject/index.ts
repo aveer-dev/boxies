@@ -75,6 +75,20 @@ import {
 	seedWelcomeEmailsInDO,
 	WELCOME_FLAG_KEY,
 } from "../lib/welcome-emails";
+import {
+	deleteSummariesForEmail,
+	resolveSummary,
+	SummaryGenerationError,
+	type SummaryMessageMeta,
+} from "../lib/ai-summary";
+import { normalizeEmailAddress } from "../lib/mail-automations";
+import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
+
+/**
+ * DO-side summary result. Model failures come back as a value rather than a
+ * thrown error because custom error classes don't survive the RPC boundary.
+ */
+export type MailboxSummaryResult = AiSummaryResponse | { status: "generation_failed"; error: string };
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -204,6 +218,8 @@ export class MailboxDO extends DurableObject<Env> {
 	declare __DURABLE_OBJECT_BRAND: never;
 	db: ReturnType<typeof drizzle>;
 	#subscribers: Set<ReadableStreamDefaultController> = new Set();
+	/** In-flight AI summary generations, so two opens of one thread run the model once. */
+	#summaryInflight = new Map<string, Promise<MailboxSummaryResult | null>>();
 	#pingInterval: ReturnType<typeof setInterval> | null = null;
 
 	#ensurePingInterval() {
@@ -1212,6 +1228,129 @@ export class MailboxDO extends DurableObject<Env> {
 		);
 	}
 
+	// ── AI summaries (AVE-20) ──────────────────────────────────────
+
+	/** Metadata of every message in a thread (key = thread_id, or the id of a thread's first message). */
+	#summaryThreadMetas(threadKey: string): SummaryMessageMeta[] {
+		return [
+			...this.ctx.storage.sql.exec(
+				`SELECT id, folder_id, sender, sender_name, subject, date
+				   FROM emails
+				  WHERE thread_id = ?1 OR (id = ?1 AND thread_id IS NULL)`,
+				threadKey,
+			),
+		] as unknown as SummaryMessageMeta[];
+	}
+
+	/** Thread senders the user rejected in the Screener. */
+	#rejectedSendersAmong(messages: SummaryMessageMeta[]): Set<string> {
+		const senders = [
+			...new Set(
+				messages
+					.map((message) => normalizeEmailAddress(message.sender))
+					.filter((address): address is string => !!address),
+			),
+		];
+		if (senders.length === 0) return new Set();
+		const placeholders = senders.map((_, i) => `?${i + 1}`).join(",");
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT sender FROM sender_triage WHERE status = 'rejected' AND sender IN (${placeholders})`,
+				...senders,
+			),
+		];
+		return new Set(rows.map((row) => String(row.sender)));
+	}
+
+	async #summaryBody(emailId: string): Promise<string | null> {
+		const row = this.db
+			.select({ body: schema.emails.body, snippet: schema.emails.snippet })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, emailId))
+			.get();
+		if (!row) return null;
+		return this.#hydrateBody(emailId, row.body, row.snippet);
+	}
+
+	async #resolveSummary(
+		type: AiSummaryTargetType,
+		targetId: string,
+		threadKey: string,
+		mode: "cached" | "lazy" | "force",
+	): Promise<MailboxSummaryResult | null> {
+		const threadMessages = this.#summaryThreadMetas(threadKey);
+		if (threadMessages.length === 0) return null;
+		if (type === "email" && !threadMessages.some((message) => message.id === targetId)) return null;
+		let result: AiSummaryResponse;
+		try {
+			result = await resolveSummary({
+				sql: this.ctx.storage.sql,
+				ai: this.env.AI,
+				target: { type, id: targetId },
+				threadMessages,
+				rejectedSenders: this.#rejectedSendersAmong(threadMessages),
+				loadBody: (id) => this.#summaryBody(id),
+				mode,
+				assertWritable: () => this.#assertMailboxWritable(),
+			});
+		} catch (e) {
+			if (e instanceof SummaryGenerationError) {
+				return { status: "generation_failed", error: e.message };
+			}
+			throw e;
+		}
+		if (result.status === "ready" && !result.cached) {
+			this.broadcastEvent("summary_updated", { target_type: type, target_id: targetId });
+		}
+		return result;
+	}
+
+	/** Shares one in-flight generation per target; "cached" reads never wait on it. */
+	#dedupedSummary(
+		type: AiSummaryTargetType,
+		targetId: string,
+		threadKey: string,
+		mode: "cached" | "lazy" | "force",
+	): Promise<MailboxSummaryResult | null> {
+		if (mode === "cached") return this.#resolveSummary(type, targetId, threadKey, mode);
+		const key = `${type}:${targetId}`;
+		const pending = this.#summaryInflight.get(key);
+		if (pending) return pending;
+		const run = this.#resolveSummary(type, targetId, threadKey, mode).finally(() => {
+			this.#summaryInflight.delete(key);
+		});
+		this.#summaryInflight.set(key, run);
+		return run;
+	}
+
+	/**
+	 * Thread summary for the detail screen: cached, or generated on first open
+	 * ("lazy") / always ("force", Regenerate). Null when the thread has no mail.
+	 */
+	async getThreadSummary(
+		threadKey: string,
+		mode: "lazy" | "force" = "lazy",
+	): Promise<MailboxSummaryResult | null> {
+		return this.#dedupedSummary("thread", threadKey, threadKey, mode);
+	}
+
+	/**
+	 * Quick summary of one message in a multi-message thread. "cached" never
+	 * runs the model. Null when the email doesn't exist.
+	 */
+	async getEmailSummary(
+		emailId: string,
+		mode: "cached" | "lazy" | "force" = "cached",
+	): Promise<MailboxSummaryResult | null> {
+		const row = this.db
+			.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, emailId))
+			.get();
+		if (!row) return null;
+		return this.#dedupedSummary("email", emailId, row.thread_id || row.id, mode);
+	}
+
 	async updateEmail(
 		id: string,
 		{
@@ -1532,7 +1671,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 	async deleteEmail(id: string) {
 		const email = this.db
-			.select({ id: schema.emails.id })
+			.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
 			.from(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.get();
@@ -1554,6 +1693,7 @@ export class MailboxDO extends DurableObject<Env> {
 			.run();
 
 		this.#deleteEmailFts(id);
+		deleteSummariesForEmail(this.ctx.storage.sql, id, email.thread_id || id);
 
 		await deleteEmailContent(this.env.BUCKET, id);
 		await deleteEmailAttachments(this.env.BUCKET, id, emailAttachments);
@@ -1651,6 +1791,7 @@ export class MailboxDO extends DurableObject<Env> {
 			sql.exec(`DELETE FROM sender_triage`);
 			sql.exec(`DELETE FROM sender_preferences`);
 			sql.exec(`DELETE FROM inbound_message_claims`);
+			sql.exec(`DELETE FROM email_summaries`);
 
 			for (const folderId of SYSTEM_FOLDER_IDS) {
 				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;

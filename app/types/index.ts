@@ -408,6 +408,13 @@ export type {
 	InboxDigestTopicItem,
 } from "shared/inbox-digest";
 
+export type {
+	AiSummary,
+	AiSummaryIneligibleReason,
+	AiSummaryResponse,
+	AiSummaryTargetType,
+} from "shared/ai-summaries";
+
 export interface MaskedAlias {
 	id: string;
 	alias_email: string;

@@ -3,7 +3,10 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Badge, Button } from '@cloudflare/kumo';
-import { CaretDownIcon, CaretUpIcon, CodeIcon, PaperclipIcon, PaperPlaneTiltIcon, PencilSimpleIcon, TrashIcon } from '@phosphor-icons/react';
+import { ArrowClockwiseIcon, CaretDownIcon, CaretUpIcon, CodeIcon, PaperclipIcon, PaperPlaneTiltIcon, PencilSimpleIcon, SparkleIcon, TrashIcon } from '@phosphor-icons/react';
+import { useState } from 'react';
+import { SummarySkeleton, SummaryText } from '~/components/email-panel/AISummaryCard';
+import { useEmailQuickSummary, useRegenerateEmailSummary } from '~/queries/summaries';
 import EmailAttachmentList from '~/components/EmailAttachmentList';
 import { IconButton } from '~/components/IconButton';
 import EmailIframe from '~/components/EmailIframe';
@@ -27,6 +30,64 @@ interface ThreadMessageProps {
     onDeleteDraft?: () => void;
     onViewSource?: () => void;
     onPreviewImage?: (url: string, filename: string) => void;
+    /** Offer "Quick summary" (AVE-20): only for messages in a multi-message thread. */
+    quickSummary?: boolean;
+}
+
+/** Inline AI summary of one thread message, generated when the user asks. */
+function QuickSummary({ mailboxId, emailId }: { mailboxId?: string; emailId: string }) {
+    const [requested, setRequested] = useState(false);
+    const { data, isFetching, isError, refetch } = useEmailQuickSummary(mailboxId, emailId, requested);
+    const regenerate = useRegenerateEmailSummary();
+
+    if (!mailboxId) return null;
+    if (!requested && !data) {
+        return (
+            <Button variant="ghost" size="sm" icon={<SparkleIcon size={14} />} onClick={() => setRequested(true)} className="mb-3 md:ml-10.5">
+                Quick summary
+            </Button>
+        );
+    }
+    if (data && data.status === 'not_eligible') {
+        return (
+            <p className="mb-3 md:ml-10.5 text-xs text-kumo-subtle" role="status">
+                {data.reason === 'too_short' ? 'This message is too short to summarize.' : 'This message can’t be summarized.'}
+            </p>
+        );
+    }
+    return (
+        <div className="mb-3 md:ml-10.5 rounded-xl border border-kumo-line bg-kumo-tint px-3.5 py-2.5" aria-label="Quick summary">
+            <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-xs font-medium text-kumo-subtle">
+                    <SparkleIcon size={14} weight="fill" className="text-kumo-brand" aria-hidden />
+                    Quick summary
+                </span>
+                {data?.status === 'ready' && (
+                    <IconButton
+                        label="Regenerate quick summary"
+                        icon={ArrowClockwiseIcon}
+                        iconClassName={regenerate.isPending ? 'animate-spin' : undefined}
+                        disabled={regenerate.isPending}
+                        onClick={() => regenerate.mutate({ mailboxId, emailId })}
+                    />
+                )}
+            </div>
+            {regenerate.isPending || (isFetching && !data) ? (
+                <SummarySkeleton />
+            ) : data?.status === 'ready' ? (
+                <SummaryText summary={data.summary} />
+            ) : isError ? (
+                <p className="text-xs text-kumo-subtle" role="status">
+                    Couldn’t summarize this message.{' '}
+                    <button type="button" className="underline underline-offset-2 hover:text-kumo-default" onClick={() => refetch()}>
+                        Try again
+                    </button>
+                </p>
+            ) : (
+                <SummarySkeleton />
+            )}
+        </div>
+    );
 }
 
 function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolean; sender: string }) {
@@ -37,7 +98,7 @@ function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolea
     );
 }
 
-export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage }: ThreadMessageProps) {
+export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage, quickSummary }: ThreadMessageProps) {
     const isSelf = email.sender === mailboxEmail;
     const deliveryFailed = isDeliveryFailure(email.delivery_status);
     const spoofed = isAuthSpoofed(email);
@@ -119,6 +180,8 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                         )}
                     </div>
                 )}
+
+                {quickSummary && !isDraft && <QuickSummary mailboxId={mailboxId} emailId={email.id} />}
 
                 <div className="md:ml-10.5">
                     <EmailIframe body={rewriteInlineImages(email.body || '', mailboxId || '', email.id, email.attachments)} autoSize />

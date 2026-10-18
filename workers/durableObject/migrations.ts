@@ -499,5 +499,28 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_emails_thread_read ON emails(thread_id, read);
         `),
 	},
+	{
+		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
+		// or per message (quick summary). Generated lazily on open and reused
+		// until the thread gains a message. Additive only. Numbered 31; an open
+		// PR adds 31_thread_notes_to_self, which is fine because the runner
+		// tracks migrations by name, so either can apply first.
+		name: "31_email_summaries",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS email_summaries (
+                target_type TEXT NOT NULL CHECK (target_type IN ('thread', 'email')),
+                target_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                key_points TEXT NOT NULL DEFAULT '[]',
+                model TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                last_email_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (target_type, target_id)
+            );
+        `),
+	},
 ];
 
