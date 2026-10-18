@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
 import { Tip } from "~/components/IconButton";
-import { OnboardingFlow } from "~/components/OnboardingFlow";
+import { AddMailboxDialog } from "~/components/AddMailboxDialog";
 import { folderPath } from "~/hooks/useMailNavigation";
 import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { useInboxUnreadCounts } from "~/queries/folders";
@@ -154,10 +154,11 @@ export default function AccountsColumn() {
 				</nav>
 			)}
 
-			<OnboardingFlow
+			<AddMailboxDialog
 				isOpen={isAddOpen}
 				onClose={() => setIsAddOpen(false)}
 				mailDomain={mailDomain}
+				isAdmin={Boolean(me?.isAdmin)}
 				onSuccess={async (mailboxId) => {
 					setIsAddOpen(false);
 					await refetch();

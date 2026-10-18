@@ -357,8 +357,14 @@ final class AppModel {
     func createMailbox(name: String, email: String) async throws -> Mailbox {
         do {
             let mailbox = try await APIClient.shared.createMailbox(name: name, email: email)
-            await refreshMailboxes(showLoading: true)
+            // List the new mailbox right away. The full refresh also reloads the selected
+            // mailbox's mail, so it reconciles in the background instead of holding the sheet.
+            if !mailboxes.contains(where: { $0.id == mailbox.id }) {
+                mailboxes.append(mailbox)
+                db.upsertMailboxes(mailboxes)
+            }
             showToast("Mailbox created")
+            Task { await refreshMailboxes(showLoading: false) }
             return mailbox
         } catch {
             showToast("Failed to create mailbox: \(error.localizedDescription)", isError: true)
