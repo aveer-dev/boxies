@@ -27,6 +27,42 @@ enum AppTheme {
     static let unread = Color(uiColor: uiUnread)
     static let deepDarkRed = Color(uiColor: uiDeepDarkRed)
 
+    /// Notes to self: the one warm surface in the monochrome shell, so a sticky note
+    /// reads as paper stuck on the page. Soft, low-chroma; same values as web `--note-*`.
+    enum Note {
+        static let paper = Color(uiColor: dynamicColor(
+            light: UIColor(red: 1.0, green: 0.969, blue: 0.812, alpha: 1),
+            dark: UIColor(red: 0.165, green: 0.149, blue: 0.090, alpha: 1)
+        ))
+        static let paperEdge = Color(uiColor: dynamicColor(
+            light: UIColor(red: 0.937, green: 0.882, blue: 0.631, alpha: 1),
+            dark: UIColor(red: 0.239, green: 0.216, blue: 0.125, alpha: 1)
+        ))
+        static let ink = Color(uiColor: dynamicColor(
+            light: UIColor(red: 0.227, green: 0.196, blue: 0.078, alpha: 1),
+            dark: UIColor(red: 0.945, green: 0.914, blue: 0.800, alpha: 1)
+        ))
+        static let muted = Color(uiColor: dynamicColor(
+            light: UIColor(red: 0.478, green: 0.424, blue: 0.227, alpha: 1),
+            dark: UIColor(red: 0.702, green: 0.651, blue: 0.471, alpha: 1)
+        ))
+        static let pin = Color(uiColor: dynamicColor(
+            light: UIColor(red: 0.761, green: 0.329, blue: 0.110, alpha: 1),
+            dark: UIColor(red: 0.898, green: 0.541, blue: 0.322, alpha: 1)
+        ))
+        static let shadow = Color(uiColor: dynamicColor(
+            light: UIColor(red: 0.31, green: 0.235, blue: 0, alpha: 0.20),
+            dark: UIColor(white: 0, alpha: 0.55)
+        ))
+        /// Resting tilt of a sticky note, in degrees (flat while lifted).
+        static let tilt: Double = -1.2
+        /// Paper corners: tight, with one softer curled corner (bottom-right).
+        static let cornerRadius: CGFloat = 3
+        static let curlRadius: CGFloat = 14
+        /// Inline notes: neutral card with a dashed hairline.
+        static let inlineCornerRadius: CGFloat = 12
+    }
+
     private static func dynamicColor(light: UIColor, dark: UIColor) -> UIColor {
         return UIColor { traitCollection in
             switch traitCollection.userInterfaceStyle {

@@ -52,6 +52,10 @@ final class AppModel {
     var listPaging: EmailListPaging?
     var selectedEmail: Email?
     var threadEmails: [Email] = []
+    /// Notes to self on the open conversation (the signed-in user's own only).
+    var threadNotes: [ThreadNote] = []
+    /// `mailboxId|threadKey` that `threadNotes` belongs to; nil before the first load.
+    var threadNotesKey: String?
     var composeSession: ComposeSession?
     var toast: AppToast?
     /// Count for bottom Reply Later chrome (workflow pile).
@@ -1578,6 +1582,8 @@ final class AppModel {
         errorMessage = nil
         selectedEmail = nil
         threadEmails = []
+        threadNotes = []
+        threadNotesKey = nil
         composeSession = nil
         toastDismissTask?.cancel()
         toastDismissTask = nil

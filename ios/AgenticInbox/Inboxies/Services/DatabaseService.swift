@@ -206,6 +206,14 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN alias_email TEXT;")
             setVersion(6)
         }
+
+        // Notes to self: the list row's sticky snippet + private note count.
+        if (getVersion() < 7) {
+            exec("ALTER TABLE emails ADD COLUMN has_sticky_note INTEGER;")
+            exec("ALTER TABLE emails ADD COLUMN sticky_note_text TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN inline_note_count INTEGER;")
+            setVersion(7)
+        }
     }
 
     private func getVersion() -> Int {
@@ -409,13 +417,15 @@ final class DatabaseService: @unchecked Sendable {
                 message_id, raw_headers, thread_count, thread_unread_count, participants,
                 folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id, reply_later, reply_later_at,
-                updated_at, alias_id, alias_email
+                updated_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
+                ?, ?, ?,
                 ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
@@ -452,7 +462,12 @@ final class DatabaseService: @unchecked Sendable {
                 reply_later_at = excluded.reply_later_at,
                 updated_at = excluded.updated_at,
                 alias_id = COALESCE(excluded.alias_id, emails.alias_id),
-                alias_email = COALESCE(excluded.alias_email, emails.alias_email);
+                alias_email = COALESCE(excluded.alias_email, emails.alias_email),
+                -- Only list rows carry note fields; detail/thread payloads keep the cached ones.
+                has_sticky_note = COALESCE(excluded.has_sticky_note, emails.has_sticky_note),
+                sticky_note_text = CASE WHEN excluded.has_sticky_note IS NULL
+                    THEN emails.sticky_note_text ELSE excluded.sticky_note_text END,
+                inline_note_count = COALESCE(excluded.inline_note_count, emails.inline_note_count);
             """
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -502,6 +517,9 @@ final class DatabaseService: @unchecked Sendable {
                     bindString(stmt, 33, now)
                     bindOptionalString(stmt, 34, e.aliasId)
                     bindOptionalString(stmt, 35, e.aliasEmail)
+                    bindOptionalBool(stmt, 36, e.hasStickyNote)
+                    bindOptionalString(stmt, 37, e.stickyNoteText)
+                    bindOptionalInt(stmt, 38, e.inlineNoteCount)
 
                     sqlite3_step(stmt)
                 }
@@ -531,7 +549,8 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ? AND (? IS NULL OR date >= ?)
             ORDER BY date DESC
@@ -574,7 +593,8 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count
             FROM emails
             WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
             ORDER BY CASE WHEN reply_later_at IS NOT NULL THEN reply_later_at ELSE date END ASC, date DESC
@@ -623,7 +643,8 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -652,7 +673,8 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -937,6 +959,27 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    /// Writes a conversation's note summary onto every cached row of it, so the
+    /// list shows a note change before the next sync.
+    func updateThreadNoteSummary(mailboxId: String, threadKey: String, summary: ThreadNoteSummary) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql = """
+            UPDATE emails SET has_sticky_note = ?, sticky_note_text = ?, inline_note_count = ?
+            WHERE mailbox_id = ? AND COALESCE(thread_id, id) = ?;
+            """
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_int(stmt, 1, summary.hasStickyNote ? 1 : 0)
+                bindOptionalString(stmt, 2, summary.stickyNoteText)
+                sqlite3_bind_int(stmt, 3, Int32(summary.inlineNoteCount))
+                bindString(stmt, 4, mailboxId)
+                bindString(stmt, 5, threadKey)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
     // MARK: - Full-Text Search (FTS5)
 
     func searchEmails(mailboxId: String, query: String, limit: Int = 30) -> [Email] {
@@ -958,7 +1001,8 @@ final class DatabaseService: @unchecked Sendable {
                 e.thread_unread_count, e.participants, e.folder_name, e.has_draft,
                 e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json,
                 e.delivery_status, e.delivery_error, e.provider_message_id,
-                e.reply_later, e.reply_later_at, e.alias_id, e.alias_email
+                e.reply_later, e.reply_later_at, e.alias_id, e.alias_email,
+                e.has_sticky_note, e.sticky_note_text, e.inline_note_count
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -1119,7 +1163,10 @@ final class DatabaseService: @unchecked Sendable {
             deliveryStatus: columnOptionalString(stmt, 26),
             deliveryError: columnOptionalString(stmt, 27),
             aliasId: columnOptionalString(stmt, 31),
-            aliasEmail: columnOptionalString(stmt, 32)
+            aliasEmail: columnOptionalString(stmt, 32),
+            hasStickyNote: columnOptionalBool(stmt, 33),
+            stickyNoteText: columnOptionalString(stmt, 34),
+            inlineNoteCount: columnOptionalInt(stmt, 35)
         )
     }
 

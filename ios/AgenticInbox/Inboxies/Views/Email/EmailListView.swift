@@ -546,13 +546,22 @@ struct EmailRowView: View {
                 if !previewText.isEmpty {
                     previewRow
                 }
-                if showsTags && !rowTags.isEmpty {
+                let tags = showsTags ? rowTags : []
+                if !tags.isEmpty || inlineNoteCount > 0 {
                     HStack(spacing: 6) {
-                        ForEach(rowTags, id: \.self) { tag in
+                        ForEach(tags, id: \.self) { tag in
                             tagRow(tag)
+                        }
+                        if inlineNoteCount > 0 {
+                            PrivateNotesChip(count: inlineNoteCount)
                         }
                     }
                     .padding(.top, 3)
+                }
+                // Notes to self: the latest sticky's text on the bottom row.
+                if !stickyNotePreview.isEmpty {
+                    StickyNoteRowStrip(text: stickyNotePreview)
+                        .padding(.top, 4)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -676,6 +685,14 @@ struct EmailRowView: View {
 
     private var previewText: String {
         email.previewText
+    }
+
+    private var stickyNotePreview: String {
+        email.hasStickyNote == true ? NoteText.preview(email.stickyNoteText) : ""
+    }
+
+    private var inlineNoteCount: Int {
+        max(0, email.inlineNoteCount ?? 0)
     }
 
     private var rowTags: [String] {

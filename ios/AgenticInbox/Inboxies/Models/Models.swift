@@ -510,6 +510,12 @@ struct Email: Identifiable, Codable, Hashable {
     var aliasEmail: String? = nil
     /// False when that private email is paused, expired or deleted (detail payloads only).
     var aliasActive: Bool? = nil
+    /// Notes to self (threaded list rows only; the signed-in user's own notes).
+    var hasStickyNote: Bool? = nil
+    /// Latest sticky note's markdown, trimmed to 200 characters by the server.
+    var stickyNoteText: String? = nil
+    /// How many private notes sit on single messages of this conversation.
+    var inlineNoteCount: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -534,6 +540,15 @@ struct Email: Identifiable, Codable, Hashable {
         case aliasId = "alias_id"
         case aliasEmail = "alias_email"
         case aliasActive = "alias_active"
+        case hasStickyNote = "has_sticky_note"
+        case stickyNoteText = "sticky_note_text"
+        case inlineNoteCount = "inline_note_count"
+    }
+
+    /// The conversation key notes are filed under: the thread id, or the email's own id.
+    var noteThreadKey: String {
+        if let threadId, !threadId.isEmpty { return threadId }
+        return id
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -860,7 +875,48 @@ extension Email {
         deliveryError = try c.decodeIfPresent(String.self, forKey: .deliveryError)
         listSection = try c.decodeIfPresent(String.self, forKey: .listSection)
         aliasId = try c.decodeIfPresent(String.self, forKey: .aliasId)
+        hasStickyNote = c.decodeLenientBool(forKey: .hasStickyNote)
+        stickyNoteText = try? c.decodeIfPresent(String.self, forKey: .stickyNoteText)
+        inlineNoteCount = try? c.decodeIfPresent(Int.self, forKey: .inlineNoteCount)
     }
+}
+
+// MARK: - Notes to self
+
+/// A private note to self on a conversation (`/threads/:threadId/notes`).
+/// Only its author ever sees it.
+/// - `sticky`: pinned to the whole conversation; floats over the reader and can be dragged.
+/// - `inline`: attached to one message (`emailId`); shown in line under it.
+struct ThreadNote: Identifiable, Codable, Hashable {
+    let id: String
+    /// Conversation key: the emails' `thread_id`, or the email id for mail without one.
+    let threadId: String
+    var emailId: String?
+    /// `sticky` | `inline`.
+    var noteType: String
+    /// Markdown.
+    var body: String
+    /// Points from the top-left of the reader's message area (sticky notes only).
+    var posX: Double?
+    var posY: Double?
+    var createdAt: String
+    var updatedAt: String
+
+    static let stickyType = "sticky"
+    static let inlineType = "inline"
+    /// Server limit on a note's markdown, in characters.
+    static let bodyMax = 10_000
+
+    var isSticky: Bool { noteType == Self.stickyType }
+
+    var savedPosition: CGPoint? {
+        guard let posX, let posY, posX.isFinite, posY.isFinite else { return nil }
+        return CGPoint(x: posX, y: posY)
+    }
+}
+
+struct ThreadNotesResponse: Decodable {
+    let notes: [ThreadNote]
 }
 
 extension KeyedDecodingContainer {

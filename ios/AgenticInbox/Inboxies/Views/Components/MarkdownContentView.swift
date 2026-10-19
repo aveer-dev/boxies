@@ -312,6 +312,8 @@ struct InlineMarkdownText: View {
     var onCompose: ((MailAddress) -> Void)? = nil
     var onSearch: ((String) -> Void)? = nil
     var onAskAI: ((String) -> Void)? = nil
+    /// Text colour; notes to self pass their paper ink.
+    var ink: Color = AppTheme.ink
 
     var body: some View {
         if ContactPillParser.containsContactOrEmail(text) {
@@ -323,7 +325,7 @@ struct InlineMarkdownText: View {
                         Text(attributedWord)
                             .font(.inter(size: fontSize))
                             .tracking(AppTheme.Chat.tracking)
-                            .foregroundStyle(AppTheme.ink)
+                            .foregroundStyle(ink)
                     case .contact(_, let address, let trailingPunct):
                         ContactPillMenu(
                             address: address,
@@ -342,13 +344,13 @@ struct InlineMarkdownText: View {
             Text(attributed)
                 .font(.inter(size: fontSize))
                 .tracking(AppTheme.Chat.tracking)
-                .foregroundStyle(AppTheme.ink)
+                .foregroundStyle(ink)
                 .tint(AppTheme.accent)
         } else {
             Text(text)
                 .font(.inter(size: fontSize))
                 .tracking(AppTheme.Chat.tracking)
-                .foregroundStyle(AppTheme.ink)
+                .foregroundStyle(ink)
         }
     }
 }
@@ -417,6 +419,8 @@ struct MarkdownContentView: View {
     var onCompose: ((MailAddress) -> Void)? = nil
     var onSearch: ((String) -> Void)? = nil
     var onAskAI: ((String) -> Void)? = nil
+    /// Text colour; notes to self pass their paper ink.
+    var ink: Color = AppTheme.ink
 
     private var blocks: [MarkdownBlock] {
         parseMarkdownBlocks(text)
@@ -456,11 +460,12 @@ struct MarkdownContentView: View {
                         fontSize: size,
                         onCompose: onCompose,
                         onSearch: onSearch,
-                        onAskAI: onAskAI
+                        onAskAI: onAskAI,
+                        ink: ink
                     )
                     .fontWeight(weight)
                     .tracking(tracking)
-                    .foregroundStyle(level == 6 ? AppTheme.muted : AppTheme.ink)
+                    .foregroundStyle(level == 6 ? AppTheme.muted : ink)
                     .padding(.top, level <= 2 ? 4 : 2)
 
                 case .paragraph(let paraText):
@@ -469,9 +474,10 @@ struct MarkdownContentView: View {
                         fontSize: fontSize,
                         onCompose: onCompose,
                         onSearch: onSearch,
-                        onAskAI: onAskAI
+                        onAskAI: onAskAI,
+                        ink: ink
                     )
-                    .foregroundStyle(AppTheme.ink)
+                    .foregroundStyle(ink)
                     .lineSpacing(fontSize * AppTheme.Chat.bodyLineSpacingRatio)
 
                 case .bulletItem(let indent, let itemText):
@@ -485,9 +491,10 @@ struct MarkdownContentView: View {
                             fontSize: fontSize,
                             onCompose: onCompose,
                             onSearch: onSearch,
-                            onAskAI: onAskAI
+                            onAskAI: onAskAI,
+                            ink: ink
                         )
-                        .foregroundStyle(AppTheme.ink)
+                        .foregroundStyle(ink)
                         .lineSpacing(fontSize * 0.2)
                     }
                     .padding(.leading, CGFloat(indent * 14))
@@ -502,9 +509,10 @@ struct MarkdownContentView: View {
                             fontSize: fontSize,
                             onCompose: onCompose,
                             onSearch: onSearch,
-                            onAskAI: onAskAI
+                            onAskAI: onAskAI,
+                            ink: ink
                         )
-                        .foregroundStyle(AppTheme.ink)
+                        .foregroundStyle(ink)
                         .lineSpacing(fontSize * 0.2)
                     }
                     .padding(.leading, CGFloat(indent * 14))
@@ -519,9 +527,10 @@ struct MarkdownContentView: View {
                             fontSize: fontSize,
                             onCompose: onCompose,
                             onSearch: onSearch,
-                            onAskAI: onAskAI
+                            onAskAI: onAskAI,
+                            ink: ink
                         )
-                        .foregroundStyle(isDone ? AppTheme.muted : AppTheme.ink)
+                        .foregroundStyle(isDone ? AppTheme.muted : ink)
                         .lineSpacing(fontSize * 0.2)
                     }
                     .padding(.leading, CGFloat(indent * 14))
@@ -550,7 +559,8 @@ struct MarkdownContentView: View {
                             fontSize: fontSize,
                             onCompose: onCompose,
                             onSearch: onSearch,
-                            onAskAI: onAskAI
+                            onAskAI: onAskAI,
+                            ink: ink
                         )
                         .foregroundStyle(AppTheme.muted)
                         .lineSpacing(fontSize * 0.22)
