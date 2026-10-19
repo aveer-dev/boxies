@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 
 export const folders = sqliteTable("folders", {
 	id: text("id").primaryKey(),
@@ -92,4 +92,21 @@ export const aliases = sqliteTable("aliases", {
 	created_at: text("created_at").notNull(),
 	stats_received: integer("stats_received").notNull().default(0),
 	stats_blocked: integer("stats_blocked").notNull().default(0),
+});
+
+/**
+ * Notes to self (migration 31_thread_notes_to_self), private to their author.
+ * Queried with raw SQL in workers/lib/thread-notes.ts; mirrored here for types.
+ */
+export const threadNotes = sqliteTable("thread_notes", {
+	id: text("id").primaryKey(),
+	thread_id: text("thread_id").notNull(),
+	email_id: text("email_id"),
+	note_type: text("note_type").notNull(),
+	body: text("body").notNull(),
+	pos_x: real("pos_x"),
+	pos_y: real("pos_y"),
+	author_user_id: text("author_user_id").notNull(),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
 });

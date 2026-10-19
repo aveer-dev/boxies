@@ -49,6 +49,11 @@ import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
+	CreateThreadNoteSchema,
+	UpdateThreadNoteSchema,
+	isValidNoteRouteId,
+} from "./lib/thread-notes";
+import {
 	authDb,
 	canCreateMailbox,
 	listMailboxMembers,
@@ -432,7 +437,12 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const stub = c.var.mailboxStub;
 
 	if (threaded && folder && !reply_later) {
-		const emails = await (stub as any).getThreadedEmails({ folder, page, limit });
+		const emails = await (stub as any).getThreadedEmails({
+			folder,
+			page,
+			limit,
+			userId: c.get("principal")?.userId,
+		});
 		const totalCount = await (stub as any).countThreadedEmails(folder);
 		if (folder === Folders.INBOX) {
 			const sections = await (stub as any).countThreadedEmailSections(folder);
@@ -887,6 +897,57 @@ app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) 
 app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppContext) => {
 	await c.var.mailboxStub.markThreadRead(c.req.param("threadId")!);
 	return c.json({ status: "marked_read" });
+});
+
+// -- Notes to self --------------------------------------------------
+// Private to their author: every call is scoped to the signed-in user, and
+// someone else's note is a 404, the same as a missing one.
+
+function noteAuthorId(c: AppContext): string | null {
+	return c.get("principal")?.userId ?? null;
+}
+
+app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId/notes", async (c: AppContext) => {
+	const userId = noteAuthorId(c);
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const threadId = c.req.param("threadId");
+	if (!isValidNoteRouteId(threadId)) return c.json({ error: "Invalid thread id" }, 400);
+	const notes = await c.var.mailboxStub.getThreadNotes(threadId, userId);
+	return c.json({ notes });
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/notes", async (c: AppContext) => {
+	const userId = noteAuthorId(c);
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const threadId = c.req.param("threadId");
+	if (!isValidNoteRouteId(threadId)) return c.json({ error: "Invalid thread id" }, 400);
+	const input = CreateThreadNoteSchema.parse(await c.req.json());
+	const result = await c.var.mailboxStub.createThreadNote(threadId, userId, input);
+	if (!result.ok) {
+		return result.error === "thread_not_found"
+			? c.json({ error: "Thread not found" }, 404)
+			: c.json({ error: "emailId: message is not in this thread" }, 400);
+	}
+	return c.json(result.note, 201);
+});
+
+app.patch("/api/v1/mailboxes/:mailboxId/notes/:noteId", async (c: AppContext) => {
+	const userId = noteAuthorId(c);
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const noteId = c.req.param("noteId");
+	if (!isValidNoteRouteId(noteId)) return c.json({ error: "Note not found" }, 404);
+	const input = UpdateThreadNoteSchema.parse(await c.req.json());
+	const note = await c.var.mailboxStub.updateThreadNote(noteId, userId, input);
+	return note ? c.json(note) : c.json({ error: "Note not found" }, 404);
+});
+
+app.delete("/api/v1/mailboxes/:mailboxId/notes/:noteId", async (c: AppContext) => {
+	const userId = noteAuthorId(c);
+	if (!userId) return c.json({ error: "Unauthorized" }, 401);
+	const noteId = c.req.param("noteId");
+	if (!isValidNoteRouteId(noteId)) return c.json({ error: "Note not found" }, 404);
+	const deleted = await c.var.mailboxStub.deleteThreadNote(noteId, userId);
+	return deleted ? c.body(null, 204) : c.json({ error: "Note not found" }, 404);
 });
 
 // -- Real-Time Events Stream (SSE) ----------------------------------
