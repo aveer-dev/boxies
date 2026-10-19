@@ -525,5 +525,20 @@ export const mailboxMigrations: Migration[] = [
                 ON thread_notes(email_id);
         `),
 	},
+	{
+		// Idempotency-Key on send / reply / forward (AVE-63). The key a client
+		// sent is stored on the Sent row; a replay with the same key returns
+		// that row instead of sending again. Unique per mailbox (one DO per
+		// mailbox); the index is partial so rows without a key never collide.
+		// Additive only: a nullable column, existing rows stay NULL.
+		// Numbered 33 to leave 32 to the open PRs that each add a `32_`
+		// migration; the runner tracks by name, so any order applies cleanly.
+		name: "33_email_idempotency_key",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN idempotency_key TEXT;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_idempotency_key
+                ON emails(idempotency_key) WHERE idempotency_key IS NOT NULL;
+        `),
+	},
 ];
 

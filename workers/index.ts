@@ -14,6 +14,12 @@ import {
 	OutboundSizeError,
 } from "./lib/outbound-limits";
 import { deliverOutboundInBackground } from "./lib/outbound-delivery";
+import {
+	checkIdempotencyKey,
+	discardReplayedSend,
+	idempotentReplayResponse,
+	type CreateEmailResult,
+} from "./lib/outbound-idempotency";
 import { storeAttachments, attachmentKey, sanitizeAttachmentFilename, deleteR2Keys, type StoredAttachment } from "./lib/attachments";
 import {
 	computeSnippet,
@@ -480,10 +486,13 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const mailboxId = c.var.mailboxId;
+	const stub = c.var.mailboxStub;
+	// A retried send with a stored Idempotency-Key returns the original row.
+	const idem = await checkIdempotencyKey(c, stub);
+	if ("response" in idem) return idem.response;
+
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
-
-	const stub = c.var.mailboxStub;
 
 	let resolvedThreadId = thread_id;
 	if (!resolvedThreadId && (in_reply_to || (references && references.length > 0))) {
@@ -537,9 +546,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		resolvedThreadId = messageId;
 	}
 
+	let created: CreateEmailResult | undefined;
+	let attachmentData: Awaited<ReturnType<typeof storeAttachments>> = [];
 	try {
-		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
-		await stub.createEmail(Folders.SENT, {
+		attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+		created = await stub.createEmail(Folders.SENT, {
 			id: messageId, subject, sender: fromEmail,
 			sender_name: displayNameFromAddressField(from),
 			recipient: toStr,
@@ -550,6 +561,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 			thread_id: resolvedThreadId, message_id: outgoingMessageId,
 			delivery_status: "queued", delivery_error: null,
 			alias_id: sender.aliasId,
+			idempotency_key: idem.key,
 			raw_headers: JSON.stringify([
 				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -563,6 +575,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		// Not accepted, so it shouldn't count against the send quota.
 		await (stub as any).releaseSendSlot().catch(() => {});
 		throw e;
+	}
+	if (created?.replayed) {
+		// A concurrent request with this key won: send nothing more.
+		await discardReplayedSend(c.env, stub, messageId, attachmentData);
+		return idempotentReplayResponse(c, created.id);
 	}
 
 	// Screener-lite: people you email bypass the review queue on reply.

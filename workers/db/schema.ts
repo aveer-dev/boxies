@@ -46,6 +46,8 @@ export const emails = sqliteTable("emails", {
 	alias_id: text("alias_id"),
 	/** Draft author: "agent" for AI drafts, null for the user's own. */
 	source: text("source"),
+	/** Client `Idempotency-Key` for a send/reply/forward; unique when set (migration 33). */
+	idempotency_key: text("idempotency_key"),
 });
 
 export const attachments = sqliteTable("attachments", {

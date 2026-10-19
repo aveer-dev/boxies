@@ -43,6 +43,11 @@ import {
 	deleteR2Keys,
 } from "../lib/attachments";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import {
+	findEmailIdByIdempotencyKey,
+	insertOrReplay,
+	type CreateEmailResult,
+} from "../lib/outbound-idempotency";
 import type { ExportEmailRow } from "../lib/email-exporter";
 import {
 	agentConversationIdsToPurge,
@@ -202,6 +207,8 @@ interface EmailData {
 	alias_id?: string | null;
 	/** "agent" for AI-written drafts; omitted for the user's own mail. */
 	source?: "agent" | null;
+	/** Client Idempotency-Key (Sent rows only); unique per mailbox. */
+	idempotency_key?: string | null;
 }
 
 interface AttachmentData {
@@ -1474,6 +1481,11 @@ export class MailboxDO extends DurableObject<Env> {
 		);
 	}
 
+	/** Sent row already stored with this Idempotency-Key, if any. */
+	async findEmailIdByIdempotencyKey(key: string): Promise<string | null> {
+		return findEmailIdByIdempotencyKey(this.ctx.storage.sql, key);
+	}
+
 	async setDeliveryState(
 		id: string,
 		state: {
@@ -2692,11 +2704,25 @@ export class MailboxDO extends DurableObject<Env> {
 
 	// ── Email creation (Drizzle) ───────────────────────────────────
 
+	/**
+	 * Insert an email row. With `email.idempotency_key`, this is
+	 * insert-or-return-existing: if a row already holds the key, nothing is
+	 * inserted and `{ id: <existing>, replayed: true }` comes back. The final
+	 * check and the insert run with no await in between, so two concurrent
+	 * calls with one key can't both insert.
+	 */
 	async createEmail(
 		folder: string,
 		email: EmailData,
 		attachments: AttachmentData[],
-	) {
+	): Promise<CreateEmailResult> {
+		const idempotencyKey = email.idempotency_key ?? null;
+		// Fast path: a replay doesn't need to write R2 at all.
+		const early = idempotencyKey
+			? findEmailIdByIdempotencyKey(this.ctx.storage.sql, idempotencyKey)
+			: null;
+		if (early) return { id: early, replayed: true };
+
 		await this.#assertMailboxWritable();
 		// Resolve folder name or ID to the actual folder ID.
 		const folderRow = this.db
@@ -2741,41 +2767,52 @@ export class MailboxDO extends DurableObject<Env> {
 			});
 		}
 
+		// Another request with the same key may have inserted while we awaited
+		// R2. From here to the insert there is no await, so the check and the
+		// insert can't interleave with it.
 		// Sent and draft emails are always read — the author already knows the content.
 		// This prevents them from looking unread in lists or inflating thread_unread_count.
-		this.db
-			.insert(schema.emails)
-			.values({
-				id: email.id,
-				folder_id: folderId,
-				subject: email.subject,
-				sender: email.sender,
-				sender_name: email.sender_name ?? null,
-				recipient: email.recipient,
-				cc: email.cc ?? null,
-				bcc: email.bcc ?? null,
-				date: email.date,
-				read: isOwnComposition ? 1 : (email.read ? 1 : 0),
-				starred: email.starred ? 1 : 0,
-				body: null,
-				snippet,
-				in_reply_to: email.in_reply_to ?? null,
-				email_references: email.email_references ?? null,
-				thread_id: email.thread_id ?? null,
-				message_id: email.message_id ?? null,
-				raw_headers: email.raw_headers ?? null,
-				provider_message_id: email.provider_message_id ?? null,
-				delivery_status: email.delivery_status ?? null,
-				delivery_error: email.delivery_error ?? null,
-				auth: serializeEmailAuth(
-					typeof email.auth === "string"
-						? parseStoredEmailAuth(email.auth)
-						: email.auth,
-				),
-				alias_id: email.alias_id ?? null,
-				source: email.source ?? null,
-			})
-			.run();
+		const created = insertOrReplay(this.ctx.storage.sql, idempotencyKey, email.id, () => {
+			this.db
+				.insert(schema.emails)
+				.values({
+					id: email.id,
+					folder_id: folderId,
+					subject: email.subject,
+					sender: email.sender,
+					sender_name: email.sender_name ?? null,
+					recipient: email.recipient,
+					cc: email.cc ?? null,
+					bcc: email.bcc ?? null,
+					date: email.date,
+					read: isOwnComposition ? 1 : (email.read ? 1 : 0),
+					starred: email.starred ? 1 : 0,
+					body: null,
+					snippet,
+					in_reply_to: email.in_reply_to ?? null,
+					email_references: email.email_references ?? null,
+					thread_id: email.thread_id ?? null,
+					message_id: email.message_id ?? null,
+					raw_headers: email.raw_headers ?? null,
+					provider_message_id: email.provider_message_id ?? null,
+					delivery_status: email.delivery_status ?? null,
+					delivery_error: email.delivery_error ?? null,
+					auth: serializeEmailAuth(
+						typeof email.auth === "string"
+							? parseStoredEmailAuth(email.auth)
+							: email.auth,
+					),
+					alias_id: email.alias_id ?? null,
+					source: email.source ?? null,
+					idempotency_key: idempotencyKey,
+				})
+				.run();
+		});
+		if (created.replayed) {
+			// Our body blobs are orphans (keyed by our unused id).
+			await deleteEmailContent(this.env.BUCKET, email.id).catch(() => {});
+			return created;
+		}
 
 		if (attachments.length > 0) {
 			this.db.insert(schema.attachments).values(attachments).run();
@@ -2817,6 +2854,7 @@ export class MailboxDO extends DurableObject<Env> {
 			reply_later: false,
 			alias_id: email.alias_id ?? null,
 		});
+		return { id: email.id, replayed: false };
 	}
 
 	/**
