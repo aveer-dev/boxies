@@ -14,6 +14,10 @@ import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
 import ScreenerTriageBar from "~/components/email-panel/ScreenerTriageBar";
 import SingleMessageView from "~/components/email-panel/SingleMessageView";
 import ThreadMessage from "~/components/email-panel/ThreadMessage";
+import InlineNotes from "~/components/notes/InlineNotes";
+import StickyNotes from "~/components/notes/StickyNotes";
+import { groupThreadNotes, threadKeyFor } from "~/lib/thread-notes";
+import { useThreadNotes } from "~/queries/thread-notes";
 import { splitEmailList, toEmailListValue } from "~/lib/utils";
 import api from "~/services/api";
 import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
@@ -80,6 +84,12 @@ export default function EmailPanel({
 	const [previewImage, setPreviewImage] = useState<{ url: string; filename: string } | null>(null);
 	const [pendingPurposeMove, setPendingPurposeMove] = useState<string | null>(null);
 	const isDraftFolder = folder === Folders.DRAFT;
+	// Notes to self (AVE-60): stickies float over the messages, inline notes sit under theirs.
+	const threadKey = email ? threadKeyFor(email) : undefined;
+	const { data: threadNotes } = useThreadNotes(mailboxId, threadKey);
+	const { sticky: stickyNotes, inlineByEmail } = useMemo(() => groupThreadNotes(threadNotes), [threadNotes]);
+	const [composingNoteFor, setComposingNoteFor] = useState<string | null>(null);
+	const [creatingSticky, setCreatingSticky] = useState(false);
 
 	const threadReplies = useMemo(() => {
 		if (!threadRepliesRaw || !email) return [];
@@ -294,6 +304,20 @@ export default function EmailPanel({
 	};
 
 	const hasThread = allMessages.length > 1;
+	const notesFor = (msgId: string) => {
+		const notes = inlineByEmail.get(msgId) ?? [];
+		if (!mailboxId || !threadKey || (notes.length === 0 && composingNoteFor !== msgId)) return undefined;
+		return (
+			<InlineNotes
+				mailboxId={mailboxId}
+				threadId={threadKey}
+				emailId={msgId}
+				notes={notes}
+				composing={composingNoteFor === msgId}
+				onComposeDone={() => setComposingNoteFor(null)}
+			/>
+		);
+	};
 	// Gate on the message folder only (match iOS/Android) so a Screener
 	// sidebar selection cannot triage a non-screener thread message.
 	const isScreenerFolder = email.folder_id === Folders.SCREENER;
@@ -323,6 +347,7 @@ export default function EmailPanel({
 				onSpamAction={handleSpamAction}
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
+				onAddStickyNote={mailboxId && !isDraftFolder ? () => setCreatingSticky(true) : undefined}
 			/>
 
 			{isScreenerFolder && mailboxId && email.sender && (
@@ -343,7 +368,8 @@ export default function EmailPanel({
 			/>
 
 			{/* A single message fills the reader and its body scrolls itself. */}
-			<ScrollArea className="flex-1" contentClassName={`animate-reveal ${hasThread ? "" : "h-full"}`}>
+			<div className="relative flex-1 min-h-0">
+			<ScrollArea className="h-full" contentClassName={`animate-reveal ${hasThread ? "" : "h-full"}`}>
 				{hasThread ? (
 					allMessages.map((msg, idx) => {
 						const isDraft = draftMessageIds.has(msg.id);
@@ -365,6 +391,8 @@ export default function EmailPanel({
 								onPreviewImage={(url, filename) =>
 									setPreviewImage({ url, filename })
 								}
+								notes={notesFor(msg.id)}
+								onAddNote={isDraft || !mailboxId ? undefined : () => setComposingNoteFor(msg.id)}
 							/>
 						);
 					})
@@ -375,9 +403,20 @@ export default function EmailPanel({
 						onPreviewImage={(url, filename) =>
 							setPreviewImage({ url, filename })
 						}
+						notes={notesFor(email.id)}
 					/>
 				)}
 			</ScrollArea>
+			{mailboxId && threadKey && (stickyNotes.length > 0 || creatingSticky) && (
+				<StickyNotes
+					mailboxId={mailboxId}
+					threadId={threadKey}
+					notes={stickyNotes}
+					creating={creatingSticky}
+					onCreatingDone={() => setCreatingSticky(false)}
+				/>
+			)}
+			</div>
 
 			{renderFooter && lastReceivedMessage && !isDraftFolder && email.folder_id !== Folders.DRAFT &&
 				renderFooter(lastReceivedMessage)}

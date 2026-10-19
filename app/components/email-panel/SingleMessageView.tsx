@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { PaperclipIcon, ShieldCheckIcon } from "@phosphor-icons/react";
+import type { ReactNode } from "react";
 import EmailAttachmentList from "~/components/EmailAttachmentList";
 import EmailIframe from "~/components/EmailIframe";
 import { formatDetailDate, hasFileAttachment, rewriteInlineImages } from "~/lib/utils";
@@ -21,12 +22,15 @@ interface SingleMessageViewProps {
 	email: Email;
 	mailboxId?: string;
 	onPreviewImage: (url: string, filename: string) => void;
+	/** Notes to self on this message (AVE-60), above its body. */
+	notes?: ReactNode;
 }
 
 export default function SingleMessageView({
 	email,
 	mailboxId,
 	onPreviewImage,
+	notes,
 }: SingleMessageViewProps) {
 	const senderName = displaySenderName(email);
 	const deliveryFailed = isDeliveryFailure(email.delivery_status);
@@ -91,6 +95,8 @@ export default function SingleMessageView({
 					)}
 				</div>
 			)}
+
+			{notes && <div className="mx-4 mt-3 md:mx-6 max-h-[40%] overflow-y-auto shrink-0">{notes}</div>}
 
 			<div className="flex-1 min-h-0">
 				<EmailIframe

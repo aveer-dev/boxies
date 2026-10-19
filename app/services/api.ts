@@ -29,6 +29,9 @@ import type {
 	MailboxMember,
 	MailboxInviteRow,
 	MailboxRole,
+	ThreadNote,
+	CreateThreadNoteRequest,
+	UpdateThreadNoteRequest,
 } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -486,6 +489,24 @@ const api = {
 	},
 	markThreadRead: (mailboxId: string, threadId: string) =>
 		post<void>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}/read`),
+	// Notes to self (AVE-59): private to the signed-in user.
+	listThreadNotes: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
+		get<{ notes: ThreadNote[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/notes`,
+			{ signal: opts?.signal },
+		),
+	createThreadNote: (mailboxId: string, threadId: string, data: CreateThreadNoteRequest) =>
+		post<ThreadNote>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/notes`,
+			data,
+		),
+	updateThreadNote: (mailboxId: string, noteId: string, data: UpdateThreadNoteRequest) =>
+		patch<ThreadNote>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/notes/${encodeURIComponent(noteId)}`,
+			data,
+		),
+	deleteThreadNote: (mailboxId: string, noteId: string) =>
+		del<void>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/notes/${encodeURIComponent(noteId)}`),
 	getAttachment: (mailboxId: string, emailId: string, attachmentId: string) =>
 		get<Blob>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/attachments/${attachmentId}`, { responseType: "blob" }),
 	saveDraft: (

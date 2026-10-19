@@ -124,6 +124,17 @@
   color-scheme: light;
   /* Text size (Settings → Appearance, T): 1 = 100%. */
   --font-scale: 1;
+
+  /*
+   * Notes to self (AVE-60): the one warm surface in the monochrome UI, so a
+   * sticky note reads as paper stuck on the page. Kept soft and low-chroma.
+   */
+  --note-paper: #fff7cf;
+  --note-paper-edge: #efe1a1;
+  --note-ink: #3a3214;
+  --note-muted: #7a6c3a;
+  --note-pin: #c2541c;
+  --note-shadow: 0 1px 1px rgba(80, 60, 0, 0.06), 0 4px 10px rgba(80, 60, 0, 0.08), 0 14px 28px -8px rgba(80, 60, 0, 0.18);
 }
 
 /*
@@ -160,6 +171,13 @@
   --color-kumo-elevated: #1a1a1a;
   --color-kumo-brand-hover: #d0d0d0;
   color-scheme: dark;
+
+  --note-paper: #2a2617;
+  --note-paper-edge: #3d3720;
+  --note-ink: #f1e9cc;
+  --note-muted: #b3a678;
+  --note-pin: #e58a52;
+  --note-shadow: 0 0 0 1px rgba(255, 240, 200, 0.06), 0 4px 12px rgba(0, 0, 0, 0.45), 0 16px 32px -8px rgba(0, 0, 0, 0.6);
 }
 
 /*
@@ -289,6 +307,16 @@ button[class*="ring-kumo-hairline"]:focus-visible {
 .icon-btn[aria-expanded="true"]::before {
   opacity: 1;
   transform: scale(1);
+}
+/* On a sticky note's paper the controls take the note's warm ink. */
+.note-paper .icon-btn {
+  color: var(--note-muted);
+}
+.note-paper .icon-btn:hover {
+  color: var(--note-ink);
+}
+.note-paper .icon-btn::before {
+  background: color-mix(in srgb, var(--note-ink) 9%, transparent);
 }
 .icon-btn > svg,
 .icon-motion svg {

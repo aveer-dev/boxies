@@ -3,7 +3,8 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Badge, Button } from '@cloudflare/kumo';
-import { CaretDownIcon, CaretUpIcon, CodeIcon, PaperclipIcon, PaperPlaneTiltIcon, PencilSimpleIcon, TrashIcon } from '@phosphor-icons/react';
+import type { ReactNode } from 'react';
+import { CaretDownIcon, CaretUpIcon, CodeIcon, NotePencilIcon, PaperclipIcon, PaperPlaneTiltIcon, PencilSimpleIcon, TrashIcon } from '@phosphor-icons/react';
 import EmailAttachmentList from '~/components/EmailAttachmentList';
 import { IconButton } from '~/components/IconButton';
 import EmailIframe from '~/components/EmailIframe';
@@ -27,6 +28,10 @@ interface ThreadMessageProps {
     onDeleteDraft?: () => void;
     onViewSource?: () => void;
     onPreviewImage?: (url: string, filename: string) => void;
+    /** Notes to self on this message, shown in line under it (AVE-60). */
+    notes?: ReactNode;
+    /** Starts a private note on this message. */
+    onAddNote?: () => void;
 }
 
 function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolean; sender: string }) {
@@ -37,7 +42,7 @@ function Avatar({ isDraft, isSelf, sender }: { isDraft?: boolean; isSelf: boolea
     );
 }
 
-export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage }: ThreadMessageProps) {
+export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, isDraft, isSending, isExpanded, onToggleExpand, onSendDraft, onEditDraft, onDeleteDraft, onViewSource, onPreviewImage, notes, onAddNote }: ThreadMessageProps) {
     const isSelf = email.sender === mailboxEmail;
     const deliveryFailed = isDeliveryFailure(email.delivery_status);
     const spoofed = isAuthSpoofed(email);
@@ -69,6 +74,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                     </div>
                     <CaretDownIcon size={16} className="text-kumo-subtle shrink-0" />
                 </button>
+                {notes && <div className="px-4 pb-3 pl-[60px]">{notes}</div>}
             </div>
         );
     }
@@ -99,6 +105,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                     <div className="flex items-center gap-1 shrink-0">
                         {hasFileAttachment(email) && <PaperclipIcon size={12} className="text-kumo-subtle shrink-0" aria-label="Has attachment" />}
                         <span className="text-xs text-kumo-subtle">{formatShortDate(email.date)}</span>
+                        {onAddNote && <IconButton label="Add private note" icon={NotePencilIcon} onClick={onAddNote} />}
                         {onViewSource && <IconButton label="View source" icon={CodeIcon} onClick={onViewSource} />}
                         <IconButton label="Collapse message" icon={CaretUpIcon} onClick={onToggleExpand} />
                     </div>
@@ -145,6 +152,8 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                 )}
 
                 <EmailAttachmentList mailboxId={mailboxId} emailId={email.id} attachments={email.attachments} onPreviewImage={onPreviewImage} className="mt-3 md:ml-10.5" />
+
+                {notes && <div className="mt-3 md:ml-10.5">{notes}</div>}
             </div>
         </div>
     );
