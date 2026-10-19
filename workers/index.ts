@@ -1932,6 +1932,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			subject: parsedEmail.subject || "",
 			headers: storedHeaders,
 			auth,
+			aliasEmail: privateAlias?.aliasEmail ?? null,
 		});
 		if (filterHit) {
 			console.log(

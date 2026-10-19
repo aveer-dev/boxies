@@ -15,6 +15,8 @@ export interface InboxFilterRule {
 	from?: string;
 	list?: string;
 	subject?: string;
+	/** Only mail delivered via this private email. */
+	toAlias?: string;
 	folderId?: string;
 	skipAutoDraft?: boolean;
 	forwardTo?: string;

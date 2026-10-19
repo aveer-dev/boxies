@@ -43,6 +43,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,12 +63,15 @@ import androidx.compose.ui.window.DialogProperties
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.InboxFilterRule
+import co.inboxies.app.models.MaskedAlias
+import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -97,11 +101,24 @@ fun FiltersSettingsView(
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var isSaving by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
+    var aliases by remember(mailbox?.id) { mutableStateOf<List<MaskedAlias>>(emptyList()) }
+
+    // Private emails for the "Sent To" picker; the list still works without them.
+    LaunchedEffect(mailbox?.id) {
+        val mid = mailbox?.id ?: return@LaunchedEffect
+        try {
+            aliases = ApiClient.shared.listAliases(mid).aliases
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
 
     val actionRule = rules.firstOrNull { it.id == actionRuleId }
 
     fun summarize(rule: InboxFilterRule): String {
         val conditions = buildList {
+            rule.toAlias?.trim()?.takeIf { it.isNotEmpty() }?.let { add("to $it") }
             rule.from?.trim()?.takeIf { it.isNotEmpty() }?.let { add("from $it") }
             rule.list?.trim()?.takeIf { it.isNotEmpty() }?.let {
                 add(if (it == "*") "any list" else "list $it")
@@ -186,6 +203,7 @@ fun FiltersSettingsView(
                                         from = rule.from?.trim()?.ifEmpty { null },
                                         list = rule.list?.trim()?.ifEmpty { null },
                                         subject = rule.subject?.trim()?.ifEmpty { null },
+                                        toAlias = rule.toAlias?.trim()?.lowercase()?.ifEmpty { null },
                                         folderId = rule.folderId?.trim()?.ifEmpty { null },
                                         skipAutoDraft = if (rule.skipAutoDraft == true) true else null,
                                         forwardTo = rule.forwardTo?.trim()?.ifEmpty { null },
@@ -193,14 +211,15 @@ fun FiltersSettingsView(
                                 }
                                 for (rule in cleaned) {
                                     val hasCondition =
-                                        rule.from != null || rule.list != null || rule.subject != null
+                                        rule.from != null || rule.list != null ||
+                                            rule.subject != null || rule.toAlias != null
                                     val hasAction =
                                         rule.folderId != null ||
                                             rule.skipAutoDraft == true ||
                                             rule.forwardTo != null
                                     if (!hasCondition) {
                                         saveMessage =
-                                            "Each filter needs a from, list, or subject condition"
+                                            "Each filter needs a from, list, subject, or private email condition"
                                         delay(2000)
                                         saveMessage = null
                                         return@launch
@@ -270,7 +289,7 @@ fun FiltersSettingsView(
                         color = colors.muted,
                     )
                     Text(
-                        "Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list.",
+                        "Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list. Pick a private email to match only mail sent to it.",
                         fontFamily = InterFontFamily,
                         fontSize = 12.sp,
                         color = colors.muted,
@@ -462,6 +481,7 @@ fun FiltersSettingsView(
         FilterEditorDialog(
             draft = draft,
             folders = folders,
+            aliases = aliases,
             mailboxEmail = mailbox?.email.orEmpty(),
             onDismiss = { editorDraft = null },
             onSave = { rule ->
@@ -607,6 +627,7 @@ private fun FilterActionsSheet(
 private fun FilterEditorDialog(
     draft: FilterEditorDraft,
     folders: List<Folder>,
+    aliases: List<MaskedAlias>,
     mailboxEmail: String,
     onDismiss: () -> Unit,
     onSave: (InboxFilterRule) -> Unit,
@@ -616,6 +637,22 @@ private fun FilterEditorDialog(
     var rule by remember(draft.rule.id) { mutableStateOf(draft.rule) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var folderMenuExpanded by remember { mutableStateOf(false) }
+    var aliasMenuExpanded by remember { mutableStateOf(false) }
+    // Private emails to pick from, keeping a saved address listed even if
+    // that private email was since deleted.
+    val aliasOptions = remember(aliases, rule.toAlias) {
+        val options = aliases.map { alias ->
+            val email = alias.aliasEmail.lowercase()
+            val label = alias.label?.trim()?.ifEmpty { null }
+            email to (label?.let { "$it ($email)" } ?: email)
+        }
+        val saved = rule.toAlias?.trim()?.lowercase()?.ifEmpty { null }
+        if (saved != null && options.none { it.first == saved }) {
+            listOf(saved to saved) + options
+        } else {
+            options
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -682,19 +719,21 @@ private fun FilterEditorDialog(
                                 from = rule.from?.trim()?.ifEmpty { null },
                                 list = rule.list?.trim()?.ifEmpty { null },
                                 subject = rule.subject?.trim()?.ifEmpty { null },
+                                toAlias = rule.toAlias?.trim()?.lowercase()?.ifEmpty { null },
                                 folderId = rule.folderId?.trim()?.ifEmpty { null },
                                 skipAutoDraft = if (rule.skipAutoDraft == true) true else null,
                                 forwardTo = rule.forwardTo?.trim()?.ifEmpty { null },
                             )
                             val hasCondition =
-                                cleaned.from != null || cleaned.list != null || cleaned.subject != null
+                                cleaned.from != null || cleaned.list != null ||
+                                    cleaned.subject != null || cleaned.toAlias != null
                             val hasAction =
                                 cleaned.folderId != null ||
                                     cleaned.skipAutoDraft == true ||
                                     cleaned.forwardTo != null
                             when {
                                 !hasCondition -> {
-                                    errorMessage = "Add a from, list, or subject condition"
+                                    errorMessage = "Add a from, list, subject, or private email condition"
                                 }
                                 !hasAction -> {
                                     errorMessage =
@@ -758,9 +797,35 @@ private fun FilterEditorDialog(
                             onValueChange = { value -> rule = rule.copy(subject = value) },
                             placeholder = "Contains…",
                         )
+                        SettingsFormDivider()
+                        SettingsFormMenuRow(
+                            title = "Sent To",
+                            valueLabel = rule.toAlias?.trim()?.lowercase()?.ifEmpty { null }
+                                ?.let { saved -> aliasOptions.firstOrNull { it.first == saved }?.second ?: saved }
+                                ?: "Any address",
+                            expanded = aliasMenuExpanded,
+                            onExpandChange = { aliasMenuExpanded = it },
+                        ) {
+                            InboxiesMenuItem(
+                                text = "Any address",
+                                onClick = {
+                                    rule = rule.copy(toAlias = null)
+                                    aliasMenuExpanded = false
+                                },
+                            )
+                            aliasOptions.forEach { (email, title) ->
+                                InboxiesMenuItem(
+                                    text = title,
+                                    onClick = {
+                                        rule = rule.copy(toAlias = email)
+                                        aliasMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
                     }
                     SettingsFormFooter(
-                        "Match sender, mailing list, or subject text. At least one condition is required. Multiple conditions use AND.",
+                        "Match sender, mailing list, subject text, or one of your private emails. At least one condition is required. Multiple conditions use AND.",
                     )
 
                     SettingsFormSectionHeader("Actions")

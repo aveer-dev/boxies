@@ -274,6 +274,8 @@ data class InboxFilterRule(
     val from: String? = null,
     val list: String? = null,
     val subject: String? = null,
+    /** Only mail delivered via this private email (lowercased address). */
+    val toAlias: String? = null,
     val folderId: String? = null,
     val skipAutoDraft: Boolean? = null,
     val forwardTo: String? = null,
