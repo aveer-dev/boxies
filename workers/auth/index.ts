@@ -56,11 +56,15 @@ function socialProviders(env: Env) {
 		};
 	}
 	if (env.APPLE_CLIENT_ID) {
+		const bundleId = env.APPLE_APP_BUNDLE_ID ?? env.APPLE_CLIENT_ID;
 		providers.apple = {
 			clientId: env.APPLE_CLIENT_ID,
 			clientSecret: env.APPLE_CLIENT_SECRET ?? "",
 			// Native iOS ID tokens carry the bundle id as their audience.
-			appBundleIdentifier: env.APPLE_APP_BUNDLE_ID ?? env.APPLE_CLIENT_ID,
+			appBundleIdentifier: bundleId,
+			// Web (Apple JS) ID tokens carry the Services ID instead; accept
+			// both only when one is configured.
+			...(env.APPLE_WEB_SERVICES_ID ? { audience: [bundleId, env.APPLE_WEB_SERVICES_ID] } : {}),
 		};
 	}
 	return providers;

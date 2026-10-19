@@ -262,6 +262,8 @@ export function registerAccountRoutes(app: App) {
 				}),
 			);
 		}
+		// The web login page uses this too; it needs the session cookie (mobile uses the token).
+		c.header("Set-Cookie", await sessionCookieHeader(c.env, result.session));
 		return c.json({
 			token: result.session.token,
 			expiresAt: result.session.expiresAt.toISOString(),
