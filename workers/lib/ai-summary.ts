@@ -384,7 +384,7 @@ export async function runSummaryModel(
 	return parsed;
 }
 
-// ── Storage (email_summaries, migration 31) ────────────────────────
+// ── Storage (email_summaries, migration 32) ────────────────────────
 
 function rowToStored(row: Record<string, unknown>): StoredSummaryRow {
 	let keyPoints: string[] = [];
