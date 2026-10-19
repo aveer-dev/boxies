@@ -138,6 +138,12 @@
                 "name": "EMAIL_MCP",
                 "class_name": "EmailMCP",
             },
+            // Background .mbox export runner, one instance per export job
+            // (workers/durableObject/export-job.ts).
+            {
+                "name": "EXPORT_JOBS",
+                "class_name": "ExportJobDO",
+            },
         ],
     },
     "migrations": [
@@ -152,6 +158,10 @@
         {
             "tag": "v3",
             "new_sqlite_classes": ["EmailMCP"],
+        },
+        {
+            "tag": "v4",
+            "new_sqlite_classes": ["ExportJobDO"],
         },
     ],
 }

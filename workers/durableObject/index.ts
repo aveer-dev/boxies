@@ -18,6 +18,11 @@ import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 import {
+	abandonInboundDelivery,
+	claimInboundMessage,
+	completeInboundMessageClaim,
+} from "../lib/inbound-claims";
+import {
 	senderNameFromRawHeaders,
 } from "../../shared/sender";
 import {
@@ -38,6 +43,7 @@ import {
 	deleteR2Keys,
 } from "../lib/attachments";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import type { ExportEmailRow } from "../lib/email-exporter";
 import {
 	agentConversationIdsToPurge,
 	clearAgentConversationTombstone,
@@ -647,6 +653,26 @@ export class MailboxDO extends DurableObject<Env> {
 			.limit(Math.min(limit, 500))
 			.offset(Math.max(offset, 0))
 			.all();
+	}
+
+	/**
+	 * Keyset page of email rows for the background .mbox export, in rowid
+	 * order. Unlike OFFSET paging, mail arriving or being deleted between
+	 * pages never shifts the cursor, so nothing is skipped or duplicated.
+	 */
+	async getExportPage(afterRowId = 0, limit = 100): Promise<ExportEmailRow[]> {
+		return this.ctx.storage.sql
+			.exec<ExportEmailRow>(
+				`SELECT rowid, id, subject, sender, sender_name, recipient, cc, bcc, date,
+				        folder_id, in_reply_to, provider_message_id, snippet
+				 FROM emails
+				 WHERE rowid > ?
+				 ORDER BY rowid
+				 LIMIT ?`,
+				Math.max(Number(afterRowId) || 0, 0),
+				Math.min(Math.max(Number(limit) || 100, 1), 500),
+			)
+			.toArray();
 	}
 
 	/**
@@ -1356,6 +1382,36 @@ export class MailboxDO extends DurableObject<Env> {
 		);
 	}
 
+	/**
+	 * Inbound dedup: claim a Message-ID before the worker writes R2 or
+	 * classifies. Check and insert run with no await in between, so of two
+	 * concurrent deliveries of the same message only one gets `true`.
+	 * `claimId` is the email row id the delivery will insert.
+	 */
+	async claimInboundMessageId(messageId: string, claimId: string): Promise<boolean> {
+		return this.ctx.storage.transactionSync(() =>
+			claimInboundMessage(this.ctx.storage.sql, messageId, claimId),
+		);
+	}
+
+	/** The claimed delivery stored its row (`emailId` is also its claim id). */
+	async completeInboundMessageClaim(messageId: string, emailId: string): Promise<void> {
+		completeInboundMessageClaim(this.ctx.storage.sql, messageId, emailId);
+	}
+
+	/**
+	 * An inbound delivery failed. Releases its claim unless the row was stored
+	 * after all; `"not_stored"` tells the worker its R2 blobs are orphans.
+	 */
+	async abandonInboundDelivery(
+		emailId: string,
+		messageId: string | null,
+	): Promise<"stored" | "not_stored"> {
+		return this.ctx.storage.transactionSync(() =>
+			abandonInboundDelivery(this.ctx.storage.sql, emailId, messageId),
+		);
+	}
+
 	async findEmailByProviderMessageId(providerMessageId: string) {
 		const cleaned = providerMessageId.trim();
 		if (!cleaned) return null;
@@ -1594,6 +1650,7 @@ export class MailboxDO extends DurableObject<Env> {
 			sql.exec(`DELETE FROM auto_reply_receipts`);
 			sql.exec(`DELETE FROM sender_triage`);
 			sql.exec(`DELETE FROM sender_preferences`);
+			sql.exec(`DELETE FROM inbound_message_claims`);
 
 			for (const folderId of SYSTEM_FOLDER_IDS) {
 				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;

@@ -93,6 +93,17 @@ console.log("Starting Welcome & Onboarding Emails test suite...");
 	assert.equal(t1 - t2, 60000, "1 minute interval between 1 and 2");
 	assert.equal(t2 - t3, 60000, "1 minute interval between 2 and 3");
 
+	// Theme-neutral palette: readers strip <style>/<body> attributes and paint the
+	// body on a dark background in dark mode, so prose must not hard-code the old
+	// light-only slate text colours or opaque light surfaces.
+	for (const email of emails) {
+		assert.ok(email.body.includes('<meta name="color-scheme" content="light dark">'), "Declares light/dark color-scheme");
+		assert.ok(email.body.includes("prefers-color-scheme: dark"), "Has a dark-mode media query for external clients");
+		for (const lightOnly of ["#0f172a", "#1e293b", "#334155", "#475569", "#f8fafc", "#e2e8f0", "#cbd5e1"]) {
+			assert.ok(!email.body.includes(lightOnly), `No light-only colour ${lightOnly} in "${email.subject}"`);
+		}
+	}
+
 	console.log("✔ generateWelcomeEmails unit tests passed");
 }
 

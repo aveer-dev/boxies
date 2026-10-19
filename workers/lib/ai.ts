@@ -43,7 +43,7 @@ export async function isPromptInjection(ai: Ai, bodyHtml: string | null | undefi
 		const result = (response?.response || "NO").trim().toUpperCase();
 		
 		if (result.includes("YES")) {
-			console.warn("Prompt injection detected in incoming email, blocking auto-draft");
+			console.warn("Prompt injection detected in email content");
 			return true;
 		}
 		
