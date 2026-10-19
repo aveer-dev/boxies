@@ -35,7 +35,7 @@ function createMockBucket() {
 	};
 }
 
-/** Mirrors MailboxDO deleted-flag + metadata delete ordering after inventory wipe. */
+/** Key collection + metadata delete. Full purge ordering: mailbox-purge-ordering.test.mjs. */
 async function simulatePurge(bucket, mailboxId, emailIds, attachments) {
 	const keys = collectMailboxPurgeR2Keys(emailIds, attachments, emailContentKeys);
 	await deleteR2Keys(bucket, keys);

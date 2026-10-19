@@ -1392,6 +1392,8 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
 /** SMTP reply for mail over MAX_EMAIL_SIZE (RFC 3463 5.3.4: message too big for system). */
 const OVERSIZE_REJECT_REASON = "552 5.3.4 Message size exceeds fixed limit";
+/** A mailbox being purged (or already purged) refuses mail with a permanent error. */
+const MAILBOX_UNAVAILABLE_REJECT_REASON = "550 5.2.1 Mailbox unavailable";
 
 /** Thrown when an inbound message is (or turns out to be) larger than MAX_EMAIL_SIZE. */
 class EmailTooLargeError extends Error {
@@ -1805,7 +1807,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 
 	const stub = getMailboxStub(env, mailboxId);
 	if (!(await stub.isWritable())) {
-		console.log(`Skipping inbound for deleted mailbox ${mailboxId}`);
+		console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
+		message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 		return;
 	}
 	const fromRaw = (parsedEmail.from?.address || message.from || "").toLowerCase();
@@ -1998,13 +2001,14 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			}
 		} catch (e) {
 			if ((e as Error).message === "Mailbox has been deleted") {
-				console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+				console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
 				await abandonUnstoredInbound(env, stub, {
 					emailId: messageId,
 					originalMessageId,
 					blobKeys: inboundBlobKeys(),
 					knownUnstored: true,
 				});
+				message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 				return;
 			}
 			if (!shouldFallbackToInbox(targetFolder, e)) throw e;
@@ -2017,13 +2021,14 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				stored = true;
 			} catch (inboxErr) {
 				if ((inboxErr as Error).message === "Mailbox has been deleted") {
-					console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+					console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
 					await abandonUnstoredInbound(env, stub, {
 						emailId: messageId,
 						originalMessageId,
 						blobKeys: inboundBlobKeys(),
 						knownUnstored: true,
 					});
+					message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 					return;
 				}
 				throw inboxErr;
