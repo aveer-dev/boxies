@@ -76,6 +76,18 @@ import {
 	WELCOME_FLAG_KEY,
 } from "../lib/welcome-emails";
 import {
+	createThreadNote,
+	deleteThreadNote,
+	deleteThreadNotesForDeletedEmail,
+	listThreadNotes,
+	updateThreadNote,
+	withThreadNoteFields,
+	type CreateThreadNoteInput,
+	type CreateThreadNoteResult,
+	type UpdateThreadNoteInput,
+} from "../lib/thread-notes";
+import type { ThreadNote } from "../../shared/thread-notes";
+import {
 	deleteSummariesForEmail,
 	resolveSummary,
 	SummaryGenerationError,
@@ -164,6 +176,8 @@ interface GetEmailsOptions {
 	reply_later?: boolean;
 	/** Include trash/spam/draft in Reply Later pile (default false). */
 	include_junk?: boolean;
+	/** Threaded lists: whose notes to summarize on each row (notes are private). */
+	userId?: string;
 }
 
 export type DeliveryStatus =
@@ -883,16 +897,20 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 
 			const rows = [...result];
-			return this.#withFileAttachmentFlag(
-				rows.map((row: any) => this.#withDecodedAuth({
-					...row,
-					read: !!row.read,
-					starred: !!row.starred,
-					reply_later: !!row.reply_later,
-					thread_count: row.thread_count || 1,
-					thread_unread_count: row.thread_unread_count || 0,
-					participants: row.participants || row.sender,
-				})),
+			return withThreadNoteFields(
+				this.ctx.storage.sql,
+				this.#withFileAttachmentFlag(
+					rows.map((row: any) => this.#withDecodedAuth({
+						...row,
+						read: !!row.read,
+						starred: !!row.starred,
+						reply_later: !!row.reply_later,
+						thread_count: row.thread_count || 1,
+						thread_unread_count: row.thread_unread_count || 0,
+						participants: row.participants || row.sender,
+					})),
+				),
+				options.userId,
 			);
 		}
 
@@ -998,8 +1016,10 @@ export class MailboxDO extends DurableObject<Env> {
 			needs_reply: !!row.needs_reply,
 			has_draft: !!row.has_draft,
 		}));
-		return this.#withFileAttachmentFlag(
-			annotateListSections(mapped, useNewSeen),
+		return withThreadNoteFields(
+			this.ctx.storage.sql,
+			this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
+			options.userId,
 		);
 	}
 
@@ -1351,6 +1371,36 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.#dedupedSummary("email", emailId, row.thread_id || row.id, mode);
 	}
 
+	// ── Notes to self (private to their author; see lib/thread-notes) ──
+	// No broadcast: SSE subscribers are every member of the mailbox, and a
+	// note (even its existence) is only for its author.
+
+	async getThreadNotes(threadId: string, userId: string): Promise<ThreadNote[]> {
+		return listThreadNotes(this.ctx.storage.sql, threadId, userId);
+	}
+
+	async createThreadNote(
+		threadId: string,
+		userId: string,
+		input: CreateThreadNoteInput,
+	): Promise<CreateThreadNoteResult> {
+		await this.#assertMailboxWritable();
+		return createThreadNote(this.ctx.storage.sql, threadId, userId, input);
+	}
+
+	async updateThreadNote(
+		noteId: string,
+		userId: string,
+		input: UpdateThreadNoteInput,
+	): Promise<ThreadNote | null> {
+		await this.#assertMailboxWritable();
+		return updateThreadNote(this.ctx.storage.sql, noteId, userId, input);
+	}
+
+	async deleteThreadNote(noteId: string, userId: string): Promise<boolean> {
+		return deleteThreadNote(this.ctx.storage.sql, noteId, userId) !== null;
+	}
+
 	async updateEmail(
 		id: string,
 		{
@@ -1694,6 +1744,11 @@ export class MailboxDO extends DurableObject<Env> {
 
 		this.#deleteEmailFts(id);
 		deleteSummariesForEmail(this.ctx.storage.sql, id, email.thread_id || id);
+		deleteThreadNotesForDeletedEmail(
+			this.ctx.storage.sql,
+			id,
+			email.thread_id || id,
+		);
 
 		await deleteEmailContent(this.env.BUCKET, id);
 		await deleteEmailAttachments(this.env.BUCKET, id, emailAttachments);
@@ -1792,6 +1847,7 @@ export class MailboxDO extends DurableObject<Env> {
 			sql.exec(`DELETE FROM sender_preferences`);
 			sql.exec(`DELETE FROM inbound_message_claims`);
 			sql.exec(`DELETE FROM email_summaries`);
+			sql.exec(`DELETE FROM thread_notes`);
 
 			for (const folderId of SYSTEM_FOLDER_IDS) {
 				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;

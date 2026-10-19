@@ -343,13 +343,15 @@ for (const folder of ["screener", "screened_out", "spam", "trash", "draft", "", 
 
 // ── Migration ──────────────────────────────────────────────────
 {
-	const migration = mailboxMigrations.find((m) => m.name === "31_email_summaries");
-	assert.ok(migration, "31_email_summaries is registered");
+	const migration = mailboxMigrations.find((m) => m.name === "32_email_summaries");
+	assert.ok(migration, "32_email_summaries is registered");
+	const migrationIndex = mailboxMigrations.indexOf(migration);
+	assert.equal(mailboxMigrations[migrationIndex - 1].name, "31_thread_notes_to_self", "ordered after 31");
 	assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS email_summaries/);
 	assert.doesNotMatch(migration.sql, /DROP|ALTER TABLE emails|DELETE/i, "additive only");
 	const { sql } = freshDb();
 	applyMigrations(sql, mailboxMigrations);
-	assert.equal(sql.exec(`SELECT COUNT(*) AS n FROM d1_migrations WHERE name = ?`, "31_email_summaries")[0].n, 1);
+	assert.equal(sql.exec(`SELECT COUNT(*) AS n FROM d1_migrations WHERE name = ?`, "32_email_summaries")[0].n, 1);
 	assert.throws(
 		() => sql.exec(
 			`INSERT INTO email_summaries (target_type, target_id, summary, model, version, message_count, last_email_id, created_at, updated_at)

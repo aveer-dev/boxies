@@ -15,6 +15,8 @@ export interface InboxFilterRule {
 	from?: string;
 	list?: string;
 	subject?: string;
+	/** Only mail delivered via this private email. */
+	toAlias?: string;
 	folderId?: string;
 	skipAutoDraft?: boolean;
 	forwardTo?: string;
@@ -369,6 +371,11 @@ export interface Email {
 	has_attachment?: boolean;
 	/** Inbox New vs Seen section (threaded inbox list only). */
 	list_section?: "new" | "seen";
+	/** Threaded list only: the signed-in user's own notes on this conversation. */
+	has_sticky_note?: boolean;
+	/** Latest sticky note's markdown, trimmed to a short snippet. */
+	sticky_note_text?: string | null;
+	inline_note_count?: number;
 }
 
 export interface Attachment {
@@ -414,6 +421,14 @@ export type {
 	AiSummaryResponse,
 	AiSummaryTargetType,
 } from "shared/ai-summaries";
+
+export type {
+	ThreadNote,
+	ThreadNoteType,
+	CreateThreadNoteRequest,
+	UpdateThreadNoteRequest,
+	ThreadNoteListFields,
+} from "shared/thread-notes";
 
 export interface MaskedAlias {
 	id: string;

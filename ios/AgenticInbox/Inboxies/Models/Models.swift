@@ -278,6 +278,8 @@ struct InboxFilterRule: Codable, Hashable, Identifiable {
     var from: String?
     var list: String?
     var subject: String?
+    /// Only mail delivered via this private email (lowercased address).
+    var toAlias: String? = nil
     var folderId: String?
     var skipAutoDraft: Bool?
     var forwardTo: String?

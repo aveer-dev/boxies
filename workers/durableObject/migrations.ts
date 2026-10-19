@@ -500,12 +500,38 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Notes to self on threads (sticky) and messages (inline), private to
+		// their author. Additive only: a new table and its indexes.
+		name: "31_thread_notes_to_self",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS thread_notes (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL,
+                email_id TEXT,
+                note_type TEXT NOT NULL CHECK (note_type IN ('sticky', 'inline')),
+                body TEXT NOT NULL,
+                pos_x REAL,
+                pos_y REAL,
+                author_user_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CHECK (note_type != 'inline' OR email_id IS NOT NULL)
+            );
+            CREATE INDEX IF NOT EXISTS idx_thread_notes_thread_author
+                ON thread_notes(thread_id, author_user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_thread_notes_author_type
+                ON thread_notes(author_user_id, note_type, thread_id);
+            CREATE INDEX IF NOT EXISTS idx_thread_notes_email
+                ON thread_notes(email_id);
+        `),
+	},
+	{
 		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
 		// or per message (quick summary). Generated lazily on open and reused
-		// until the thread gains a message. Additive only. Numbered 31; an open
-		// PR adds 31_thread_notes_to_self, which is fine because the runner
-		// tracks migrations by name, so either can apply first.
-		name: "31_email_summaries",
+		// until the thread gains a message. Additive only. Renumbered from 31 to 32
+		// after 31_thread_notes_to_self (AVE-59) merged first; the runner tracks
+		// migrations by name, so either order applies cleanly.
+		name: "32_email_summaries",
 		sql: txn(`
             CREATE TABLE IF NOT EXISTS email_summaries (
                 target_type TEXT NOT NULL CHECK (target_type IN ('thread', 'email')),
