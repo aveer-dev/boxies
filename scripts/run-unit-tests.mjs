@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Runs every *.test.mjs under workers/test, android/test and extension/test,
+// Runs every *.test.mjs under workers/test, android/test, extension/test and site/test,
 // one node process per file, stopping at the first failure. Tests are discovered
 // rather than listed in package.json so PRs that add tests don't conflict.
 import { spawnSync } from "node:child_process";
@@ -13,6 +13,7 @@ const suites = [
 	},
 	{ dir: "android/test", args: [] },
 	{ dir: "extension/test", args: [] },
+	{ dir: "site/test", args: ["--experimental-strip-types"] },
 ];
 
 const only = process.argv.slice(2);
