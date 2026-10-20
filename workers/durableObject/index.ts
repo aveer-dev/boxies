@@ -99,6 +99,14 @@ import {
 	outboundSendClaimKey,
 	type OutboundSendClaim,
 } from "../lib/outbound-send-claim";
+import {
+	countQueuedSends,
+	markOutboundSendQueued,
+	OUTBOUND_SEND_MAILBOX_ID_KEY,
+	STUCK_SEND_FIRST_CHECK_MS,
+	stuckSendAlarmDelayMs,
+	sweepStuckSends,
+} from "../lib/outbound-send-sweeper";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -338,16 +346,19 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#backfillSenderNames();
 		this.#scheduleFtsBackfill();
 		this.#resumePendingBlobDeletes();
+		this.#resumeStuckSendSweep();
 	}
 
 	/**
 	 * One alarm serves every scheduled job: incremental R2 → FTS indexing for
-	 * mail created before FTS existed, and the sweep of queued blob deletes.
-	 * Each job reschedules itself; the sweep only ever moves the alarm earlier.
+	 * mail created before FTS existed, the sweep of queued blob deletes, and
+	 * the stuck-send sweeper. Each job reschedules itself; the sweep only ever
+	 * moves the alarm earlier.
 	 */
 	async alarm(): Promise<void> {
 		await this.#runFtsBackfillBatch();
 		await this.#sweepPendingBlobDeletes();
+		await this.#sweepStuckSends();
 	}
 
 	/** Fire the alarm within `delayMs`, keeping an earlier alarm if one is set. */
@@ -368,6 +379,53 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 		} catch (e) {
 			console.error("Blob sweep resume failed:", (e as Error).message);
+		}
+	}
+
+	/** Queued Sent rows exist (maybe from before this DO restarted): sweep them. */
+	#resumeStuckSendSweep(): void {
+		try {
+			if (countQueuedSends(this.ctx.storage.sql) === 0) return;
+			void this.#scheduleAlarmWithin(60_000).catch((e) =>
+				console.error("Stuck-send sweep schedule failed:", (e as Error).message),
+			);
+		} catch (e) {
+			console.error("Stuck-send sweep resume failed:", (e as Error).message);
+		}
+	}
+
+	/**
+	 * Re-enqueue Sent rows stuck in `queued`, failing them after a few tries
+	 * (lib/outbound-send-sweeper). Never throws; reschedules itself while any
+	 * row is still queued.
+	 */
+	async #sweepStuckSends(): Promise<void> {
+		try {
+			const mailboxId =
+				(await this.ctx.storage.get<string>(OUTBOUND_SEND_MAILBOX_ID_KEY)) ??
+				this.ctx.id.name ??
+				null;
+			const result = await sweepStuckSends({
+				sql: this.ctx.storage.sql,
+				now: () => Date.now(),
+				mailboxId,
+				getClaimExpiry: (id) => this.ctx.storage.get<number>(outboundSendClaimKey(id)),
+				claim: (id, leaseMs) => this.claimOutboundSend(id, leaseMs),
+				releaseClaim: (id) => this.releaseOutboundSendClaim(id),
+				setDeliveryState: (id, state) => this.setDeliveryState(id, state),
+				bucket: this.env.BUCKET,
+				queue: this.env.OUTBOUND_SEND,
+			});
+			if (result.nextDueAt != null) {
+				await this.#scheduleAlarmWithin(stuckSendAlarmDelayMs(result.nextDueAt, Date.now()));
+			}
+		} catch (e) {
+			console.error("Stuck-send sweep failed:", (e as Error).message);
+			try {
+				await this.#scheduleAlarmWithin(60_000);
+			} catch {
+				/* ignore reschedule failure */
+			}
 		}
 	}
 
@@ -1629,6 +1687,19 @@ export class MailboxDO extends DurableObject<Env> {
 			await this.ctx.storage.delete(key);
 		}
 		return claim;
+	}
+
+	/**
+	 * Outbound-send producer: the queued Sent row is on the queue. Starts the
+	 * stuck-send clock and makes sure the alarm will check on it. The mailbox
+	 * id is remembered so the sweeper can rebuild the queue message.
+	 */
+	async noteOutboundSendQueued(id: string, mailboxId: string): Promise<void> {
+		if ((await this.ctx.storage.get<string>(OUTBOUND_SEND_MAILBOX_ID_KEY)) !== mailboxId) {
+			await this.ctx.storage.put(OUTBOUND_SEND_MAILBOX_ID_KEY, mailboxId);
+		}
+		markOutboundSendQueued(this.ctx.storage.sql, id, Date.now());
+		await this.#scheduleAlarmWithin(STUCK_SEND_FIRST_CHECK_MS);
 	}
 
 	/** Drop a send claim so a queue retry can try again. */
