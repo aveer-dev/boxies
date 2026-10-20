@@ -171,6 +171,8 @@ const api = {
 			emailAddresses?: string[];
 			googleClientId?: string | null;
 			appleSignInConfigured?: boolean;
+			/** Services ID for Sign in with Apple on the web; null hides the button. */
+			appleWebClientId?: string | null;
 		}>("/api/v1/config"),
 
     // Mailboxes
@@ -351,6 +353,12 @@ const api = {
 	/** Google ID token from the GIS button; sets the session cookie like passwordLogin. */
 	googleLogin: (idToken: string) =>
 		post<{ token: string; expiresAt: string }>("/api/v1/auth/google", { idToken }),
+	/** Same endpoint as iOS; it also sets the web session cookie. */
+	appleLogin: (body: {
+		identityToken: string;
+		nonce: string;
+		fullName?: { givenName?: string; familyName?: string };
+	}) => post<{ token: string; expiresAt: string }>("/api/v1/auth/apple", body),
 	forgotPassword: (email: string) =>
 		post<{
 			ok: boolean;
