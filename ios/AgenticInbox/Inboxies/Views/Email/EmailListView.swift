@@ -9,6 +9,7 @@ private struct ActionsSheetEmail: Identifiable {
 /// unread dot · sender + time · bold subject · 1-line preview.
 struct EmailListView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.homeLayoutMode) private var homeLayoutMode
 
     let emails: [Email]
     var highlightQuery: String = ""
@@ -248,10 +249,20 @@ struct EmailListView: View {
         }
     }
 
+    /// Two-pane only: the row whose email (or thread) is open in the reading pane.
+    private func isOpenInReadingPane(_ email: Email) -> Bool {
+        guard homeLayoutMode == .twoPane, !isSelectMode, let open = app.selectedEmail else { return false }
+        if open.id == email.id { return true }
+        guard let threadId = open.threadId, !threadId.isEmpty else { return false }
+        return threadId == email.threadId
+    }
+
     @ViewBuilder
     private func emailRow(for email: Email) -> some View {
         let isSelected = selectedEmailIDs.wrappedValue.contains(email.id)
         let isScreener = fallbackFolderId == "screener" || email.folderId == "screener"
+        // Softer than pillFill so the row's tag chips stay legible on the highlight.
+        let rowBackground = isOpenInReadingPane(email) ? AppTheme.pillFill.opacity(0.6) : AppTheme.background
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 if isSelectMode {
@@ -277,7 +288,8 @@ struct EmailListView: View {
                         highlightQuery: highlightQuery,
                         folderLabel: folderLabel,
                         showsTags: showsTags,
-                        showsSeparator: !isScreener || app.isReadOnly
+                        showsSeparator: !isScreener || app.isReadOnly,
+                        rowBackground: rowBackground
                     )
                 }
             }
@@ -298,7 +310,7 @@ struct EmailListView: View {
                     .accessibilityHidden(true)
             }
         }
-        .background(AppTheme.background)
+        .background(rowBackground)
         .mailRowChrome()
         .onAppear { prefetchIfNearEnd(email) }
         .contextMenu {
@@ -535,6 +547,8 @@ struct EmailRowView: View {
     var folderLabel: String?
     var showsTags: Bool = true
     var showsSeparator: Bool = true
+    /// Fill behind the row; the two-pane list tints the row open in the reading pane.
+    var rowBackground: Color = AppTheme.background
 
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
@@ -562,7 +576,7 @@ struct EmailRowView: View {
         .padding(.leading, AppTheme.List.rowHorizontalPadding)
         .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.background)
+        .background(rowBackground)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             if showsSeparator {

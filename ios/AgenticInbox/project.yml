@@ -20,9 +20,10 @@ settings:
     Release:
       VALIDATE_PRODUCT: true
 settingGroups:
-  # XcodeGen's iOS preset sets TARGETED_DEVICE_FAMILY "1,2" per target; this app is iPhone-only.
-  iphoneTarget:
-    TARGETED_DEVICE_FAMILY: "1"
+  # iPhone + iPad (AVE-71). iPhone stays portrait-only via Info.plist; iPad gets every
+  # orientation and multitasking (Split View / Slide Over), so UIRequiresFullScreen stays unset.
+  deviceTarget:
+    TARGETED_DEVICE_FAMILY: "1,2"
     SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
     SUPPORTS_MACCATALYST: false
 packages:
@@ -45,7 +46,7 @@ targets:
       - target: InboxiesCredentialProvider
     settings:
       groups:
-        - iphoneTarget
+        - deviceTarget
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app
         INFOPLIST_FILE: Inboxies/Info.plist
@@ -83,7 +84,7 @@ targets:
         buildPhase: resources
     settings:
       groups:
-        - iphoneTarget
+        - deviceTarget
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.app.credential-provider
         INFOPLIST_FILE: InboxiesCredentialProvider/Info.plist
@@ -103,7 +104,7 @@ targets:
       - target: Inboxies
     settings:
       groups:
-        - iphoneTarget
+        - deviceTarget
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.inboxies.InboxiesTests
         PRODUCT_MODULE_NAME: InboxiesTests

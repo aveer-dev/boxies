@@ -7,6 +7,7 @@ struct HomeShellView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.undoManager) private var undoManager
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var showSearch = false
     @State private var showChat = false
@@ -83,8 +84,14 @@ struct HomeShellView: View {
             + (hasServiceBanner ? serviceBannerHeight + 8 : 0)
     }
 
+    /// Regular width (full-screen iPad, wide Split View) reads mail in a side pane;
+    /// compact width keeps the phone layout with the detail sheet.
+    private var layoutMode: HomeLayoutMode {
+        HomeLayoutMode(horizontalSizeClass: horizontalSizeClass)
+    }
+
     var body: some View {
-        shell
+        splitLayout
             .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isComposeExpanded)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasMinimizedCompose)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
@@ -103,6 +110,7 @@ struct HomeShellView: View {
                 SettingsSheetView()
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
+                    .formSheetSizing()
             }
             .sheet(isPresented: $showChat, onDismiss: {
                 dismissChat()
@@ -137,6 +145,16 @@ struct HomeShellView: View {
             }
             .sensoryFeedback(.success, trigger: app.pendingUndoAction?.id)
             .sensoryFeedback(.selection, trigger: highlightedComposeAction)
+    }
+
+    /// List column (everything the phone shows) + reading pane at regular width.
+    private var splitLayout: some View {
+        HomeSplitLayout(mode: layoutMode) {
+            shell
+        } detail: {
+            HomeReadingPane()
+        }
+        .background(AppTheme.background.ignoresSafeArea())
     }
 
     private var shell: some View {
@@ -273,6 +291,7 @@ struct HomeShellView: View {
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationBackground(AppTheme.background)
+        .formSheetSizing()
     }
 
     @ViewBuilder
@@ -282,6 +301,7 @@ struct HomeShellView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(AppTheme.background)
+                .formSheetSizing()
         }
     }
 
@@ -428,14 +448,18 @@ struct HomeShellView: View {
         undoManager?.setActionName("Action")
     }
 
+    /// Detail sheet binding — compact width only. In the two-pane layout the email
+    /// shows in the reading pane, so the sheet reads nil; when the window widens with
+    /// the sheet up, its dismissal must not clear the selection the pane now shows.
     private var selectedEmailItem: Binding<IdentifiedEmail?> {
-        Binding(
+        let isStacked = layoutMode == .stacked
+        return Binding(
             get: {
-                guard let email = app.selectedEmail else { return nil }
+                guard isStacked, let email = app.selectedEmail else { return nil }
                 return IdentifiedEmail(email: email)
             },
             set: { newValue in
-                if newValue == nil {
+                if newValue == nil && isStacked {
                     app.selectedEmail = nil
                 }
             }
@@ -533,6 +557,7 @@ struct HomeShellView: View {
                 .disabled(isCreatingMailbox)
             }
             .presentationDetents([.medium, .large])
+            .formSheetSizing()
             .interactiveDismissDisabled(isCreatingMailbox)
         }
     }
