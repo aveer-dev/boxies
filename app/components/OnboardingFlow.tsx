@@ -23,12 +23,12 @@ import {
 	GlobeIcon,
 	PlusIcon,
 	ShieldCheckIcon,
-	SparkleIcon,
 	TrashIcon,
 	UserPlusIcon,
 	UsersIcon,
 	WarningCircleIcon,
 } from "@phosphor-icons/react";
+import { AppIconTile } from "~/components/AuthShell";
 import { useEffect, useState, type FormEvent } from "react";
 import api from "~/services/api";
 import type { DomainAvailabilityResponse } from "~/types";
@@ -376,16 +376,16 @@ export function OnboardingFlow({
 				}
 			}}
 		>
-			<Dialog size="lg" className="p-6">
+			<Dialog size="lg" className="brand-surface p-6">
 				{/* ------------------------------------------------------------- */}
 				{/* SELECT TRACK                                                  */}
 				{/* ------------------------------------------------------------- */}
 				{track === "select" && (
 					<div>
-						<Dialog.Title className="text-xl font-bold text-kumo-default mb-2">
+						<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 							Choose your email setup
 						</Dialog.Title>
-						<p className="text-sm text-kumo-subtle mb-6">
+						<p className="text-13 text-kumo-subtle mb-6">
 							Get started with a free personal address or connect your company's custom domain.
 						</p>
 
@@ -399,16 +399,16 @@ export function OnboardingFlow({
 								}}
 								className="flex flex-col text-left p-5 rounded-xl border border-kumo-line bg-kumo-base hover:border-kumo-default hover:bg-kumo-tint transition-all group cursor-pointer"
 							>
-								<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 mb-3 group-hover:scale-105 transition-transform">
+								<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-kumo-tint text-kumo-default ring-1 ring-kumo-line mb-3 group-hover:scale-105 transition-transform">
 									<EnvelopeIcon size={24} />
 								</div>
-								<h3 className="text-base font-semibold text-kumo-default mb-1">
+								<h3 className="text-base font-medium tracking-[-0.005em] text-kumo-default mb-1">
 									Personal Address
 								</h3>
 								<p className="text-xs text-kumo-subtle flex-1 mb-4">
 									Instant address on @{effectiveMailDomain}. No DNS or setup required.
 								</p>
-								<span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+								<span className="text-xs font-medium text-kumo-default underline underline-offset-[3px] decoration-[var(--text-subtle)] flex items-center gap-1">
 									Get Started <ArrowRightIcon size={12} />
 								</span>
 							</button>
@@ -422,16 +422,16 @@ export function OnboardingFlow({
 								}}
 								className="flex flex-col text-left p-5 rounded-xl border border-kumo-line bg-kumo-base hover:border-kumo-default hover:bg-kumo-tint transition-all group cursor-pointer"
 							>
-								<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 mb-3 group-hover:scale-105 transition-transform">
+								<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-kumo-tint text-kumo-default ring-1 ring-kumo-line mb-3 group-hover:scale-105 transition-transform">
 									<GlobeIcon size={24} />
 								</div>
-								<h3 className="text-base font-semibold text-kumo-default mb-1">
+								<h3 className="text-base font-medium tracking-[-0.005em] text-kumo-default mb-1">
 									Custom Domain
 								</h3>
 								<p className="text-xs text-kumo-subtle flex-1 mb-4">
 									Automated Cloudflare integration. Buy wholesale or connect an existing domain.
 								</p>
-								<span className="text-xs font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+								<span className="text-xs font-medium text-kumo-default underline underline-offset-[3px] decoration-[var(--text-subtle)] flex items-center gap-1">
 									Connect Domain <ArrowRightIcon size={12} />
 								</span>
 							</button>
@@ -453,7 +453,7 @@ export function OnboardingFlow({
 						{/* Progress Bar */}
 						<div className="flex items-center justify-between border-b border-kumo-line pb-3">
 							<div className="flex items-center gap-2">
-								<span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+								<span className="brand-micro">
 									Personal Setup
 								</span>
 								<span className="text-xs text-kumo-subtle">
@@ -466,7 +466,7 @@ export function OnboardingFlow({
 										key={step}
 										className={`h-1.5 w-6 rounded-full transition-all ${
 											step <= personalStep
-												? "bg-emerald-500"
+												? "bg-kumo-contrast"
 												: "bg-kumo-line"
 										}`}
 									/>
@@ -484,7 +484,7 @@ export function OnboardingFlow({
 						{personalStep === 1 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										What is your name?
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -522,7 +522,7 @@ export function OnboardingFlow({
 						{personalStep === 2 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Set your password
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -572,14 +572,14 @@ export function OnboardingFlow({
 						{personalStep === 3 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Backup & recovery email
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
 										Provide an existing email address for account recovery.
 									</p>
 								</div>
-								<div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 flex items-start gap-2.5 text-xs text-emerald-700 dark:text-emerald-300">
+								<div className="rounded-xl border border-kumo-line bg-kumo-recessed p-3 flex items-start gap-2.5 text-xs text-kumo-subtle">
 									<ShieldCheckIcon size={20} className="shrink-0 mt-0.5" />
 									<p>
 										We will use this email address strictly for account backup, password resets, and critical security notices.
@@ -617,7 +617,7 @@ export function OnboardingFlow({
 						{personalStep === 4 && (
 							<form onSubmit={handlePersonalComplete} className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Choose your address
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -670,7 +670,7 @@ export function OnboardingFlow({
 						{/* Progress Header */}
 						<div className="flex items-center justify-between border-b border-kumo-line pb-3">
 							<div className="flex items-center gap-2">
-								<span className="text-xs font-bold text-sky-600 dark:text-sky-400 uppercase tracking-wider">
+								<span className="brand-micro">
 									Custom Domain
 								</span>
 								<span className="text-xs text-kumo-subtle">
@@ -682,7 +682,7 @@ export function OnboardingFlow({
 									<div
 										key={step}
 										className={`h-1.5 w-3.5 rounded-full transition-all ${
-											step <= domainStep ? "bg-sky-500" : "bg-kumo-line"
+											step <= domainStep ? "bg-kumo-contrast" : "bg-kumo-line"
 										}`}
 									/>
 								))}
@@ -699,7 +699,7 @@ export function OnboardingFlow({
 						{domainStep === 1 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										What is your full name?
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -737,7 +737,7 @@ export function OnboardingFlow({
 						{domainStep === 2 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Set master password
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -787,7 +787,7 @@ export function OnboardingFlow({
 						{domainStep === 3 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Administrator backup email
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -826,7 +826,7 @@ export function OnboardingFlow({
 						{domainStep === 4 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Select or enter domain
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -879,7 +879,7 @@ export function OnboardingFlow({
 												</span>
 											</div>
 										) : (
-											<div className="flex items-center justify-between text-sky-600 dark:text-sky-400 font-medium">
+											<div className="flex items-center justify-between text-kumo-default font-medium">
 												<span className="flex items-center gap-1.5">
 													<GlobeIcon size={16} />
 													Domain is registered externally.
@@ -915,7 +915,7 @@ export function OnboardingFlow({
 								{domainAction === "purchase" && availability?.available ? (
 									<>
 										<div>
-											<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+											<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 												Subscription & fee breakdown
 											</Dialog.Title>
 											<p className="text-xs text-kumo-subtle">
@@ -952,19 +952,19 @@ export function OnboardingFlow({
 											<div className="text-xs text-kumo-subtle pt-2 border-t border-kumo-line space-y-1.5">
 												<div className="flex items-center justify-between">
 													<span>ICANN Fees</span>
-													<span className="text-emerald-600 dark:text-emerald-400 font-medium">Included</span>
+													<span className="text-kumo-default font-medium">Included</span>
 												</div>
 												<div className="flex items-center justify-between">
 													<span>WHOIS Privacy Protection</span>
-													<span className="text-emerald-600 dark:text-emerald-400 font-medium">Free</span>
+													<span className="text-kumo-default font-medium">Free</span>
 												</div>
 												<div className="flex items-center justify-between">
 													<span>Global Anycast DNS & SSL</span>
-													<span className="text-emerald-600 dark:text-emerald-400 font-medium">Included</span>
+													<span className="text-kumo-default font-medium">Included</span>
 												</div>
 												<div className="flex items-center justify-between">
 													<span>Auto-Configured MX/SPF/DKIM/DMARC</span>
-													<span className="text-emerald-600 dark:text-emerald-400 font-medium">Automatic</span>
+													<span className="text-kumo-default font-medium">Automatic</span>
 												</div>
 											</div>
 										</div>
@@ -999,7 +999,7 @@ export function OnboardingFlow({
 								) : (
 									<>
 										<div>
-											<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+											<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 												Update registrar nameservers
 											</Dialog.Title>
 											<p className="text-xs text-kumo-subtle">
@@ -1031,7 +1031,7 @@ export function OnboardingFlow({
 											</div>
 										</div>
 
-										<div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-700 dark:text-sky-300 flex items-start gap-2">
+										<div className="rounded-xl border border-kumo-line bg-kumo-recessed p-3 text-xs text-kumo-subtle flex items-start gap-2">
 											<CloudIcon size={18} className="shrink-0 mt-0.5" />
 											<p>
 												Once you confirm, we watch in the background. As soon as nameservers point to Cloudflare, email DNS is configured automatically!
@@ -1058,7 +1058,7 @@ export function OnboardingFlow({
 						{domainStep === 6 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Your admin email address
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -1101,7 +1101,7 @@ export function OnboardingFlow({
 						{domainStep === 7 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Add team users (optional)
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -1182,7 +1182,7 @@ export function OnboardingFlow({
 						{domainStep === 8 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Add email aliases
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -1266,7 +1266,7 @@ export function OnboardingFlow({
 						{domainStep === 9 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										State of setup
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -1328,7 +1328,7 @@ export function OnboardingFlow({
 						{domainStep === 10 && (
 							<div className="space-y-4">
 								<div>
-									<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										DNS records overview
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle">
@@ -1370,11 +1370,9 @@ export function OnboardingFlow({
 						{/* Step 11: Welcome Page */}
 						{domainStep === 11 && (
 							<div className="space-y-5 text-center py-4">
-								<div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-									<SparkleIcon size={32} weight="fill" />
-								</div>
+								<AppIconTile size={56} className="mx-auto" />
 								<div>
-									<Dialog.Title className="text-xl font-bold text-kumo-default mb-1">
+									<Dialog.Title className="text-lg font-medium tracking-[-0.01em] text-kumo-default mb-1">
 										Welcome to your new Inbox!
 									</Dialog.Title>
 									<p className="text-xs text-kumo-subtle max-w-sm mx-auto">
@@ -1405,7 +1403,7 @@ export function OnboardingFlow({
 
 								<Button
 									variant="primary"
-									className="w-full justify-center py-2.5 text-sm font-semibold"
+									className="w-full justify-center"
 									onClick={() => {
 										onSuccess(createdMailboxId || `${customUsername}@${customDomain}`);
 										resetState();
