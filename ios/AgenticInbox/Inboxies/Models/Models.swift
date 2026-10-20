@@ -1638,6 +1638,57 @@ struct DecommissionResponse: Codable {
     var status: String
     var eppCode: String?
     var message: String
+    /// When the domain's data is deleted unless finalized sooner (ISO 8601).
+    var finalizeAfter: String?
+}
+
+/// Where a decommissioned domain's offboarding stands: the grace period and finalize-now.
+struct DomainOffboardingState: Codable, Hashable {
+    var decommissionedAt: String
+    /// Scheduled deletion (ISO 8601).
+    var finalizeAfter: String
+    var graceDays: Int
+    var warningSentAt: String?
+    var finalizeRequestedAt: String?
+    var finalizeStartedAt: String?
+    var finalizedAt: String?
+    var step: String?
+    var lastError: String?
+    var canFinalizeNow: Bool
+    var scheduledFinalizeDue: Bool
+}
+
+struct OffboardingDomain: Codable, Hashable, Identifiable {
+    var domain: String
+    var offboarding: DomainOffboardingState
+    var id: String { domain }
+}
+
+struct OffboardingDomainsResponse: Codable {
+    var domains: [OffboardingDomain]
+}
+
+struct FinalizeDomainResponse: Codable {
+    var success: Bool
+    var domain: String
+    var finalized: Bool
+    /// "in_progress" or "will_retry" when it didn't finish now; the hourly run does.
+    var status: String?
+    var mailboxesPurged: Int?
+    var subscriptionCanceled: Bool?
+    var error: String?
+}
+
+/// Formats an ISO 8601 offboarding date as "October 20, 2026"; the raw string if it doesn't parse.
+func formatOffboardingDate(_ iso: String) -> String {
+    let parser = ISO8601DateFormatter()
+    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    guard let date else { return iso }
+    let out = DateFormatter()
+    out.dateStyle = .long
+    out.timeStyle = .none
+    return out.string(from: date)
 }
 
 struct DomainEppCodeResponse: Codable {

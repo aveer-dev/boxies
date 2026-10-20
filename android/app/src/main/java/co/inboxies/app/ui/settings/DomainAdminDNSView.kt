@@ -96,6 +96,8 @@ import co.inboxies.app.models.DomainAvailabilityResponse
 import co.inboxies.app.models.DomainHealthResponse
 import co.inboxies.app.models.EmailHealthItem
 import co.inboxies.app.models.ExportJob
+import co.inboxies.app.models.OffboardingDomain
+import co.inboxies.app.models.formatOffboardingDate
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
@@ -136,6 +138,8 @@ fun DomainAdminDNSView(
     var showAddDomainDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showOffboardDialog by remember { mutableStateOf(false) }
+    var offboardingDomains by remember { mutableStateOf<List<OffboardingDomain>>(emptyList()) }
+    var finalizeTarget by remember { mutableStateOf<OffboardingDomain?>(null) }
     var recordToDelete by remember { mutableStateOf<CloudflareDnsRecord?>(null) }
     var domainMenuExpanded by remember { mutableStateOf(false) }
 
@@ -170,8 +174,18 @@ fun DomainAdminDNSView(
         }
     }
 
+    suspend fun loadOffboardingDomains() {
+        // Best effort: the rest of the screen works without it.
+        offboardingDomains = try {
+            if (previewDomains != null) emptyList() else ApiClient.shared.listOffboardingDomains()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
     LaunchedEffect(Unit) {
         isLoading = true
+        loadOffboardingDomains()
         try {
             val fetchedDomains = previewDomains ?: ApiClient.shared.listAdminDomains()
             domains = fetchedDomains
@@ -309,6 +323,66 @@ fun DomainAdminDNSView(
                                             reloadCurrent()
                                         },
                                     )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (offboardingDomains.isNotEmpty()) {
+                    SettingsFormSectionHeader("Scheduled for Deletion")
+                    SettingsFormGroup {
+                        offboardingDomains.forEachIndexed { index, item ->
+                            if (index > 0) {
+                                HorizontalDivider(thickness = 0.5.dp, color = colors.line.copy(alpha = 0.65f))
+                            }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    item.domain,
+                                    fontFamily = InterFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    color = colors.ink,
+                                )
+                                Text(
+                                    if (item.offboarding.finalizeStartedAt != null) {
+                                        "Deleting its data now. This finishes within the hour."
+                                    } else {
+                                        "Decommissioned. Its mailboxes, aliases, members and subscription are deleted on " +
+                                            "${formatOffboardingDate(item.offboarding.finalizeAfter)}. Export your mail before then."
+                                    },
+                                    fontFamily = InterFontFamily,
+                                    fontSize = 12.sp,
+                                    color = colors.muted,
+                                )
+                                if (item.offboarding.canFinalizeNow && item.offboarding.finalizeStartedAt == null) {
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { finalizeTarget = item }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Delete,
+                                            contentDescription = null,
+                                            tint = colors.deepDarkRed,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            "Delete Now",
+                                            fontFamily = InterFontFamily,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp,
+                                            color = colors.deepDarkRed,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -813,6 +887,15 @@ fun DomainAdminDNSView(
         )
     }
 
+    finalizeTarget?.let { target ->
+        FinalizeDomainDialog(
+            domain = target.domain,
+            finalizeAfter = target.offboarding.finalizeAfter,
+            onDismiss = { finalizeTarget = null },
+            onFinalized = { scope.launch { loadOffboardingDomains() } },
+        )
+    }
+
     if (showOffboardDialog) {
         DomainOffboardDialog(
             domain = selectedDomain,
@@ -820,6 +903,7 @@ fun DomainAdminDNSView(
             onDecommissioned = {
                 showOffboardDialog = false
                 reloadCurrent()
+                scope.launch { loadOffboardingDomains() }
             },
             onOpenExport = {
                 showOffboardDialog = false
@@ -1954,6 +2038,7 @@ private fun DomainOffboardDialog(
     var isLoadingEpp by remember { mutableStateOf(false) }
     var isTogglingLock by remember { mutableStateOf(false) }
     var isDecommissionSuccess by remember { mutableStateOf(false) }
+    var finalizeAfter by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(domain) {
         isLoadingPreflight = true
@@ -2050,6 +2135,17 @@ private fun DomainOffboardDialog(
                             fontSize = 13.sp,
                             color = colors.muted,
                         )
+                        finalizeAfter?.let { date ->
+                            Text(
+                                "Your mail stays available to export until ${formatOffboardingDate(date)}. " +
+                                    "Then every mailbox, alias, member and invite on $domain is deleted and the subscription " +
+                                    "is cancelled. We'll email you a week before. To delete it sooner, use Delete Now under " +
+                                    "Scheduled for Deletion.",
+                                fontFamily = InterFontFamily,
+                                fontSize = 12.sp,
+                                color = colors.muted,
+                            )
+                        }
                         Button(
                             onClick = onDecommissioned,
                             shape = RoundedCornerShape(8.dp),
@@ -2308,11 +2404,12 @@ private fun DomainOffboardDialog(
                                 isSubmitting = true
                                 errorMessage = null
                                 try {
-                                    ApiClient.shared.decommissionDomain(
+                                    val res = ApiClient.shared.decommissionDomain(
                                         domain = domain,
                                         confirmDomain = confirmDomainInput.trim(),
                                         skipExportAcknowledged = skipBackup,
                                     )
+                                    finalizeAfter = res.finalizeAfter
                                     isDecommissionSuccess = true
                                 } catch (e: Exception) {
                                     errorMessage = e.message ?: "Failed to decommission domain"
@@ -2338,6 +2435,198 @@ private fun DomainOffboardDialog(
                         } else {
                             Text(
                                 "Decommission & Release DNS",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 14.sp,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * "Delete Now" for a decommissioned domain: deletes its data without waiting for the
+ * grace period. The domain must be typed to confirm; the server checks it too.
+ */
+@Composable
+private fun FinalizeDomainDialog(
+    domain: String,
+    finalizeAfter: String,
+    onDismiss: () -> Unit,
+    onFinalized: () -> Unit,
+) {
+    val colors = inboxiesColors()
+    val scope = rememberCoroutineScope()
+    val view = LocalView.current
+
+    var confirmDomainInput by remember { mutableStateOf("") }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var resultMessage by remember { mutableStateOf<String?>(null) }
+    val canFinalize = confirmDomainInput.trim().lowercase() == domain.lowercase() && !isSubmitting
+
+    Dialog(onDismissRequest = { if (!isSubmitting) onDismiss() }) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = colors.surface,
+            border = BorderStroke(0.5.dp, colors.line),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Delete $domain",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 17.sp,
+                        color = colors.ink,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            onDismiss()
+                        },
+                        enabled = !isSubmitting,
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Close,
+                            contentDescription = "Close",
+                            tint = colors.ink,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+
+                errorMessage?.let {
+                    Text(it, color = colors.deepDarkRed, fontFamily = InterFontFamily, fontSize = 12.sp)
+                }
+
+                val result = resultMessage
+                if (result != null) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF16A34A),
+                            modifier = Modifier.size(36.dp),
+                        )
+                        Text(result, fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.muted)
+                        Button(
+                            onClick = onDismiss,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = colors.ink,
+                                contentColor = colors.surface,
+                            ),
+                        ) {
+                            Text("Done", fontFamily = InterFontFamily)
+                        }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Icon(
+                            Icons.Outlined.Warning,
+                            contentDescription = null,
+                            tint = Color(0xFFEA580C),
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "This can't be undone",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                                color = colors.ink,
+                            )
+                            Text(
+                                "This permanently deletes every mailbox on $domain with its mail and attachments, " +
+                                    "its aliases, members and pending invites, and cancels its subscription without a " +
+                                    "refund for the unused time. Otherwise this happens on ${formatOffboardingDate(finalizeAfter)}.",
+                                fontFamily = InterFontFamily,
+                                fontSize = 12.sp,
+                                color = colors.muted,
+                            )
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "Type $domain below to confirm:",
+                            fontFamily = InterFontFamily,
+                            fontSize = 12.sp,
+                            color = colors.muted,
+                        )
+                        OutlinedTextField(
+                            value = confirmDomainInput,
+                            onValueChange = { confirmDomainInput = it },
+                            placeholder = { Text(domain) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = colors.accent,
+                                unfocusedBorderColor = colors.line,
+                            ),
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                isSubmitting = true
+                                errorMessage = null
+                                try {
+                                    val res = ApiClient.shared.finalizeDomain(domain, confirmDomainInput.trim())
+                                    resultMessage = if (res.finalized) {
+                                        "$domain's data was deleted."
+                                    } else {
+                                        "Deleting $domain's data. This finishes within the hour."
+                                    }
+                                    onFinalized()
+                                } catch (e: Exception) {
+                                    errorMessage = e.message ?: "Failed to delete the domain's data"
+                                } finally {
+                                    isSubmitting = false
+                                }
+                            }
+                        },
+                        enabled = canFinalize,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.deepDarkRed,
+                            contentColor = Color.White,
+                            disabledContainerColor = colors.pillFill,
+                            disabledContentColor = colors.muted,
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                    ) {
+                        if (isSubmitting) {
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        } else {
+                            Text(
+                                "Delete All Data",
                                 fontFamily = InterFontFamily,
                                 fontWeight = FontWeight.Medium,
                                 fontSize = 14.sp,

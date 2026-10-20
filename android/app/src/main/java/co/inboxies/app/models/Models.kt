@@ -1300,7 +1300,59 @@ data class DecommissionResponse(
     val status: String,
     val eppCode: String? = null,
     val message: String = "",
+    /** When the domain's data is deleted unless finalized sooner (ISO 8601). */
+    val finalizeAfter: String? = null,
 )
+
+/** Where a decommissioned domain's offboarding stands: the grace period and finalize-now. */
+@Serializable
+data class DomainOffboardingState(
+    val decommissionedAt: String,
+    /** Scheduled deletion (ISO 8601). */
+    val finalizeAfter: String,
+    val graceDays: Int = 30,
+    val warningSentAt: String? = null,
+    val finalizeRequestedAt: String? = null,
+    val finalizeStartedAt: String? = null,
+    val finalizedAt: String? = null,
+    val step: String? = null,
+    val lastError: String? = null,
+    val canFinalizeNow: Boolean = false,
+    val scheduledFinalizeDue: Boolean = false,
+)
+
+@Serializable
+data class OffboardingDomain(
+    val domain: String,
+    val offboarding: DomainOffboardingState,
+)
+
+@Serializable
+data class OffboardingDomainsResponse(
+    val domains: List<OffboardingDomain> = emptyList(),
+)
+
+@Serializable
+data class FinalizeDomainResponse(
+    val success: Boolean = false,
+    val domain: String,
+    val finalized: Boolean = false,
+    /** "in_progress" or "will_retry" when it didn't finish now; the hourly run does. */
+    val status: String? = null,
+    val mailboxesPurged: Int? = null,
+    val subscriptionCanceled: Boolean? = null,
+    val error: String? = null,
+)
+
+/** Formats an ISO 8601 offboarding date as "October 20, 2026"; the raw string if it doesn't parse. */
+fun formatOffboardingDate(iso: String): String =
+    try {
+        java.time.Instant.parse(iso)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.LONG))
+    } catch (_: Exception) {
+        iso
+    }
 
 @Serializable
 data class DomainEppCodeResponse(

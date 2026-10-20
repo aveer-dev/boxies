@@ -265,3 +265,40 @@ export const auditLog = sqliteTable(
 	},
 	(t) => [index("audit_log_created_at_idx").on(t.createdAt)],
 );
+
+/**
+ * Finalizing a decommissioned domain (AVE-43, lib/domain-offboarding.ts).
+ * One row per decommission: when the grace period ends, whether the admins
+ * were warned, and how far the finalize got, so a crash mid-way resumes
+ * instead of starting over. No foreign key: the row outlives the domain row
+ * it describes, as the record that the domain's data was deleted.
+ */
+export const domainOffboarding = sqliteTable(
+	"domain_offboarding",
+	{
+		domain: text("domain").primaryKey(),
+		decommissionedAt: integer("decommissioned_at", { mode: "timestamp_ms" }).notNull(),
+		/** Earliest time the scheduled finalize may run (decommission + grace, never < warning + 7 days). */
+		finalizeAfter: integer("finalize_after", { mode: "timestamp_ms" }).notNull(),
+		warningSentAt: integer("warning_sent_at", { mode: "timestamp_ms" }),
+		/** Set when an owner asked to finalize now (typed confirmation passed). */
+		finalizeRequestedBy: text("finalize_requested_by"),
+		finalizeRequestedAt: integer("finalize_requested_at", { mode: "timestamp_ms" }),
+		finalizeStartedAt: integer("finalize_started_at", { mode: "timestamp_ms" }),
+		finalizedAt: integer("finalized_at", { mode: "timestamp_ms" }),
+		/** Billing copied from the domain metadata before it is deleted. */
+		subscriptionId: text("subscription_id"),
+		customerId: text("customer_id"),
+		subscriptionCanceledAt: integer("subscription_canceled_at", { mode: "timestamp_ms" }),
+		mailboxesPurged: integer("mailboxes_purged").notNull().default(0),
+		/** Last step reached ("billing", "mailboxes", "aliases", "access", "registry", "done"). */
+		step: text("step"),
+		lastError: text("last_error"),
+		attempts: integer("attempts").notNull().default(0),
+		/** A runner holds the row until then; another runner skips it. */
+		leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [index("domain_offboarding_finalize_after_idx").on(t.finalizeAfter)],
+);

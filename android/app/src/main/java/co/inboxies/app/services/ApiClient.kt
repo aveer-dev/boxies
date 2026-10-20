@@ -30,6 +30,9 @@ import co.inboxies.app.models.ExportJob
 import co.inboxies.app.models.ForgotPasswordResponse
 import co.inboxies.app.models.DecommissionPreflightResponse
 import co.inboxies.app.models.DecommissionResponse
+import co.inboxies.app.models.FinalizeDomainResponse
+import co.inboxies.app.models.OffboardingDomain
+import co.inboxies.app.models.OffboardingDomainsResponse
 import co.inboxies.app.models.DeleteAccountResponse
 import co.inboxies.app.models.EmptyTrashResponse
 import co.inboxies.app.models.FixEmailDnsResponse
@@ -1258,6 +1261,19 @@ class ApiClient private constructor() {
         body = buildJsonObject {
             put("confirmDomain", confirmDomain)
             put("skipExportAcknowledged", skipExportAcknowledged)
+        },
+    )
+
+    /** Decommissioned domains of the caller still waiting to be deleted. */
+    suspend fun listOffboardingDomains(): List<OffboardingDomain> =
+        request<OffboardingDomainsResponse>("/api/v1/admin/offboarding-domains").domains
+
+    /** Delete a decommissioned domain's data now. `confirmDomain` must be the domain name (checked server-side). */
+    suspend fun finalizeDomain(domain: String, confirmDomain: String): FinalizeDomainResponse = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/finalize",
+        method = "POST",
+        body = buildJsonObject {
+            put("confirmDomain", confirmDomain)
         },
     )
 

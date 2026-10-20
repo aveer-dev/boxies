@@ -243,6 +243,41 @@ export interface DecommissionResponse {
 	status: string;
 	eppCode?: string;
 	message: string;
+	/** When the domain's data is deleted unless finalized sooner (AVE-43). */
+	finalizeAfter?: string;
+	offboarding?: DomainOffboardingState | null;
+}
+
+/** Where a decommissioned domain's offboarding stands (`/offboarding`). */
+export interface DomainOffboardingState {
+	decommissionedAt: string;
+	/** Scheduled deletion: decommission + grace period, never under 7 days after the warning. */
+	finalizeAfter: string;
+	graceDays: number;
+	warningSentAt: string | null;
+	finalizeRequestedAt: string | null;
+	finalizeStartedAt: string | null;
+	finalizedAt: string | null;
+	step: string | null;
+	lastError: string | null;
+	canFinalizeNow: boolean;
+	scheduledFinalizeDue: boolean;
+}
+
+export interface OffboardingDomain {
+	domain: string;
+	offboarding: DomainOffboardingState;
+}
+
+export interface FinalizeDomainResponse {
+	success: boolean;
+	domain: string;
+	finalized: boolean;
+	/** "in_progress" or "will_retry" when it didn't finish now; the hourly run does. */
+	status?: string;
+	mailboxesPurged?: number;
+	subscriptionCanceled?: boolean;
+	error?: string;
 }
 
 export interface DomainHealthResponse {

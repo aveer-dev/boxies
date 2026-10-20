@@ -1194,6 +1194,21 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Decommissioned domains of the caller still waiting to be deleted.
+    func listOffboardingDomains() async throws -> [OffboardingDomain] {
+        let response: OffboardingDomainsResponse = try await request(path: "/api/v1/admin/offboarding-domains")
+        return response.domains
+    }
+
+    /// Delete a decommissioned domain's data now. `confirmDomain` must be the domain name (checked server-side).
+    func finalizeDomain(domain: String, confirmDomain: String) async throws -> FinalizeDomainResponse {
+        try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/finalize",
+            method: "POST",
+            body: ["confirmDomain": confirmDomain]
+        )
+    }
+
     func getDomainEppCode(domain: String) async throws -> DomainEppCodeResponse {
         try await request(path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/epp-code")
     }

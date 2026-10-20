@@ -25,6 +25,8 @@ struct DomainAdminDNSView: View {
     @State private var showAddDomain = false
     @State private var showExportSheet = false
     @State private var showOffboardSheet = false
+    @State private var offboardingDomains: [OffboardingDomain] = []
+    @State private var finalizeTarget: OffboardingDomain?
 
     /// The domain's subscription ended: DNS edits are frozen; export and transfer stay.
     private var serviceEnded: Bool {
@@ -81,6 +83,39 @@ struct DomainAdminDNSView: View {
                     .onChange(of: selectedDomain) { _, newDomain in
                         Task { await loadDomainData(domain: newDomain) }
                     }
+                }
+            }
+
+            if !offboardingDomains.isEmpty {
+                Section {
+                    ForEach(offboardingDomains) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.domain)
+                                .font(.inter(size: 14, weight: .semibold))
+                                .foregroundStyle(AppTheme.ink)
+                            Text(
+                                item.offboarding.finalizeStartedAt != nil
+                                    ? "Deleting its data now. This finishes within the hour."
+                                    : "Decommissioned. Its mailboxes, aliases, members and subscription are deleted on \(formatOffboardingDate(item.offboarding.finalizeAfter)). Export your mail before then."
+                            )
+                            .font(.inter(size: 12))
+                            .foregroundStyle(AppTheme.muted)
+                            if item.offboarding.canFinalizeNow && item.offboarding.finalizeStartedAt == nil {
+                                Button(role: .destructive) {
+                                    finalizeTarget = item
+                                } label: {
+                                    Label("Delete Now", systemImage: "trash")
+                                        .font(.inter(size: 13, weight: .semibold))
+                                        .foregroundStyle(AppTheme.deepDarkRed)
+                                }
+                                .buttonStyle(.borderless)
+                                .padding(.top, 2)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("Scheduled for Deletion")
                 }
             }
 
@@ -357,6 +392,11 @@ struct DomainAdminDNSView: View {
                 Task { await bootstrap() }
             }
         }
+        .sheet(item: $finalizeTarget) { item in
+            FinalizeDomainSheet(domain: item.domain, finalizeAfter: item.offboarding.finalizeAfter) {
+                Task { await loadOffboardingDomains() }
+            }
+        }
         .sheet(isPresented: $showAddDomain) {
             AddDomainSheet { newDomain in
                 Task {
@@ -415,9 +455,15 @@ struct DomainAdminDNSView: View {
         }
     }
 
+    private func loadOffboardingDomains() async {
+        // Best effort: the rest of the screen works without it.
+        offboardingDomains = (try? await APIClient.shared.listOffboardingDomains()) ?? []
+    }
+
     private func bootstrap() async {
         isLoading = true
         defer { isLoading = false }
+        await loadOffboardingDomains()
         do {
             domains = try await APIClient.shared.listAdminDomains()
             if let initialDomain, !initialDomain.isEmpty {
@@ -1082,6 +1128,7 @@ struct DomainOffboardSheet: View {
     @State private var isTogglingLock = false
     @State private var showExportSheet = false
     @State private var isDecommissionSuccess = false
+    @State private var finalizeAfter: String?
 
     var canDecommission: Bool {
         guard let preflight else { return false }
@@ -1122,6 +1169,12 @@ struct DomainOffboardSheet: View {
                                 .font(.inter(size: 13))
                                 .foregroundStyle(AppTheme.muted)
                                 .multilineTextAlignment(.center)
+                            if let finalizeAfter {
+                                Text("Your mail stays available to export until \(formatOffboardingDate(finalizeAfter)). Then every mailbox, alias, member and invite on \(domain) is deleted and the subscription is cancelled. We'll email you a week before. To delete it sooner, use Delete Now under Scheduled for Deletion.")
+                                    .font(.inter(size: 12))
+                                    .foregroundStyle(AppTheme.muted)
+                                    .multilineTextAlignment(.center)
+                            }
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -1348,13 +1401,140 @@ struct DomainOffboardSheet: View {
         isSubmitting = true
         errorMessage = nil
         do {
-            _ = try await APIClient.shared.decommissionDomain(
+            let res = try await APIClient.shared.decommissionDomain(
                 domain: domain,
                 confirmDomain: confirmDomainInput.trimmingCharacters(in: .whitespacesAndNewlines),
                 skipExportAcknowledged: skipBackup
             )
+            finalizeAfter = res.finalizeAfter
             isDecommissionSuccess = true
             onDecommissioned()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isSubmitting = false
+    }
+}
+
+/// "Delete Now" for a decommissioned domain: deletes its data without waiting for the
+/// grace period. The domain must be typed to confirm; the server checks it too.
+struct FinalizeDomainSheet: View {
+    let domain: String
+    let finalizeAfter: String
+    var onFinalized: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var confirmDomainInput = ""
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+    @State private var resultMessage: String?
+
+    private var canFinalize: Bool {
+        confirmDomainInput.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == domain.lowercased()
+            && !isSubmitting
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .font(.inter(size: 13))
+                            .foregroundStyle(AppTheme.deepDarkRed)
+                            .textSelection(.enabled)
+                    }
+                }
+                if let resultMessage {
+                    Section {
+                        VStack(spacing: 12) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 36))
+                                .foregroundStyle(Color.green)
+                            Text(resultMessage)
+                                .font(.inter(size: 13))
+                                .foregroundStyle(AppTheme.muted)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    }
+                } else {
+                    Section {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Color.orange)
+                                Text("This can't be undone")
+                                    .font(.inter(size: 14, weight: .semibold))
+                                    .foregroundStyle(AppTheme.ink)
+                            }
+                            Text("This permanently deletes every mailbox on \(domain) with its mail and attachments, its aliases, members and pending invites, and cancels its subscription without a refund for the unused time. Otherwise this happens on \(formatOffboardingDate(finalizeAfter)).")
+                                .font(.inter(size: 12))
+                                .foregroundStyle(AppTheme.muted)
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    Section("Confirm Deletion") {
+                        Text("Type \(domain) below to confirm:")
+                            .font(.inter(size: 12))
+                            .foregroundStyle(AppTheme.muted)
+
+                        TextField(domain, text: $confirmDomainInput)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+
+                        Button(role: .destructive) {
+                            Task { await finalize() }
+                        } label: {
+                            HStack {
+                                Spacer()
+                                if isSubmitting { ProgressView() }
+                                else {
+                                    Text("Delete All Data")
+                                        .font(.inter(size: 15, weight: .semibold))
+                                        .foregroundStyle(canFinalize ? AppTheme.deepDarkRed : AppTheme.muted)
+                                }
+                                Spacer()
+                            }
+                        }
+                        .disabled(!canFinalize)
+                    }
+                }
+            }
+            .navigationTitle("Delete \(domain)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(AppTheme.ink)
+                            .frame(width: 32, height: 32)
+                    }
+                    .accessibilityLabel("Close")
+                    .disabled(isSubmitting)
+                }
+            }
+        }
+    }
+
+    private func finalize() async {
+        isSubmitting = true
+        errorMessage = nil
+        do {
+            let res = try await APIClient.shared.finalizeDomain(
+                domain: domain,
+                confirmDomain: confirmDomainInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            resultMessage = res.finalized
+                ? "\(domain)'s data was deleted."
+                : "Deleting \(domain)'s data. This finishes within the hour."
+            onFinalized()
         } catch {
             errorMessage = error.localizedDescription
         }

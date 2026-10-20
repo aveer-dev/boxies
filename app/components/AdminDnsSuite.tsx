@@ -42,6 +42,7 @@ import type {
 	NewDnsRecord,
 } from "~/types";
 import { DomainSubscriptionCard } from "./DomainSubscriptionCard";
+import { OFFBOARDING_DOMAINS_QUERY_KEY, OffboardingDomainsCard } from "./OffboardingDomainsCard";
 
 interface AdminDnsSuiteProps {
 	configuredDomains: string[];
@@ -237,6 +238,7 @@ export function AdminDnsSuite({
 			toastManager.add({ title: "Domain email routing disconnected" });
 			queryClient.invalidateQueries({ queryKey: ["admin-domains"] });
 			queryClient.invalidateQueries({ queryKey: ["admin-dns-health", selectedDomain] });
+			queryClient.invalidateQueries({ queryKey: OFFBOARDING_DOMAINS_QUERY_KEY });
 		} catch (err: unknown) {
 			setDecommissionError(
 				err instanceof Error ? err.message : "Failed to decommission domain",
@@ -532,6 +534,8 @@ export function AdminDnsSuite({
 					</div>
 				</div>
 			)}
+
+			<OffboardingDomainsCard />
 
 			<DomainSubscriptionCard domain={selectedDomain} justRenewed={justRenewed} />
 
@@ -1242,6 +1246,25 @@ export function AdminDnsSuite({
 									{offboardResult.message}
 								</p>
 							</div>
+
+							{offboardResult.finalizeAfter && (
+								<div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-xs text-kumo-subtle space-y-1">
+									<div className="font-semibold text-kumo-default">
+										Data deleted on{" "}
+										{new Date(offboardResult.finalizeAfter).toLocaleDateString("en-US", {
+											year: "numeric",
+											month: "long",
+											day: "numeric",
+										})}
+									</div>
+									<p>
+										Your mail stays available to export until then. After that every mailbox,
+										alias, member and invite on {offboardResult.domain} is deleted and the
+										subscription is cancelled. We'll email you a week before. To delete it
+										sooner, use "Delete now" under Scheduled for deletion.
+									</p>
+								</div>
+							)}
 
 							{offboardResult.eppCode && (
 								<div className="rounded-xl border border-kumo-line bg-kumo-recessed p-4 space-y-2">

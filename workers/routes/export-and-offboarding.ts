@@ -4,7 +4,7 @@
 
 import { type Context, type Hono } from "hono";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { MailboxContext } from "../lib/mailbox";
 import { authDb, authorizeMailboxAccess } from "../auth/authz";
 import * as schema from "../auth/schema";
@@ -27,11 +27,21 @@ import {
 	saveDomainMetadata,
 } from "../lib/domain-registry";
 import { disableCatchAllRule } from "../lib/cloudflare-client";
+import {
+	finalizeDomainOffboarding,
+	getOffboarding,
+	offboardingPayload,
+	recordDecommission,
+} from "../lib/domain-offboarding";
 import { listAllR2Objects } from "../lib/r2-list";
 
 const DecommissionBody = z.object({
 	confirmDomain: z.string().trim().min(1, "Confirmation domain is required"),
 	skipExportAcknowledged: z.boolean().optional().default(false),
+});
+
+const FinalizeBody = z.object({
+	confirmDomain: z.string().trim().min(1, "Type the domain name to confirm"),
 });
 
 const TransferLockBody = z.object({
@@ -328,10 +338,13 @@ export function registerExportAndOffboardingRoutes(
 
 		await saveDomainMetadata(c.env.BUCKET, domainMeta);
 		// Admin rights end here; the owner keeps the offboarding routes.
-		await authDb(c.env.AUTH_DB)
+		const db = authDb(c.env.AUTH_DB);
+		await db
 			.update(schema.domain)
 			.set({ status: "decommissioned" })
 			.where(eq(schema.domain.domain, domainMeta.domain));
+		// The grace period starts: the data is deleted when it ends (AVE-43).
+		const offboarding = await recordDecommission(db, domainMeta.domain);
 
 		return c.json({
 			success: true,
@@ -339,11 +352,121 @@ export function registerExportAndOffboardingRoutes(
 			status: "offboarding",
 			eppCode,
 			routingDisconnected,
+			finalizeAfter: offboarding.finalizeAfter.toISOString(),
+			offboarding: offboardingPayload(offboarding, "decommissioned"),
 			...(warnings.length > 0 ? { warnings } : {}),
 			message: routingDisconnected
 				? "Email routing has been disconnected. You may now point your nameservers elsewhere or transfer your domain registration."
 				: "Inboxies now rejects mail for this domain, but the Email Routing catch-all could not be disabled; check the warnings.",
 		});
+	});
+
+	/**
+	 * The caller's decommissioned domains still waiting to be finalized. They
+	 * drop out of `GET /api/v1/admin/domains` at decommission; this is where
+	 * the owner sees the deletion date and can finalize now.
+	 */
+	app.get("/api/v1/admin/offboarding-domains", async (c) => {
+		const principal = c.get("principal");
+		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		const db = authDb(c.env.AUTH_DB);
+		const owned = await db
+			.select({ domain: schema.domain.domain })
+			.from(schema.domain)
+			.where(and(eq(schema.domain.ownerUserId, principal.userId), eq(schema.domain.status, "decommissioned")))
+			.all();
+		const domains: { domain: string; offboarding: ReturnType<typeof offboardingPayload> }[] = [];
+		for (const { domain } of owned) {
+			const row = (await getOffboarding(db, domain)) ?? (await recordDecommission(db, domain));
+			if (row.finalizedAt) continue;
+			domains.push({ domain, offboarding: offboardingPayload(row, "decommissioned") });
+		}
+		return c.json({ domains });
+	});
+
+	/**
+	 * Where offboarding stands: when the grace period ends (the scheduled
+	 * finalize) and whether the owner can finalize now. `offboarding` is null
+	 * for a domain that was never decommissioned.
+	 */
+	app.get("/api/v1/admin/domains/:domain/offboarding", async (c) => {
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
+		if (authz instanceof Response) return authz;
+		const domain = authz.domainMeta.domain.toLowerCase();
+		const db = authDb(c.env.AUTH_DB);
+		const row = await db
+			.select({ status: schema.domain.status })
+			.from(schema.domain)
+			.where(eq(schema.domain.domain, domain))
+			.get();
+		let offboarding = await getOffboarding(db, domain);
+		// Decommissioned before offboarding was tracked: the grace period starts now.
+		if (!offboarding && row?.status === "decommissioned") offboarding = await recordDecommission(db, domain);
+		return c.json({ domain, offboarding: offboardingPayload(offboarding, row?.status) });
+	});
+
+	/**
+	 * Finalize now: delete the decommissioned domain's mailboxes, aliases,
+	 * access, subscription and registry entry without waiting for the grace
+	 * period. The caller types the domain name to confirm; this is checked here,
+	 * not only in the clients. If the run stops part-way, the hourly cron
+	 * finishes it (202).
+	 */
+	app.post("/api/v1/admin/domains/:domain/finalize", async (c) => {
+		const authz = await authorizeDomainAdmin(c, c.req.param("domain"), { offboarding: true });
+		if (authz instanceof Response) return authz;
+		const domain = authz.domainMeta.domain.toLowerCase();
+
+		const parsed = FinalizeBody.safeParse(await c.req.json().catch(() => ({})));
+		if (!parsed.success) {
+			return c.json({ error: parsed.error.issues[0]?.message || "Invalid input", code: "confirmation_required" }, 400);
+		}
+		if (parsed.data.confirmDomain.toLowerCase() !== domain) {
+			return c.json(
+				{
+					error: `Confirmation domain mismatch. Type '${domain}' exactly to delete its data.`,
+					code: "confirmation_mismatch",
+				},
+				400,
+			);
+		}
+
+		const db = authDb(c.env.AUTH_DB);
+		const row = await db
+			.select({ status: schema.domain.status })
+			.from(schema.domain)
+			.where(eq(schema.domain.domain, domain))
+			.get();
+		if (row?.status !== "decommissioned") {
+			return c.json({ error: "Decommission the domain before finalizing it", code: "not_decommissioned" }, 409);
+		}
+
+		const principal = c.get("principal")!;
+		const now = new Date();
+		await recordDecommission(db, domain, now);
+		await db
+			.update(schema.domainOffboarding)
+			.set({ finalizeRequestedAt: now, finalizeRequestedBy: principal.userId })
+			.where(eq(schema.domainOffboarding.domain, domain));
+
+		const result = await finalizeDomainOffboarding(c.env, domain, { now, actorUserId: principal.userId });
+		switch (result.status) {
+			case "finalized":
+				return c.json({
+					success: true,
+					domain,
+					finalized: true,
+					mailboxesPurged: result.mailboxesPurged,
+					subscriptionCanceled: result.subscriptionCanceled,
+				});
+			case "busy":
+				return c.json({ success: true, domain, finalized: false, status: "in_progress" }, 202);
+			case "failed":
+				// Progress is kept; the hourly run resumes it.
+				return c.json({ success: false, domain, finalized: false, status: "will_retry", error: result.error }, 202);
+			case "blocked":
+				return c.json({ error: `Cannot finalize ${domain} (${result.reason})`, code: result.reason }, 409);
+		}
 	});
 
 	/**
