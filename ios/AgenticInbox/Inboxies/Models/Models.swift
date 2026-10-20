@@ -203,6 +203,20 @@ struct AccountSession: Codable, Identifiable, Hashable {
     var current: Bool
 }
 
+/// An app connected over MCP OAuth (Account → Devices & sessions → Connected apps).
+struct McpGrant: Codable, Identifiable, Hashable {
+    var id: String
+    var clientId: String
+    /// Self-registered and unverified; nil when the app gave none.
+    var clientName: String?
+    var clientUri: String?
+    var scopes: [String]
+    /// Mailboxes the app is limited to; nil means every mailbox.
+    var mailboxIds: [String]?
+    var createdAt: String
+    var expiresAt: String?
+}
+
 struct RevokeSessionsResponse: Codable {
     var ok: Bool
     var revoked: Int?
