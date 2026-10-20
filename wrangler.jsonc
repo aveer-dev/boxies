@@ -70,6 +70,18 @@
             "migrations_dir": "migrations/auth",
         },
     ],
+    // MCP OAuth 2.1 (AVE-67, workers/mcp/oauth.ts): clients, grants, codes and
+    // tokens for @cloudflare/workers-oauth-provider (secrets stored as hashes,
+    // grant props encrypted).
+    // OPS PREREQUISITE before deploying: `wrangler kv namespace create OAUTH_KV`
+    // and replace the placeholder id below with the namespace id it prints.
+    // Local dev (`pnpm dev`) uses a local simulated namespace and works as is.
+    "kv_namespaces": [
+        {
+            "binding": "OAUTH_KV",
+            "id": "00000000000000000000000000000000",
+        },
+    ],
     // Per-IP throttle on 6-digit password reset code guesses.
     // namespace_id must be unique among rate limiters in the Cloudflare account.
     "ratelimits": [
