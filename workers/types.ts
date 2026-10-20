@@ -56,6 +56,13 @@ export interface Env extends Cloudflare.Env {
 	OPS_ALERT_EMAIL?: string;
 	/** Better Auth signing secret (32+ random bytes). `AUTH_DB` comes from wrangler.jsonc. */
 	BETTER_AUTH_SECRET?: string;
+	/**
+	 * Extra WebAuthn origins accepted for passkeys besides APP_BASE_URL's
+	 * origin, comma-separated: the Android app's
+	 * `android:apk-key-hash:<base64url SHA-256 of the signing cert>`. Not a
+	 * secret; unset means web and iOS passkeys only. See `passkeyRelyingParty`.
+	 */
+	PASSKEY_EXTRA_ORIGINS?: string;
 	/** Extra Google client ids (iOS, Android) accepted alongside GOOGLE_CLIENT_ID, comma-separated. */
 	GOOGLE_EXTRA_CLIENT_IDS?: string;
 	GOOGLE_CLIENT_SECRET?: string;
