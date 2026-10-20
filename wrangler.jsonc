@@ -42,7 +42,7 @@
         "APNS_TOPIC": "co.inboxies.app",
         // Sign in with Apple on the web login page: the Services ID (not secret).
         // Unset hides the button. See workers/types.ts.
-        // "APPLE_WEB_SERVICES_ID": "app.inboxies.web",
+        "APPLE_WEB_SERVICES_ID": "app.inboxies.web",
     },
     "send_email": [
         {
