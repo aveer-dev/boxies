@@ -15,7 +15,7 @@ struct SplashScreenView: View {
 }
 
 /// The official Inboxies app logo / icon component.
-/// Renders the Notion-inspired squircle card tile with the faceted origami paper plane.
+/// Renders the Notion-inspired squircle card tile (22% continuous corners) with the paper plane.
 struct AppLogoView: View {
     var size: CGFloat = 64
     var showTile: Bool = true
@@ -23,10 +23,10 @@ struct AppLogoView: View {
     var body: some View {
         if showTile {
             ZStack {
-                RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
+                RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
                     .fill(AppTheme.surface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: size * 0.25, style: .continuous)
+                        RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
                             .stroke(AppTheme.line.opacity(0.8), lineWidth: 1)
                     )
                     .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 3)
@@ -44,153 +44,170 @@ struct AppLogoView: View {
     }
 }
 
-/// Private Email product logo:
-/// The app's origami paper plane logo with a reduced black and white shield at the top left corner.
+/// Private Email product logo: the simplified paper plane with a half-filled shield badge
+/// at the bottom right. One colour (`AppTheme.ink`), so it follows the in-app theme.
 struct PrivateEmailLogoView: View {
     var size: CGFloat = 24
     var showTile: Bool = false
+    /// Forces the light palette (e.g. on a fixed white surface).
     var alwaysLight: Bool = false
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var isLight: Bool {
-        alwaysLight || colorScheme == .light
-    }
 
     var body: some View {
-        let planeColor = isLight ? Color.black : Color.white
-        if showTile {
-            let cornerRadius = size * 0.25
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(isLight ? Color.white : Color.black)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(isLight ? Color.black.opacity(0.12) : Color.white.opacity(0.2), lineWidth: 1)
-                    )
-                    .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 3)
+        Group {
+            if showTile {
+                ZStack {
+                    RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                        .fill(AppTheme.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                                .stroke(AppTheme.line.opacity(0.8), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 3)
 
-                InboxiesLogo()
-                    .foregroundStyle(planeColor)
-                    .frame(width: size * 0.60, height: size * 0.60)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-                privateEmailShield(shieldSize: size * 0.26)
-                    .padding(size * 0.08)
-            }
-            .frame(width: size, height: size)
-        } else {
-            ZStack(alignment: .topLeading) {
-                InboxiesLogo()
-                    .foregroundStyle(planeColor)
+                    PrivateEmailMarkShape()
+                        .fill(AppTheme.ink)
+                        .frame(width: size * 0.8, height: size * 0.8)
+                }
+                .frame(width: size, height: size)
+            } else {
+                PrivateEmailMarkShape()
+                    .fill(AppTheme.ink)
                     .frame(width: size, height: size)
-
-                privateEmailShield(shieldSize: size * 0.36)
-                    .offset(x: -size * 0.02, y: -size * 0.02)
             }
-            .frame(width: size, height: size)
         }
+        .environment(\.colorScheme, alwaysLight ? .light : colorScheme)
+        .accessibilityLabel("Private Email Logo")
     }
 
-    @ViewBuilder
-    private func privateEmailShield(shieldSize: CGFloat) -> some View {
-        let strokeColor = isLight ? Color.black : Color.white
-        let leftFill = Color.white
-        let rightFill = Color.black
-
-        ZStack {
-            PrivateEmailShieldLeftHalf()
-                .fill(leftFill)
-            PrivateEmailShieldLeftHalf()
-                .stroke(strokeColor, lineWidth: max(1, shieldSize * 0.09))
-
-            PrivateEmailShieldRightHalf()
-                .fill(rightFill)
-            PrivateEmailShieldRightHalf()
-                .stroke(strokeColor, lineWidth: max(1, shieldSize * 0.09))
-        }
-        .frame(width: shieldSize * 0.85, height: shieldSize)
-    }
+    @Environment(\.colorScheme) private var colorScheme
 }
 
-struct PrivateEmailShieldLeftHalf: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let topCenter = CGPoint(x: rect.midX, y: rect.minY)
-        let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
-        let topLeft = CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.16)
-        let midLeft = CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.55)
-
-        path.move(to: topCenter)
-        path.addCurve(to: topLeft, control1: CGPoint(x: rect.minX + rect.width * 0.35, y: rect.minY + rect.height * 0.05), control2: CGPoint(x: rect.minX + rect.width * 0.1, y: rect.minY + rect.height * 0.12))
-        path.addLine(to: midLeft)
-        path.addCurve(to: bottomCenter, control1: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.8), control2: CGPoint(x: rect.minX + rect.width * 0.25, y: rect.maxY))
-        path.addLine(to: topCenter)
-        path.closeSubpath()
-        return path
-    }
-}
-
-struct PrivateEmailShieldRightHalf: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let topCenter = CGPoint(x: rect.midX, y: rect.minY)
-        let bottomCenter = CGPoint(x: rect.midX, y: rect.maxY)
-        let topRight = CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.16)
-        let midRight = CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.55)
-
-        path.move(to: topCenter)
-        path.addLine(to: bottomCenter)
-        path.addCurve(to: midRight, control1: CGPoint(x: rect.maxX - rect.width * 0.25, y: rect.maxY), control2: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.8))
-        path.addLine(to: topRight)
-        path.addCurve(to: topCenter, control1: CGPoint(x: rect.maxX - rect.width * 0.1, y: rect.minY + rect.height * 0.12), control2: CGPoint(x: rect.maxX - rect.width * 0.35, y: rect.minY + rect.height * 0.05))
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// Vector origami paper plane logo for Inboxies.
+/// Vector paper plane logo for Inboxies. Fills with the current foreground style.
 struct InboxiesLogo: View {
     var body: some View {
         InboxiesLogoShape()
-            .fill(style: FillStyle(eoFill: true))
+            .fill()
     }
 }
 
-/// Shape representing the faceted paper plane icon (512x512 normalized coordinate space).
-struct InboxiesLogoShape: Shape {
-    static let baseCGPath: CGPath = {
-        let d = "M 384.7,107.2 L 398.9,109.1 L 409.2,117.2 L 413.5,128.5 L 412.1,141.7 L 308.2,391.1 L 303.0,400.0 L 294.0,404.8 L 288.8,404.8 L 281.7,401.9 L 228.4,357.5 L 195.3,399.6 L 187.8,403.3 L 177.4,400.5 L 172.2,393.0 L 154.2,289.1 L 102.3,238.1 L 98.5,230.5 L 99.0,221.5 L 104.6,213.5 L 112.7,209.7 L 371.9,111.0 L 384.2,107.7 Z M 404.5,115.7 L 400.7,112.4 L 393.2,109.6 L 380.9,110.1 L 106.5,214.9 L 101.3,221.5 L 101.3,225.8 L 124.9,228.1 L 396.5,122.3 L 404.1,116.2 Z M 407.8,119.5 L 406.4,117.6 L 405.0,118.1 L 397.0,128.0 L 290.7,375.5 L 294.5,401.9 L 299.7,400.0 L 304.9,393.4 L 409.2,143.1 L 411.1,137.0 L 411.1,127.1 L 408.3,120.0 Z M 387.1,129.0 L 388.0,128.5 L 386.6,128.0 L 130.6,227.2 L 244.4,228.1 L 386.6,129.4 Z M 393.2,132.3 L 386.1,137.9 L 272.8,257.9 L 290.2,372.2 L 392.7,132.7 Z M 385.6,133.7 L 385.2,132.7 L 378.6,137.0 L 247.3,228.1 L 245.8,230.0 L 248.2,242.8 L 244.9,231.4 L 240.7,229.6 L 126.8,231.0 L 176.4,274.9 L 177.8,273.9 L 176.9,275.4 L 180.7,300.9 L 184.0,357.5 L 184.0,354.7 L 182.6,354.2 L 176.0,278.2 L 158.5,288.6 L 159.9,285.8 L 174.1,276.8 L 174.1,275.4 L 124.0,230.5 L 100.9,227.7 L 103.2,235.7 L 150.9,281.5 L 156.1,288.1 L 174.1,391.5 L 179.3,399.1 L 183.0,401.0 L 184.0,400.0 L 199.6,332.0 L 214.2,316.9 L 223.2,319.8 L 259.5,354.2 L 278.0,368.9 L 287.9,374.1 L 270.4,259.8 L 230.7,301.8 L 218.0,312.7 L 269.9,257.4 L 269.5,246.6 L 201.0,313.1 L 196.3,321.6 L 193.4,335.8 L 192.5,334.4 L 191.5,349.5 L 191.1,348.1 L 190.1,350.0 L 190.6,343.4 L 195.3,320.2 L 202.4,308.9 L 222.2,289.1 L 341.7,174.3 L 340.3,175.7 L 341.7,176.7 L 271.3,244.7 L 272.3,255.1 L 380.0,141.7 L 379.0,140.8 L 374.3,144.1 L 367.7,152.1 L 363.9,155.4 L 363.0,154.0 L 361.6,155.4 L 385.2,134.2 Z M 236.9,233.3 L 239.2,233.8 L 223.2,245.1 L 200.0,260.7 L 197.2,260.7 L 196.7,263.1 L 195.8,261.7 L 195.8,263.6 L 193.0,263.6 L 236.4,233.8 Z M 271.3,367.5 L 271.3,375.5 L 263.3,383.5 L 282.7,400.0 L 288.4,402.4 L 292.6,401.9 L 288.8,376.9 L 270.9,367.0 Z"
-        let path = CGMutablePath()
-        let tokens = d.split(separator: " ")
-        var i = 0
-        while i < tokens.count {
-            let token = tokens[i]
-            if token == "M" {
-                i += 1
-                let parts = tokens[i].split(separator: ",").compactMap { Double($0) }
-                if parts.count >= 2 { path.move(to: CGPoint(x: parts[0], y: parts[1])) }
-            } else if token == "L" {
-                i += 1
-                let parts = tokens[i].split(separator: ",").compactMap { Double($0) }
-                if parts.count >= 2 { path.addLine(to: CGPoint(x: parts[0], y: parts[1])) }
-            } else if token == "Z" {
-                path.closeSubpath()
-            }
-            i += 1
-        }
-        return path
-    }()
+/// Logo geometry. Mirrors `scripts/generate-logo-assets.mjs` (MASTER / SMALL / PRIVATE);
+/// keep them in sync. Lines are stroked with round caps and joins, then outlined so the
+/// mark can be filled like any other shape.
+enum InboxiesMark {
+    struct Geometry {
+        let grid: CGFloat
+        let stroke: CGFloat
+        /// Polylines; the first is the closed silhouette.
+        let lines: [[CGPoint]]
+        /// Filled shadow polygon under the keel.
+        let shadow: [CGPoint]
+    }
 
-    func path(in rect: CGRect) -> Path {
-        let cgPath = Self.baseCGPath
-        let scale = min(rect.width / 512.0, rect.height / 512.0)
-        let dx = (rect.width - 512.0 * scale) / 2.0
-        let dy = (rect.height - 512.0 * scale) / 2.0
-        var transform = CGAffineTransform(translationX: dx, y: dy).scaledBy(x: scale, y: scale)
-        if let transformed = cgPath.copy(using: &transform) {
-            return Path(transformed)
+    private static func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
+
+    /// 512-unit master with every fold. Used above 32 pt.
+    static let master = Geometry(
+        grid: 512,
+        stroke: 10,
+        lines: [
+            [p(406, 114), p(106, 224), p(158, 284), p(182, 396), p(232, 354), p(294, 398), p(406, 114)],
+            [p(106, 224), p(248, 228), p(406, 114)],
+            [p(406, 114), p(206, 316), p(182, 396)],
+            [p(406, 114), p(274, 254), p(294, 398)],
+        ],
+        shadow: [p(206, 316), p(270, 364), p(266, 377), p(232, 354), p(182, 396)]
+    )
+
+    /// 32-unit simplified mark with heavier strokes. Used at 32 pt and below.
+    static let small = Geometry(
+        grid: 32,
+        stroke: 2,
+        lines: [
+            [p(26, 6), p(5, 14), p(9, 18), p(11, 26), p(15, 23), p(19, 26), p(26, 6)],
+            [p(26, 6), p(13, 20), p(11, 26)],
+        ],
+        shadow: [p(13, 20), p(17, 24), p(15, 23), p(11, 26)]
+    )
+
+    /// The small plane at 85%, tucked top-left for the Private Email badge (32 grid).
+    static let privatePlane = Geometry(
+        grid: 32,
+        stroke: 2,
+        lines: [
+            [p(21.2, 3.7), p(3.35, 10.5), p(6.75, 13.9), p(8.45, 20.7), p(11.85, 18.15), p(15.25, 20.7), p(21.2, 3.7)],
+            [p(21.2, 3.7), p(10.15, 15.6), p(8.45, 20.7)],
+        ],
+        shadow: [p(10.15, 15.6), p(13.55, 19), p(11.85, 18.15), p(8.45, 20.7)]
+    )
+
+    static func transform(grid: CGFloat, in rect: CGRect) -> CGAffineTransform {
+        let scale = min(rect.width, rect.height) / grid
+        let dx = rect.minX + (rect.width - grid * scale) / 2
+        let dy = rect.minY + (rect.height - grid * scale) / 2
+        return CGAffineTransform(translationX: dx, y: dy).scaledBy(x: scale, y: scale)
+    }
+
+    static func polygon(_ points: [CGPoint]) -> CGMutablePath {
+        let path = CGMutablePath()
+        path.addLines(between: points)
+        path.closeSubpath()
+        return path
+    }
+
+    /// Outlined (fillable) path for a geometry, in grid units.
+    static func outlined(_ g: Geometry) -> CGPath {
+        let lines = CGMutablePath()
+        for line in g.lines { lines.addLines(between: line) }
+        let stroke = { (path: CGPath, width: CGFloat) in
+            path.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 10)
         }
-        return Path(cgPath)
+        let shadow = polygon(g.shadow)
+        return stroke(lines, g.stroke)
+            .union(stroke(shadow, g.stroke))
+            .union(shadow)
+    }
+
+    static let masterPath = outlined(master)
+    static let smallPath = outlined(small)
+
+    /// Private Email mark: small plane + shield whose right half is filled.
+    static let privatePath: CGPath = {
+        let shield = CGMutablePath()
+        shield.move(to: p(24.1, 16.1))
+        shield.addLine(to: p(28.6, 17.85))
+        shield.addLine(to: p(28.6, 22.1))
+        shield.addCurve(to: p(24.1, 28.35), control1: p(28.6, 25.1), control2: p(26.6, 27.2))
+        shield.addCurve(to: p(19.6, 22.1), control1: p(21.6, 27.2), control2: p(19.6, 25.1))
+        shield.addLine(to: p(19.6, 17.85))
+        shield.closeSubpath()
+
+        let half = CGMutablePath()
+        half.move(to: p(24.1, 16.1))
+        half.addLine(to: p(28.6, 17.85))
+        half.addLine(to: p(28.6, 22.1))
+        half.addCurve(to: p(24.1, 28.35), control1: p(28.6, 25.1), control2: p(26.6, 27.2))
+        half.closeSubpath()
+
+        let shieldOutline = shield.copy(strokingWithWidth: 1.5, lineCap: .round, lineJoin: .round, miterLimit: 10)
+        return outlined(privatePlane).union(shieldOutline).union(half)
+    }()
+}
+
+/// The paper plane, picking the simplified mark at 32 pt and below.
+struct InboxiesLogoShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let useSmall = min(rect.width, rect.height) <= 32
+        let base = useSmall ? InboxiesMark.smallPath : InboxiesMark.masterPath
+        var t = InboxiesMark.transform(grid: useSmall ? 32 : 512, in: rect)
+        return Path(base.copy(using: &t) ?? base)
+    }
+}
+
+/// The Private Email mark (32 grid), scaled into the rect.
+struct PrivateEmailMarkShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var t = InboxiesMark.transform(grid: 32, in: rect)
+        return Path(InboxiesMark.privatePath.copy(using: &t) ?? InboxiesMark.privatePath)
     }
 }
 
