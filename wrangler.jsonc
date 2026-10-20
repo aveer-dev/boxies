@@ -111,12 +111,37 @@
     "triggers": {
         "crons": ["17 * * * *"],
     },
+    // Queues must exist before deploy (`pnpm ensure-queues`, or by hand):
+    //   wrangler queues create outbound-send
+    //   wrangler queues create outbound-send-dlq
     "queues": {
+        // Send / reply / forward enqueue { mailboxId, emailId }; the Email
+        // binding payload is staged in R2 (workers/lib/outbound-send-queue.ts).
+        "producers": [
+            {
+                "binding": "OUTBOUND_SEND",
+                "queue": "outbound-send",
+            },
+        ],
         "consumers": [
             {
                 "queue": "email-sending-events",
                 "max_batch_size": 10,
                 "max_retries": 5,
+            },
+            // max_retries must match OUTBOUND_SEND_MAX_RETRIES. Exhausted
+            // messages go to the DLQ, whose consumer marks the Sent row failed.
+            {
+                "queue": "outbound-send",
+                "max_batch_size": 10,
+                "max_batch_timeout": 1,
+                "max_retries": 5,
+                "dead_letter_queue": "outbound-send-dlq",
+            },
+            {
+                "queue": "outbound-send-dlq",
+                "max_batch_size": 10,
+                "max_retries": 3,
             },
         ],
     },

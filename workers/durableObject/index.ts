@@ -87,6 +87,11 @@ import {
 	type UpdateThreadNoteInput,
 } from "../lib/thread-notes";
 import type { ThreadNote } from "../../shared/thread-notes";
+import {
+	decideOutboundSendClaim,
+	outboundSendClaimKey,
+	type OutboundSendClaim,
+} from "../lib/outbound-send-claim";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -1499,6 +1504,10 @@ export class MailboxDO extends DurableObject<Env> {
 			.set(data)
 			.where(eq(schema.emails.id, id))
 			.run();
+		if (state.status !== "queued") {
+			// The outbound-send consumer's claim only matters while queued.
+			await this.ctx.storage.delete(outboundSendClaimKey(id));
+		}
 
 		this.broadcastEvent("email_updated", {
 			id,
@@ -1507,6 +1516,39 @@ export class MailboxDO extends DurableObject<Env> {
 			delivery_error: state.error ?? null,
 		});
 		return this.getEmail(id);
+	}
+
+	/**
+	 * Outbound-send queue consumer: take the right to call the Email binding
+	 * for a queued Sent row. Status check and claim happen in one DO turn, so
+	 * a duplicate queue delivery sees `in_flight` instead of sending twice.
+	 */
+	async claimOutboundSend(id: string, leaseMs: number): Promise<OutboundSendClaim> {
+		const row = [
+			...this.ctx.storage.sql.exec(
+				`SELECT delivery_status FROM emails WHERE id = ?1`,
+				id,
+			),
+		][0] as { delivery_status: string | null } | undefined;
+		const key = outboundSendClaimKey(id);
+		const existing = await this.ctx.storage.get<number>(key);
+		const now = Date.now();
+		const claim = decideOutboundSendClaim(
+			row ? row.delivery_status : undefined,
+			existing,
+			now,
+		);
+		if (claim === "claimed") {
+			await this.ctx.storage.put(key, now + Math.max(0, leaseMs));
+		} else if (claim !== "in_flight" && existing !== undefined) {
+			await this.ctx.storage.delete(key);
+		}
+		return claim;
+	}
+
+	/** Drop a send claim so a queue retry can try again. */
+	async releaseOutboundSendClaim(id: string): Promise<void> {
+		await this.ctx.storage.delete(outboundSendClaimKey(id));
 	}
 
 	async deleteDraftsForThread(threadId: string) {

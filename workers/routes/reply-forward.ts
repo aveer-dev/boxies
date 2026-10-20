@@ -7,7 +7,7 @@ import {
 	assertOutboundMessageSize,
 	OutboundSizeError,
 } from "../lib/outbound-limits";
-import { deliverOutboundInBackground } from "../lib/outbound-delivery";
+import { enqueueOutboundSendFromEnv } from "../lib/outbound-send-queue";
 import { storeAttachments } from "../lib/attachments";
 import type { EmailFull } from "../lib/schemas";
 import {
@@ -149,25 +149,23 @@ export async function handleReplyEmail(c: AppContext) {
 	await stub.deleteDraftsForThread(thread_id);
 	await (stub as any).clearReplyLaterForThread(thread_id);
 
-	c.executionCtx.waitUntil(
-		deliverOutboundInBackground(c.env, mailboxId, messageId, {
-			to,
-			cc,
-			bcc,
-			from,
-			subject,
-			html,
-			text,
-			attachments: attachments?.map((att) => ({
-				content: att.content,
-				filename: att.filename,
-				type: att.type,
-				disposition: att.disposition,
-				contentId: att.contentId,
-			})),
-			headers: buildThreadingHeaders(originalMsgId, references),
-		}),
-	);
+	await enqueueOutboundSendFromEnv(c.env, mailboxId, messageId, {
+		to,
+		cc,
+		bcc,
+		from,
+		subject,
+		html,
+		text,
+		attachments: attachments?.map((att) => ({
+			content: att.content,
+			filename: att.filename,
+			type: att.type,
+			disposition: att.disposition,
+			contentId: att.contentId,
+		})),
+		headers: buildThreadingHeaders(originalMsgId, references),
+	});
 
 	return c.json({ id: messageId, status: "sent" }, 202);
 }
@@ -270,24 +268,22 @@ export async function handleForwardEmail(c: AppContext) {
 
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
 
-	c.executionCtx.waitUntil(
-		deliverOutboundInBackground(c.env, mailboxId, messageId, {
-			to,
-			cc,
-			bcc,
-			from,
-			subject,
-			html,
-			text,
-			attachments: attachments?.map((att) => ({
-				content: att.content,
-				filename: att.filename,
-				type: att.type,
-				disposition: att.disposition,
-				contentId: att.contentId,
-			})),
-		}),
-	);
+	await enqueueOutboundSendFromEnv(c.env, mailboxId, messageId, {
+		to,
+		cc,
+		bcc,
+		from,
+		subject,
+		html,
+		text,
+		attachments: attachments?.map((att) => ({
+			content: att.content,
+			filename: att.filename,
+			type: att.type,
+			disposition: att.disposition,
+			contentId: att.contentId,
+		})),
+	});
 
 	return c.json({ id: messageId, status: "sent" }, 202);
 }
