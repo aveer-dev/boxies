@@ -38,6 +38,11 @@ import {
 } from "../lib/email-content";
 import { attachmentKey } from "../lib/attachments";
 import {
+	listDeliveryRecipients,
+	upsertDeliveryRecipient,
+	type RecipientDeliveryUpdate,
+} from "../lib/delivery-recipients";
+import {
 	blobDeleteRetryDelayMs,
 	countPendingBlobDeletes,
 	drainPendingBlobDeletes,
@@ -1238,6 +1243,8 @@ export class MailboxDO extends DurableObject<Env> {
 			starred: !!email.starred,
 			reply_later: !!email.reply_later,
 			attachments: emailAttachments,
+			delivery_recipients:
+				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
 			auth: parseStoredEmailAuth(email.auth),
 		};
 	}
@@ -1303,6 +1310,8 @@ export class MailboxDO extends DurableObject<Env> {
 			attachmentsByEmail.set(att.email_id, list);
 		}
 
+		const recipientsByEmail = listDeliveryRecipients(this.ctx.storage.sql, emailIds);
+
 		return await Promise.all(
 			emailRows.map(async (email) => this.#withDecodedAuth({
 				...email,
@@ -1312,6 +1321,7 @@ export class MailboxDO extends DurableObject<Env> {
 				starred: !!email.starred,
 				reply_later: !!email.reply_later,
 				attachments: attachmentsByEmail.get(email.id) || [],
+				delivery_recipients: recipientsByEmail.get(email.id) || [],
 			})),
 		);
 	}
@@ -1601,6 +1611,30 @@ export class MailboxDO extends DurableObject<Env> {
 			delivery_error: state.error ?? null,
 		});
 		return this.getEmail(id);
+	}
+
+	/**
+	 * Email Sending event for one recipient of a Sent row (AVE-41). Stale or
+	 * repeated events are ignored (see lib/delivery-recipients). Returns
+	 * whether anything changed; only then do clients hear about it.
+	 */
+	async recordRecipientDelivery(
+		emailId: string,
+		update: RecipientDeliveryUpdate,
+	): Promise<boolean> {
+		const exists = [
+			...this.ctx.storage.sql.exec(`SELECT 1 FROM emails WHERE id = ?1`, emailId),
+		].length > 0;
+		if (!exists) return false;
+		const changed = upsertDeliveryRecipient(this.ctx.storage.sql, emailId, update);
+		if (changed) {
+			this.broadcastEvent("email_updated", {
+				id: emailId,
+				delivery_recipients:
+					listDeliveryRecipients(this.ctx.storage.sql, [emailId]).get(emailId) ?? [],
+			});
+		}
+		return changed;
 	}
 
 	/**

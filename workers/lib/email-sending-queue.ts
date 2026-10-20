@@ -22,6 +22,7 @@ import type { Env } from "../types";
 export async function handleEmailSendingQueueMessage(
 	env: Env,
 	body: unknown,
+	attempts = 1,
 ): Promise<boolean> {
 	return applyEmailSendingEvent(body, async (sender) => {
 		// Mail sent from a private alias is stored in the alias's target mailbox.
@@ -36,7 +37,7 @@ export async function handleEmailSendingQueueMessage(
 			}
 		}
 		return getMailboxStub(env, mailboxId) as unknown as DeliveryStub;
-	});
+	}, attempts);
 }
 
 export async function handleEmailSendingQueueBatch(
@@ -45,7 +46,11 @@ export async function handleEmailSendingQueueBatch(
 ): Promise<void> {
 	for (const message of batch.messages) {
 		try {
-			const ok = await handleEmailSendingQueueMessage(env, message.body);
+			const ok = await handleEmailSendingQueueMessage(
+				env,
+				message.body,
+				message.attempts,
+			);
 			if (ok) message.ack();
 			else message.retry();
 		} catch (error) {

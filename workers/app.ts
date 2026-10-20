@@ -8,6 +8,10 @@ import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 import {
+	EMAIL_SENDING_EVENTS_DLQ,
+	handleEmailSendingDeadLetterBatch,
+} from "./lib/email-sending-dlq";
+import {
 	handleOutboundSendBatch,
 	handleOutboundSendDeadLetterBatch,
 	OUTBOUND_SEND_DLQ,
@@ -138,6 +142,10 @@ export default {
 				return;
 			case OUTBOUND_SEND_DLQ:
 				await handleOutboundSendDeadLetterBatch(batch, env);
+				return;
+			case EMAIL_SENDING_EVENTS_DLQ:
+				// Logged and kept in R2 for replay from /ops (AVE-41).
+				await handleEmailSendingDeadLetterBatch(batch, env);
 				return;
 			default:
 				// email-sending-events (Email Sending lifecycle events).

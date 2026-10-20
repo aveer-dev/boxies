@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
 
 export const folders = sqliteTable("folders", {
 	id: text("id").primaryKey(),
@@ -61,6 +61,25 @@ export const attachments = sqliteTable("attachments", {
 	content_id: text("content_id"),
 	disposition: text("disposition"),
 });
+
+/**
+ * Per-recipient delivery state from Email Sending events (migration
+ * 35_delivery_recipients). Written and read with raw SQL in
+ * workers/lib/delivery-recipients.ts; mirrored here for types.
+ */
+export const deliveryRecipients = sqliteTable(
+	"delivery_recipients",
+	{
+		email_id: text("email_id")
+			.notNull()
+			.references(() => emails.id, { onDelete: "cascade" }),
+		address: text("address").notNull(),
+		status: text("status").notNull(),
+		error: text("error"),
+		updated_at: text("updated_at").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.email_id, table.address] })],
+);
 
 /** Registry of AI chat conversations for a mailbox (messages live in EmailAgent DOs). */
 export const agentConversations = sqliteTable("agent_conversations", {
