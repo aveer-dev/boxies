@@ -525,5 +525,17 @@ export const mailboxMigrations: Migration[] = [
                 ON thread_notes(email_id);
         `),
 	},
+	{
+		// R2 keys whose rows are already deleted; the DO alarm sweeps them
+		// until R2 confirms the delete. Additive only: a new table.
+		name: "32_pending_blob_deletes",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS pending_blob_deletes (
+                key TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            );
+        `),
+	},
 ];
 
