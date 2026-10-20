@@ -552,5 +552,46 @@ export const mailboxMigrations: Migration[] = [
                 ON emails(idempotency_key) WHERE idempotency_key IS NOT NULL;
         `),
 	},
+	{
+		// Spam / Trash retention (AVE-42). `retention_since` is when a message
+		// entered Spam or Trash (NULL anywhere else); the DO alarm deletes
+		// rows whose clock is older than FOLDER_RETENTION_DAYS. Triggers keep
+		// it right for every write path (moves, bulk refiles, inbound spam,
+		// delete-to-trash): any change of folder_id restarts or clears it.
+		// Mail already in Spam / Trash starts its clock now, so nothing is
+		// purged until the retention period after this migration runs.
+		// Additive only: a nullable column, a partial index, two triggers.
+		// PR #115 also uses the "34_" prefix (34_email_summaries); the runner
+		// tracks by full name, so both apply in either order.
+		name: "34_spam_trash_retention",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN retention_since TEXT;
+            UPDATE emails
+               SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE folder_id IN ('spam', 'trash');
+            CREATE INDEX IF NOT EXISTS idx_emails_retention_since
+                ON emails(retention_since) WHERE retention_since IS NOT NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_insert
+            AFTER INSERT ON emails
+            WHEN NEW.folder_id IN ('spam', 'trash') AND NEW.retention_since IS NULL
+            BEGIN
+                UPDATE emails
+                   SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = NEW.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_move
+            AFTER UPDATE OF folder_id ON emails
+            WHEN NEW.folder_id IS NOT OLD.folder_id
+            BEGIN
+                UPDATE emails
+                   SET retention_since = CASE
+                       WHEN NEW.folder_id IN ('spam', 'trash')
+                       THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                       ELSE NULL
+                   END
+                 WHERE id = NEW.id;
+            END;
+        `),
+	},
 ];
 

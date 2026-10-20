@@ -1025,6 +1025,16 @@ object FolderIds {
 
     fun isPurposeFolder(id: String): Boolean = id in purposeFolderIds
 
+    /** Spam and Trash keep mail this many days after it was moved in (AVE-42). */
+    const val RETENTION_DAYS = 30
+
+    /** Quiet notice at the top of Spam / Trash; matches `folderRetentionNotice` in shared/folders.ts. */
+    fun retentionNotice(id: String?): String? = when (id) {
+        SPAM -> "Messages in Spam are deleted after $RETENTION_DAYS days."
+        TRASH -> "Messages in Trash are deleted after $RETENTION_DAYS days."
+        else -> null
+    }
+
     fun purposeDisplayName(id: String): String = when (id) {
         INBOX -> "Inbox"
         PROMOTIONS -> "Promotions"

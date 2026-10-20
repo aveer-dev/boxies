@@ -26,7 +26,12 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { Folders, getFolderDisplayName, SYSTEM_FOLDER_IDS } from "shared/folders";
+import {
+	Folders,
+	folderRetentionNotice,
+	getFolderDisplayName,
+	SYSTEM_FOLDER_IDS,
+} from "shared/folders";
 import { formatParticipants } from "shared/sender";
 import ColumnMenu from "~/components/columns/ColumnMenu";
 import { IconButton } from "~/components/IconButton";
@@ -219,6 +224,8 @@ export default function EmailListRoute() {
 	const filterBy = (operator: string) =>
 		navigate(searchPath(mailboxId, `in:${folder} ${operator}`));
 
+	const retentionNotice = folderRetentionNotice(folder);
+
 	const emptyState = FOLDER_EMPTY_STATES[folder] ?? {
 		icon: <EnvelopeSimpleIcon size={40} weight="thin" className="text-kumo-subtle" />,
 		title: isTag ? "Nothing tagged yet" : "No emails",
@@ -287,6 +294,11 @@ export default function EmailListRoute() {
 					/>
 				) : (
 					<>
+						{retentionNotice && (
+							<p className="pl-10 pr-4 pt-3 pb-1 text-xs text-kumo-subtle">
+								{retentionNotice}
+							</p>
+						)}
 						{listItems.map((item, index) => {
 							if (item.type === "section") {
 								return (
