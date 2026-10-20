@@ -12,6 +12,8 @@ import { isPurposeFolderId, type PurposeFolderId } from "../../shared/folders";
 import {
 	annotateListSections,
 	folderUsesNewSeen,
+	inboxSectionFilterSql,
+	type InboxSectionQuery,
 } from "../../shared/list-sections";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
 import type { InboxDigest } from "../../shared/inbox-digest";
@@ -171,6 +173,8 @@ interface GetEmailsOptions {
 	include_junk?: boolean;
 	/** Threaded lists: whose notes to summarize on each row (notes are private). */
 	userId?: string;
+	/** Threaded Inbox only: New/Seen window (`section`, `new_limit`). */
+	inboxSections?: InboxSectionQuery;
 }
 
 export type DeliveryStatus =
@@ -977,7 +981,11 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 		}
 
-		// Non-draft folders: full threading logic
+		// Non-draft folders: full threading logic. Inbox can window New/Seen
+		// (only one section, or the newest N New + all Seen) over `listed`.
+		const sectionFilter = useNewSeen
+			? inboxSectionFilterSql(options.inboxSections ?? {})
+			: "1 = 1";
 		const result = this.ctx.storage.sql.exec(
 			`WITH
 			folder_emails AS (
@@ -1039,7 +1047,8 @@ export class MailboxDO extends DurableObject<Env> {
 				FROM folder_emails fe
 				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
 					ON fe.raw_thread_id = tc.raw_thread_id
-			)
+			),
+			listed AS (
 			SELECT
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
 				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.thread_id, lif.folder_id,
@@ -1052,23 +1061,27 @@ export class MailboxDO extends DurableObject<Env> {
 					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
 					AND cs.thread_read_count > 0
 					THEN 1 ELSE 0 END as needs_reply,
-				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft
+				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft,
+				CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END as is_new,
+				ROW_NUMBER() OVER (
+					PARTITION BY CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END
+					ORDER BY lif.date DESC
+				) as section_rank
 			FROM latest_in_folder lif
 			JOIN conversation_stats cs ON lif.conversation_id = cs.conversation_id
 			LEFT JOIN latest_message_per_conversation lmc
 				ON lmc.conversation_id = lif.conversation_id AND lmc.rn = 1
 			WHERE lif.rn = 1
-			ORDER BY ${
-				useNewSeen
-					? `CASE WHEN cs.thread_unread_count > 0 THEN 0 ELSE 1 END ASC, lif.date DESC`
-					: `lif.date DESC`
-			}
+			)
+			SELECT * FROM listed
+			WHERE ${sectionFilter}
+			ORDER BY ${useNewSeen ? `is_new DESC, date DESC` : `date DESC`}
 			LIMIT ?2 OFFSET ?3`,
 			folder, limit, offset
 		);
 
 		const rows = [...result];
-		const mapped = rows.map((row: any) => this.#withDecodedAuth({
+		const mapped = rows.map(({ is_new: _isNew, section_rank: _rank, ...row }: any) => this.#withDecodedAuth({
 			...row,
 			read: !!row.read,
 			starred: !!row.starred,

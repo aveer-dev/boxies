@@ -75,6 +75,28 @@ class AppModel {
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails.asStateFlow()
 
+    /** Inbox page 1's server New total, for the list it came from (AVE-23). */
+    data class InboxNewTotal(val scope: EmailListScope, val count: Int)
+    private val _inboxNewTotal = MutableStateFlow<InboxNewTotal?>(null)
+    val inboxNewTotal: StateFlow<InboxNewTotal?> = _inboxNewTotal.asStateFlow()
+
+    /** Server New total for the inbox on screen; null before page 1 lands. */
+    fun inboxNewCountFor(total: InboxNewTotal?): Int? =
+        total?.takeIf { it.scope == currentListScope && it.scope.folderId == FolderIds.INBOX }?.count
+
+    private fun rememberInboxNewCount(scope: EmailListScope, count: Int?) {
+        if (scope.folderId != FolderIds.INBOX) return
+        _inboxNewTotal.value = count?.let { InboxNewTotal(scope, it) }
+    }
+
+    /** Optimistic read / unread on the inbox keeps "Show N more new" honest until the next sync. */
+    private fun adjustInboxNewCount(wasUnread: Boolean, isUnread: Boolean) {
+        if (wasUnread == isUnread) return
+        val current = _inboxNewTotal.value ?: return
+        if (current.scope != currentListScope) return
+        _inboxNewTotal.value = current.copy(count = maxOf(0, current.count + if (isUnread) 1 else -1))
+    }
+
     private val _replyLaterCount = MutableStateFlow(0)
     val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
 
@@ -273,6 +295,7 @@ class AppModel {
         if (wasUnread == isUnread) return
         val folderId = email.folderId ?: _selectedTab.value.syncFolderId ?: return
         adjustFolderUnread(folderId, if (isUnread) 1 else -1)
+        if (folderId == FolderIds.INBOX) adjustInboxNewCount(wasUnread, isUnread)
     }
 
     /** Token the last [bootstrap] ran for — lets a recreated Activity skip a redundant reload. */
@@ -892,6 +915,7 @@ class AppModel {
             }
             ifStillShowing(listScope) {
                 rememberFirstPage(listScope, synced.pageIds)
+                rememberInboxNewCount(listScope, synced.newCount)
                 _emails.value = displayOrder(folderId, synced.emails)
                 _emailListError.value = null
                 if (restart || _paging.value.scope != listScope) {
@@ -1033,6 +1057,8 @@ class AppModel {
             }.getOrNull()?.let { synced ->
                 ifStillShowing(listScope) {
                     rememberFirstPage(listScope, synced.pageIds)
+                    rememberInboxNewCount(listScope, synced.newCount)
+                rememberInboxNewCount(listScope, synced.newCount)
                     _emails.value = displayOrder(folderId, synced.emails)
                     // A full prune left exactly page 1; say so, which also voids any page
                     // request started against the old list.

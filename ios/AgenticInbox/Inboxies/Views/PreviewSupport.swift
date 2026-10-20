@@ -200,6 +200,9 @@ enum PreviewSupport {
             app.replyLaterCount = emails.filter(\.replyLater).count
         }
         applyLoadStateFixtures(to: app, args: args)
+        if args.contains("-previewManyNew") {
+            applyManyNewFixtures(to: app)
+        }
         if let service = previewDomainService(args: args) {
             applyPreviewService(service, to: app)
         }
@@ -229,6 +232,36 @@ enum PreviewSupport {
             )
             paging.isLoadingMore = true
             app.listPaging = paging
+        }
+    }
+
+    /// `-previewMailbox -previewManyNew`: a dozen New conversations, so Inbox caps New at
+    /// `inboxNewPreviewLimit` with "Show N more new" above Seen (AVE-23).
+    @MainActor
+    private static func applyManyNewFixtures(to app: AppModel) {
+        let senders = ["Priya Shah", "Marco Rossi", "Lena Fischer", "Tom Becker", "Ava Chen",
+                       "Noah Kim", "Sara Lind", "Omar Haddad", "Ivy Park", "Ben Ortiz"]
+        let extra = senders.enumerated().map { index, name in
+            Email(
+                id: "preview-new-\(index)",
+                folderId: "inbox",
+                subject: "Follow-up \(index + 1)",
+                sender: "\(name.split(separator: " ")[0].lowercased())@example.com",
+                senderName: name,
+                recipient: "you@inboxies.email",
+                date: String(format: "2026-09-%02dT09:00:00.000Z", 2 + index),
+                read: false,
+                starred: false,
+                body: "<p>Checking in.</p>",
+                snippet: "Checking in on the thread from last week.",
+                folderName: "Inbox"
+            )
+        }
+        DatabaseService.shared.upsertEmails(mailboxId: "mb-preview", emails: extra)
+        app.emails = EmailListPaging.inboxOrder(app.emails + extra, sectionFloor: nil)
+        if let key = app.currentListKey {
+            let unread = app.emails.filter(\.isUnread)
+            app.inboxNewWindow = InboxNewWindow(key: key, count: unread.count, ids: unread.map(\.id))
         }
     }
 

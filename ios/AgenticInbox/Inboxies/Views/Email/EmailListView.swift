@@ -28,6 +28,10 @@ struct EmailListView: View {
     /// Infinite scroll for this list; nil hides the load-more footer.
     var paging: EmailListPaging? = nil
     var onLoadMore: (() async -> Void)? = nil
+    /// Inbox: server New total (the list shows at most `inboxNewPreviewLimit` New rows).
+    var inboxNewCount: Int? = nil
+    /// Inbox: opens the "All new" screen from the row under the capped New section.
+    var onShowAllNew: (() -> Void)? = nil
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
@@ -196,13 +200,18 @@ struct EmailListView: View {
     /// Prefer sectioned New / Seen when viewing Inbox (even with filters — empty sections hide).
     @ViewBuilder
     private var newSeenSections: some View {
-        // Only the first page's window is split; later pages stay at the end of Seen.
-        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: paging?.sectionFloor)
-        let newEmails = sections.new
+        // The server sends at most a few New rows on page 1 and Seen after that, so the whole
+        // window splits. New is capped so Seen always stays in view (AVE-23).
+        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: nil)
+        let preview = EmailListPaging.inboxNewPreview(
+            sections.new,
+            serverNewCount: isFiltered ? nil : inboxNewCount
+        )
+        let newEmails = preview.shown
         let seenEmails = sections.seen
 
         Section {
-            sectionHeader(title: "New", count: newEmails.count)
+            sectionHeader(title: "New", count: newEmails.count + preview.hiddenCount)
                 .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 4, trailing: 20))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -217,6 +226,9 @@ struct EmailListView: View {
             } else {
                 ForEach(newEmails) { email in
                     emailRow(for: email)
+                }
+                if preview.hiddenCount > 0, let onShowAllNew, !isSelectMode {
+                    showAllNewRow(hiddenCount: preview.hiddenCount, action: onShowAllNew)
                 }
             }
         }
@@ -233,6 +245,29 @@ struct EmailListView: View {
                 }
             }
         }
+    }
+
+    /// Quiet accent link under the capped New rows; opens every New conversation.
+    private func showAllNewRow(hiddenCount: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("Show \(hiddenCount) more new")
+                    .font(.inter(size: AppTheme.List.subject, weight: .medium))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(AppTheme.accent)
+            .padding(.leading, AppTheme.List.separatorLeadingInset)
+            .padding(.trailing, AppTheme.List.rowHorizontalPadding)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MailRowButtonStyle())
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .accessibilityLabel("Show all new emails, \(hiddenCount) more")
     }
 
     private func sectionHeader(title: String, count: Int) -> some View {
