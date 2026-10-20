@@ -171,6 +171,12 @@ class ApiClient private constructor() {
         val shared: ApiClient by lazy { ApiClient() }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
+        /** Header for send / reply / forward: one key per compose, reused on retries. */
+        const val IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+
+        fun idempotencyHeaders(key: String?): Map<String, String> =
+            if (key.isNullOrEmpty()) emptyMap() else mapOf(IDEMPOTENCY_KEY_HEADER to key)
+
         /**
          * The Worker answers a bad or expired bearer with 401/403 "Invalid or
          * expired mobile session token". Per-mailbox ACL denials are also 403
@@ -215,8 +221,17 @@ class ApiClient private constructor() {
         body: JsonObject? = null,
         authed: Boolean = true,
         bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): T = withContext(Dispatchers.IO) {
-        val (data, code, contentType) = perform(path, method, query, body, authed, bearerToken = bearerToken)
+        val (data, code, contentType) = perform(
+            path,
+            method,
+            query,
+            body,
+            authed,
+            bearerToken = bearerToken,
+            headers = headers,
+        )
         if (code == 204 && T::class == EmptyResponse::class) {
             @Suppress("UNCHECKED_CAST")
             return@withContext EmptyResponse() as T
@@ -250,10 +265,12 @@ class ApiClient private constructor() {
         authed: Boolean,
         asBytes: Boolean = false,
         bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): Triple<String, Int, String> {
         val builder = Request.Builder().url(buildUrl(path, query))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
+        headers.forEach { (name, value) -> builder.header(name, value) }
         val sentToken = if (authed) bearerToken ?: authTokenProvider() else null
         sentToken?.let { builder.header("Authorization", "Bearer $it") }
         val requestBody = body?.let { json.encodeToString(JsonObject.serializer(), it).toRequestBody(JSON_MEDIA) }
@@ -1028,10 +1045,20 @@ class ApiClient private constructor() {
     suspend fun search(mailboxId: String, query: String): List<Email> =
         searchEmails(mailboxId, query).emails
 
-    suspend fun sendEmail(mailboxId: String, payload: JsonObject): SendEmailResponse = request(
+    /**
+     * [idempotencyKey]: one per compose, reused on every retry of that send. The server
+     * answers a repeated key with the original `202 { id, status }` (plus
+     * `Idempotent-Replayed: true`), which decodes like any other success.
+     */
+    suspend fun sendEmail(
+        mailboxId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun sendEmail(
@@ -1053,10 +1080,16 @@ class ApiClient private constructor() {
         },
     )
 
-    suspend fun replyToEmail(mailboxId: String, emailId: String, payload: JsonObject): SendEmailResponse = request(
+    suspend fun replyToEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/reply",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun replyEmail(
@@ -1074,10 +1107,16 @@ class ApiClient private constructor() {
         },
     )
 
-    suspend fun forwardEmail(mailboxId: String, emailId: String, payload: JsonObject): SendEmailResponse = request(
+    suspend fun forwardEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/forward",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun forwardEmail(

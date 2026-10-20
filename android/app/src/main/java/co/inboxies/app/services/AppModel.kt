@@ -1708,7 +1708,7 @@ class AppModel {
                 when (form.mode) {
                     ComposeMode.Reply, ComposeMode.ReplyAll, ComposeMode.Forward ->
                         sendReplyOrForward(form, mailboxId, payload)
-                    else -> ApiClient.shared.sendEmail(mailboxId, payload)
+                    else -> ApiClient.shared.sendEmail(mailboxId, payload, form.sendIdempotencyKey)
                 }
             }.onSuccess {
                 form.deleteSavedDraft()
@@ -1738,19 +1738,21 @@ class AppModel {
      */
     private suspend fun sendReplyOrForward(form: ComposeFormModel, mailboxId: String, payload: JsonObject) {
         val targetId = form.original?.id ?: form.originalEmailId?.takeIf { it.isNotBlank() }
+        // One key for the whole compose, so the 404 fallback below and any retry share it.
+        val key = form.sendIdempotencyKey
         if (targetId == null) {
-            ApiClient.shared.sendEmail(mailboxId, payload)
+            ApiClient.shared.sendEmail(mailboxId, payload, key)
             return
         }
         try {
             if (form.mode == ComposeMode.Forward) {
-                ApiClient.shared.forwardEmail(mailboxId, targetId, payload)
+                ApiClient.shared.forwardEmail(mailboxId, targetId, payload, key)
             } else {
-                ApiClient.shared.replyToEmail(mailboxId, targetId, payload)
+                ApiClient.shared.replyToEmail(mailboxId, targetId, payload, key)
             }
         } catch (e: ApiException.Http) {
             if (e.code != 404 || form.original != null) throw e
-            ApiClient.shared.sendEmail(mailboxId, payload)
+            ApiClient.shared.sendEmail(mailboxId, payload, key)
         }
     }
 

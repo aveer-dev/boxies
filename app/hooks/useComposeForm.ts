@@ -37,6 +37,7 @@ import {
 import { useDeleteEmail, useForwardEmail, useReplyToEmail, useSaveDraft, useSendEmail } from "~/queries/emails";
 import { useMailbox } from "~/queries/mailboxes";
 import { type ComposeOptions, useUIStore } from "~/hooks/useUIStore";
+import { newIdempotencyKey } from "~/lib/send-idempotency";
 import {
 	prepareComposeAttachment,
 	type PreparedAttachment,
@@ -253,6 +254,8 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	const [addedFiles, setAddedFiles] = useState(false);
 	const saveGenerationRef = useRef(0);
 	const isSendingRef = useRef(false);
+	/** One Idempotency-Key per compose session, reused by every send retry. */
+	const sendKeyRef = useRef<string | null>(null);
 	const isDraftEdit = !!composeOptions.draftEmail;
 
 	const formTitle = useMemo(() => {
@@ -270,6 +273,8 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	useEffect(() => {
 		if (lastInitializedOptionsRef.current === composeOptions) return;
 		lastInitializedOptionsRef.current = composeOptions;
+		// A new compose (or reply / forward) in this column is a new send.
+		sendKeyRef.current = newIdempotencyKey();
 
 		const selfAddress = (currentMailbox?.email || mailboxId)?.toLowerCase();
 		const initialFields = buildInitialComposeFields(
@@ -511,11 +516,14 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		};
 		const draftId = savedDraftId || composeOptions.draftEmail?.id;
 		const originalId = original?.id || composeOptions.draftEmail?.in_reply_to;
+		// Kept across failed attempts: a retry after a timeout that did go
+		// through gets the original 202 back instead of sending again.
+		const idempotencyKey = (sendKeyRef.current ??= newIdempotencyKey());
 		setIsSending(true); toastManager.add({ title: "Sending email..." });
 		try {
-			if ((mode === "reply" || mode === "reply-all") && originalId) await replyMutation.mutateAsync({ mailboxId, emailId: originalId, email: emailData });
-			else if (mode === "forward" && originalId) await forwardMutation.mutateAsync({ mailboxId, emailId: originalId, email: emailData });
-			else await sendEmailMutation.mutateAsync({ mailboxId, email: emailData });
+			if ((mode === "reply" || mode === "reply-all") && originalId) await replyMutation.mutateAsync({ mailboxId, emailId: originalId, email: emailData, idempotencyKey });
+			else if (mode === "forward" && originalId) await forwardMutation.mutateAsync({ mailboxId, emailId: originalId, email: emailData, idempotencyKey });
+			else await sendEmailMutation.mutateAsync({ mailboxId, email: emailData, idempotencyKey });
 			if (draftId) deleteEmailMutation.mutate({ mailboxId, id: draftId });
 			toastManager.add({ title: "Email sent!" });
 			onClose();
