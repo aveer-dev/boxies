@@ -18,3 +18,13 @@ export function safeRedirectPath(next: string | null | undefined, origin: string
 		return "/";
 	}
 }
+
+/**
+ * Same-origin paths served by the Worker rather than the SPA, so landing there
+ * after sign-in needs a full page load: the MCP OAuth consent page
+ * (workers/mcp/oauth.ts).
+ */
+export function isWorkerPagePath(path: string): boolean {
+	const pathname = path.split(/[?#]/, 1)[0];
+	return pathname === "/authorize";
+}

@@ -22,7 +22,7 @@ import {
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
 import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "../auth/authz";
-import type { RequestPrincipal } from "../auth/principal";
+import type { McpRequestProps } from "./oauth";
 import { serviceEndedErrorForMailbox } from "../lib/domain-service";
 
 /** Wrap a plain result object into MCP content format. */
@@ -63,7 +63,7 @@ function mcpResult(result: Record<string, unknown>) {
  * `/mcp` endpoint and can list mailboxes, read/search emails,
  * draft replies, send messages, and manage folders.
  */
-export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrincipal }> {
+export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 	server = new McpServer({
 		name: "agentic-inbox",
 		version: "1.0.0",

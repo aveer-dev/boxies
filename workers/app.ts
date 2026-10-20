@@ -3,11 +3,12 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { routeAgentRequest } from "agents";
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
 import { EmailMCP } from "./mcp";
+import { createMcpOAuth, registerMcpOAuthRoutes, registerMcpRoutes } from "./mcp/oauth";
 import { strictMailboxId } from "./lib/mailbox-routing";
 import { authDb, authorizeMailboxAccess } from "./auth/authz";
 import type { RequestPrincipal } from "./auth/principal";
@@ -46,10 +47,6 @@ import { serviceEndedErrorForMailbox } from "./lib/domain-service";
 export { isPublicAuthPath };
 
 type AppVariables = { principal?: RequestPrincipal; operator?: Operator };
-type ExecutionCtxWithProps = ExecutionContext & {
-	props?: { principal?: RequestPrincipal };
-};
-
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -63,19 +60,23 @@ app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.
 app.use("/ops/*", operatorMiddleware);
 registerOpsRoutes(app);
 
+// MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)
+const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
+
+// OAuth 2.1 for /mcp (AVE-67, workers/mcp/oauth.ts): metadata, /token,
+// /register and /authorize answer before the session middleware (anything
+// they don't own falls through unchanged), and a /mcp 401 names the resource
+// metadata so OAuth clients can discover the authorization server.
+const mcpOAuth = createMcpOAuth(mcpHandler);
+registerMcpOAuthRoutes(app, mcpOAuth);
+
 // Everyone else: a Better Auth session.
 app.use("*", sessionMiddleware);
 
-// MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)
-// Must be before API routes and React Router catch-all
-const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
-function mcpFetch(c: Context<{ Bindings: Env; Variables: AppVariables }>) {
-	const ctx = c.executionCtx as ExecutionCtxWithProps;
-	ctx.props = { principal: c.get("principal") };
-	return mcpHandler.fetch(c.req.raw, c.env, ctx);
-}
-app.all("/mcp", async (c) => mcpFetch(c));
-app.all("/mcp/*", async (c) => mcpFetch(c));
+// /mcp: an OAuth access token goes to the resource server; anything else
+// already went through the session middleware (Bearer session token or
+// cookie), unchanged. Must be before API routes and React Router catch-all.
+registerMcpRoutes(app, mcpOAuth, mcpHandler);
 
 // Mount the API routes
 app.route("/", apiApp);

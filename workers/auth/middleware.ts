@@ -10,12 +10,16 @@
  *   a 401. Auth bootstrap and invite routes are public but still see the
  *   caller's session when there is one.
  * - Scoped sessions (extension / AutoFill) only reach `isPathAllowedForTokenScope`.
+ * - `/mcp` with an OAuth access token (`userId:grantId:secret`) skips this
+ *   middleware: the `/mcp` route validates it (workers/mcp/oauth.ts). It is
+ *   never looked up as a session, and every other path is unaffected.
  * - Operators: Cloudflare Access on /ops/* only. Access identities are never
  *   app users, and app sessions never reach /ops.
  */
 
 import { createMiddleware } from "hono/factory";
 import { isPathAllowedForTokenScope, isPublicAuthPath } from "../lib/auth-paths";
+import { isOAuthMcpRequest } from "../lib/mcp-oauth-token";
 import type { Env } from "../types";
 import { verifyOperator, type Operator } from "./operators";
 import { principalFromHeaders, type RequestPrincipal } from "./principal";
@@ -48,6 +52,7 @@ export const operatorMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 export const sessionMiddleware = createMiddleware<AuthEnv>(async (c, next) => {
 	const pathname = new URL(c.req.url).pathname;
 	if (pathname === "/ops" || pathname.startsWith("/ops/")) return next();
+	if (isOAuthMcpRequest(pathname, c.req.raw.headers)) return next();
 
 	const headers = c.req.raw.headers;
 	const presented = hasSessionCredentials(headers);
