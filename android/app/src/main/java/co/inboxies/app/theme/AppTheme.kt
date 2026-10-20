@@ -43,6 +43,51 @@ object InboxiesColors {
     val DarkDeepDarkRed = Color(0xFFE65959)
 }
 
+/**
+ * Notes to self: the one warm surface in the monochrome shell, so a sticky note
+ * reads as paper stuck on the page. Soft, low-chroma; same values as iOS
+ * `AppTheme.Note` and web `--note-*`.
+ */
+@Immutable
+data class NotePalette(
+    val paper: Color,
+    val paperEdge: Color,
+    val ink: Color,
+    val muted: Color,
+    val pin: Color,
+    val shadow: Color,
+) {
+    companion object {
+        val Light = NotePalette(
+            paper = Color(0xFFFFF7CF),
+            paperEdge = Color(0xFFEFE1A1),
+            ink = Color(0xFF3A3214),
+            muted = Color(0xFF7A6C3A),
+            pin = Color(0xFFC2541C),
+            shadow = Color(0x334F3C00),
+        )
+        val Dark = NotePalette(
+            paper = Color(0xFF2A2617),
+            paperEdge = Color(0xFF3D3720),
+            ink = Color(0xFFF1E9CC),
+            muted = Color(0xFFB3A678),
+            pin = Color(0xFFE58A52),
+            shadow = Color(0x8C000000),
+        )
+    }
+}
+
+/** Note geometry — mirrors iOS `AppTheme.Note`. */
+object NoteDims {
+    /** Resting tilt of a sticky note, in degrees (flat while lifted). */
+    const val tilt = -1.2f
+    /** Paper corners: tight, with one softer curled corner (bottom-right). */
+    val cornerRadius = 3.dp
+    val curlRadius = 14.dp
+    /** Inline notes: neutral card with a dashed hairline. */
+    val inlineCornerRadius = 12.dp
+}
+
 @Immutable
 data class InboxiesPalette(
     val background: Color,
@@ -55,6 +100,7 @@ data class InboxiesPalette(
     val accent: Color,
     val unread: Color,
     val deepDarkRed: Color,
+    val note: NotePalette = NotePalette.Light,
 )
 
 val LocalInboxiesPalette = staticCompositionLocalOf {
@@ -150,6 +196,7 @@ fun InboxiesTheme(
             accent = InboxiesColors.DarkAccent,
             unread = InboxiesColors.DarkUnread,
             deepDarkRed = InboxiesColors.DarkDeepDarkRed,
+            note = NotePalette.Dark,
         )
     } else {
         InboxiesPalette(

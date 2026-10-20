@@ -497,7 +497,17 @@ data class Email(
     @SerialName("alias_email") val aliasEmail: String? = null,
     /** Alias still active and unexpired; `null` when not a private-email thread. */
     @SerialName("alias_active") val aliasActive: Boolean? = null,
+    /** Notes to self (threaded list rows only; the signed-in user's own notes). */
+    @SerialName("has_sticky_note") val hasStickyNote: Boolean? = null,
+    /** Latest sticky note's markdown, trimmed to 200 characters by the server. */
+    @SerialName("sticky_note_text") val stickyNoteText: String? = null,
+    /** How many private notes sit on single messages of this conversation. */
+    @SerialName("inline_note_count") val inlineNoteCount: Int? = null,
 ) {
+    /** The conversation key notes are filed under: the thread id, or the email's own id. */
+    val noteThreadKey: String
+        get() = threadId?.takeIf { it.isNotEmpty() } ?: id
+
     val isDraft: Boolean
         get() {
             val name = folderName?.lowercase()
@@ -785,6 +795,52 @@ data class EmailFilterState(
         return list.filter { matches(it, userEmail, now) }
     }
 }
+
+/**
+ * A private note to self on a conversation (`/threads/:threadId/notes`). Only its
+ * author ever sees it.
+ * - `sticky`: pinned to the whole conversation; floats over the reader and can be dragged.
+ * - `inline`: attached to one message ([emailId]); shown in line under it.
+ */
+@Serializable
+data class ThreadNote(
+    val id: String,
+    /** Conversation key: the emails' `thread_id`, or the email id for mail without one. */
+    val threadId: String,
+    val emailId: String? = null,
+    /** `sticky` | `inline`. */
+    val noteType: String,
+    /** Markdown. */
+    val body: String,
+    /** dp from the top-left of the reader's message area (sticky notes only). */
+    val posX: Double? = null,
+    val posY: Double? = null,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+) {
+    val isSticky: Boolean get() = noteType == STICKY
+
+    /** Saved spot in dp, or null when never dragged (default top-right cascade). */
+    val savedPosition: Pair<Float, Float>?
+        get() {
+            val x = posX ?: return null
+            val y = posY ?: return null
+            if (!x.isFinite() || !y.isFinite()) return null
+            return x.toFloat() to y.toFloat()
+        }
+
+    companion object {
+        const val STICKY = "sticky"
+        const val INLINE = "inline"
+        /** Server limit on a note's markdown, in characters. */
+        const val BODY_MAX = 10_000
+    }
+}
+
+@Serializable
+data class ThreadNotesResponse(
+    val notes: List<ThreadNote> = emptyList(),
+)
 
 @Serializable
 data class EmailListResponse(
