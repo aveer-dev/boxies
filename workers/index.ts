@@ -13,7 +13,7 @@ import {
 	assertOutboundMessageSize,
 	OutboundSizeError,
 } from "./lib/outbound-limits";
-import { deliverOutboundInBackground } from "./lib/outbound-delivery";
+import { enqueueOutboundSendFromEnv } from "./lib/outbound-send-queue";
 import {
 	checkIdempotencyKey,
 	discardReplayedSend,
@@ -590,13 +590,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		await (stub as any).clearReplyLaterForThread(resolvedThreadId);
 	}
 
-	c.executionCtx.waitUntil(
-		deliverOutboundInBackground(c.env, mailboxId, messageId, {
-			to, cc, bcc, from, subject, html, text,
-			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
-			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
-		}),
-	);
+	await enqueueOutboundSendFromEnv(c.env, mailboxId, messageId, {
+		to, cc, bcc, from, subject, html, text,
+		attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
+		...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
+	});
 	return c.json({ id: messageId, status: "sent" }, 202);
 });
 

@@ -7,6 +7,12 @@ import { Hono } from "hono";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { handleEmailSendingQueueBatch } from "./lib/email-sending-queue";
+import {
+	handleOutboundSendBatch,
+	handleOutboundSendDeadLetterBatch,
+	OUTBOUND_SEND_DLQ,
+	OUTBOUND_SEND_QUEUE,
+} from "./lib/outbound-send-queue";
 import { EmailMCP } from "./mcp";
 import { createMcpOAuth, registerMcpOAuthRoutes, registerMcpRoutes } from "./mcp/oauth";
 import { strictMailboxId } from "./lib/mailbox-routing";
@@ -126,7 +132,17 @@ export default {
 		}
 	},
 	async queue(batch: MessageBatch<unknown>, env: Env) {
-		await handleEmailSendingQueueBatch(batch, env);
+		switch (batch.queue) {
+			case OUTBOUND_SEND_QUEUE:
+				await handleOutboundSendBatch(batch, env);
+				return;
+			case OUTBOUND_SEND_DLQ:
+				await handleOutboundSendDeadLetterBatch(batch, env);
+				return;
+			default:
+				// email-sending-events (Email Sending lifecycle events).
+				await handleEmailSendingQueueBatch(batch, env);
+		}
 	},
 	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
 		ctx.waitUntil(runScheduledMaintenance(env, new Date(controller.scheduledTime)));
