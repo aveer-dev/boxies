@@ -8,6 +8,12 @@ import {
 	OutboundSizeError,
 } from "../lib/outbound-limits";
 import { enqueueOutboundSendFromEnv } from "../lib/outbound-send-queue";
+import {
+	checkIdempotencyKey,
+	discardReplayedSend,
+	idempotentReplayResponse,
+	type CreateEmailResult,
+} from "../lib/outbound-idempotency";
 import { storeAttachments } from "../lib/attachments";
 import type { EmailFull } from "../lib/schemas";
 import {
@@ -40,6 +46,9 @@ type RateLimitStub = {
 export async function handleReplyEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
+	// A retried send with a stored Idempotency-Key returns the original row.
+	const idem = await checkIdempotencyKey(c, c.var.mailboxStub);
+	if ("response" in idem) return idem.response;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { cc, bcc, subject, html, text, attachments } = body;
 
@@ -102,10 +111,12 @@ export async function handleReplyEmail(c: AppContext) {
 		return c.json({ error: rateLimitError }, 429);
 	}
 
+	let created: CreateEmailResult | undefined;
+	let attachmentData: Awaited<ReturnType<typeof storeAttachments>> = [];
 	try {
-		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+		attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
-		await stub.createEmail(
+		created = await stub.createEmail(
 			Folders.SENT,
 			{
 				id: messageId,
@@ -124,6 +135,7 @@ export async function handleReplyEmail(c: AppContext) {
 				delivery_status: "queued",
 				delivery_error: null,
 				alias_id: sender.aliasId,
+				idempotency_key: idem.key,
 				raw_headers: JSON.stringify([
 					{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 					{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -142,6 +154,11 @@ export async function handleReplyEmail(c: AppContext) {
 		// Not accepted, so it shouldn't count against the send quota.
 		await (stub as unknown as RateLimitStub).releaseSendSlot().catch(() => {});
 		throw e;
+	}
+	if (created?.replayed) {
+		// A concurrent request with this key won: send nothing more.
+		await discardReplayedSend(c.env, stub, messageId, attachmentData);
+		return idempotentReplayResponse(c, created.id);
 	}
 
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
@@ -173,6 +190,9 @@ export async function handleReplyEmail(c: AppContext) {
 export async function handleForwardEmail(c: AppContext) {
 	const mailboxId = c.var.mailboxId;
 	const id = c.req.param("id") ?? "";
+	// A retried send with a stored Idempotency-Key returns the original row.
+	const idem = await checkIdempotencyKey(c, c.var.mailboxStub);
+	if ("response" in idem) return idem.response;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, subject, html, text, attachments } = body;
 
@@ -226,10 +246,12 @@ export async function handleForwardEmail(c: AppContext) {
 		return c.json({ error: rateLimitError }, 429);
 	}
 
+	let created: CreateEmailResult | undefined;
+	let attachmentData: Awaited<ReturnType<typeof storeAttachments>> = [];
 	try {
-		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+		attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
-		await stub.createEmail(
+		created = await stub.createEmail(
 			Folders.SENT,
 			{
 				id: messageId,
@@ -248,6 +270,7 @@ export async function handleForwardEmail(c: AppContext) {
 				delivery_status: "queued",
 				delivery_error: null,
 				alias_id: sender.aliasId,
+				idempotency_key: idem.key,
 				raw_headers: JSON.stringify([
 					{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 					{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -264,6 +287,11 @@ export async function handleForwardEmail(c: AppContext) {
 		// Not accepted, so it shouldn't count against the send quota.
 		await (stub as unknown as RateLimitStub).releaseSendSlot().catch(() => {});
 		throw e;
+	}
+	if (created?.replayed) {
+		// A concurrent request with this key won: send nothing more.
+		await discardReplayedSend(c.env, stub, messageId, attachmentData);
+		return idempotentReplayResponse(c, created.id);
 	}
 
 	await allowOutboundRecipients(stub as any, to, cc, bcc);

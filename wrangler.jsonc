@@ -1,192 +1,228 @@
 {
-    "$schema": "node_modules/wrangler/config-schema.json",
-    "name": "agentic-inbox",
-    "compatibility_date": "2025-11-28",
-    "main": "./workers/app.ts",
-    "observability": {
-        "enabled": true,
-    },
-    "compatibility_flags": ["nodejs_compat"],
-    "routes": [
-        {
-            "pattern": "inboxies.email",
-            "custom_domain": true,
-            "enabled": true,
-            "previews_enabled": false,
-        },
-        // The web app. inboxies.email keeps mail, the native apps' API and /ops;
-        // its web pages redirect here (WEB_REDIRECT_HOSTS).
-        {
-            "pattern": "inboxies.app",
-            "custom_domain": true,
-            "enabled": true,
-            "previews_enabled": false,
-        },
-    ],
-    "vars": {
-        // POLICY_AUD and TEAM_DOMAIN (Cloudflare Access) gate operator routes under /ops/*
-        // only; without them /ops is closed. App users sign in through Better Auth
-        // (BETTER_AUTH_SECRET secret + AUTH_DB).
-        // TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
-        // Mailbox domain(s) for create-address UI and Email Routing.
-        // Optional MAIL_DOMAIN overrides the primary suffix; DOMAINS is comma-separated.
-        // When both unset, API falls back to inboxies.email (hosted SaaS default only).
-        // "MAIL_DOMAIN": "mail.example.com",
-        "DOMAINS": "inboxies.email",
-        "APP_BASE_URL": "https://inboxies.app",
-        "WEB_REDIRECT_HOSTS": "inboxies.email,www.inboxies.app",
-        "EMAIL_ADDRESSES": [],
-        // "admin_only" keeps extra addresses on the shared domains to sign-up and /ops.
-        // "MAILBOX_CREATE_POLICY": "admin_only",
-        "APNS_SANDBOX": "true",
-        "APNS_TOPIC": "co.inboxies.app",
-    },
-    "send_email": [
-        {
-            "name": "EMAIL",
-            "remote": true,
-        },
-    ],
-    "r2_buckets": [
-        {
-            "binding": "BUCKET",
-            "bucket_name": "agentic-inbox",
-            "preview_bucket_name": "agentic-inbox",
-        },
-    ],
-    "ai": {
-        "binding": "AI",
-    },
-    // Identity and permissions (Better Auth + workers/auth/schema.ts).
-    // Apply schema changes with `pnpm auth:migrate:local` / `pnpm auth:migrate:remote`.
-    "d1_databases": [
-        {
-            "binding": "AUTH_DB",
-            "database_name": "inboxies-auth",
-            "database_id": "eba8651c-9e75-4615-be6d-90d39fd9438a",
-            "migrations_dir": "migrations/auth",
-        },
-    ],
-    // Per-IP throttle on 6-digit password reset code guesses.
-    // namespace_id must be unique among rate limiters in the Cloudflare account.
-    "ratelimits": [
-        {
-            "name": "PASSWORD_RESET_LIMITER",
-            "namespace_id": "1001",
-            "simple": {
-                "limit": 10,
-                "period": 60,
-            },
-        },
-        // Per-inviter cap on invite emails (they go out from our noreply address).
-        {
-            "name": "INVITE_LIMITER",
-            "namespace_id": "1002",
-            "simple": {
-                "limit": 10,
-                "period": 60,
-            },
-        },
-        // Per-IP cap on sign-in, sign-up and sending account codes.
-        {
-            "name": "AUTH_LIMITER",
-            "namespace_id": "1003",
-            "simple": {
-                "limit": 10,
-                "period": 60,
-            },
-        },
-        // Per-IP cap on domain availability checks and checkout sessions.
-        {
-            "name": "PUBLIC_LIMITER",
-            "namespace_id": "1004",
-            "simple": {
-                "limit": 30,
-                "period": 60,
-            },
-        },
-    ],
-    // Hourly upkeep: domain promotion, stale claims, expired exports and
-    // sessions (workers/lib/maintenance.ts).
-    "triggers": {
-        "crons": ["17 * * * *"],
-    },
-    // Queues must exist before deploy (`pnpm ensure-queues`, or by hand):
-    //   wrangler queues create outbound-send
-    //   wrangler queues create outbound-send-dlq
-    "queues": {
-        // Send / reply / forward enqueue { mailboxId, emailId }; the Email
-        // binding payload is staged in R2 (workers/lib/outbound-send-queue.ts).
-        "producers": [
-            {
-                "binding": "OUTBOUND_SEND",
-                "queue": "outbound-send",
-            },
-        ],
-        "consumers": [
-            {
-                "queue": "email-sending-events",
-                "max_batch_size": 10,
-                "max_retries": 5,
-            },
-            // max_retries must match OUTBOUND_SEND_MAX_RETRIES. Exhausted
-            // messages go to the DLQ, whose consumer marks the Sent row failed.
-            {
-                "queue": "outbound-send",
-                "max_batch_size": 10,
-                "max_batch_timeout": 1,
-                "max_retries": 5,
-                "dead_letter_queue": "outbound-send-dlq",
-            },
-            {
-                "queue": "outbound-send-dlq",
-                "max_batch_size": 10,
-                "max_retries": 3,
-            },
-        ],
-    },
-    // Serve only from the custom domain. Preview URLs would run old versions
-    // against production R2, Durable Objects and email sending.
-    "workers_dev": false,
-    "preview_urls": false,
-    "durable_objects": {
-        "bindings": [
-            {
-                "name": "MAILBOX",
-                "class_name": "MailboxDO",
-            },
-            {
-                "name": "EMAIL_AGENT",
-                "class_name": "EmailAgent",
-            },
-            {
-                "name": "EMAIL_MCP",
-                "class_name": "EmailMCP",
-            },
-            // Background .mbox export runner, one instance per export job
-            // (workers/durableObject/export-job.ts).
-            {
-                "name": "EXPORT_JOBS",
-                "class_name": "ExportJobDO",
-            },
-        ],
-    },
-    "migrations": [
-        {
-            "tag": "v1",
-            "new_sqlite_classes": ["MailboxDO"],
-        },
-        {
-            "tag": "v2",
-            "new_sqlite_classes": ["EmailAgent"],
-        },
-        {
-            "tag": "v3",
-            "new_sqlite_classes": ["EmailMCP"],
-        },
-        {
-            "tag": "v4",
-            "new_sqlite_classes": ["ExportJobDO"],
-        },
-    ],
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "agentic-inbox",
+	"compatibility_date": "2025-11-28",
+	"main": "./workers/app.ts",
+	"observability": {
+		"enabled": true,
+	},
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"routes": [
+		{
+			"pattern": "inboxies.email",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false,
+		},
+		// The web app. inboxies.email keeps mail, the native apps' API and /ops;
+		// its web pages redirect here (WEB_REDIRECT_HOSTS).
+		{
+			"pattern": "inboxies.app",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false,
+		},
+	],
+	"vars": {
+		// POLICY_AUD and TEAM_DOMAIN (Cloudflare Access) gate operator routes under /ops/*
+		// only; without them /ops is closed. App users sign in through Better Auth
+		// (BETTER_AUTH_SECRET secret + AUTH_DB).
+		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
+		// Mailbox domain(s) for create-address UI and Email Routing.
+		// Optional MAIL_DOMAIN overrides the primary suffix; DOMAINS is comma-separated.
+		// When both unset, API falls back to inboxies.email (hosted SaaS default only).
+		// "MAIL_DOMAIN": "mail.example.com",
+		"DOMAINS": "inboxies.email",
+		"APP_BASE_URL": "https://inboxies.app",
+		"WEB_REDIRECT_HOSTS": "inboxies.email,www.inboxies.app",
+		"EMAIL_ADDRESSES": [],
+		// "admin_only" keeps extra addresses on the shared domains to sign-up and /ops.
+		// "MAILBOX_CREATE_POLICY": "admin_only",
+		"APNS_SANDBOX": "true",
+		"APNS_TOPIC": "co.inboxies.app",
+		// Sign in with Apple on the web login page: the Services ID (not secret).
+		// Unset hides the button. See workers/types.ts.
+		"APPLE_WEB_SERVICES_ID": "app.inboxies.web",
+	},
+	"send_email": [
+		{
+			"name": "EMAIL",
+			"remote": true,
+		},
+	],
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "agentic-inbox",
+			"preview_bucket_name": "agentic-inbox",
+		},
+	],
+	"ai": {
+		"binding": "AI",
+	},
+	// Identity and permissions (Better Auth + workers/auth/schema.ts).
+	// Apply schema changes with `pnpm auth:migrate:local` / `pnpm auth:migrate:remote`.
+	"d1_databases": [
+		{
+			"binding": "AUTH_DB",
+			"database_name": "inboxies-auth",
+			"database_id": "eba8651c-9e75-4615-be6d-90d39fd9438a",
+			"migrations_dir": "migrations/auth",
+		},
+	],
+	// MCP OAuth 2.1 (AVE-67, workers/mcp/oauth.ts) stores clients, grants, codes
+	// and tokens in a KV namespace bound as OAUTH_KV. Without the binding, OAuth is
+	// off and /mcp accepts only the existing bearer tokens. To turn it on:
+	//   1. `wrangler kv namespace create OAUTH_KV`
+	//   2. add here: "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "<id it prints>" }],
+	// A placeholder id cannot be committed: every deploy fails with KV error 10041.
+	// Per-IP throttle on 6-digit password reset code guesses.
+	// namespace_id must be unique among rate limiters in the Cloudflare account.
+	"ratelimits": [
+		{
+			"name": "PASSWORD_RESET_LIMITER",
+			"namespace_id": "1001",
+			"simple": {
+				"limit": 10,
+				"period": 60,
+			},
+		},
+		// Per-inviter cap on invite emails (they go out from our noreply address).
+		{
+			"name": "INVITE_LIMITER",
+			"namespace_id": "1002",
+			"simple": {
+				"limit": 10,
+				"period": 60,
+			},
+		},
+		// Per-IP cap on sign-in, sign-up and sending account codes.
+		{
+			"name": "AUTH_LIMITER",
+			"namespace_id": "1003",
+			"simple": {
+				"limit": 10,
+				"period": 60,
+			},
+		},
+		// Per-IP cap on domain availability checks and checkout sessions.
+		{
+			"name": "PUBLIC_LIMITER",
+			"namespace_id": "1004",
+			"simple": {
+				"limit": 30,
+				"period": 60,
+			},
+		},
+	],
+	// Hourly upkeep: domain promotion, stale claims, expired exports and
+	// sessions (workers/lib/maintenance.ts).
+	"triggers": {
+		"crons": [
+			"17 * * * *"
+		],
+	},
+	// Queues must exist before deploy (`pnpm ensure-queues`, or by hand):
+	//   wrangler queues create outbound-send
+	//   wrangler queues create outbound-send-dlq
+	"queues": {
+		"consumers": [
+			{
+				"queue": "email-sending-events",
+				"max_batch_size": 10,
+				"max_retries": 5,
+			},
+			// max_retries must match OUTBOUND_SEND_MAX_RETRIES. Exhausted
+			// messages go to the DLQ, whose consumer marks the Sent row failed.
+			{
+				"queue": "outbound-send",
+				"max_batch_size": 10,
+				"max_batch_timeout": 1,
+				"max_retries": 5,
+				"dead_letter_queue": "outbound-send-dlq",
+			},
+			{
+				"queue": "outbound-send-dlq",
+				"max_batch_size": 10,
+				"max_retries": 3,
+			},
+		],
+		"producers": [
+			// Send / reply / forward enqueue { mailboxId, emailId }; the Email
+			// binding payload is staged in R2 (workers/lib/outbound-send-queue.ts).
+			{
+				"queue": "outbound-send",
+				"binding": "OUTBOUND_SEND",
+			},
+			{
+				"queue": "outbound-send",
+				"binding": "outbound_send",
+			},
+			{
+				"queue": "outbound-send-dlq",
+				"binding": "outbound_send_dlq",
+			},
+		],
+	},
+	// Serve only from the custom domain. Preview URLs would run old versions
+	// against production R2, Durable Objects and email sending.
+	"workers_dev": false,
+	"preview_urls": false,
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MAILBOX",
+				"class_name": "MailboxDO",
+			},
+			{
+				"name": "EMAIL_AGENT",
+				"class_name": "EmailAgent",
+			},
+			{
+				"name": "EMAIL_MCP",
+				"class_name": "EmailMCP",
+			},
+			// Background .mbox export runner, one instance per export job
+			// (workers/durableObject/export-job.ts).
+			{
+				"name": "EXPORT_JOBS",
+				"class_name": "ExportJobDO",
+			},
+		],
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"MailboxDO"
+			],
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"EmailAgent"
+			],
+		},
+		{
+			"tag": "v3",
+			"new_sqlite_classes": [
+				"EmailMCP"
+			],
+		},
+		{
+			"tag": "v4",
+			"new_sqlite_classes": [
+				"ExportJobDO"
+			],
+		},
+	],
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "ed76e680d73b4ff99939fee428514072",
+			"remote": true
+		}
+	],
 }

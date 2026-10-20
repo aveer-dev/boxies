@@ -32,20 +32,27 @@ import {
 import {
 	buildSimpleMime,
 	computeSnippet,
-	deleteEmailContent,
 	emailContentKeys,
 	loadEmailBody,
 	storeEmailContent,
 } from "../lib/email-content";
+import { attachmentKey } from "../lib/attachments";
 import {
-	collectMailboxPurgeR2Keys,
-	deleteEmailAttachments,
-	deleteR2Keys,
-} from "../lib/attachments";
-import { mailboxMetadataKey } from "../lib/mailbox-routing";
+	blobDeleteRetryDelayMs,
+	countPendingBlobDeletes,
+	drainPendingBlobDeletes,
+	enqueueBlobDeletes,
+	forgetPendingBlobDeletes,
+} from "../lib/pending-blob-deletes";
+import { runMailboxPurge } from "../lib/mailbox-purge";
+import { aliasMetadataKey, mailboxMetadataKey } from "../lib/mailbox-routing";
+import {
+	findEmailIdByIdempotencyKey,
+	insertOrReplay,
+	type CreateEmailResult,
+} from "../lib/outbound-idempotency";
 import type { ExportEmailRow } from "../lib/email-exporter";
 import {
-	agentConversationIdsToPurge,
 	clearAgentConversationTombstone,
 	tombstoneAgentConversation,
 } from "../lib/agent-conversation-tombstones";
@@ -113,7 +120,7 @@ const folderIdSql = (id: string) =>
 const DRAFT_FOLDER_ID_SQL = folderIdSql(Folders.DRAFT);
 const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
 
-/** KV flag set after a successful purge so in-flight writers cannot resurrect mail. */
+/** KV flag set when a purge starts (before any wipe) so writers cannot resurrect mail. */
 const MAILBOX_DELETED_KEY = "mailbox_deleted";
 
 const ALLOWED_SORT_COLUMNS = [
@@ -207,6 +214,8 @@ interface EmailData {
 	alias_id?: string | null;
 	/** "agent" for AI-written drafts; omitted for the user's own mail. */
 	source?: "agent" | null;
+	/** Client Idempotency-Key (Sent rows only); unique per mailbox. */
+	idempotency_key?: string | null;
 }
 
 interface AttachmentData {
@@ -292,9 +301,28 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 	}
 
-	/** Clear the post-purge write lock when recreating the same address. */
+	/**
+	 * Re-check the deleted flag after an R2 write, right before the row write:
+	 * a purge may have started (and wiped) while the write was in flight. The
+	 * blobs just written are queued for deletion, as the purge would have.
+	 */
+	async #assertStillWritableAfterBlobWrite(blobKeys: string[]): Promise<void> {
+		if (!(await this.#isMailboxDeleted())) return;
+		this.ctx.storage.transactionSync(() =>
+			enqueueBlobDeletes(this.ctx.storage.sql, blobKeys),
+		);
+		await this.#sweepPendingBlobDeletes(blobKeys);
+		throw new Error("Mailbox has been deleted");
+	}
+
+	/**
+	 * Clear the post-purge write lock when recreating the same address.
+	 * Blobs still queued by the old purge stay queued (their rows are gone)
+	 * and are swept here or by the alarm.
+	 */
 	async reviveMailbox(): Promise<{ status: string }> {
 		await this.ctx.storage.delete(MAILBOX_DELETED_KEY);
+		await this.#sweepPendingBlobDeletes();
 		return { status: "revived" };
 	}
 
@@ -309,11 +337,62 @@ export class MailboxDO extends DurableObject<Env> {
 		applyMigrations(this.ctx.storage.sql, mailboxMigrations, this.ctx.storage);
 		this.#backfillSenderNames();
 		this.#scheduleFtsBackfill();
+		this.#resumePendingBlobDeletes();
 	}
 
-	/** Incremental R2 → FTS indexing for mail created before FTS existed. */
+	/**
+	 * One alarm serves every scheduled job: incremental R2 → FTS indexing for
+	 * mail created before FTS existed, and the sweep of queued blob deletes.
+	 * Each job reschedules itself; the sweep only ever moves the alarm earlier.
+	 */
 	async alarm(): Promise<void> {
 		await this.#runFtsBackfillBatch();
+		await this.#sweepPendingBlobDeletes();
+	}
+
+	/** Fire the alarm within `delayMs`, keeping an earlier alarm if one is set. */
+	async #scheduleAlarmWithin(delayMs: number): Promise<void> {
+		const at = Date.now() + delayMs;
+		const current = await this.ctx.storage.getAlarm();
+		if (current == null || current > at) {
+			await this.ctx.storage.setAlarm(at);
+		}
+	}
+
+	/** A previous run died with blobs still queued: make sure the alarm sweeps them. */
+	#resumePendingBlobDeletes(): void {
+		try {
+			if (countPendingBlobDeletes(this.ctx.storage.sql) === 0) return;
+			void this.#scheduleAlarmWithin(1_000).catch((e) =>
+				console.error("Blob sweep schedule failed:", (e as Error).message),
+			);
+		} catch (e) {
+			console.error("Blob sweep resume failed:", (e as Error).message);
+		}
+	}
+
+	/**
+	 * Delete queued blobs (all of them, or just `keys`). Never throws: what
+	 * R2 fails to delete stays queued and the alarm retries it with backoff.
+	 */
+	async #sweepPendingBlobDeletes(keys?: string[]): Promise<void> {
+		try {
+			const sql = this.ctx.storage.sql;
+			const result = await drainPendingBlobDeletes(sql, this.env.BUCKET, { keys });
+			if (result.error) {
+				console.error("Blob delete failed, alarm will retry:", result.error.message);
+			}
+			if (result.remaining > 0 && (result.error || !keys)) {
+				await this.#scheduleAlarmWithin(blobDeleteRetryDelayMs(sql));
+			}
+		} catch (e) {
+			console.error("Blob sweep failed:", (e as Error).message);
+			try {
+				await this.#scheduleAlarmWithin(60_000);
+			} catch {
+				/* ignore reschedule failure */
+			}
+		}
 	}
 
 	/**
@@ -1392,6 +1471,7 @@ export class MailboxDO extends DurableObject<Env> {
 				data.body,
 			),
 		});
+		await this.#assertStillWritableAfterBlobWrite(emailContentKeys(id));
 
 		this.db
 			.update(schema.emails)
@@ -1477,6 +1557,11 @@ export class MailboxDO extends DurableObject<Env> {
 				.where(eq(schema.emails.provider_message_id, cleaned))
 				.get() ?? null
 		);
+	}
+
+	/** Sent row already stored with this Idempotency-Key, if any. */
+	async findEmailIdByIdempotencyKey(key: string): Promise<string | null> {
+		return findEmailIdByIdempotencyKey(this.ctx.storage.sql, key);
 	}
 
 	async setDeliveryState(
@@ -1640,10 +1725,20 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.attachments.email_id, id))
 			.all();
 
-		this.db
-			.delete(schema.emails)
-			.where(eq(schema.emails.id, id))
-			.run();
+		// Row first, then blob: the row and the queue entries for its blobs
+		// commit together, so a failed R2 delete leaves the keys queued for
+		// the alarm sweep instead of leaking them.
+		const blobKeys = [
+			...emailContentKeys(id),
+			...emailAttachments.map((att) => attachmentKey(id, att.id, att.filename)),
+		];
+		this.ctx.storage.transactionSync(() => {
+			this.db
+				.delete(schema.emails)
+				.where(eq(schema.emails.id, id))
+				.run();
+			enqueueBlobDeletes(this.ctx.storage.sql, blobKeys);
+		});
 
 		this.#deleteEmailFts(id);
 		deleteThreadNotesForDeletedEmail(
@@ -1652,8 +1747,7 @@ export class MailboxDO extends DurableObject<Env> {
 			email.thread_id || id,
 		);
 
-		await deleteEmailContent(this.env.BUCKET, id);
-		await deleteEmailAttachments(this.env.BUCKET, id, emailAttachments);
+		await this.#sweepPendingBlobDeletes(blobKeys);
 
 		this.broadcastEvent("email_deleted", { id });
 		return emailAttachments;
@@ -1694,100 +1788,46 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
-	 * Wipe mailbox SQLite + all inventoried R2 email/attachment blobs, then
-	 * remove `mailboxes/{id}.json` so inbound/API stop treating it as live.
-	 * Returns conversation ids so the HTTP layer can purge EmailAgent DOs.
+	 * Delete everything this mailbox stores, then remove `mailboxes/{id}.json`
+	 * so inbound/API stop treating it as live. Order (see lib/mailbox-purge):
+	 * deleted flag first, then rows (queueing their blobs), then blobs, then
+	 * metadata. Safe to retry: a purge interrupted anywhere completes when
+	 * called again. Returns conversation ids so the HTTP layer can purge
+	 * EmailAgent DOs.
 	 */
 	async purgeMailbox(
 		mailboxId: string,
 	): Promise<{ conversationIds: string[] }> {
-		const emailRows = this.db
-			.select({ id: schema.emails.id })
-			.from(schema.emails)
-			.all();
-		const emailIds = emailRows.map((row) => row.id);
-
-		const attachmentRows = this.db
-			.select({
-				email_id: schema.attachments.email_id,
-				id: schema.attachments.id,
-				filename: schema.attachments.filename,
-			})
-			.from(schema.attachments)
-			.all();
-
-		// Includes deleted conversations whose agent purge never completed.
-		const conversationIds = agentConversationIdsToPurge(this.ctx.storage.sql);
-
-		const aliasEmails = [
-			...this.ctx.storage.sql.exec(`SELECT alias_email FROM aliases`),
-		].map((row) => String(row.alias_email));
-
-		const keys = collectMailboxPurgeR2Keys(
-			emailIds,
-			attachmentRows,
-			emailContentKeys,
-			aliasEmails,
-		);
-		await deleteR2Keys(this.env.BUCKET, keys);
-
-		// Wipe tables first; only then clear FTS / alarm so a failed txn
-		// leaves searchable mail + backfill alarm intact.
-		this.ctx.storage.transactionSync(() => {
-			const sql = this.ctx.storage.sql;
-			sql.exec(`DELETE FROM aliases`);
-			sql.exec(`DELETE FROM send_log`);
-			sql.exec(`DELETE FROM attachments`);
-			sql.exec(`DELETE FROM emails`);
-			sql.exec(`DELETE FROM folders`);
-			sql.exec(`DELETE FROM agent_conversations`);
-			sql.exec(`DELETE FROM agent_conversation_tombstones`);
-			sql.exec(`DELETE FROM device_tokens`);
-			sql.exec(`DELETE FROM dismissed_todos`);
-			sql.exec(`DELETE FROM auto_reply_receipts`);
-			sql.exec(`DELETE FROM sender_triage`);
-			sql.exec(`DELETE FROM sender_preferences`);
-			sql.exec(`DELETE FROM inbound_message_claims`);
-			sql.exec(`DELETE FROM thread_notes`);
-
-			for (const folderId of SYSTEM_FOLDER_IDS) {
-				const name = FOLDER_DISPLAY_NAMES[folderId] ?? folderId;
-				sql.exec(
-					`INSERT INTO folders (id, name, is_deletable) VALUES (?, ?, 0)`,
-					folderId,
-					name,
-				);
-			}
+		const { conversationIds } = await runMailboxPurge({
+			sql: this.ctx.storage.sql,
+			transactionSync: (fn) => this.ctx.storage.transactionSync(fn),
+			bucket: this.env.BUCKET,
+			systemFolders: SYSTEM_FOLDER_IDS.map((id) => ({
+				id,
+				name: FOLDER_DISPLAY_NAMES[id] ?? id,
+			})),
+			metadataKey: mailboxMetadataKey(mailboxId),
+			// Block createEmail/updateDraft (and inbound) until reviveMailbox on recreate.
+			markDeleted: () => this.ctx.storage.put(MAILBOX_DELETED_KEY, "1"),
+			afterWipe: async () => {
+				try {
+					this.ctx.storage.sql.exec(`DELETE FROM emails_fts`);
+				} catch (e) {
+					console.error("purgeMailbox emails_fts wipe failed:", (e as Error).message);
+				}
+				try {
+					await this.ctx.storage.delete("sender_triage_bootstrapped");
+				} catch {
+					/* ignore */
+				}
+				try {
+					await this.ctx.storage.delete(WELCOME_FLAG_KEY);
+				} catch {
+					/* ignore */
+				}
+			},
+			scheduleBlobSweep: (delayMs) => this.#scheduleAlarmWithin(delayMs),
 		});
-
-		try {
-			this.ctx.storage.sql.exec(`DELETE FROM emails_fts`);
-		} catch (e) {
-			console.error("purgeMailbox emails_fts wipe failed:", (e as Error).message);
-		}
-
-		try {
-			await this.ctx.storage.deleteAlarm();
-		} catch (e) {
-			console.error("purgeMailbox deleteAlarm failed:", (e as Error).message);
-		}
-
-		try {
-			await this.ctx.storage.delete("sender_triage_bootstrapped");
-		} catch {
-			/* ignore */
-		}
-
-		try {
-			await this.ctx.storage.delete(WELCOME_FLAG_KEY);
-		} catch {
-			/* ignore */
-		}
-
-		// Block createEmail/updateDraft until reviveMailbox on recreate.
-		await this.ctx.storage.put(MAILBOX_DELETED_KEY, "1");
-		await this.env.BUCKET.delete(mailboxMetadataKey(mailboxId));
-
 		return { conversationIds };
 	}
 
@@ -2341,6 +2381,11 @@ export class MailboxDO extends DurableObject<Env> {
 			alias.expires_at ?? null,
 			alias.created_at,
 		);
+		// A purge may still have this address's old routing record queued for
+		// deletion; the caller is about to write the new one.
+		forgetPendingBlobDeletes(this.ctx.storage.sql, [
+			aliasMetadataKey(alias.alias_email.toLowerCase().trim()),
+		]);
 		const created = await this.getAlias(alias.id);
 		this.broadcastEvent("alias_created", { alias: created });
 		return created;
@@ -2734,11 +2779,25 @@ export class MailboxDO extends DurableObject<Env> {
 
 	// ── Email creation (Drizzle) ───────────────────────────────────
 
+	/**
+	 * Insert an email row. With `email.idempotency_key`, this is
+	 * insert-or-return-existing: if a row already holds the key, nothing is
+	 * inserted and `{ id: <existing>, replayed: true }` comes back. The final
+	 * check and the insert run with no await in between, so two concurrent
+	 * calls with one key can't both insert.
+	 */
 	async createEmail(
 		folder: string,
 		email: EmailData,
 		attachments: AttachmentData[],
-	) {
+	): Promise<CreateEmailResult> {
+		const idempotencyKey = email.idempotency_key ?? null;
+		// Fast path: a replay doesn't need to write R2 at all.
+		const early = idempotencyKey
+			? findEmailIdByIdempotencyKey(this.ctx.storage.sql, idempotencyKey)
+			: null;
+		if (early) return { id: early, replayed: true };
+
 		await this.#assertMailboxWritable();
 		// Resolve folder name or ID to the actual folder ID.
 		const folderRow = this.db
@@ -2781,43 +2840,60 @@ export class MailboxDO extends DurableObject<Env> {
 					email.body,
 				),
 			});
+			await this.#assertStillWritableAfterBlobWrite(emailContentKeys(email.id));
 		}
 
+		// Another request with the same key may have inserted while we awaited
+		// R2. From here to the insert there is no await, so the check and the
+		// insert can't interleave with it.
 		// Sent and draft emails are always read — the author already knows the content.
 		// This prevents them from looking unread in lists or inflating thread_unread_count.
-		this.db
-			.insert(schema.emails)
-			.values({
-				id: email.id,
-				folder_id: folderId,
-				subject: email.subject,
-				sender: email.sender,
-				sender_name: email.sender_name ?? null,
-				recipient: email.recipient,
-				cc: email.cc ?? null,
-				bcc: email.bcc ?? null,
-				date: email.date,
-				read: isOwnComposition ? 1 : (email.read ? 1 : 0),
-				starred: email.starred ? 1 : 0,
-				body: null,
-				snippet,
-				in_reply_to: email.in_reply_to ?? null,
-				email_references: email.email_references ?? null,
-				thread_id: email.thread_id ?? null,
-				message_id: email.message_id ?? null,
-				raw_headers: email.raw_headers ?? null,
-				provider_message_id: email.provider_message_id ?? null,
-				delivery_status: email.delivery_status ?? null,
-				delivery_error: email.delivery_error ?? null,
-				auth: serializeEmailAuth(
-					typeof email.auth === "string"
-						? parseStoredEmailAuth(email.auth)
-						: email.auth,
-				),
-				alias_id: email.alias_id ?? null,
-				source: email.source ?? null,
-			})
-			.run();
+		const created = insertOrReplay(this.ctx.storage.sql, idempotencyKey, email.id, () => {
+			this.db
+				.insert(schema.emails)
+				.values({
+					id: email.id,
+					folder_id: folderId,
+					subject: email.subject,
+					sender: email.sender,
+					sender_name: email.sender_name ?? null,
+					recipient: email.recipient,
+					cc: email.cc ?? null,
+					bcc: email.bcc ?? null,
+					date: email.date,
+					read: isOwnComposition ? 1 : (email.read ? 1 : 0),
+					starred: email.starred ? 1 : 0,
+					body: null,
+					snippet,
+					in_reply_to: email.in_reply_to ?? null,
+					email_references: email.email_references ?? null,
+					thread_id: email.thread_id ?? null,
+					message_id: email.message_id ?? null,
+					raw_headers: email.raw_headers ?? null,
+					provider_message_id: email.provider_message_id ?? null,
+					delivery_status: email.delivery_status ?? null,
+					delivery_error: email.delivery_error ?? null,
+					auth: serializeEmailAuth(
+						typeof email.auth === "string"
+							? parseStoredEmailAuth(email.auth)
+							: email.auth,
+					),
+					alias_id: email.alias_id ?? null,
+					source: email.source ?? null,
+					idempotency_key: idempotencyKey,
+				})
+				.run();
+		});
+		if (created.replayed) {
+			// Our body blobs are orphans (keyed by our unused id): queue them
+			// so a failed R2 delete is retried by the alarm sweep.
+			const orphanKeys = emailContentKeys(email.id);
+			this.ctx.storage.transactionSync(() =>
+				enqueueBlobDeletes(this.ctx.storage.sql, orphanKeys),
+			);
+			await this.#sweepPendingBlobDeletes(orphanKeys);
+			return created;
+		}
 
 		if (attachments.length > 0) {
 			this.db.insert(schema.attachments).values(attachments).run();
@@ -2859,6 +2935,7 @@ export class MailboxDO extends DurableObject<Env> {
 			reply_later: false,
 			alias_id: email.alias_id ?? null,
 		});
+		return { id: email.id, replayed: false };
 	}
 
 	/**

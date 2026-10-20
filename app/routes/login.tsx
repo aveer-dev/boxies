@@ -5,11 +5,12 @@
 import { Button, Input, useKumoToastManager } from "@cloudflare/kumo";
 import { ArrowLeftIcon, EyeIcon, EyeSlashIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type AppleCredential, AppleSignInButton } from "~/components/AppleSignInButton";
 import { GoogleSignInButton } from "~/components/GoogleSignInButton";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
 import { OnboardingFlow } from "~/components/OnboardingFlow";
-import { safeRedirectPath } from "~/lib/safe-redirect";
+import { isWorkerPagePath, safeRedirectPath } from "~/lib/safe-redirect";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
 
@@ -20,7 +21,13 @@ export function meta() {
 type LoginStep = "email" | "password" | "forgot" | "reset";
 
 export default function PasswordLoginRoute() {
-	const navigate = useNavigate();
+	const routerNavigate = useNavigate();
+	// Worker-rendered pages (the MCP OAuth consent page) need a full page load;
+	// the SPA router would show its not-found route.
+	const navigate = useCallback(
+		(to: string) => (isWorkerPagePath(to) ? window.location.assign(to) : routerNavigate(to)),
+		[routerNavigate],
+	);
 	const [searchParams] = useSearchParams();
 	// Where to land after signing in (set by the Worker's signed-out redirect).
 	// Same-origin paths only, so this can't be used as an open redirect.
@@ -92,6 +99,27 @@ export default function PasswordLoginRoute() {
 			} catch (err: unknown) {
 				toastManager.add({
 					title: err instanceof Error ? err.message : "Google sign-in failed",
+					variant: "error",
+				});
+			} finally {
+				setSubmitting(false);
+			}
+		},
+		[afterSignIn, navigate, toastManager],
+	);
+
+	const appleWebClientId =
+		config?.appleSignInConfigured && config.appleWebClientId ? config.appleWebClientId : null;
+
+	const handleAppleCredential = useCallback(
+		async (credential: AppleCredential) => {
+			setSubmitting(true);
+			try {
+				await api.appleLogin(credential);
+				navigate(afterSignIn);
+			} catch (err: unknown) {
+				toastManager.add({
+					title: err instanceof Error ? err.message : "Apple sign-in failed",
 					variant: "error",
 				});
 			} finally {
@@ -264,18 +292,30 @@ export default function PasswordLoginRoute() {
 							Next
 						</Button>
 
-						{googleClientId && (
+						{(googleClientId || appleWebClientId) && (
 							<>
 								<div className="flex items-center my-4 text-xs text-kumo-subtle">
 									<div className="flex-1 border-t border-kumo-line" />
 									<span className="px-3">or</span>
 									<div className="flex-1 border-t border-kumo-line" />
 								</div>
-								<GoogleSignInButton
-									clientId={googleClientId}
-									onCredential={(idToken) => void handleGoogleCredential(idToken)}
-									busy={submitting}
-								/>
+								<div className="space-y-2">
+									{googleClientId && (
+										<GoogleSignInButton
+											clientId={googleClientId}
+											onCredential={(idToken) => void handleGoogleCredential(idToken)}
+											busy={submitting}
+										/>
+									)}
+									{appleWebClientId && (
+										<AppleSignInButton
+											clientId={appleWebClientId}
+											onCredential={(credential) => void handleAppleCredential(credential)}
+											onError={(message) => toastManager.add({ title: message, variant: "error" })}
+											busy={submitting}
+										/>
+									)}
+								</div>
 							</>
 						)}
 					</form>

@@ -168,7 +168,7 @@ describe("outbound-send message + policy helpers", () => {
 		const block = config.match(/"queue":\s*"outbound-send",\s*"max_batch_size"[\s\S]*?\}/)?.[0] ?? "";
 		assert.match(block, new RegExp(`"max_retries":\\s*${OUTBOUND_SEND_MAX_RETRIES},`));
 		assert.match(block, /"dead_letter_queue":\s*"outbound-send-dlq"/);
-		assert.match(config, /"binding":\s*"OUTBOUND_SEND",\s*"queue":\s*"outbound-send"/);
+		assert.match(config, /"queue":\s*"outbound-send",\s*"binding":\s*"OUTBOUND_SEND"/);
 	});
 });
 

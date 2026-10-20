@@ -14,6 +14,12 @@ import {
 	OutboundSizeError,
 } from "./lib/outbound-limits";
 import { enqueueOutboundSendFromEnv } from "./lib/outbound-send-queue";
+import {
+	checkIdempotencyKey,
+	discardReplayedSend,
+	idempotentReplayResponse,
+	type CreateEmailResult,
+} from "./lib/outbound-idempotency";
 import { storeAttachments, attachmentKey, sanitizeAttachmentFilename, deleteR2Keys, type StoredAttachment } from "./lib/attachments";
 import {
 	computeSnippet,
@@ -269,8 +275,10 @@ app.get("/api/v1/config", (c) => {
 		emailAddresses,
 		/** OAuth Web client id for GIS / Connect Google (same aud as mobile). */
 		googleClientId: c.env.GOOGLE_CLIENT_ID ?? null,
-		/** True when Sign in with Apple can be verified (iOS bundle aud). Web Apple needs a Services ID — use mobile Connect or link code. */
+		/** True when Sign in with Apple can be verified (iOS bundle aud). */
 		appleSignInConfigured: Boolean(c.env.APPLE_CLIENT_ID),
+		/** Services ID for Sign in with Apple on the web login page; null hides the button. */
+		appleWebClientId: c.env.APPLE_CLIENT_ID ? (c.env.APPLE_WEB_SERVICES_ID ?? null) : null,
 	});
 });
 
@@ -480,10 +488,13 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const mailboxId = c.var.mailboxId;
+	const stub = c.var.mailboxStub;
+	// A retried send with a stored Idempotency-Key returns the original row.
+	const idem = await checkIdempotencyKey(c, stub);
+	if ("response" in idem) return idem.response;
+
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
-
-	const stub = c.var.mailboxStub;
 
 	let resolvedThreadId = thread_id;
 	if (!resolvedThreadId && (in_reply_to || (references && references.length > 0))) {
@@ -537,9 +548,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		resolvedThreadId = messageId;
 	}
 
+	let created: CreateEmailResult | undefined;
+	let attachmentData: Awaited<ReturnType<typeof storeAttachments>> = [];
 	try {
-		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
-		await stub.createEmail(Folders.SENT, {
+		attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+		created = await stub.createEmail(Folders.SENT, {
 			id: messageId, subject, sender: fromEmail,
 			sender_name: displayNameFromAddressField(from),
 			recipient: toStr,
@@ -550,6 +563,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 			thread_id: resolvedThreadId, message_id: outgoingMessageId,
 			delivery_status: "queued", delivery_error: null,
 			alias_id: sender.aliasId,
+			idempotency_key: idem.key,
 			raw_headers: JSON.stringify([
 				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -563,6 +577,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		// Not accepted, so it shouldn't count against the send quota.
 		await (stub as any).releaseSendSlot().catch(() => {});
 		throw e;
+	}
+	if (created?.replayed) {
+		// A concurrent request with this key won: send nothing more.
+		await discardReplayedSend(c.env, stub, messageId, attachmentData);
+		return idempotentReplayResponse(c, created.id);
 	}
 
 	// Screener-lite: people you email bypass the review queue on reply.
@@ -1390,6 +1409,8 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
 /** SMTP reply for mail over MAX_EMAIL_SIZE (RFC 3463 5.3.4: message too big for system). */
 const OVERSIZE_REJECT_REASON = "552 5.3.4 Message size exceeds fixed limit";
+/** A mailbox being purged (or already purged) refuses mail with a permanent error. */
+const MAILBOX_UNAVAILABLE_REJECT_REASON = "550 5.2.1 Mailbox unavailable";
 
 /** Thrown when an inbound message is (or turns out to be) larger than MAX_EMAIL_SIZE. */
 class EmailTooLargeError extends Error {
@@ -1803,7 +1824,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 
 	const stub = getMailboxStub(env, mailboxId);
 	if (!(await stub.isWritable())) {
-		console.log(`Skipping inbound for deleted mailbox ${mailboxId}`);
+		console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
+		message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 		return;
 	}
 	const fromRaw = (parsedEmail.from?.address || message.from || "").toLowerCase();
@@ -1996,13 +2018,14 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			}
 		} catch (e) {
 			if ((e as Error).message === "Mailbox has been deleted") {
-				console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+				console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
 				await abandonUnstoredInbound(env, stub, {
 					emailId: messageId,
 					originalMessageId,
 					blobKeys: inboundBlobKeys(),
 					knownUnstored: true,
 				});
+				message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 				return;
 			}
 			if (!shouldFallbackToInbox(targetFolder, e)) throw e;
@@ -2015,13 +2038,14 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				stored = true;
 			} catch (inboxErr) {
 				if ((inboxErr as Error).message === "Mailbox has been deleted") {
-					console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+					console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
 					await abandonUnstoredInbound(env, stub, {
 						emailId: messageId,
 						originalMessageId,
 						blobKeys: inboundBlobKeys(),
 						knownUnstored: true,
 					});
+					message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 					return;
 				}
 				throw inboxErr;
