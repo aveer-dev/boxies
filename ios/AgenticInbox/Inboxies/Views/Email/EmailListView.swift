@@ -366,6 +366,15 @@ struct EmailListView: View {
             Label(email.read ? "Mark as Unread" : "Mark as Read", systemImage: email.read ? "envelope.badge" : "envelope.open")
         }
 
+        Button {
+            Task { await app.toggleReplyLater(on: email) }
+        } label: {
+            Label(
+                email.replyLater ? "Remove from Reply Later" : "Reply later",
+                systemImage: email.replyLater ? "clock.arrow.circlepath" : "clock"
+            )
+        }
+
         Divider()
 
         Button {

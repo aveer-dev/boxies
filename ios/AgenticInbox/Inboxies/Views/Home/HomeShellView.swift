@@ -13,6 +13,9 @@ struct HomeShellView: View {
     @State private var chatSeedPrompt: String?
     @State private var tabNavigatingForward = true
     @State private var previousTabBeforeReplyLater: HomeTab = .folder("inbox")
+    /// Entering or leaving Reply Later is a push, not a folder-tab slide.
+    @State private var isReplyLaterPush = false
+    @State private var tabContentWidth: CGFloat = 390
     @State private var registeredUndoID: UUID?
     @State private var showSettings = false
     @State private var isSelectMode = false
@@ -53,6 +56,14 @@ struct HomeShellView: View {
 
     private var tabSpring: Animation {
         .spring(duration: 0.42, bounce: 0.18)
+    }
+
+    /// Standard push spring (Android twin: `dampingRatio = 0.86f` + `StiffnessMediumLow`).
+    private static let pushSpring = Animation.spring(response: 0.32, dampingFraction: 0.86)
+
+    /// The implicit tab animations override `withAnimation`, so pick the push spring here too.
+    private var tabAnimation: Animation {
+        isReplyLaterPush ? Self.pushSpring : tabSpring
     }
 
     private var hasMinimizedCompose: Bool {
@@ -157,7 +168,7 @@ struct HomeShellView: View {
                 .opacity(showSearch ? 0 : 1)
         }
         .tint(AppTheme.ink)
-        .animation(tabSpring, value: app.selectedTab)
+        .animation(tabAnimation, value: app.selectedTab)
         .background(AppTheme.background.ignoresSafeArea())
         .overlay(alignment: .bottom) {
             if !showSearch {
@@ -369,7 +380,7 @@ struct HomeShellView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.toast?.id)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasServiceBanner)
-        .animation(tabSpring, value: app.selectedTab)
+        .animation(tabAnimation, value: app.selectedTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isSelectMode)
         .padding(.bottom, -12)
     }
@@ -693,14 +704,32 @@ struct HomeShellView: View {
                 )
             }
         }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            tabContentWidth = width
+        }
         .id(app.selectedTab)
         .contentShape(Rectangle())
         .gesture(tabSwipeGesture)
-        .transition(
-            .asymmetric(
-                insertion: .offset(x: tabNavigatingForward ? 28 : -28).combined(with: .opacity),
-                removal: .offset(x: tabNavigatingForward ? -18 : 18).combined(with: .opacity)
-            )
+        .transition(tabTransition(for: app.selectedTab))
+    }
+
+    /// Folder tabs slide a short distance. Reply Later is a push, matching the Android
+    /// settings/Reply Later push: in from a quarter width, the page underneath shifts a sixth.
+    /// The Reply Later page's own transition doesn't depend on direction state, so it pushes
+    /// in and pops back out toward the trailing edge either way.
+    private func tabTransition(for tab: HomeTab) -> AnyTransition {
+        let width = max(tabContentWidth, 1)
+        if tab == .replyLater {
+            return .offset(x: width / 4).combined(with: .opacity)
+        }
+        if isReplyLaterPush {
+            return .offset(x: -width / 6).combined(with: .opacity)
+        }
+        return .asymmetric(
+            insertion: .offset(x: tabNavigatingForward ? 28 : -28).combined(with: .opacity),
+            removal: .offset(x: tabNavigatingForward ? -18 : 18).combined(with: .opacity)
         )
     }
 
@@ -717,6 +746,7 @@ struct HomeShellView: View {
             isSelectMode = false
             selectedEmailIDs.removeAll()
         }
+        isReplyLaterPush = tab == .replyLater || app.selectedTab == .replyLater
         if tab == .replyLater {
             if app.selectedTab != .replyLater {
                 previousTabBeforeReplyLater = app.selectedTab
@@ -729,9 +759,16 @@ struct HomeShellView: View {
             let next = folderTabs.firstIndex(of: tab) ?? 0
             tabNavigatingForward = next > current
         }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+        withAnimation(Self.pushSpring) {
             app.selectTab(tab)
         }
+    }
+
+    /// Back out of Reply Later to the folder it was opened from (Android: system back).
+    private func popReplyLater() {
+        guard app.selectedTab == .replyLater else { return }
+        let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
+        selectTab(target)
     }
 
     private func selectAdjacentTab(forward: Bool) {
@@ -745,6 +782,11 @@ struct HomeShellView: View {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
                 let threshold: CGFloat = 40
+                if app.selectedTab == .replyLater {
+                    // Reply Later is pushed over a folder: swipe right pops back.
+                    if value.translation.width > threshold { popReplyLater() }
+                    return
+                }
                 if value.translation.width < -threshold {
                     selectAdjacentTab(forward: true)
                 } else if value.translation.width > threshold {
@@ -781,8 +823,7 @@ struct HomeShellView: View {
                 return
             }
             if app.selectedTab == .replyLater {
-                let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
-                selectTab(target)
+                popReplyLater()
             } else if app.replyLaterCount == 0 {
                 app.showToast("There is no reply later mail")
                 Task { await app.refreshReplyLaterCount() }

@@ -1841,10 +1841,13 @@ class AppModel {
         )
         runCatching {
             ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
+        }.onSuccess {
+            showToast(if (next) "Added to Reply Later" else "Removed from Reply Later")
         }.onFailure {
             // Roll back optimistic update on failure
             db.updateEmailFlags(target.id, replyLater = !next)
             applyEmailUpdate(target)
+            showToast("Couldn't update Reply Later", isError = true)
         }
         refreshReplyLaterCount()
         if (_selectedTab.value is HomeTab.ReplyLater) {
