@@ -49,6 +49,8 @@ import {
 	type AliasSenderStub,
 } from "./alias-sender";
 import type { Env } from "../types";
+import { authDb } from "../auth/authz";
+import { checkOutboundSuppression } from "./email-suppression";
 
 // ── Type casts for DO methods not on the base stub type ────────────
 type MailboxSearchStub = {
@@ -520,6 +522,13 @@ export async function toolSendReply(
 		throw e;
 	}
 
+	const suppressed = await checkOutboundSuppression(authDb(env.AUTH_DB), {
+		fromEmail: fromAddress,
+		mailboxId,
+		to,
+	});
+	if (suppressed) return { error: suppressed.error };
+
 	// Reserve a send slot only once the message is verified and valid, so a
 	// refused draft doesn't use up the user's quota.
 	const rateLimitError = await (stub as unknown as RateLimitStub).checkSendRateLimit();
@@ -604,6 +613,13 @@ export async function toolSendEmail(
 		if (e instanceof OutboundSizeError) return { error: e.message };
 		throw e;
 	}
+
+	const suppressed = await checkOutboundSuppression(authDb(env.AUTH_DB), {
+		fromEmail: mailboxId,
+		mailboxId,
+		to: params.to,
+	});
+	if (suppressed) return { error: suppressed.error };
 
 	// Reserve a send slot only once the message is verified and valid, so a
 	// refused draft doesn't use up the user's quota.

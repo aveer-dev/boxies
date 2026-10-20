@@ -83,6 +83,13 @@ import { registerDomainDnsRoutes } from "./routes/domain-dns";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
+import { blockSuppressedSend, registerSuppressionRoutes } from "./routes/suppressions";
+import {
+	applyInboundDsn,
+	parseDeliveryStatusReport,
+	type AppliedDsn,
+	type DsnStub,
+} from "./lib/inbound-dsn";
 import { getDomainMetadata } from "./lib/domain-registry";
 import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
@@ -289,6 +296,7 @@ registerDomainDnsRoutes(app);
 registerBillingRoutes(app);
 registerExportAndOffboardingRoutes(app);
 registerAliasRoutes(app);
+registerSuppressionRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
@@ -532,6 +540,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
+
+	// Suppressed recipients (hard bounce / complaint) block the send before a
+	// slot is reserved or a Sent row exists.
+	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
+	if (suppressed) return suppressed;
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 	// Validate before reserving a send slot, so a refused message is free.
@@ -1911,6 +1924,58 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		const senderName =
 			normalizeDisplayName(parsedEmail.from?.name) ??
 			senderNameFromRawHeaders(fromHeaders);
+
+		// A bounce report for one of our Sent messages updates that message
+		// (and the suppression list) and is archived in its thread instead of
+		// being filed as new mail. Unmatched reports fall through as normal mail.
+		const dsnReport = parseDeliveryStatusReport(rawEmail);
+		if (dsnReport) {
+			let appliedDsn: AppliedDsn | null = null;
+			try {
+				appliedDsn = await applyInboundDsn({
+					report: dsnReport,
+					stub: stub as unknown as DsnStub,
+					db: authDb(env.AUTH_DB),
+					mailboxId,
+					dsnMessageId: originalMessageId,
+				});
+			} catch (e) {
+				console.error(`Applying inbound DSN failed for ${mailboxId}, filing normally:`, (e as Error).message);
+			}
+			if (appliedDsn) {
+				console.log(
+					`Inbound DSN for ${mailboxId} matched ${appliedDsn.originalId} (${appliedDsn.status}); suppressed ${appliedDsn.suppressed.length}`,
+				);
+				const dsnBody = parsedEmail.html || parsedEmail.text || "";
+				await storeEmailContent(env.BUCKET, messageId, { htmlOrText: dsnBody, rawMime: rawEmail });
+				await stub.createEmail(
+					Folders.ARCHIVE,
+					{
+						id: messageId, subject: parsedEmail.subject || "",
+						sender: fromAddress, sender_name: senderName, recipient,
+						cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
+						date: new Date().toISOString(),
+						snippet: computeSnippet(dsnBody),
+						search_text: computeSearchText(dsnBody, { plainText: parsedEmail.text }),
+						in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
+						thread_id: appliedDsn.threadId ?? threadId, message_id: originalMessageId, raw_headers: fromHeaders,
+						auth: serializeEmailAuth(auth),
+						alias_id: privateAlias?.aliasId || null,
+						read: true,
+					},
+					attachmentData,
+				);
+				stored = true;
+				if (originalMessageId) {
+					await stub
+						.completeInboundMessageClaim(originalMessageId, messageId)
+						.catch((e: unknown) =>
+							console.error(`Inbound claim completion failed for ${mailboxId}:`, (e as Error).message),
+						);
+				}
+				return;
+			}
+		}
 
 		let classification = await classifyInboundEmail(
 			{

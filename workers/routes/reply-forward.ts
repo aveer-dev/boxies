@@ -29,6 +29,7 @@ import { SendEmailRequestSchema } from "../lib/schemas";
 import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
+import { blockSuppressedSend } from "./suppressions";
 import { allowOutboundRecipients } from "../lib/sender-triage";
 import {
 	findThreadAliasId,
@@ -94,6 +95,10 @@ export async function handleReplyEmail(c: AppContext) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
+
+	// Suppressed recipients block the send before a slot or Sent row exists.
+	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
+	if (suppressed) return suppressed;
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
@@ -231,6 +236,10 @@ export async function handleForwardEmail(c: AppContext) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
+
+	// Suppressed recipients block the send before a slot or Sent row exists.
+	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
+	if (suppressed) return suppressed;
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
