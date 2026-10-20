@@ -269,8 +269,10 @@ app.get("/api/v1/config", (c) => {
 		emailAddresses,
 		/** OAuth Web client id for GIS / Connect Google (same aud as mobile). */
 		googleClientId: c.env.GOOGLE_CLIENT_ID ?? null,
-		/** True when Sign in with Apple can be verified (iOS bundle aud). Web Apple needs a Services ID — use mobile Connect or link code. */
+		/** True when Sign in with Apple can be verified (iOS bundle aud). */
 		appleSignInConfigured: Boolean(c.env.APPLE_CLIENT_ID),
+		/** Services ID for Sign in with Apple on the web login page; null hides the button. */
+		appleWebClientId: c.env.APPLE_CLIENT_ID ? (c.env.APPLE_WEB_SERVICES_ID ?? null) : null,
 	});
 });
 
