@@ -67,11 +67,10 @@ const count = (sql, query, ...b) => Number(Object.values(sql.exec(query, ...b)[0
 
 // ── Migration: last, additive, idempotent ────────────────────────
 {
-	// Appended after every earlier migration (later ones may follow it).
+	const names = mailboxMigrations.map((m) => m.name);
 	assert.ok(
-		mailboxMigrations.findIndex((m) => m.name === MIGRATION) >
-			mailboxMigrations.findIndex((m) => m.name === "30_list_query_indexes"),
-		"appended after the existing migrations",
+		names.indexOf(MIGRATION) > names.indexOf("30_list_query_indexes"),
+		"appended after the earlier migrations",
 	);
 	assert.equal(mailboxMigrations.filter((m) => m.name === MIGRATION).length, 1);
 

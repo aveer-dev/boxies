@@ -63,6 +63,12 @@ export interface Env extends Cloudflare.Env {
 	APPLE_CLIENT_SECRET?: string;
 	/** iOS bundle id, the `aud` of native Apple ID tokens (defaults to APPLE_CLIENT_ID). */
 	APPLE_APP_BUNDLE_ID?: string;
+	/*
+	 * `APPLE_WEB_SERVICES_ID` (Sign in with Apple Services ID for the web login
+	 * page; not a secret, it is sent to the browser via /api/v1/config; Apple ID
+	 * tokens with this audience are accepted alongside the bundle id) is a
+	 * wrangler var, so its type comes from `Cloudflare.Env`.
+	 */
 	/**
 	 * Sign in with Apple key (Key ID + .p8 contents) and team id, used to
 	 * revoke Apple tokens when an account is deleted. Team falls back to APNS_TEAM_ID.
