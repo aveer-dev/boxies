@@ -72,6 +72,12 @@
 			"migrations_dir": "migrations/auth",
 		},
 	],
+	// MCP OAuth 2.1 (AVE-67, workers/mcp/oauth.ts) stores clients, grants, codes
+	// and tokens in a KV namespace bound as OAUTH_KV. Without the binding, OAuth is
+	// off and /mcp accepts only the existing bearer tokens. To turn it on:
+	//   1. `wrangler kv namespace create OAUTH_KV`
+	//   2. add here: "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "<id it prints>" }],
+	// A placeholder id cannot be committed: every deploy fails with KV error 10041.
 	// Per-IP throttle on 6-digit password reset code guesses.
 	// namespace_id must be unique among rate limiters in the Cloudflare account.
 	"ratelimits": [

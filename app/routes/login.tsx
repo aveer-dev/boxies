@@ -10,7 +10,7 @@ import { GoogleSignInButton } from "~/components/GoogleSignInButton";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
 import { OnboardingFlow } from "~/components/OnboardingFlow";
-import { safeRedirectPath } from "~/lib/safe-redirect";
+import { isWorkerPagePath, safeRedirectPath } from "~/lib/safe-redirect";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
 
@@ -21,7 +21,13 @@ export function meta() {
 type LoginStep = "email" | "password" | "forgot" | "reset";
 
 export default function PasswordLoginRoute() {
-	const navigate = useNavigate();
+	const routerNavigate = useNavigate();
+	// Worker-rendered pages (the MCP OAuth consent page) need a full page load;
+	// the SPA router would show its not-found route.
+	const navigate = useCallback(
+		(to: string) => (isWorkerPagePath(to) ? window.location.assign(to) : routerNavigate(to)),
+		[routerNavigate],
+	);
 	const [searchParams] = useSearchParams();
 	// Where to land after signing in (set by the Worker's signed-out redirect).
 	// Same-origin paths only, so this can't be used as an open redirect.
