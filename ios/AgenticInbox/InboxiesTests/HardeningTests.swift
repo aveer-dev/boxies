@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Inboxies
 
@@ -333,5 +334,39 @@ final class HardeningTests: XCTestCase {
         XCTAssertFalse(prepared.main.lowercased().contains("<script"))
         let cached = await EmailHTMLSanitizer.prepareOffMain("<p>ignored</p>", key: key)
         XCTAssertEqual(cached, prepared, "Same key is served from the cache")
+    }
+
+    // MARK: - Dark mode: own colours
+
+    /// Same fixtures as web (`workers/test/email-colors.test.mjs`) and Android.
+    func testHasOwnColorsMatchesSharedFixtures() throws {
+        struct Fixture: Decodable {
+            let name: String
+            let html: String
+            let ownColors: Bool
+        }
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // InboxiesTests
+            .deletingLastPathComponent() // AgenticInbox
+            .deletingLastPathComponent() // ios
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("shared/email-colors.fixtures.json")
+        let fixtures = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: url))
+        XCTAssertGreaterThan(fixtures.count, 10)
+        for fixture in fixtures {
+            XCTAssertEqual(EmailHTMLSanitizer.hasOwnColors(fixture.html), fixture.ownColors, fixture.name)
+        }
+    }
+
+    func testPreparedBodyFlagsOwnColorsAfterSanitizing() async {
+        let designed = ##"<table><tr><td bgcolor="#ffffff" onclick="x()">Sale</td></tr></table>"##
+        let simple = "<p>Hi</p><script>document.body.style.background='red'</script>"
+        let a = await EmailHTMLSanitizer.prepareOffMain(designed, key: "own-\(UUID())")
+        let b = await EmailHTMLSanitizer.prepareOffMain(simple, key: "own-\(UUID())")
+        XCTAssertTrue(a.mainHasOwnColors)
+        XCTAssertFalse(b.mainHasOwnColors, "Stripped script styles never count")
+        XCTAssertEqual(EmailBodyAppearance(colorScheme: .dark, hasOwnColors: true), .paper)
+        XCTAssertEqual(EmailBodyAppearance(colorScheme: .dark, hasOwnColors: false), .dark)
+        XCTAssertEqual(EmailBodyAppearance(colorScheme: .light, hasOwnColors: true), .light)
     }
 }
