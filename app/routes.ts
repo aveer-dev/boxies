@@ -18,6 +18,8 @@ export default [
 	route("login", "routes/login.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
 	route("extension/connect", "routes/extension-connect.tsx"),
+	// MCP OAuth consent; only the Worker's GET /authorize gives it data.
+	route("authorize", "routes/authorize.tsx"),
 	// Miller columns: each child route renders its own column(s); an optional
 	// trailing :emailId opens the reader beside the list.
 	route("mailbox/:mailboxId", "routes/mailbox.tsx", [
