@@ -122,8 +122,9 @@ export function useSendEmail() {
 		mutationFn: ({
 			mailboxId,
 			email,
-		}: { mailboxId: string; email: unknown }) =>
-			api.sendEmail(mailboxId, email),
+			idempotencyKey,
+		}: { mailboxId: string; email: unknown; idempotencyKey?: string }) =>
+			api.sendEmail(mailboxId, email, idempotencyKey),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }
@@ -382,8 +383,9 @@ export function useReplyToEmail() {
 			mailboxId,
 			emailId,
 			email,
-		}: { mailboxId: string; emailId: string; email: unknown }) =>
-			api.replyToEmail(mailboxId, emailId, email),
+			idempotencyKey,
+		}: { mailboxId: string; emailId: string; email: unknown; idempotencyKey?: string }) =>
+			api.replyToEmail(mailboxId, emailId, email, idempotencyKey),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }
@@ -395,8 +397,9 @@ export function useForwardEmail() {
 			mailboxId,
 			emailId,
 			email,
-		}: { mailboxId: string; emailId: string; email: unknown }) =>
-			api.forwardEmail(mailboxId, emailId, email),
+			idempotencyKey,
+		}: { mailboxId: string; emailId: string; email: unknown; idempotencyKey?: string }) =>
+			api.forwardEmail(mailboxId, emailId, email, idempotencyKey),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }

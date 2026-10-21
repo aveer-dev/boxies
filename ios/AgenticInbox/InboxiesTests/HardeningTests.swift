@@ -310,6 +310,62 @@ final class HardeningTests: XCTestCase {
         XCTAssertTrue(restored.hasUnsavedChanges, "Restored message is saved as a draft next")
     }
 
+    // MARK: - Send idempotency key
+
+    @MainActor
+    func testEachComposeHasItsOwnIdempotencyKey() {
+        let mailbox = Mailbox(id: "mb-1", email: "me@x.com", name: "Me", settings: nil)
+        let first = ComposeFormModel(mode: .new, mailbox: mailbox)
+        let second = ComposeFormModel(mode: .new, mailbox: mailbox)
+        first.cancelAutoSave()
+        second.cancelAutoSave()
+        XCTAssertNotEqual(first.sendIdempotencyKey, second.sendIdempotencyKey)
+        // The server takes 1-200 printable ASCII characters.
+        for key in [first.sendIdempotencyKey, second.sendIdempotencyKey] {
+            XCTAssertEqual(key.count, 36)
+            XCTAssertTrue(key.unicodeScalars.allSatisfy { (0x20...0x7E).contains($0.value) })
+        }
+        XCTAssertEqual(first.sendIdempotencyKey, first.sendIdempotencyKey, "Stable for the compose's life")
+    }
+
+    @MainActor
+    func testRestoredPendingSendKeepsItsIdempotencyKey() {
+        let mailbox = Mailbox(id: "mb-1", email: "me@x.com", name: "Me", settings: nil)
+        let form = ComposeFormModel(mode: .new, mailbox: mailbox)
+        form.toTokens = [MailAddress(name: nil, email: "jordan@example.com")]
+        form.cancelAutoSave()
+        let saved = form.pendingSendRecord(accountKey: "me@x.com")
+        XCTAssertEqual(saved.idempotencyKey, form.sendIdempotencyKey)
+
+        let restored = ComposeFormModel(mode: saved.composeMode, mailbox: mailbox)
+        restored.restore(from: saved)
+        restored.cancelAutoSave()
+        XCTAssertEqual(restored.sendIdempotencyKey, form.sendIdempotencyKey)
+
+        // Records written before the key existed restore with the new form's own key.
+        var legacy = saved
+        legacy.idempotencyKey = nil
+        let fresh = ComposeFormModel(mode: legacy.composeMode, mailbox: mailbox)
+        let freshKey = fresh.sendIdempotencyKey
+        fresh.restore(from: legacy)
+        fresh.cancelAutoSave()
+        XCTAssertEqual(fresh.sendIdempotencyKey, freshKey)
+    }
+
+    func testPendingSendRecordPersistsIdempotencyKey() throws {
+        let store = try tempStore()
+        var saved = record()
+        saved.idempotencyKey = "key-123"
+        store.save(saved)
+        XCTAssertEqual(store.loadAll().first?.idempotencyKey, "key-123")
+    }
+
+    func testIdempotencyHeaders() {
+        XCTAssertEqual(APIClient.idempotencyHeaders("abc"), ["Idempotency-Key": "abc"])
+        XCTAssertEqual(APIClient.idempotencyHeaders(nil), [:])
+        XCTAssertEqual(APIClient.idempotencyHeaders(""), [:])
+    }
+
     // MARK: - Body sanitizing
 
     func testMailCSPRunsNoPageScript() {
