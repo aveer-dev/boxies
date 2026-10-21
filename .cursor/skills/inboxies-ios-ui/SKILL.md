@@ -17,7 +17,8 @@ When polishing motion, also load `animate`, `apple-design`, and `emil-design-eng
 
 ## Stack
 
-- SwiftUI-first, iOS 17+, iPhone portrait only (`TARGETED_DEVICE_FAMILY: 1`).
+- SwiftUI-first, iOS 17+, iPhone (portrait only) + iPad (all orientations, Split View / Slide Over) — `TARGETED_DEVICE_FAMILY: "1,2"`.
+- iPad: `horizontalSizeClass == .regular` → `HomeSplitLayout` two-pane (list column + reading pane, `Views/Home/HomeSplitLayout.swift`); compact width is the phone layout. Sheets use `.formSheetSizing()` (centered form sheet on iPad, iOS 18+).
 - Swift **5.10** (`project.yml`). Do not migrate language/concurrency for a UI change.
 - UIKit only for appearance proxies, `WKWebView` (HTML mail), Sign in with Apple, Quick Look, and hosting-VC theme override.
 - `@Observable` `AppModel` + `AuthStore` via `.environment`. Views own local `@State` for presentation flags.
@@ -125,7 +126,7 @@ Home large-title fade: `ProgressiveBlurBackground` (ultraThinMaterial masked to 
 | --- | --- |
 | Home | `NavigationStack`, large title, hidden toolbar background + progressive blur |
 | Folder tabs | Custom chrome on `AppModel.selectedTab` (`HomeTab`). Horizontal swipe between folders. **Not** `TabView`. |
-| Email detail | `.sheet(item:)` with stable id `"email-detail"` so prev/next does not remount |
+| Email detail | Compact: `.sheet(item:)` with stable id `"email-detail"` so prev/next does not remount. Regular width: `HomeReadingPane` beside the list |
 | Compose | `.sheet` when expanded; minimize to `ComposeDockBar` on dismiss |
 | Ask AI | `.sheet` + inner `NavigationStack(path:)` |
 | Search | ZStack opacity swap over home (not a push) |
@@ -207,6 +208,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMailbox -previewLoadFailed` | First mailbox load failed, nothing cached (error + Retry / Sign out, not onboarding) |
 | `-previewMailbox -previewListError` | Folder fetch failed with an empty cache (error + Retry, not "This folder is empty") |
 | `-previewMailbox -previewLoadMore` | Inbox with the infinite-scroll skeleton footer (scroll to the bottom) |
+| `-previewMailbox -previewManyNew` | Inbox with a dozen New: New capped at 5 + "Show N more new" (pushes the All new screen) above Seen |
 | `-htmlHardenFixture` | Sanitizer / link-policy fixture + quoted-replies sheet |
 | `-previewAutofill` | AutoFill extension lists fixture private emails (no sign-in or API). Enable the provider with `xcrun simctl spawn <udid> pluginkit -e use -i co.inboxies.app.credential-provider`, then in Safari tap an email field → QuickType **Passwords** → Inboxies. iOS always shows credential-provider UI as a full-height sheet. |
 
