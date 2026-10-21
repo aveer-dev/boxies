@@ -47,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,6 +57,7 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
+import co.inboxies.app.theme.InboxiesColors
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
 import co.inboxies.app.ui.components.MarkdownContentView
@@ -100,6 +100,14 @@ fun EmailBodyView(
             )
     }
     val showLoading = isHtml && (isWebLoading || webHeightPx <= 1f)
+    // Dark mode: designed mail keeps its colours on a light paper card; simple mail goes dark.
+    val appearance = EmailBodyAppearance.of(
+        dark = colors.isDark,
+        hasOwnColors = remember(prepared.main) { EmailHtmlSanitizer.hasOwnColors(prepared.main) },
+    )
+    val quoteHasOwnColors = remember(prepared.quote) {
+        prepared.quote?.let(EmailHtmlSanitizer::hasOwnColors) == true
+    }
 
     LaunchedEffect(email.id, htmlOrText, attachments.map { it.id }.joinToString(",")) {
         showQuoted = false
@@ -172,13 +180,15 @@ fun EmailBodyView(
 
             Box(modifier = Modifier.fillMaxWidth()) {
                 HtmlBodyWebView(
-                    html = wrapEmailHtml(prepared.main, allowRemoteImages),
+                    html = wrapEmailHtml(prepared.main, allowRemoteImages, appearance),
                     onHeight = { webHeightPx = it },
                     onLoadingChanged = { isWebLoading = it },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(with(LocalDensity.current) { webHeightPx.toDp().coerceAtLeast(1.dp) })
-                        .alpha(if (showLoading) 0f else 1f),
+                        // The probe reports CSS px, which are dp under `width=device-width, initial-scale=1`.
+                        .height(webHeightPx.coerceAtLeast(1f).dp)
+                        .alpha(if (showLoading) 0f else 1f)
+                        .mailPaper(appearance),
                 )
                 if (showLoading) {
                     BodySkeleton(isResolvingImages = isResolvingImages)
@@ -208,6 +218,7 @@ fun EmailBodyView(
                 content = quote,
                 isHtml = isHtml,
                 allowRemoteImages = allowRemoteImages,
+                hasOwnColors = isHtml && quoteHasOwnColors,
                 onClose = { showQuoted = false },
             )
         }
@@ -334,10 +345,12 @@ private fun QuotedRepliesSheet(
     content: String,
     isHtml: Boolean,
     allowRemoteImages: Boolean,
+    hasOwnColors: Boolean,
     onClose: () -> Unit,
 ) {
     val colors = inboxiesColors()
     val view = LocalView.current
+    val appearance = EmailBodyAppearance.of(dark = colors.isDark, hasOwnColors = hasOwnColors)
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -370,7 +383,7 @@ private fun QuotedRepliesSheet(
                         setBackgroundColor(android.graphics.Color.TRANSPARENT)
                         applyEmailHtmlWebViewSettings(javaScriptEnabled = false)
                         webViewClient = EmailLinkWebViewClient()
-                        val wrapped = wrapQuotedHtml(content, allowRemoteImages)
+                        val wrapped = wrapQuotedHtml(content, allowRemoteImages, appearance)
                         tag = wrapped
                         loadDataWithBaseURL(
                             EmailHtmlSanitizer.OPAQUE_ORIGIN,
@@ -382,7 +395,7 @@ private fun QuotedRepliesSheet(
                     }
                 },
                 update = { view ->
-                    val wrapped = wrapQuotedHtml(content, allowRemoteImages)
+                    val wrapped = wrapQuotedHtml(content, allowRemoteImages, appearance)
                     if (view.tag != wrapped) {
                         view.tag = wrapped
                         view.loadDataWithBaseURL(
@@ -397,7 +410,14 @@ private fun QuotedRepliesSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(420.dp)
-                    .padding(bottom = 24.dp),
+                    .padding(bottom = 24.dp)
+                    .then(
+                        if (appearance == EmailBodyAppearance.Paper) {
+                            Modifier.padding(horizontal = 12.dp).mailPaper(appearance)
+                        } else {
+                            Modifier
+                        },
+                    ),
             )
         } else {
             Column(
@@ -545,7 +565,55 @@ private fun emailCsp(allowRemoteImages: Boolean): String =
         EmailHtmlSanitizer.BLOCKED_REMOTE_IMAGES_POLICY
     }
 
-private fun wrapEmailHtml(bodyHtml: String, allowRemoteImages: Boolean): String {
+/**
+ * How an HTML mail body is coloured. Dark mode follows Gmail / Apple Mail / Hey:
+ * simple mail (no colours of its own) takes the app theme; designed mail
+ * ([EmailHtmlSanitizer.hasOwnColors]) is shown as designed on a light paper card,
+ * so it never turns into dark-on-dark text. Light mode is unchanged. Twin of iOS
+ * `EmailBodyAppearance`. The sanitizer strips `<style>` / `<meta>`, so a mail's own
+ * dark variant can't apply.
+ *
+ * Colours are written into the page: WebView's `prefers-color-scheme` follows the
+ * (light) Activity theme, not the in-app System / Light / Dark choice.
+ */
+internal enum class EmailBodyAppearance(
+    val cssColorScheme: String,
+    val text: String,
+    val link: String,
+    val quoteBorder: String,
+    val quoteText: String,
+) {
+    Light("light", "#1f1f23", "#2659d9", "#d0d0d4", "#5a5a60"),
+    Dark("dark", "#f7f7f8", "#5888fb", "#3f3f46", "#a1a1aa"),
+    Paper("light", "#1f1f23", "#2659d9", "#d0d0d4", "#5a5a60"),
+    ;
+
+    companion object {
+        const val PAPER_PADDING = "14px 16px"
+        val PaperCornerRadius = 12.dp
+
+        fun of(dark: Boolean, hasOwnColors: Boolean): EmailBodyAppearance = when {
+            !dark -> Light
+            hasOwnColors -> Paper
+            else -> Dark
+        }
+    }
+}
+
+/** Designed mail in dark mode sits on a light rounded card. Apply after `alpha` so it fades with the body. */
+private fun Modifier.mailPaper(appearance: EmailBodyAppearance): Modifier =
+    if (appearance == EmailBodyAppearance.Paper) {
+        clip(RoundedCornerShape(EmailBodyAppearance.PaperCornerRadius))
+            .background(InboxiesColors.MailPaper)
+    } else {
+        this
+    }
+
+private fun wrapEmailHtml(
+    bodyHtml: String,
+    allowRemoteImages: Boolean,
+    appearance: EmailBodyAppearance,
+): String {
     val bodySize = AppThemeDims.FontSize.body.value.toInt()
     return """
         <!DOCTYPE html>
@@ -555,7 +623,7 @@ private fun wrapEmailHtml(bodyHtml: String, allowRemoteImages: Boolean): String 
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <meta http-equiv="Content-Security-Policy" content="${emailCsp(allowRemoteImages)}">
         <style>
-          :root { color-scheme: light dark; }
+          :root { color-scheme: ${appearance.cssColorScheme}; }
           html, body {
             margin: 0;
             padding: 0;
@@ -569,20 +637,17 @@ private fun wrapEmailHtml(bodyHtml: String, allowRemoteImages: Boolean): String 
             font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: ${bodySize}px;
             line-height: 1.45;
-            color: #1f1f23;
+            color: ${appearance.text};
             word-wrap: break-word;
             overflow-wrap: anywhere;
           }
           img { max-width: 100%; height: auto; }
-          a { color: #2659d9; }
+          a { color: ${appearance.link}; }
           pre, code { white-space: pre-wrap; }
           [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
             position: relative !important;
           }
-          @media (prefers-color-scheme: dark) {
-            body { color: #f7f7f8; }
-            a { color: #5888fb; }
-          }
+          ${if (appearance == EmailBodyAppearance.Paper) "body { padding: ${EmailBodyAppearance.PAPER_PADDING}; }" else ""}
           .gmail_quote, .yahoo_quoted, .protonmail_quote, #divRplyFwdMsg, blockquote[type="cite"], #appendonsend {
             display: none !important;
           }
@@ -593,7 +658,11 @@ private fun wrapEmailHtml(bodyHtml: String, allowRemoteImages: Boolean): String 
     """.trimIndent()
 }
 
-private fun wrapQuotedHtml(bodyContent: String, allowRemoteImages: Boolean): String {
+private fun wrapQuotedHtml(
+    bodyContent: String,
+    allowRemoteImages: Boolean,
+    appearance: EmailBodyAppearance,
+): String {
     val bodySize = AppThemeDims.FontSize.body.value.toInt()
     val sanitized = EmailHtmlSanitizer.sanitize(bodyContent)
     return """
@@ -604,7 +673,7 @@ private fun wrapQuotedHtml(bodyContent: String, allowRemoteImages: Boolean): Str
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <meta http-equiv="Content-Security-Policy" content="${emailCsp(allowRemoteImages)}">
         <style>
-          :root { color-scheme: light dark; }
+          :root { color-scheme: ${appearance.cssColorScheme}; }
           html, body {
             margin: 0;
             padding: 16px 20px 32px 20px;
@@ -616,29 +685,21 @@ private fun wrapQuotedHtml(bodyContent: String, allowRemoteImages: Boolean): Str
             font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: ${bodySize}px;
             line-height: 1.5;
-            color: #1f1f23;
+            color: ${appearance.text};
             word-wrap: break-word;
             overflow-wrap: anywhere;
           }
           img { max-width: 100%; height: auto; }
-          a { color: #2659d9; }
+          a { color: ${appearance.link}; }
           pre, code { white-space: pre-wrap; }
           [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
             position: relative !important;
           }
           blockquote {
-            border-left: 2px solid #d0d0d4;
+            border-left: 2px solid ${appearance.quoteBorder};
             margin: 10px 0;
             padding-left: 12px;
-            color: #5a5a60;
-          }
-          @media (prefers-color-scheme: dark) {
-            body { color: #f7f7f8; }
-            a { color: #5888fb; }
-            blockquote {
-              border-left-color: #3f3f46;
-              color: #a1a1aa;
-            }
+            color: ${appearance.quoteText};
           }
         </style>
         </head>

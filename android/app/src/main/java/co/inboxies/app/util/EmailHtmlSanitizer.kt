@@ -34,6 +34,48 @@ object EmailHtmlSanitizer {
 
     const val OPAQUE_ORIGIN = "https://inboxies.invalid/"
 
+    private val tagRegex = Regex("""<([a-zA-Z][^\s/>]*)((?:[^>"']|"[^"]*"|'[^']*')*)>""")
+    private val attributeRegex = Regex("""([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?""")
+    private val importantRegex = Regex("""!\s*important\s*$""", RegexOption.IGNORE_CASE)
+    private val colorProperties = setOf("color", "background", "background-color", "background-image")
+    private val neutralColorValues = setOf(
+        "", "transparent", "inherit", "initial", "unset", "revert", "currentcolor", "none",
+    )
+
+    /**
+     * True when sanitized HTML sets its own background or text colours: a non-empty
+     * `bgcolor` / `background` attribute, `<font color>`, or an inline `color` /
+     * `background*` declaration with a real value. Such mail renders on a light paper
+     * card in dark mode; everything else takes the app theme. Same rules as web
+     * `shared/email-colors.ts` and iOS `EmailHTMLSanitizer.hasOwnColors`, checked
+     * against `shared/email-colors.fixtures.json`.
+     */
+    fun hasOwnColors(html: String): Boolean {
+        if (html.isEmpty()) return false
+        for (tag in tagRegex.findAll(html)) {
+            val tagName = tag.groupValues[1].lowercase()
+            for (attr in attributeRegex.findAll(tag.groupValues[2])) {
+                val name = attr.groupValues[1].lowercase()
+                val value = attr.groups[2]?.value ?: attr.groups[3]?.value ?: attr.groups[4]?.value ?: ""
+                if ((name == "bgcolor" || name == "background") && !isNeutralColor(value)) return true
+                if (name == "color" && tagName == "font" && !isNeutralColor(value)) return true
+                if (name == "style" && styleSetsColors(value)) return true
+            }
+        }
+        return false
+    }
+
+    private fun styleSetsColors(style: String): Boolean =
+        style.split(';').any { declaration ->
+            val colon = declaration.indexOf(':')
+            colon >= 0 &&
+                declaration.substring(0, colon).trim().lowercase() in colorProperties &&
+                !isNeutralColor(declaration.substring(colon + 1))
+        }
+
+    private fun isNeutralColor(value: String): Boolean =
+        value.replace(importantRegex, "").trim().lowercase() in neutralColorValues
+
     data class SplitBody(val main: String, val quote: String?)
 
     fun prepare(html: String): SplitBody = splitQuotedReplies(sanitize(html))
