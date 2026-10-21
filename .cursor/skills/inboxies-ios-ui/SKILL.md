@@ -17,7 +17,8 @@ When polishing motion, also load `animate`, `apple-design`, and `emil-design-eng
 
 ## Stack
 
-- SwiftUI-first, iOS 17+, iPhone portrait only (`TARGETED_DEVICE_FAMILY: 1`).
+- SwiftUI-first, iOS 17+, iPhone (portrait only) + iPad (all orientations, Split View / Slide Over) — `TARGETED_DEVICE_FAMILY: "1,2"`.
+- iPad: `horizontalSizeClass == .regular` → `HomeSplitLayout` two-pane (list column + reading pane, `Views/Home/HomeSplitLayout.swift`); compact width is the phone layout. Sheets use `.formSheetSizing()` (centered form sheet on iPad, iOS 18+).
 - Swift **5.10** (`project.yml`). Do not migrate language/concurrency for a UI change.
 - UIKit only for appearance proxies, `WKWebView` (HTML mail), Sign in with Apple, Quick Look, and hosting-VC theme override.
 - `@Observable` `AppModel` + `AuthStore` via `.environment`. Views own local `@State` for presentation flags.
@@ -125,7 +126,7 @@ Home large-title fade: `ProgressiveBlurBackground` (ultraThinMaterial masked to 
 | --- | --- |
 | Home | `NavigationStack`, large title, hidden toolbar background + progressive blur |
 | Folder tabs | Custom chrome on `AppModel.selectedTab` (`HomeTab`). Horizontal swipe between folders. **Not** `TabView`. |
-| Email detail | `.sheet(item:)` with stable id `"email-detail"` so prev/next does not remount |
+| Email detail | Compact: `.sheet(item:)` with stable id `"email-detail"` so prev/next does not remount. Regular width: `HomeReadingPane` beside the list |
 | Compose | `.sheet` when expanded; minimize to `ComposeDockBar` on dismiss |
 | Ask AI | `.sheet` + inner `NavigationStack(path:)` |
 | Search | ZStack opacity swap over home (not a push) |

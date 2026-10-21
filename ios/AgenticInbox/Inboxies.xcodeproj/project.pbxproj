@@ -115,6 +115,7 @@
 		F77157DDCC45943C4BECC699 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A1EA00A322BC72F5FC673D /* LiquidGlass.swift */; };
 		F96094F83B37222A8FD02A81 /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B42BE8CBB664C4EBD75372C9 /* SplashScreenView.swift */; };
 		FBA191135B4D172A08F34424 /* DomainAdminSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F56EB81F290A128A71EC93C /* DomainAdminSettingsView.swift */; };
+		FC991A4DFE575F4AE22826B6 /* HomeSplitLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C4C122B42D9070E03121C1 /* HomeSplitLayout.swift */; };
 		FFCDD7CFD3A77A3C7BB29D37 /* SearchQueryParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -212,6 +213,7 @@
 		9B74F632D521C5EC45A24A89 /* PrivateEmailMatchingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailMatchingTests.swift; sourceTree = "<group>"; };
 		9C1FB146E802AF1FE45C344C /* WebKitLinkageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebKitLinkageTests.swift; sourceTree = "<group>"; };
 		9F90087071E0670883ED0ACD /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A2C4C122B42D9070E03121C1 /* HomeSplitLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeSplitLayout.swift; sourceTree = "<group>"; };
 		A4D9A4CBE7DF8D0E6DA68CFB /* PreviewSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewSupport.swift; sourceTree = "<group>"; };
 		A6DC837F339566A42E1C94BC /* ComposeFormatChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFormatChrome.swift; sourceTree = "<group>"; };
 		A7FD63286EBBC3A8BC11AE66 /* ContactPillParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactPillParser.swift; sourceTree = "<group>"; };
@@ -427,6 +429,7 @@
 			children = (
 				D7739FB6CD5F7B4E10AFE9A6 /* ComposeActionListOverlay.swift */,
 				F7DF8BEBB79B2AC262704B84 /* HomeShellView.swift */,
+				A2C4C122B42D9070E03121C1 /* HomeSplitLayout.swift */,
 				7FB6663712D0C7C547997049 /* InboxDigestView.swift */,
 				41B3D8693D204D7862C6350E /* ServiceStatusBanner.swift */,
 			);
@@ -721,6 +724,7 @@
 				47889E308407CEA2EBEB6704 /* ForwardingSettingsView.swift in Sources */,
 				4F2A3F99634F03CF0A219758 /* GoogleSignInFlow.swift in Sources */,
 				88944A707FD0A19F995EF96B /* HomeShellView.swift in Sources */,
+				FC991A4DFE575F4AE22826B6 /* HomeSplitLayout.swift in Sources */,
 				3770413860D08C5653807FD5 /* InboxDigestView.swift in Sources */,
 				8D71C210B786877436A48B37 /* InboxNewListView.swift in Sources */,
 				4A9AA670A55D6114A8355823 /* InboxiesApp.swift in Sources */,
@@ -834,7 +838,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -854,7 +858,7 @@
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Inboxies.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Inboxies";
 			};
 			name = Debug;
@@ -879,7 +883,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -899,7 +903,7 @@
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Inboxies.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Inboxies";
 			};
 			name = Release;
@@ -987,7 +991,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -1088,7 +1092,7 @@
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
