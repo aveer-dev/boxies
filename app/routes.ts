@@ -26,6 +26,7 @@ export default [
 		index("routes/mailbox-index.tsx"),
 		route("emails/:folder/:emailId?", "routes/email-list.tsx"),
 		route("reply-later/:emailId?", "routes/reply-later.tsx"),
+		route("new/:emailId?", "routes/inbox-new.tsx"),
 		route("search/:emailId?", "routes/search-results.tsx"),
 		// Settings is a side panel (useUIStore); old links open it.
 		route("settings/:page?", "routes/settings.tsx"),

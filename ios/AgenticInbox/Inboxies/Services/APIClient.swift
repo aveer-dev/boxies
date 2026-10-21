@@ -784,15 +784,26 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func listEmails(mailboxId: String, folder: String, page: Int = 1) async throws -> EmailListResponse {
-        try await request(
+    /// Threaded folder page. Inbox only: `newLimit` keeps the newest N New conversations above
+    /// every Seen one; `section` (`new` | `seen`) lists one section (AVE-23).
+    func listEmails(
+        mailboxId: String,
+        folder: String,
+        page: Int = 1,
+        newLimit: Int? = nil,
+        section: String? = nil
+    ) async throws -> EmailListResponse {
+        var query = [
+            "folder": folder,
+            "threaded": "true",
+            "page": String(page),
+            "limit": "25",
+        ]
+        if let newLimit { query["new_limit"] = String(newLimit) }
+        if let section { query["section"] = section }
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
-            query: [
-                "folder": folder,
-                "threaded": "true",
-                "page": String(page),
-                "limit": "25",
-            ]
+            query: query
         )
     }
 

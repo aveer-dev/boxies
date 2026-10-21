@@ -860,19 +860,27 @@ class ApiClient private constructor() {
             },
         )
 
+    /**
+     * Threaded folder page. Inbox only: [newLimit] keeps the newest N New conversations above
+     * every Seen one; [section] (`new` | `seen`) lists one section (AVE-23).
+     */
     suspend fun listEmails(
         mailboxId: String,
         folder: String,
         page: Int = 1,
         threaded: Boolean = true,
+        newLimit: Int? = null,
+        section: String? = null,
     ): EmailListResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
-        query = mapOf(
-            "folder" to folder,
-            "threaded" to threaded.toString(),
-            "page" to page.toString(),
-            "limit" to "25",
-        ),
+        query = buildMap {
+            put("folder", folder)
+            put("threaded", threaded.toString())
+            put("page", page.toString())
+            put("limit", "25")
+            newLimit?.let { put("new_limit", it.toString()) }
+            section?.let { put("section", it) }
+        },
     )
 
     suspend fun getEmail(mailboxId: String, id: String): Email =
