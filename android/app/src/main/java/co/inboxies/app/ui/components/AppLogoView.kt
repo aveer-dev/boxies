@@ -21,7 +21,11 @@ import co.inboxies.app.theme.inboxiesColors
 /** Logo tile corner radius as a fraction of the tile size (matches iOS and web). */
 internal const val LOGO_TILE_CORNER_FRACTION = 0.22f
 
-/** The plane drawable for a given rendered size: the simplified mark at 32dp and below. */
+/**
+ * The plane drawable for a given rendered size. Both are generated from the master mark
+ * (`design/logo/inboxies-mark.svg`) with the same padding; at 32dp and below the strokes
+ * are heavier and the finest folds are dropped so it stays legible.
+ */
 internal fun inboxiesLogoRes(size: Dp): Int =
     if (size <= 32.dp) R.drawable.ic_inboxies_logo_small else R.drawable.ic_inboxies_logo
 

@@ -138,7 +138,7 @@ class InboxiesAutofillService : AutofillService() {
         val content = InlineSuggestionUi.newContentBuilder(attribution)
             .setTitle(title)
             .setSubtitle(subtitle)
-            .setStartIcon(Icon.createWithResource(this, R.drawable.ic_inboxies_logo_small))
+            .setStartIcon(Icon.createWithResource(this, R.drawable.ic_inboxies_glyph))
             .setContentDescription(getString(R.string.autofill_content_description))
             .build()
         return InlinePresentation(content.slice, spec, false)

@@ -53,7 +53,7 @@ class InboxiesFirebaseMessagingService : FirebaseMessagingService() {
         )
         PushNotificationManager.ensureChannel(this)
         val notification = NotificationCompat.Builder(this, PushNotificationManager.CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_inboxies_logo_small)
+            .setSmallIcon(R.drawable.ic_inboxies_glyph)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
