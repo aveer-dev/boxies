@@ -56,6 +56,7 @@ import co.inboxies.app.models.MailboxInviteRow
 import co.inboxies.app.models.MailboxMember
 import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.models.RevokeSessionsResponse
+import co.inboxies.app.models.McpGrant
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -400,6 +401,15 @@ class ApiClient private constructor() {
         method = "POST",
         body = buildJsonObject {},
     )
+
+    // ── Connected apps (MCP OAuth grants) ──
+
+    suspend fun listMcpGrants(): List<McpGrant> = request("/api/v1/me/mcp-grants")
+
+    /** Disconnects the app: the grant and all its tokens are deleted server-side. */
+    suspend fun revokeMcpGrant(id: String) {
+        request<EmptyResponse>("/api/v1/me/mcp-grants/${pathEncode(id)}", method = "DELETE")
+    }
 
     // ── Recovery email ──
 

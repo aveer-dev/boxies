@@ -149,6 +149,27 @@ function oauthEnabled(env: Env): boolean {
 	return Boolean((env as { OAUTH_KV?: unknown }).OAUTH_KV);
 }
 
+/** The authorization server for one configuration. Holds config only, no request state. */
+function newAuthorizationServer(config: OAuthConfig): OAuthAuthorizationServer<Env> {
+	return new OAuthAuthorizationServer<Env>({
+		issuer: config.issuer,
+		resources: config.resources,
+		defaultResource: config.defaultResource,
+		authorizeEndpoint: OAUTH_AUTHORIZE_PATH,
+		tokenEndpoint: OAUTH_TOKEN_PATH,
+		clientRegistrationEndpoint: OAUTH_REGISTER_PATH,
+		scopesSupported: [...MCP_OAUTH_SCOPES],
+		// Defaults, spelled out: 1h access tokens, 30-day refresh, 90-day DCR clients.
+		accessTokenTTL: 60 * 60,
+		refreshTokenTTL: 30 * 24 * 60 * 60,
+		// No private-use (custom scheme) redirect URIs and no Client ID
+		// Metadata Documents for now: https or loopback http, registered via DCR.
+		allowPrivateUseRedirectUris: false,
+		clientIdMetadataDocumentEnabled: false,
+		allowTokenExchangeGrant: false,
+	});
+}
+
 /**
  * The OAuth machinery for one `/mcp` handler. Instances are cached per
  * configuration (they hold only config, no request state).
@@ -169,23 +190,7 @@ export function createMcpOAuth(mcpHandler: McpFetchHandler, options: { renderCon
 		const cached = bundles.get(key);
 		if (cached) return cached;
 
-		const authorizationServer = new OAuthAuthorizationServer<Env>({
-			issuer: config.issuer,
-			resources: config.resources,
-			defaultResource: config.defaultResource,
-			authorizeEndpoint: OAUTH_AUTHORIZE_PATH,
-			tokenEndpoint: OAUTH_TOKEN_PATH,
-			clientRegistrationEndpoint: OAUTH_REGISTER_PATH,
-			scopesSupported: [...MCP_OAUTH_SCOPES],
-			// Defaults, spelled out: 1h access tokens, 30-day refresh, 90-day DCR clients.
-			accessTokenTTL: 60 * 60,
-			refreshTokenTTL: 30 * 24 * 60 * 60,
-			// No private-use (custom scheme) redirect URIs and no Client ID
-			// Metadata Documents for now: https or loopback http, registered via DCR.
-			allowPrivateUseRedirectUris: false,
-			clientIdMetadataDocumentEnabled: false,
-			allowTokenExchangeGrant: false,
-		});
+		const authorizationServer = newAuthorizationServer(config);
 
 		const resourceServers = new Map<string, OAuthResourceServer<Env, McpRequestProps>>();
 		for (const resource of config.resources) {
@@ -383,7 +388,25 @@ export async function validateMcpAccessToken(
 
 // ── /authorize ───────────────────────────────────────────────────
 
-type OAuthApi = ReturnType<OAuthAuthorizationServer<Env>["getOAuthApi"]>;
+export type OAuthApi = ReturnType<OAuthAuthorizationServer<Env>["getOAuthApi"]>;
+
+/**
+ * OAuth helpers outside a `/mcp` request (Settings → Sessions lists and
+ * revokes the user's grants, AVE-70). Null when OAuth is off.
+ */
+const apiServers = new Map<string, OAuthAuthorizationServer<Env>>();
+export function mcpOAuthApi(env: Env, requestUrl: URL): OAuthApi | null {
+	if (!oauthEnabled(env)) return null;
+	const config = mcpOAuthConfig(env, requestUrl);
+	if (!config) return null;
+	const key = JSON.stringify(config);
+	let server = apiServers.get(key);
+	if (!server) {
+		server = newAuthorizationServer(config);
+		apiServers.set(key, server);
+	}
+	return server.getOAuthApi(env);
+}
 
 /** A full app session (not an extension/AutoFill scoped one) or null. */
 async function signedInPrincipal(env: Env, request: Request): Promise<RequestPrincipal | null> {

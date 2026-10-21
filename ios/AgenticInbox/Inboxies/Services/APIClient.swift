@@ -315,6 +315,20 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/me/sessions/revoke-others", method: "POST", body: [:] as [String: Any])
     }
 
+    // MARK: Connected apps (MCP OAuth grants)
+
+    func listMcpGrants() async throws -> [McpGrant] {
+        try await request(path: "/api/v1/me/mcp-grants")
+    }
+
+    /// Disconnects the app: the grant and all its tokens are deleted server-side.
+    func revokeMcpGrant(id: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/me/mcp-grants/\(id.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
     /// A scoped, revocable session for the AutoFill extension (private emails only).
     func createAutofillSession() async throws -> ScopedSessionResponse {
         try await request(

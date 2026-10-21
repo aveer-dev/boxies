@@ -25,6 +25,7 @@ import type {
 	MaskedAlias,
 	MeResponse,
 	AccountSession,
+	McpGrant,
 	RecoveryEmailStatus,
 	MailboxMember,
 	MailboxInviteRow,
@@ -195,6 +196,11 @@ const api = {
 		del<{ ok: boolean }>(`/api/v1/me/sessions/${encodeURIComponent(sessionId)}`),
 	revokeOtherSessions: () =>
 		post<{ ok: boolean; revoked: number }>("/api/v1/me/sessions/revoke-others"),
+
+	// Connected apps (MCP OAuth grants)
+	listMcpGrants: () => get<McpGrant[]>("/api/v1/me/mcp-grants"),
+	revokeMcpGrant: (grantId: string) =>
+		del<{ ok: boolean }>(`/api/v1/me/mcp-grants/${encodeURIComponent(grantId)}`),
 
 	// Recovery email (where password reset codes go)
 	getRecoveryEmail: () => get<RecoveryEmailStatus>("/api/v1/me/recovery-email"),
