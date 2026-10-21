@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Laptop
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.AccountSession
+import co.inboxies.app.models.McpGrant
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
@@ -54,7 +56,8 @@ import java.time.Instant
 
 /**
  * Account → Devices & sessions: every signed-in device, browser, extension and
- * AutoFill session, with sign-out per session or everywhere else.
+ * AutoFill session, with sign-out per session or everywhere else; plus the apps
+ * connected over MCP OAuth, each with Disconnect (revokes the grant and its tokens).
  */
 @Composable
 fun SessionsSettingsView(onBack: () -> Unit) {
@@ -70,14 +73,31 @@ fun SessionsSettingsView(onBack: () -> Unit) {
     var sessionToRevoke by remember { mutableStateOf<AccountSession?>(null) }
     var showRevokeOthers by remember { mutableStateOf(false) }
     var isRevokingOthers by remember { mutableStateOf(false) }
+    var grants by remember { mutableStateOf<List<McpGrant>>(emptyList()) }
+    var isLoadingGrants by remember { mutableStateOf(true) }
+    var grantsError by remember { mutableStateOf<String?>(null) }
+    var revokingGrantId by remember { mutableStateOf<String?>(null) }
+    var grantToRevoke by remember { mutableStateOf<McpGrant?>(null) }
 
     val others = sessions.filterNot { it.current }
 
     fun load() {
         if (app.isDebugPreview) {
             sessions = previewSessions()
+            grants = previewGrants()
             isLoading = false
+            isLoadingGrants = false
             return
+        }
+        scope.launch {
+            isLoadingGrants = true
+            runCatching { ApiClient.shared.listMcpGrants() }
+                .onSuccess {
+                    grants = it
+                    grantsError = null
+                }
+                .onFailure { grantsError = "Couldn't load connected apps. ${it.message.orEmpty()}" }
+            isLoadingGrants = false
         }
         scope.launch {
             isLoading = true
@@ -188,6 +208,59 @@ fun SessionsSettingsView(onBack: () -> Unit) {
             )
         }
 
+        SettingsSectionHeader("Connected apps")
+
+        when {
+            isLoadingGrants && grants.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(22.dp), color = colors.muted, strokeWidth = 2.dp)
+            }
+            grants.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.surface)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            ) {
+                Text(
+                    grantsError ?: "No apps connected",
+                    fontFamily = InterFontFamily,
+                    fontSize = if (grantsError != null) 12.sp else 15.sp,
+                    color = colors.muted,
+                )
+            }
+            else -> Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.surface),
+            ) {
+                grants.forEachIndexed { index, grant ->
+                    GrantRow(
+                        grant = grant,
+                        busy = revokingGrantId == grant.id,
+                        onDisconnect = { grantToRevoke = grant },
+                    )
+                    if (index < grants.lastIndex) {
+                        HorizontalDivider(modifier = Modifier.padding(start = 52.dp), color = colors.line)
+                    }
+                }
+            }
+        }
+        Text(
+            "AI assistants and other apps you allowed to use your mail over MCP. Disconnecting cuts off access right away.",
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            color = colors.muted,
+        )
+
         statusMessage?.let {
             Text(
                 it,
@@ -233,6 +306,45 @@ fun SessionsSettingsView(onBack: () -> Unit) {
             },
             dismissButton = {
                 TextButton(onClick = { sessionToRevoke = null }) {
+                    Text("Cancel", fontFamily = InterFontFamily, color = colors.muted)
+                }
+            },
+        )
+    }
+
+    grantToRevoke?.let { grant ->
+        AlertDialog(
+            onDismissRequest = { grantToRevoke = null },
+            containerColor = colors.surface,
+            title = { Text("Disconnect ${grantTitle(grant)}?", fontFamily = InterFontFamily, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "It loses access to your mail immediately. To use it again, connect it again from the app.",
+                    fontFamily = InterFontFamily,
+                    fontSize = 13.sp,
+                    color = colors.muted,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    grantToRevoke = null
+                    scope.launch {
+                        revokingGrantId = grant.id
+                        errorMessage = null
+                        runCatching { ApiClient.shared.revokeMcpGrant(grant.id) }
+                            .onSuccess {
+                                grants = grants.filterNot { it.id == grant.id }
+                                statusMessage = "Disconnected ${grantTitle(grant)}"
+                            }
+                            .onFailure { errorMessage = it.message }
+                        revokingGrantId = null
+                    }
+                }) {
+                    Text("Disconnect", fontFamily = InterFontFamily, color = colors.deepDarkRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { grantToRevoke = null }) {
                     Text("Cancel", fontFamily = InterFontFamily, color = colors.muted)
                 }
             },
@@ -327,6 +439,63 @@ private fun SessionRow(session: AccountSession, busy: Boolean, onSignOut: () -> 
     }
 }
 
+@Composable
+private fun GrantRow(grant: McpGrant, busy: Boolean, onDisconnect: () -> Unit) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = colors.ink, modifier = Modifier.size(22.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                grantTitle(grant),
+                fontFamily = InterFontFamily,
+                fontSize = 15.sp,
+                color = colors.ink,
+                maxLines = 1,
+            )
+            Text(
+                grantSubtitle(grant),
+                fontFamily = InterFontFamily,
+                fontSize = 12.sp,
+                color = colors.muted,
+                maxLines = 2,
+            )
+        }
+        if (busy) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), color = colors.muted, strokeWidth = 2.dp)
+        } else {
+            TextButton(onClick = onDisconnect) {
+                Text("Disconnect", fontFamily = InterFontFamily, fontSize = 13.sp, color = colors.deepDarkRed)
+            }
+        }
+    }
+}
+
+/** The app's registered name (unverified). Same rules as iOS `SessionsSettingsView.grantTitle`. */
+internal fun grantTitle(grant: McpGrant): String =
+    grant.clientName?.trim()?.takeIf { it.isNotEmpty() } ?: "Unnamed app"
+
+private val scopeLabels = mapOf("read" to "Read", "draft" to "Drafts", "send" to "Send", "manage" to "Organize")
+
+/** "Connected 3 days ago · Read, Drafts · All mailboxes" */
+internal fun grantSubtitle(grant: McpGrant): String {
+    val parts = mutableListOf<String>()
+    runCatching { Instant.parse(grant.createdAt) }.getOrNull()?.let { parts += "Connected ${relative(it)}" }
+    grant.scopes.joinToString(", ") { scopeLabels[it] ?: it }.takeIf { it.isNotEmpty() }?.let { parts += it }
+    val mailboxes = grant.mailboxIds
+    parts += when {
+        mailboxes == null -> "All mailboxes"
+        mailboxes.size == 1 -> mailboxes[0]
+        else -> "${mailboxes.size} mailboxes"
+    }
+    return parts.joinToString(" · ")
+}
+
 /** Server label, else a name from the user agent. Same rules as iOS `SessionsSettingsView.title`. */
 internal fun sessionTitle(session: AccountSession): String {
     session.label?.takeIf { it.isNotBlank() }?.let { return it }
@@ -387,6 +556,21 @@ private fun sessionIcon(session: AccountSession): ImageVector {
         title.contains("iphone") || title.contains("ipad") -> Icons.Outlined.PhoneIphone
         else -> Icons.Outlined.Laptop
     }
+}
+
+private fun previewGrants(): List<McpGrant> {
+    val now = Instant.now()
+    return listOf(
+        McpGrant(
+            id = "g-1", clientId = "c-1", clientName = "Claude Desktop",
+            scopes = listOf("read", "draft", "send", "manage"),
+            createdAt = now.minusSeconds(3 * 86_400).toString(),
+        ),
+        McpGrant(
+            id = "g-2", clientId = "c-2", scopes = listOf("read"), mailboxIds = listOf("hello@inboxies.email"),
+            createdAt = now.minusSeconds(3_600).toString(),
+        ),
+    )
 }
 
 private fun previewSessions(): List<AccountSession> {

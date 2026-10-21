@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Account → Devices & sessions: every signed-in device, browser, extension and
-/// AutoFill session, with sign-out per session or everywhere else.
+/// AutoFill session, with sign-out per session or everywhere else; plus the apps
+/// connected over MCP OAuth, each with Disconnect (revokes the grant and its tokens).
 struct SessionsSettingsView: View {
     @Environment(AppModel.self) private var app
 
@@ -13,6 +14,11 @@ struct SessionsSettingsView: View {
     @State private var sessionToRevoke: AccountSession?
     @State private var showRevokeOthers = false
     @State private var isRevokingOthers = false
+    @State private var grants: [McpGrant] = []
+    @State private var isLoadingGrants = true
+    @State private var grantsError: String?
+    @State private var revokingGrantId: String?
+    @State private var grantToRevoke: McpGrant?
 
     private var others: [AccountSession] { sessions.filter { !$0.current } }
 
@@ -62,6 +68,33 @@ struct SessionsSettingsView: View {
                 }
             }
 
+            Section {
+                if isLoadingGrants && grants.isEmpty {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                } else if let grantsError, grants.isEmpty {
+                    Text(grantsError)
+                        .font(.inter(size: SettingsFormChrome.footerFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                } else if grants.isEmpty {
+                    Text("No apps connected")
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                } else {
+                    ForEach(grants) { grant in
+                        grantRow(grant)
+                    }
+                }
+            } header: {
+                Text("Connected apps")
+            } footer: {
+                Text("AI assistants and other apps you allowed to use your mail over MCP. Disconnecting cuts off access right away.")
+            }
+
             if let statusMessage {
                 Section {
                     Text(statusMessage)
@@ -94,6 +127,23 @@ struct SessionsSettingsView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Disconnect \(grantToRevoke.map(Self.grantTitle) ?? "this app")?",
+            isPresented: Binding(
+                get: { grantToRevoke != nil },
+                set: { if !$0 { grantToRevoke = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Disconnect", role: .destructive) {
+                if let grant = grantToRevoke {
+                    Task { await revokeGrant(grant) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It loses access to your mail immediately. To use it again, connect it again from the app.")
         }
         .confirmationDialog(
             "Sign out everywhere else?",
@@ -148,14 +198,77 @@ struct SessionsSettingsView: View {
         .padding(.vertical, 2)
     }
 
+    private func grantRow(_ grant: McpGrant) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 17))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.grantTitle(grant))
+                    .font(.inter(size: SettingsFormChrome.rowFontSize))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(1)
+                Text(Self.grantSubtitle(grant))
+                    .font(.inter(size: SettingsFormChrome.footerFontSize))
+                    .foregroundStyle(AppTheme.muted)
+                    .lineLimit(2)
+            }
+            Spacer()
+            if revokingGrantId == grant.id {
+                ProgressView().controlSize(.small)
+            } else {
+                Button("Disconnect") {
+                    grantToRevoke = grant
+                }
+                .font(.inter(size: 13, weight: .medium))
+                .foregroundStyle(.red)
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     // MARK: Actions
 
     private func load() async {
         if app.isDebugPreview {
             sessions = Self.previewSessions
+            grants = Self.previewGrants
             isLoading = false
+            isLoadingGrants = false
             return
         }
+        async let grantsLoad: Void = loadGrants()
+        await loadSessions()
+        await grantsLoad
+    }
+
+    private func loadGrants() async {
+        isLoadingGrants = true
+        defer { isLoadingGrants = false }
+        do {
+            grants = try await APIClient.shared.listMcpGrants()
+            grantsError = nil
+        } catch {
+            grantsError = "Couldn't load connected apps. \(error.localizedDescription)"
+        }
+    }
+
+    private func revokeGrant(_ grant: McpGrant) async {
+        revokingGrantId = grant.id
+        errorMessage = nil
+        defer { revokingGrantId = nil }
+        do {
+            try await APIClient.shared.revokeMcpGrant(id: grant.id)
+            grants.removeAll { $0.id == grant.id }
+            statusMessage = "Disconnected \(Self.grantTitle(grant))"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadSessions() async {
         isLoading = true
         defer { isLoading = false }
         do {
@@ -253,8 +366,50 @@ struct SessionsSettingsView: View {
         return "laptopcomputer"
     }
 
+    static func grantTitle(_ grant: McpGrant) -> String {
+        if let name = grant.clientName?.trimmingCharacters(in: .whitespaces), !name.isEmpty { return name }
+        return "Unnamed app"
+    }
+
+    private static let scopeLabels: [String: String] = [
+        "read": "Read", "draft": "Drafts", "send": "Send", "manage": "Organize",
+    ]
+
+    /// "Connected 3 days ago · Read, Drafts · All mailboxes"
+    static func grantSubtitle(_ grant: McpGrant) -> String {
+        var parts: [String] = []
+        if let date = parseDate(grant.createdAt) {
+            parts.append("Connected \(date.formatted(.relative(presentation: .named)))")
+        }
+        let scopes = grant.scopes.map { scopeLabels[$0] ?? $0 }.joined(separator: ", ")
+        if !scopes.isEmpty { parts.append(scopes) }
+        switch grant.mailboxIds {
+        case nil: parts.append("All mailboxes")
+        case let ids? where ids.count == 1: parts.append(ids[0])
+        case let ids?: parts.append("\(ids.count) mailboxes")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private static func parseDate(_ iso: String) -> Date? {
         ISO8601DateFormatter.withFractionalSeconds.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    }
+
+    private static var previewGrants: [McpGrant] {
+        let iso = ISO8601DateFormatter()
+        let now = Date()
+        return [
+            McpGrant(
+                id: "g-1", clientId: "c-1", clientName: "Claude Desktop", clientUri: nil,
+                scopes: ["read", "draft", "send", "manage"], mailboxIds: nil,
+                createdAt: iso.string(from: now.addingTimeInterval(-3 * 86_400)), expiresAt: nil
+            ),
+            McpGrant(
+                id: "g-2", clientId: "c-2", clientName: nil, clientUri: nil,
+                scopes: ["read"], mailboxIds: ["hello@inboxies.email"],
+                createdAt: iso.string(from: now.addingTimeInterval(-3_600)), expiresAt: nil
+            ),
+        ]
     }
 
     private static var previewSessions: [AccountSession] {

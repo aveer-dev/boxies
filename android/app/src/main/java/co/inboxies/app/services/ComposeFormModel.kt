@@ -76,6 +76,13 @@ class ComposeFormModel(
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
 
+    /**
+     * `Idempotency-Key` for this compose: sent on every send attempt (including a retry
+     * after a failure) so a send that did reach the server is not repeated; the server
+     * answers a repeated key with the original 202. A new compose gets a new key.
+     */
+    val sendIdempotencyKey: String = UUID.randomUUID().toString()
+
     var fromMailboxId: String = mailbox.id
     var fromEmail: String = aliasEmail ?: mailbox.email
     var fromName: String? = if (isAliasBound) {

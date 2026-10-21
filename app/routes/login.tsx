@@ -23,8 +23,8 @@ type LoginStep = "email" | "password" | "forgot" | "reset";
 
 export default function PasswordLoginRoute() {
 	const routerNavigate = useNavigate();
-	// Worker-rendered pages (the MCP OAuth consent page) need a full page load;
-	// the SPA router would show its not-found route.
+	// Pages the Worker handles first (the MCP OAuth consent page) need a full
+	// page load; a client-side navigation would skip the Worker.
 	const navigate = useCallback(
 		(to: string) => (isWorkerPagePath(to) ? window.location.assign(to) : routerNavigate(to)),
 		[routerNavigate],

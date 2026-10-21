@@ -3,7 +3,8 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import DOMPurify from "dompurify";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { emailHasOwnColors } from "../../shared/email-colors";
 import { scrollerFor } from "~/lib/scroll-axis";
 import { useTextSize } from "~/lib/text-size";
 import { useTheme } from "~/lib/theme";
@@ -35,12 +36,24 @@ const PALETTES = {
 	},
 } as const;
 
-/**
- * The email paints its own colours (backgrounds, text colours, <font color>).
- * Darkening those risks dark-on-dark text, so in dark mode such mail is shown
- * as it was designed, on a light sheet; plain mail takes the dark theme.
- */
-const OWN_COLORS_PATTERN = /\bbgcolor\s*=|background(?:-color)?\s*:|[\s;"']color\s*:|<font[^>]+color\s*=/i;
+/** DOMPurify with the email profile: no `<style>`, links open in a new tab. */
+function sanitizeEmailBody(body: string): string {
+	// Every link opens in a new tab instead of navigating the iframe or the app.
+	DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+		if (node.tagName === "A" && node.getAttribute("href")) {
+			node.setAttribute("target", "_blank");
+			node.setAttribute("rel", "noopener noreferrer");
+		}
+	});
+	const clean = DOMPurify.sanitize(body, {
+		USE_PROFILES: { html: true },
+		FORBID_TAGS: ["style"],
+		ADD_ATTR: ["target"],
+		FORCE_BODY: true,
+	});
+	DOMPurify.removeHook("afterSanitizeAttributes");
+	return clean;
+}
 
 interface EmailIframeProps {
 	body: string;
@@ -77,9 +90,16 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 	 */
 	const [doc, setDoc] = useState<{ html: string; version: number } | null>(null);
 	const hasRemoteImages = REMOTE_IMAGE_PATTERN.test(body);
+	// Sanitised once per body (browser only: DOMPurify needs a DOM).
+	const cleanBody = useMemo(
+		() => (body && typeof window !== "undefined" ? sanitizeEmailBody(body) : ""),
+		[body],
+	);
 	const dark = useTheme((s) => s.resolved) === "dark";
-	// Dark mode, but the email brings its own colours: show it on a light sheet.
-	const paper = dark && OWN_COLORS_PATTERN.test(body);
+	// Dark mode, but the email brings its own colours: show it as designed on a
+	// light paper card (Gmail / Apple Mail / Hey). Simple mail takes the dark
+	// theme. Same rules as iOS and Android: shared/email-colors.ts.
+	const paper = dark && emailHasOwnColors(cleanBody);
 	const palette = PALETTES[dark && !paper ? "dark" : "light"];
 	// Text size zooms the whole message (its own inline sizes included). Live
 	// changes are posted in, so dragging the wheel doesn't reload the frame.
@@ -132,21 +152,6 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 
 	useEffect(() => {
 		if (!body) return;
-
-		// Every link opens in a new tab instead of navigating the iframe or the app.
-		DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-			if (node.tagName === "A" && node.getAttribute("href")) {
-				node.setAttribute("target", "_blank");
-				node.setAttribute("rel", "noopener noreferrer");
-			}
-		});
-		const cleanBody = DOMPurify.sanitize(body, {
-			USE_PROFILES: { html: true },
-			FORBID_TAGS: ["style"],
-			ADD_ATTR: ["target"],
-			FORCE_BODY: true,
-		});
-		DOMPurify.removeHook("afterSanitizeAttributes");
 
 		const imgSrc = allowRemoteImages
 			? "data: cid: https:"
@@ -249,7 +254,7 @@ ul, ol { padding-left: 20px; margin: 4px 0; }
 <body>${cleanBody}${heightScript}${wheelScript}${zoomScript}</body>
 </html>`;
 		setDoc((prev) => ({ html, version: (prev?.version ?? 0) + 1 }));
-	}, [body, autoSize, allowRemoteImages, palette, paper]);
+	}, [body, cleanBody, autoSize, allowRemoteImages, palette, paper]);
 
 	const iframe = (
 		<iframe
