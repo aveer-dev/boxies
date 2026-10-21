@@ -144,6 +144,7 @@ import co.inboxies.app.ui.compose.ComposeSheetView
 import co.inboxies.app.ui.compose.ComposeStackButton
 import co.inboxies.app.ui.email.EmailDetailView
 import co.inboxies.app.ui.email.EmailListView
+import co.inboxies.app.ui.email.InboxNewListView
 import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.ui.settings.SettingsSheetView
 import kotlinx.coroutines.delay
@@ -171,6 +172,7 @@ fun HomeShellView(
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
     val paging by appModel.paging.collectAsState()
+    val inboxNewTotal by appModel.inboxNewTotal.collectAsState()
     val emailListError by appModel.emailListError.collectAsState()
     val isDigestLoading by appModel.isDigestLoading.collectAsState()
     val mailboxes by appModel.mailboxes.collectAsState()
@@ -180,6 +182,8 @@ fun HomeShellView(
     val mailbox = appModel.selectedMailbox
 
     var showSearch by remember { mutableStateOf(false) }
+    /** Inbox "Show N more new" replaced the list with the All new screen (AVE-23). */
+    var showAllNew by remember { mutableStateOf(false) }
     var showChat by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showMailboxMenu by remember { mutableStateOf(false) }
@@ -236,6 +240,8 @@ fun HomeShellView(
     // POST_NOTIFICATIONS is a runtime permission (minSdk 34): ask once the user has
     // a mailbox to register for, then register the FCM token if granted.
     val selectedMailboxId by appModel.selectedMailboxId.collectAsState()
+    // A different mailbox or folder closes the All new screen.
+    LaunchedEffect(selectedMailboxId, selectedTab) { showAllNew = false }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -402,7 +408,16 @@ fun HomeShellView(
     ) {
         ProgressiveBlurBackground(modifier = Modifier.align(Alignment.TopCenter))
 
-        if (!showSearch) {
+        if (showAllNew && !showSearch) {
+            InboxNewListView(
+                onClose = {
+                    showAllNew = false
+                    // Re-sync so the capped New preview reflects what was read.
+                    scope.launch { appModel.refreshCurrentTab() }
+                },
+                bottomInset = listBottomInset,
+            )
+        } else if (!showSearch) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -755,6 +770,8 @@ fun HomeShellView(
                                 loadError = emailListError,
                                 paging = paging,
                                 onLoadMore = { appModel.loadMoreEmails() },
+                                inboxNewCount = if (tab.id == FolderIds.INBOX) appModel.inboxNewCountFor(inboxNewTotal) else null,
+                                onShowAllNew = if (tab.id == FolderIds.INBOX) ({ showAllNew = true }) else null,
                                 onOpen = { email ->
                                     scope.launch {
                                         if (email.isDraft) appModel.openDraft(email) else appModel.openEmail(email)

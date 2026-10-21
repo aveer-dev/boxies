@@ -13,7 +13,7 @@ import {
 	assertOutboundMessageSize,
 	OutboundSizeError,
 } from "./lib/outbound-limits";
-import { deliverOutboundInBackground } from "./lib/outbound-delivery";
+import { enqueueOutboundSendFromEnv } from "./lib/outbound-send-queue";
 import {
 	checkIdempotencyKey,
 	discardReplayedSend,
@@ -44,6 +44,7 @@ import {
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
+import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
 import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
@@ -445,22 +446,29 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const stub = c.var.mailboxStub;
 
 	if (threaded && folder && !reply_later) {
+		// Inbox: `section=new|seen` lists one section; `new_limit=N` keeps the
+		// newest N New conversations above every Seen one (AVE-23).
+		const inboxSections =
+			folder === Folders.INBOX
+				? parseInboxSectionQuery(c.req.query("section"), c.req.query("new_limit"))
+				: undefined;
 		const emails = await (stub as any).getThreadedEmails({
 			folder,
 			page,
 			limit,
 			userId: c.get("principal")?.userId,
+			inboxSections,
 		});
-		const totalCount = await (stub as any).countThreadedEmails(folder);
 		if (folder === Folders.INBOX) {
 			const sections = await (stub as any).countThreadedEmailSections(folder);
 			return c.json({
 				emails,
-				totalCount: sections.totalCount ?? totalCount,
+				totalCount: inboxSectionTotal(sections, inboxSections ?? {}),
 				newCount: sections.newCount,
 				seenCount: sections.seenCount,
 			});
 		}
+		const totalCount = await (stub as any).countThreadedEmails(folder);
 		return c.json({ emails, totalCount });
 	}
 
@@ -590,13 +598,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		await (stub as any).clearReplyLaterForThread(resolvedThreadId);
 	}
 
-	c.executionCtx.waitUntil(
-		deliverOutboundInBackground(c.env, mailboxId, messageId, {
-			to, cc, bcc, from, subject, html, text,
-			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
-			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
-		}),
-	);
+	await enqueueOutboundSendFromEnv(c.env, mailboxId, messageId, {
+		to, cc, bcc, from, subject, html, text,
+		attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
+		...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
+	});
 	return c.json({ id: messageId, status: "sent" }, 202);
 });
 

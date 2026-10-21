@@ -14,6 +14,8 @@ data class FolderPage(
     /** Ids the server returned for [page]. */
     val pageIds: Set<String>,
     val totalCount: Int,
+    /** Inbox only: every New conversation on the server (page 1 holds at most a few). */
+    val newCount: Int? = null,
 )
 
 /** How a page-1 sync reconciles the cache with the fresh page. */
@@ -45,7 +47,14 @@ object MailboxSyncService {
         page: Int = 1,
         prune: () -> FolderPrune = { FolderPrune.Full },
     ): FolderPage {
-        val response = ApiClient.shared.listEmails(mailboxId, folder = folderId, page = page, threaded = true)
+        // Inbox: newest few New, then Seen, so Seen is never pushed off the first page.
+        val response = ApiClient.shared.listEmails(
+            mailboxId,
+            folder = folderId,
+            page = page,
+            threaded = true,
+            newLimit = if (folderId == "inbox") EmailPaging.INBOX_NEW_PREVIEW_LIMIT else null,
+        )
         val db = DatabaseService.shared
         val mode = if (page == 1) prune() else null
         if (mode == FolderPrune.Window) {
@@ -80,6 +89,7 @@ object MailboxSyncService {
             received = response.emails.size,
             pageIds = response.emails.map { it.id }.toSet(),
             totalCount = response.totalCount,
+            newCount = response.newCount,
         )
     }
 

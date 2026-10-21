@@ -80,6 +80,7 @@
 		88944A707FD0A19F995EF96B /* HomeShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7DF8BEBB79B2AC262704B84 /* HomeShellView.swift */; };
 		88FB935CE262B3509CFCF86D /* AliasesSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1609C0BDD26430D61B1C6476 /* AliasesSettingsView.swift */; };
 		8BD503C1BB8CECFACE798F77 /* UndoToastBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018B22BD9842565F2F766F27 /* UndoToastBanner.swift */; };
+		8D71C210B786877436A48B37 /* InboxNewListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB3527F65416B46A46835EB7 /* InboxNewListView.swift */; };
 		917E0E0C5189D64E5287672A /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6B151B4351CA838E67E2C95C /* Inter-SemiBold.ttf */; };
 		926F05AFFEC794982B75F395 /* Inter-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = C891EC430F44EBFDE4AAEB69 /* Inter-Medium.ttf */; };
 		9488898F1174B55B2CA31011 /* AgentChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4DA859650B3CC11EE116D0A /* AgentChatClient.swift */; };
@@ -223,6 +224,7 @@
 		B6EAA3D3B4846476CC7EC8A5 /* OutboxQueueWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboxQueueWorker.swift; sourceTree = "<group>"; };
 		B8A432039F72F28C3CB4B1FF /* EmailBodyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailBodyView.swift; sourceTree = "<group>"; };
 		B9003AA3BAEDF7626B89A4FC /* SignInMethodsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInMethodsSettingsView.swift; sourceTree = "<group>"; };
+		BB3527F65416B46A46835EB7 /* InboxNewListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxNewListView.swift; sourceTree = "<group>"; };
 		C019E22F3F4AA3C5E376212F /* InboxiesCredentialProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = InboxiesCredentialProvider.entitlements; sourceTree = "<group>"; };
 		C0EDC9246D251503A2C2895D /* ChatSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSheetView.swift; sourceTree = "<group>"; };
 		C0F163A3B34A0B9617C93664 /* OutboundAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutboundAttachments.swift; sourceTree = "<group>"; };
@@ -273,6 +275,7 @@
 				B8A432039F72F28C3CB4B1FF /* EmailBodyView.swift */,
 				0F7ACA3D7A218207D8E3BE44 /* EmailDetailView.swift */,
 				E51724FD6B45BEDFE570B2A8 /* EmailListView.swift */,
+				BB3527F65416B46A46835EB7 /* InboxNewListView.swift */,
 			);
 			path = Email;
 			sourceTree = "<group>";
@@ -719,6 +722,7 @@
 				4F2A3F99634F03CF0A219758 /* GoogleSignInFlow.swift in Sources */,
 				88944A707FD0A19F995EF96B /* HomeShellView.swift in Sources */,
 				3770413860D08C5653807FD5 /* InboxDigestView.swift in Sources */,
+				8D71C210B786877436A48B37 /* InboxNewListView.swift in Sources */,
 				4A9AA670A55D6114A8355823 /* InboxiesApp.swift in Sources */,
 				64C59D826FC55FF600893708 /* InviteAcceptView.swift in Sources */,
 				F2425D0712AEABC65863A995 /* LiquidGlass.swift in Sources */,

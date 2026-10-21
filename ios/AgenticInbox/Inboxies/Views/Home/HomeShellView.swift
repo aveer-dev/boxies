@@ -9,6 +9,8 @@ struct HomeShellView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var showSearch = false
+    /// Inbox "Show N more new" pushed the All new screen (AVE-23).
+    @State private var showAllNew = false
     @State private var showChat = false
     @State private var chatSeedPrompt: String?
     @State private var tabNavigatingForward = true
@@ -245,6 +247,21 @@ struct HomeShellView: View {
                     }
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
+                .navigationDestination(isPresented: $showAllNew) {
+                    InboxNewListView(bottomInset: listBottomInset)
+                }
+        }
+        .onChange(of: showAllNew) { _, isShowing in
+            // Back from All new: re-sync so the capped New preview reflects what was read.
+            if !isShowing, currentFolderId == "inbox" {
+                Task { await app.refreshCurrentTab() }
+            }
+        }
+        .onChange(of: app.selectedMailboxId) { _, _ in
+            showAllNew = false
+        }
+        .onChange(of: app.selectedTab) { _, _ in
+            showAllNew = false
         }
     }
 
@@ -657,7 +674,9 @@ struct HomeShellView: View {
                     showsTags: true,
                     loadError: app.emailListError,
                     paging: app.visibleListPaging,
-                    onLoadMore: { await app.loadMoreEmails() }
+                    onLoadMore: { await app.loadMoreEmails() },
+                    inboxNewCount: currentFolderId == "inbox" ? app.inboxNewCount : nil,
+                    onShowAllNew: currentFolderId == "inbox" ? { showAllNew = true } : nil
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
@@ -1379,7 +1398,7 @@ private struct IdentifiedEmail: Identifiable {
     let email: Email
 }
 
-private struct HomeNavigationSubtitle: ViewModifier {
+struct HomeNavigationSubtitle: ViewModifier {
     var subtitle: String
     var fontSize: CGFloat = AppTheme.FontSize.homeSubtitle
     var fontWeight: Font.Weight = .regular
