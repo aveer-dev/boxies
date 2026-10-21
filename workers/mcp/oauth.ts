@@ -65,7 +65,7 @@ export const OAUTH_PRM_PREFIX = "/.well-known/oauth-protected-resource";
 /**
  * Everything this server can grant (planned in AVE-36); the user picks a
  * subset on the consent page (AVE-68, shared/mcp-consent.ts).
- * TODO(AVE-69): enforce scopes per tool in workers/mcp/index.ts.
+ * Enforced per tool in workers/mcp/index.ts (table: workers/mcp/scopes.ts, AVE-69).
  */
 export { MCP_OAUTH_SCOPES };
 
