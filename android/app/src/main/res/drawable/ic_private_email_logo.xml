@@ -6,31 +6,24 @@
     android:viewportWidth="32"
     android:viewportHeight="32">
     <path
-        android:strokeColor="@color/splash_icon_color"
-        android:strokeWidth="1.371"
-        android:strokeLineJoin="round"
-        android:strokeLineCap="round"
-        android:pathData="M 1.62 9.48 L 22.18 1.64 A 1.89 1.89 0 0 1 24.59 4.13 L 16.6 23.29 A 1.22 1.22 0 0 1 14.69 23.76 L 10.69 20.39 L 8.2 23.56 A 0.97 0.97 0 0 1 6.48 23.12 L 5.1 15.21 L 1.21 11.43 A 1.18 1.18 0 0 1 1.62 9.48 Z" />
-    <path
-        android:strokeColor="@color/splash_icon_color"
-        android:strokeWidth="1.143"
-        android:strokeLineJoin="round"
-        android:strokeLineCap="round"
-        android:pathData="M 0.86 10.56 L 2.72 10.76 L 11.95 10.73 L 23.64 2.62 M 23.64 2.62 L 8.71 16.92 L 8.22 17.72 L 7.76 19.9 M 13.83 11.97 L 15.36 21.95 L 15.68 24.03 M 23.64 2.62 L 24.19 2.07" />
+        android:fillColor="@color/splash_icon_color"
+        android:pathData="M 5.17 24.5 A 2 2 0 1 0 9.17 24.5 A 2 2 0 1 0 5.17 24.5 Z" />
     <path
         android:fillColor="@color/splash_icon_color"
-        android:pathData="M 8.5 18.59 L 9.62 17.44 L 10.3 17.66 L 13.96 21.26 L 13.97 21.9 L 13.36 22.51 L 10.69 20.39 L 8.2 23.56 A 0.97 0.97 0 0 1 7.29 23.92 Z" />
+        android:pathData="M 1.87 27.87 A 1.6 1.6 0 1 0 5.07 27.87 A 1.6 1.6 0 1 0 1.87 27.87 Z" />
     <path
         android:strokeColor="@color/splash_icon_color"
-        android:strokeWidth="1.166"
+        android:strokeWidth="1.532"
         android:strokeLineJoin="round"
         android:strokeLineCap="round"
-        android:pathData="M 24.8 17.28 L 29.76 19.2 V 23.52 C 29.76 26.72 27.68 28.96 24.8 30.24 C 21.92 28.96 19.84 26.72 19.84 23.52 V 19.2 Z" />
+        android:pathData="M 7.64 9.63 L 28.52 1.67 A 1.92 1.92 0 0 1 30.97 4.19 L 22.86 23.66 A 1.24 1.24 0 0 1 20.92 24.13 L 16.86 20.71 L 14.33 23.93 A 0.99 0.99 0 0 1 12.58 23.49 L 11.18 15.45 L 7.23 11.61 A 1.2 1.2 0 0 1 7.64 9.63 Z" />
+    <path
+        android:strokeColor="@color/splash_icon_color"
+        android:strokeWidth="1.277"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 6.87 10.72 L 8.76 10.92 L 18.13 10.9 L 30.01 2.66 M 30.01 2.66 L 14.84 17.18 L 14.35 18 L 13.88 20.21 M 20.05 12.16 L 21.6 22.29 L 21.92 24.4 M 30.01 2.66 L 30.56 2.11" />
     <path
         android:fillColor="@color/splash_icon_color"
-        android:strokeColor="@color/splash_icon_color"
-        android:strokeWidth="1.166"
-        android:strokeLineJoin="round"
-        android:strokeLineCap="round"
-        android:pathData="M 24.8 17.28 L 29.76 19.2 V 23.52 C 29.76 26.72 27.68 28.96 24.8 30.24 Z" />
+        android:pathData="M 14.64 18.88 L 15.77 17.71 L 16.46 17.94 L 20.18 21.6 L 20.18 22.25 L 19.56 22.87 L 16.86 20.71 L 14.33 23.93 A 0.99 0.99 0 0 1 13.4 24.29 Z" />
 </vector>

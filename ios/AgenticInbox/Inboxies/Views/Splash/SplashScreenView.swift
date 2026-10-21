@@ -44,8 +44,8 @@ struct AppLogoView: View {
     }
 }
 
-/// Private Email product logo: the Inboxies plane (master mark, small-size weight) with a
-/// half-filled shield badge at the bottom right. One colour (`AppTheme.ink`), so it follows
+/// Private Email product logo: the concept chosen by `PRIVATE_EMAIL_CONCEPT` in
+/// `scripts/generate-logo-assets.mjs` (`design/logo/private-email-concepts/`). One colour (`AppTheme.ink`), so it follows
 /// the in-app theme. Artwork: `PrivateEmailMark` (generated vector template image).
 struct PrivateEmailLogoView: View {
     var size: CGFloat = 24

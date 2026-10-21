@@ -3,6 +3,9 @@
 //
 //   design/logo/inboxies-mark.svg   (512 grid; the only place the plane is drawn)
 //
+// The Private Email icon is one of design/logo/private-email-concepts/*.svg, picked by
+// PRIVATE_EMAIL_CONCEPT below; concepts place the master plane rather than redraw it.
+//
 //   pnpm install && node scripts/generate-logo-assets.mjs
 //
 // Everything below is derived from the master's paths: scaled, padded, tiled, given
@@ -26,19 +29,19 @@
 // from the site workspace (already a dependency).
 
 import { createRequire } from "node:module";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const sharp = require(require.resolve("sharp", { paths: [join(root, "site"), root] }));
 
-const INK = "#1F1F24";
-const INK_DARK = "#EDEDF2";
-const PAPER = "#FFFFFF";
-const PAPER_DARK = "#141416";
-const LINE = "#E5E5EA";
+export const INK = "#1F1F24";
+export const INK_DARK = "#EDEDF2";
+export const PAPER = "#FFFFFF";
+export const PAPER_DARK = "#141416";
+export const LINE = "#E5E5EA";
 const TILE_RADIUS = 0.22;
 
 // ---------- master ----------
@@ -65,7 +68,7 @@ function readMaster() {
 const M = readMaster();
 
 /** Stroke weights per tier, in master units. `master` is the file as drawn. */
-const TIERS = {
+export const TIERS = {
 	master: { outline: M.outline.width, inner: M.folds.width, layers: ["folds", "fine", "details"] },
 	large: { outline: 5, inner: 4, layers: ["folds", "fine", "details"] },
 	medium: { outline: 9, inner: 7.5, layers: ["folds", "fine", "details"] },
@@ -74,12 +77,12 @@ const TIERS = {
 
 // Boxes (x, y, size) in master units. ARTBOARD keeps the master's padding (app icons,
 // in-app logos); GLYPH crops to the mark so it fills small boxes (favicon, header).
-const ARTBOARD = { x: 0, y: 0, size: 512 };
-const GLYPH = { x: 88, y: 88, size: 336 };
+export const ARTBOARD = { x: 0, y: 0, size: 512 };
+export const GLYPH = { x: 88, y: 88, size: 336 };
 
 // ---------- path math (absolute M/L/H/V/A/C/Z only) ----------
 
-function transformPath(d, s, dx, dy) {
+export function transformPath(d, s, dx, dy) {
 	const r = (n) => +n.toFixed(2);
 	const tokens = d.match(/[MLHVACZ]|-?\d*\.?\d+(?:e-?\d+)?/gi);
 	const out = [];
@@ -107,7 +110,7 @@ function transformPath(d, s, dx, dy) {
 }
 
 /** Map master units into a box of `size` px starting at (ox, oy), via `box` (master units). */
-function placer(box, size, ox = 0, oy = 0) {
+export function placer(box, size, ox = 0, oy = 0) {
 	const s = size / box.size;
 	return { s, dx: ox - box.x * s, dy: oy - box.y * s };
 }
@@ -117,7 +120,7 @@ function placer(box, size, ox = 0, oy = 0) {
  *   { d, stroke?: width, fill?: true }
  * `color` is applied by each writer, so one part list serves SVG, Android and code.
  */
-function markParts(tier, place) {
+export function markParts(tier, place) {
 	const t = TIERS[tier];
 	const { s, dx, dy } = place;
 	const parts = [{ d: transformPath(M.outline.d, s, dx, dy), stroke: +(t.outline * s).toFixed(3) }];
@@ -126,30 +129,81 @@ function markParts(tier, place) {
 	return parts;
 }
 
-// Private Email mark: the small-tier master plane, scaled down into the top-left of the
-// GLYPH box, plus a shield whose right half is filled, bottom right. Same stroke weight
-// for both, so it reads as one icon. Shield drawn in GLYPH-box fractions.
-const PRIVATE = { planeScale: 0.8, planeShift: [0, 0], shieldStroke: 0.85 };
-const SHIELD = (u, ox, oy) => {
-	const X = (f) => +(ox + f * u).toFixed(2);
-	const Y = (f) => +(oy + f * u).toFixed(2);
-	// top centre, right shoulder, right side, bottom point (and mirror)
-	const outline = `M ${X(0.775)} ${Y(0.54)} L ${X(0.93)} ${Y(0.6)} V ${Y(0.735)} C ${X(0.93)} ${Y(0.835)} ${X(0.865)} ${Y(0.905)} ${X(0.775)} ${Y(0.945)} C ${X(0.685)} ${Y(0.905)} ${X(0.62)} ${Y(0.835)} ${X(0.62)} ${Y(0.735)} V ${Y(0.6)} Z`;
-	const half = `M ${X(0.775)} ${Y(0.54)} L ${X(0.93)} ${Y(0.6)} V ${Y(0.735)} C ${X(0.93)} ${Y(0.835)} ${X(0.865)} ${Y(0.905)} ${X(0.775)} ${Y(0.945)} Z`;
-	return { outline, half };
-};
+// ---------- Private Email mark ----------
+//
+// The Private Email icon is one of the concept drawings in design/logo/private-email-concepts/
+// (32 grid). Switch the shipped icon by changing this one constant and re-running the script.
+//   concept-a     Relay: the plane leaving a dotted trail (mail relayed from a hidden address)
+//   concept-b     Masked letter: an envelope whose address is shown as masked dots
+//   concept-c     Shadow plane: the plane with its lower half in solid shadow
+//   current-shield  the previous plane + half-filled shield badge, kept for comparison
+export const PRIVATE_EMAIL_CONCEPT = "concept-a";
+const CONCEPT_DIR = "design/logo/private-email-concepts";
+const CONCEPT_GRID = 32;
 
-function privateParts(size, ox = 0, oy = 0, tier = "small") {
-	const p = placer(GLYPH, size * PRIVATE.planeScale, ox + size * PRIVATE.planeShift[0], oy + size * PRIVATE.planeShift[1]);
-	const plane = markParts(tier, p);
-	const w = +(TIERS[tier].outline * p.s * PRIVATE.shieldStroke).toFixed(3);
-	const sh = SHIELD(size, ox, oy);
-	return [...plane, { d: sh.outline, stroke: w }, { d: sh.half, stroke: w, fill: true }];
+// A concept file holds plain <path>s (absolute M/L/H/V/A/C/Z; a `stroke-width` makes it a
+// stroke, a non-"none" `fill` makes it a fill) and, optionally, one
+//   <g id="plane" data-x data-y data-size data-weight>
+// that places the master plane (small tier) in a `data-size` box at (data-x, data-y);
+// data-weight scales its strokes. The group's contents are refreshed from the master on
+// every run, so the plane is still only drawn in inboxies-mark.svg.
+const PLANE_GROUP = /(<g\b[^>]*\bid="plane"[^>]*>)([\s\S]*?)(<\/g>)/;
+
+export function readConcept(name) {
+	const rel = `${CONCEPT_DIR}/${name}.svg`;
+	const svg = readFileSync(join(root, rel), "utf8");
+	const g = svg.match(PLANE_GROUP);
+	const num = (tag, a, d) => Number(tag.match(new RegExp(`\\b${a}="([^"]+)"`))?.[1] ?? d);
+	const plane = g
+		? { x: num(g[1], "data-x", 0), y: num(g[1], "data-y", 0), size: num(g[1], "data-size", CONCEPT_GRID), weight: num(g[1], "data-weight", 1) }
+		: null;
+	const rest = (g ? svg.replace(PLANE_GROUP, "") : svg).replace(/<!--[\s\S]*?-->/g, "");
+	const paths = [...rest.matchAll(/<path\b[^>]*>/g)].map(([tag]) => {
+		const attr = (a) => tag.match(new RegExp(`\\b${a}="([^"]+)"`))?.[1];
+		const fill = attr("fill");
+		return { d: attr("d"), stroke: attr("stroke-width") ? Number(attr("stroke-width")) : 0, fill: !!fill && fill !== "none" };
+	});
+	return { rel, svg, plane, paths };
+}
+
+/** The plane of a concept, in concept-grid units scaled by `s` and offset by (ox, oy). */
+function conceptPlane(plane, tier, s, ox, oy) {
+	return markParts(tier, placer(GLYPH, plane.size * s, ox + plane.x * s, oy + plane.y * s)).map((p) =>
+		p.stroke ? { ...p, stroke: +(p.stroke * plane.weight).toFixed(3) } : p,
+	);
+}
+
+/**
+ * Private Email mark parts in a `size` box at (ox, oy). `tier` "medium" lightens every
+ * stroke for large renders (extension 128 px), in the same ratio as the plane tiers.
+ */
+export function privateParts(size, ox = 0, oy = 0, tier = "small", concept = PRIVATE_EMAIL_CONCEPT) {
+	const c = readConcept(concept);
+	const s = size / CONCEPT_GRID;
+	const k = TIERS[tier].outline / TIERS.small.outline;
+	const own = c.paths.map((p) => ({
+		d: transformPath(p.d, s, ox, oy),
+		...(p.stroke ? { stroke: +(p.stroke * s * k).toFixed(3) } : {}),
+		...(p.fill ? { fill: true } : {}),
+	}));
+	return [...own, ...(c.plane ? conceptPlane(c.plane, tier, s, ox, oy) : [])];
+}
+
+/** Rewrite each concept file's plane group from the current master. */
+function refreshConceptPlanes() {
+	for (const f of readdirSync(join(root, CONCEPT_DIR)).filter((f) => f.endsWith(".svg"))) {
+		const c = readConcept(f.replace(/\.svg$/, ""));
+		if (!c.plane) continue;
+		const body = conceptPlane(c.plane, "small", 1, 0, 0)
+			.map((p) => `\n\t\t<path d="${p.d}" ${p.fill ? `fill="${INK}"` : `fill="none" stroke="${INK}" stroke-width="${p.stroke}"`}/>`)
+			.join("");
+		write(c.rel, c.svg.replace(PLANE_GROUP, (_, a, _b, z) => `${a}${body}\n\t${z}`));
+	}
 }
 
 // ---------- writers ----------
 
-function svgParts(parts, color) {
+export function svgParts(parts, color) {
 	return parts
 		.map((p) => {
 			const fill = p.fill ? color : "none";
@@ -159,7 +213,7 @@ function svgParts(parts, color) {
 		.join("");
 }
 
-const JOIN = `stroke-linecap="round" stroke-linejoin="round"`;
+export const JOIN = `stroke-linecap="round" stroke-linejoin="round"`;
 
 function svgDoc(size, body, { width = size, height = size } = {}) {
 	return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${size} ${size}">${body}</svg>`;
@@ -176,7 +230,7 @@ function tileRect(size, bg, border) {
  * A mark in a `size` box. `box` picks ARTBOARD (padded) or GLYPH (cropped); `inset`
  * shrinks the mark inside a tile. `bg` adds a rounded tile (radius 0 = full bleed).
  */
-function iconSvg(size, { tier, box = ARTBOARD, color = INK, bg = null, radius = TILE_RADIUS, border = null, inset = 0, parts = null }) {
+export function iconSvg(size, { tier, box = ARTBOARD, color = INK, bg = null, radius = TILE_RADIUS, border = null, inset = 0, parts = null }) {
 	let body = "";
 	if (bg) body += radius ? tileRect(size, bg, border) : `<rect width="${size}" height="${size}" fill="${bg}"/>`;
 	const inner = size * (1 - 2 * inset);
@@ -341,6 +395,7 @@ function inlinePaths(parts, { jsx = false, indent = "" } = {}) {
 // ---------- main ----------
 
 async function main() {
+	refreshConceptPlanes();
 	const glyph = (tier, size) => markParts(tier, placer(GLYPH, size));
 
 	// Canonical derived artwork (for design review / other tools).
@@ -442,7 +497,10 @@ async function main() {
 	console.log("logo assets regenerated from", MASTER_PATH);
 }
 
-main().catch((e) => {
-	console.error(e);
-	process.exit(1);
-});
+// Importable (the design review sheet reuses the part builders); runs when executed.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+	main().catch((e) => {
+		console.error(e);
+		process.exit(1);
+	});
+}
