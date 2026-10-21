@@ -10,9 +10,9 @@ import { cn } from "@cloudflare/kumo";
  * page carried into the app, so the walk from the website through auth to
  * the inbox reads as one product. Same pieces as the site
  * (site/src/components/Header.astro, AppIcon.astro, PageIntro.astro):
- * the plane + lowercase wordmark top left, a squircle app tile, a quiet
- * intro, one narrow column on the page colour (no card), pill buttons
- * (`.brand-surface` in index.css) and a "·" separated footer.
+ * a squircle app tile (the one logo on the page), a quiet intro, one narrow
+ * column on the page colour (no card), pill buttons (`.brand-surface` in
+ * index.css) and a "·" separated Support · Terms · Privacy footer.
  */
 
 /** The marketing site. The web app itself lives on inboxies.app; mail addresses stay @inboxies.email. */
@@ -66,58 +66,56 @@ export const quietLinkClass =
 export function AuthShell({
 	title,
 	description,
+	wide = false,
 	children,
 }: {
-	/** The page's one heading. */
-	title: ReactNode;
+	/** The page's one heading. Omit when the content renders its own (onboarding steps). */
+	title?: ReactNode;
 	/** One quiet line under the heading. */
 	description?: ReactNode;
+	/** A wider column, for content laid out side by side (the onboarding choice). */
+	wide?: boolean;
 	children: ReactNode;
 }) {
 	return (
 		<div className="brand-surface flex min-h-dvh flex-col bg-kumo-base text-kumo-default">
-			<header className="flex min-h-[60px] items-center justify-between gap-4 px-6 py-3">
-				<a
-					href={SITE_URL}
-					aria-label="Inboxies home"
-					className="inline-flex items-center gap-[5px] text-2xs tracking-[-0.01em] text-kumo-inactive no-underline hover:text-kumo-default"
-				>
-					<PlaneGlyph className="size-[13px]" />
-					<span>inboxies</span>
-				</a>
-				<a
-					href={SUPPORT_URL}
-					className="text-2xs text-kumo-subtle no-underline hover:text-kumo-default"
-				>
-					Support
-				</a>
-			</header>
-
-			<main className="flex flex-1 items-start justify-center px-4 pt-[8vh] pb-16 sm:items-center sm:pt-0">
-				<div className="w-full max-w-[380px] animate-reveal">
+			<main className="flex flex-1 items-start justify-center px-4 pt-[10vh] pb-16 sm:items-center sm:pt-16">
+				<div className={cn("w-full animate-reveal", wide ? "max-w-[520px]" : "max-w-[380px]")}>
 					<AppIconTile size={44} />
-					<h1 className="mt-6 text-lg font-medium tracking-[-0.01em] text-kumo-default">
-						{title}
-					</h1>
+					{title && (
+						<h1 className="mt-6 text-lg font-medium tracking-[-0.01em] text-kumo-default">
+							{title}
+						</h1>
+					)}
 					{description && (
 						<p className="mt-1 text-13 text-kumo-subtle">{description}</p>
 					)}
-					<div className="mt-7">{children}</div>
+					<div className={title ? "mt-7" : "mt-6"}>{children}</div>
 				</div>
 			</main>
 
 			<footer className="flex items-center justify-center gap-2 px-6 pb-6 text-2xs text-kumo-subtle">
+				<a href={SUPPORT_URL} className="no-underline hover:text-kumo-default">
+					Support
+				</a>
+				<FooterDot />
 				<a href={TERMS_URL} className="no-underline hover:text-kumo-default">
 					Terms
 				</a>
-				<span aria-hidden="true" className="text-kumo-inactive">
-					·
-				</span>
+				<FooterDot />
 				<a href={PRIVACY_URL} className="no-underline hover:text-kumo-default">
 					Privacy
 				</a>
 			</footer>
 		</div>
+	);
+}
+
+function FooterDot() {
+	return (
+		<span aria-hidden="true" className="text-kumo-inactive">
+			·
+		</span>
 	);
 }
 

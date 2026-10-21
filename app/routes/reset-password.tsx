@@ -25,13 +25,20 @@ export default function ResetPasswordRoute() {
 	const [newPassword, setNewPassword] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
+	const emailInputRef = useRef<HTMLInputElement>(null);
+	const codeInputRef = useRef<HTMLInputElement>(null);
 	const passwordInputRef = useRef<HTMLInputElement>(null);
 
+	// Focus the first field still to fill: a reset link only needs the new
+	// password; the code form starts at the email (or the code when the email
+	// came in the URL).
 	useEffect(() => {
 		if (tokenParam) {
 			setToken(tokenParam);
+			passwordInputRef.current?.focus();
+			return;
 		}
-		passwordInputRef.current?.focus();
+		(searchParams.get("email") ? codeInputRef : emailInputRef).current?.focus();
 	}, [tokenParam]);
 
 	const handleSubmit = async (e: FormEvent) => {
@@ -97,6 +104,7 @@ export default function ResetPasswordRoute() {
 								onChange={(e) => setEmail(e.target.value)}
 								placeholder="you@example.com"
 								autoComplete="email"
+								ref={emailInputRef}
 								required={!token}
 							/>
 						</div>
@@ -117,6 +125,7 @@ export default function ResetPasswordRoute() {
 								maxLength={6}
 								inputMode="numeric"
 								autoComplete="one-time-code"
+								ref={codeInputRef}
 								required={!token}
 							/>
 						</div>
@@ -140,7 +149,7 @@ export default function ResetPasswordRoute() {
 							minLength={10}
 							autoComplete="new-password"
 							ref={passwordInputRef}
-							autoFocus
+							aria-describedby="reset-new-password-hint"
 							className="w-full pr-10"
 						/>
 						<button
@@ -153,13 +162,12 @@ export default function ResetPasswordRoute() {
 							{showPassword ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
 						</button>
 					</div>
-				</div>
-
-				{newPassword.length > 0 && newPassword.length < 10 && (
-					<p className="text-xs text-kumo-subtle">
-						{10 - newPassword.length} more characters needed (minimum 10)
+					<p id="reset-new-password-hint" className="mt-1 text-xs text-kumo-subtle">
+						{newPassword.length > 0 && newPassword.length < 10
+							? `${10 - newPassword.length} more characters needed (minimum 10)`
+							: "At least 10 characters"}
 					</p>
-				)}
+				</div>
 
 				<Button
 					type="submit"

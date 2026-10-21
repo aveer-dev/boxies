@@ -10,7 +10,6 @@ import { GoogleSignInButton } from "~/components/GoogleSignInButton";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
 import { AuthDivider, AuthShell, quietLinkClass } from "~/components/AuthShell";
-import { OnboardingFlow } from "~/components/OnboardingFlow";
 import { isWorkerPagePath, safeRedirectPath } from "~/lib/safe-redirect";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
@@ -51,7 +50,6 @@ export default function PasswordLoginRoute() {
 	const [newPassword, setNewPassword] = useState("");
 	const [showNewPassword, setShowNewPassword] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
-	const [showOnboarding, setShowOnboarding] = useState(false);
 
 	const emailInputRef = useRef<HTMLInputElement>(null);
 	const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -232,7 +230,11 @@ export default function PasswordLoginRoute() {
 						type="button"
 						variant="primary"
 						className="w-full"
-						onClick={() => setShowOnboarding(true)}
+						onClick={() => {
+							// Onboarding is its own page; carry the sign-in target through.
+							const next = searchParams.get("next");
+							routerNavigate(next ? `/onboarding?next=${encodeURIComponent(next)}` : "/onboarding");
+						}}
 					>
 						Get started
 					</Button>
@@ -500,12 +502,6 @@ export default function PasswordLoginRoute() {
 				</form>
 			)}
 
-			<OnboardingFlow
-				isOpen={showOnboarding}
-				onClose={() => setShowOnboarding(false)}
-				onSuccess={() => navigate(afterSignIn)}
-				mailDomain={config?.mailDomain || "inboxies.email"}
-			/>
 		</AuthShell>
 	);
 }
