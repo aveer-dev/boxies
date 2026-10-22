@@ -1,10 +1,11 @@
 /**
- * MCP OAuth 2.1 (AVE-67, workers/mcp/oauth.ts) end to end, with the real
+ * MCP OAuth 2.1 (AVE-67, AVE-68 consent; workers/mcp/oauth.ts) end to end, with the real
  * @cloudflare/workers-oauth-provider over an in-memory KV, a real AUTH_DB and
  * real Better Auth sessions: discovery metadata, dynamic client registration,
  * /authorize (sign-in redirect, consent, CSRF binding, PKCE), token exchange,
  * /mcp with OAuth tokens and with legacy session tokens, and unrelated routes.
- * The MCP Durable Object is replaced by a handler that echoes its props.
+ * The MCP Durable Object is replaced by a handler that echoes its props, and
+ * the React consent page by a renderer that returns the view it was given.
  * Run: node --experimental-strip-types --import ./workers/test/register-ts-ext.mjs workers/test/mcp-oauth.test.mjs
  */
 
@@ -19,11 +20,13 @@ import {
 	registerMcpOAuthRoutes,
 	registerMcpRoutes,
 	MCP_OAUTH_SCOPES,
+	grantCoversMailbox,
 } from "../mcp/oauth.ts";
+import { initialConsentScopes, validateConsentSelection } from "../../shared/mcp-consent.ts";
 import { isOAuthAccessTokenShape, isOAuthMcpRequest, bearerTokenFromHeaders } from "../lib/mcp-oauth-token.ts";
 import { isWorkerPagePath } from "../../app/lib/safe-redirect.ts";
 import * as schema from "../auth/schema.ts";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { addMailbox, addUser, createAuthTestEnv, signIn } from "./auth-fixtures.mjs";
 
 // ── In-memory KV with the subset of the API the provider uses ─────────
@@ -80,10 +83,18 @@ const echoMcp = {
 	},
 };
 
+/** Stands in for the React Router render of app/routes/authorize.tsx. */
+const renderConsent = (_request, _env, _ctx, view) =>
+	new Response(JSON.stringify({ consentView: view }), {
+		status: 200,
+		// Like React Router's response: the Worker must add its own headers on top.
+		headers: { "Content-Type": "application/json", "X-Frame-Options": "SAMEORIGIN" },
+	});
+
 function buildApp() {
 	const app = new Hono();
 	app.on(["GET", "POST"], "/api/auth/*", (c) => handleBetterAuthRequest(c.env, c.req.raw));
-	const mcpOAuth = createMcpOAuth(echoMcp);
+	const mcpOAuth = createMcpOAuth(echoMcp, { renderConsent });
 	registerMcpOAuthRoutes(app, mcpOAuth);
 	app.use("*", sessionMiddleware);
 	registerMcpRoutes(app, mcpOAuth, echoMcp);
@@ -98,6 +109,7 @@ async function call(env, url, { method = "GET", headers = {}, body, form, json }
 	const h = new Headers(headers);
 	let payload = body;
 	if (form) {
+		// An object, or [name, value] pairs for repeated fields (scope, mailbox).
 		h.set("content-type", "application/x-www-form-urlencoded");
 		payload = new URLSearchParams(form).toString();
 	} else if (json) {
@@ -118,6 +130,8 @@ const { env, db, bucket } = createAuthTestEnv({ OAUTH_KV: memoryKV(), WEB_REDIRE
 const ada = await addUser(db, { id: "ada", email: "ada@inboxies.email" });
 const bob = await addUser(db, { id: "bob", email: "bob@inboxies.email" });
 await addMailbox(db, bucket, "ada@inboxies.email", { owners: ["ada"] });
+await addMailbox(db, bucket, "team@inboxies.email", { owners: ["bob"], members: ["ada"] });
+await addMailbox(db, bucket, "bob@inboxies.email", { owners: ["bob"] });
 const adaSession = await signIn(env, ada);
 const bobSession = await signIn(env, bob);
 const adaAliasSession = await signIn(env, ada, { scope: "aliases" });
@@ -236,20 +250,24 @@ function authorizeUrl(overrides = {}) {
 }
 const bearer = (token) => ({ authorization: `Bearer ${token}` });
 
-/** Open the consent page as `session`; returns the handle and the consent cookie. */
+/** Open the consent page as `session`; returns the view, the handle and the consent cookie. */
 async function openConsent(session, url = authorizeUrl()) {
 	const res = await call(env, url, { headers: bearer(session.token) });
 	assert.equal(res.status, 200, res.text);
-	const handle = /name="handle" value="([^"]+)"/.exec(res.text)?.[1];
+	const view = res.data.consentView;
+	const handle = view.handle;
 	const cookie = res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
 	assert.ok(handle && cookie.startsWith("__Host-oauth-consent"));
-	return { res, handle, cookie };
+	return { res, view, handle, cookie };
 }
-function submit(session, { handle, cookie }, form, headers = {}) {
+/** Everything, in ada's own mailbox: what most tests approve. */
+const GRANT_ALL = [...MCP_OAUTH_SCOPES.map((s) => ["scope", s]), ["mailbox", "ada@inboxies.email"]];
+function submit(session, { handle, cookie }, form, headers = {}, grant = GRANT_ALL) {
+	const fields = [["handle", handle], ["account", "ada"], ...Object.entries(form), ...grant];
 	return call(env, `${ISSUER}/authorize`, {
 		method: "POST",
 		headers: { ...bearer(session.token), cookie, origin: ISSUER, ...headers },
-		form: { handle, account: "ada", ...form },
+		form: fields,
 	});
 }
 
@@ -284,16 +302,30 @@ function submit(session, { handle, cookie }, form, headers = {}) {
 	assert.equal(scoped.status, 403);
 }
 
-// Consent page: escaped client metadata, anti-framing, nothing approved yet.
+// Consent page: the view handed to the web page, anti-framing, nothing approved yet.
 let code;
 {
-	const { res, handle, cookie } = await openConsent(adaSession);
-	assert.ok(!res.text.includes("<script>"), "client name is escaped");
-	assert.ok(res.text.includes("&#60;script&#62;"));
-	assert.ok(res.text.includes("127.0.0.1"), "redirect host shown");
-	assert.ok(res.text.includes("ada@inboxies.email"));
-	assert.equal(res.headers.get("x-frame-options"), "DENY");
+	const { res, view, handle, cookie } = await openConsent(adaSession);
+	// Raw text: the React page escapes it when rendering.
+	assert.equal(view.client.name, 'Evil <script>alert("x")</script>');
+	assert.equal(view.client.domain, null, "a DCR client's name is unverified");
+	assert.equal(view.client.redirectHost, "127.0.0.1", "redirect host shown");
+	assert.equal(view.client.redirectIsLoopback, true);
+	assert.equal(view.email, "ada@inboxies.email");
+	assert.equal(view.account, "ada");
+	assert.deepEqual(view.requestedScopes, ["read"], "no scope requested: read only is pre-checked");
+	assert.deepEqual(
+		view.mailboxes,
+		[
+			{ id: "ada@inboxies.email", role: "owner" },
+			{ id: "team@inboxies.email", role: "member" },
+		],
+		"only mailboxes ada can open",
+	);
+	assert.equal(res.headers.get("x-frame-options"), "DENY", "the library's anti-framing header wins");
 	assert.match(res.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+	assert.equal(res.headers.get("cache-control"), "no-store");
+	assert.equal(res.headers.get("referrer-policy"), "same-origin", "no-referrer would make the post's Origin null");
 
 	// CSRF: cross-site post, missing cookie, other browser, switched account.
 	assert.equal((await submit(adaSession, { handle, cookie }, { decision: "approve" }, { origin: "https://evil.example" })).status, 403);
@@ -316,6 +348,69 @@ let code;
 	assert.equal((await submit(adaSession, { handle, cookie }, { decision: "approve" })).status, 400);
 }
 
+// Requested scopes are pre-checked (known ones only), read always.
+{
+	const { view } = await openConsent(adaSession, authorizeUrl({ scope: "send draft" }));
+	assert.deepEqual(view.requestedScopes, ["read", "draft", "send"]);
+}
+
+// Approve is re-validated server-side before the handle is spent.
+{
+	const opened = await openConsent(adaSession);
+	const approve = (grant) => submit(adaSession, opened, { decision: "approve" }, {}, grant);
+	const rejected = [
+		["no read", [["scope", "send"], ["mailbox", "ada@inboxies.email"]]],
+		["unknown scope", [["scope", "read"], ["scope", "admin"], ["mailbox", "ada@inboxies.email"]]],
+		["someone else's mailbox", [["scope", "read"], ["mailbox", "bob@inboxies.email"]]],
+		["mixed with someone else's", [["scope", "read"], ["mailbox", "ada@inboxies.email"], ["mailbox", "bob@inboxies.email"]]],
+		["non-canonical id", [["scope", "read"], ["mailbox", "ADA@inboxies.email"]]],
+		["unknown mailbox", [["scope", "read"], ["mailbox", "nobody@inboxies.email"]]],
+		["no mailbox", [["scope", "read"]]],
+	];
+	for (const [label, grant] of rejected) {
+		const res = await approve(grant);
+		assert.equal(res.status, 400, label);
+		assert.equal(res.headers.get("location"), null, label);
+	}
+	// Approval needs a session even with a valid selection.
+	assert.equal((await submit({ token: "nope" }, opened, { decision: "approve" }, {}, [["scope", "read"], ["mailbox", "ada@inboxies.email"]])).status, 401);
+
+	// The handle survived the rejected posts; a narrow grant goes through.
+	const ok = await approve([["scope", "read"], ["scope", "draft"], ["scope", "draft"], ["mailbox", "team@inboxies.email"]]);
+	assert.equal(ok.status, 302, ok.text);
+	const narrowCode = new URL(ok.headers.get("location")).searchParams.get("code");
+	const res = await call(env, `${ISSUER}/token`, {
+		method: "POST",
+		form: { client_id: clientId, grant_type: "authorization_code", code: narrowCode, redirect_uri: REDIRECT, code_verifier: VERIFIER },
+	});
+	assert.equal(res.status, 200, res.text);
+	assert.deepEqual(res.data.scope.split(" "), ["read", "draft"], "granted scopes, deduplicated");
+	const mcp = await call(env, `${ISSUER}/mcp`, { method: "POST", headers: bearer(res.data.access_token), json: {} });
+	assert.equal(mcp.status, 200);
+	assert.deepEqual(mcp.data.props.oauth.scopes, ["read", "draft"]);
+	assert.deepEqual(mcp.data.props.oauth.mailboxIds, ["team@inboxies.email"]);
+}
+
+// A mailbox ada lost access to after the page opened can't be granted.
+{
+	const opened = await openConsent(adaSession);
+	assert.ok(opened.view.mailboxes.some((m) => m.id === "team@inboxies.email"));
+	await db
+		.delete(schema.mailboxMember)
+		.where(and(eq(schema.mailboxMember.mailboxId, "team@inboxies.email"), eq(schema.mailboxMember.userId, "ada")));
+	const res = await submit(adaSession, opened, { decision: "approve" }, {}, [["scope", "read"], ["mailbox", "team@inboxies.email"]]);
+	assert.equal(res.status, 400);
+	await db.insert(schema.mailboxMember).values({ mailboxId: "team@inboxies.email", userId: "ada", role: "member" });
+}
+
+// Deny needs no selection at all.
+{
+	const opened = await openConsent(adaSession);
+	const denied = await submit(adaSession, opened, { decision: "deny" }, {}, []);
+	assert.equal(denied.status, 302);
+	assert.equal(new URL(denied.headers.get("location")).searchParams.get("error"), "access_denied");
+}
+
 // Deny goes back with access_denied and no code.
 {
 	const opened = await openConsent(adaSession);
@@ -324,6 +419,15 @@ let code;
 	const to = new URL(denied.headers.get("location"));
 	assert.equal(to.searchParams.get("error"), "access_denied");
 	assert.equal(to.searchParams.get("code"), null);
+}
+
+// A new authorization replaces the client's earlier grants (the library's
+// default), so the narrow grant above revoked `code`: take a fresh one.
+{
+	const opened = await openConsent(adaSession);
+	const ok = await submit(adaSession, opened, { decision: "approve" });
+	code = new URL(ok.headers.get("location")).searchParams.get("code");
+	assert.ok(code);
 }
 
 // ── Token exchange: PKCE verifier required ────────────────────────────
@@ -380,7 +484,7 @@ async function issueTokens() {
 	assert.match(res.data.props.principal.sessionId, /^oauth:/);
 	assert.equal(res.data.props.oauth.clientId, clientId);
 	assert.deepEqual(res.data.props.oauth.scopes.sort(), [...MCP_OAUTH_SCOPES].sort());
-	assert.equal(res.data.props.oauth.mailboxIds, null);
+	assert.deepEqual(res.data.props.oauth.mailboxIds, ["ada@inboxies.email"]);
 
 	const sub = await call(env, `${ISSUER}/mcp/message`, { method: "POST", headers: bearer(accessToken), json: {} });
 	assert.equal(sub.status, 200);
@@ -459,6 +563,29 @@ async function issueTokens() {
 	assert.equal(legacy.status, 200);
 	const oauthShaped = await call(plain, `${ISSUER}/mcp`, { method: "POST", headers: bearer("carol:g:s"), json: {} });
 	assert.equal(oauthShaped.status, 401);
+}
+
+// ── Pure helpers ──────────────────────────────────────────────────────
+{
+	assert.deepEqual(initialConsentScopes([]), ["read"]);
+	assert.deepEqual(initialConsentScopes(["manage", "openid", "read"]), ["read", "manage"]);
+	const mine = ["a@x.test", "b@x.test"];
+	assert.deepEqual(validateConsentSelection({ scopes: ["send", "read"], mailboxIds: ["b@x.test", "a@x.test"] }, mine), {
+		ok: true,
+		scopes: ["read", "send"],
+		mailboxIds: ["a@x.test", "b@x.test"],
+	});
+	assert.equal(validateConsentSelection({ scopes: ["draft"], mailboxIds: ["a@x.test"] }, mine).ok, false);
+	assert.equal(validateConsentSelection({ scopes: ["read", "READ"], mailboxIds: ["a@x.test"] }, mine).ok, false);
+	assert.equal(validateConsentSelection({ scopes: ["read"], mailboxIds: [] }, mine).ok, false);
+	assert.equal(validateConsentSelection({ scopes: ["read"], mailboxIds: ["c@x.test"] }, mine).ok, false);
+	assert.equal(validateConsentSelection({ scopes: ["read"], mailboxIds: ["a@x.test"] }, []).ok, false);
+
+	assert.equal(grantCoversMailbox(undefined, "a@x.test"), true, "session-token requests: user access only");
+	assert.equal(grantCoversMailbox({ clientId: "c", scopes: ["read"], mailboxIds: null }, "a@x.test"), true, "pre-AVE-68 grants");
+	assert.equal(grantCoversMailbox({ clientId: "c", scopes: ["read"], mailboxIds: ["a@x.test"] }, "a@x.test"), true);
+	assert.equal(grantCoversMailbox({ clientId: "c", scopes: ["read"], mailboxIds: ["a@x.test"] }, "b@x.test"), false);
+	assert.equal(grantCoversMailbox({ clientId: "c", scopes: ["read"], mailboxIds: [] }, "a@x.test"), false);
 }
 
 console.log("mcp-oauth: ok");

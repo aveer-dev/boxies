@@ -122,8 +122,9 @@ export function useSendEmail() {
 		mutationFn: ({
 			mailboxId,
 			email,
-		}: { mailboxId: string; email: unknown }) =>
-			api.sendEmail(mailboxId, email),
+			idempotencyKey,
+		}: { mailboxId: string; email: unknown; idempotencyKey?: string }) =>
+			api.sendEmail(mailboxId, email, idempotencyKey),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }
@@ -166,7 +167,9 @@ export function useUpdateEmail() {
 				if (!cached?.emails) continue;
 				const params = key[2] as Record<string, string> | undefined;
 				const folder = params?.folder;
-				if (readPatch !== undefined && folderUsesNewSeen(folder)) {
+				// A single-section list (`section=new`, the All new page) keeps its
+				// order; reading a row there must not move it under the reader.
+				if (readPatch !== undefined && folderUsesNewSeen(folder) && !params?.section) {
 					qc.setQueryData(
 						key,
 						patchEmailListCache(cached, folder, { id, read: readPatch }),
@@ -267,7 +270,10 @@ export function useMarkThreadRead() {
 				const folder = params?.folder;
 				qc.setQueryData(
 					key,
-					patchEmailListCache(cached, folder, { threadId, read: true }),
+					patchEmailListCache(cached, params?.section ? undefined : folder, {
+						threadId,
+						read: true,
+					}),
 				);
 			}
 
@@ -382,8 +388,9 @@ export function useReplyToEmail() {
 			mailboxId,
 			emailId,
 			email,
-		}: { mailboxId: string; emailId: string; email: unknown }) =>
-			api.replyToEmail(mailboxId, emailId, email),
+			idempotencyKey,
+		}: { mailboxId: string; emailId: string; email: unknown; idempotencyKey?: string }) =>
+			api.replyToEmail(mailboxId, emailId, email, idempotencyKey),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }
@@ -395,8 +402,9 @@ export function useForwardEmail() {
 			mailboxId,
 			emailId,
 			email,
-		}: { mailboxId: string; emailId: string; email: unknown }) =>
-			api.forwardEmail(mailboxId, emailId, email),
+			idempotencyKey,
+		}: { mailboxId: string; emailId: string; email: unknown; idempotencyKey?: string }) =>
+			api.forwardEmail(mailboxId, emailId, email, idempotencyKey),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }

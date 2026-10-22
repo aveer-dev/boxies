@@ -10,7 +10,7 @@
 
 import { execSync } from "node:child_process";
 
-const QUEUES = ["email-sending-events"];
+const QUEUES = ["email-sending-events", "outbound-send", "outbound-send-dlq"];
 
 for (const queue of QUEUES) {
 	try {

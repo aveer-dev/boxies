@@ -7,7 +7,7 @@ import {
 	assertOutboundMessageSize,
 	OutboundSizeError,
 } from "../lib/outbound-limits";
-import { deliverOutboundInBackground } from "../lib/outbound-delivery";
+import { enqueueOutboundSendFromEnv } from "../lib/outbound-send-queue";
 import {
 	checkIdempotencyKey,
 	discardReplayedSend,
@@ -29,6 +29,7 @@ import { SendEmailRequestSchema } from "../lib/schemas";
 import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
+import { blockSuppressedSend } from "./suppressions";
 import { allowOutboundRecipients } from "../lib/sender-triage";
 import {
 	findThreadAliasId,
@@ -94,6 +95,10 @@ export async function handleReplyEmail(c: AppContext) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
+
+	// Suppressed recipients block the send before a slot or Sent row exists.
+	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
+	if (suppressed) return suppressed;
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
@@ -166,25 +171,23 @@ export async function handleReplyEmail(c: AppContext) {
 	await stub.deleteDraftsForThread(thread_id);
 	await (stub as any).clearReplyLaterForThread(thread_id);
 
-	c.executionCtx.waitUntil(
-		deliverOutboundInBackground(c.env, mailboxId, messageId, {
-			to,
-			cc,
-			bcc,
-			from,
-			subject,
-			html,
-			text,
-			attachments: attachments?.map((att) => ({
-				content: att.content,
-				filename: att.filename,
-				type: att.type,
-				disposition: att.disposition,
-				contentId: att.contentId,
-			})),
-			headers: buildThreadingHeaders(originalMsgId, references),
-		}),
-	);
+	await enqueueOutboundSendFromEnv(c.env, mailboxId, messageId, {
+		to,
+		cc,
+		bcc,
+		from,
+		subject,
+		html,
+		text,
+		attachments: attachments?.map((att) => ({
+			content: att.content,
+			filename: att.filename,
+			type: att.type,
+			disposition: att.disposition,
+			contentId: att.contentId,
+		})),
+		headers: buildThreadingHeaders(originalMsgId, references),
+	});
 
 	return c.json({ id: messageId, status: "sent" }, 202);
 }
@@ -231,6 +234,10 @@ export async function handleForwardEmail(c: AppContext) {
 		if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
 		throw e;
 	}
+
+	// Suppressed recipients block the send before a slot or Sent row exists.
+	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
+	if (suppressed) return suppressed;
 
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 
@@ -298,24 +305,22 @@ export async function handleForwardEmail(c: AppContext) {
 
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
 
-	c.executionCtx.waitUntil(
-		deliverOutboundInBackground(c.env, mailboxId, messageId, {
-			to,
-			cc,
-			bcc,
-			from,
-			subject,
-			html,
-			text,
-			attachments: attachments?.map((att) => ({
-				content: att.content,
-				filename: att.filename,
-				type: att.type,
-				disposition: att.disposition,
-				contentId: att.contentId,
-			})),
-		}),
-	);
+	await enqueueOutboundSendFromEnv(c.env, mailboxId, messageId, {
+		to,
+		cc,
+		bcc,
+		from,
+		subject,
+		html,
+		text,
+		attachments: attachments?.map((att) => ({
+			content: att.content,
+			filename: att.filename,
+			type: att.type,
+			disposition: att.disposition,
+			contentId: att.contentId,
+		})),
+	});
 
 	return c.json({ id: messageId, status: "sent" }, 202);
 }

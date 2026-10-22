@@ -3,7 +3,8 @@
  * `33_email_idempotency_key` migration (nullable column + partial UNIQUE
  * index), the atomic insert-or-return-existing step `createEmail` uses, and
  * the HTTP routes: a replay sends once and returns the original row, two
- * concurrent requests with one key send once, and requests without a key
+ * concurrent requests with one key send once (one outbound-send queue
+ * message), and requests without a key
  * behave as before. Runs the real MailboxDO migrations on node:sqlite; the
  * HTTP part wires a mock mailbox stub (yielding at every await, like the DO
  * does at its R2 write) to that same database.
@@ -172,8 +173,17 @@ const stubExtras = {
 	},
 };
 
+// Fresh sends go through the outbound-send queue (AVE-65): count enqueued
+// messages; the EMAIL binding must never be called inline.
+const outboundSend = {
+	sent: [],
+	send: async (body) => {
+		outboundSend.sent.push(body);
+	},
+};
 const { env, db: authDb, bucket, email: emailBinding } = createAuthTestEnv({
 	MAILBOX: mockMailboxNamespace(stubExtras),
+	OUTBOUND_SEND: outboundSend,
 	DOMAINS: "inboxies.email",
 });
 const ada = await addUser(authDb, { id: "ada", email: MAILBOX });
@@ -211,26 +221,26 @@ async function settle() {
 	assert.notEqual(a.payload.id, b.payload.id, "two sends, two rows");
 	assert.equal(a.headers.get("Idempotent-Replayed"), null);
 	assert.equal(sentRows(), rowsBefore + 2);
-	assert.equal(emailBinding.sent.length, 2);
+	assert.equal(outboundSend.sent.length, 2);
 	assert.equal(slots, 2);
 	assert.equal(count(sql, `SELECT COUNT(*) FROM emails WHERE idempotency_key IS NOT NULL`), 0, "no key stored");
 }
 
 // Invalid key: 400, nothing sent or reserved.
 {
-	const before = [sentRows(), emailBinding.sent.length, slots];
+	const before = [sentRows(), outboundSend.sent.length, slots];
 	const res = await post("/emails", message("Bad key"), "café");
 	assert.equal(res.status, 400);
 	assert.match(res.payload.error, /Idempotency-Key/);
 	const longKey = await post("/emails", message("Bad key"), "x".repeat(IDEMPOTENCY_KEY_MAX_LENGTH + 1));
 	assert.equal(longKey.status, 400);
 	await settle();
-	assert.deepEqual([sentRows(), emailBinding.sent.length, slots], before);
+	assert.deepEqual([sentRows(), outboundSend.sent.length, slots], before);
 }
 
 // Replayed send: one row, one send, the original row back.
 {
-	const before = [sentRows(), emailBinding.sent.length, slots];
+	const before = [sentRows(), outboundSend.sent.length, slots];
 	const first = await post("/emails", message("Once"), "send-key-1");
 	await settle();
 	const replay = await post("/emails", message("Once"), "send-key-1");
@@ -241,14 +251,14 @@ async function settle() {
 	assert.equal(replay.headers.get("Idempotent-Replayed"), "true");
 	assert.equal(first.headers.get("Idempotent-Replayed"), null);
 	assert.equal(sentRows(), before[0] + 1, "one Sent row");
-	assert.equal(emailBinding.sent.length, before[1] + 1, "sent once");
+	assert.equal(outboundSend.sent.length, before[1] + 1, "sent once");
 	assert.equal(slots, before[2] + 1, "one send slot");
 	assert.equal(findEmailIdByIdempotencyKey(sql, "send-key-1"), first.payload.id);
 }
 
 // Two concurrent requests with one key: one send, both get the same row.
 {
-	const before = [sentRows(), emailBinding.sent.length, slots];
+	const before = [sentRows(), outboundSend.sent.length, slots];
 	const [a, b] = await Promise.all([
 		post("/emails", message("Race"), "race-key"),
 		post("/emails", message("Race"), "race-key"),
@@ -258,7 +268,7 @@ async function settle() {
 	assert.equal(b.status, 202);
 	assert.equal(a.payload.id, b.payload.id, "both point at the winner's row");
 	assert.equal(sentRows(), before[0] + 1, "one Sent row");
-	assert.equal(emailBinding.sent.length, before[1] + 1, "sent once");
+	assert.equal(outboundSend.sent.length, before[1] + 1, "sent once");
 	assert.equal(slots, before[2] + 1, "the loser gave its send slot back");
 	assert.equal(
 		[a, b].filter((r) => r.headers.get("Idempotent-Replayed") === "true").length,
@@ -270,7 +280,7 @@ async function settle() {
 
 // Reply and forward: replay sends once and returns the original row.
 for (const route of ["reply", "forward"]) {
-	const before = [sentRows(), emailBinding.sent.length];
+	const before = [sentRows(), outboundSend.sent.length];
 	const key = `${route}-key`;
 	const first = await post(`/emails/orig/${route}`, message(`Re: ${route}`), key);
 	await settle();
@@ -281,25 +291,27 @@ for (const route of ["reply", "forward"]) {
 	assert.deepEqual(replay.payload, first.payload, `${route}: replay returns the original row`);
 	assert.equal(replay.headers.get("Idempotent-Replayed"), "true");
 	assert.equal(sentRows(), before[0] + 1, `${route}: one Sent row`);
-	assert.equal(emailBinding.sent.length, before[1] + 1, `${route}: sent once`);
+	assert.equal(outboundSend.sent.length, before[1] + 1, `${route}: sent once`);
 
 	// Without a key, reply/forward send every time as before.
 	const plain1 = await post(`/emails/orig/${route}`, message(`Re: ${route}`));
 	const plain2 = await post(`/emails/orig/${route}`, message(`Re: ${route}`));
 	await settle();
 	assert.notEqual(plain1.payload.id, plain2.payload.id);
-	assert.equal(emailBinding.sent.length, before[1] + 3);
+	assert.equal(outboundSend.sent.length, before[1] + 3);
 }
 
 // The key is per mailbox, not per route: reusing a send's key on a forward
 // returns the send's row and sends nothing.
 {
-	const before = emailBinding.sent.length;
+	const before = outboundSend.sent.length;
 	const res = await post("/emails/orig/forward", message("Fwd"), "send-key-1");
 	await settle();
 	assert.equal(res.status, 202);
 	assert.equal(res.payload.id, findEmailIdByIdempotencyKey(sql, "send-key-1"));
-	assert.equal(emailBinding.sent.length, before);
+	assert.equal(outboundSend.sent.length, before);
 }
+
+assert.equal(emailBinding.sent.length, 0, "no inline sends: everything went through the queue");
 
 console.log("outbound-idempotency: ok");
