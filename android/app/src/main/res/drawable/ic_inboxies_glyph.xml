@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from design/logo/inboxies-mark.svg by scripts/generate-logo-assets.mjs; do not edit by hand. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="@color/splash_icon_color"
+        android:strokeWidth="1.286"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 1.51 8.89 L 20.79 1.54 A 1.77 1.77 0 0 1 23.05 3.87 L 15.57 21.84 A 1.14 1.14 0 0 1 13.78 22.27 L 10.02 19.11 L 7.69 22.09 A 0.91 0.91 0 0 1 6.07 21.68 L 4.79 14.26 L 1.14 10.72 A 1.11 1.11 0 0 1 1.51 8.89 Z" />
+    <path
+        android:strokeColor="@color/splash_icon_color"
+        android:strokeWidth="1.071"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 0.8 9.9 L 2.55 10.08 L 11.2 10.06 L 22.16 2.46 M 22.16 2.46 L 8.16 15.86 L 7.71 16.62 L 7.27 18.66 M 12.96 11.22 L 14.4 20.58 L 14.7 22.53 M 22.16 2.46 L 22.67 1.94" />
+    <path
+        android:fillColor="@color/splash_icon_color"
+        android:pathData="M 7.97 17.43 L 9.01 16.35 L 9.66 16.56 L 13.09 19.94 L 13.09 20.54 L 12.52 21.11 L 10.02 19.11 L 7.69 22.09 A 0.91 0.91 0 0 1 6.83 22.42 Z" />
+</vector>

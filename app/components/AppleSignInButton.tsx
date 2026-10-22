@@ -15,6 +15,11 @@ export type AppleCredential = {
 	identityToken: string;
 	/** Raw nonce passed to Apple; the Worker checks it against the token. */
 	nonce: string;
+	/**
+	 * Apple's one-time code. The Worker exchanges it (as the Services ID) for
+	 * a refresh token so deleting the account can revoke Apple's grant.
+	 */
+	authorizationCode?: string;
 	fullName?: { givenName?: string; familyName?: string };
 };
 
@@ -68,7 +73,9 @@ export function AppleSignInButton({
 		auth.init({
 			clientId,
 			scope: "name email",
-			// Must be a Return URL registered on the Services ID.
+			// Must be a Return URL registered on the Services ID. The Worker
+			// exchanges the code with `${APP_BASE_URL}/login` as redirect_uri;
+			// other hosts redirect /login there, so the two match.
 			redirectURI: `${window.location.origin}/login`,
 			state: randomNonce(8),
 			nonce,
@@ -93,6 +100,7 @@ export function AppleSignInButton({
 		onCredentialRef.current({
 			identityToken,
 			nonce,
+			authorizationCode: response.authorization?.code || undefined,
 			fullName: name ? { givenName: name.firstName, familyName: name.lastName } : undefined,
 		});
 	};
