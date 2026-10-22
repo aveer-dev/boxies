@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * AVE-41: per-recipient delivery status (`35_delivery_recipients`, filled from
+ * AVE-41: per-recipient delivery status (`36_delivery_recipients`, filled from
  * Email Sending events) and the `email-sending-events-dlq` dead-letter store
  * with its /ops list / replay / discard routes.
  * Run: node --experimental-strip-types --import ./workers/test/register-ts-ext.mjs workers/test/delivery-recipients-dlq.test.mjs
@@ -36,7 +36,7 @@ import {
 } from "../lib/email-sending-dlq.ts";
 import { authedRequest, createAuthTestEnv, mockBucket } from "./auth-fixtures.mjs";
 
-const MIGRATION = "35_delivery_recipients";
+const MIGRATION = "36_delivery_recipients";
 
 /** `ctx.storage.sql` stand-in: multi-statement scripts via exec, else one prepared statement. */
 function sqlStorage(db) {
@@ -69,7 +69,7 @@ function freshMailbox() {
 
 const rowsFor = (sql, id) => listDeliveryRecipients(sql, [id]).get(id) ?? [];
 
-describe("35_delivery_recipients migration", () => {
+describe("36_delivery_recipients migration", () => {
 	it("adds the table to an existing mailbox without touching mail", () => {
 		const db = new DatabaseSync(":memory:");
 		const sql = sqlStorage(db);
@@ -224,15 +224,15 @@ describe("applyEmailSendingEvent with recipients", () => {
 	it("gives delivered events a few tries when the Sent row is missing, then drops them", async () => {
 		const s = stub({ found: false });
 		const event = { type: "cf.email.sending.message.delivered", payload };
-		assert.equal(await applyEmailSendingEvent(event, s.resolve, 1), false);
-		assert.equal(await applyEmailSendingEvent(event, s.resolve, RECIPIENT_ONLY_EVENT_MAX_ATTEMPTS), true);
+		assert.equal(await applyEmailSendingEvent(event, s.resolve, undefined, 1), false);
+		assert.equal(await applyEmailSendingEvent(event, s.resolve, undefined, RECIPIENT_ONLY_EVENT_MAX_ATTEMPTS), true);
 		assert.equal(s.calls.length, 0);
 	});
 
 	it("keeps retrying failure events when the Sent row is missing (they dead-letter)", async () => {
 		const s = stub({ found: false });
 		const event = { type: "cf.email.sending.message.bounced", payload };
-		assert.equal(await applyEmailSendingEvent(event, s.resolve, 99), false);
+		assert.equal(await applyEmailSendingEvent(event, s.resolve, undefined, 99), false);
 	});
 
 	it("retries when recording the recipient fails", async () => {

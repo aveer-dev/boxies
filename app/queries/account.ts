@@ -32,6 +32,14 @@ export function useSessions() {
 	});
 }
 
+export function useMcpGrants() {
+	return useQuery({
+		queryKey: queryKeys.account.mcpGrants,
+		queryFn: () => api.listMcpGrants(),
+		staleTime: 15_000,
+	});
+}
+
 export function useRecoveryEmail() {
 	return useQuery({
 		queryKey: queryKeys.account.recoveryEmail,

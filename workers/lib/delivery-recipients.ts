@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Per-recipient delivery state (AVE-41, migration 35_delivery_recipients).
+ * Per-recipient delivery state (AVE-41, migration 36_delivery_recipients).
  *
  * `emails.delivery_status` is one value per message, so with several
  * recipients it can't say which one bounced. Each Email Sending event names

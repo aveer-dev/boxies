@@ -553,13 +553,29 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Stuck-send sweeper (AVE-66, workers/lib/outbound-send-sweeper.ts).
+		// send_queued_at: epoch ms of the last (re-)enqueue of a queued Sent
+		// row; send_attempts: re-enqueues the sweeper made. The partial index
+		// keeps the alarm's "queued rows" scan off the rest of the mailbox.
+		// Additive only: existing rows get 0 / NULL, and the first sweep
+		// stamps any already-queued row.
+		name: "34_outbound_send_sweeper",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE emails ADD COLUMN send_queued_at INTEGER;
+            CREATE INDEX IF NOT EXISTS idx_emails_queued_sends
+                ON emails(send_queued_at) WHERE delivery_status = 'queued';
+        `),
+	},
+	{
 		// Per-recipient delivery state from Email Sending events (AVE-41).
 		// emails.delivery_status stays the message-level summary; this says
 		// which recipient bounced / complained / was delivered. Rows go with
 		// their email (ON DELETE CASCADE, like attachments).
-		// Additive only: a new table. Numbered 35 because open PRs already
-		// use 34_; the runner tracks by name, so landing order doesn't matter.
-		name: "35_delivery_recipients",
+		// Additive only: a new table. Numbered 36: dev's highest is
+		// 34_outbound_send_sweeper and open PR #133 (AVE-42) uses 35_; the
+		// runner tracks by name, so landing order doesn't matter.
+		name: "36_delivery_recipients",
 		sql: txn(`
             CREATE TABLE IF NOT EXISTS delivery_recipients (
                 email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,

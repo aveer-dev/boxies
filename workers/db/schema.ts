@@ -64,7 +64,7 @@ export const attachments = sqliteTable("attachments", {
 
 /**
  * Per-recipient delivery state from Email Sending events (migration
- * 35_delivery_recipients). Written and read with raw SQL in
+ * 36_delivery_recipients). Written and read with raw SQL in
  * workers/lib/delivery-recipients.ts; mirrored here for types.
  */
 export const deliveryRecipients = sqliteTable(

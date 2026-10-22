@@ -1,0 +1,19 @@
+[
+	{ "name": "empty body", "html": "", "ownColors": false },
+	{ "name": "plain text, no tags", "html": "Hi Sam,\nSee you tomorrow.", "ownColors": false },
+	{ "name": "simple paragraphs and a link", "html": "<p>Hi Sam,</p><p>Notes are <a href=\"https://example.com\" target=\"_blank\">here</a>.</p>", "ownColors": false },
+	{ "name": "quoted reply with a grey border", "html": "<p>Thanks!</p><blockquote style=\"border-left: 2px solid #ccc; margin: 0; padding-left: 1em;\">Earlier note</blockquote>", "ownColors": false },
+	{ "name": "border and outline colours only", "html": "<div style=\"border-color: #ccc; outline-color: red; text-decoration-color: blue\">Hi</div>", "ownColors": false },
+	{ "name": "neutral colour values", "html": "<span style=\"background: transparent; color: inherit; background-image: none !important\">Hi</span>", "ownColors": false },
+	{ "name": "colour words in the text, not in a tag", "html": "<p>Favourite color: blue; background: red</p>", "ownColors": false },
+	{ "name": "colour words in a different attribute", "html": "<p title=\"color: red\" data-bgcolor=\"x\">Hi</p>", "ownColors": false },
+	{ "name": "empty bgcolor", "html": "<table><tr><td bgcolor=\"\">Hi</td></tr></table>", "ownColors": false },
+	{ "name": "bgcolor on a cell", "html": "<table><tr><td bgcolor=\"#ffffff\">Hi</td></tr></table>", "ownColors": true },
+	{ "name": "background image attribute", "html": "<table background=\"https://example.com/bg.png\"><tr><td>Hi</td></tr></table>", "ownColors": true },
+	{ "name": "font colour", "html": "<p><font color=\"red\">Sale</font></p>", "ownColors": true },
+	{ "name": "inline background-color", "html": "<div style=\"padding: 8px; background-color:#f4f4f4\">Hi</div>", "ownColors": true },
+	{ "name": "inline text colour", "html": "<p style=\"color: rgb(34, 34, 34)\">Hi</p>", "ownColors": true },
+	{ "name": "background shorthand", "html": "<td style=\"background: #0a0a0a\">Hi</td>", "ownColors": true },
+	{ "name": "background image with a data url", "html": "<td style=\"background-image:url(data:image/png;base64,AAAA)\">Hi</td>", "ownColors": true },
+	{ "name": "single quotes, uppercase, !important", "html": "<div style='BACKGROUND-COLOR: #FFF !important'>Hi</div>", "ownColors": true }
+]

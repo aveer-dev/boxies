@@ -1,10 +1,17 @@
 package co.inboxies.app.util
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class EmailHtmlSanitizerTest {
     @Test
@@ -148,5 +155,29 @@ class EmailHtmlSanitizerTest {
         assertNotNull(split.quote)
         assertTrue(split.quote!!.contains("Hello") || split.quote!!.contains("Bob"))
         assertTrue(split.quote!!.contains("older"))
+    }
+
+    /** Same fixtures as web (`workers/test/email-colors.test.mjs`) and iOS. */
+    @Test
+    fun hasOwnColorsMatchesSharedFixtures() {
+        // Gradle runs unit tests from the module directory (android/app).
+        val file = File("../../shared/email-colors.fixtures.json")
+        val fixtures = Json.parseToJsonElement(file.readText()).jsonArray
+        assertTrue(fixtures.size > 10)
+        for (element in fixtures) {
+            val fixture = element.jsonObject
+            val name = fixture.getValue("name").jsonPrimitive.content
+            val html = fixture.getValue("html").jsonPrimitive.content
+            val expected = fixture.getValue("ownColors").jsonPrimitive.boolean
+            assertEquals(name, expected, EmailHtmlSanitizer.hasOwnColors(html))
+        }
+    }
+
+    @Test
+    fun ownColorsAreJudgedAfterSanitizing() {
+        val designed = EmailHtmlSanitizer.sanitize("""<table><tr><td bgcolor="#ffffff" onclick="x()">Sale</td></tr></table>""")
+        val simple = EmailHtmlSanitizer.sanitize("""<p>Hi</p><style>body { background: red }</style>""")
+        assertTrue(EmailHtmlSanitizer.hasOwnColors(designed))
+        assertFalse("Stripped <style> never counts", EmailHtmlSanitizer.hasOwnColors(simple))
     }
 }
