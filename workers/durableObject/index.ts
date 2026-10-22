@@ -87,6 +87,7 @@ import {
 	serializeEmailAuth,
 	type EmailAuth,
 } from "../lib/email-auth";
+import { storedAuthTier } from "../lib/classification-reason";
 import { buildBootstrapAllowSeeds } from "../lib/sender-triage";
 import {
 	normalizeSenderPreferenceAddress,
@@ -237,6 +238,12 @@ interface EmailData {
 	delivery_status?: DeliveryStatus | null;
 	delivery_error?: string | null;
 	auth?: EmailAuth | string | null;
+	/** Why inbound mail was filed where it was (shared/spam-reason.ts code). */
+	classification_reason?: string | null;
+	/** Defaults to the tier of `auth`; null when there's no auth snapshot. */
+	auth_tier?: string | null;
+	/** Sender rule that decided the folder (null until sender_rules exists). */
+	matched_rule_id?: string | null;
 	alias_id?: string | null;
 	/** "agent" for AI-written drafts; omitted for the user's own mail. */
 	source?: "agent" | null;
@@ -759,12 +766,22 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 	}
 
-	#withDecodedAuth<T extends { auth?: unknown }>(
+	/**
+	 * Decode the stored auth JSON and fill `auth_tier` for rows from before
+	 * migration 37, which only have the tier inside `auth`.
+	 */
+	#withDecodedAuth<T extends { auth?: unknown; auth_tier?: unknown }>(
 		email: T,
-	): T & { auth: EmailAuth | null } {
+	): T & { auth: EmailAuth | null; auth_tier: string | null } {
+		const auth = parseStoredEmailAuth(email.auth);
+		const stored =
+			typeof email.auth_tier === "string" && email.auth_tier
+				? email.auth_tier
+				: null;
 		return {
 			...email,
-			auth: parseStoredEmailAuth(email.auth),
+			auth,
+			auth_tier: stored ?? storedAuthTier(auth),
 		};
 	}
 
@@ -840,6 +857,9 @@ export class MailboxDO extends DurableObject<Env> {
 				delivery_error: schema.emails.delivery_error,
 				snippet: schema.emails.snippet,
 				auth: schema.emails.auth,
+				auth_tier: schema.emails.auth_tier,
+				classification_reason: schema.emails.classification_reason,
+				matched_rule_id: schema.emails.matched_rule_id,
 				alias_id: schema.emails.alias_id,
 			})
 			.from(schema.emails)
@@ -1086,7 +1106,7 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
-					lp.auth,
+					lp.auth, lp.auth_tier, lp.classification_reason, lp.matched_rule_id,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
@@ -1188,7 +1208,7 @@ export class MailboxDO extends DurableObject<Env> {
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
-				lif.auth,
+				lif.auth, lif.auth_tier, lif.classification_reason, lif.matched_rule_id,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
 				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
 					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
@@ -1371,7 +1391,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const body = await this.#hydrateBody(id, email.body, email.snippet);
 
-		return {
+		return this.#withDecodedAuth({
 			...email,
 			...this.#aliasFields(email.alias_id),
 			body,
@@ -1381,8 +1401,7 @@ export class MailboxDO extends DurableObject<Env> {
 			attachments: emailAttachments,
 			delivery_recipients:
 				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
-			auth: parseStoredEmailAuth(email.auth),
-		};
+		});
 	}
 
 	/**
@@ -2748,7 +2767,7 @@ export class MailboxDO extends DurableObject<Env> {
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,
-				e.auth,
+				e.auth, e.auth_tier, e.classification_reason, e.matched_rule_id,
 				f.name as folder_name
 			FROM emails e
 			${ftsJoin}
@@ -3033,6 +3052,11 @@ export class MailboxDO extends DurableObject<Env> {
 		// insert can't interleave with it.
 		// Sent and draft emails are always read — the author already knows the content.
 		// This prevents them from looking unread in lists or inflating thread_unread_count.
+		const decodedAuth =
+			typeof email.auth === "string"
+				? parseStoredEmailAuth(email.auth)
+				: email.auth ?? null;
+		const authTier = email.auth_tier ?? storedAuthTier(decodedAuth);
 		const created = insertOrReplay(this.ctx.storage.sql, idempotencyKey, email.id, () => {
 			this.db
 				.insert(schema.emails)
@@ -3058,11 +3082,10 @@ export class MailboxDO extends DurableObject<Env> {
 					provider_message_id: email.provider_message_id ?? null,
 					delivery_status: email.delivery_status ?? null,
 					delivery_error: email.delivery_error ?? null,
-					auth: serializeEmailAuth(
-						typeof email.auth === "string"
-							? parseStoredEmailAuth(email.auth)
-							: email.auth,
-					),
+					auth: serializeEmailAuth(decodedAuth),
+					classification_reason: email.classification_reason ?? null,
+					auth_tier: authTier,
+					matched_rule_id: email.matched_rule_id ?? null,
 					alias_id: email.alias_id ?? null,
 					source: email.source ?? null,
 					idempotency_key: idempotencyKey,
@@ -3113,9 +3136,10 @@ export class MailboxDO extends DurableObject<Env> {
 			provider_message_id: email.provider_message_id ?? null,
 			delivery_status: email.delivery_status ?? null,
 			delivery_error: email.delivery_error ?? null,
-			auth: typeof email.auth === "string"
-				? parseStoredEmailAuth(email.auth)
-				: email.auth ?? null,
+			auth: decodedAuth,
+			auth_tier: authTier,
+			classification_reason: email.classification_reason ?? null,
+			matched_rule_id: email.matched_rule_id ?? null,
 			// iOS decodes the full Email model from this event; it requires these.
 			reply_later: false,
 			alias_id: email.alias_id ?? null,

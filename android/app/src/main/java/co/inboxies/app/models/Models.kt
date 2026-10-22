@@ -525,9 +525,11 @@ data class EmailAuth(
     val envelopeFrom: String? = null,
     val aligned: Boolean? = null,
     val spoofed: Boolean = false,
+    /** `verified` | `unverified` | `failed` (AVE-92). Absent on older snapshots. */
+    val authTier: String? = null,
     val source: String? = null,
 ) {
-    val isSpoofed: Boolean get() = spoofed
+    val isSpoofed: Boolean get() = spoofed || authTier == "failed"
 }
 
 @Serializable
@@ -571,6 +573,12 @@ data class Email(
     @SerialName("alias_email") val aliasEmail: String? = null,
     /** Alias still active and unexpired; `null` when not a private-email thread. */
     @SerialName("alias_active") val aliasActive: Boolean? = null,
+    /** Auth tier stored at receive time (`verified` | `unverified` | `failed`). */
+    @SerialName("auth_tier") val authTier: String? = null,
+    /** Why inbound mail was filed where it was (machine code, see [SpamReason]). */
+    @SerialName("classification_reason") val classificationReason: String? = null,
+    /** Sender rule that decided the folder (null until sender rules exist). */
+    @SerialName("matched_rule_id") val matchedRuleId: String? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -579,7 +587,19 @@ data class Email(
         }
 
     val isSpoofed: Boolean
-        get() = auth?.isSpoofed == true
+        get() = auth?.isSpoofed == true || authTier == "failed"
+
+    /** Stored tier, else the tier inside the auth snapshot (cached rows). */
+    val effectiveAuthTier: String?
+        get() = authTier ?: auth?.authTier
+
+    /** "Unverified sender" banner — any folder, allowed senders included. */
+    val showsUnverifiedBanner: Boolean
+        get() = effectiveAuthTier == "unverified"
+
+    /** One line explaining why this is in Spam / Screened out, if we know. */
+    val spamReasonLine: String?
+        get() = SpamReason.line(classificationReason, folderId)
 
     val isDeliveryFailure: Boolean
         get() = DeliveryStatus.isFailure(deliveryStatus)

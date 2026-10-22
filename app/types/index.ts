@@ -408,6 +408,12 @@ export interface Email {
 	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
 	delivery_error?: string | null;
 	auth?: EmailAuthSnapshot | null;
+	/** Auth tier at receive time; null on outbound mail. */
+	auth_tier?: "verified" | "unverified" | "failed" | null;
+	/** Why inbound mail was filed where it was (code; see shared/spam-reason). */
+	classification_reason?: string | null;
+	/** Sender rule that decided the folder (null until sender rules exist). */
+	matched_rule_id?: string | null;
 	/** Private email the message arrived on or was sent from. */
 	alias_id?: string | null;
 	/** Detail/thread payloads only. Replies go out from this address. */
