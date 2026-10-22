@@ -7,7 +7,8 @@
  * was filed (docs/spam-management-plan.md §5 Explainability):
  * `classification_reason` (stable machine code, see shared/spam-reason.ts),
  * `auth_tier` (verified / unverified / failed) and `matched_rule_id` (the
- * sender rule that decided it; always null until `sender_rules` lands).
+ * `sender_rules` row that decided it, see decidingSenderRuleId in
+ * sender-rules.ts).
  */
 
 import { ClassificationReasons } from "../../shared/spam-reason.ts";

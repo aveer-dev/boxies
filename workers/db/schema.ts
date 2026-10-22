@@ -111,6 +111,23 @@ export const senderTriage = sqliteTable("sender_triage", {
 	updated_at: text("updated_at").notNull(),
 });
 
+/**
+ * Explicit allow / block rules by address or registrable domain (migration
+ * 38_sender_rules). Queried with raw SQL in workers/lib/sender-rules.ts;
+ * mirrored here for types.
+ */
+export const senderRules = sqliteTable("sender_rules", {
+	id: text("id").primaryKey(),
+	kind: text("kind").notNull(),
+	value: text("value").notNull(),
+	verdict: text("verdict").notNull(),
+	source: text("source").notNull(),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+	last_matched_at: text("last_matched_at"),
+	match_count: integer("match_count").notNull().default(0),
+});
+
 /** Masked email aliases configured for this mailbox. */
 export const aliases = sqliteTable("aliases", {
 	id: text("id").primaryKey(),
