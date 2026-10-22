@@ -39,6 +39,12 @@ import { useMailbox } from "~/queries/mailboxes";
 import { type ComposeOptions, useUIStore } from "~/hooks/useUIStore";
 import { newIdempotencyKey } from "~/lib/send-idempotency";
 import {
+	type SuppressedRecipient,
+	suppressedRecipientsFromError,
+	suppressionsStillAddressed,
+} from "~/lib/suppression";
+import { useUnsuppress } from "~/queries/suppressions";
+import {
 	prepareComposeAttachment,
 	type PreparedAttachment,
 } from "~/lib/prepare-compose-attachment";
@@ -234,6 +240,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	const replyMutation = useReplyToEmail();
 	const forwardMutation = useForwardEmail();
 	const deleteEmailMutation = useDeleteEmail();
+	const unsuppressMutation = useUnsuppress();
 
 	const [to, setTo] = useState("");
 	const [cc, setCc] = useState("");
@@ -243,6 +250,9 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	const [body, setBody] = useState("");
 	const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
 	const [error, setError] = useState<string | null>(null);
+	/** Recipients the last send was refused for (409 recipient_suppressed). */
+	const [suppressed, setSuppressed] = useState<SuppressedRecipient[]>([]);
+	const [isUnsuppressing, setIsUnsuppressing] = useState(false);
 	const [isSavingDraft, setIsSavingDraft] = useState(false);
 	const [isSending, setIsSending] = useState(false);
 	const [saveStatus, setSaveStatus] = useState<DraftSaveStatus>("idle");
@@ -284,6 +294,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 			aliasEmail,
 		);
 		setError(null);
+		setSuppressed([]);
 		setTo(initialFields.to);
 		setCc(initialFields.cc);
 		setBcc(initialFields.bcc);
@@ -456,11 +467,16 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		onClose();
 	};
 
-	const handleSend = async (e: FormEvent, onClose: () => void) => {
+	const handleSend = (e: FormEvent, onClose: () => void) => {
 		e.preventDefault();
+		return sendNow(onClose);
+	};
+
+	const sendNow = async (onClose: () => void) => {
 		if (isSendingRef.current) return;
 		isSendingRef.current = true;
 		setError(null);
+		setSuppressed([]);
 		if (!currentMailbox || !mailboxId) {
 			isSendingRef.current = false;
 			setError("No mailbox selected.");
@@ -529,6 +545,16 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 			onClose();
 		} catch (err: unknown) {
 			isSendingRef.current = false;
+			const blocked = suppressedRecipientsFromError(err);
+			if (blocked) {
+				// Shown inline with Un-suppress; the server's sentence goes in the toast.
+				setSuppressed(blocked);
+				toastManager.add({
+					title: (err instanceof Error && err.message) || "Not sent: a recipient is suppressed.",
+					variant: "error",
+				});
+				return;
+			}
 			let message = (err instanceof Error ? err.message : null) || "Failed to send email.";
 			if (
 				(err instanceof ApiError && err.status === 413) ||
@@ -541,6 +567,41 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		} finally {
 			setIsSending(false);
 		}
+	};
+
+	// Only the suppressed addresses still in To / Cc / Bcc: removing one
+	// clears its notice without another send attempt.
+	const visibleSuppressed = useMemo(
+		() => suppressionsStillAddressed(suppressed, [...splitEmailList(to), ...splitEmailList(cc), ...splitEmailList(bcc)]),
+		[suppressed, to, cc, bcc],
+	);
+
+	/** Lift every shown suppression, then send again with the same Idempotency-Key. */
+	const handleUnsuppressAndSend = async (onClose: () => void) => {
+		if (!mailboxId || isSendingRef.current || isUnsuppressing) return;
+		const targets = visibleSuppressed;
+		if (targets.length === 0 || targets.some((s) => !s.canUnsuppress)) return;
+		setIsUnsuppressing(true);
+		setError(null);
+		try {
+			for (const s of targets) {
+				try {
+					await unsuppressMutation.mutateAsync({ mailboxId, address: s.address });
+				} catch (err) {
+					// Already lifted (by someone else, or an earlier attempt): carry on.
+					if (err instanceof ApiError && err.status === 404) continue;
+					throw err;
+				}
+			}
+		} catch (err: unknown) {
+			const message = (err instanceof Error ? err.message : null) || "Couldn't un-suppress the address.";
+			setError(message);
+			toastManager.add({ title: message, variant: "error" });
+			return;
+		} finally {
+			setIsUnsuppressing(false);
+		}
+		await sendNow(onClose);
 	};
 
 	const addFiles = async (files: File[]) => {
@@ -598,6 +659,9 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		overSize,
 		error: overSize ? OUTBOUND_SIZE_ERROR : error,
 		setError,
+		suppressed: visibleSuppressed,
+		isUnsuppressing,
+		handleUnsuppressAndSend,
 		isSavingDraft,
 		isSending,
 		saveStatus,
