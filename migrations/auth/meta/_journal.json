@@ -33,8 +33,15 @@
     {
       "idx": 4,
       "version": "6",
-      "when": 1792642596198,
-      "tag": "0004_domain_offboarding",
+      "when": 1792638760703,
+      "tag": "0004_apple_refresh_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792661158049,
+      "tag": "0005_domain_offboarding",
       "breakpoints": true
     }
   ]

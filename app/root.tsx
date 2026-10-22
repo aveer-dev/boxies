@@ -121,7 +121,7 @@ export function HydrateFallback() {
 	return (
 		<div className="flex flex-col items-center justify-center min-h-screen bg-[#FAFAFB] dark:bg-[#0D0D0D] text-[#1F1F24] dark:text-[#FAFAFC]">
 			<img
-				src="/favicon.svg"
+				src="/logo.svg"
 				alt="Inboxies Logo"
 				className="w-18 h-18 mb-4 select-none pointer-events-none"
 			/>

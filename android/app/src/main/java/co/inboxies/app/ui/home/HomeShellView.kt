@@ -85,9 +85,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -380,6 +382,15 @@ fun HomeShellView(
         highlightedComposeAction = hit
     }
 
+    // Large screens read mail in a side pane; phones keep the detail sheet (AVE-72).
+    val layoutMode = rememberHomeLayoutMode()
+    val isTwoPane = layoutMode == HomeLayoutMode.TwoPane
+
+    // Two-pane: back clears the reading pane to its placeholder (the phone's back
+    // dismisses the detail sheet). Declared before the home handler so search /
+    // select mode / overlays still take precedence.
+    BackHandler(enabled = isTwoPane && selectedEmail != null) { appModel.closeEmail() }
+
     BackHandler(enabled = showSearch || showComposeActions || isSelectMode || selectedTab is HomeTab.ReplyLater) {
         when {
             showComposeActions -> {
@@ -401,11 +412,18 @@ fun HomeShellView(
         }
     }
 
+    CompositionLocalProvider(
+        LocalHomeLayoutMode provides layoutMode,
+        LocalReadingPaneEmail provides if (isTwoPane) selectedEmail else null,
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background),
     ) {
+        HomeSplitLayout(
+            mode = layoutMode,
+            list = {
         ProgressiveBlurBackground(modifier = Modifier.align(Alignment.TopCenter))
 
         if (showAllNew && !showSearch) {
@@ -1068,27 +1086,65 @@ fun HomeShellView(
             }
         }
 
+            },
+            detail = {
+                val open = selectedEmail
+                if (open != null) {
+                    // Fresh detail state per email; the pane keeps the email's close (x),
+                    // which clears back to the placeholder.
+                    key(open.id) {
+                        EmailDetailView(onClose = { appModel.closeEmail() }, showsGrabber = false)
+                    }
+                } else {
+                    ReadingPanePlaceholder()
+                }
+            },
+        )
+
         if (composeSession?.isExpanded == true) {
-            ComposeSheetView(
-                session = composeSession!!,
-                onMinimize = { appModel.minimizeCompose() },
-                onClose = { appModel.closeCompose() },
-                onSend = { appModel.sendCompose() },
-                onSaveDraft = { appModel.saveDraft() },
-            )
+            // Scrim stays inert: unsaved field edits live in the sheet until it minimizes.
+            HomeFormSheet(mode = layoutMode, onDismissOutside = null) {
+                ComposeSheetView(
+                    session = composeSession!!,
+                    onMinimize = { appModel.minimizeCompose() },
+                    onClose = { appModel.closeCompose() },
+                    onSend = { appModel.sendCompose() },
+                    onSaveDraft = { appModel.saveDraft() },
+                )
+            }
         }
 
         if (showChat) {
-            ChatSheetView(
-                onClose = {
-                    showChat = false
-                    appModel.dismissChatSession()
-                },
-            )
+            val closeChat = {
+                showChat = false
+                appModel.dismissChatSession()
+            }
+            HomeFormSheet(mode = layoutMode, onDismissOutside = closeChat) {
+                ChatSheetView(onClose = closeChat)
+            }
+        }
+
+        if (showSettings && isTwoPane) {
+            val closeSettings = {
+                showSettings = false
+                settingsInitialDomainAdmin = false
+            }
+            HomeFormSheet(mode = layoutMode, onDismissOutside = closeSettings) {
+                SettingsSheetView(
+                    onClose = closeSettings,
+                    onThemeModeChange = onThemeModeChange,
+                    themeMode = themeMode,
+                    initialDomainAdmin = settingsInitialDomainAdmin,
+                )
+            }
         }
     }
+    }
 
-    if (selectedEmail != null) {
+    // Phone detail sheet. In two-pane the email shows in the reading pane instead; if the
+    // window widens with the sheet up it simply leaves composition (no dismiss callback),
+    // so the selection carries over to the pane.
+    if (selectedEmail != null && !isTwoPane) {
         ModalBottomSheet(
             onDismissRequest = { appModel.closeEmail() },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1101,7 +1157,7 @@ fun HomeShellView(
         }
     }
 
-    if (showSettings) {
+    if (showSettings && !isTwoPane) {
         ModalBottomSheet(
             onDismissRequest = {
                 showSettings = false
