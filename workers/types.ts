@@ -56,6 +56,13 @@ export interface Env extends Cloudflare.Env {
 	OPS_ALERT_EMAIL?: string;
 	/** Better Auth signing secret (32+ random bytes). `AUTH_DB` comes from wrangler.jsonc. */
 	BETTER_AUTH_SECRET?: string;
+	/**
+	 * Extra WebAuthn origins accepted for passkeys besides APP_BASE_URL's
+	 * origin, comma-separated: the Android app's
+	 * `android:apk-key-hash:<base64url SHA-256 of the signing cert>`. Not a
+	 * secret; unset means web and iOS passkeys only. See `passkeyRelyingParty`.
+	 */
+	PASSKEY_EXTRA_ORIGINS?: string;
 	/** Extra Google client ids (iOS, Android) accepted alongside GOOGLE_CLIENT_ID, comma-separated. */
 	GOOGLE_EXTRA_CLIENT_IDS?: string;
 	GOOGLE_CLIENT_SECRET?: string;
@@ -63,6 +70,12 @@ export interface Env extends Cloudflare.Env {
 	APPLE_CLIENT_SECRET?: string;
 	/** iOS bundle id, the `aud` of native Apple ID tokens (defaults to APPLE_CLIENT_ID). */
 	APPLE_APP_BUNDLE_ID?: string;
+	/*
+	 * `APPLE_WEB_SERVICES_ID` (Sign in with Apple Services ID for the web login
+	 * page; not a secret, it is sent to the browser via /api/v1/config; Apple ID
+	 * tokens with this audience are accepted alongside the bundle id) is a
+	 * wrangler var, so its type comes from `Cloudflare.Env`.
+	 */
 	/**
 	 * Sign in with Apple key (Key ID + .p8 contents) and team id, used to
 	 * revoke Apple tokens when an account is deleted. Team falls back to APNS_TEAM_ID.

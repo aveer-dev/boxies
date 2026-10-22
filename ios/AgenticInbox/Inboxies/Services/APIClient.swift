@@ -12,6 +12,12 @@ enum APIError: LocalizedError {
     /// 403 `code: "service_ended"`: the domain's subscription ended and its mailboxes are
     /// read-only. Access is intact; never treat this as losing the mailbox or the session.
     case serviceEnded(domain: String?, message: String)
+    /// 409 `code: "recipient_suppressed"`: a recipient bounced or complained earlier, so the
+    /// send was refused before anything went out. `message` is the server's sentence.
+    case recipientSuppressed(message: String, suppressed: [SuppressedRecipient])
+    /// 401 `code: "TWO_FACTOR_REQUIRED"` from password sign-in: the password was right,
+    /// and the account wants an authenticator or backup code before it hands out a session.
+    case twoFactorRequired(TwoFactorChallenge)
 
     /// True for a write refused because the domain's service ended.
     var isServiceEnded: Bool {
@@ -36,6 +42,10 @@ enum APIError: LocalizedError {
         case .serviceEnded(let domain, let message):
             if !message.isEmpty { return message }
             return "The subscription for \(domain ?? "this domain") has ended. Mail on it is read-only until it's renewed."
+        case .recipientSuppressed(let message, _):
+            return message.isEmpty ? "Not sent: a recipient is suppressed." : message
+        case .twoFactorRequired:
+            return "Enter the code from your authenticator app."
         }
     }
 }
@@ -74,16 +84,44 @@ final class APIClient: @unchecked Sendable {
         query: [String: String] = [:],
         body: [String: Any]? = nil,
         authed: Bool = true,
-        bearerToken: String? = nil
+        bearerToken: String? = nil,
+        headers: [String: String] = [:]
     ) async throws -> T {
+        try await requestWithResponse(
+            path: path,
+            method: method,
+            query: query,
+            body: body,
+            authed: authed,
+            bearerToken: bearerToken,
+            headers: headers
+        ).0
+    }
+
+    /// `request`, plus the HTTP response for callers that need its headers
+    /// (the passkey challenge cookie, `set-auth-token`).
+    func requestWithResponse<T: Decodable>(
+        path: String,
+        method: String = "GET",
+        query: [String: String] = [:],
+        body: [String: Any]? = nil,
+        authed: Bool = true,
+        bearerToken: String? = nil,
+        headers: [String: String] = [:]
+    ) async throws -> (T, HTTPURLResponse) {
         let (data, http) = try await perform(
             path: path,
             method: method,
             query: query,
             body: body,
             authed: authed,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: headers
         )
+        return (try decodeResponse(data: data, http: http), http)
+    }
+
+    private func decodeResponse<T: Decodable>(data: Data, http: HTTPURLResponse) throws -> T {
         if http.statusCode == 204 {
             if T.self == EmptyResponse.self {
                 return EmptyResponse() as! T
@@ -110,7 +148,7 @@ final class APIClient: @unchecked Sendable {
         query: [String: String] = [:],
         authed: Bool = true
     ) async throws -> (Data, HTTPURLResponse) {
-        try await perform(path: path, method: method, query: query, body: nil, authed: authed, bearerToken: nil)
+        try await perform(path: path, method: method, query: query, body: nil, authed: authed, bearerToken: nil, headers: [:])
     }
 
     /// Builds an API URL. `path` segments must already be escaped with
@@ -151,13 +189,17 @@ final class APIClient: @unchecked Sendable {
         query: [String: String],
         body: [String: Any]?,
         authed: Bool,
-        bearerToken: String?
+        bearerToken: String?,
+        headers: [String: String]
     ) async throws -> (Data, HTTPURLResponse) {
         guard let url = Self.makeURL(path: path, query: query) else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
         // `bearerToken` pins a request to a session that is being torn down (sign-out cleanup).
         let sentToken = authed ? (bearerToken ?? authToken) : nil
         if let sentToken {
@@ -182,6 +224,12 @@ final class APIClient: @unchecked Sendable {
                         Self.postServiceEnded(domain: domain, message: endedMessage)
                     }
                     throw ended
+                }
+                if let blocked = BounceSuppression.error(statusCode: http.statusCode, data: data) {
+                    throw blocked
+                }
+                if http.statusCode == 401, let challenge = TwoFactorChallenge.parse(data) {
+                    throw APIError.twoFactorRequired(challenge)
                 }
                 if let sentToken, bearerToken == nil,
                    Self.isExpiredSessionResponse(statusCode: http.statusCode, message: message) {
@@ -307,6 +355,20 @@ final class APIClient: @unchecked Sendable {
 
     func revokeOtherSessions() async throws -> RevokeSessionsResponse {
         try await request(path: "/api/v1/me/sessions/revoke-others", method: "POST", body: [:] as [String: Any])
+    }
+
+    // MARK: Connected apps (MCP OAuth grants)
+
+    func listMcpGrants() async throws -> [McpGrant] {
+        try await request(path: "/api/v1/me/mcp-grants")
+    }
+
+    /// Disconnects the app: the grant and all its tokens are deleted server-side.
+    func revokeMcpGrant(id: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/me/mcp-grants/\(id.urlPathEncoded)",
+            method: "DELETE"
+        )
     }
 
     /// A scoped, revocable session for the AutoFill extension (private emails only).
@@ -452,8 +514,20 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Second step of a password sign-in when the account has two-factor on: the
+    /// challenge token from the sign-in reply plus an authenticator code
+    /// (`method: "totp"`) or a one-time backup code (`method: "backup_code"`).
+    func verifyTwoFactor(challengeToken: String, code: String, method: String) async throws -> PasswordLoginResponse {
+        try await request(
+            path: "/api/v1/auth/two-factor/verify",
+            method: "POST",
+            body: ["twoFactorToken": challengeToken, "code": code, "method": method],
+            authed: false
+        )
+    }
+
     /// Pass `token` (email link), or `email` + `code` (6-digit code).
-    func resetPassword(token: String? = nil, email: String? = nil, code: String? = nil, newPassword: String) async throws -> PasswordLoginResponse {
+    func resetPassword(token: String? = nil, email: String? = nil, code: String? = nil, newPassword: String) async throws -> ResetPasswordResponse {
         var body: [String: Any] = ["newPassword": newPassword]
         if let token, !token.isEmpty { body["token"] = token }
         if let email, !email.isEmpty { body["email"] = email }
@@ -764,15 +838,26 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func listEmails(mailboxId: String, folder: String, page: Int = 1) async throws -> EmailListResponse {
-        try await request(
+    /// Threaded folder page. Inbox only: `newLimit` keeps the newest N New conversations above
+    /// every Seen one; `section` (`new` | `seen`) lists one section (AVE-23).
+    func listEmails(
+        mailboxId: String,
+        folder: String,
+        page: Int = 1,
+        newLimit: Int? = nil,
+        section: String? = nil
+    ) async throws -> EmailListResponse {
+        var query = [
+            "folder": folder,
+            "threaded": "true",
+            "page": String(page),
+            "limit": "25",
+        ]
+        if let newLimit { query["new_limit"] = String(newLimit) }
+        if let section { query["section"] = section }
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
-            query: [
-                "folder": folder,
-                "threaded": "true",
-                "page": String(page),
-                "limit": "25",
-            ]
+            query: query
         )
     }
 
@@ -963,30 +1048,69 @@ final class APIClient: @unchecked Sendable {
         return response.recipients
     }
 
-    func sendEmail(mailboxId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
+    /// Header for send / reply / forward: one key per compose, reused on every retry.
+    /// The server answers a repeated key with the original `202 { id, status }`.
+    static let idempotencyKeyHeader = "Idempotency-Key"
+
+    static func idempotencyHeaders(_ key: String?) -> [String: String] {
+        guard let key, !key.isEmpty else { return [:] }
+        return [idempotencyKeyHeader: key]
+    }
+
+    func sendEmail(
+        mailboxId: String,
+        payload: [String: Any],
+        bearerToken: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
             method: "POST",
             body: payload,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: Self.idempotencyHeaders(idempotencyKey)
         )
     }
 
-    func replyToEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
+    func replyToEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: [String: Any],
+        bearerToken: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/reply",
             method: "POST",
             body: payload,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: Self.idempotencyHeaders(idempotencyKey)
         )
     }
 
-    func forwardEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
+    func forwardEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: [String: Any],
+        bearerToken: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/forward",
             method: "POST",
             body: payload,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: Self.idempotencyHeaders(idempotencyKey)
+        )
+    }
+
+    /// Lifts a bounce / complaint suppression (AVE-37). 404 means it is already gone;
+    /// 403 `suppression_not_manageable` means only a domain admin can lift it.
+    func unsuppress(mailboxId: String, address: String) async throws {
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/suppressions/\(normalized.urlPathEncoded)",
+            method: "DELETE"
         )
     }
 
@@ -1191,6 +1315,21 @@ final class APIClient: @unchecked Sendable {
                 "confirmDomain": confirmDomain,
                 "skipExportAcknowledged": skipExportAcknowledged
             ]
+        )
+    }
+
+    /// Decommissioned domains of the caller still waiting to be deleted.
+    func listOffboardingDomains() async throws -> [OffboardingDomain] {
+        let response: OffboardingDomainsResponse = try await request(path: "/api/v1/admin/offboarding-domains")
+        return response.domains
+    }
+
+    /// Delete a decommissioned domain's data now. `confirmDomain` must be the domain name (checked server-side).
+    func finalizeDomain(domain: String, confirmDomain: String) async throws -> FinalizeDomainResponse {
+        try await request(
+            path: "/api/v1/admin/domains/\(domain.urlPathEncoded)/finalize",
+            method: "POST",
+            body: ["confirmDomain": confirmDomain]
         )
     }
 

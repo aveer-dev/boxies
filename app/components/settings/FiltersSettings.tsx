@@ -7,6 +7,7 @@ import { PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import SettingsSubpage from "./SettingsSubpage";
+import { useAliases } from "~/queries/aliases";
 import { useFolders } from "~/queries/folders";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import type { InboxFilterRule } from "~/types";
@@ -19,6 +20,7 @@ function createRule(): InboxFilterRule {
 		from: "",
 		list: "",
 		subject: "",
+		toAlias: "",
 		folderId: "",
 		skipAutoDraft: false,
 		forwardTo: "",
@@ -27,6 +29,7 @@ function createRule(): InboxFilterRule {
 
 function summarizeRule(rule: InboxFilterRule, folderName?: string): string {
 	const conditions: string[] = [];
+	if (rule.toAlias?.trim()) conditions.push(`to ${rule.toAlias.trim()}`);
 	if (rule.from?.trim()) conditions.push(`from ${rule.from.trim()}`);
 	if (rule.list?.trim()) {
 		conditions.push(
@@ -53,6 +56,7 @@ function sanitizeRules(rules: InboxFilterRule[]): InboxFilterRule[] {
 		from: rule.from?.trim() || undefined,
 		list: rule.list?.trim() || undefined,
 		subject: rule.subject?.trim() || undefined,
+		toAlias: rule.toAlias?.trim().toLowerCase() || undefined,
 		folderId: rule.folderId?.trim() || undefined,
 		skipAutoDraft: rule.skipAutoDraft || undefined,
 		forwardTo: rule.forwardTo?.trim() || undefined,
@@ -64,6 +68,7 @@ export default function FiltersSettings() {
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
 	const { data: folders } = useFolders(mailboxId);
+	const { data: aliases } = useAliases(mailboxId);
 	const updateMailboxMutation = useUpdateMailbox();
 
 	const [rules, setRules] = useState<InboxFilterRule[]>([]);
@@ -90,6 +95,20 @@ export default function FiltersSettings() {
 
 	const editing = rules.find((rule) => rule.id === editingId) ?? null;
 
+	// Private emails to pick from; keep a saved address listed even if the
+	// alias was since deleted so the rule still reads correctly.
+	const aliasOptions = useMemo(() => {
+		const options = (aliases ?? []).map((alias) => ({
+			email: alias.alias_email.toLowerCase(),
+			label: alias.label,
+		}));
+		const saved = editing?.toAlias?.trim().toLowerCase();
+		if (saved && !options.some((option) => option.email === saved)) {
+			options.unshift({ email: saved, label: null });
+		}
+		return options;
+	}, [aliases, editing?.toAlias]);
+
 	const updateRule = (id: string, patch: Partial<InboxFilterRule>) => {
 		setRules((prev) =>
 			prev.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)),
@@ -112,13 +131,16 @@ export default function FiltersSettings() {
 		const cleaned = sanitizeRules(rules);
 
 		for (const rule of cleaned) {
-			const hasCondition = Boolean(rule.from || rule.list || rule.subject);
+			const hasCondition = Boolean(
+				rule.from || rule.list || rule.subject || rule.toAlias,
+			);
 			const hasAction = Boolean(
 				rule.folderId || rule.skipAutoDraft || rule.forwardTo,
 			);
 			if (!hasCondition) {
 				toastManager.add({
-					title: "Each filter needs a from, list, or subject condition",
+					title:
+						"Each filter needs a from, list, subject, or private email condition",
 					variant: "error",
 				});
 				return;
@@ -194,6 +216,7 @@ export default function FiltersSettings() {
 						<code className="text-kumo-default">@domain.com</code>, or a
 						substring. For lists, use List-Id text or{" "}
 						<code className="text-kumo-default">*</code> for any mailing list.
+						Pick a private email to match only mail sent to that address.
 					</p>
 				</div>
 
@@ -282,6 +305,27 @@ export default function FiltersSettings() {
 								}
 								placeholder="invoice"
 							/>
+							<label className="block space-y-1.5">
+								<span className="text-sm text-kumo-default">
+									Sent to private email
+								</span>
+								<select
+									className="w-full rounded-2xl border border-kumo-line bg-kumo-base px-3 py-2 text-sm text-kumo-default"
+									value={editing.toAlias?.trim().toLowerCase() || ""}
+									onChange={(e) =>
+										updateRule(editing.id, { toAlias: e.target.value })
+									}
+								>
+									<option value="">Any address</option>
+									{aliasOptions.map((option) => (
+										<option key={option.email} value={option.email}>
+											{option.label
+												? `${option.label} (${option.email})`
+												: option.email}
+										</option>
+									))}
+								</select>
+							</label>
 						</div>
 						<div className="space-y-3">
 							<div className="text-xs font-medium text-kumo-subtle uppercase tracking-wide">

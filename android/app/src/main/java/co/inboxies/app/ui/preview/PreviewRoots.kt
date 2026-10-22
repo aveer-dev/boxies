@@ -42,6 +42,7 @@ import co.inboxies.app.ui.settings.DomainAdminSettingsView
 import co.inboxies.app.ui.settings.SessionsSettingsView
 import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
+import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.ui.splash.SplashScreenView
 
 /**
@@ -51,6 +52,16 @@ import co.inboxies.app.ui.splash.SplashScreenView
 object PreviewHarness {
     fun seed(mode: PreviewMode, auth: AuthStore, appModel: AppModel) {
         when (mode) {
+            PreviewMode.TwoFactorChallenge -> {
+                appModel.reset()
+                auth.applyPreviewTwoFactorChallenge(
+                    TwoFactorChallenge(
+                        token = "preview",
+                        methods = listOf("totp", "backup_code"),
+                        email = "you@inboxies.email",
+                    ),
+                )
+            }
             PreviewMode.PasswordSignIn,
             PreviewMode.ForgotPassword,
             PreviewMode.Welcome,
@@ -93,6 +104,7 @@ object PreviewHarness {
             }
             PreviewMode.Mailbox,
             PreviewMode.LoadMore,
+            PreviewMode.ManyNew,
             PreviewMode.LoadFailed,
             PreviewMode.ListError,
             PreviewMode.Screener,
@@ -126,6 +138,7 @@ fun PreviewRoot(
         PreviewMode.AuthOptions -> SignInView(isShowingSplash = false, expandPasswordForm = false, showAuthOptionsInitial = true)
         PreviewMode.PasswordSignIn -> SignInView(expandPasswordForm = true)
         PreviewMode.ForgotPassword -> SignInView(expandForgotPassword = true)
+        PreviewMode.TwoFactorChallenge -> SignInView(expandPasswordForm = true)
         PreviewMode.DomainOnboarding -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
                 MailboxOnboardingView(initialTrack = OnboardingTrack.Domain(1))
@@ -180,6 +193,7 @@ fun PreviewRoot(
         PreviewMode.LoadFailed -> MailboxLoadFailedView(appModel = appModel, auth = auth)
         PreviewMode.Mailbox,
         PreviewMode.LoadMore,
+        PreviewMode.ManyNew,
         PreviewMode.ListError,
         PreviewMode.Screener,
         PreviewMode.ScreenerList,

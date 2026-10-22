@@ -103,6 +103,38 @@ object HomeChromeMetrics {
         }
         return height
     }
+
+    // Large screens (tablet / unfolded foldable) — mirrors iOS regular-width two-pane.
+
+    /** Window width at which home switches to list + reading pane (Expanded width class). */
+    val twoPaneMinWidth: Dp = 840.dp
+
+    /** List column share of the window, clamped so rows keep their phone proportions. */
+    const val listColumnFraction: Float = 0.38f
+    val listColumnMinWidth: Dp = 320.dp
+    val listColumnMaxWidth: Dp = 420.dp
+
+    fun listColumnWidth(totalWidth: Dp): Dp =
+        (totalWidth * listColumnFraction).coerceIn(listColumnMinWidth, listColumnMaxWidth)
+
+    /**
+     * Window width from which the leading folder column fits beside the list and the
+     * reading pane (AVE-73). Same number as iOS (an 11-inch iPad in landscape, 1180pt);
+     * tablets in landscape (Material "Large", ≥ 1200.dp) clear it, while unfolded
+     * foldables (~840–900.dp) and portrait tablets stay two-pane.
+     */
+    val threeColumnMinWidth: Dp = 1180.dp
+
+    /** Fixed width of the folder column (web Miller "Folders" column). */
+    val folderColumnWidth: Dp = 240.dp
+    val folderRowHeight: Dp = 38.dp
+    val folderRowCornerRadius: Dp = 10.dp
+
+    /** Centered form sheet (compose, settings, Ask AI) on large screens. */
+    val formSheetMaxWidth: Dp = 600.dp
+    val formSheetMaxHeight: Dp = 880.dp
+    val formSheetMargin: Dp = 24.dp
+    val formSheetCornerRadius: Dp = 18.dp
 }
 
 /**

@@ -9,6 +9,17 @@
  * mailbox; ours mail the verified recovery address), email change, user
  * deletion (ours also purges mailboxes), and the OAuth redirect/callback
  * flow (clients send native ID tokens).
+ *
+ * Passkeys: registering and managing them needs a full session; the two
+ * sign-in steps are public and rate limited like password sign-in. The
+ * WebAuthn challenge rides in a short-lived signed cookie between the two
+ * calls (`better-auth-passkey`), so native clients echo it back.
+ *
+ * Two-factor (TOTP + backup codes, optional): enable/disable/regenerate need
+ * the password and are throttled like sign-in; the verify routes finish a
+ * password sign-in from its `two_factor` challenge cookie (or confirm setup
+ * while signed in) and are throttled like code guesses. Native clients that
+ * don't keep cookies use `/api/v1/auth/two-factor/verify` instead.
  */
 
 import { getAuth, AUTH_BASE_PATH } from "../auth";
@@ -21,7 +32,7 @@ type RouteRule = {
 	/** Allowed for scoped (extension / AutoFill) sessions. */
 	scoped?: boolean;
 	/** Rate limited per client IP before Better Auth sees it. */
-	limit?: "sign-in";
+	limit?: "sign-in" | "otp-verify";
 	/** Body must carry an `idToken` (no redirect flow). */
 	idTokenOnly?: boolean;
 };
@@ -40,6 +51,21 @@ const ROUTES: Record<string, RouteRule> = {
 	"/unlink-account": { methods: ["POST"] },
 	"/list-accounts": { methods: ["GET"] },
 	"/update-user": { methods: ["POST"] },
+	// Passkeys (@better-auth/passkey).
+	"/passkey/generate-register-options": { methods: ["GET"] },
+	"/passkey/verify-registration": { methods: ["POST"] },
+	"/passkey/generate-authenticate-options": { methods: ["GET"], limit: "sign-in" },
+	"/passkey/verify-authentication": { methods: ["POST"], limit: "sign-in" },
+	"/passkey/list-user-passkeys": { methods: ["GET"] },
+	"/passkey/update-passkey": { methods: ["POST"] },
+	"/passkey/delete-passkey": { methods: ["POST"] },
+	// Two-factor (twoFactor plugin; TOTP only, so no /two-factor/*-otp routes).
+	"/two-factor/enable": { methods: ["POST"], limit: "sign-in" },
+	"/two-factor/disable": { methods: ["POST"], limit: "sign-in" },
+	"/two-factor/get-totp-uri": { methods: ["POST"], limit: "sign-in" },
+	"/two-factor/generate-backup-codes": { methods: ["POST"], limit: "sign-in" },
+	"/two-factor/verify-totp": { methods: ["POST"], limit: "otp-verify" },
+	"/two-factor/verify-backup-code": { methods: ["POST"], limit: "otp-verify" },
 };
 
 const json = (body: unknown, status: number) =>

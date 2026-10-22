@@ -9,6 +9,7 @@ import {
 	FunnelSimpleIcon,
 	KeyIcon,
 	PaperPlaneTiltIcon,
+	ProhibitIcon,
 	UserMinusIcon,
 	UsersThreeIcon,
 } from "@phosphor-icons/react";
@@ -21,6 +22,7 @@ export const SETTINGS_PAGE_IDS = [
 	"auto-reply",
 	"filters",
 	"senders",
+	"suppressions",
 	"sharing",
 	"sign-in",
 	"sessions",
@@ -78,6 +80,13 @@ export const SETTINGS_PAGES: Record<SettingsPageId, SettingsPage> = {
 		icon: <AddressBookIcon size={18} />,
 		Component: lazy(() => import("./SendersSettings")),
 	},
+	suppressions: {
+		id: "suppressions",
+		label: "Bounced addresses",
+		description: "Recipients that bounced or reported spam; sending to them is paused",
+		icon: <ProhibitIcon size={18} />,
+		Component: lazy(() => import("./SuppressionsSettings")),
+	},
 	sharing: {
 		id: "sharing",
 		label: "Members",
@@ -88,14 +97,14 @@ export const SETTINGS_PAGES: Record<SettingsPageId, SettingsPage> = {
 	"sign-in": {
 		id: "sign-in",
 		label: "Sign-in & recovery",
-		description: "Password, Google, Apple, and your recovery email",
+		description: "Password, passkeys, two-factor, Google, Apple, and your recovery email",
 		icon: <KeyIcon size={18} />,
 		Component: lazy(() => import("./SignInSettings")),
 	},
 	sessions: {
 		id: "sessions",
 		label: "Devices",
-		description: "Where you're signed in; sign out other sessions",
+		description: "Where you're signed in and apps you connected; sign out or disconnect",
 		icon: <DevicesIcon size={18} />,
 		Component: lazy(() => import("./SessionsSettings")),
 	},
@@ -120,3 +129,6 @@ export const INCOMING_MAIL_PAGES: SettingsPageId[] = [
 	"senders",
 	"sharing",
 ];
+
+/** Listed under "Outgoing mail" in the Settings column. */
+export const OUTGOING_MAIL_PAGES: SettingsPageId[] = ["suppressions"];

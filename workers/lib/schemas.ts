@@ -11,6 +11,7 @@
  * Zod schemas: used across route handlers to eliminate duplication.
  */
 import { z } from "zod";
+import type { DeliveryRecipient } from "./delivery-recipients";
 
 // ── TypeScript Interfaces ──────────────────────────────────────────
 
@@ -61,6 +62,11 @@ export interface EmailFull extends EmailMetadata {
 	message_id?: string | null;
 	raw_headers?: string | null;
 	attachments?: AttachmentInfo[];
+	/**
+	 * Per-recipient delivery state from Email Sending events (Sent rows;
+	 * empty until an event arrives). `delivery_status` stays the summary.
+	 */
+	delivery_recipients?: DeliveryRecipient[];
 }
 
 export interface AttachmentInfo {

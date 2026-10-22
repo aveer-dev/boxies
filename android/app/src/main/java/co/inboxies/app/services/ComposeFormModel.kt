@@ -76,6 +76,13 @@ class ComposeFormModel(
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
 
+    /**
+     * `Idempotency-Key` for this compose: sent on every send attempt (including a retry
+     * after a failure) so a send that did reach the server is not repeated; the server
+     * answers a repeated key with the original 202. A new compose gets a new key.
+     */
+    val sendIdempotencyKey: String = UUID.randomUUID().toString()
+
     var fromMailboxId: String = mailbox.id
     var fromEmail: String = aliasEmail ?: mailbox.email
     var fromName: String? = if (isAliasBound) {
@@ -103,6 +110,14 @@ class ComposeFormModel(
     var saveStatus: DraftSaveStatus = DraftSaveStatus.Idle
     var toast: ComposeToast? = null
     var errorMessage: String? = null
+
+    /**
+     * Recipients the last send was refused for (409 `recipient_suppressed`). The sheet
+     * shows the ones still addressed ([visibleSuppressedRecipients]) in place of
+     * [errorMessage]; the server's sentence goes in the toast.
+     */
+    var suppressedRecipients: List<SuppressedRecipient> = emptyList()
+    var isUnsuppressing: Boolean = false
     val quotedOriginal: QuotedOriginal?
 
     private val signature: String
@@ -211,6 +226,14 @@ class ComposeFormModel(
             }
         }
     }
+
+    /** Suppressed recipients still in To / Cc / Bcc. Removing one clears its notice. */
+    fun visibleSuppressedRecipients(
+        to: List<MailAddress> = toTokens,
+        cc: List<MailAddress> = ccTokens,
+        bcc: List<MailAddress> = bccTokens,
+    ): List<SuppressedRecipient> =
+        BounceSuppression.stillAddressed(suppressedRecipients, (to + cc + bcc).map { it.email })
 
     fun toJoined(): String = toTokens.joinToString(", ") { it.email }
     fun ccJoined(): String = ccTokens.joinToString(", ") { it.email }

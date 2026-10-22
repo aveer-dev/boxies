@@ -3,24 +3,32 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Input, useKumoToastManager } from "@cloudflare/kumo";
-import { ArrowLeftIcon, EyeIcon, EyeSlashIcon } from "@phosphor-icons/react";
+import { ArrowLeftIcon, EyeIcon, EyeSlashIcon, FingerprintIcon } from "@phosphor-icons/react";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type AppleCredential, AppleSignInButton } from "~/components/AppleSignInButton";
 import { GoogleSignInButton } from "~/components/GoogleSignInButton";
+import { TwoFactorChallengeForm } from "~/components/TwoFactorChallengeForm";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router";
-import { OnboardingFlow } from "~/components/OnboardingFlow";
-import { safeRedirectPath } from "~/lib/safe-redirect";
+import { AuthDivider, AuthShell, quietLinkClass } from "~/components/AuthShell";
+import { isWorkerPagePath, safeRedirectPath } from "~/lib/safe-redirect";
 import { queryKeys } from "~/queries/keys";
-import api from "~/services/api";
+import api, { type TwoFactorChallenge, twoFactorChallenge } from "~/services/api";
 
 export function meta() {
 	return [{ title: "Sign in — Inboxies" }];
 }
 
-type LoginStep = "email" | "password" | "forgot" | "reset";
+type LoginStep = "email" | "password" | "forgot" | "reset" | "two-factor";
 
 export default function PasswordLoginRoute() {
-	const navigate = useNavigate();
+	const routerNavigate = useNavigate();
+	// Pages the Worker handles first (the MCP OAuth consent page) need a full
+	// page load; a client-side navigation would skip the Worker.
+	const navigate = useCallback(
+		(to: string) => (isWorkerPagePath(to) ? window.location.assign(to) : routerNavigate(to)),
+		[routerNavigate],
+	);
 	const [searchParams] = useSearchParams();
 	// Where to land after signing in (set by the Worker's signed-out redirect).
 	// Same-origin paths only, so this can't be used as an open redirect.
@@ -43,7 +51,10 @@ export default function PasswordLoginRoute() {
 	const [newPassword, setNewPassword] = useState("");
 	const [showNewPassword, setShowNewPassword] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
-	const [showOnboarding, setShowOnboarding] = useState(false);
+	const [passkeyBusy, setPasskeyBusy] = useState(false);
+	// WebAuthn is browser-only; decided after hydration so SSR markup matches.
+	const [canUsePasskey, setCanUsePasskey] = useState(false);
+	const [challenge, setChallenge] = useState<TwoFactorChallenge | null>(null);
 
 	const emailInputRef = useRef<HTMLInputElement>(null);
 	const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -51,6 +62,10 @@ export default function PasswordLoginRoute() {
 	const newPasswordInputRef = useRef<HTMLInputElement>(null);
 
 	const isValidEmail = email.trim().includes("@") && email.trim().includes(".");
+
+	useEffect(() => {
+		setCanUsePasskey(typeof window.PublicKeyCredential === "function");
+	}, []);
 
 	useEffect(() => {
 		if (step === "email") {
@@ -101,6 +116,55 @@ export default function PasswordLoginRoute() {
 		[afterSignIn, navigate, toastManager],
 	);
 
+	const appleWebClientId =
+		config?.appleSignInConfigured && config.appleWebClientId ? config.appleWebClientId : null;
+
+	const handleAppleCredential = useCallback(
+		async (credential: AppleCredential) => {
+			setSubmitting(true);
+			try {
+				await api.appleLogin(credential);
+				navigate(afterSignIn);
+			} catch (err: unknown) {
+				toastManager.add({
+					title: err instanceof Error ? err.message : "Apple sign-in failed",
+					variant: "error",
+				});
+			} finally {
+				setSubmitting(false);
+			}
+		},
+		[afterSignIn, navigate, toastManager],
+	);
+
+	const handlePasskeySignIn = async () => {
+		setPasskeyBusy(true);
+		try {
+			const { signInWithPasskey } = await import("~/lib/auth-client");
+			await signInWithPasskey();
+			navigate(afterSignIn);
+		} catch (err: unknown) {
+			const { isCancelled } = await import("~/lib/auth-client");
+			// Closing the browser's passkey sheet isn't an error worth a red toast.
+			if (!isCancelled(err)) {
+				toastManager.add({
+					title: err instanceof Error ? err.message : "Passkey sign-in failed",
+					variant: "error",
+				});
+			}
+		} finally {
+			setPasskeyBusy(false);
+		}
+	};
+
+	/** Password was right but the account has two-factor on: ask for the code. */
+	const startTwoFactor = (next: TwoFactorChallenge) => {
+		setChallenge(next);
+		setPassword("");
+		setNewPassword("");
+		setStep("two-factor");
+	};
+
 	const handlePasswordLogin = async (e: FormEvent) => {
 		e.preventDefault();
 		setSubmitting(true);
@@ -108,6 +172,11 @@ export default function PasswordLoginRoute() {
 			await api.passwordLogin(email.trim(), password);
 			navigate(afterSignIn);
 		} catch (err: unknown) {
+			const pending = twoFactorChallenge(err);
+			if (pending) {
+				startTwoFactor(pending);
+				return;
+			}
 			toastManager.add({
 				title: err instanceof Error ? err.message : "Sign in failed",
 				variant: "error",
@@ -167,7 +236,7 @@ export default function PasswordLoginRoute() {
 
 		setSubmitting(true);
 		try {
-			await api.resetPassword({
+			const res = await api.resetPassword({
 				email: email.trim(),
 				code: resetCode.trim(),
 				newPassword,
@@ -176,6 +245,13 @@ export default function PasswordLoginRoute() {
 				title: "Password reset successfully",
 				variant: "success",
 			});
+			// With two-factor on, the reset doesn't sign in on its own.
+			const pending = twoFactorChallenge(res);
+			if (pending) {
+				setResetCode("");
+				startTwoFactor(pending);
+				return;
+			}
 			navigate(afterSignIn);
 		} catch (err: unknown) {
 			toastManager.add({
@@ -188,301 +264,323 @@ export default function PasswordLoginRoute() {
 	};
 
 	return (
-		<div className="min-h-screen bg-kumo-recessed flex items-center justify-center px-4">
-			<div className="w-full max-w-md rounded-xl border border-kumo-line bg-kumo-base p-6 md:p-8">
-				<div className="flex items-center gap-3 mb-6">
-					<img src="/favicon.svg" alt="Inboxies" className="w-9 h-9" />
+		<AuthShell
+			title={
+				step === "forgot"
+					? "Reset your password"
+					: step === "reset"
+						? "Enter your reset code"
+						: step === "two-factor"
+							? "Two-factor authentication"
+							: "Sign in to your mailbox"
+			}
+		>
+			{(step === "email" || step === "password") && (
+				<>
+					<Button
+						type="button"
+						variant="primary"
+						className="w-full"
+						onClick={() => {
+							// Onboarding is its own page; carry the sign-in target through.
+							const next = searchParams.get("next");
+							routerNavigate(next ? `/onboarding?next=${encodeURIComponent(next)}` : "/onboarding");
+						}}
+					>
+						Get started
+					</Button>
+
+					<AuthDivider className="my-5" />
+				</>
+			)}
+
+			{step === "email" && (
+				<form onSubmit={handleEmailNext} className="space-y-2">
 					<div>
-						<h1 className="text-xl font-bold text-kumo-default leading-tight">Inboxies</h1>
+						<label className="block text-xs font-medium text-kumo-subtle mb-1">
+							Mailbox email
+						</label>
+						<Input
+							className="w-full"
+							ref={emailInputRef}
+							type="email"
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							placeholder="name@example.com"
+							required
+							autoComplete="username"
+							autoFocus
+						/>
+					</div>
+
+					{/* Button for forgot password should be below the email input, then some extra space below it before the next button. */}
+					<div className="flex justify-end pt-1">
+						<button
+							type="button"
+							onClick={() => setStep("forgot")}
+							className={`text-xs ${quietLinkClass}`}
+						>
+							Forgot password?
+						</button>
+					</div>
+
+					<div className="h-4" />
+
+					<Button
+						type="submit"
+						variant="primary"
+						className="w-full"
+						disabled={!isValidEmail}
+					>
+						Next
+					</Button>
+
+					{(googleClientId || appleWebClientId || canUsePasskey) && (
+						<>
+							<AuthDivider className="my-5" />
+							<div className="space-y-2">
+								{canUsePasskey && (
+									<Button
+										type="button"
+										variant="secondary"
+										className="w-full"
+										icon={<FingerprintIcon size={16} />}
+										loading={passkeyBusy}
+										disabled={submitting}
+										onClick={() => void handlePasskeySignIn()}
+									>
+										Sign in with a passkey
+									</Button>
+								)}
+								{googleClientId && (
+									<GoogleSignInButton
+										clientId={googleClientId}
+										onCredential={(idToken) => void handleGoogleCredential(idToken)}
+										busy={submitting}
+									/>
+								)}
+								{appleWebClientId && (
+									<AppleSignInButton
+										clientId={appleWebClientId}
+										onCredential={(credential) => void handleAppleCredential(credential)}
+										onError={(message) => toastManager.add({ title: message, variant: "error" })}
+										busy={submitting}
+									/>
+								)}
+							</div>
+						</>
+					)}
+				</form>
+			)}
+
+			{step === "password" && (
+				<form onSubmit={handlePasswordLogin} className="space-y-3">
+					<div className="flex items-center justify-between text-xs text-kumo-subtle">
+						<span className="truncate mr-2">
+							Signing in as <strong className="text-kumo-default">{email}</strong>
+						</span>
+						<button
+							type="button"
+							onClick={() => setStep("email")}
+							className={`shrink-0 ${quietLinkClass}`}
+						>
+							Change
+						</button>
+					</div>
+
+					<div>
+						<label className="block text-xs font-medium text-kumo-subtle mb-1">
+							Password
+						</label>
+						<div className="relative flex items-center">
+							<Input
+								ref={passwordInputRef}
+								type={showPassword ? "text" : "password"}
+								value={password}
+								onChange={(e) => setPassword(e.target.value)}
+								placeholder="Enter your password"
+								required
+								autoComplete="current-password"
+								autoFocus
+								className="w-full pr-10"
+							/>
+							<button
+								type="button"
+								onClick={() => setShowPassword(!showPassword)}
+								className="absolute right-3 text-kumo-subtle hover:text-kumo-default p-1 cursor-pointer"
+								title={showPassword ? "Hide password" : "Show password"}
+								aria-label={showPassword ? "Hide password" : "Show password"}
+							>
+								{showPassword ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
+							</button>
+						</div>
+					</div>
+
+					<div className="flex justify-end pt-1">
+						<button
+							type="button"
+							onClick={() => setStep("forgot")}
+							className={`text-xs ${quietLinkClass}`}
+						>
+							Forgot password?
+						</button>
+					</div>
+
+					<Button
+						type="submit"
+						variant="primary"
+						className="w-full mt-2"
+						loading={submitting}
+						disabled={!password}
+					>
+						Sign in
+					</Button>
+				</form>
+			)}
+
+			{step === "forgot" && (
+				<form onSubmit={handleSendResetCode} className="space-y-4">
+					<div>
+						<button
+							type="button"
+							onClick={() => setStep("email")}
+							className="inline-flex items-center gap-1.5 text-xs text-kumo-subtle hover:text-kumo-default mb-3 cursor-pointer"
+						>
+							<ArrowLeftIcon size={14} /> Back to sign in
+						</button>
 						<p className="text-xs text-kumo-subtle">
-							{step === "forgot"
-								? "Reset your password"
-								: step === "reset"
-									? "Enter your reset code"
-									: "Sign in to your mailbox"}
+							Enter the email you sign in with. We'll send a 6-digit code to your
+							recovery email.
+						</p>
+						<p className="text-xs text-kumo-subtle mt-2">
+							No recovery email set up? Then no code will arrive. Sign in with Google
+							or Apple if you connected one, and add a recovery email in Settings.
 						</p>
 					</div>
-				</div>
 
-				{(step === "email" || step === "password") && (
-					<>
-						<Button
+					<div>
+						<label className="block text-xs font-medium text-kumo-subtle mb-1">
+							Inboxies email
+						</label>
+						<Input
+							className="w-full"
+							ref={emailInputRef}
+							type="email"
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							placeholder="name@example.com"
+							required
+							autoComplete="username"
+							autoFocus
+						/>
+					</div>
+
+					<Button
+						type="submit"
+						variant="primary"
+						className="w-full"
+						loading={submitting}
+						disabled={!isValidEmail}
+					>
+						Send reset code
+					</Button>
+				</form>
+			)}
+
+			{step === "reset" && (
+				<form onSubmit={handleResetPassword} className="space-y-3">
+					<div>
+						<button
 							type="button"
-							variant="primary"
+							onClick={() => setStep("forgot")}
+							className="inline-flex items-center gap-1.5 text-xs text-kumo-subtle hover:text-kumo-default mb-3 cursor-pointer"
+						>
+							<ArrowLeftIcon size={14} /> Back
+						</button>
+						<p className="text-xs text-kumo-subtle">
+							Enter the 6-digit code we sent to the recovery email for{" "}
+							<strong className="text-kumo-default">{email}</strong>, and choose a new password.
+						</p>
+					</div>
+
+					<div>
+						<label className="block text-xs font-medium text-kumo-subtle mb-1">
+							6-digit reset code
+						</label>
+						<Input
 							className="w-full"
-							onClick={() => setShowOnboarding(true)}
-						>
-							Get started
-						</Button>
+							ref={resetCodeInputRef}
+							type="text"
+							value={resetCode}
+							onChange={(e) => setResetCode(e.target.value)}
+							placeholder="123456"
+							maxLength={6}
+							required
+							autoFocus
+						/>
+					</div>
 
-						<div className="flex items-center my-4 text-xs text-kumo-subtle">
-							<div className="flex-1 border-t border-kumo-line" />
-							<span className="px-3">or</span>
-							<div className="flex-1 border-t border-kumo-line" />
-						</div>
-					</>
-				)}
-
-				{step === "email" && (
-					<form onSubmit={handleEmailNext} className="space-y-2">
-						<div>
-							<label className="block text-xs font-medium text-kumo-subtle mb-1">
-								Mailbox email
-							</label>
+					<div>
+						<label className="block text-xs font-medium text-kumo-subtle mb-1">
+							New password
+						</label>
+						<div className="relative flex items-center">
 							<Input
-								ref={emailInputRef}
-								type="email"
-								size="sm"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
-								placeholder="name@example.com"
+								ref={newPasswordInputRef}
+								type={showNewPassword ? "text" : "password"}
+								value={newPassword}
+								onChange={(e) => setNewPassword(e.target.value)}
+								placeholder="At least 10 characters"
 								required
-								autoComplete="username"
-								autoFocus
+								minLength={10}
+								autoComplete="new-password"
+								className="w-full pr-10"
 							/>
-						</div>
-
-						{/* Button for forgot password should be below the email input, then some extra space below it before the next button. */}
-						<div className="flex justify-end pt-1">
 							<button
 								type="button"
-								onClick={() => setStep("forgot")}
-								className="text-xs text-kumo-accent hover:underline cursor-pointer"
+								onClick={() => setShowNewPassword(!showNewPassword)}
+								className="absolute right-3 text-kumo-subtle hover:text-kumo-default p-1 cursor-pointer"
+								title={showNewPassword ? "Hide password" : "Show password"}
+								aria-label={showNewPassword ? "Hide password" : "Show password"}
 							>
-								Forgot password?
+								{showNewPassword ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
 							</button>
 						</div>
+					</div>
 
-						<div className="h-4" />
+					{newPassword.length > 0 && newPassword.length < 10 && (
+						<p className="text-xs text-kumo-subtle">
+							{10 - newPassword.length} more characters needed (minimum 10)
+						</p>
+					)}
 
-						<Button
-							type="submit"
-							variant="primary"
-							className="w-full"
-							disabled={!isValidEmail}
-						>
-							Next
-						</Button>
+					<Button
+						type="submit"
+						variant="primary"
+						className="w-full mt-2"
+						loading={submitting}
+						disabled={resetCode.trim().length < 6 || newPassword.length < 10}
+					>
+						Reset password & sign in
+					</Button>
+				</form>
+			)}
 
-						{googleClientId && (
-							<>
-								<div className="flex items-center my-4 text-xs text-kumo-subtle">
-									<div className="flex-1 border-t border-kumo-line" />
-									<span className="px-3">or</span>
-									<div className="flex-1 border-t border-kumo-line" />
-								</div>
-								<GoogleSignInButton
-									clientId={googleClientId}
-									onCredential={(idToken) => void handleGoogleCredential(idToken)}
-									busy={submitting}
-								/>
-							</>
-						)}
-					</form>
-				)}
-
-				{step === "password" && (
-					<form onSubmit={handlePasswordLogin} className="space-y-3">
-						<div className="flex items-center justify-between text-xs text-kumo-subtle">
-							<span className="truncate mr-2">
-								Signing in as <strong className="text-kumo-default">{email}</strong>
-							</span>
-							<button
-								type="button"
-								onClick={() => setStep("email")}
-								className="text-kumo-accent hover:underline shrink-0 cursor-pointer"
-							>
-								Change
-							</button>
-						</div>
-
-						<div>
-							<label className="block text-xs font-medium text-kumo-subtle mb-1">
-								Password
-							</label>
-							<div className="relative flex items-center">
-								<Input
-									ref={passwordInputRef}
-									type={showPassword ? "text" : "password"}
-									size="sm"
-									value={password}
-									onChange={(e) => setPassword(e.target.value)}
-									placeholder="Enter your password"
-									required
-									autoComplete="current-password"
-									autoFocus
-									className="pr-10"
-								/>
-								<button
-									type="button"
-									onClick={() => setShowPassword(!showPassword)}
-									className="absolute right-3 text-kumo-subtle hover:text-kumo-default p-1 cursor-pointer"
-									title={showPassword ? "Hide password" : "Show password"}
-									aria-label={showPassword ? "Hide password" : "Show password"}
-								>
-									{showPassword ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
-								</button>
-							</div>
-						</div>
-
-						<div className="flex justify-end pt-1">
-							<button
-								type="button"
-								onClick={() => setStep("forgot")}
-								className="text-xs text-kumo-accent hover:underline cursor-pointer"
-							>
-								Forgot password?
-							</button>
-						</div>
-
-						<Button
-							type="submit"
-							variant="primary"
-							className="w-full mt-2"
-							loading={submitting}
-							disabled={!password}
-						>
-							Sign in
-						</Button>
-					</form>
-				)}
-
-				{step === "forgot" && (
-					<form onSubmit={handleSendResetCode} className="space-y-4">
-						<div>
-							<button
-								type="button"
-								onClick={() => setStep("email")}
-								className="inline-flex items-center gap-1.5 text-xs text-kumo-subtle hover:text-kumo-default mb-3 cursor-pointer"
-							>
-								<ArrowLeftIcon size={14} /> Back to sign in
-							</button>
-							<p className="text-xs text-kumo-subtle">
-								Enter the email you sign in with. We'll send a 6-digit code to your
-								recovery email.
-							</p>
-							<p className="text-xs text-kumo-subtle mt-2">
-								No recovery email set up? Then no code will arrive. Sign in with Google
-								or Apple if you connected one, and add a recovery email in Settings.
-							</p>
-						</div>
-
-						<div>
-							<label className="block text-xs font-medium text-kumo-subtle mb-1">
-								Inboxies email
-							</label>
-							<Input
-								ref={emailInputRef}
-								type="email"
-								size="sm"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
-								placeholder="name@example.com"
-								required
-								autoComplete="username"
-								autoFocus
-							/>
-						</div>
-
-						<Button
-							type="submit"
-							variant="primary"
-							className="w-full"
-							loading={submitting}
-							disabled={!isValidEmail}
-						>
-							Send reset code
-						</Button>
-					</form>
-				)}
-
-				{step === "reset" && (
-					<form onSubmit={handleResetPassword} className="space-y-3">
-						<div>
-							<button
-								type="button"
-								onClick={() => setStep("forgot")}
-								className="inline-flex items-center gap-1.5 text-xs text-kumo-subtle hover:text-kumo-default mb-3 cursor-pointer"
-							>
-								<ArrowLeftIcon size={14} /> Back
-							</button>
-							<p className="text-xs text-kumo-subtle">
-								Enter the 6-digit code we sent to the recovery email for{" "}
-								<strong className="text-kumo-default">{email}</strong>, and choose a new password.
-							</p>
-						</div>
-
-						<div>
-							<label className="block text-xs font-medium text-kumo-subtle mb-1">
-								6-digit reset code
-							</label>
-							<Input
-								ref={resetCodeInputRef}
-								type="text"
-								size="sm"
-								value={resetCode}
-								onChange={(e) => setResetCode(e.target.value)}
-								placeholder="123456"
-								maxLength={6}
-								required
-								autoFocus
-							/>
-						</div>
-
-						<div>
-							<label className="block text-xs font-medium text-kumo-subtle mb-1">
-								New password
-							</label>
-							<div className="relative flex items-center">
-								<Input
-									ref={newPasswordInputRef}
-									type={showNewPassword ? "text" : "password"}
-									size="sm"
-									value={newPassword}
-									onChange={(e) => setNewPassword(e.target.value)}
-									placeholder="At least 10 characters"
-									required
-									minLength={10}
-									autoComplete="new-password"
-									className="pr-10"
-								/>
-								<button
-									type="button"
-									onClick={() => setShowNewPassword(!showNewPassword)}
-									className="absolute right-3 text-kumo-subtle hover:text-kumo-default p-1 cursor-pointer"
-									title={showNewPassword ? "Hide password" : "Show password"}
-									aria-label={showNewPassword ? "Hide password" : "Show password"}
-								>
-									{showNewPassword ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
-								</button>
-							</div>
-						</div>
-
-						{newPassword.length > 0 && newPassword.length < 10 && (
-							<p className="text-xs text-kumo-subtle">
-								{10 - newPassword.length} more characters needed (minimum 10)
-							</p>
-						)}
-
-						<Button
-							type="submit"
-							variant="primary"
-							className="w-full mt-2"
-							loading={submitting}
-							disabled={resetCode.trim().length < 6 || newPassword.length < 10}
-						>
-							Reset password & sign in
-						</Button>
-					</form>
-				)}
-
-				<OnboardingFlow
-					isOpen={showOnboarding}
-					onClose={() => setShowOnboarding(false)}
-					onSuccess={() => navigate(afterSignIn)}
-					mailDomain={config?.mailDomain || "inboxies.email"}
+			{step === "two-factor" && challenge && (
+				<TwoFactorChallengeForm
+					challenge={challenge}
+					email={email.trim() || undefined}
+					onSignedIn={() => navigate(afterSignIn)}
+					onExpired={() => {
+						setChallenge(null);
+						setStep("password");
+					}}
+					onBack={() => {
+						setChallenge(null);
+						setStep("password");
+					}}
 				/>
-			</div>
-		</div>
+			)}
+		</AuthShell>
 	);
 }

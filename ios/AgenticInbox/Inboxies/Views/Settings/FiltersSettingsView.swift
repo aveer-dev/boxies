@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// Gmail-style inbound filters: from / list / subject → folder, skip auto-draft, forward.
+/// Gmail-style inbound filters: from / list / subject / private email → folder, skip auto-draft, forward.
 struct FiltersSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
 
     @State private var rules: [InboxFilterRule] = []
+    @State private var aliases: [MaskedAlias] = []
     @State private var editorDraft: FilterEditorDraft?
     @State private var actionItem: FilterActionItem?
     @State private var isSelectMode = false
@@ -26,7 +27,7 @@ struct FiltersSettingsView: View {
                         .font(.inter(size: 13))
                         .foregroundStyle(AppTheme.muted)
 
-                    Text("Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list.")
+                    Text("Conditions use AND. For sender, use an address, @domain.com, or a substring. For lists, use List-Id text or * for any mailing list. Pick a private email to match only mail sent to it.")
                         .font(.inter(size: 12))
                         .foregroundStyle(AppTheme.muted)
                 }
@@ -126,6 +127,7 @@ struct FiltersSettingsView: View {
             FilterEditorSheet(
                 draft: draft,
                 folders: app.folders,
+                aliases: aliases,
                 mailboxEmail: mailboxEmail,
                 onCancel: { editorDraft = nil },
                 onSave: { rule in
@@ -152,6 +154,13 @@ struct FiltersSettingsView: View {
         .sensoryFeedback(.selection, trigger: isSelectMode)
         .onAppear {
             rules = app.selectedMailbox?.settings?.filters ?? []
+        }
+        .task {
+            // Private emails for the "Sent to" picker; the list still works without them.
+            guard let mailboxId = app.selectedMailboxId else { return }
+            if let loaded = try? await APIClient.shared.listAliases(mailboxId: mailboxId) {
+                aliases = loaded
+            }
         }
         .applyThemeController()
     }
@@ -249,6 +258,9 @@ struct FiltersSettingsView: View {
 
     private func summary(for rule: InboxFilterRule) -> String {
         var conditions: [String] = []
+        if let toAlias = rule.toAlias?.trimmingCharacters(in: .whitespacesAndNewlines), !toAlias.isEmpty {
+            conditions.append("to \(toAlias)")
+        }
         if let from = rule.from?.trimmingCharacters(in: .whitespacesAndNewlines), !from.isEmpty {
             conditions.append("from \(from)")
         }
@@ -285,6 +297,7 @@ struct FiltersSettingsView: View {
                 from: rule.from?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
                 list: rule.list?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
                 subject: rule.subject?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                toAlias: rule.toAlias?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().nilIfEmpty,
                 folderId: rule.folderId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
                 skipAutoDraft: (rule.skipAutoDraft == true) ? true : nil,
                 forwardTo: rule.forwardTo?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
@@ -292,10 +305,10 @@ struct FiltersSettingsView: View {
         }
 
         for rule in cleaned {
-            let hasCondition = rule.from != nil || rule.list != nil || rule.subject != nil
+            let hasCondition = rule.from != nil || rule.list != nil || rule.subject != nil || rule.toAlias != nil
             let hasAction = rule.folderId != nil || rule.skipAutoDraft == true || rule.forwardTo != nil
             if !hasCondition {
-                await flash("Each filter needs a from, list, or subject condition")
+                await flash("Each filter needs a from, list, subject, or private email condition")
                 return
             }
             if !hasAction {
@@ -410,6 +423,7 @@ private struct FilterEditorDraft: Identifiable {
                 from: nil,
                 list: nil,
                 subject: nil,
+                toAlias: nil,
                 folderId: nil,
                 skipAutoDraft: false,
                 forwardTo: nil
@@ -425,6 +439,7 @@ private struct FilterEditorSheet: View {
 
     let isNew: Bool
     let folders: [Folder]
+    let aliases: [MaskedAlias]
     let mailboxEmail: String
     var onCancel: () -> Void
     var onSave: (InboxFilterRule) -> Void
@@ -432,6 +447,7 @@ private struct FilterEditorSheet: View {
     init(
         draft: FilterEditorDraft,
         folders: [Folder],
+        aliases: [MaskedAlias],
         mailboxEmail: String,
         onCancel: @escaping () -> Void,
         onSave: @escaping (InboxFilterRule) -> Void
@@ -439,6 +455,7 @@ private struct FilterEditorSheet: View {
         _rule = State(initialValue: draft.rule)
         self.isNew = draft.isNew
         self.folders = folders
+        self.aliases = aliases
         self.mailboxEmail = mailboxEmail
         self.onCancel = onCancel
         self.onSave = onSave
@@ -449,6 +466,28 @@ private struct FilterEditorSheet: View {
             get: { rule.folderId ?? "" },
             set: { rule.folderId = $0.isEmpty ? nil : $0 }
         )
+    }
+
+    private var aliasSelection: Binding<String> {
+        Binding(
+            get: { rule.toAlias?.lowercased() ?? "" },
+            set: { rule.toAlias = $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    /// Private emails to pick from, keeping a saved address listed even if
+    /// that private email was since deleted.
+    private var aliasOptions: [(email: String, title: String)] {
+        var options = aliases.map { alias -> (email: String, title: String) in
+            let email = alias.aliasEmail.lowercased()
+            let label = alias.label?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            return (email, label.map { "\($0) (\(email))" } ?? email)
+        }
+        if let saved = rule.toAlias?.lowercased().nilIfEmpty,
+           !options.contains(where: { $0.email == saved }) {
+            options.insert((saved, saved), at: 0)
+        }
+        return options
     }
 
     private var skipAutoDraft: Binding<Bool> {
@@ -508,11 +547,17 @@ private struct FilterEditorSheet: View {
                         ),
                         placeholder: "Contains…"
                     )
+                    SettingsMenuPickerRow(title: "Sent To", selection: aliasSelection) {
+                        Text("Any address").tag("")
+                        ForEach(aliasOptions, id: \.email) { option in
+                            Text(option.title).tag(option.email)
+                        }
+                    }
                 } header: {
                     Text("Conditions")
                 } footer: {
                     SettingsFormFooter(
-                        text: "Match sender, mailing list, or subject text. At least one condition is required. Multiple conditions use AND."
+                        text: "Match sender, mailing list, subject text, or one of your private emails. At least one condition is required. Multiple conditions use AND."
                     )
                 }
 
@@ -569,15 +614,17 @@ private struct FilterEditorSheet: View {
             from: rule.from?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             list: rule.list?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             subject: rule.subject?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            toAlias: rule.toAlias?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().nilIfEmpty,
             folderId: rule.folderId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             skipAutoDraft: (rule.skipAutoDraft == true) ? true : nil,
             forwardTo: rule.forwardTo?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         )
 
         let hasCondition = cleaned.from != nil || cleaned.list != nil || cleaned.subject != nil
+            || cleaned.toAlias != nil
         let hasAction = cleaned.folderId != nil || cleaned.skipAutoDraft == true || cleaned.forwardTo != nil
         if !hasCondition {
-            errorMessage = "Add a from, list, or subject condition"
+            errorMessage = "Add a from, list, subject, or private email condition"
             return
         }
         if !hasAction {

@@ -117,6 +117,21 @@ data class AccountSession(
     val current: Boolean = false,
 )
 
+/** An app connected over MCP OAuth (Account → Devices & sessions → Connected apps). */
+@Serializable
+data class McpGrant(
+    val id: String,
+    val clientId: String,
+    /** Self-registered and unverified; null when the app gave none. */
+    val clientName: String? = null,
+    val clientUri: String? = null,
+    val scopes: List<String> = emptyList(),
+    /** Mailboxes the app is limited to; null means every mailbox. */
+    val mailboxIds: List<String>? = null,
+    val createdAt: String,
+    val expiresAt: String? = null,
+)
+
 @Serializable
 data class RevokeSessionsResponse(
     val ok: Boolean = false,
@@ -135,6 +150,8 @@ data class MeResponse(
     val administeredDomains: List<String> = emptyList(),
     val mailDomain: String? = null,
     val domains: List<String> = emptyList(),
+    /** TOTP two-factor is on. It only challenges password sign-in. */
+    val twoFactorEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -218,6 +235,63 @@ data class PasswordLoginResponse(
     val keys: List<String> = emptyList(),
 )
 
+/**
+ * `/api/v1/auth/password/reset`. With two-factor on, the reset answers with a challenge
+ * instead of a session (a reset proves the recovery email, not the second factor).
+ */
+@Serializable
+data class ResetPasswordResponse(
+    val ok: Boolean? = null,
+    val token: String? = null,
+    val expiresAt: String? = null,
+    val email: String? = null,
+    val twoFactorRequired: Boolean? = null,
+    val twoFactorToken: String? = null,
+    val twoFactorMethods: List<String> = emptyList(),
+) {
+    val twoFactorChallenge: TwoFactorChallenge?
+        get() = if (twoFactorRequired == true && !twoFactorToken.isNullOrEmpty()) {
+            TwoFactorChallenge(twoFactorToken, twoFactorMethods, email)
+        } else {
+            null
+        }
+}
+
+/**
+ * A password sign-in that still needs a second factor: an authenticator (TOTP) code or a
+ * one-time backup code, sent with [token] to `/api/v1/auth/two-factor/verify`. Good for
+ * one sign-in, 10 minutes, 5 codes.
+ */
+data class TwoFactorChallenge(
+    val token: String,
+    /** Server methods, e.g. `["totp", "backup_code"]`. */
+    val methods: List<String>,
+    val email: String? = null,
+) {
+    companion object {
+        /** The 401 `TWO_FACTOR_REQUIRED` body of `/api/v1/auth/password`, else null. */
+        fun parse(body: String): TwoFactorChallenge? {
+            val obj = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+            if ((obj["twoFactorRequired"] as? JsonPrimitive)?.booleanOrNull != true) return null
+            val token = (obj["twoFactorToken"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return null
+            val methods = (obj["twoFactorMethods"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                .orEmpty()
+            return TwoFactorChallenge(token, methods)
+        }
+    }
+}
+
+/** A passkey registered to the signed-in account (`/api/auth/passkey/list-user-passkeys`). */
+@Serializable
+data class PasskeyRow(
+    val id: String,
+    val name: String? = null,
+    val createdAt: String? = null,
+    val deviceType: String? = null,
+    val backedUp: Boolean? = null,
+)
+
 @Serializable
 data class ForgotPasswordResponse(
     val ok: Boolean,
@@ -274,6 +348,8 @@ data class InboxFilterRule(
     val from: String? = null,
     val list: String? = null,
     val subject: String? = null,
+    /** Only mail delivered via this private email (lowercased address). */
+    val toAlias: String? = null,
     val folderId: String? = null,
     val skipAutoDraft: Boolean? = null,
     val forwardTo: String? = null,
@@ -1023,6 +1099,16 @@ object FolderIds {
 
     fun isPurposeFolder(id: String): Boolean = id in purposeFolderIds
 
+    /** Spam and Trash keep mail this many days after it was moved in (AVE-42). */
+    const val RETENTION_DAYS = 30
+
+    /** Quiet notice at the top of Spam / Trash; matches `folderRetentionNotice` in shared/folders.ts. */
+    fun retentionNotice(id: String?): String? = when (id) {
+        SPAM -> "Messages in Spam are deleted after $RETENTION_DAYS days."
+        TRASH -> "Messages in Trash are deleted after $RETENTION_DAYS days."
+        else -> null
+    }
+
     fun purposeDisplayName(id: String): String = when (id) {
         INBOX -> "Inbox"
         PROMOTIONS -> "Promotions"
@@ -1298,7 +1384,59 @@ data class DecommissionResponse(
     val status: String,
     val eppCode: String? = null,
     val message: String = "",
+    /** When the domain's data is deleted unless finalized sooner (ISO 8601). */
+    val finalizeAfter: String? = null,
 )
+
+/** Where a decommissioned domain's offboarding stands: the grace period and finalize-now. */
+@Serializable
+data class DomainOffboardingState(
+    val decommissionedAt: String,
+    /** Scheduled deletion (ISO 8601). */
+    val finalizeAfter: String,
+    val graceDays: Int = 30,
+    val warningSentAt: String? = null,
+    val finalizeRequestedAt: String? = null,
+    val finalizeStartedAt: String? = null,
+    val finalizedAt: String? = null,
+    val step: String? = null,
+    val lastError: String? = null,
+    val canFinalizeNow: Boolean = false,
+    val scheduledFinalizeDue: Boolean = false,
+)
+
+@Serializable
+data class OffboardingDomain(
+    val domain: String,
+    val offboarding: DomainOffboardingState,
+)
+
+@Serializable
+data class OffboardingDomainsResponse(
+    val domains: List<OffboardingDomain> = emptyList(),
+)
+
+@Serializable
+data class FinalizeDomainResponse(
+    val success: Boolean = false,
+    val domain: String,
+    val finalized: Boolean = false,
+    /** "in_progress" or "will_retry" when it didn't finish now; the hourly run does. */
+    val status: String? = null,
+    val mailboxesPurged: Int? = null,
+    val subscriptionCanceled: Boolean? = null,
+    val error: String? = null,
+)
+
+/** Formats an ISO 8601 offboarding date as "October 20, 2026"; the raw string if it doesn't parse. */
+fun formatOffboardingDate(iso: String): String =
+    try {
+        java.time.Instant.parse(iso)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.LONG))
+    } catch (_: Exception) {
+        iso
+    }
 
 @Serializable
 data class DomainEppCodeResponse(

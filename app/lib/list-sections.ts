@@ -8,6 +8,7 @@
 export {
 	applyReadToEmails,
 	buildInboxListItems,
+	INBOX_NEW_PREVIEW_LIMIT,
 	patchEmailListCache,
 	type EmailListCacheLike as EmailListCache,
 	type InboxListItem,

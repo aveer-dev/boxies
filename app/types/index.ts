@@ -15,6 +15,8 @@ export interface InboxFilterRule {
 	from?: string;
 	list?: string;
 	subject?: string;
+	/** Only mail delivered via this private email. */
+	toAlias?: string;
 	folderId?: string;
 	skipAutoDraft?: boolean;
 	forwardTo?: string;
@@ -64,6 +66,8 @@ export interface MeResponse {
 	mailDomain?: string;
 	domains?: string[];
 	sessionScope?: string | null;
+	/** TOTP two-factor is on (it only challenges password sign-in). */
+	twoFactorEnabled?: boolean;
 }
 
 export interface AccountSession {
@@ -76,6 +80,20 @@ export interface AccountSession {
 	lastActiveAt: string;
 	expiresAt: string;
 	current: boolean;
+}
+
+/** An app connected over MCP OAuth (Settings → Devices → Connected apps). */
+export interface McpGrant {
+	id: string;
+	clientId: string;
+	/** Self-registered and unverified; null when the app gave none. */
+	clientName: string | null;
+	clientUri: string | null;
+	scopes: string[];
+	/** Mailboxes the app is limited to; null means every mailbox. */
+	mailboxIds: string[] | null;
+	createdAt: string;
+	expiresAt: string | null;
 }
 
 export interface RecoveryEmailStatus {
@@ -241,6 +259,41 @@ export interface DecommissionResponse {
 	status: string;
 	eppCode?: string;
 	message: string;
+	/** When the domain's data is deleted unless finalized sooner (AVE-43). */
+	finalizeAfter?: string;
+	offboarding?: DomainOffboardingState | null;
+}
+
+/** Where a decommissioned domain's offboarding stands (`/offboarding`). */
+export interface DomainOffboardingState {
+	decommissionedAt: string;
+	/** Scheduled deletion: decommission + grace period, never under 7 days after the warning. */
+	finalizeAfter: string;
+	graceDays: number;
+	warningSentAt: string | null;
+	finalizeRequestedAt: string | null;
+	finalizeStartedAt: string | null;
+	finalizedAt: string | null;
+	step: string | null;
+	lastError: string | null;
+	canFinalizeNow: boolean;
+	scheduledFinalizeDue: boolean;
+}
+
+export interface OffboardingDomain {
+	domain: string;
+	offboarding: DomainOffboardingState;
+}
+
+export interface FinalizeDomainResponse {
+	success: boolean;
+	domain: string;
+	finalized: boolean;
+	/** "in_progress" or "will_retry" when it didn't finish now; the hourly run does. */
+	status?: string;
+	mailboxesPurged?: number;
+	subscriptionCanceled?: boolean;
+	error?: string;
 }
 
 export interface DomainHealthResponse {
@@ -369,6 +422,11 @@ export interface Email {
 	has_attachment?: boolean;
 	/** Inbox New vs Seen section (threaded inbox list only). */
 	list_section?: "new" | "seen";
+	/** Threaded list only: the signed-in user's own notes on this conversation. */
+	has_sticky_note?: boolean;
+	/** Latest sticky note's markdown, trimmed to a short snippet. */
+	sticky_note_text?: string | null;
+	inline_note_count?: number;
 }
 
 export interface Attachment {
@@ -407,6 +465,14 @@ export type {
 	InboxDigestTopic,
 	InboxDigestTopicItem,
 } from "shared/inbox-digest";
+
+export type {
+	ThreadNote,
+	ThreadNoteType,
+	CreateThreadNoteRequest,
+	UpdateThreadNoteRequest,
+	ThreadNoteListFields,
+} from "shared/thread-notes";
 
 export interface MaskedAlias {
 	id: string;
