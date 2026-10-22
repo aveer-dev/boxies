@@ -407,9 +407,10 @@ export function registerExportAndOffboardingRoutes(
 
 	/**
 	 * Finalize now: delete the decommissioned domain's mailboxes, aliases,
-	 * access, subscription and registry entry without waiting for the grace
-	 * period. The caller types the domain name to confirm; this is checked here,
-	 * not only in the clients. If the run stops part-way, the hourly cron
+	 * access, subscription and registry entry, then its Cloudflare zone (and
+	 * registrar auto-renew), without waiting for the grace period. The caller
+	 * types the domain name to confirm; this is checked here, not only in the
+	 * clients. If the run stops part-way, the hourly cron
 	 * finishes it (202).
 	 */
 	app.post("/api/v1/admin/domains/:domain/finalize", async (c) => {
@@ -458,6 +459,8 @@ export function registerExportAndOffboardingRoutes(
 					finalized: true,
 					mailboxesPurged: result.mailboxesPurged,
 					subscriptionCanceled: result.subscriptionCanceled,
+					// The data is gone; removing the Cloudflare zone/registration failed and the hourly run retries it.
+					...(result.cloudflareError ? { cloudflareCleanupPending: true } : {}),
 				});
 			case "busy":
 				return c.json({ success: true, domain, finalized: false, status: "in_progress" }, 202);

@@ -1,7 +1,8 @@
 /**
  * Finalizing a decommissioned domain (AVE-43): the grace period and warning,
  * "finalize now" (typed confirmation, owner only), idempotent and resumable
- * runs, and the Stripe cancellation (mocked through fetch).
+ * runs, the Stripe cancellation, and the Cloudflare zone / registrar cleanup
+ * (both mocked through fetch).
  * Run: node --experimental-strip-types --import ./workers/test/register-ts-ext.mjs workers/test/domain-offboarding.test.mjs
  */
 
@@ -404,6 +405,146 @@ assert.equal((await decommission("now.test")).status, 200);
 	assert.deepEqual(report.finalized, ["stripe-down.test"]);
 	assert.equal(cancels("sub_down").length, 1);
 	await assertDomainGone("stripe-down.test");
+}
+
+// ── 7. Cloudflare cleanup: zone deleted, registrar auto-renew off ──
+{
+	env.MAILBOX = mockMailboxNamespace();
+	env.CF_API_TOKEN = "cf_test_token";
+	env.CF_ACCOUNT_ID = "acct_test";
+	env.OPS_ALERT_EMAIL = "ops@example.com";
+
+	const cfCalls = [];
+	/** Per-test answer for DELETE /zones/{id}: a status code. */
+	let zoneDeleteStatus = () => 200;
+	const prev = globalThis.fetch;
+	globalThis.fetch = async (url, init = {}) => {
+		const u = String(url);
+		if (!u.startsWith("https://api.cloudflare.com/")) return prev(url, init);
+		const method = init.method ?? "GET";
+		const path = u.replace("https://api.cloudflare.com/client/v4", "");
+		cfCalls.push({ method, path, body: init.body ? JSON.parse(init.body) : undefined });
+		assert.equal(init.headers.Authorization, "Bearer cf_test_token");
+		const json = (status, body) =>
+			new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+		if (method === "DELETE" && path.startsWith("/zones/")) {
+			const status = zoneDeleteStatus(path);
+			return status === 200
+				? json(200, { success: true, result: { id: path.slice("/zones/".length) } })
+				: json(status, { success: false, errors: [{ code: 1000, message: `zone delete ${status}` }] });
+		}
+		if (path.endsWith("/transfer_auth_code")) return json(200, { success: true, result: { auth_code: "epp-123" } });
+		// Catch-all disable, transfer unlock, auto-renew off.
+		return json(200, { success: true, result: init.body ? JSON.parse(init.body) : {} });
+	};
+	const zoneDeletes = (domain) => cfCalls.filter((c) => c.method === "DELETE" && c.path === `/zones/zone-${domain}`);
+	const autoRenewOffs = (domain) =>
+		cfCalls.filter(
+			(c) => c.method === "PATCH" && c.path === `/accounts/acct_test/registrar/registrations/${domain}` && c.body?.auto_renew === false,
+		);
+	const registrarCalls = (domain) => cfCalls.filter((c) => c.path.includes(`/registrar/`) && c.path.includes(domain));
+	const opsAlerts = (domain) => email.sent.filter((m) => m.to === "ops@example.com" && m.subject.includes(domain));
+	const registration = { provider: "cloudflare_registrar", autoRenew: true, locked: true, registeredAt: "", expiresAt: "2027-01-01T00:00:00Z" };
+
+	// a) BYO domain: its recorded zone is deleted; the registrar is never touched.
+	await seedDomain("byo.test", { subscriptionId: "sub_byo", customerId: "cus_byo" });
+	assert.equal((await decommission("byo.test")).status, 200);
+	{
+		const res = await finalizeNow("byo.test", { confirmDomain: "byo.test" });
+		assert.equal(res.status, 200, JSON.stringify(res.payload));
+		assert.equal(res.payload.finalized, true);
+		assert.equal(res.payload.cloudflareCleanupPending, undefined);
+		assert.equal(zoneDeletes("byo.test").length, 1, "the recorded zone id is deleted");
+		assert.deepEqual(registrarCalls("byo.test"), [], "BYO domain: no registrar calls");
+		assert.equal(cfCalls.filter((c) => c.method === "GET" && c.path.startsWith("/zones?")).length, 0, "never looked up by name");
+		await assertDomainGone("byo.test");
+		const row = await getOffboarding(db, "byo.test");
+		assert.equal(row.zoneId, "zone-byo.test");
+		assert.equal(row.registrarManaged, false);
+		assert.ok(row.dataDeletedAt && row.zoneDeletedAt && row.registrarReleasedAt && row.finalizedAt);
+		assert.equal(row.step, "done");
+	}
+
+	// b) Registered through us, zone already gone (404): both count as done.
+	await seedDomain("gone.test", { subscriptionId: "sub_gone", customerId: "cus_gone" });
+	await bucket.put(
+		domainR2Key("gone.test"),
+		JSON.stringify({ ...(await getDomainMetadata(bucket, "gone.test")), registration }),
+	);
+	assert.equal((await decommission("gone.test")).status, 200);
+	{
+		zoneDeleteStatus = () => 404;
+		const res = await finalizeNow("gone.test", { confirmDomain: "gone.test" });
+		zoneDeleteStatus = () => 200;
+		assert.equal(res.status, 200, JSON.stringify(res.payload));
+		assert.equal(res.payload.cloudflareCleanupPending, undefined, "404 is success");
+		assert.equal(zoneDeletes("gone.test").length, 1);
+		assert.equal(autoRenewOffs("gone.test").length, 1, "registrar auto-renew turned off");
+		const row = await getOffboarding(db, "gone.test");
+		assert.equal(row.registrarManaged, true);
+		assert.ok(row.finalizedAt);
+		assert.equal(row.lastError, null);
+		assert.deepEqual(opsAlerts("gone.test"), []);
+	}
+
+	// c) Zone delete fails: data is deleted anyway, the failure is recorded and
+	// alerted once, and the next runs retry only the zone.
+	await seedDomain("cfdown.test", { subscriptionId: "sub_cfdown", customerId: "cus_cfdown" });
+	await bucket.put(
+		domainR2Key("cfdown.test"),
+		JSON.stringify({ ...(await getDomainMetadata(bucket, "cfdown.test")), registration }),
+	);
+	assert.equal((await decommission("cfdown.test")).status, 200);
+	{
+		zoneDeleteStatus = () => 500;
+		const res = await finalizeNow("cfdown.test", { confirmDomain: "cfdown.test" });
+		assert.equal(res.status, 200, JSON.stringify(res.payload));
+		assert.equal(res.payload.finalized, true);
+		assert.equal(res.payload.cloudflareCleanupPending, true);
+		await assertDomainGone("cfdown.test");
+		assert.equal(cancels("sub_cfdown").length, 1);
+		let row = await getOffboarding(db, "cfdown.test");
+		assert.ok(row.dataDeletedAt);
+		assert.equal(row.finalizedAt, null);
+		assert.equal(row.zoneDeletedAt, null);
+		assert.ok(row.registrarReleasedAt, "the registrar step finished on its own");
+		assert.match(row.lastError, /zone: zone delete 500/);
+		assert.equal(row.leaseUntil, null);
+		assert.equal(opsAlerts("cfdown.test").length, 1, "ops alerted");
+
+		// Still failing an hour later: retried, not re-alerted.
+		const purgesBefore = env.MAILBOX.calls.filter(([, m]) => m === "purgeMailbox").length;
+		const stillDown = await runDomainOffboarding(env, new Date(Date.now() + HOUR));
+		assert.deepEqual(stillDown.finalized, []);
+		assert.ok(stillDown.errors.some((e) => e.startsWith("cloudflare cfdown.test")));
+		assert.equal(zoneDeletes("cfdown.test").length, 2);
+		assert.equal(opsAlerts("cfdown.test").length, 1, "same error: no second alert");
+
+		// Cloudflare is back: only the zone step runs again.
+		zoneDeleteStatus = () => 200;
+		const report = await runScheduledMaintenance(env, new Date(Date.now() + 2 * HOUR));
+		assert.deepEqual(report.offboardingCloudflareCleaned, ["cfdown.test"]);
+		assert.deepEqual(report.offboardingFinalized, [], "the data was finalized earlier");
+		assert.equal(zoneDeletes("cfdown.test").length, 3);
+		assert.equal(autoRenewOffs("cfdown.test").length, 1, "registrar step not repeated");
+		assert.equal(cancels("sub_cfdown").length, 1, "Stripe not called again");
+		assert.equal(env.MAILBOX.calls.filter(([, m]) => m === "purgeMailbox").length, purgesBefore, "no mailbox purged again");
+		row = await getOffboarding(db, "cfdown.test");
+		assert.ok(row.zoneDeletedAt && row.finalizedAt);
+		assert.equal(row.step, "done");
+		assert.equal(row.lastError, null);
+		const audit = await db.select().from(schema.auditLog).where(eq(schema.auditLog.target, "cfdown.test")).all();
+		assert.equal(audit.filter((a) => a.action === "domain.offboarding_finalized").length, 1);
+
+		// Done: later runs leave it alone.
+		const after = await runDomainOffboarding(env, new Date(Date.now() + 3 * HOUR));
+		assert.deepEqual(after.cloudflareCleaned, []);
+		assert.equal(zoneDeletes("cfdown.test").length, 3);
+	}
+
+	globalThis.fetch = prev;
+	delete env.CF_API_TOKEN;
+	delete env.CF_ACCOUNT_ID;
 }
 
 globalThis.fetch = realFetch;

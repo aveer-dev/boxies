@@ -1259,9 +1259,10 @@ export function AdminDnsSuite({
 									</div>
 									<p>
 										Your mail stays available to export until then. After that every mailbox,
-										alias, member and invite on {offboardResult.domain} is deleted and the
-										subscription is cancelled. We'll email you a week before. To delete it
-										sooner, use "Delete now" under Scheduled for deletion.
+										alias, member and invite on {offboardResult.domain} is deleted, the
+										subscription is cancelled and its DNS zone is removed from Cloudflare, so
+										move your nameservers before then. We'll email you a week before. To delete
+										it sooner, use "Delete now" under Scheduled for deletion.
 									</p>
 								</div>
 							)}

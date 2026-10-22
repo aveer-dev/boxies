@@ -18,7 +18,8 @@
  *   their mail deleted (see service-reminders.ts, domain-purge.ts).
  * - Decommissioned domains get their admins warned 7 days before finalize,
  *   and are finalized once their 30-day grace period ends: mailboxes,
- *   aliases, access, subscription and registry entry deleted
+ *   aliases, access, subscription and registry entry deleted, then the
+ *   Cloudflare zone deleted and registrar auto-renew turned off
  *   (domain-offboarding.ts). An interrupted finalize resumes here.
  *
  * Each step is independent: one failing doesn't stop the others.
@@ -50,6 +51,7 @@ export type MaintenanceReport = {
 	domainsPurged: string[];
 	offboardingWarned: string[];
 	offboardingFinalized: string[];
+	offboardingCloudflareCleaned: string[];
 	errors: string[];
 };
 
@@ -73,6 +75,7 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		domainsPurged: [],
 		offboardingWarned: [],
 		offboardingFinalized: [],
+		offboardingCloudflareCleaned: [],
 		errors: [],
 	};
 	const db = authDb(env.AUTH_DB);
@@ -148,6 +151,7 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		const offboarding = await runDomainOffboarding(env, now);
 		report.offboardingWarned = offboarding.warned;
 		report.offboardingFinalized = offboarding.finalized;
+		report.offboardingCloudflareCleaned = offboarding.cloudflareCleaned;
 		report.errors.push(...offboarding.errors);
 	});
 
@@ -175,7 +179,8 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		report.claimsReleased.length ||
 		report.staleClaims.length ||
 		report.offboardingWarned.length ||
-		report.offboardingFinalized.length
+		report.offboardingFinalized.length ||
+		report.offboardingCloudflareCleaned.length
 	) {
 		console.log("[Maintenance]", JSON.stringify(report));
 	}

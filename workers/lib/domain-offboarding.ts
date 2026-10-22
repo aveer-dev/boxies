@@ -21,14 +21,21 @@
  *   3. aliases   - the domain's aliases;
  *   4. access    - the domain admin rows;
  *   5. registry  - the R2 domain metadata, billing lookups and the D1 domain row.
+ * Then, once the data is gone, the Cloudflare side:
+ *   6. registrar - for a domain registered through us (Cloudflare Registrar),
+ *                  auto-renew is turned off so the registration lapses at
+ *                  expiry. Registrar has no API to delete a registration
+ *                  (deletion needs a token emailed to a Super Admin), so this
+ *                  is the closest automatic equivalent. Skipped for BYO domains.
+ *   7. zone      - the Cloudflare zone Inboxies created for the domain, by the
+ *                  zone id we recorded (never looked up by name).
+ * A failure in 6 or 7 never holds back 1-5: the data is already deleted, the
+ * error is recorded, ops are alerted, and the hourly cron retries just the
+ * Cloudflare steps that haven't finished. A 404 counts as already done.
  *
  * Progress lives in `domain_offboarding` (D1), which outlives the domain. Every
  * step is safe to repeat, so a run that dies part-way is resumed by the hourly
  * cron rather than started over, and a lease keeps two runners off one domain.
- *
- * The Cloudflare zone and any registrar registration are left alone: deleting
- * a zone the owner still points nameservers at would take down their DNS. Ops
- * get an alert to review them.
  */
 
 import { and, eq, isNotNull, isNull, lte, or } from "drizzle-orm";
@@ -44,7 +51,9 @@ import {
 	listAllRegisteredDomains,
 	type DomainMetadata,
 } from "./domain-registry";
-import { isRegistrarManaged, setAutoRenewBestEffort } from "./domain-service";
+import { CloudflareApiError, deleteZone } from "./cloudflare-client";
+import { setDomainAutoRenew } from "./cloudflare-registrar";
+import { isRegistrarManaged } from "./domain-service";
 import { purgeEmailAgents } from "./email-agent";
 import { escapeHtml } from "./email-helpers";
 import { mailboxMetadataKey } from "./mailbox-routing";
@@ -63,6 +72,8 @@ export const OFFBOARDING_WARNING_MS = 7 * DAY_MS;
 const LEASE_MS = 14 * 60 * 1000;
 /** Domains finalized per cron run; the rest wait an hour. */
 const FINALIZE_BATCH = 3;
+/** Domains whose Cloudflare cleanup is retried per cron run (two API calls each). */
+const CLEANUP_BATCH = 10;
 
 export type OffboardingRow = typeof schema.domainOffboarding.$inferSelect;
 
@@ -73,7 +84,14 @@ export type FinalizeBlocker =
 	| "warning_pending";
 
 export type FinalizeResult =
-	| { status: "finalized"; domain: string; mailboxesPurged: number; subscriptionCanceled: boolean }
+	| {
+			status: "finalized";
+			domain: string;
+			mailboxesPurged: number;
+			subscriptionCanceled: boolean;
+			/** Set when the data is deleted but the zone/registrar step failed; the cron retries it. */
+			cloudflareError?: string;
+	  }
 	| { status: "blocked"; domain: string; reason: FinalizeBlocker }
 	| { status: "busy"; domain: string }
 	| { status: "failed"; domain: string; error: string };
@@ -286,85 +304,175 @@ export async function finalizeDomainOffboarding(
 			await setProgress(db, domain, { leaseUntil: null });
 			return { status: "blocked", domain, reason: blocker };
 		}
+		const previousError = row.lastError;
 
-		let meta = await getDomainMetadata(env.BUCKET, domain);
-		await setProgress(db, domain, {
-			finalizeStartedAt: row.finalizeStartedAt ?? now,
-			attempts: row.attempts + 1,
-			// Keep billing ids before the metadata that holds them is deleted.
-			subscriptionId: row.subscriptionId ?? meta?.billing?.subscriptionId ?? null,
-			customerId: row.customerId ?? meta?.billing?.customerId ?? null,
-			step: "billing",
-			lastError: null,
-		});
+		let subscriptionCanceled = Boolean(row.subscriptionCanceledAt);
+		if (!row.dataDeletedAt) {
+			let meta = await getDomainMetadata(env.BUCKET, domain);
+			await setProgress(db, domain, {
+				finalizeStartedAt: row.finalizeStartedAt ?? now,
+				attempts: row.attempts + 1,
+				// Keep what later steps need before the metadata that holds it is deleted.
+				subscriptionId: row.subscriptionId ?? meta?.billing?.subscriptionId ?? null,
+				customerId: row.customerId ?? meta?.billing?.customerId ?? null,
+				zoneId: row.zoneId ?? (meta?.zoneId || null),
+				registrarManaged: row.registrarManaged ?? (meta ? isRegistrarManaged(meta) : null),
+				step: "billing",
+				lastError: null,
+			});
+			row = (await getOffboarding(db, domain))!;
+
+			// 1. Billing first: nobody pays for a domain that is being deleted.
+			subscriptionCanceled = await cancelBilling(env, db, row, meta);
+
+			// 2. Mailboxes.
+			await setProgress(db, domain, { step: "mailboxes" });
+			let purged = row.mailboxesPurged;
+			for (const mailboxId of await mailboxesOnDomain(env, db, domain)) {
+				await purgeOneMailbox(env, db, mailboxId);
+				purged += 1;
+				await setProgress(db, domain, { mailboxesPurged: purged });
+			}
+
+			// 3. Aliases.
+			await setProgress(db, domain, { step: "aliases" });
+			meta = await getDomainMetadata(env.BUCKET, domain);
+			for (const alias of meta?.aliases ?? []) {
+				await deleteEmailAlias(env.BUCKET, domain, alias.aliasLocal);
+			}
+
+			// 4. Access: domain admins (mailbox members and invites went with step 2).
+			await setProgress(db, domain, { step: "access" });
+			await db.delete(schema.domainAdmin).where(eq(schema.domainAdmin.domain, domain));
+
+			// 5. Registry. Billing lookups go before the metadata, so a late Stripe
+			// webhook finds nothing to write back.
+			await setProgress(db, domain, { step: "registry" });
+			await unwatchDomain(env, domain);
+			if (row.customerId) await env.BUCKET.delete(billingCustomerKey(row.customerId));
+			await deleteDomainMetadata(env.BUCKET, domain);
+			await db.delete(schema.domain).where(eq(schema.domain.domain, domain));
+
+			await db.insert(schema.auditLog).values({
+				id: crypto.randomUUID(),
+				actorUserId: opts.actorUserId ?? row.finalizeRequestedBy ?? null,
+				action: "domain.offboarding_finalized",
+				target: domain,
+				detail: JSON.stringify({
+					mailboxesPurged: purged,
+					subscriptionId: row.subscriptionId,
+					subscriptionCanceled,
+					requested: Boolean(row.finalizeRequestedAt),
+					attempts: row.attempts,
+					zoneId: row.zoneId,
+					registrarManaged: row.registrarManaged,
+				}),
+			});
+			await setProgress(db, domain, { dataDeletedAt: now, step: "cloudflare" });
+			console.log(`[Offboarding] ${domain}: data deleted (${purged} mailboxes)`);
+		} else {
+			// Only the Cloudflare cleanup is left from an earlier run.
+			await setProgress(db, domain, { attempts: row.attempts + 1, step: "cloudflare", lastError: null });
+		}
 		row = (await getOffboarding(db, domain))!;
 
-		// 1. Billing first: nobody pays for a domain that is being deleted.
-		const subscriptionCanceled = await cancelBilling(env, db, row, meta);
-
-		// 2. Mailboxes.
-		await setProgress(db, domain, { step: "mailboxes" });
-		let purged = row.mailboxesPurged;
-		for (const mailboxId of await mailboxesOnDomain(env, db, domain)) {
-			await purgeOneMailbox(env, db, mailboxId);
-			purged += 1;
-			await setProgress(db, domain, { mailboxesPurged: purged });
-		}
-
-		// 3. Aliases.
-		await setProgress(db, domain, { step: "aliases" });
-		meta = await getDomainMetadata(env.BUCKET, domain);
-		for (const alias of meta?.aliases ?? []) {
-			await deleteEmailAlias(env.BUCKET, domain, alias.aliasLocal);
-		}
-
-		// 4. Access: domain admins (mailbox members and invites went with step 2).
-		await setProgress(db, domain, { step: "access" });
-		await db.delete(schema.domainAdmin).where(eq(schema.domainAdmin.domain, domain));
-
-		// 5. Registry. Billing lookups go before the metadata, so a late Stripe
-		// webhook finds nothing to write back.
-		await setProgress(db, domain, { step: "registry" });
-		meta = await getDomainMetadata(env.BUCKET, domain);
-		if (meta && isRegistrarManaged(meta)) await setAutoRenewBestEffort(env, meta, false);
-		await unwatchDomain(env, domain);
-		if (row.customerId) await env.BUCKET.delete(billingCustomerKey(row.customerId));
-		if (meta) {
-			await alertOps(
-				env,
-				`Review the zone for finalized domain ${domain}`,
-				`${domain}'s Inboxies data was deleted after offboarding. Its Cloudflare zone ${meta.zoneId || "(none)"} ` +
-					(isRegistrarManaged(meta)
-						? "and its Cloudflare Registrar registration (auto-renew turned off) were left in place; "
-						: "was left in place; ") +
-					"remove them by hand once the owner has moved the domain.",
-			).catch((e) => console.error(`[Offboarding] ops alert for ${domain} failed:`, (e as Error).message || e));
-		}
-		await deleteDomainMetadata(env.BUCKET, domain);
-		await db.delete(schema.domain).where(eq(schema.domain.domain, domain));
-
-		await db.insert(schema.auditLog).values({
-			id: crypto.randomUUID(),
-			actorUserId: opts.actorUserId ?? row.finalizeRequestedBy ?? null,
-			action: "domain.offboarding_finalized",
-			target: domain,
-			detail: JSON.stringify({
-				mailboxesPurged: purged,
-				subscriptionId: row.subscriptionId,
+		// 6-7. Cloudflare: registrar, then zone. Each is recorded on its own, so a
+		// retry only redoes what hasn't finished.
+		const cloudflareError = await cleanUpCloudflare(env, db, row, now);
+		if (cloudflareError) {
+			await setProgress(db, domain, { lastError: cloudflareError.slice(0, 500), leaseUntil: null });
+			// Alert once per distinct error, not every hour.
+			if (cloudflareError.slice(0, 500) !== previousError) {
+				await alertOps(
+					env,
+					`Cloudflare cleanup failed for finalized domain ${domain}`,
+					`${domain}'s Inboxies data was deleted, but removing it from Cloudflare failed: ${cloudflareError}. ` +
+						"The hourly run retries it; fix the cause (e.g. the API token's permissions) or finish it by hand.",
+				).catch((e) => console.error(`[Offboarding] ops alert for ${domain} failed:`, (e as Error).message || e));
+			}
+			console.error(`[Offboarding] ${domain}: Cloudflare cleanup failed, will retry:`, cloudflareError);
+			return {
+				status: "finalized",
+				domain,
+				mailboxesPurged: row.mailboxesPurged,
 				subscriptionCanceled,
-				requested: Boolean(row.finalizeRequestedAt),
-				attempts: row.attempts,
-			}),
-		});
+				cloudflareError,
+			};
+		}
+
 		await setProgress(db, domain, { step: "done", finalizedAt: now, leaseUntil: null, lastError: null });
-		console.log(`[Offboarding] ${domain}: finalized (${purged} mailboxes)`);
-		return { status: "finalized", domain, mailboxesPurged: purged, subscriptionCanceled };
+		console.log(`[Offboarding] ${domain}: finalized (${row.mailboxesPurged} mailboxes)`);
+		return { status: "finalized", domain, mailboxesPurged: row.mailboxesPurged, subscriptionCanceled };
 	} catch (e) {
 		const error = (e as Error).message || String(e);
 		console.error(`[Offboarding] ${domain}: finalize failed, will resume:`, error);
 		await setProgress(db, domain, { lastError: error.slice(0, 500), leaseUntil: null }).catch(() => {});
 		return { status: "failed", domain, error };
 	}
+}
+
+/** A Cloudflare error that means the thing is already gone. */
+function isGone(e: unknown): boolean {
+	if (!(e instanceof CloudflareApiError)) return false;
+	// 7003: "Could not route to /zones/<id>" - the zone id no longer exists.
+	return e.status === 404 || e.errors.some((err) => err.code === 7003);
+}
+
+/**
+ * Steps 6 and 7. Returns null when both are done, else the error(s). Each step
+ * stamps its own column, so it never runs again once it has succeeded.
+ */
+async function cleanUpCloudflare(env: Env, db: AuthDb, row: OffboardingRow, now: Date): Promise<string | null> {
+	const errors: string[] = [];
+
+	// 6. Registrar: only for domains registered through us.
+	if (!row.registrarReleasedAt) {
+		try {
+			if (row.registrarManaged) {
+				try {
+					await setDomainAutoRenew(env, row.domain, false);
+				} catch (e) {
+					if (!isGone(e)) throw e;
+					console.log(`[Offboarding] ${row.domain}: registration already gone (transferred out or expired)`);
+				}
+			} else if (row.registrarManaged === null) {
+				// Metadata was gone before we could record it: don't guess.
+				await alertOps(
+					env,
+					`Check the registration of finalized domain ${row.domain}`,
+					`Inboxies couldn't tell whether ${row.domain} was registered through Cloudflare Registrar. If it was, turn auto-renew off by hand.`,
+				).catch(() => {});
+			}
+			await setProgress(db, row.domain, { registrarReleasedAt: now });
+		} catch (e) {
+			errors.push(`registrar: ${(e as Error).message || String(e)}`);
+		}
+	}
+
+	// 7. Zone: only the zone id we recorded for this domain.
+	if (!row.zoneDeletedAt) {
+		try {
+			if (row.zoneId) {
+				try {
+					await deleteZone(env, row.zoneId);
+				} catch (e) {
+					if (!isGone(e)) throw e;
+					console.log(`[Offboarding] ${row.domain}: zone ${row.zoneId} already gone`);
+				}
+			} else {
+				await alertOps(
+					env,
+					`Check the zone of finalized domain ${row.domain}`,
+					`Inboxies has no zone id recorded for ${row.domain}, so it deleted no zone. Remove it by hand if one is left in the account.`,
+				).catch(() => {});
+			}
+			await setProgress(db, row.domain, { zoneDeletedAt: now });
+		} catch (e) {
+			errors.push(`zone: ${(e as Error).message || String(e)}`);
+		}
+	}
+
+	return errors.length > 0 ? errors.join("; ") : null;
 }
 
 /** The warning email's subject and paragraphs. Plain text; escaped when sent. */
@@ -379,6 +487,7 @@ export function finalizeWarningContent(domain: string, finalizeAfter: Date): { s
 		subject: `${domain}: your Inboxies data will be deleted on ${date}`,
 		paragraphs: [
 			`${domain} was decommissioned from Inboxies. On ${date} we'll permanently delete everything on it: every mailbox and its mail, attachments, aliases, members and invites, and cancel its subscription.`,
+			`We'll also delete ${domain}'s DNS zone from Cloudflare, so point its nameservers elsewhere before then. If you bought the domain through Inboxies, we turn off its auto-renew and it lapses when it expires, unless you transfer it out first.`,
 			"Export your mail before then if you want to keep it. This can't be undone.",
 		],
 	};
@@ -415,7 +524,15 @@ async function sendFinalizeWarning(env: Env, db: AuthDb, row: OffboardingRow, no
 	return true;
 }
 
-export type OffboardingReport = { tracked: string[]; warned: string[]; finalized: string[]; errors: string[] };
+export type OffboardingReport = {
+	tracked: string[];
+	warned: string[];
+	/** Data deleted this run. */
+	finalized: string[];
+	/** Cloudflare zone/registrar removed this run (after the data was deleted). */
+	cloudflareCleaned: string[];
+	errors: string[];
+};
 
 /**
  * Hourly: start tracking decommissioned domains that have no row yet (the
@@ -424,7 +541,7 @@ export type OffboardingReport = { tracked: string[]; warned: string[]; finalized
  */
 export async function runDomainOffboarding(env: Env, now = new Date()): Promise<OffboardingReport> {
 	const db = authDb(env.AUTH_DB);
-	const report: OffboardingReport = { tracked: [], warned: [], finalized: [], errors: [] };
+	const report: OffboardingReport = { tracked: [], warned: [], finalized: [], cloudflareCleaned: [], errors: [] };
 
 	const untracked = await db
 		.select({ domain: schema.domain.domain })
@@ -464,6 +581,7 @@ export async function runDomainOffboarding(env: Env, now = new Date()): Promise<
 		.where(
 			and(
 				isNull(schema.domainOffboarding.finalizedAt),
+				isNull(schema.domainOffboarding.dataDeletedAt),
 				or(
 					isNotNull(schema.domainOffboarding.finalizeStartedAt),
 					isNotNull(schema.domainOffboarding.finalizeRequestedAt),
@@ -476,7 +594,27 @@ export async function runDomainOffboarding(env: Env, now = new Date()): Promise<
 		.all();
 	for (const { domain } of due) {
 		const result = await finalizeDomainOffboarding(env, domain, { now });
-		if (result.status === "finalized") report.finalized.push(domain);
+		if (result.status === "finalized") {
+			report.finalized.push(domain);
+			if (result.cloudflareError) report.errors.push(`cloudflare ${domain}: ${result.cloudflareError}`);
+			else report.cloudflareCleaned.push(domain);
+		} else if (result.status === "failed") report.errors.push(`finalize ${domain}: ${result.error}`);
+	}
+
+	// Data already deleted, Cloudflare cleanup still failing: retried separately
+	// so these never take the slots of domains whose data is waiting.
+	const cleanup = await db
+		.select({ domain: schema.domainOffboarding.domain })
+		.from(schema.domainOffboarding)
+		.where(and(isNull(schema.domainOffboarding.finalizedAt), isNotNull(schema.domainOffboarding.dataDeletedAt)))
+		.orderBy(schema.domainOffboarding.updatedAt)
+		.limit(CLEANUP_BATCH)
+		.all();
+	for (const { domain } of cleanup) {
+		if (report.finalized.includes(domain)) continue;
+		const result = await finalizeDomainOffboarding(env, domain, { now });
+		if (result.status === "finalized" && !result.cloudflareError) report.cloudflareCleaned.push(domain);
+		else if (result.status === "finalized") report.errors.push(`cloudflare ${domain}: ${result.cloudflareError}`);
 		else if (result.status === "failed") report.errors.push(`finalize ${domain}: ${result.error}`);
 	}
 	return report;

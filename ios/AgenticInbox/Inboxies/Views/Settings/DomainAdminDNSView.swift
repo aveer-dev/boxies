@@ -96,7 +96,7 @@ struct DomainAdminDNSView: View {
                             Text(
                                 item.offboarding.finalizeStartedAt != nil
                                     ? "Deleting its data now. This finishes within the hour."
-                                    : "Decommissioned. Its mailboxes, aliases, members and subscription are deleted on \(formatOffboardingDate(item.offboarding.finalizeAfter)). Export your mail before then."
+                                    : "Decommissioned. Its mailboxes, aliases, members, subscription and DNS zone are deleted on \(formatOffboardingDate(item.offboarding.finalizeAfter)). Export your mail before then."
                             )
                             .font(.inter(size: 12))
                             .foregroundStyle(AppTheme.muted)
@@ -1170,7 +1170,7 @@ struct DomainOffboardSheet: View {
                                 .foregroundStyle(AppTheme.muted)
                                 .multilineTextAlignment(.center)
                             if let finalizeAfter {
-                                Text("Your mail stays available to export until \(formatOffboardingDate(finalizeAfter)). Then every mailbox, alias, member and invite on \(domain) is deleted and the subscription is cancelled. We'll email you a week before. To delete it sooner, use Delete Now under Scheduled for Deletion.")
+                                Text("Your mail stays available to export until \(formatOffboardingDate(finalizeAfter)). Then every mailbox, alias, member and invite on \(domain) is deleted, the subscription is cancelled and its DNS zone is removed from Cloudflare, so move your nameservers before then. We'll email you a week before. To delete it sooner, use Delete Now under Scheduled for Deletion.")
                                     .font(.inter(size: 12))
                                     .foregroundStyle(AppTheme.muted)
                                     .multilineTextAlignment(.center)
@@ -1469,7 +1469,7 @@ struct FinalizeDomainSheet: View {
                                     .font(.inter(size: 14, weight: .semibold))
                                     .foregroundStyle(AppTheme.ink)
                             }
-                            Text("This permanently deletes every mailbox on \(domain) with its mail and attachments, its aliases, members and pending invites, and cancels its subscription without a refund for the unused time. Otherwise this happens on \(formatOffboardingDate(finalizeAfter)).")
+                            Text("This permanently deletes every mailbox on \(domain) with its mail and attachments, its aliases, members and pending invites, and cancels its subscription without a refund for the unused time. It also deletes the domain's Cloudflare DNS zone and, if you bought the domain through Inboxies, turns off its auto-renew so it lapses when it expires. Otherwise this happens on \(formatOffboardingDate(finalizeAfter)).")
                                 .font(.inter(size: 12))
                                 .foregroundStyle(AppTheme.muted)
                         }

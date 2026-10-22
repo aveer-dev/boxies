@@ -352,7 +352,20 @@ export const domainOffboarding = sqliteTable(
 		customerId: text("customer_id"),
 		subscriptionCanceledAt: integer("subscription_canceled_at", { mode: "timestamp_ms" }),
 		mailboxesPurged: integer("mailboxes_purged").notNull().default(0),
-		/** Last step reached ("billing", "mailboxes", "aliases", "access", "registry", "done"). */
+		/**
+		 * Copied from the domain metadata before it is deleted: the Cloudflare zone
+		 * Inboxies created for the domain, and whether we registered it
+		 * (Cloudflare Registrar). Null = unknown (metadata already gone).
+		 */
+		zoneId: text("zone_id"),
+		registrarManaged: integer("registrar_managed", { mode: "boolean" }),
+		/** Mailboxes, aliases, access and registry are gone (steps 1-5). */
+		dataDeletedAt: integer("data_deleted_at", { mode: "timestamp_ms" }),
+		/** The Cloudflare zone was deleted (or was already gone / never recorded). */
+		zoneDeletedAt: integer("zone_deleted_at", { mode: "timestamp_ms" }),
+		/** Registrar auto-renew is off (or the domain isn't ours / already gone). */
+		registrarReleasedAt: integer("registrar_released_at", { mode: "timestamp_ms" }),
+		/** Last step reached ("billing", "mailboxes", "aliases", "access", "registry", "cloudflare", "done"). */
 		step: text("step"),
 		lastError: text("last_error"),
 		attempts: integer("attempts").notNull().default(0),

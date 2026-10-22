@@ -56,7 +56,7 @@ export function OffboardingDomainsCard() {
 							<p className="text-xs text-kumo-subtle">
 								{d.offboarding.finalizeStartedAt
 									? "Deleting its data now. This finishes within the hour."
-									: `Decommissioned. Its mailboxes, aliases, members and subscription are deleted on ${formatDate(
+									: `Decommissioned. Its mailboxes, aliases, members, subscription and DNS zone are deleted on ${formatDate(
 											d.offboarding.finalizeAfter,
 										)} (${left} ${left === 1 ? "day" : "days"} left). Export your mail before then.`}
 							</p>
@@ -126,7 +126,9 @@ function FinalizeDomainDialog({ target, onClose }: { target: OffboardingDomain |
 					This permanently deletes every mailbox on{" "}
 					<span className="font-semibold text-kumo-default">{domain}</span> with its mail and
 					attachments, its aliases, members and pending invites, and cancels its subscription
-					without a refund for the unused time. It can't be undone.
+					without a refund for the unused time. It also deletes the domain's Cloudflare DNS zone
+					and, if you bought the domain through Inboxies, turns off its auto-renew so it lapses
+					when it expires. It can't be undone.
 				</p>
 				{error && (
 					<div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400 mb-3">{error}</div>
