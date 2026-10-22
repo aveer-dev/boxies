@@ -196,6 +196,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | --- | --- |
 | `-previewDomainAdmin` | Domain Admin console |
 | `-previewPasswordSignIn` | Password sign-in |
+| `-previewPasswordSignIn -previewTwoFactorChallenge` | Two-factor code step after a password sign-in (fixture challenge, no API) |
 | `-previewInviteAccept` | Invite accept (signed out: code + create account) |
 | `-previewInviteAcceptSignedIn` | Invite accept into the signed-in account |
 | `-previewSignInMethods` | Sign-in & recovery (methods + recovery email) |

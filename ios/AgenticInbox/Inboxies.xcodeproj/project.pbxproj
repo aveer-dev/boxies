@@ -37,6 +37,7 @@
 		30F108BC60A0F552A332B723 /* DomainSubscriptionSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9859D4B6A75E9458659F039F /* DomainSubscriptionSection.swift */; };
 		317C209183BF569CDA6F7D84 /* ContactPillMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD43709A935F7194342F7B3 /* ContactPillMenu.swift */; };
 		3374A76051D224709C7CDC9F /* InboxiesCredentialProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8E1D02CCA12F69B381CB7809 /* InboxiesCredentialProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		33D93B96F3D40BA9E89E6676 /* PasskeysSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41C4DB3C7FEDCA22742B4199 /* PasskeysSettingsSection.swift */; };
 		35EE2809BF15F0492A030F22 /* LoadFailedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6602B0CDD566F14EDA4F3E1B /* LoadFailedViews.swift */; };
 		36F631B743CF5D93F9F7077A /* BounceSuppression.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DC01F9995CCF1938777EB3 /* BounceSuppression.swift */; };
 		3770413860D08C5653807FD5 /* InboxDigestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FB6663712D0C7C547997049 /* InboxDigestView.swift */; };
@@ -101,6 +102,7 @@
 		C5E8225C2C880AC6DD2D44E8 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723EAC1668DC9825FED81F4A /* AuthStore.swift */; };
 		C739D111D71A04159CBC722D /* ComposeFormatChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6DC837F339566A42E1C94BC /* ComposeFormatChrome.swift */; };
 		D1A18F95D1ED4AF08CF9EC6E /* ThemeController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 686F4132F3FED4973E6530FA /* ThemeController.swift */; };
+		D4EF86138702120973282AA5 /* PasskeysTwoFactorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91800C0E06AC3EE38BD0947D /* PasskeysTwoFactorTests.swift */; };
 		D5566197F7B08166FD48F399 /* Inter-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 6B151B4351CA838E67E2C95C /* Inter-SemiBold.ttf */; };
 		D58D3EF1F02A06F20A858B41 /* MailboxSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8304F69E9D1C222B8C2D1D6F /* MailboxSyncService.swift */; };
 		D58FC4EC78BF9FB8BCACB858 /* PrivateEmailMatching.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BB32F69932FAFD095B9C54C /* PrivateEmailMatching.swift */; };
@@ -118,6 +120,7 @@
 		F77157DDCC45943C4BECC699 /* LiquidGlass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A1EA00A322BC72F5FC673D /* LiquidGlass.swift */; };
 		F96094F83B37222A8FD02A81 /* SplashScreenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B42BE8CBB664C4EBD75372C9 /* SplashScreenView.swift */; };
 		FBA191135B4D172A08F34424 /* DomainAdminSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F56EB81F290A128A71EC93C /* DomainAdminSettingsView.swift */; };
+		FBC64A77AFCE5849130F59E7 /* Passkeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EF61044C60599CDCB184D29 /* Passkeys.swift */; };
 		FC991A4DFE575F4AE22826B6 /* HomeSplitLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C4C122B42D9070E03121C1 /* HomeSplitLayout.swift */; };
 		FFCDD7CFD3A77A3C7BB29D37 /* SearchQueryParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */; };
 /* End PBXBuildFile section */
@@ -168,6 +171,7 @@
 		1AB27A624A1B5FCFC5D0A5E5 /* CredentialProviderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialProviderViewController.swift; sourceTree = "<group>"; };
 		1BC58A9CE22044670D6519AB /* Inter-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Regular.ttf"; sourceTree = "<group>"; };
 		1D9BCCA2D7465A3A3E00D1BC /* ComposeSheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeSheetView.swift; sourceTree = "<group>"; };
+		1EF61044C60599CDCB184D29 /* Passkeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Passkeys.swift; sourceTree = "<group>"; };
 		23EB17929E91ADAAE7BAC902 /* ForwardingSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForwardingSettingsView.swift; sourceTree = "<group>"; };
 		24BE3AFF4CF6238AE60BB1A8 /* GoogleSignInFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleSignInFlow.swift; sourceTree = "<group>"; };
 		26D571C6F679098DC92D5978 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -176,6 +180,7 @@
 		2F5E3708A0F74752B1E1E925 /* ComposeFormModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeFormModel.swift; sourceTree = "<group>"; };
 		37786A9610B8F787C5525CA8 /* AppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppConfig.swift; sourceTree = "<group>"; };
 		41B3D8693D204D7862C6350E /* ServiceStatusBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceStatusBanner.swift; sourceTree = "<group>"; };
+		41C4DB3C7FEDCA22742B4199 /* PasskeysSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasskeysSettingsSection.swift; sourceTree = "<group>"; };
 		45D197C214C0E3D8CB2DABD2 /* SessionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsSettingsView.swift; sourceTree = "<group>"; };
 		469EBA3B54DC4C3853D04061 /* PrivateEmailClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailClient.swift; sourceTree = "<group>"; };
 		49649C28917B9CFF9BDA12B5 /* DomainAdminDNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainAdminDNSView.swift; sourceTree = "<group>"; };
@@ -213,6 +218,7 @@
 		8658FB20162E4931296C3338 /* EmailHTMLSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailHTMLSanitizer.swift; sourceTree = "<group>"; };
 		8E1D02CCA12F69B381CB7809 /* InboxiesCredentialProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = InboxiesCredentialProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F4A9BE28CD5C12A238585ED /* SwipeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeSettingsView.swift; sourceTree = "<group>"; };
+		91800C0E06AC3EE38BD0947D /* PasskeysTwoFactorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasskeysTwoFactorTests.swift; sourceTree = "<group>"; };
 		980CAABDCDC902B32048C356 /* SendersSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendersSettingsView.swift; sourceTree = "<group>"; };
 		9859D4B6A75E9458659F039F /* DomainSubscriptionSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainSubscriptionSection.swift; sourceTree = "<group>"; };
 		9B74F632D521C5EC45A24A89 /* PrivateEmailMatchingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailMatchingTests.swift; sourceTree = "<group>"; };
@@ -309,6 +315,7 @@
 				8304F69E9D1C222B8C2D1D6F /* MailboxSyncService.swift */,
 				C0F163A3B34A0B9617C93664 /* OutboundAttachments.swift */,
 				B6EAA3D3B4846476CC7EC8A5 /* OutboxQueueWorker.swift */,
+				1EF61044C60599CDCB184D29 /* Passkeys.swift */,
 				ED60F739533D7F2E3DCC74F6 /* PaymentCallback.swift */,
 				CAD6F28F3D52BDF30B14FA46 /* PendingSendStore.swift */,
 				FD35F79DAFD4CA942872DA19 /* PushNotificationManager.swift */,
@@ -403,6 +410,7 @@
 				9859D4B6A75E9458659F039F /* DomainSubscriptionSection.swift */,
 				76573DB9DE17A066E6E6FDD9 /* FiltersSettingsView.swift */,
 				23EB17929E91ADAAE7BAC902 /* ForwardingSettingsView.swift */,
+				41C4DB3C7FEDCA22742B4199 /* PasskeysSettingsSection.swift */,
 				980CAABDCDC902B32048C356 /* SendersSettingsView.swift */,
 				45D197C214C0E3D8CB2DABD2 /* SessionsSettingsView.swift */,
 				789C13DE076FDF45C432F26B /* SettingsSheetView.swift */,
@@ -480,6 +488,7 @@
 				602BF2EFF3E0FFE7D50873BC /* BounceSuppressionTests.swift */,
 				048F9C0790FD14781DE293EE /* ClientContractTests.swift */,
 				AB26EA100736B5C531C2586D /* HardeningTests.swift */,
+				91800C0E06AC3EE38BD0947D /* PasskeysTwoFactorTests.swift */,
 				4B7767906DCD7E6E8C605D88 /* PrivateEmailIdentitiesTests.swift */,
 				9B74F632D521C5EC45A24A89 /* PrivateEmailMatchingTests.swift */,
 				7C1C06633CFD7648FEFF998F /* SearchQueryParserTests.swift */,
@@ -747,6 +756,8 @@
 				56341FB47D85681AFC883737 /* Models.swift in Sources */,
 				5132C35E8D5354EEEC478D83 /* OutboundAttachments.swift in Sources */,
 				3C72EC4E0AB026763B5FD0CA /* OutboxQueueWorker.swift in Sources */,
+				FBC64A77AFCE5849130F59E7 /* Passkeys.swift in Sources */,
+				33D93B96F3D40BA9E89E6676 /* PasskeysSettingsSection.swift in Sources */,
 				1B8052C319418C877DA65E00 /* PaymentCallback.swift in Sources */,
 				E13D469BDB3E71F4FA615F96 /* PendingSendStore.swift in Sources */,
 				BEABE6117A87AF07E976CF2E /* PreviewSupport.swift in Sources */,
@@ -783,6 +794,7 @@
 				0B92FC241FEF89FBF81AD7BE /* BounceSuppressionTests.swift in Sources */,
 				43BDF0A5517B4663A83AD4A7 /* ClientContractTests.swift in Sources */,
 				1EEE9157E1D9DCD331AF96E6 /* HardeningTests.swift in Sources */,
+				D4EF86138702120973282AA5 /* PasskeysTwoFactorTests.swift in Sources */,
 				11EBC9EC88AD1BADA1516DE8 /* PrivateEmailIdentitiesTests.swift in Sources */,
 				0DF13F17817F75C157DDDDD0 /* PrivateEmailMatchingTests.swift in Sources */,
 				FFCDD7CFD3A77A3C7BB29D37 /* SearchQueryParserTests.swift in Sources */,

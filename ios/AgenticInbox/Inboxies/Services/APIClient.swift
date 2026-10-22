@@ -15,6 +15,9 @@ enum APIError: LocalizedError {
     /// 409 `code: "recipient_suppressed"`: a recipient bounced or complained earlier, so the
     /// send was refused before anything went out. `message` is the server's sentence.
     case recipientSuppressed(message: String, suppressed: [SuppressedRecipient])
+    /// 401 `code: "TWO_FACTOR_REQUIRED"` from password sign-in: the password was right,
+    /// and the account wants an authenticator or backup code before it hands out a session.
+    case twoFactorRequired(TwoFactorChallenge)
 
     /// True for a write refused because the domain's service ended.
     var isServiceEnded: Bool {
@@ -41,6 +44,8 @@ enum APIError: LocalizedError {
             return "The subscription for \(domain ?? "this domain") has ended. Mail on it is read-only until it's renewed."
         case .recipientSuppressed(let message, _):
             return message.isEmpty ? "Not sent: a recipient is suppressed." : message
+        case .twoFactorRequired:
+            return "Enter the code from your authenticator app."
         }
     }
 }
@@ -82,6 +87,28 @@ final class APIClient: @unchecked Sendable {
         bearerToken: String? = nil,
         headers: [String: String] = [:]
     ) async throws -> T {
+        try await requestWithResponse(
+            path: path,
+            method: method,
+            query: query,
+            body: body,
+            authed: authed,
+            bearerToken: bearerToken,
+            headers: headers
+        ).0
+    }
+
+    /// `request`, plus the HTTP response for callers that need its headers
+    /// (the passkey challenge cookie, `set-auth-token`).
+    func requestWithResponse<T: Decodable>(
+        path: String,
+        method: String = "GET",
+        query: [String: String] = [:],
+        body: [String: Any]? = nil,
+        authed: Bool = true,
+        bearerToken: String? = nil,
+        headers: [String: String] = [:]
+    ) async throws -> (T, HTTPURLResponse) {
         let (data, http) = try await perform(
             path: path,
             method: method,
@@ -91,6 +118,10 @@ final class APIClient: @unchecked Sendable {
             bearerToken: bearerToken,
             headers: headers
         )
+        return (try decodeResponse(data: data, http: http), http)
+    }
+
+    private func decodeResponse<T: Decodable>(data: Data, http: HTTPURLResponse) throws -> T {
         if http.statusCode == 204 {
             if T.self == EmptyResponse.self {
                 return EmptyResponse() as! T
@@ -196,6 +227,9 @@ final class APIClient: @unchecked Sendable {
                 }
                 if let blocked = BounceSuppression.error(statusCode: http.statusCode, data: data) {
                     throw blocked
+                }
+                if http.statusCode == 401, let challenge = TwoFactorChallenge.parse(data) {
+                    throw APIError.twoFactorRequired(challenge)
                 }
                 if let sentToken, bearerToken == nil,
                    Self.isExpiredSessionResponse(statusCode: http.statusCode, message: message) {
@@ -480,8 +514,20 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Second step of a password sign-in when the account has two-factor on: the
+    /// challenge token from the sign-in reply plus an authenticator code
+    /// (`method: "totp"`) or a one-time backup code (`method: "backup_code"`).
+    func verifyTwoFactor(challengeToken: String, code: String, method: String) async throws -> PasswordLoginResponse {
+        try await request(
+            path: "/api/v1/auth/two-factor/verify",
+            method: "POST",
+            body: ["twoFactorToken": challengeToken, "code": code, "method": method],
+            authed: false
+        )
+    }
+
     /// Pass `token` (email link), or `email` + `code` (6-digit code).
-    func resetPassword(token: String? = nil, email: String? = nil, code: String? = nil, newPassword: String) async throws -> PasswordLoginResponse {
+    func resetPassword(token: String? = nil, email: String? = nil, code: String? = nil, newPassword: String) async throws -> ResetPasswordResponse {
         var body: [String: Any] = ["newPassword": newPassword]
         if let token, !token.isEmpty { body["token"] = token }
         if let email, !email.isEmpty { body["email"] = email }

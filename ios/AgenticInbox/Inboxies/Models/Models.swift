@@ -241,6 +241,8 @@ struct MeResponse: Codable {
     var administeredDomains: [String]?
     var mailDomain: String?
     var domains: [String]?
+    /// TOTP two-factor is on. It only challenges password sign-in.
+    var twoFactorEnabled: Bool?
 }
 
 struct LinkedIdentity: Codable, Identifiable, Hashable {
@@ -1324,6 +1326,52 @@ struct PasswordLoginResponse: Codable {
     var email: String?
     var sub: String?
     var keys: [String]?
+}
+
+/// `/api/v1/auth/password/reset`. With two-factor on, the reset answers with a
+/// challenge instead of a session (a reset proves the recovery email, not the
+/// second factor).
+struct ResetPasswordResponse: Codable {
+    var ok: Bool?
+    var token: String?
+    var expiresAt: String?
+    var email: String?
+    var twoFactorRequired: Bool?
+    var twoFactorToken: String?
+    var twoFactorMethods: [String]?
+
+    var twoFactorChallenge: TwoFactorChallenge? {
+        guard twoFactorRequired == true, let twoFactorToken, !twoFactorToken.isEmpty else { return nil }
+        return TwoFactorChallenge(token: twoFactorToken, methods: twoFactorMethods ?? [], email: email)
+    }
+}
+
+/// A password sign-in that still needs a second factor: an authenticator
+/// (TOTP) code or a one-time backup code, sent with `token` to
+/// `/api/v1/auth/two-factor/verify`. Good for one sign-in, 10 minutes, 5 codes.
+struct TwoFactorChallenge: Equatable, Sendable {
+    var token: String
+    /// Server methods, e.g. `["totp", "backup_code"]`.
+    var methods: [String]
+    var email: String?
+
+    /// The 401 `TWO_FACTOR_REQUIRED` body of `/api/v1/auth/password`.
+    static func parse(_ data: Data) -> TwoFactorChallenge? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (obj["twoFactorRequired"] as? Bool) == true,
+              let token = obj["twoFactorToken"] as? String, !token.isEmpty else { return nil }
+        let methods = (obj["twoFactorMethods"] as? [Any])?.compactMap { $0 as? String } ?? []
+        return TwoFactorChallenge(token: token, methods: methods, email: nil)
+    }
+}
+
+/// A passkey registered to the signed-in account (`/api/auth/passkey/list-user-passkeys`).
+struct PasskeyRow: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String?
+    var createdAt: String?
+    var deviceType: String?
+    var backedUp: Bool?
 }
 
 struct ForgotPasswordResponse: Codable {

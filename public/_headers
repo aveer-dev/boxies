@@ -1,5 +1,11 @@
-# Workers static assets: Google fetches this to tie the Android app (Credential
-# Manager passkeys, `delegate_permission/common.get_login_creds`) to the web
-# app's domain. Say it's JSON explicitly.
+# Workers static assets: Apple fetches this to tie the iOS app (passkeys,
+# `webcredentials:inboxies.app`) to the web app's domain. It has no file
+# extension, so say it's JSON.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+
+# Google fetches this to tie the Android app (Credential Manager passkeys,
+# `delegate_permission/common.get_login_creds`) to the web app's domain.
+# Say it's JSON explicitly.
 /.well-known/assetlinks.json
   Content-Type: application/json
