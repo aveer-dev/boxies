@@ -9,14 +9,15 @@
  *   1. Explicit spam headers (wins over list headers)
  *   2. Bulk via List-Unsubscribe / List-Id / List-Unsubscribe-Post
  *      (and Precedence: list|bulk), then Promotions vs Updates
- *   3. Spoofed personal mail (trusted CF auth, From not aligned) → spam
+ *   3. Auth tier `failed` (enforced DMARC fail, or SPF hard-fail with no
+ *      DKIM pass) → spam. `unverified` mail falls through to the AI step.
  *   4. Remaining mail: Workers AI spam vs ham, fail-open to ham
  *
  * An AI-only spam verdict can be overridden later for a vouched, authenticated
  * sender (see overrideAiSpamForVouchedSender).
  */
 
-import { isAuthSpoofed, type EmailAuth } from "./email-auth.ts";
+import { isAuthFailed, isFromUntrusted, type EmailAuth } from "./email-auth.ts";
 
 export type InboundClass = "spam" | "ham" | "bulk";
 
@@ -235,11 +236,11 @@ export function classifyFromHeaders(
 	if (isBulk(map)) {
 		return bulkClassification(map, input.subject ?? "", input.sender ?? "");
 	}
-	if (isAuthSpoofed(input.auth)) {
+	if (isAuthFailed(input.auth)) {
 		return {
 			class: "spam",
 			folderId: "spam",
-			reason: "auth-spoofed",
+			reason: "auth-failed",
 		};
 	}
 	return null;
@@ -338,12 +339,12 @@ export function shouldClassifyInbound(options: {
 	return options.routeAction === "deliver" && !options.isDuplicate;
 }
 
-/** Only personal ham is auto-drafted. Spoofed From never auto-drafts. */
+/** Only personal ham is auto-drafted. A failed or unaligned From never auto-drafts. */
 export function shouldAutoDraft(
 	classification: EmailClassification,
 	auth?: EmailAuth | null,
 ): boolean {
-	if (isAuthSpoofed(auth)) return false;
+	if (isFromUntrusted(auth)) return false;
 	return classification.class === "ham";
 }
 

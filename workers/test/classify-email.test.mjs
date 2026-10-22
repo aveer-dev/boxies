@@ -566,6 +566,7 @@ async function classifyMime(raw, ai) {
 		subject: "Urgent wire",
 		sender: "ceo@paypal.com",
 		auth: {
+			authTier: "failed",
 			spoofed: true,
 			source: "authentication-results",
 			aligned: false,
@@ -576,9 +577,67 @@ async function classifyMime(raw, ai) {
 	assert.deepEqual(result, {
 		class: "spam",
 		folderId: Folders.SPAM,
-		reason: "auth-spoofed",
+		reason: "auth-failed",
 	});
-	assert.equal(shouldAutoDraft(result, { spoofed: true }), false);
+	assert.equal(shouldAutoDraft(result, { authTier: "failed", spoofed: true }), false);
+}
+
+// ── Auth tiers: only `failed` is spam on auth alone ───────────────
+
+{
+	const base = {
+		source: "authentication-results",
+		headerFrom: "ada@smallbiz.example",
+		envelopeFrom: "bounces@sendgrid.net",
+	};
+	const input = (auth) => ({
+		headers: headers(["From", "Ada <ada@smallbiz.example>"]),
+		subject: "Your quote",
+		sender: "ada@smallbiz.example",
+		auth,
+	});
+
+	const verified = { ...base, aligned: true, authTier: "verified", spoofed: false };
+	assert.equal(classifyFromHeaders(input(verified)), null);
+	assert.equal(
+		shouldAutoDraft({ class: "ham", folderId: Folders.INBOX, reason: "ai-ham" }, verified),
+		true,
+	);
+
+	// Passes only for the ESP, no enforcing DMARC: falls through to AI.
+	const unverified = { ...base, aligned: false, authTier: "unverified", spoofed: false };
+	assert.equal(classifyFromHeaders(input(unverified)), null);
+	const viaAi = await classifyInboundEmail(input(unverified), {
+		run: async () => ({ response: "HAM" }),
+	});
+	assert.equal(viaAi.class, "ham");
+	assert.equal(viaAi.reason, "ai-ham");
+	// Unaligned From still never auto-drafts.
+	assert.equal(shouldAutoDraft(viaAi, unverified), false);
+	// No trusted verdict at all: unverified, auto-draft allowed as before.
+	const noVerdict = { ...base, source: "none", aligned: null, authTier: "unverified", spoofed: false };
+	assert.equal(classifyFromHeaders(input(noVerdict)), null);
+	assert.equal(shouldAutoDraft(viaAi, noVerdict), true);
+
+	const failed = { ...base, aligned: false, authTier: "failed", spoofed: true, dmarc: "fail", dmarcPolicy: "reject" };
+	assert.deepEqual(classifyFromHeaders(input(failed)), {
+		class: "spam",
+		folderId: Folders.SPAM,
+		reason: "auth-failed",
+	});
+	// The AI is never consulted for failed mail.
+	const noAi = await classifyInboundEmail(input(failed), {
+		run: async () => {
+			throw new Error("AI must not run for auth-failed mail");
+		},
+	});
+	assert.equal(noAi.reason, "auth-failed");
+
+	// Explicit spam headers and bulk still decide before auth.
+	assert.equal(
+		classifyFromHeaders({ ...input(failed), headers: headers(["X-Spam-Flag", "YES"]) })?.reason,
+		"spam-headers",
+	);
 }
 
 // ── AI spam yields to vouched, authenticated senders ──────────────
@@ -586,14 +645,15 @@ async function classifyMime(raw, ai) {
 {
 	const aiSpam = { class: "spam", folderId: Folders.SPAM, reason: "ai-spam" };
 	const authed = {
+		authTier: "verified",
 		spoofed: false,
 		source: "authentication-results",
 		aligned: true,
 		headerFrom: "osato@inboxies.email",
 		envelopeFrom: "bounces@cf-bounce.inboxies.email",
 	};
-	const unverified = { ...authed, aligned: null, source: "none" };
-	const forged = { ...authed, aligned: false, spoofed: true };
+	const unverified = { ...authed, aligned: null, source: "none", authTier: "unverified" };
+	const forged = { ...authed, aligned: false, authTier: "failed", spoofed: true };
 
 	assert.equal(isAiSpam(aiSpam), true);
 	assert.equal(
@@ -633,7 +693,7 @@ async function classifyMime(raw, ai) {
 	);
 
 	// Hard spam signals stay final even for vouched, authenticated senders.
-	for (const reason of ["spam-headers", "auth-spoofed"]) {
+	for (const reason of ["spam-headers", "auth-failed"]) {
 		const hard = { class: "spam", folderId: Folders.SPAM, reason };
 		assert.equal(
 			overrideAiSpamForVouchedSender(hard, { vouched: true, auth: authed }),
