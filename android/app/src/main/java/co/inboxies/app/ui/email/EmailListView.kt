@@ -774,6 +774,14 @@ private fun MailRow(
                         scope.launch { app.toggleRead(email) }
                     },
                 )
+                InboxiesMenuItem(
+                    text = if (email.replyLater) "Remove from Reply Later" else "Reply later",
+                    icon = Icons.Outlined.Schedule,
+                    onClick = {
+                        showMenu = false
+                        scope.launch { app.toggleReplyLater(email) }
+                    },
+                )
                 InboxiesMenuDivider()
                 InboxiesMenuItem(
                     text = "More Options…",
@@ -1222,6 +1230,18 @@ fun EmailRowView(
                             fontWeight = FontWeight.Medium,
                             fontSize = list.badge,
                             color = colors.deepDarkRed,
+                        )
+                    }
+                    // Sent mail the DSN pipeline marked bounced / complained (or a failed send).
+                    email.deliveryStatusLabel?.let { status ->
+                        Text(
+                            status,
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = list.badge,
+                            color = colors.deepDarkRed,
+                            maxLines = 1,
+                            softWrap = false,
                         )
                     }
                 }

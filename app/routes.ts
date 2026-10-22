@@ -16,6 +16,7 @@ export default [
 	route("checkout/cancel", "routes/checkout-cancel.tsx"),
 	route("invite/:token", "routes/invite.tsx"),
 	route("login", "routes/login.tsx"),
+	route("onboarding", "routes/onboarding.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
 	route("extension/connect", "routes/extension-connect.tsx"),
 	// MCP OAuth consent; only the Worker's GET /authorize gives it data.

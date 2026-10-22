@@ -567,5 +567,25 @@ export const mailboxMigrations: Migration[] = [
                 ON emails(send_queued_at) WHERE delivery_status = 'queued';
         `),
 	},
+	{
+		// Per-recipient delivery state from Email Sending events (AVE-41).
+		// emails.delivery_status stays the message-level summary; this says
+		// which recipient bounced / complained / was delivered. Rows go with
+		// their email (ON DELETE CASCADE, like attachments).
+		// Additive only: a new table. Numbered 36: dev's highest is
+		// 34_outbound_send_sweeper and open PR #133 (AVE-42) uses 35_; the
+		// runner tracks by name, so landing order doesn't matter.
+		name: "36_delivery_recipients",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS delivery_recipients (
+                email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+                address TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (email_id, address)
+            );
+        `),
+	},
 ];
 

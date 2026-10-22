@@ -10,6 +10,11 @@
  */
 
 import type { DeliveryStatus } from "../durableObject";
+import {
+	normalizeRecipientAddress,
+	type RecipientDeliveryStatus,
+	type RecipientDeliveryUpdate,
+} from "./delivery-recipients";
 import { isPermanentRecipientStatus } from "./email-suppression";
 
 export type EmailSendingEventType =
@@ -179,6 +184,48 @@ export function mapEmailSendingEvent(
 	return null;
 }
 
+/** One recipient's status from an event (AVE-41), for `delivery_recipients`. */
+export interface MappedRecipientEvent extends RecipientDeliveryUpdate {
+	status: RecipientDeliveryStatus;
+	error: string | null;
+	providerMessageId: string;
+	sender: string | null;
+}
+
+/**
+ * Per-recipient status for any lifecycle event that names its recipient,
+ * delivered and deferred included. Null when the event has no message id,
+ * no usable recipient, or an unknown type.
+ */
+export function mapRecipientDeliveryEvent(
+	event: EmailSendingEvent,
+): MappedRecipientEvent | null {
+	const payload = event.payload ?? {};
+	const providerMessageId = payload.messageId?.trim();
+	const address = normalizeRecipientAddress(payload.recipient);
+	if (!providerMessageId || !address) return null;
+	const sender = payload.sender?.trim().toLowerCase() || null;
+
+	const failure = mapEmailSendingEvent(event);
+	if (failure) {
+		return { address, status: failure.status, error: failure.error, providerMessageId, sender };
+	}
+	const type = event.type || "";
+	if (type.endsWith("message.delivered")) {
+		return { address, status: "delivered", error: null, providerMessageId, sender };
+	}
+	if (type.endsWith("message.deferred")) {
+		return {
+			address,
+			status: "deferred",
+			error: actionableDeliveryDetail(payload),
+			providerMessageId,
+			sender,
+		};
+	}
+	return null;
+}
+
 /** A suppression an Email Sending event asks for (hard bounce / complaint). */
 export interface EventSuppression {
 	reason: "hard_bounce" | "complaint";
@@ -251,6 +298,15 @@ export function suppressionFromEmailSendingEvent(
 	return null;
 }
 
+/**
+ * Delivered / deferred events only update `delivery_recipients`. When their
+ * Sent row isn't there yet (or never will be, e.g. system mail from a
+ * no-reply address) they get this many tries, then are dropped quietly
+ * instead of filling the dead-letter queue. Failure events keep retrying
+ * until the queue gives up and dead-letters them.
+ */
+export const RECIPIENT_ONLY_EVENT_MAX_ATTEMPTS = 3;
+
 export type RecordEventSuppression = (suppression: EventSuppression) => Promise<unknown>;
 
 export type DeliveryStub = {
@@ -265,31 +321,40 @@ export type DeliveryStub = {
 			error?: string | null;
 		},
 	) => Promise<unknown>;
+	recordRecipientDelivery: (
+		emailId: string,
+		update: RecipientDeliveryUpdate,
+	) => Promise<unknown>;
 };
 
 export type ResolveDeliveryStub = (sender: string) => DeliveryStub | Promise<DeliveryStub>;
 
 /**
  * Apply one Email Sending event body. Returns whether the message should be
- * acked (true) or retried (false).
+ * acked (true) or retried (false). `recordSuppression` (AVE-37) stores
+ * hard-bounce / complaint suppressions; `attempts` is the queue's
+ * `message.attempts` (1 on first delivery).
  */
 export async function applyEmailSendingEvent(
 	body: unknown,
 	resolveStub: ResolveDeliveryStub,
 	recordSuppression?: RecordEventSuppression,
+	attempts = 1,
 ): Promise<boolean> {
 	const event = unwrapEmailSendingEvent(body);
 	const mapped = mapEmailSendingEvent(event);
-	if (!mapped) {
-		// Delivered / deferred / unknown — nothing to persist.
+	const recipient = mapRecipientDeliveryEvent(event);
+	if (!mapped && !recipient) {
+		// Unknown type, or delivered / deferred without a recipient.
 		return true;
 	}
 
-	const sender = mapped.sender;
+	const providerMessageId = (mapped ?? recipient)!.providerMessageId;
+	const sender = mapped?.sender ?? recipient?.sender ?? null;
 	if (!sender) {
 		console.warn(
 			"Email sending event missing sender; cannot route to mailbox",
-			mapped.providerMessageId,
+			providerMessageId,
 		);
 		return true;
 	}
@@ -322,24 +387,35 @@ export async function applyEmailSendingEvent(
 	}
 
 	try {
-		const email = await stub.findEmailByProviderMessageId(
-			mapped.providerMessageId,
-		);
+		const email = await stub.findEmailByProviderMessageId(providerMessageId);
 		if (!email) {
+			if (!mapped) {
+				// Delivered / deferred: worth a short wait, not a dead letter.
+				return attempts >= RECIPIENT_ONLY_EVENT_MAX_ATTEMPTS;
+			}
 			// Race: Sent row may not have provider_message_id yet — retry.
 			console.warn(
 				"No email found for provider message id; will retry",
-				mapped.providerMessageId,
+				providerMessageId,
 				sender,
 			);
 			return false;
 		}
 
-		await stub.setDeliveryState(email.id, {
-			status: mapped.status,
-			error: mapped.error,
-			providerMessageId: mapped.providerMessageId,
-		});
+		if (mapped) {
+			await stub.setDeliveryState(email.id, {
+				status: mapped.status,
+				error: mapped.error,
+				providerMessageId: mapped.providerMessageId,
+			});
+		}
+		if (recipient) {
+			await stub.recordRecipientDelivery(email.id, {
+				address: recipient.address,
+				status: recipient.status,
+				error: recipient.error,
+			});
+		}
 		return true;
 	} catch (error) {
 		console.error(

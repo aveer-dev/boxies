@@ -16,6 +16,9 @@ struct HomeShellView: View {
     @State private var chatSeedPrompt: String?
     @State private var tabNavigatingForward = true
     @State private var previousTabBeforeReplyLater: HomeTab = .folder("inbox")
+    /// Entering or leaving Reply Later is a push, not a folder-tab slide.
+    @State private var isReplyLaterPush = false
+    @State private var tabContentWidth: CGFloat = 390
     @State private var registeredUndoID: UUID?
     @State private var showSettings = false
     @State private var isSelectMode = false
@@ -38,6 +41,10 @@ struct HomeShellView: View {
     @State private var composeLastTapAt: Date?
     @State private var composeDoubleTapArmed = false
     @State private var serviceBannerHeight: CGFloat = 0
+    /// Window width; with the size class it picks two- vs three-column (AVE-73).
+    @State private var windowWidth: CGFloat = 0
+    /// Folder column toggle on wide iPads. Persists; off keeps the two-pane layout.
+    @AppStorage("home_folder_column_visible") private var showsFolderColumn = true
     @GestureState private var isComposePressed = false
 
     private let folderTabs: [HomeTab] = [
@@ -56,6 +63,14 @@ struct HomeShellView: View {
 
     private var tabSpring: Animation {
         .spring(duration: 0.42, bounce: 0.18)
+    }
+
+    /// Standard push spring (Android twin: `dampingRatio = 0.86f` + `StiffnessMediumLow`).
+    private static let pushSpring = Animation.spring(response: 0.32, dampingFraction: 0.86)
+
+    /// The implicit tab animations override `withAnimation`, so pick the push spring here too.
+    private var tabAnimation: Animation {
+        isReplyLaterPush ? Self.pushSpring : tabSpring
     }
 
     private var hasMinimizedCompose: Bool {
@@ -87,9 +102,18 @@ struct HomeShellView: View {
     }
 
     /// Regular width (full-screen iPad, wide Split View) reads mail in a side pane;
-    /// compact width keeps the phone layout with the detail sheet.
+    /// compact width keeps the phone layout with the detail sheet. Wide regular windows
+    /// add the leading folder column unless the user hid it.
     private var layoutMode: HomeLayoutMode {
-        HomeLayoutMode(horizontalSizeClass: horizontalSizeClass)
+        HomeLayoutMode(
+            horizontalSizeClass: horizontalSizeClass,
+            width: windowWidth,
+            showsFolderColumn: showsFolderColumn
+        )
+    }
+
+    private var allowsFolderColumn: Bool {
+        HomeLayoutMode.allowsFolderColumn(horizontalSizeClass: horizontalSizeClass, width: windowWidth)
     }
 
     var body: some View {
@@ -149,14 +173,29 @@ struct HomeShellView: View {
             .sensoryFeedback(.selection, trigger: highlightedComposeAction)
     }
 
-    /// List column (everything the phone shows) + reading pane at regular width.
+    /// List column (everything the phone shows) + reading pane at regular width, plus
+    /// the folder column on wide windows.
     private var splitLayout: some View {
         HomeSplitLayout(mode: layoutMode) {
+            HomeFolderColumn(
+                title: mailboxName,
+                subtitle: mailboxTitle,
+                folders: folderTabs,
+                selected: app.selectedTab,
+                onSelect: selectTab,
+                onHide: { setFolderColumnVisible(false) }
+            )
+        } list: {
             shell
         } detail: {
             HomeReadingPane()
         }
         .background(AppTheme.background.ignoresSafeArea())
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            windowWidth = width
+        }
     }
 
     private var shell: some View {
@@ -177,7 +216,7 @@ struct HomeShellView: View {
                 .opacity(showSearch ? 0 : 1)
         }
         .tint(AppTheme.ink)
-        .animation(tabSpring, value: app.selectedTab)
+        .animation(tabAnimation, value: app.selectedTab)
         .background(AppTheme.background.ignoresSafeArea())
         .overlay(alignment: .bottom) {
             if !showSearch {
@@ -265,6 +304,7 @@ struct HomeShellView: View {
                     }
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
+                .listColumnNavigationBarMargins(layoutMode)
                 .navigationDestination(isPresented: $showAllNew) {
                     InboxNewListView(bottomInset: listBottomInset)
                 }
@@ -406,7 +446,7 @@ struct HomeShellView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.toast?.id)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasServiceBanner)
-        .animation(tabSpring, value: app.selectedTab)
+        .animation(tabAnimation, value: app.selectedTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isSelectMode)
         .padding(.bottom, -12)
     }
@@ -504,6 +544,15 @@ struct HomeShellView: View {
                 }
             }
             Divider()
+            // Not a toolbar item: an extra leading item crowds the list column's toolbar.
+            if allowsFolderColumn {
+                Button(
+                    showsFolderColumn ? "Hide folders" : "Show folders",
+                    systemImage: "sidebar.left"
+                ) {
+                    setFolderColumnVisible(!showsFolderColumn)
+                }
+            }
             Button("Add another email", systemImage: "plus") {
                 showAddMailboxSheet = true
             }
@@ -737,14 +786,32 @@ struct HomeShellView: View {
                 )
             }
         }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            tabContentWidth = width
+        }
         .id(app.selectedTab)
         .contentShape(Rectangle())
         .gesture(tabSwipeGesture)
-        .transition(
-            .asymmetric(
-                insertion: .offset(x: tabNavigatingForward ? 28 : -28).combined(with: .opacity),
-                removal: .offset(x: tabNavigatingForward ? -18 : 18).combined(with: .opacity)
-            )
+        .transition(tabTransition(for: app.selectedTab))
+    }
+
+    /// Folder tabs slide a short distance. Reply Later is a push, matching the Android
+    /// settings/Reply Later push: in from a quarter width, the page underneath shifts a sixth.
+    /// The Reply Later page's own transition doesn't depend on direction state, so it pushes
+    /// in and pops back out toward the trailing edge either way.
+    private func tabTransition(for tab: HomeTab) -> AnyTransition {
+        let width = max(tabContentWidth, 1)
+        if tab == .replyLater {
+            return .offset(x: width / 4).combined(with: .opacity)
+        }
+        if isReplyLaterPush {
+            return .offset(x: -width / 6).combined(with: .opacity)
+        }
+        return .asymmetric(
+            insertion: .offset(x: tabNavigatingForward ? 28 : -28).combined(with: .opacity),
+            removal: .offset(x: tabNavigatingForward ? -18 : 18).combined(with: .opacity)
         )
     }
 
@@ -761,6 +828,7 @@ struct HomeShellView: View {
             isSelectMode = false
             selectedEmailIDs.removeAll()
         }
+        isReplyLaterPush = tab == .replyLater || app.selectedTab == .replyLater
         if tab == .replyLater {
             if app.selectedTab != .replyLater {
                 previousTabBeforeReplyLater = app.selectedTab
@@ -773,9 +841,16 @@ struct HomeShellView: View {
             let next = folderTabs.firstIndex(of: tab) ?? 0
             tabNavigatingForward = next > current
         }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+        withAnimation(Self.pushSpring) {
             app.selectTab(tab)
         }
+    }
+
+    /// Back out of Reply Later to the folder it was opened from (Android: system back).
+    private func popReplyLater() {
+        guard app.selectedTab == .replyLater else { return }
+        let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
+        selectTab(target)
     }
 
     private func selectAdjacentTab(forward: Bool) {
@@ -789,6 +864,11 @@ struct HomeShellView: View {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
                 let threshold: CGFloat = 40
+                if app.selectedTab == .replyLater {
+                    // Reply Later is pushed over a folder: swipe right pops back.
+                    if value.translation.width > threshold { popReplyLater() }
+                    return
+                }
                 if value.translation.width < -threshold {
                     selectAdjacentTab(forward: true)
                 } else if value.translation.width > threshold {
@@ -825,8 +905,7 @@ struct HomeShellView: View {
                 return
             }
             if app.selectedTab == .replyLater {
-                let target = previousTabBeforeReplyLater == .replyLater ? .folder("inbox") : previousTabBeforeReplyLater
-                selectTab(target)
+                popReplyLater()
             } else if app.replyLaterCount == 0 {
                 app.showToast("There is no reply later mail")
                 Task { await app.refreshReplyLaterCount() }
@@ -1040,6 +1119,13 @@ struct HomeShellView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("New chat")
+        }
+    }
+
+    /// Shows / hides the leading folder column (three-column widths only).
+    private func setFolderColumnVisible(_ visible: Bool) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            showsFolderColumn = visible
         }
     }
 

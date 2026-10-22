@@ -110,6 +110,14 @@ class ComposeFormModel(
     var saveStatus: DraftSaveStatus = DraftSaveStatus.Idle
     var toast: ComposeToast? = null
     var errorMessage: String? = null
+
+    /**
+     * Recipients the last send was refused for (409 `recipient_suppressed`). The sheet
+     * shows the ones still addressed ([visibleSuppressedRecipients]) in place of
+     * [errorMessage]; the server's sentence goes in the toast.
+     */
+    var suppressedRecipients: List<SuppressedRecipient> = emptyList()
+    var isUnsuppressing: Boolean = false
     val quotedOriginal: QuotedOriginal?
 
     private val signature: String
@@ -218,6 +226,14 @@ class ComposeFormModel(
             }
         }
     }
+
+    /** Suppressed recipients still in To / Cc / Bcc. Removing one clears its notice. */
+    fun visibleSuppressedRecipients(
+        to: List<MailAddress> = toTokens,
+        cc: List<MailAddress> = ccTokens,
+        bcc: List<MailAddress> = bccTokens,
+    ): List<SuppressedRecipient> =
+        BounceSuppression.stillAddressed(suppressedRecipients, (to + cc + bcc).map { it.email })
 
     fun toJoined(): String = toTokens.joinToString(", ") { it.email }
     fun ccJoined(): String = ccTokens.joinToString(", ") { it.email }

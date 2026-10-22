@@ -5,7 +5,8 @@
 /**
  * D1 schema for identity and permissions (`AUTH_DB`).
  *
- * The first four tables belong to Better Auth: their JS property names must
+ * The first four tables belong to Better Auth, plus `passkey` (passkey
+ * plugin) and `twoFactor` (twoFactor plugin): their JS property names must
  * match Better Auth's field names (the drizzle adapter maps by key). The rest
  * are ours. Every permission is a row keyed by `user.id`; emails are
  * attributes, never identities.
@@ -47,6 +48,14 @@ export const user = sqliteTable("user", {
 	image: text("image"),
 	createdAt: createdAt(),
 	updatedAt: updatedAt(),
+	/**
+	 * Set by the twoFactor plugin once the user confirms a TOTP code. Password
+	 * sign-in then answers with a two-factor challenge instead of a session.
+	 * Optional for everyone; nothing enforces it.
+	 */
+	twoFactorEnabled: integer("two_factor_enabled", { mode: "boolean" })
+		.notNull()
+		.default(false),
 });
 
 export const session = sqliteTable(
@@ -140,6 +149,67 @@ export const verification = sqliteTable(
 		updatedAt: updatedAt(),
 	},
 	(t) => [index("verification_identifier_idx").on(t.identifier)],
+);
+
+/**
+ * WebAuthn credentials (`@better-auth/passkey`). A passkey signs the user in
+ * by itself, with no password and no two-factor step.
+ */
+export const passkey = sqliteTable(
+	"passkey",
+	{
+		id: text("id").primaryKey(),
+		/** User-chosen label ("MacBook", "iPhone"). */
+		name: text("name"),
+		/** COSE public key, base64. */
+		publicKey: text("public_key").notNull(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** base64url credential id; unique across all users. */
+		credentialID: text("credential_id").notNull(),
+		/** Signature counter (replay detection). */
+		counter: integer("counter").notNull(),
+		/** "singleDevice" or "multiDevice" (synced). */
+		deviceType: text("device_type").notNull(),
+		backedUp: integer("backed_up", { mode: "boolean" }).notNull(),
+		/** Comma-separated transports ("internal,hybrid"). */
+		transports: text("transports"),
+		createdAt: integer("created_at", { mode: "timestamp_ms" }).default(
+			sql`(unixepoch('subsecond') * 1000)`,
+		),
+		/** Authenticator model id (all zeros for Apple and other private platforms). */
+		aaguid: text("aaguid"),
+	},
+	(t) => [
+		index("passkey_user_id_idx").on(t.userId),
+		uniqueIndex("passkey_credential_id_uidx").on(t.credentialID),
+	],
+);
+
+/**
+ * TOTP secret and backup (recovery) codes (Better Auth twoFactor plugin).
+ * Both are encrypted with BETTER_AUTH_SECRET by the plugin before they get
+ * here; nothing in this table is usable without that secret.
+ */
+export const twoFactor = sqliteTable(
+	"two_factor",
+	{
+		id: text("id").primaryKey(),
+		/** Encrypted TOTP secret. */
+		secret: text("secret").notNull(),
+		/** Encrypted JSON array of one-time backup codes. */
+		backupCodes: text("backup_codes").notNull(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** False until the user confirms a first TOTP code while enabling. */
+		verified: integer("verified", { mode: "boolean" }).notNull().default(true),
+		/** Consecutive failed codes across challenges; locks the account at 10. */
+		failedVerificationCount: integer("failed_verification_count").notNull().default(0),
+		lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
+	},
+	(t) => [uniqueIndex("two_factor_user_id_uidx").on(t.userId)],
 );
 
 // ── Inboxies permissions ─────────────────────────────────────────

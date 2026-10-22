@@ -24,7 +24,7 @@
 // squircle). The iOS app icon and apple-touch-icon stay full-bleed: the OS masks them.
 // The Android launcher foreground fits the mark inside the round-mask safe zone.
 //
-// Code that embeds the mark inline (web PrivateEmailLogo.tsx, site PlaneGlyph.astro,
+// Code that embeds the mark inline (web PrivateEmailLogo.tsx and AuthShell.tsx, site PlaneGlyph.astro,
 // extension side panel) is rewritten between `logo:generated` markers. Uses `sharp`
 // from the site workspace (already a dependency).
 
@@ -492,6 +492,7 @@ async function main() {
 		"paths",
 		`const PATHS = {\n\tsmall: ${astroPaths(glyph("small", 32))},\n\tfull: ${astroPaths(glyph("medium", 32))},\n};`,
 	);
+	inject("app/components/AuthShell.tsx", "plane", inlinePaths(glyph("small", 32), { jsx: true, indent: "\t\t\t" }));
 	inject("extension/sidepanel.html", "private", inlinePaths(privateParts(32), { indent: "\t\t\t\t" }));
 
 	console.log("logo assets regenerated from", MASTER_PATH);
