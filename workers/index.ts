@@ -121,6 +121,7 @@ import {
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
+	deferAuthenticatedAiSpamToScreener,
 	isAiSpam,
 	overrideAiSpamForVouchedSender,
 	shouldAutoDraft,
@@ -2065,6 +2066,18 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			);
 			classification = vouchedClassification;
 		}
+		// Authenticated mail from a stranger goes to Screener, not Spam, on an
+		// AI guess alone (see deferAuthenticatedAiSpamToScreener).
+		const deferredClassification = deferAuthenticatedAiSpamToScreener(classification, {
+			screenerEnabled,
+			auth,
+		});
+		if (deferredClassification !== classification) {
+			console.log(
+				`Authenticated sender ${fromAddress} deferred AI spam verdict to Screener for ${mailboxId}`,
+			);
+			classification = deferredClassification;
+		}
 		const triageDecision = resolveInboundFolder({
 			classification,
 			triage: triageRow,
@@ -2086,9 +2099,6 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		try {
 			await stub.createEmail(targetFolder, inboundEmail, attachmentData);
 			stored = true;
-			if (privateAlias) {
-				await (stub as any).recordAliasInbound(privateAlias.aliasEmail, false);
-			}
 		} catch (e) {
 			if ((e as Error).message === "Mailbox has been deleted") {
 				console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
@@ -2124,6 +2134,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				throw inboxErr;
 			}
 			filedFolder = Folders.INBOX;
+		}
+		if (privateAlias) {
+			// Best effort: the message is stored, so a failed counter must not
+			// throw into a retry that dedup drops (losing the push and forward).
+			await (stub as any)
+				.recordAliasInbound(privateAlias.aliasEmail, false)
+				.catch((e: unknown) =>
+					console.error(`Recording private email inbound failed for ${mailboxId}:`, (e as Error).message),
+				);
 		}
 		if (originalMessageId) {
 			// Best effort: the stored row already blocks redelivery.

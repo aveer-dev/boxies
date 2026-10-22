@@ -8,6 +8,7 @@ import { Folders } from "../../shared/folders.ts";
 import {
 	classifyFromHeaders,
 	classifyInboundEmail,
+	deferAuthenticatedAiSpamToScreener,
 	firstClassifierToken,
 	isAiSpam,
 	overrideAiSpamForVouchedSender,
@@ -17,6 +18,7 @@ import {
 	shouldSendPush,
 } from "../lib/classify-email.ts";
 import PostalMime from "postal-mime";
+import { resolveInboundFolder } from "../lib/sender-triage.ts";
 
 function headers(...pairs) {
 	return pairs.map(([key, value]) => ({ key, value }));
@@ -707,6 +709,77 @@ async function classifyMime(raw, ai) {
 		overrideAiSpamForVouchedSender(ham, { vouched: true, auth: authed }),
 		ham,
 	);
+}
+
+// ── AI spam on authenticated mail from strangers goes to Screener (AVE-103) ──
+
+{
+	const aiSpam = { class: "spam", folderId: Folders.SPAM, reason: "ai-spam" };
+	const authed = {
+		spoofed: false,
+		source: "arc-authentication-results",
+		aligned: true,
+		headerFrom: "noreply@uber.com",
+		envelopeFrom: "bounces@uber.com",
+	};
+	const unverified = { ...authed, aligned: null, source: "none" };
+	const forged = { ...authed, aligned: false, spoofed: true };
+
+	const deferred = deferAuthenticatedAiSpamToScreener(aiSpam, {
+		screenerEnabled: true,
+		auth: authed,
+	});
+	assert.deepEqual(deferred, {
+		class: "ham",
+		folderId: Folders.INBOX,
+		reason: "ai-spam-authenticated",
+	});
+
+	// Unknown sender: Screener, still no push or draft.
+	const unknown = resolveInboundFolder({
+		classification: deferred,
+		triage: null,
+		filterHit: null,
+		screenerEnabled: true,
+	});
+	assert.equal(unknown.folderId, Folders.SCREENER);
+	assert.equal(unknown.skipPush, true);
+	assert.equal(unknown.skipAutoDraft, true);
+
+	// Rejected sender: Screened Out.
+	const rejected = resolveInboundFolder({
+		classification: deferred,
+		triage: { sender: "noreply@uber.com", status: "rejected", destination_folder_id: null, decided_at: "", updated_at: "" },
+		filterHit: null,
+		screenerEnabled: true,
+	});
+	assert.equal(rejected.folderId, Folders.SCREENED_OUT);
+	assert.equal(rejected.skipPush, true);
+
+	// Screener off, unverified or forged auth, or a hard spam signal: verdict stands.
+	assert.equal(
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: false, auth: authed }),
+		aiSpam,
+	);
+	assert.equal(
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: true, auth: unverified }),
+		aiSpam,
+	);
+	assert.equal(
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: true, auth: forged }),
+		aiSpam,
+	);
+	assert.equal(
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: true, auth: null }),
+		aiSpam,
+	);
+	for (const reason of ["spam-headers", "auth-spoofed"]) {
+		const hard = { class: "spam", folderId: Folders.SPAM, reason };
+		assert.equal(
+			deferAuthenticatedAiSpamToScreener(hard, { screenerEnabled: true, auth: authed }),
+			hard,
+		);
+	}
 }
 
 console.log("classify-email tests passed");
