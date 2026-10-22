@@ -457,13 +457,32 @@ function tierFor(signals: {
 
 /**
  * Upstream ARC sealers whose results we accept for forwarded mail (a user
- * forwarding Gmail or Microsoft 365 into Inboxies). A seal's `d=` must be
- * one of these or a subdomain of one. Add new sealers here.
+ * forwarding another mailbox into Inboxies). A seal's `d=` must be one of
+ * these or a subdomain of one; no suffix matching beyond a `.` boundary.
+ * Only list domains owned by the mailbox provider itself (never a domain
+ * where customers can get their own subdomain or DKIM keys). Cloudflare
+ * validates the seal signature (`arc=pass`), so a listed domain that a
+ * provider never seals with is inert, not a hole. Add new sealers here.
  */
 export const TRUSTED_ARC_SEALERS: readonly string[] = [
+	// Gmail / Google Workspace.
 	"google.com",
+	// Outlook.com / Microsoft 365.
 	"outlook.com",
 	"microsoft.com",
+	// Apple iCloud Mail.
+	"icloud.com",
+	// Proton Mail (MX hosts are *.protonmail.ch).
+	"protonmail.ch",
+	"proton.me",
+	// Fastmail (seals as its platform domain, not fastmail.com).
+	"messagingengine.com",
+	// Zoho Mail (US and EU data centres).
+	"zohomail.com",
+	"zohomail.eu",
+	// Yahoo Mail and AOL (same platform).
+	"yahoo.com",
+	"aol.com",
 ];
 
 /** Exact or proper-subdomain match against `TRUSTED_ARC_SEALERS`. */
