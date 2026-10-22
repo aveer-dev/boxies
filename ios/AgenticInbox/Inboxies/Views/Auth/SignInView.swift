@@ -845,6 +845,7 @@ private struct EmailLoginScreen: View {
     @State private var isResetting: Bool = false
     @State private var twoFactorCode: String = ""
     @State private var isUsingBackupCode: Bool = false
+    @State private var isVerifyingCode: Bool = false
     @FocusState private var isFieldFocused: Bool
 
     private var isValidEmail: Bool {
@@ -897,7 +898,9 @@ private struct EmailLoginScreen: View {
                 twoFactorCode = ""
                 isUsingBackupCode = false
                 if navigationPath.last != .twoFactor {
-                    navigationPath.append(.twoFactor)
+                    // The code step sits on the password step, also after a reset, so Back and
+                    // an expired challenge never return to a reset form whose code is spent.
+                    navigationPath = [.password, .twoFactor]
                 }
             } else if navigationPath.last == .twoFactor, !auth.isAuthenticated {
                 // Expired challenge: back to the password to start over.
@@ -1505,7 +1508,7 @@ private struct EmailLoginScreen: View {
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
-                    .disabled(!twoFactorCodeReady || auth.isBusy)
+                    .disabled(!twoFactorCodeReady || auth.isBusy || isVerifyingCode)
                     .padding(.horizontal, 24)
 
                     Spacer()
@@ -1518,8 +1521,11 @@ private struct EmailLoginScreen: View {
     }
 
     private func submitTwoFactor() {
-        guard twoFactorCodeReady, !auth.isBusy else { return }
+        // The sixth digit, Return and Verify can land before the Task starts and sets isBusy.
+        guard twoFactorCodeReady, !auth.isBusy, !isVerifyingCode else { return }
+        isVerifyingCode = true
         Task {
+            defer { isVerifyingCode = false }
             commitAPIBaseURL()
             let ok = await auth.verifyTwoFactor(code: twoFactorCode, useBackupCode: isUsingBackupCode)
             if ok, auth.isAuthenticated {
