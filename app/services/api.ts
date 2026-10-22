@@ -50,6 +50,27 @@ export class ApiError extends Error {
 	}
 }
 
+/** A pending password sign-in that needs a second factor (TOTP or backup code). */
+export interface TwoFactorChallenge {
+	twoFactorToken: string;
+	methods: string[];
+}
+
+/**
+ * The challenge in a password sign-in (or reset) reply, when the account has
+ * two-factor on. Sign-in answers it as a 401 `TWO_FACTOR_REQUIRED` error, so
+ * pass the caught error or the reset reply.
+ */
+export function twoFactorChallenge(source: unknown): TwoFactorChallenge | null {
+	const body =
+		source instanceof ApiError ? source.body : (source as Record<string, unknown> | null | undefined);
+	if (!body || body.twoFactorRequired !== true || typeof body.twoFactorToken !== "string") return null;
+	const methods = Array.isArray(body.twoFactorMethods)
+		? body.twoFactorMethods.filter((m): m is string => typeof m === "string")
+		: [];
+	return { twoFactorToken: body.twoFactorToken, methods };
+}
+
 async function request<T>(
 	url: string,
 	options: RequestInit = {},
@@ -360,6 +381,14 @@ const api = {
 			"/api/v1/auth/password",
 			{ email, password },
 		),
+	/**
+	 * Second step of a password sign-in when the account has two-factor on:
+	 * the `twoFactorToken` from the sign-in reply (see `twoFactorChallenge`)
+	 * plus an authenticator code or a one-time backup code. Sets the session
+	 * cookie like passwordLogin.
+	 */
+	verifyTwoFactor: (body: { twoFactorToken: string; code: string; method: "totp" | "backup_code" }) =>
+		post<{ token: string; expiresAt: string }>("/api/v1/auth/two-factor/verify", body),
 	/** Google ID token from the GIS button; sets the session cookie like passwordLogin. */
 	googleLogin: (idToken: string) =>
 		post<{ token: string; expiresAt: string }>("/api/v1/auth/google", { idToken }),
@@ -390,6 +419,10 @@ const api = {
 			token?: string;
 			expiresAt?: string;
 			email?: string | null;
+			/** Set when the account has two-factor on: no session yet, finish with verifyTwoFactor. */
+			twoFactorRequired?: boolean;
+			twoFactorToken?: string;
+			twoFactorMethods?: string[];
 		}>("/api/v1/auth/password/reset", body),
 	/** Revokes this session and clears the session cookie. */
 	logout: () => post<{ ok: boolean }>("/api/v1/auth/logout"),

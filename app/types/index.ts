@@ -66,6 +66,8 @@ export interface MeResponse {
 	mailDomain?: string;
 	domains?: string[];
 	sessionScope?: string | null;
+	/** TOTP two-factor is on (it only challenges password sign-in). */
+	twoFactorEnabled?: boolean;
 }
 
 export interface AccountSession {

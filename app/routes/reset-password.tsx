@@ -7,7 +7,8 @@ import { EyeIcon, EyeSlashIcon } from "@phosphor-icons/react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router";
 import { AuthShell, quietLinkClass } from "~/components/AuthShell";
-import api from "~/services/api";
+import { TwoFactorChallengeForm } from "~/components/TwoFactorChallengeForm";
+import api, { type TwoFactorChallenge, twoFactorChallenge } from "~/services/api";
 
 export function meta() {
 	return [{ title: "Reset password — Inboxies" }];
@@ -25,6 +26,9 @@ export default function ResetPasswordRoute() {
 	const [newPassword, setNewPassword] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
+	// Set when the account has two-factor on: the reset worked, but signing
+	// in still needs the authenticator (or a backup) code.
+	const [challenge, setChallenge] = useState<TwoFactorChallenge | null>(null);
 	const emailInputRef = useRef<HTMLInputElement>(null);
 	const codeInputRef = useRef<HTMLInputElement>(null);
 	const passwordInputRef = useRef<HTMLInputElement>(null);
@@ -60,7 +64,7 @@ export default function ResetPasswordRoute() {
 
 		setSubmitting(true);
 		try {
-			await api.resetPassword(
+			const res = await api.resetPassword(
 				token.trim()
 					? { token: token.trim(), newPassword }
 					: { email: email.trim(), code: code.trim(), newPassword },
@@ -69,6 +73,12 @@ export default function ResetPasswordRoute() {
 				title: "Password reset successfully",
 				variant: "success",
 			});
+			const pending = twoFactorChallenge(res);
+			if (pending) {
+				setNewPassword("");
+				setChallenge(pending);
+				return;
+			}
 			navigate("/");
 		} catch (err: unknown) {
 			toastManager.add({
@@ -79,6 +89,20 @@ export default function ResetPasswordRoute() {
 			setSubmitting(false);
 		}
 	};
+
+	if (challenge) {
+		return (
+			<AuthShell title="Two-factor authentication">
+				<TwoFactorChallengeForm
+					challenge={challenge}
+					email={email.trim() || undefined}
+					onSignedIn={() => navigate("/")}
+					// The new password is set; an expired challenge just means signing in again.
+					onExpired={() => navigate("/login")}
+				/>
+			</AuthShell>
+		);
+	}
 
 	return (
 		<AuthShell title="Set a new password for your account">
