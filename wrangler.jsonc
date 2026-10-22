@@ -127,12 +127,22 @@
 	// Queues must exist before deploy (`pnpm ensure-queues`, or by hand):
 	//   wrangler queues create outbound-send
 	//   wrangler queues create outbound-send-dlq
+	//   wrangler queues create email-sending-events-dlq
 	"queues": {
 		"consumers": [
+			// Exhausted Email Sending events go to the DLQ, whose consumer logs
+			// them and keeps them in R2 for replay from /ops
+			// (workers/lib/email-sending-dlq.ts).
 			{
 				"queue": "email-sending-events",
 				"max_batch_size": 10,
 				"max_retries": 5,
+				"dead_letter_queue": "email-sending-events-dlq",
+			},
+			{
+				"queue": "email-sending-events-dlq",
+				"max_batch_size": 10,
+				"max_retries": 3,
 			},
 			// max_retries must match OUTBOUND_SEND_MAX_RETRIES. Exhausted
 			// messages go to the DLQ, whose consumer marks the Sent row failed.
