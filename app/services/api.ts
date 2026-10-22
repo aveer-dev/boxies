@@ -364,6 +364,8 @@ const api = {
 	appleLogin: (body: {
 		identityToken: string;
 		nonce: string;
+		/** Apple's one-time code; the Worker exchanges it so account deletion can revoke. */
+		authorizationCode?: string;
 		fullName?: { givenName?: string; familyName?: string };
 	}) => post<{ token: string; expiresAt: string }>("/api/v1/auth/apple", body),
 	forgotPassword: (email: string) =>

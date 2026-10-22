@@ -91,6 +91,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -124,6 +125,8 @@ import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.home.LocalReadingPaneEmail
+import co.inboxies.app.ui.home.isOpenInReadingPane
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuItem
@@ -567,6 +570,8 @@ private fun EmailRowItem(
     val readOnly by LocalAppModel.current.selectedMailboxReadOnly.collectAsState()
     val isSelected = selectedEmailIds.contains(email.id)
     val isScreener = fallbackFolderId == FolderIds.SCREENER || email.folderId == FolderIds.SCREENER
+    // Two-pane only (null otherwise): the row whose email / thread is in the reading pane.
+    val isOpenInPane = !isSelectMode && email.isOpenInReadingPane(LocalReadingPaneEmail.current)
     val layout = remember(email.id, email.folderId, fallbackFolderId, swipePreferences, readOnly) {
         EmailSwipeLayout.resolve(email, fallbackFolderId, swipePreferences)
             .let { if (readOnly) it.readOnly() else it }
@@ -581,6 +586,7 @@ private fun EmailRowItem(
         showsTags = showsTags,
         isScreener = isScreener,
         readOnly = readOnly,
+        isOpenInPane = isOpenInPane,
         onOpen = { onOpen(email) },
         onToggleSelect = { onToggleSelect?.invoke(email.id) },
         onMore = { onMore(email) },
@@ -599,11 +605,19 @@ private fun MailRow(
     showsTags: Boolean = true,
     isScreener: Boolean = false,
     readOnly: Boolean = false,
+    isOpenInPane: Boolean = false,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onMore: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    // Soft tint (not pillFill) so the row's tag chips stay legible; opaque so swipe
+    // actions underneath never show through.
+    val rowBackground = if (isOpenInPane) {
+        colors.pillFill.copy(alpha = 0.6f).compositeOver(colors.background)
+    } else {
+        colors.background
+    }
     val app = LocalAppModel.current
     val list = AppThemeDims.List
     val scope = rememberCoroutineScope()
@@ -660,7 +674,7 @@ private fun MailRow(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(colors.background),
+                        .background(rowBackground),
                 ) {
                     EmailRowView(
                         email = email,
@@ -668,6 +682,7 @@ private fun MailRow(
                         folderLabel = folderLabel,
                         showsTags = showsTags,
                         showDivider = !isScreener,
+                        rowBackground = rowBackground,
                         modifier = Modifier
                             .fillMaxWidth()
                             .combinedClickable(
@@ -1122,6 +1137,8 @@ fun EmailRowView(
     showsTags: Boolean = true,
     showDivider: Boolean = true,
     modifier: Modifier = Modifier,
+    /** Fill behind the row; the two-pane list tints the row open in the reading pane. */
+    rowBackground: Color = inboxiesColors().background,
 ) {
     val colors = inboxiesColors()
     val list = AppThemeDims.List
@@ -1134,7 +1151,7 @@ fun EmailRowView(
     val senderWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
     val subjectWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
 
-    Box(modifier = modifier.fillMaxWidth().background(colors.background)) {
+    Box(modifier = modifier.fillMaxWidth().background(rowBackground)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

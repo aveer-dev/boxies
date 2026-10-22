@@ -22,7 +22,7 @@ When polishing motion, also load `animate`, `apple-design`, and `emil-design-eng
 - Material 3 (`androidx.compose.material3`) for primitives: `ModalBottomSheet`, `Switch`, `DropdownMenu`, `PullToRefreshBox`, `Button`. Visual language is custom Notion/iOS, not default M3.
 - **No dynamic / wallpaper color.** Comment in `AppTheme.kt`: “Notion-inspired Inboxies palette — not purple Material You.”
 - Navigation Compose is **not a dependency** (removed). Do not introduce `NavHost` / `rememberNavController`.
-- `minSdk 34`, `targetSdk/compileSdk 35`, portrait, phone screens.
+- `minSdk 34`, `targetSdk/compileSdk 35`. Resizable activity, any orientation; phones plus tablets / foldables (two-pane at ≥ 840.dp, see below).
 - HTML mail via `AndroidView` + `WebView` in `EmailBodyView.kt`.
 - Icons: Material Icons Extended.
 - State: `AppModel` `StateFlow`s via `LocalAppModel` / `LocalAuthStore` / `LocalInboxiesPalette`. Collect with `collectAsState()`.
@@ -113,7 +113,7 @@ Edge-to-edge is required:
 | Surface | Mechanism |
 | --- | --- |
 | Folder tabs | `HomeTab` + horizontal swipe (≥40.dp) |
-| Email detail | `ModalBottomSheet` (`skipPartiallyExpanded = true`, custom scrim, no drag handle) |
+| Email detail | Stacked: `ModalBottomSheet` (`skipPartiallyExpanded = true`, custom scrim, no drag handle). Two-pane: reading pane (`HomeSplitLayout`) |
 | Settings | Same modal sheet; nested pages via horizontal `AnimatedContent` |
 | Search | Full-screen replace inside home (`showSearch`) |
 | AI chat | Custom full-screen overlay; drag-to-dismiss; list ↔ conversation `AnimatedContent` |
@@ -123,6 +123,16 @@ Edge-to-edge is required:
 | Back | `BackHandler` for search, select mode, compose actions, chat stack |
 
 Folder order: For you (`HomeTab.AiInbox`) then Inbox → Promotions → Updates → Sent → Drafts → Archive → Spam → Trash.
+
+## Large screens (tablet / foldable)
+
+`ui/home/HomeSplitLayout.kt`, design twin of iOS `HomeSplitLayout` (AVE-71/72). `HomeLayoutMode` comes from window width (`LocalConfiguration.screenWidthDp`), not the device:
+
+- **Stacked** (< `HomeChromeMetrics.twoPaneMinWidth` 840.dp): phone layout, unchanged.
+- **TwoPane** (≥ 840.dp): list column (`listColumnWidth` = 38% clamped 320–420.dp) + 0.5.dp `line` hairline + reading pane (`EmailDetailView(showsGrabber = false)` or `ReadingPanePlaceholder`). The email's close (x) and Back clear to the placeholder. The row open in the pane is tinted (`pillFill` @ 60% over `background`) via `LocalReadingPaneEmail`.
+- Compose, Ask AI and Settings render through `HomeFormSheet`: full-window on phones, centered card (max 600×880.dp, 18.dp corners, `modalScrim`) in two-pane. Add mailbox is already a centered `Dialog`.
+- Selection lives in `AppModel.selectedEmail`, so it survives resizing / fold changes. The manifest handles `screenSize|smallestScreenSize|screenLayout|orientation` itself, so `remember` state isn't lost.
+- A future third column (AVE-73) = another `HomeLayoutMode` case + another column in `HomeSplitLayout`.
 
 ## Motion already in this app
 
