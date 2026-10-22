@@ -1,0 +1,5 @@
+# Workers static assets: Apple fetches this to tie the iOS app (passkeys,
+# `webcredentials:inboxies.app`) to the web app's domain. It has no file
+# extension, so say it's JSON.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
