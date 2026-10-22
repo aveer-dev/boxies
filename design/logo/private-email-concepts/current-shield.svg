@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+	<!--
+		Private Email, previous design (kept for comparison / to switch back): the plane at
+		80% plus a shield, right half filled, bottom right.
+		32 grid. Paths are read by scripts/generate-logo-assets.mjs; the plane group is
+		refreshed from design/logo/inboxies-mark.svg on every run.
+	-->
+	<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+	<g id="plane" data-x="0" data-y="0" data-size="25.6" data-weight="1">
+		<path d="M 1.62 9.48 L 22.18 1.64 A 1.89 1.89 0 0 1 24.59 4.13 L 16.6 23.29 A 1.22 1.22 0 0 1 14.69 23.76 L 10.69 20.39 L 8.2 23.56 A 0.97 0.97 0 0 1 6.48 23.12 L 5.1 15.21 L 1.21 11.43 A 1.18 1.18 0 0 1 1.62 9.48 Z" fill="none" stroke="#1F1F24" stroke-width="1.371"/>
+		<path d="M 0.86 10.56 L 2.72 10.76 L 11.95 10.73 L 23.64 2.62 M 23.64 2.62 L 8.71 16.92 L 8.22 17.72 L 7.76 19.9 M 13.83 11.97 L 15.36 21.95 L 15.68 24.03 M 23.64 2.62 L 24.19 2.07" fill="none" stroke="#1F1F24" stroke-width="1.143"/>
+		<path d="M 8.5 18.59 L 9.62 17.44 L 10.3 17.66 L 13.96 21.26 L 13.97 21.9 L 13.36 22.51 L 10.69 20.39 L 8.2 23.56 A 0.97 0.97 0 0 1 7.29 23.92 Z" fill="#1F1F24"/>
+	</g>
+	</g>
+	<path id="shield" fill="none" stroke="#1F1F24" stroke-width="1.166" stroke-linejoin="round" d="M 24.8 17.28 L 29.76 19.2 V 23.52 C 29.76 26.72 27.68 28.96 24.8 30.24 C 21.92 28.96 19.84 26.72 19.84 23.52 V 19.2 Z"/>
+	<path id="shield-half" fill="#1F1F24" stroke="#1F1F24" stroke-width="1.166" stroke-linejoin="round" d="M 24.8 17.28 L 29.76 19.2 V 23.52 C 29.76 26.72 27.68 28.96 24.8 30.24 Z"/>
+</svg>

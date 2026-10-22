@@ -78,15 +78,18 @@ writeFileSync(
 process.env.FONTCONFIG_FILE = join(tmp, "fonts.conf");
 const { default: sharp } = await import("sharp");
 
-// The plane from the favicon, drawn in ink.
-const favicon = readFileSync(join(REPO, "public/favicon.svg"), "utf8");
-const plane = favicon.match(/<path d="([^"]+)"/)[1];
+// The plane, derived from the master mark (scripts/generate-logo-assets.mjs), in ink.
+const markSvg = readFileSync(join(REPO, "design/logo/inboxies-mark-medium.svg"), "utf8");
+const plane = markSvg
+	.replace(/^[\s\S]*?<svg[^>]*>/, "")
+	.replace(/<\/svg>\s*$/, "")
+	.replace(/#1F1F24/g, INK);
 
 // The headline's top sits at 260px; line boxes are 1.15 × 52px.
 const FONT = 'font-family="Inter, Helvetica, Arial, sans-serif"';
 const base = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
 	<rect width="${W}" height="${H}" fill="#fcfcfc"/>
-	<svg x="96" y="120" width="72" height="72" viewBox="0 0 512 512"><path fill="${INK}" fill-rule="evenodd" d="${plane}"/></svg>
+	<svg x="96" y="120" width="72" height="72" viewBox="0 0 512 512">${plane}</svg>
 	<text ${FONT} font-size="52" font-weight="500" letter-spacing="-1.3" fill="${INK}">
 		<tspan x="96" y="307">Email that waits</tspan>
 		<tspan x="96" y="367">for your yes.</tspan>

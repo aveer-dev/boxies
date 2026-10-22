@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from design/logo/inboxies-mark.svg by scripts/generate-logo-assets.mjs; do not edit by hand. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:strokeColor="@color/splash_icon_color"
+        android:strokeWidth="0.861"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 24.54 47.85 L 71.03 30.13 A 4.26 4.26 0 0 1 76.48 35.75 L 58.42 79.08 A 2.76 2.76 0 0 1 54.1 80.13 L 45.05 72.51 L 39.42 79.68 A 2.2 2.2 0 0 1 35.53 78.7 L 32.42 60.8 L 23.63 52.26 A 2.67 2.67 0 0 1 24.54 47.85 Z" />
+    <path
+        android:strokeColor="@color/splash_icon_color"
+        android:strokeWidth="0.689"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 22.82 50.28 L 27.03 50.74 L 47.89 50.68 L 74.32 32.34 M 74.32 32.34 L 40.57 64.66 L 39.47 66.49 L 38.42 71.41 M 52.15 53.48 L 55.6 76.04 L 56.33 80.74 M 74.32 32.34 L 75.57 31.1" />
+    <path
+        android:strokeColor="@color/splash_icon_color"
+        android:strokeWidth="0.689"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 74.32 32.34 L 45.67 62.83 L 43.45 64.97 M 74.32 32.34 L 55.6 76.04 L 52.46 74.35 M 27.03 50.74 L 74.32 32.34 M 27.03 50.74 L 36.14 58.88 L 32.66 61.04 M 36.14 58.88 L 36.61 63.07 L 37.31 72.58" />
+    <path
+        android:strokeColor="@color/splash_icon_color"
+        android:strokeWidth="0.689"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M 47.89 50.68 L 48.43 52.94 M 39.14 56.61 L 46.76 51.5" />
+    <path
+        android:fillColor="@color/splash_icon_color"
+        android:pathData="M 40.11 68.45 L 42.62 65.85 L 44.17 66.35 L 52.44 74.49 L 52.46 75.94 L 51.08 77.32 L 45.05 72.51 L 39.42 79.68 A 2.2 2.2 0 0 1 37.36 80.49 Z" />
+</vector>
