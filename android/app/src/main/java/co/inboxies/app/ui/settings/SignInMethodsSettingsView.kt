@@ -538,6 +538,10 @@ fun SignInMethodsSettingsView(
             }
         }
 
+        PasskeysSection(onStatus = { statusMessage = it })
+
+        TwoFactorStatusSection()
+
         RecoveryEmailSection(onStatus = { statusMessage = it })
 
         statusMessage?.let {

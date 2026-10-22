@@ -150,6 +150,8 @@ data class MeResponse(
     val administeredDomains: List<String> = emptyList(),
     val mailDomain: String? = null,
     val domains: List<String> = emptyList(),
+    /** TOTP two-factor is on. It only challenges password sign-in. */
+    val twoFactorEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -231,6 +233,63 @@ data class PasswordLoginResponse(
     val email: String? = null,
     val sub: String? = null,
     val keys: List<String> = emptyList(),
+)
+
+/**
+ * `/api/v1/auth/password/reset`. With two-factor on, the reset answers with a challenge
+ * instead of a session (a reset proves the recovery email, not the second factor).
+ */
+@Serializable
+data class ResetPasswordResponse(
+    val ok: Boolean? = null,
+    val token: String? = null,
+    val expiresAt: String? = null,
+    val email: String? = null,
+    val twoFactorRequired: Boolean? = null,
+    val twoFactorToken: String? = null,
+    val twoFactorMethods: List<String> = emptyList(),
+) {
+    val twoFactorChallenge: TwoFactorChallenge?
+        get() = if (twoFactorRequired == true && !twoFactorToken.isNullOrEmpty()) {
+            TwoFactorChallenge(twoFactorToken, twoFactorMethods, email)
+        } else {
+            null
+        }
+}
+
+/**
+ * A password sign-in that still needs a second factor: an authenticator (TOTP) code or a
+ * one-time backup code, sent with [token] to `/api/v1/auth/two-factor/verify`. Good for
+ * one sign-in, 10 minutes, 5 codes.
+ */
+data class TwoFactorChallenge(
+    val token: String,
+    /** Server methods, e.g. `["totp", "backup_code"]`. */
+    val methods: List<String>,
+    val email: String? = null,
+) {
+    companion object {
+        /** The 401 `TWO_FACTOR_REQUIRED` body of `/api/v1/auth/password`, else null. */
+        fun parse(body: String): TwoFactorChallenge? {
+            val obj = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+            if ((obj["twoFactorRequired"] as? JsonPrimitive)?.booleanOrNull != true) return null
+            val token = (obj["twoFactorToken"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return null
+            val methods = (obj["twoFactorMethods"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                .orEmpty()
+            return TwoFactorChallenge(token, methods)
+        }
+    }
+}
+
+/** A passkey registered to the signed-in account (`/api/auth/passkey/list-user-passkeys`). */
+@Serializable
+data class PasskeyRow(
+    val id: String,
+    val name: String? = null,
+    val createdAt: String? = null,
+    val deviceType: String? = null,
+    val backedUp: Boolean? = null,
 )
 
 @Serializable

@@ -1,5 +1,6 @@
 package co.inboxies.app.services
 
+import android.app.Activity
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
@@ -8,6 +9,8 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.ForgotPasswordResponse
+import co.inboxies.app.models.ResetPasswordResponse
+import co.inboxies.app.models.TwoFactorChallenge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,6 +45,13 @@ class AuthStore(context: Context) {
 
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    /**
+     * Set when a password sign-in (or reset) needs a second factor; cleared by
+     * [verifyTwoFactor] succeeding or [cancelTwoFactor]. No session until then.
+     */
+    private val _twoFactorChallenge = MutableStateFlow<TwoFactorChallenge?>(null)
+    val twoFactorChallenge: StateFlow<TwoFactorChallenge?> = _twoFactorChallenge.asStateFlow()
 
     val isAuthenticated: Boolean
         get() = !_token.value.isNullOrEmpty()
@@ -87,11 +97,68 @@ class AuthStore(context: Context) {
     suspend fun signInWithPassword(email: String, password: String) {
         _isBusy.value = true
         _errorMessage.value = null
+        _twoFactorChallenge.value = null
         try {
             val response = withContext(Dispatchers.IO) {
                 ApiClient.shared.passwordLogin(email, password)
             }
             persist(response.token, response.email ?: email)
+        } catch (e: ApiException.TwoFactorRequired) {
+            _twoFactorChallenge.value = e.challenge.copy(email = email)
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+        } finally {
+            _isBusy.value = false
+        }
+    }
+
+    /**
+     * Finishes a password sign-in that answered with a two-factor challenge. Returns false
+     * (with [errorMessage] set) when the code didn't work; an expired challenge also clears
+     * [twoFactorChallenge], so the user signs in again.
+     */
+    suspend fun verifyTwoFactor(code: String, useBackupCode: Boolean): Boolean {
+        val challenge = _twoFactorChallenge.value ?: return false
+        val trimmed = if (useBackupCode) code.trim() else code.filterNot { it.isWhitespace() }
+        if (trimmed.isEmpty()) return false
+        _isBusy.value = true
+        _errorMessage.value = null
+        return try {
+            val response = withContext(Dispatchers.IO) {
+                ApiClient.shared.verifyTwoFactor(
+                    challengeToken = challenge.token,
+                    code = trimmed,
+                    method = if (useBackupCode) "backup_code" else "totp",
+                )
+            }
+            _twoFactorChallenge.value = null
+            persist(response.token, response.email ?: challenge.email)
+            true
+        } catch (e: ApiException.Http) {
+            _errorMessage.value = twoFactorErrorMessage(e.code, e.message.orEmpty(), useBackupCode)
+            if (isExpiredTwoFactor(e.code, e.message.orEmpty())) _twoFactorChallenge.value = null
+            false
+        } catch (e: Exception) {
+            _errorMessage.value = e.message
+            false
+        } finally {
+            _isBusy.value = false
+        }
+    }
+
+    fun cancelTwoFactor() {
+        _twoFactorChallenge.value = null
+    }
+
+    /** Signs in with a passkey from the system sheet. Dismissing the sheet is not an error. */
+    suspend fun signInWithPasskey(activity: Activity) {
+        _isBusy.value = true
+        _errorMessage.value = null
+        try {
+            val result = Passkeys.signIn(activity)
+            persist(result.token, result.email)
+        } catch (_: Passkeys.Cancelled) {
+            // Dismissed.
         } catch (e: Exception) {
             _errorMessage.value = e.message
         } finally {
@@ -121,13 +188,32 @@ class AuthStore(context: Context) {
             val response = withContext(Dispatchers.IO) {
                 ApiClient.shared.resetPassword(token, email, code, newPassword)
             }
-            persist(response.token, response.email)
+            applyResetReply(response, email)
         } catch (e: Exception) {
             _errorMessage.value = e.message
             throw e
         } finally {
             _isBusy.value = false
         }
+    }
+
+    /** What a password reset handed back: a session, a 2FA challenge, or neither. */
+    internal fun applyResetReply(response: ResetPasswordResponse, email: String?) {
+        _twoFactorChallenge.value = null
+        val challenge = response.twoFactorChallenge
+        val sessionToken = response.token
+        when {
+            // A reset proves the recovery email, not the second factor.
+            challenge != null -> _twoFactorChallenge.value = challenge.copy(email = challenge.email ?: email)
+            !sessionToken.isNullOrEmpty() -> persist(sessionToken, response.email ?: email)
+            // Password changed, but no session came back: sign in with it.
+            else -> _errorMessage.value = PASSWORD_UPDATED_SIGN_IN
+        }
+    }
+
+    /** DEBUG preview: show the code step without a real challenge. */
+    fun applyPreviewTwoFactorChallenge(challenge: TwoFactorChallenge) {
+        _twoFactorChallenge.value = challenge
     }
 
     fun applySession(token: String, email: String?) {
@@ -158,6 +244,7 @@ class AuthStore(context: Context) {
     }
 
     fun signOut() {
+        _twoFactorChallenge.value = null
         _token.value = null
         _userEmail.value = null
         clearStoredSession()
@@ -230,6 +317,21 @@ class AuthStore(context: Context) {
         private const val TOKEN_KEY = "mobileSessionToken"
         private const val EMAIL_KEY = "mobileUserEmail"
         private const val LEGACY_PLAINTEXT_PREFS = "inboxies_session_fallback"
+        const val PASSWORD_UPDATED_SIGN_IN = "Password updated. Sign in with your new password."
+
+        /** `/api/v1/auth/two-factor/verify` 401 for a challenge that's gone (expired / used up). */
+        fun isExpiredTwoFactor(code: Int, message: String): Boolean =
+            code == 401 && message.contains("expired", ignoreCase = true)
+
+        fun twoFactorErrorMessage(code: Int, message: String, useBackupCode: Boolean): String = when {
+            code == 401 && message == "Invalid code" ->
+                if (useBackupCode) {
+                    "That backup code didn't work."
+                } else {
+                    "That code didn't work. Check your authenticator app and try again."
+                }
+            else -> message.ifBlank { "Couldn't verify the code." }
+        }
     }
 }
 

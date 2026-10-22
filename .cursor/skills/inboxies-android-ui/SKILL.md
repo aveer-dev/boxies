@@ -201,6 +201,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | --- | --- | --- | --- |
 | Domain Admin | `previewDomainAdmin` | `domainAdmin` | Admin mailbox console (fixture rows, no network) |
 | Password sign-in | `previewPasswordSignIn` | `passwordSignIn` | `SignInView` with password form expanded |
+| 2FA code step | `previewTwoFactorChallenge` | `twoFactorChallenge` | Email sign-in at the authenticator / backup code step (fixture challenge, verify hits the network and fails) |
 | Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |
 | Invite accept (signed in) | `previewInviteAcceptSignedIn` | `inviteAcceptSignedIn` | Invite accept into the signed-in account |
 | Sign-in & recovery | `previewSignInMethods` | `signInMethods` | Sign-in methods + recovery email |
