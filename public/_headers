@@ -1,0 +1,5 @@
+# Workers static assets: Google fetches this to tie the Android app (Credential
+# Manager passkeys, `delegate_permission/common.get_login_creds`) to the web
+# app's domain. Say it's JSON explicitly.
+/.well-known/assetlinks.json
+  Content-Type: application/json

@@ -55,6 +55,8 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.PasswordLoginResponse
+import co.inboxies.app.models.ResetPasswordResponse
+import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.models.MailboxInviteRow
 import co.inboxies.app.models.MailboxMember
 import co.inboxies.app.models.RecoveryEmailStatus
@@ -117,6 +119,14 @@ sealed class ApiException(message: String) : Exception(message) {
      */
     class RecipientSuppressed(val suppressed: List<SuppressedRecipient>, message: String) : ApiException(
         message.ifBlank { "Not sent: a recipient is suppressed." },
+    )
+
+    /**
+     * 401 `code: "TWO_FACTOR_REQUIRED"` from password sign-in: the password was right, and
+     * the account wants an authenticator or backup code before it hands out a session.
+     */
+    class TwoFactorRequired(val challenge: TwoFactorChallenge) : ApiException(
+        "Enter the code from your authenticator app.",
     )
 
     /** The server's readable `error` text, for paths that show it as-is. */
@@ -213,7 +223,8 @@ class ApiClient private constructor() {
     /** Tokens the server just rejected as expired; RootView signs out if it's still current. */
     val sessionExpired = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
-    private fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
+    internal fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
+        if (code == 401) TwoFactorChallenge.parse(body)?.let { return ApiException.TwoFactorRequired(it) }
         val message = httpErrorMessage(body)
         if (sentToken != null && isExpiredSessionResponse(code, message)) {
             sessionExpired.tryEmit(sentToken)
@@ -236,8 +247,22 @@ class ApiClient private constructor() {
         authed: Boolean = true,
         bearerToken: String? = null,
         headers: Map<String, String> = emptyMap(),
-    ): T = withContext(Dispatchers.IO) {
-        val (data, code, contentType) = perform(
+    ): T = requestWithHeaders<T>(path, method, query, body, authed, bearerToken, headers).first
+
+    /**
+     * [request], plus the response headers for callers that need them (the passkey
+     * challenge cookie, `set-auth-token`).
+     */
+    suspend inline fun <reified T> requestWithHeaders(
+        path: String,
+        method: String = "GET",
+        query: Map<String, String> = emptyMap(),
+        body: JsonObject? = null,
+        authed: Boolean = true,
+        bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
+    ): Pair<T, okhttp3.Headers> = withContext(Dispatchers.IO) {
+        val raw = performRaw(
             path,
             method,
             query,
@@ -246,20 +271,27 @@ class ApiClient private constructor() {
             bearerToken = bearerToken,
             headers = headers,
         )
+        Pair(decodeBody<T>(raw.text, raw.code, raw.contentType), raw.headers)
+    }
+
+    inline fun <reified T> decodeBody(data: String, code: Int, contentType: String): T {
         if (code == 204 && T::class == EmptyResponse::class) {
             @Suppress("UNCHECKED_CAST")
-            return@withContext EmptyResponse() as T
+            return EmptyResponse() as T
         }
         if (!contentType.contains("json", ignoreCase = true) && data.isNotBlank()) {
             if (looksLikeCloudflareAccess(data, null)) throw ApiException.CloudflareAccess()
             throw ApiException.NotJson(data.take(160))
         }
-        try {
+        return try {
             json.decodeFromString<T>(data.ifBlank { "{}" })
         } catch (e: Exception) {
             throw ApiException.Decoding(e)
         }
     }
+
+    /** A successful reply: body text, status, `Content-Type` and all headers. */
+    class RawResponse(val text: String, val code: Int, val contentType: String, val headers: okhttp3.Headers)
 
     suspend fun requestBytes(
         path: String,
@@ -281,6 +313,20 @@ class ApiClient private constructor() {
         bearerToken: String? = null,
         headers: Map<String, String> = emptyMap(),
     ): Triple<String, Int, String> {
+        val raw = performRaw(path, method, query, body, authed, asBytes, bearerToken, headers)
+        return Triple(raw.text, raw.code, raw.contentType)
+    }
+
+    fun performRaw(
+        path: String,
+        method: String,
+        query: Map<String, String>,
+        body: JsonObject?,
+        authed: Boolean,
+        asBytes: Boolean = false,
+        bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
+    ): RawResponse {
         val builder = Request.Builder().url(buildUrl(path, query))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
@@ -308,7 +354,7 @@ class ApiClient private constructor() {
                     // A pinned outgoing session failing is not "the current session expired".
                     throw httpFailure(response.code, text, sentToken.takeIf { bearerToken == null })
                 }
-                return Triple(text, response.code, response.header("Content-Type").orEmpty())
+                return RawResponse(text, response.code, response.header("Content-Type").orEmpty(), response.headers)
             }
         } catch (e: ApiException) {
             throw e
@@ -558,8 +604,27 @@ class ApiClient private constructor() {
         authed = false,
     )
 
-    /** Pass [token] (email link), or [email] + [code] (6-digit code). */
-    suspend fun resetPassword(token: String? = null, email: String? = null, code: String? = null, newPassword: String): PasswordLoginResponse = request(
+    /**
+     * Second step of a password sign-in when the account has two-factor on: the challenge
+     * token from the sign-in reply plus an authenticator code (`method: "totp"`) or a
+     * one-time backup code (`method: "backup_code"`).
+     */
+    suspend fun verifyTwoFactor(challengeToken: String, code: String, method: String): PasswordLoginResponse = request(
+        "/api/v1/auth/two-factor/verify",
+        method = "POST",
+        body = buildJsonObject {
+            put("twoFactorToken", challengeToken)
+            put("code", code)
+            put("method", method)
+        },
+        authed = false,
+    )
+
+    /**
+     * Pass [token] (email link), or [email] + [code] (6-digit code). With two-factor on the
+     * reply carries a challenge instead of a session token.
+     */
+    suspend fun resetPassword(token: String? = null, email: String? = null, code: String? = null, newPassword: String): ResetPasswordResponse = request(
         "/api/v1/auth/password/reset",
         method = "POST",
         body = buildJsonObject {
