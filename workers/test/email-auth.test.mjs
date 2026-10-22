@@ -7,8 +7,10 @@ import assert from "node:assert/strict";
 import { Folders } from "../../shared/folders.ts";
 import {
 	domainFromAddress,
+	authTierOf,
 	domainsAligned,
-	isAuthSpoofed,
+	isAuthFailed,
+	isFromUntrusted,
 	isTrustedAuthserv,
 	mergeTrustedAuthHeaders,
 	parseAuthSignals,
@@ -190,6 +192,7 @@ assert.equal(domainFromAddress("@paypal.com"), "paypal.com");
 	);
 	const roundTrip = parseStoredEmailAuth(stored);
 	assert.equal(roundTrip?.spoofed, true);
+	assert.equal(roundTrip?.authTier, "failed");
 	assert.equal(roundTrip?.source, "authentication-results");
 }
 
@@ -208,7 +211,7 @@ assert.equal(domainFromAddress("@paypal.com"), "paypal.com");
 	assert.deepEqual(result, {
 		class: "spam",
 		folderId: Folders.SPAM,
-		reason: "auth-spoofed",
+		reason: "auth-failed",
 	});
 	assert.equal(shouldAutoDraft(result, spoofed), false);
 }
@@ -227,7 +230,7 @@ assert.equal(domainFromAddress("@paypal.com"), "paypal.com");
 	});
 	assert.equal(result?.class, "bulk");
 	assert.equal(result?.folderId, Folders.PROMOTIONS);
-	assert.equal(isAuthSpoofed(spoofed), true);
+	assert.equal(isAuthFailed(spoofed), true);
 }
 
 {
@@ -526,6 +529,222 @@ const CF_BLOG_ARC =
 	});
 	assert.equal(auth.source, "none");
 	assert.notEqual(auth.aligned, true);
+}
+
+// ── Auth tiers (AVE-92) ──────────────────────────────────────────
+{
+	// Aligned pass → verified.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(["Authentication-Results", CF_PASS]),
+		headerFrom: "PayPal <notify@paypal.com>",
+		envelopeFrom: "notify@paypal.com",
+	});
+	assert.equal(auth.authTier, "verified");
+	assert.equal(isAuthFailed(auth), false);
+	assert.equal(isFromUntrusted(auth), false);
+}
+
+{
+	// SendGrid-style: passes only for the ESP, From domain has no DMARC
+	// policy. Unverified, not spoofed, and not spam on auth alone.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=pass header.d=sendgrid.net header.s=s1; spf=pass smtp.mailfrom=bounces+123@em1234.sendgrid.net; dmarc=none header.from=smallbiz.example",
+		]),
+		headerFrom: "Ada <ada@smallbiz.example>",
+		envelopeFrom: "bounces+123@em1234.sendgrid.net",
+	});
+	assert.equal(auth.aligned, false);
+	assert.equal(auth.authTier, "unverified");
+	assert.equal(auth.spoofed, false);
+	assert.equal(isAuthFailed(auth), false);
+	assert.equal(
+		classifyFromHeaders({
+			headers: headers(["From", "Ada <ada@smallbiz.example>"]),
+			subject: "Your quote",
+			sender: "ada@smallbiz.example",
+			auth,
+		}),
+		null,
+		"unverified mail goes to the normal classifier",
+	);
+	// Still not proven, so filters and auto-drafts stay off as before.
+	assert.equal(isFromUntrusted(auth), true);
+}
+
+{
+	// dmarc=fail under p=reject → failed → spam.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=pass header.d=evil.example; spf=softfail smtp.mailfrom=x@evil.example; dmarc=fail header.from=paypal.com policy.dmarc=reject",
+		]),
+		headerFrom: "PayPal <service@paypal.com>",
+		envelopeFrom: "x@evil.example",
+	});
+	assert.equal(auth.dmarcPolicy, "reject");
+	assert.equal(auth.authTier, "failed");
+	assert.equal(auth.spoofed, true);
+	assert.deepEqual(
+		classifyFromHeaders({
+			headers: headers(["From", "PayPal <service@paypal.com>"]),
+			subject: "Verify your account",
+			sender: "service@paypal.com",
+			auth,
+		}),
+		{ class: "spam", folderId: Folders.SPAM, reason: "auth-failed" },
+	);
+}
+
+{
+	// p=quarantine counts too.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=none; spf=softfail smtp.mailfrom=x@evil.example; dmarc=fail header.from=bank.example policy.dmarc=quarantine",
+		]),
+		headerFrom: "bank@bank.example",
+		envelopeFrom: "x@evil.example",
+	});
+	assert.equal(auth.authTier, "failed");
+}
+
+{
+	// dmarc=fail but the domain only asks for p=none → unverified.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=pass header.d=mailer.example; spf=softfail smtp.mailfrom=x@mailer.example; dmarc=fail header.from=shop.example policy.dmarc=none",
+		]),
+		headerFrom: "orders@shop.example",
+		envelopeFrom: "x@mailer.example",
+	});
+	assert.equal(auth.dmarcPolicy, "none");
+	assert.equal(auth.authTier, "unverified");
+	assert.equal(auth.spoofed, false);
+}
+
+{
+	// SPF hard-fail with no DKIM pass → failed, even without a DMARC policy.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=none; spf=fail smtp.mailfrom=ada@smallbiz.example; dmarc=none header.from=smallbiz.example",
+		]),
+		headerFrom: "ada@smallbiz.example",
+		envelopeFrom: "ada@smallbiz.example",
+	});
+	assert.equal(auth.authTier, "failed");
+}
+
+{
+	// SPF hard-fail but DKIM passes for some domain → not failed.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=pass header.d=list.example; spf=fail smtp.mailfrom=ada@smallbiz.example; dmarc=none header.from=smallbiz.example",
+		]),
+		headerFrom: "ada@smallbiz.example",
+		envelopeFrom: "ada@smallbiz.example",
+	});
+	assert.equal(auth.authTier, "unverified");
+}
+
+{
+	// SPF softfail alone is not a hard fail.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=none; spf=softfail smtp.mailfrom=ada@smallbiz.example; dmarc=none",
+		]),
+		headerFrom: "ada@smallbiz.example",
+		envelopeFrom: "ada@smallbiz.example",
+	});
+	assert.equal(auth.authTier, "unverified");
+}
+
+{
+	// No trusted verdict → unverified, never failed. An untrusted
+	// (non-Cloudflare) results header can't fail or verify mail.
+	const none = parseAuthSignals({ headerFrom: "ada@example.com", envelopeFrom: "ada@example.com" });
+	assert.equal(none.authTier, "unverified");
+	const forgedFail = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"evil.example; spf=fail smtp.mailfrom=ada@example.com; dmarc=fail header.from=example.com policy.dmarc=reject",
+		]),
+		headerFrom: "ada@example.com",
+		envelopeFrom: "ada@example.com",
+	});
+	assert.equal(forgedFail.source, "none");
+	assert.equal(forgedFail.authTier, "unverified");
+	// Only Cloudflare-sealed ARC results count; another sealer's pass doesn't verify.
+	const upstreamArc = parseAuthSignals({
+		envelopeHeaders: headers([
+			"ARC-Authentication-Results",
+			"i=1; mx.google.com; dkim=pass header.d=example.com; spf=pass smtp.mailfrom=ada@example.com; dmarc=pass header.from=example.com",
+		]),
+		headerFrom: "ada@example.com",
+		envelopeFrom: "ada@example.com",
+	});
+	assert.equal(upstreamArc.source, "none");
+	assert.equal(upstreamArc.authTier, "unverified");
+	// Cloudflare's own ARC results do.
+	const cfArc = parseAuthSignals({
+		envelopeHeaders: headers(["ARC-Authentication-Results", CF_BLOG_ARC]),
+		headerFrom: "joe@example.com",
+		envelopeFrom: "joe@example.com",
+	});
+	assert.equal(cfArc.authTier, "verified");
+	assert.equal(cfArc.dmarcPolicy, "reject");
+}
+
+{
+	// A fail wins over a pass in the same verdict set.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers([
+			"Authentication-Results",
+			"mx.cloudflare.net; dkim=fail header.d=paypal.com; spf=pass smtp.mailfrom=x@paypal.com; dmarc=fail header.from=paypal.com policy.dmarc=reject",
+		]),
+		headerFrom: "service@paypal.com",
+		envelopeFrom: "x@paypal.com",
+	});
+	assert.equal(auth.authTier, "failed");
+}
+
+{
+	// Stored rows round-trip the tier; rows from before tiers fall back to `spoofed`.
+	const verified = parseStoredEmailAuth(
+		serializeEmailAuth(
+			parseAuthSignals({
+				envelopeHeaders: headers(["Authentication-Results", CF_PASS]),
+				headerFrom: "notify@paypal.com",
+				envelopeFrom: "notify@paypal.com",
+			}),
+		),
+	);
+	assert.equal(verified?.authTier, "verified");
+	const legacySpoofed = parseStoredEmailAuth(
+		JSON.stringify({ source: "authentication-results", aligned: false, spoofed: true, headerFrom: "a@b.example", envelopeFrom: "" }),
+	);
+	assert.equal(legacySpoofed?.authTier, "failed");
+	assert.equal(legacySpoofed?.spoofed, true);
+	const legacyAligned = parseStoredEmailAuth(
+		JSON.stringify({ source: "authentication-results", aligned: true, spoofed: false, headerFrom: "a@b.example", envelopeFrom: "" }),
+	);
+	assert.equal(legacyAligned?.authTier, "verified");
+	const legacyNone = parseStoredEmailAuth(
+		JSON.stringify({ source: "none", aligned: null, spoofed: false, headerFrom: "a@b.example", envelopeFrom: "" }),
+	);
+	assert.equal(legacyNone?.authTier, "unverified");
+	// `spoofed` always mirrors the tier.
+	const stored = parseStoredEmailAuth(
+		JSON.stringify({ source: "authentication-results", aligned: false, spoofed: true, authTier: "unverified", headerFrom: "a@b.example", envelopeFrom: "" }),
+	);
+	assert.equal(stored?.authTier, "unverified");
+	assert.equal(stored?.spoofed, false);
+	assert.equal(authTierOf(null), "unverified");
 }
 
 console.log("email-auth tests passed");

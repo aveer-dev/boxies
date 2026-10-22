@@ -375,6 +375,9 @@ export interface EmailAuthSnapshot {
 	headerFrom?: string;
 	envelopeFrom?: string;
 	aligned?: boolean | null;
+	dmarcPolicy?: "none" | "quarantine" | "reject";
+	authTier?: "verified" | "unverified" | "failed";
+	/** Same as `authTier === "failed"`. */
 	spoofed?: boolean;
 	source?: "authentication-results" | "arc-authentication-results" | "none";
 }
