@@ -7,7 +7,7 @@ import SwiftUI
 /// 1. Splash handoff transition with logo gliding up.
 /// 2. 3-line headline ("Your \n Personal \n email app") + circular downward arrow button.
 /// 3. Auth buttons reveal by moving the welcome view UP (not a modal).
-/// 4. Apple and Google side by side (logo-only glass capsules, matching Android).
+/// 4. Apple, Google and passkey side by side (logo-only glass capsules).
 /// 5. Email login screen pushes entire view UP from below, with interactive drag-down return.
 struct SignInView: View {
     var isShowingSplash: Bool = false
@@ -148,6 +148,12 @@ struct SignInView: View {
                                 Task {
                                     commitAPIBaseURL()
                                     await handleGoogle()
+                                }
+                            },
+                            onPasskeySignIn: {
+                                Task {
+                                    commitAPIBaseURL()
+                                    await auth.signInWithPasskey()
                                 }
                             },
                             onOpenLegal: { url in
@@ -653,13 +659,14 @@ struct SignInView: View {
 /// 1. "Get started" (fully rounded primary pill)
 /// 2. "or" divider
 /// 3. "Continue with Email" (liquid glass capsule)
-/// 4. Apple and Google logo-only liquid glass capsules, side by side
+/// 4. Apple, Google and passkey logo-only liquid glass capsules, side by side
 /// 5. Terms of Use + Privacy Policy fine print
 private struct AuthButtonsSection: View {
     var onGetStarted: () -> Void
     var onContinueWithEmail: () -> Void
     var onAppleSignIn: () -> Void
     var onGoogleSignIn: () -> Void
+    var onPasskeySignIn: () -> Void
     var onOpenLegal: (URL) -> Void
     var commitAPIBaseURL: () -> Void
 
@@ -732,6 +739,19 @@ private struct AuthButtonsSection: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Sign in with Google")
+
+                // Passkey: same logo-only capsule. Signs in on its own (no 2FA step).
+                Button(action: onPasskeySignIn) {
+                    Image(systemName: "person.badge.key.fill")
+                        .font(.system(size: 19))
+                        .foregroundStyle(AppTheme.ink)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .liquidGlass(in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(auth.isBusy)
+                .accessibilityLabel("Sign in with a passkey")
             }
 
             #if DEBUG
@@ -797,11 +817,16 @@ private struct EmailLoginScreen: View {
         case password
         case forgotPassword
         case resetPassword
+        /// Authenticator or backup code after a password sign-in (or reset) for an account with 2FA on.
+        case twoFactor
     }
 
     @Environment(AuthStore.self) private var auth
     @State private var navigationPath: [Step] = {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-previewTwoFactorChallenge") {
+            return [.password, .twoFactor]
+        }
         if ProcessInfo.processInfo.arguments.contains("-previewPasswordSignIn") {
             return [.password]
         }
@@ -818,6 +843,8 @@ private struct EmailLoginScreen: View {
     @State private var isResetPasswordVisible: Bool = false
     @State private var isSendingReset: Bool = false
     @State private var isResetting: Bool = false
+    @State private var twoFactorCode: String = ""
+    @State private var isUsingBackupCode: Bool = false
     @FocusState private var isFieldFocused: Bool
 
     private var isValidEmail: Bool {
@@ -836,6 +863,8 @@ private struct EmailLoginScreen: View {
                         forgotPasswordStepView
                     case .resetPassword:
                         resetPasswordStepView
+                    case .twoFactor:
+                        twoFactorStepView
                     }
                 }
                 .toolbar(.hidden, for: .navigationBar)
@@ -855,10 +884,38 @@ private struct EmailLoginScreen: View {
         }
         .onChange(of: navigationPath) { _, newPath in
             isAtRoot.wrappedValue = newPath.isEmpty
+            if !newPath.contains(.twoFactor), auth.twoFactorChallenge != nil {
+                // Backed out of the code step: that challenge is abandoned.
+                auth.cancelTwoFactor()
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 isFieldFocused = true
             }
         }
+        .onChange(of: auth.twoFactorChallenge) { _, challenge in
+            if challenge != nil {
+                twoFactorCode = ""
+                isUsingBackupCode = false
+                if navigationPath.last != .twoFactor {
+                    navigationPath.append(.twoFactor)
+                }
+            } else if navigationPath.last == .twoFactor, !auth.isAuthenticated {
+                // Expired challenge: back to the password to start over.
+                navigationPath.removeLast()
+            }
+        }
+        #if DEBUG
+        .task {
+            if ProcessInfo.processInfo.arguments.contains("-previewTwoFactorChallenge"), auth.twoFactorChallenge == nil {
+                email = "you@inboxies.email"
+                auth.twoFactorChallenge = TwoFactorChallenge(
+                    token: "preview",
+                    methods: ["totp", "backup_code"],
+                    email: "you@inboxies.email"
+                )
+            }
+        }
+        #endif
         .onAppear {
             isAtRoot.wrappedValue = navigationPath.isEmpty
             if isPresented {
@@ -1330,6 +1387,147 @@ private struct EmailLoginScreen: View {
         }
         .background(AppTheme.surface)
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var twoFactorCodeReady: Bool {
+        let trimmed = twoFactorCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        return isUsingBackupCode ? trimmed.count >= 4 : trimmed.filter(\.isNumber).count == 6
+    }
+
+    private var twoFactorStepView: some View {
+        VStack(spacing: 0) {
+            subsequentStepToolbar
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ZStack {
+                        Circle()
+                            .fill(AppTheme.pillFill)
+                            .frame(width: 52, height: 52)
+
+                        Image(systemName: "lock.shield.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                    .padding(.top, 16)
+
+                    Text("Two-factor authentication")
+                        .font(.inter(size: 22, weight: .bold))
+                        .foregroundStyle(AppTheme.ink)
+                        .padding(.top, 14)
+
+                    Text(
+                        isUsingBackupCode
+                            ? "Enter one of the backup codes you saved when you turned on two-factor authentication. Each code works once."
+                            : "Enter the 6-digit code from your authenticator app."
+                    )
+                    .font(.inter(size: 14))
+                    .foregroundStyle(AppTheme.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 4)
+
+                    Group {
+                        if isUsingBackupCode {
+                            TextField("Backup code", text: $twoFactorCode)
+                                .keyboardType(.asciiCapable)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .font(.inter(size: 17, weight: .semibold))
+                        } else {
+                            TextField("6-digit code", text: $twoFactorCode)
+                                .keyboardType(.numberPad)
+                                .textContentType(.oneTimeCode)
+                                .font(.inter(size: 20, weight: .bold))
+                        }
+                    }
+                    .multilineTextAlignment(.center)
+                    .focused($isFieldFocused)
+                    .padding(14)
+                    .background(AppTheme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(AppTheme.line, lineWidth: 1)
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .onSubmit {
+                        if twoFactorCodeReady && !auth.isBusy {
+                            submitTwoFactor()
+                        }
+                    }
+                    .onChange(of: twoFactorCode) { _, code in
+                        // Authenticator codes go as soon as all six digits are in.
+                        if !isUsingBackupCode, code.filter(\.isNumber).count == 6, code.count == 6, !auth.isBusy {
+                            submitTwoFactor()
+                        }
+                    }
+
+                    HStack {
+                        Spacer()
+                        Button {
+                            auth.errorMessage = nil
+                            twoFactorCode = ""
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                                isUsingBackupCode.toggle()
+                            }
+                            isFieldFocused = true
+                        } label: {
+                            Text(isUsingBackupCode ? "Use authenticator app" : "Use a backup code")
+                                .font(.inter(size: 13, weight: .medium))
+                                .foregroundStyle(AppTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+
+                    Spacer()
+                        .frame(height: 16)
+
+                    Button(action: submitTwoFactor) {
+                        HStack {
+                            if auth.isBusy {
+                                ProgressView()
+                                    .tint(AppTheme.surface)
+                                    .scaleEffect(0.9)
+                            } else {
+                                Text("Verify")
+                                    .font(.inter(size: 16, weight: .semibold))
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(twoFactorCodeReady && !auth.isBusy ? AppTheme.ink : AppTheme.pillActive)
+                        .foregroundStyle(twoFactorCodeReady && !auth.isBusy ? AppTheme.surface : AppTheme.muted)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!twoFactorCodeReady || auth.isBusy)
+                    .padding(.horizontal, 24)
+
+                    Spacer()
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+        }
+        .background(AppTheme.surface)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private func submitTwoFactor() {
+        guard twoFactorCodeReady, !auth.isBusy else { return }
+        Task {
+            commitAPIBaseURL()
+            let ok = await auth.verifyTwoFactor(code: twoFactorCode, useBackupCode: isUsingBackupCode)
+            if ok, auth.isAuthenticated {
+                onDismiss()
+            } else if !ok {
+                twoFactorCode = ""
+            }
+        }
     }
 
     private func submitPassword() {
