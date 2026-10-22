@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import Inboxies
 
@@ -224,6 +225,21 @@ final class HardeningTests: XCTestCase {
                        ["p1-new", "p1-seen", "p2-new", "p2-seen"])
     }
 
+    func testInboxNewPreviewCapsNewAndCountsTheRest() throws {
+        let newRows = try (0..<7).map { try inboxEmail("n\($0)", date: "2026-10-\(String(format: "%02d", 20 - $0))", unread: true) }
+        // Server sent 5 New (new_limit) but reports 12 in total.
+        let capped = EmailListPaging.inboxNewPreview(Array(newRows.prefix(5)), serverNewCount: 12)
+        XCTAssertEqual(capped.shown.map(\.id), ["n0", "n1", "n2", "n3", "n4"])
+        XCTAssertEqual(capped.hiddenCount, 7)
+        // Extra cached New rows are hidden, newest first kept.
+        let local = EmailListPaging.inboxNewPreview(newRows.reversed(), serverNewCount: nil)
+        XCTAssertEqual(local.shown.first?.id, "n0")
+        XCTAssertEqual(local.shown.count, EmailListPaging.inboxNewPreviewLimit)
+        XCTAssertEqual(local.hiddenCount, 2)
+        // At or under the cap: nothing hidden.
+        XCTAssertEqual(EmailListPaging.inboxNewPreview(Array(newRows.prefix(3)), serverNewCount: 3).hiddenCount, 0)
+    }
+
     // MARK: - Pruning later pages
 
     func testPruneWindowForLaterPages() {
@@ -310,6 +326,62 @@ final class HardeningTests: XCTestCase {
         XCTAssertTrue(restored.hasUnsavedChanges, "Restored message is saved as a draft next")
     }
 
+    // MARK: - Send idempotency key
+
+    @MainActor
+    func testEachComposeHasItsOwnIdempotencyKey() {
+        let mailbox = Mailbox(id: "mb-1", email: "me@x.com", name: "Me", settings: nil)
+        let first = ComposeFormModel(mode: .new, mailbox: mailbox)
+        let second = ComposeFormModel(mode: .new, mailbox: mailbox)
+        first.cancelAutoSave()
+        second.cancelAutoSave()
+        XCTAssertNotEqual(first.sendIdempotencyKey, second.sendIdempotencyKey)
+        // The server takes 1-200 printable ASCII characters.
+        for key in [first.sendIdempotencyKey, second.sendIdempotencyKey] {
+            XCTAssertEqual(key.count, 36)
+            XCTAssertTrue(key.unicodeScalars.allSatisfy { (0x20...0x7E).contains($0.value) })
+        }
+        XCTAssertEqual(first.sendIdempotencyKey, first.sendIdempotencyKey, "Stable for the compose's life")
+    }
+
+    @MainActor
+    func testRestoredPendingSendKeepsItsIdempotencyKey() {
+        let mailbox = Mailbox(id: "mb-1", email: "me@x.com", name: "Me", settings: nil)
+        let form = ComposeFormModel(mode: .new, mailbox: mailbox)
+        form.toTokens = [MailAddress(name: nil, email: "jordan@example.com")]
+        form.cancelAutoSave()
+        let saved = form.pendingSendRecord(accountKey: "me@x.com")
+        XCTAssertEqual(saved.idempotencyKey, form.sendIdempotencyKey)
+
+        let restored = ComposeFormModel(mode: saved.composeMode, mailbox: mailbox)
+        restored.restore(from: saved)
+        restored.cancelAutoSave()
+        XCTAssertEqual(restored.sendIdempotencyKey, form.sendIdempotencyKey)
+
+        // Records written before the key existed restore with the new form's own key.
+        var legacy = saved
+        legacy.idempotencyKey = nil
+        let fresh = ComposeFormModel(mode: legacy.composeMode, mailbox: mailbox)
+        let freshKey = fresh.sendIdempotencyKey
+        fresh.restore(from: legacy)
+        fresh.cancelAutoSave()
+        XCTAssertEqual(fresh.sendIdempotencyKey, freshKey)
+    }
+
+    func testPendingSendRecordPersistsIdempotencyKey() throws {
+        let store = try tempStore()
+        var saved = record()
+        saved.idempotencyKey = "key-123"
+        store.save(saved)
+        XCTAssertEqual(store.loadAll().first?.idempotencyKey, "key-123")
+    }
+
+    func testIdempotencyHeaders() {
+        XCTAssertEqual(APIClient.idempotencyHeaders("abc"), ["Idempotency-Key": "abc"])
+        XCTAssertEqual(APIClient.idempotencyHeaders(nil), [:])
+        XCTAssertEqual(APIClient.idempotencyHeaders(""), [:])
+    }
+
     // MARK: - Body sanitizing
 
     func testMailCSPRunsNoPageScript() {
@@ -333,5 +405,39 @@ final class HardeningTests: XCTestCase {
         XCTAssertFalse(prepared.main.lowercased().contains("<script"))
         let cached = await EmailHTMLSanitizer.prepareOffMain("<p>ignored</p>", key: key)
         XCTAssertEqual(cached, prepared, "Same key is served from the cache")
+    }
+
+    // MARK: - Dark mode: own colours
+
+    /// Same fixtures as web (`workers/test/email-colors.test.mjs`) and Android.
+    func testHasOwnColorsMatchesSharedFixtures() throws {
+        struct Fixture: Decodable {
+            let name: String
+            let html: String
+            let ownColors: Bool
+        }
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // InboxiesTests
+            .deletingLastPathComponent() // AgenticInbox
+            .deletingLastPathComponent() // ios
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("shared/email-colors.fixtures.json")
+        let fixtures = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: url))
+        XCTAssertGreaterThan(fixtures.count, 10)
+        for fixture in fixtures {
+            XCTAssertEqual(EmailHTMLSanitizer.hasOwnColors(fixture.html), fixture.ownColors, fixture.name)
+        }
+    }
+
+    func testPreparedBodyFlagsOwnColorsAfterSanitizing() async {
+        let designed = ##"<table><tr><td bgcolor="#ffffff" onclick="x()">Sale</td></tr></table>"##
+        let simple = "<p>Hi</p><script>document.body.style.background='red'</script>"
+        let a = await EmailHTMLSanitizer.prepareOffMain(designed, key: "own-\(UUID())")
+        let b = await EmailHTMLSanitizer.prepareOffMain(simple, key: "own-\(UUID())")
+        XCTAssertTrue(a.mainHasOwnColors)
+        XCTAssertFalse(b.mainHasOwnColors, "Stripped script styles never count")
+        XCTAssertEqual(EmailBodyAppearance(colorScheme: .dark, hasOwnColors: true), .paper)
+        XCTAssertEqual(EmailBodyAppearance(colorScheme: .dark, hasOwnColors: false), .dark)
+        XCTAssertEqual(EmailBodyAppearance(colorScheme: .light, hasOwnColors: true), .light)
     }
 }

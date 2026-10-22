@@ -16,6 +16,7 @@ import {
 	htmlToPlainText,
 } from "~/lib/utils";
 import { useReplyToEmail } from "~/queries/emails";
+import { newIdempotencyKey } from "~/lib/send-idempotency";
 import { useMailbox } from "~/queries/mailboxes";
 import type { Email } from "~/types";
 
@@ -40,6 +41,8 @@ export default function QuickReplyBar({
 	const [text, setText] = useState("");
 	const [isSending, setIsSending] = useState(false);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	/** Idempotency-Key for the reply being typed; see `send`. */
+	const sendKeyRef = useRef<string | null>(null);
 	const toastManager = useKumoToastManager();
 	const replyMut = useReplyToEmail();
 	const { data: mailbox } = useMailbox(mailboxId);
@@ -47,7 +50,10 @@ export default function QuickReplyBar({
 
 	// A different thread starts with an empty box.
 	// eslint-disable-next-line react-hooks/exhaustive-deps -- reset per message
-	useEffect(() => setText(""), [replyTarget.id]);
+	useEffect(() => {
+		setText("");
+		sendKeyRef.current = null;
+	}, [replyTarget.id]);
 
 	const envelope = mailbox
 		? buildReplyEnvelope(
@@ -72,9 +78,12 @@ export default function QuickReplyBar({
 				displaySenderName(replyTarget),
 				replyTarget.body || "",
 			)}`;
+			// One key per quick reply: kept across failed attempts, new after success.
+			const idempotencyKey = (sendKeyRef.current ??= newIdempotencyKey());
 			await replyMut.mutateAsync({
 				mailboxId,
 				emailId: replyTarget.id,
+				idempotencyKey,
 				email: {
 					to: envelope.to,
 					cc: envelope.cc,
@@ -84,6 +93,7 @@ export default function QuickReplyBar({
 					text: htmlToPlainText(html),
 				},
 			});
+			sendKeyRef.current = null;
 			setText("");
 			toastManager.add({ title: "Reply sent!" });
 		} catch (err) {
@@ -98,6 +108,7 @@ export default function QuickReplyBar({
 
 	const popOut = () => {
 		startCompose({ mode: "reply", originalEmail: replyTarget, initialBody: text });
+		sendKeyRef.current = null;
 		setText("");
 		textareaRef.current?.blur();
 	};

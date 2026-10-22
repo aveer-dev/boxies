@@ -553,13 +553,29 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Stuck-send sweeper (AVE-66, workers/lib/outbound-send-sweeper.ts).
+		// send_queued_at: epoch ms of the last (re-)enqueue of a queued Sent
+		// row; send_attempts: re-enqueues the sweeper made. The partial index
+		// keeps the alarm's "queued rows" scan off the rest of the mailbox.
+		// Additive only: existing rows get 0 / NULL, and the first sweep
+		// stamps any already-queued row.
+		name: "34_outbound_send_sweeper",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE emails ADD COLUMN send_queued_at INTEGER;
+            CREATE INDEX IF NOT EXISTS idx_emails_queued_sends
+                ON emails(send_queued_at) WHERE delivery_status = 'queued';
+        `),
+	},
+	{
 		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
 		// or per message (quick summary). Generated lazily on open and reused
-		// until the thread gains a message. Additive only. Renumbered from 31 to 34
-		// after 31_thread_notes_to_self (AVE-59), 32_pending_blob_deletes (AVE-46)
-		// and 33_email_idempotency_key took the earlier slots; the runner tracks
+		// until the thread gains a message. Additive only. Renumbered from 31 to 37
+		// after 31_thread_notes_to_self (AVE-59), 32_pending_blob_deletes (AVE-46),
+		// 33_email_idempotency_key, 34_outbound_send_sweeper (AVE-66) and the
+		// open PRs' 35_ (AVE-42) and 36_ (AVE-41) took the earlier slots; the runner tracks
 		// migrations by name, so gaps and either order apply cleanly.
-		name: "34_email_summaries",
+		name: "37_email_summaries",
 		sql: txn(`
             CREATE TABLE IF NOT EXISTS email_summaries (
                 target_type TEXT NOT NULL CHECK (target_type IN ('thread', 'email')),

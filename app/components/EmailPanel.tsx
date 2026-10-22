@@ -17,6 +17,7 @@ import ThreadMessage from "~/components/email-panel/ThreadMessage";
 import AISummaryCard from "~/components/email-panel/AISummaryCard";
 import { isSummaryFolderEligible, MIN_SUMMARY_CHARS } from "shared/ai-summaries";
 import { splitEmailList, stripHtml, toEmailListValue } from "~/lib/utils";
+import { createSendKeyStore } from "~/lib/send-idempotency";
 import api from "~/services/api";
 import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
@@ -69,6 +70,8 @@ export default function EmailPanel({
 	const moveEmailMut = useMoveEmail();
 	const sendEmailMut = useSendEmail();
 	const replyMut = useReplyToEmail();
+	/** Idempotency-Key per draft: retries of one draft's send reuse it. */
+	const draftSendKeys = useRef(createSendKeyStore()).current;
 	const { data: folders = [] } = useFolders(mailboxId) as { data?: Folder[] };
 	const { data: currentMailbox } = useMailbox(mailboxId) as {
 		data?: Mailbox;
@@ -286,7 +289,9 @@ export default function EmailPanel({
 				html: target.body || "",
 				text: target.body ? target.body.replace(/<[^>]*>/g, "").trim() : "",
 			};
-			if (originalEmail) await replyMut.mutateAsync({ mailboxId, emailId: originalEmail.id, email: emailData }); else await sendEmailMut.mutateAsync({ mailboxId, email: emailData });
+			const idempotencyKey = draftSendKeys.keyFor(target.id);
+			if (originalEmail) await replyMut.mutateAsync({ mailboxId, emailId: originalEmail.id, email: emailData, idempotencyKey }); else await sendEmailMut.mutateAsync({ mailboxId, email: emailData, idempotencyKey });
+			draftSendKeys.release(target.id);
 			const draftIds = new Set(
 				allMessages.filter((msg) => draftMessageIds.has(msg.id)).map((msg) => msg.id),
 			);

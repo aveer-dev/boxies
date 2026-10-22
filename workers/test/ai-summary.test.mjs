@@ -343,8 +343,8 @@ for (const folder of ["screener", "screened_out", "spam", "trash", "draft", "", 
 
 // ── Migration ──────────────────────────────────────────────────
 {
-	const migration = mailboxMigrations.find((m) => m.name === "34_email_summaries");
-	assert.ok(migration, "34_email_summaries is registered");
+	const migration = mailboxMigrations.find((m) => m.name === "37_email_summaries");
+	assert.ok(migration, "37_email_summaries is registered");
 	const migrationIndex = mailboxMigrations.indexOf(migration);
 	const names = mailboxMigrations.map((m) => m.name);
 	assert.ok(migrationIndex > names.indexOf("32_pending_blob_deletes"), "ordered after 32");
@@ -352,7 +352,7 @@ for (const folder of ["screener", "screened_out", "spam", "trash", "draft", "", 
 	assert.doesNotMatch(migration.sql, /DROP|ALTER TABLE emails|DELETE/i, "additive only");
 	const { sql } = freshDb();
 	applyMigrations(sql, mailboxMigrations);
-	assert.equal(sql.exec(`SELECT COUNT(*) AS n FROM d1_migrations WHERE name = ?`, "34_email_summaries")[0].n, 1);
+	assert.equal(sql.exec(`SELECT COUNT(*) AS n FROM d1_migrations WHERE name = ?`, "37_email_summaries")[0].n, 1);
 	assert.throws(
 		() => sql.exec(
 			`INSERT INTO email_summaries (target_type, target_id, summary, model, version, message_count, last_email_id, created_at, updated_at)

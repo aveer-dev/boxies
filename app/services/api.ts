@@ -26,11 +26,13 @@ import type {
 	MaskedAlias,
 	MeResponse,
 	AccountSession,
+	McpGrant,
 	RecoveryEmailStatus,
 	MailboxMember,
 	MailboxInviteRow,
 	MailboxRole,
 } from "~/types";
+import { idempotencyHeaders } from "~/lib/send-idempotency";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -112,10 +114,11 @@ function get<T>(
 	});
 }
 
-function post<T>(url: string, body?: unknown, opts?: RequestOptions) {
+function post<T>(url: string, body?: unknown, opts?: RequestOptions & { headers?: Record<string, string> }) {
 	return request<T>(url, {
 		method: "POST",
 		signal: opts?.signal,
+		headers: opts?.headers,
 		body: body != null ? JSON.stringify(body) : undefined,
 	});
 }
@@ -194,6 +197,11 @@ const api = {
 		del<{ ok: boolean }>(`/api/v1/me/sessions/${encodeURIComponent(sessionId)}`),
 	revokeOtherSessions: () =>
 		post<{ ok: boolean; revoked: number }>("/api/v1/me/sessions/revoke-others"),
+
+	// Connected apps (MCP OAuth grants)
+	listMcpGrants: () => get<McpGrant[]>("/api/v1/me/mcp-grants"),
+	revokeMcpGrant: (grantId: string) =>
+		del<{ ok: boolean }>(`/api/v1/me/mcp-grants/${encodeURIComponent(grantId)}`),
 
 	// Recovery email (where password reset codes go)
 	getRecoveryEmail: () => get<RecoveryEmailStatus>("/api/v1/me/recovery-email"),
@@ -421,8 +429,9 @@ const api = {
 	// Emails
 	listEmails: (mailboxId: string, params: Record<string, string>, opts?: { signal?: AbortSignal }) =>
 		get<EmailListResponse | Email[]>(`/api/v1/mailboxes/${mailboxId}/emails`, { params, signal: opts?.signal }),
-	sendEmail: (mailboxId: string, email: unknown) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/emails`, email),
+	/** `idempotencyKey`: one per compose, reused on retries (a replay is a 202 too). */
+	sendEmail: (mailboxId: string, email: unknown, idempotencyKey?: string) =>
+		post<void>(`/api/v1/mailboxes/${mailboxId}/emails`, email, { headers: idempotencyHeaders(idempotencyKey) }),
 	getEmail: (mailboxId: string, id: string, opts?: { signal?: AbortSignal }) =>
 		get<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, { signal: opts?.signal }),
 	updateEmail: (mailboxId: string, id: string, data: unknown) =>
@@ -531,10 +540,14 @@ const api = {
 			draft_id?: string;
 		},
 	) => post<{ id: string; draft_id?: string }>(`/api/v1/mailboxes/${mailboxId}/drafts`, draft),
-	replyToEmail: (mailboxId: string, emailId: string, email: unknown) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/reply`, email),
-	forwardEmail: (mailboxId: string, emailId: string, email: unknown) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/forward`, email),
+	replyToEmail: (mailboxId: string, emailId: string, email: unknown, idempotencyKey?: string) =>
+		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/reply`, email, {
+			headers: idempotencyHeaders(idempotencyKey),
+		}),
+	forwardEmail: (mailboxId: string, emailId: string, email: unknown, idempotencyKey?: string) =>
+		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/forward`, email, {
+			headers: idempotencyHeaders(idempotencyKey),
+		}),
 
 	// Folders
 	listFolders: (mailboxId: string) =>
