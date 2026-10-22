@@ -1,6 +1,6 @@
 # Spam management plan
 
-Status: proposal (AVE-88). This is research and design only. The implementation work is the set of follow-up issues listed at the end.
+Status: approved (AVE-88). Decisions recorded 2026-10-22 (section 10). This is research and design only; the implementation work is the set of sub-issues in section 9.
 
 ## 1. Problem
 
@@ -84,7 +84,7 @@ Our Screener is already HEY-like. The missing piece is a Proton/Outlook-style al
 - **Sieve** ([RFC 5228](https://www.rfc-editor.org/rfc/rfc5228)) is the standard per-user filter language. Allow/block lists are equivalent to Sieve `address :is`/`:domain` tests. Keep our rules expressible that way so they can be exported.
 - **Abuse Reporting Format / feedback loops** ([RFC 5965](https://www.rfc-editor.org/rfc/rfc5965)): "Report spam" could later produce ARF reports. This is out of scope for now.
 
-## 5. Proposed model
+## 5. Model
 
 ### Sender rules, per mailbox
 
@@ -116,7 +116,7 @@ Only `failed` counts as spoofed. `unverified` mail goes to the normal classifier
 3. **User allow** (address, then domain):
    - If `verified`: never Spam. Skip the AI and spam-header verdicts and file by filter / preference / classifier (bulk vs inbox).
    - If `unverified`: allow an **address** rule (not a domain rule), file normally, and show the "unverified" banner. A domain rule needs `verified`, because domain-wide allows are what spoofers exploit.
-4. **Implicit trust** (we sent to them, contact, accepted in Screener): overrides an AI-only verdict. This is today's vouch behaviour, extended to `unverified`.
+4. **Implicit trust** (we sent to them, or accepted in Screener): overrides an AI-only verdict. This is today's vouch behaviour, extended to `unverified`. Contacts are not an explicit allow (decision 5).
 5. **Upstream spam headers** → Spam.
 6. **AI / heuristics** → Spam / ham / bulk.
 
@@ -127,8 +127,8 @@ This fixes AVE-88: a not-spammed sender is either `verified` (always allowed) or
 | Action | Writes | Retroactive | Undo |
 | --- | --- | --- | --- |
 | **Not spam** (any path out of Spam: button, move menu, swipe, bulk, MCP) | `allow` rule for the address, source `not_spam`. Clears any `block`. Sets `sender_triage = allowed`. | Moves the sender's other Spam messages from the last 30 days to their classified folder. Returns `rescuedCount`. | Toast "Undo" deletes the rule and moves the messages back. |
-| **Report spam** | `block` rule for the address. Drops the purpose preference. For bulk mail with `List-Unsubscribe`, also offers one-click unsubscribe (RFC 8058). | Moves that sender's Inbox/Promotions/Updates mail to Spam (opt-in checkbox, default on). | Toast "Undo". |
-| **Block domain / Allow domain** (Settings, or the long-press menu) | Domain rule. Allow requires the triggering message to be `verified`. | As above, scoped to the domain. | Remove the rule in Settings. |
+| **Report spam** | `block` rule for the address. Drops the purpose preference. For bulk mail with RFC 8058 one-click unsubscribe, also shows an "Unsubscribe" checkbox, unchecked by default. | Moves that sender's Inbox/Promotions/Updates mail to Spam (opt-in checkbox, default on). | Toast "Undo". |
+| **Block domain / Allow domain** (Settings only) | Domain rule. A domain allow only ever applies to `verified` mail. Refused for free-mail providers and public suffixes. | As above, scoped to the domain. | Remove the rule in Settings. |
 
 The MCP/agent `move_email` tool must **not** create rules implicitly. Agents get explicit `allow_sender` / `block_sender` tools, gated by the existing scope checks from AVE-69.
 
@@ -148,7 +148,7 @@ Store `classification_reason`, `auth_tier` and `matched_rule_id` on each email. 
   - An "Unverified sender" banner appears for `unverified` mail. A spam-reason line appears in Spam.
 - **Settings → Senders** gets three tabs: **Allowed**, **Blocked** and **Sorting** (today's purpose preferences).
   - Each row shows the address or domain, source and date, with remove/edit.
-  - An "Add" button takes an address or `@domain`.
+  - An "Add" button takes an address or `@domain`. This is the only place domain rules are created.
   - Same layout on all three clients. iOS uses `SendersSettingsView` and Android uses its Senders screen. Use `AppTheme` / `InboxiesColors` tokens. No new IA.
 - **Move-out-of-Spam paths** (move menu, swipe, multi-select) behave exactly like Not spam. No "remember?" prompt for leaving Spam: leaving Spam is the signal.
 
@@ -186,7 +186,7 @@ ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;
 - `POST /emails/:id/move` gains `rescuedCount`/`undoToken` in the response. Rules are written for every move out of or into Spam.
 - `POST /api/v1/mailboxes/:id/sender-rules/undo` with body `{undoToken}`
 
-Use a normalized registrable domain (Public Suffix List) for domain rules. Today's `domainsAligned` has no PSL. Add one before shipping domain rules so that `@co.uk` can't be allow-listed.
+Use a normalized registrable domain (Public Suffix List) for domain rules. Today's `domainsAligned` has no PSL. Add one before shipping domain rules so that `@co.uk` can't be allow-listed. `PUT` also refuses domain rules for a bundled free-mail provider list (gmail.com, outlook.com, icloud.com, …).
 
 ## 8. Metrics
 
@@ -198,27 +198,56 @@ These are logged per mailbox and aggregated without content:
 - rule counts and match counts
 - `unverified` share of inbound
 
-## 9. Phased rollout (proposed sub-issues)
+## 9. Sub-issues
 
-| # | Title | Size |
-| --- | --- | --- |
-| 1 | Split `spoofed` into auth tiers (`verified`/`unverified`/`failed`); only `failed` forces Spam. Update tests in `email-auth.test.mjs` / `classify-email.test.mjs`. | M |
-| 2 | Allowed senders beat AI verdicts and spam headers when `verified`, and AI-only verdicts when `unverified` (address-only). Fix the `aligned === null` gap. | S |
-| 3 | Persist `classification_reason` + `auth_tier` on emails; show the spam-reason line and "Unverified sender" banner on web/iOS/Android. | M |
-| 4 | Every move out of / into Spam teaches the sender (move menu, swipe, multi-select on all clients); keep MCP `move_email` neutral, add explicit agent tools. | S |
-| 5 | `sender_rules` table + migration/backfill + CRUD API + domain rules with PSL. | M |
-| 6 | Settings → Senders: Allowed / Blocked tabs on web, iOS, Android. | M |
-| 7 | Retroactive rescue/refile on Not spam / Report spam, with Undo token. | M |
-| 8 | Report spam on bulk mail offers RFC 8058 one-click unsubscribe. | S |
-| 9 | Spam metrics (reason breakdown, rescue rate) in the admin/ops dashboard. | S |
+Ship #1 and #2 first. Together they fix the reported symptom without new UI.
 
-Ship 1+2 first. Together they fix the reported symptom without new UI.
+| # | Title | Size | Platforms | Depends on |
+| --- | --- | --- | --- | --- |
+| 1 | Split `spoofed` into auth tiers | M | Worker | — |
+| 2 | Allowed senders beat AI verdicts and spam headers | S | Worker | 1 |
+| 3 | Store and show the spam reason and auth tier | M | Worker, web, iOS, Android | 1 |
+| 4 | Every move into or out of Spam teaches the sender | S | Worker, web, iOS, Android, MCP | 2 |
+| 5 | `sender_rules` table, API and domain rules | M | Worker | 2 |
+| 6 | Settings → Senders: Allowed / Blocked tabs | M | web, iOS, Android | 5 |
+| 7 | Retroactive rescue and refile, with Undo | M | Worker, web, iOS, Android | 4, 5 |
+| 8 | Report spam on bulk mail offers unsubscribe | S | Worker, web, iOS, Android | 4 |
+| 9 | Spam metrics | S | Worker, admin dashboard | 3 |
 
-## 10. Open questions for Emmanuel
+**1. Split `spoofed` into auth tiers (M).** Replace the boolean `spoofed` in `parseAuthSignals` with `authTier: verified | unverified | failed` (section 5). `failed` needs `dmarc=fail` with `p=quarantine`/`reject`, or SPF hard-fail with no DKIM pass. Honour ARC only from trusted sealers. `classifyFromHeaders` returns `auth-failed` only for `failed`.
+Done when: the SendGrid-style `dmarc=none` case is `unverified` and is not spam; `dmarc=fail p=reject` is `failed` and is spam; `email-auth.test.mjs` and `classify-email.test.mjs` cover all three tiers.
 
-1. **Should an `unverified` sender (no DMARC, sent via an ESP) be allowed after Not spam?** *Recommended: yes, for that exact address only, with an "Unverified sender" banner.* Domain allows require `verified`.
-2. **Should Not spam rescue the sender's other Spam messages automatically?** *Recommended: yes, for the last 30 days, with Undo.*
-3. **Where should a blocked sender's mail go when Screener is on: Screened out or Spam?** *Recommended: keep Screened out (today's behaviour)*, but list both under Settings → Blocked.
-4. **Should Report spam on a newsletter also unsubscribe?** *Recommended: offer it, unchecked by default.*
-5. **Should contacts count as allow?** We don't have a contacts store yet. *Recommended: treat "we sent to them" as implicit trust (tier 4), as today, and not as an explicit allow.*
-6. **Should a "Block domain" action exist outside Settings?** *Recommended: Settings only at first*, to avoid accidental domain-wide blocks of gmail.com and the like. Refuse domain rules for free-mail providers.
+**2. Allowed senders beat AI verdicts and spam headers (S).** Apply the section 5 precedence in the inbound path. An allowed address skips AI and upstream spam-header verdicts when `verified`, and AI verdicts when `unverified`. Treat `aligned === null` as `unverified`, not as "no override". Implicit trust (we sent to them, Screener accepted) overrides AI-only verdicts. Depends on #1.
+Done when: after Not spam, the next message from an `unverified` ESP sender lands in Inbox; a `failed` message from the same sender still lands in Spam; tests cover each precedence step.
+
+**3. Store and show the spam reason and auth tier (M).** Add `classification_reason`, `auth_tier` and `matched_rule_id` to `emails` and return them from the email API. Show a one-line reason in Spam and Screened out, and an "Unverified sender" banner on `unverified` mail, on web, iOS and Android (design twins, existing tokens). Depends on #1.
+Done when: every new email has a stored reason and tier; all three clients show the reason line and banner; the banner appears for an allowed `unverified` sender.
+
+**4. Every move into or out of Spam teaches the sender (S).** The move menu, swipe and multi-select on all clients behave like Not spam / Report spam, with no "remember?" prompt. MCP `move_email` stays neutral; add explicit `allow_sender` / `block_sender` agent tools behind the AVE-69 scope checks. Depends on #2.
+Done when: moving out of Spam by any client path records the allow; `move_email` writes no rule; the new agent tools are scope-checked and tested.
+
+**5. `sender_rules` table, API and domain rules (M).** Add the section 7 DO migration and backfill (`sender_triage.rejected` → address block rules). Add GET/PUT/DELETE `sender-rules` endpoints. Normalize domains with the Public Suffix List. Refuse domain rules for public suffixes and free-mail providers. Domain allows apply only to `verified` mail. Depends on #2.
+Done when: the migration and backfill run on existing mailboxes; CRUD endpoints are tested; `@co.uk` and `@gmail.com` rules are rejected; an unverified message never matches a domain allow.
+
+**6. Settings → Senders: Allowed / Blocked tabs (M).** Add Allowed, Blocked and Sorting tabs on web, iOS (`SendersSettingsView`) and Android. Each row shows address or domain, source and date, with remove. "Add" takes an address or `@domain`. This is the only place to create domain rules. Depends on #5.
+Done when: all three clients list, add and remove address and domain rules; the free-mail refusal shows an inline error; iOS and Android match visually.
+
+**7. Retroactive rescue and refile, with Undo (M).** Not spam moves the sender's other Spam messages from the last 30 days to their classified folder. Report spam moves that sender's Inbox/Promotions/Updates mail to Spam (checkbox, default on). The move response returns `rescuedCount` and `undoToken`; `POST sender-rules/undo` reverts the rule and the moves. Toasts with Undo on all clients. Depends on #4, #5.
+Done when: Not spam on one message rescues the sender's recent Spam and the toast says "· N more moved"; Undo restores both the rule and the folders.
+
+**8. Report spam on bulk mail offers unsubscribe (S).** When the reported message has `List-Unsubscribe` with RFC 8058 `List-Unsubscribe-Post`, the Report spam confirmation shows an "Unsubscribe" checkbox, unchecked by default. When checked, the Worker sends the one-click POST. Web, iOS and Android. Depends on #4.
+Done when: the checkbox appears only for RFC 8058 mail, is unchecked by default, and when checked the Worker sends exactly one POST; tests cover the POST.
+
+**9. Spam metrics (S).** Log, per mailbox and without content, the section 8 metrics: spam rate by reason, Not-spam rate by reason, Report-spam rate on Inbox mail, rule and match counts, and `unverified` share. Show them in the admin/ops dashboard. Depends on #3.
+Done when: the dashboard shows each metric for the last 7 and 30 days, including repeat rescues for senders with an allow rule.
+
+## 10. Decisions (approved 2026-10-22)
+
+Emmanuel approved the recommended defaults.
+
+1. **Not spam on an `unverified` sender allows it**, for that exact address only, with an "Unverified sender" banner. Domain allows require `verified`.
+2. **Not spam rescues that sender's other Spam messages** from the last 30 days, with Undo.
+3. **Blocked senders' mail goes to Screened out when Screener is on**, as today. Both appear under Settings → Senders → Blocked.
+4. **Report spam on a newsletter offers unsubscribe**, unchecked by default.
+5. **Contacts do not count as an explicit allow.** "We emailed them" stays implicit trust (precedence step 4).
+6. **Block domain is Settings only at first.** Domain rules are refused for free-mail providers.
