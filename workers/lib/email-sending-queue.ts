@@ -38,6 +38,7 @@ async function mailboxIdForSender(env: Env, sender: string): Promise<string> {
 export async function handleEmailSendingQueueMessage(
 	env: Env,
 	body: unknown,
+	attempts = 1,
 ): Promise<boolean> {
 	return applyEmailSendingEvent(
 		body,
@@ -57,6 +58,7 @@ export async function handleEmailSendingQueueMessage(
 				detail: suppression.detail,
 			});
 		},
+		attempts,
 	);
 }
 
@@ -66,7 +68,11 @@ export async function handleEmailSendingQueueBatch(
 ): Promise<void> {
 	for (const message of batch.messages) {
 		try {
-			const ok = await handleEmailSendingQueueMessage(env, message.body);
+			const ok = await handleEmailSendingQueueMessage(
+				env,
+				message.body,
+				message.attempts,
+			);
 			if (ok) message.ack();
 			else message.retry();
 		} catch (error) {
