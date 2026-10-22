@@ -250,6 +250,23 @@ object PreviewSupport {
                     hasMorePages = true,
                 )
             }
+            PreviewMode.ManyNew -> {
+                // A dozen New conversations: Inbox shows five, then "Show N more new", then Seen.
+                val inbox = allEmails.filter { it.folderId == FolderIds.INBOX } +
+                    manyNewEmails(you) + fillerSeenEmails(you)
+                DatabaseService.shared.upsertEmails(mailbox.id, inbox)
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = AppModel.orderNewThenSeen(inbox),
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
             else -> {
                 // Inbox list only (matches production sync + iOS previewMailbox).
                 val inbox = allEmails.filter { it.folderId == FolderIds.INBOX }
@@ -337,6 +354,29 @@ object PreviewSupport {
                 fromName = "Pending",
             ),
         )
+    }
+
+    /** Unread inbox rows for the capped-New preview (AVE-23). */
+    private fun manyNewEmails(you: String): List<Email> {
+        val senders = listOf(
+            "Priya Shah", "Marco Rossi", "Lena Fischer", "Tom Becker", "Ava Chen",
+            "Noah Kim", "Sara Lind", "Omar Haddad", "Ivy Park", "Ben Ortiz",
+        )
+        return senders.mapIndexed { i, name ->
+            Email(
+                id = "preview-new-$i",
+                folderId = FolderIds.INBOX,
+                subject = "Follow-up ${i + 1}",
+                sender = "${name.substringBefore(' ').lowercase()}@example.com",
+                senderName = name,
+                recipient = you,
+                date = "2026-09-%02dT09:00:00.000Z".format(2 + i),
+                read = false,
+                starred = false,
+                snippet = "Checking in on the thread from last week.",
+                listSection = "new",
+            )
+        }
     }
 
     /** Older, read inbox rows that pad the load-more preview past one screen. */
@@ -570,7 +610,8 @@ object PreviewSupport {
             date = "2026-09-20T07:15:00.000Z",
             read = false,
             starred = false,
-            body = "<p>Claim your reward before it expires.</p>",
+            // Designed mail (own colours): a light paper card in dark mode.
+            body = """<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fff4e5"><tr><td style="padding: 16px; color: #7a3e00"><p><b>Claim your reward</b> before it expires.</p></td></tr></table>""",
             snippet = "Claim your reward before it expires.",
             folderName = "Spam",
         ),

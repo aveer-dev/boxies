@@ -75,6 +75,58 @@ export function folderUsesNewSeen(folderId: string | null | undefined): boolean 
 	return folderId === Folders.INBOX;
 }
 
+/**
+ * Inbox list shows at most this many New conversations; the rest open on the
+ * "All new" page so Seen always stays in view right below.
+ */
+export const INBOX_NEW_PREVIEW_LIMIT = 5;
+
+/** Optional New/Seen window on the threaded Inbox list (`section`, `new_limit`). */
+export interface InboxSectionQuery {
+	/** Only this section (date DESC). Wins over `newLimit`. */
+	section?: ListSection;
+	/** Keep only the newest N New rows, then every Seen row. */
+	newLimit?: number;
+}
+
+/** Parse `section` / `new_limit` query params; unknown values are ignored. */
+export function parseInboxSectionQuery(
+	section: string | null | undefined,
+	newLimit: string | number | null | undefined,
+): InboxSectionQuery {
+	const query: InboxSectionQuery = {};
+	if (section === "new" || section === "seen") query.section = section;
+	const n = typeof newLimit === "number" ? newLimit : Number.parseInt(newLimit ?? "", 10);
+	if (Number.isFinite(n) && n >= 0) query.newLimit = Math.min(Math.floor(n), 100);
+	return query;
+}
+
+/**
+ * SQL filter over a row set exposing `is_new` (0/1) and `section_rank`
+ * (1-based rank within its section by date DESC). Integers only — safe to inline.
+ */
+export function inboxSectionFilterSql(query: InboxSectionQuery): string {
+	if (query.section === "new") return "is_new = 1";
+	if (query.section === "seen") return "is_new = 0";
+	if (query.newLimit !== undefined) {
+		return `(is_new = 0 OR section_rank <= ${Math.max(0, Math.floor(query.newLimit))})`;
+	}
+	return "1 = 1";
+}
+
+/** Rows the windowed Inbox list holds in total (drives pagination). */
+export function inboxSectionTotal(
+	counts: { newCount: number; seenCount: number },
+	query: InboxSectionQuery,
+): number {
+	if (query.section === "new") return counts.newCount;
+	if (query.section === "seen") return counts.seenCount;
+	if (query.newLimit !== undefined) {
+		return Math.min(counts.newCount, query.newLimit) + counts.seenCount;
+	}
+	return counts.newCount + counts.seenCount;
+}
+
 export type ListSectionRowWithId = ListSectionRow & {
 	id?: string;
 	thread_id?: string | null;
@@ -122,19 +174,30 @@ export function patchEmailListCache<T extends ListSectionRowWithId>(
 		return { ...cached, emails: patched };
 	}
 	const ordered = annotateListSections(sortNewThenSeen(patched), true) as T[];
-	const { newCount, seenCount } = countListSections(ordered);
+	// The cache holds one page (and New may be capped), so shift the server's
+	// section totals by what changed locally instead of recounting the page.
+	const before = countListSections(cached.emails);
+	const after = countListSections(ordered);
+	const newCount = Math.max(
+		0,
+		(cached.newCount ?? before.newCount) + after.newCount - before.newCount,
+	);
+	const seenCount = Math.max(
+		0,
+		(cached.seenCount ?? before.seenCount) + after.seenCount - before.seenCount,
+	);
 	return {
 		...cached,
 		emails: ordered,
 		newCount,
 		seenCount,
-		totalCount: newCount + seenCount,
 	};
 }
 
 export type InboxListItem<T> =
 	| { type: "section"; id: "new" | "seen"; label: string; count?: number }
 	| { type: "empty-new" }
+	| { type: "show-more-new"; hiddenCount: number }
 	| { type: "email"; email: T };
 
 /** Build New/Seen list rows for the Inbox folder UI. */
@@ -144,21 +207,45 @@ export function buildInboxListItems<T extends ListSectionRowWithId>(
 		page: number;
 		newCount?: number;
 		seenCount?: number;
+		/** Show at most this many New rows, then a "show more" row (page 1). */
+		newPreviewLimit?: number;
 	},
 ): InboxListItem<T>[] {
 	const items: InboxListItem<T>[] = [];
 	let lastSection: ListSection | null = null;
 	let sawNew = false;
 	let sawSeen = false;
+	let shownNew = 0;
+	let skippedNew = 0;
+	let showMoreAdded = false;
+	const limit = opts.newPreviewLimit;
+
+	const addShowMore = () => {
+		if (showMoreAdded || limit === undefined || opts.page !== 1) return;
+		const total = Math.max(opts.newCount ?? 0, shownNew + skippedNew);
+		if (total > shownNew) {
+			items.push({ type: "show-more-new", hiddenCount: total - shownNew });
+		}
+		showMoreAdded = true;
+	};
 
 	for (const email of emails) {
 		const section: ListSection =
 			email.list_section === "new" || email.list_section === "seen"
 				? email.list_section
 				: listSectionFor(email);
-		if (section === "new") sawNew = true;
+		if (section === "new") {
+			sawNew = true;
+			// Over the cap (e.g. an older server ignoring new_limit): hide; the
+			// "show more" row counts it.
+			if (limit !== undefined && opts.page === 1 && shownNew >= limit) {
+				skippedNew += 1;
+				continue;
+			}
+		}
 		if (section === "seen") sawSeen = true;
 		if (section !== lastSection) {
+			if (lastSection === "new") addShowMore();
 			if (
 				section === "seen" &&
 				!sawNew &&
@@ -182,7 +269,10 @@ export function buildInboxListItems<T extends ListSectionRowWithId>(
 			lastSection = section;
 		}
 		items.push({ type: "email", email });
+		if (section === "new") shownNew += 1;
 	}
+
+	if (lastSection === "new") addShowMore();
 
 	if (
 		opts.page === 1 &&

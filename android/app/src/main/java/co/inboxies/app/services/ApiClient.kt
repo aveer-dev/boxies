@@ -58,6 +58,7 @@ import co.inboxies.app.models.MailboxInviteRow
 import co.inboxies.app.models.MailboxMember
 import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.models.RevokeSessionsResponse
+import co.inboxies.app.models.McpGrant
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -173,6 +174,12 @@ class ApiClient private constructor() {
         val shared: ApiClient by lazy { ApiClient() }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
+        /** Header for send / reply / forward: one key per compose, reused on retries. */
+        const val IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+
+        fun idempotencyHeaders(key: String?): Map<String, String> =
+            if (key.isNullOrEmpty()) emptyMap() else mapOf(IDEMPOTENCY_KEY_HEADER to key)
+
         /**
          * The Worker answers a bad or expired bearer with 401/403 "Invalid or
          * expired mobile session token". Per-mailbox ACL denials are also 403
@@ -217,8 +224,17 @@ class ApiClient private constructor() {
         body: JsonObject? = null,
         authed: Boolean = true,
         bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): T = withContext(Dispatchers.IO) {
-        val (data, code, contentType) = perform(path, method, query, body, authed, bearerToken = bearerToken)
+        val (data, code, contentType) = perform(
+            path,
+            method,
+            query,
+            body,
+            authed,
+            bearerToken = bearerToken,
+            headers = headers,
+        )
         if (code == 204 && T::class == EmptyResponse::class) {
             @Suppress("UNCHECKED_CAST")
             return@withContext EmptyResponse() as T
@@ -252,10 +268,12 @@ class ApiClient private constructor() {
         authed: Boolean,
         asBytes: Boolean = false,
         bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): Triple<String, Int, String> {
         val builder = Request.Builder().url(buildUrl(path, query))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
+        headers.forEach { (name, value) -> builder.header(name, value) }
         val sentToken = if (authed) bearerToken ?: authTokenProvider() else null
         sentToken?.let { builder.header("Authorization", "Bearer $it") }
         val requestBody = body?.let { json.encodeToString(JsonObject.serializer(), it).toRequestBody(JSON_MEDIA) }
@@ -385,6 +403,15 @@ class ApiClient private constructor() {
         method = "POST",
         body = buildJsonObject {},
     )
+
+    // ── Connected apps (MCP OAuth grants) ──
+
+    suspend fun listMcpGrants(): List<McpGrant> = request("/api/v1/me/mcp-grants")
+
+    /** Disconnects the app: the grant and all its tokens are deleted server-side. */
+    suspend fun revokeMcpGrant(id: String) {
+        request<EmptyResponse>("/api/v1/me/mcp-grants/${pathEncode(id)}", method = "DELETE")
+    }
 
     // ── Recovery email ──
 
@@ -835,19 +862,27 @@ class ApiClient private constructor() {
             },
         )
 
+    /**
+     * Threaded folder page. Inbox only: [newLimit] keeps the newest N New conversations above
+     * every Seen one; [section] (`new` | `seen`) lists one section (AVE-23).
+     */
     suspend fun listEmails(
         mailboxId: String,
         folder: String,
         page: Int = 1,
         threaded: Boolean = true,
+        newLimit: Int? = null,
+        section: String? = null,
     ): EmailListResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
-        query = mapOf(
-            "folder" to folder,
-            "threaded" to threaded.toString(),
-            "page" to page.toString(),
-            "limit" to "25",
-        ),
+        query = buildMap {
+            put("folder", folder)
+            put("threaded", threaded.toString())
+            put("page", page.toString())
+            put("limit", "25")
+            newLimit?.let { put("new_limit", it.toString()) }
+            section?.let { put("section", it) }
+        },
     )
 
     suspend fun getEmail(mailboxId: String, id: String): Email =
@@ -1085,10 +1120,20 @@ class ApiClient private constructor() {
     suspend fun search(mailboxId: String, query: String): List<Email> =
         searchEmails(mailboxId, query).emails
 
-    suspend fun sendEmail(mailboxId: String, payload: JsonObject): SendEmailResponse = request(
+    /**
+     * [idempotencyKey]: one per compose, reused on every retry of that send. The server
+     * answers a repeated key with the original `202 { id, status }` (plus
+     * `Idempotent-Replayed: true`), which decodes like any other success.
+     */
+    suspend fun sendEmail(
+        mailboxId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun sendEmail(
@@ -1110,10 +1155,16 @@ class ApiClient private constructor() {
         },
     )
 
-    suspend fun replyToEmail(mailboxId: String, emailId: String, payload: JsonObject): SendEmailResponse = request(
+    suspend fun replyToEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/reply",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun replyEmail(
@@ -1131,10 +1182,16 @@ class ApiClient private constructor() {
         },
     )
 
-    suspend fun forwardEmail(mailboxId: String, emailId: String, payload: JsonObject): SendEmailResponse = request(
+    suspend fun forwardEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/forward",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun forwardEmail(

@@ -39,6 +39,10 @@ struct ComposeToast: Equatable {
 @MainActor
 final class ComposeFormModel {
     let mode: ComposeMode
+    /// `Idempotency-Key` for this compose: sent on every attempt (undo-window commit,
+    /// retry after a failed send) so a send that did reach the server isn't repeated.
+    /// A new compose gets a new key; a restored pending send keeps its record's key.
+    private(set) var sendIdempotencyKey = UUID().uuidString.lowercased()
     var fromMailboxId: String
     var fromEmail: String
     var fromName: String?
@@ -546,7 +550,8 @@ final class ComposeFormModel {
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
                     payload: payload,
-                    bearerToken: pinnedToken
+                    bearerToken: pinnedToken,
+                    idempotencyKey: sendIdempotencyKey
                 )
             case .forward:
                 guard let originalEmailId else {
@@ -557,10 +562,16 @@ final class ComposeFormModel {
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
                     payload: payload,
-                    bearerToken: pinnedToken
+                    bearerToken: pinnedToken,
+                    idempotencyKey: sendIdempotencyKey
                 )
             case .new, .editDraft:
-                _ = try await APIClient.shared.sendEmail(mailboxId: fromMailboxId, payload: payload, bearerToken: pinnedToken)
+                _ = try await APIClient.shared.sendEmail(
+                    mailboxId: fromMailboxId,
+                    payload: payload,
+                    bearerToken: pinnedToken,
+                    idempotencyKey: sendIdempotencyKey
+                )
             }
 
             if let draftId {
@@ -600,7 +611,8 @@ final class ComposeFormModel {
                     base64: $0.base64
                 )
             },
-            createdAt: Date()
+            createdAt: Date(),
+            idempotencyKey: sendIdempotencyKey
         )
     }
 
@@ -622,6 +634,9 @@ final class ComposeFormModel {
         originalEmailId = record.originalEmailId ?? originalEmailId
         threadId = record.threadId ?? threadId
         draftId = record.draftId ?? draftId
+        if let key = record.idempotencyKey, !key.isEmpty {
+            sendIdempotencyKey = key
+        }
     }
 
     private func recipientListValue() -> String {

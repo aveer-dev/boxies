@@ -202,6 +202,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Notes to self (list) | `previewNotes` | `notes` | Inbox rows with a sticky-note strip and "N private notes" chip |
 | Notes to self (detail) | `previewNotesDetail` | `notesDetail` | Q3 thread open: draggable sticky + inline private notes (in-memory edits) |
 | Load more | `previewLoadMore` | `loadMore` | Inbox with more pages; scroll down for the pulsing skeleton footer row |
+| Many New | `previewManyNew` | `manyNew` | Inbox New capped at 5 + "Show N more new" (opens the All new screen) above Seen |
 | Load failed | `previewLoadFailed` | `loadFailed` | Signed in, first mailbox load failed, nothing cached: Retry + Sign out (never onboarding) |
 | List error | `previewListError` | `listError` | Inbox fetch failed with an empty cache: "Couldn’t load emails" + Retry |
 | Service ended (admin) | `previewServiceEnded` | `serviceEnded` | Read-only inbox + "Renew" banner |

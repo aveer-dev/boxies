@@ -41,6 +41,9 @@ object InboxiesColors {
     val DarkAccent = Color(0xFF598CFF)
     val DarkUnread = Color(0xFFE6E6EB)
     val DarkDeepDarkRed = Color(0xFFE65959)
+
+    /** Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). */
+    val MailPaper = Color(0xFFFFFFFF)
 }
 
 /**
@@ -101,6 +104,8 @@ data class InboxiesPalette(
     val unread: Color,
     val deepDarkRed: Color,
     val note: NotePalette = NotePalette.Light,
+    /** Resolved app theme (System / Light / Dark), for surfaces that can't read the palette, like WebView. */
+    val isDark: Boolean = false,
 )
 
 val LocalInboxiesPalette = staticCompositionLocalOf {
@@ -197,6 +202,7 @@ fun InboxiesTheme(
             unread = InboxiesColors.DarkUnread,
             deepDarkRed = InboxiesColors.DarkDeepDarkRed,
             note = NotePalette.Dark,
+            isDark = true,
         )
     } else {
         InboxiesPalette(

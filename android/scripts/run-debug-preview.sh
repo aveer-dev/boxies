@@ -6,6 +6,7 @@
 #   ./scripts/run-debug-preview.sh domainAdmin
 #   ./scripts/run-debug-preview.sh mailbox
 #   ./scripts/run-debug-preview.sh loadMore
+#   ./scripts/run-debug-preview.sh manyNew
 #   ./scripts/run-debug-preview.sh loadFailed
 #   ./scripts/run-debug-preview.sh listError
 #   ./scripts/run-debug-preview.sh screener
@@ -49,6 +50,7 @@ case "$mode" in
   sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   loadMore|LoadMore|previewLoadMore) extra=previewLoadMore; label=loadMore ;;
+  manyNew|ManyNew|previewManyNew) extra=previewManyNew; label=manyNew ;;
   loadFailed|LoadFailed|previewLoadFailed) extra=previewLoadFailed; label=loadFailed ;;
   listError|ListError|previewListError) extra=previewListError; label=listError ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
@@ -70,7 +72,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | loadFailed | listError | screener | replyLater | spam | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | loadFailed | listError | screener | replyLater | spam | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
     exit 1
     ;;
 esac

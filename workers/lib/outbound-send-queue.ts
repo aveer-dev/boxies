@@ -16,8 +16,10 @@
  * `max_retries` land on `outbound-send-dlq`, whose consumer marks the row
  * failed so the user sees it.
  *
- * Anything that can rebuild `{ mailboxId, emailId }` can re-enqueue a row
- * (e.g. a stuck-send sweeper): the consumer skips rows no longer queued.
+ * Anything that can rebuild `{ mailboxId, emailId }` can re-enqueue a row:
+ * the consumer skips rows no longer queued. The stuck-send sweeper
+ * (outbound-send-sweeper.ts, run from the mailbox DO alarm) does exactly that
+ * for rows left `queued` too long.
  */
 
 import { sendEmail, type SendEmailParams } from "../email-sender";
@@ -98,6 +100,8 @@ export type OutboundSendStub = {
 	claimOutboundSend: (id: string, leaseMs: number) => Promise<OutboundSendClaim>;
 	releaseOutboundSendClaim: (id: string) => Promise<void>;
 	setDeliveryState: (id: string, state: DeliveryState) => Promise<unknown>;
+	/** Start the stuck-send sweeper's clock (MailboxDO.noteOutboundSendQueued). */
+	noteOutboundSendQueued?: (id: string, mailboxId: string) => Promise<void>;
 };
 
 export type OutboundBucket = {
@@ -170,7 +174,7 @@ export async function enqueueOutboundSend(
 	deps: {
 		bucket: OutboundBucket;
 		queue: OutboundSendProducer;
-		stub: Pick<OutboundSendStub, "setDeliveryState">;
+		stub: Pick<OutboundSendStub, "setDeliveryState" | "noteOutboundSendQueued">;
 	},
 	mailboxId: string,
 	emailId: string,
@@ -183,17 +187,40 @@ export async function enqueueOutboundSend(
 		});
 		await deps.queue.send({ v: 1, mailboxId, emailId }, { contentType: "json" });
 	} catch (error) {
-		console.error("Failed to enqueue outbound send:", emailId, errorMessage(error));
-		try {
-			await deps.stub.setDeliveryState(emailId, {
-				status: "failed",
-				error: OUTBOUND_SEND_FAILED_ERROR,
-			});
-		} catch (updateError) {
-			console.error("Failed to persist enqueue failure:", emailId, errorMessage(updateError));
-		}
-		await deletePayload(deps.bucket, emailId);
+		await recordEnqueueFailure(deps, emailId, error);
+		return;
 	}
+	// Enqueued. Tell the mailbox so the stuck-send sweeper can re-enqueue the
+	// row if the message is lost. Best effort: without it the sweeper still
+	// finds the row (its clock just starts at the first sweep).
+	// (Optional so test doubles may omit it; a real DO stub always has it.)
+	if (deps.stub.noteOutboundSendQueued) {
+		try {
+			await deps.stub.noteOutboundSendQueued(emailId, mailboxId);
+		} catch (error) {
+			console.warn("Failed to note queued send for the sweeper:", emailId, errorMessage(error));
+		}
+	}
+}
+
+async function recordEnqueueFailure(
+	deps: {
+		bucket: OutboundBucket;
+		stub: Pick<OutboundSendStub, "setDeliveryState">;
+	},
+	emailId: string,
+	error: unknown,
+): Promise<void> {
+	console.error("Failed to enqueue outbound send:", emailId, errorMessage(error));
+	try {
+		await deps.stub.setDeliveryState(emailId, {
+			status: "failed",
+			error: OUTBOUND_SEND_FAILED_ERROR,
+		});
+	} catch (updateError) {
+		console.error("Failed to persist enqueue failure:", emailId, errorMessage(updateError));
+	}
+	await deletePayload(deps.bucket, emailId);
 }
 
 /** Route helper: producer wired to the Worker env. */
