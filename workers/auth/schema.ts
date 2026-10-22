@@ -106,6 +106,29 @@ export const account = sqliteTable(
 	],
 );
 
+/**
+ * Sign in with Apple refresh tokens, one per Apple client a user signed in
+ * through: the iOS bundle id (native) or the web Services ID (Apple JS).
+ * Apple only revokes a token when `client_id` matches the client that
+ * issued it, so each token keeps its client. Revoked on account deletion and
+ * Apple unlink (`auth/apple.ts`). Tokens from before this table live in
+ * `account.refresh_token` and belong to the bundle id.
+ */
+export const appleRefreshToken = sqliteTable(
+	"apple_refresh_token",
+	{
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** The bundle id or Services ID the token was issued to. */
+		clientId: text("client_id").notNull(),
+		refreshToken: text("refresh_token").notNull(),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [primaryKey({ columns: [t.userId, t.clientId] })],
+);
+
 export const verification = sqliteTable(
 	"verification",
 	{

@@ -10,7 +10,7 @@ const { size } = Astro.props;
 ---
 
 <span class="app-icon" style={`--s: ${size}px`} aria-hidden="true">
-	<PlaneGlyph class="app-icon-glyph" />
+	<PlaneGlyph class="app-icon-glyph" variant={size * 0.62 > 32 ? "full" : "small"} />
 </span>
 
 <style>

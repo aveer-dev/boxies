@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+	<!--
+		Private Email, concept B: "Masked letter". An envelope (tile-radius corners, master
+		small-tier stroke) whose address line is three masked dots, like a hidden password.
+		32 grid. Paths are read by scripts/generate-logo-assets.mjs.
+	-->
+	<g fill="none" stroke="#1F1F24" stroke-linecap="round" stroke-linejoin="round">
+		<path id="envelope" stroke-width="2" d="M 7 7 H 25 A 4 4 0 0 1 29 11 V 21 A 4 4 0 0 1 25 25 H 7 A 4 4 0 0 1 3 21 V 11 A 4 4 0 0 1 7 7 Z"/>
+		<path id="flap" stroke-width="1.714" d="M 4.5 9 L 16 14.5 L 27.5 9"/>
+	</g>
+	<path id="mask-1" fill="#1F1F24" d="M 8 20 A 2 2 0 1 0 12 20 A 2 2 0 1 0 8 20 Z"/>
+	<path id="mask-2" fill="#1F1F24" d="M 14 20 A 2 2 0 1 0 18 20 A 2 2 0 1 0 14 20 Z"/>
+	<path id="mask-3" fill="#1F1F24" d="M 20 20 A 2 2 0 1 0 24 20 A 2 2 0 1 0 20 20 Z"/>
+</svg>
