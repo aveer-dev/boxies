@@ -228,8 +228,10 @@ assert.equal(domainFromAddress("@paypal.com"), "paypal.com");
 		sender: "deals@paypal.com",
 		auth: spoofed,
 	});
-	assert.equal(result?.class, "bulk");
-	assert.equal(result?.folderId, Folders.PROMOTIONS);
+	// Failed auth wins over list headers (spam-management-plan §5 step 1), so a
+	// sender preference can't file forged list mail into Inbox.
+	assert.equal(result?.class, "spam");
+	assert.equal(result?.reason, "auth-failed");
 	assert.equal(isAuthFailed(spoofed), true);
 }
 

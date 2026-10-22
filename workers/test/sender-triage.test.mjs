@@ -12,6 +12,7 @@ import {
 	parseScreenerEnabled,
 	resolveInboundFolder,
 	senderLessonForMove,
+	senderTrustOf,
 	screenerSettingsError,
 } from "../lib/sender-triage.ts";
 import { shouldFallbackToInbox } from "../lib/classify-email.ts";
@@ -357,6 +358,22 @@ assert.equal(
 		"inbox",
 	),
 	false,
+);
+
+// Sender trust (spam-management-plan §5): explicit allow = allowed + a
+// user-picked box; emailed / Screener-accepted / sorted = implicit.
+const userPref = (folderId) => ({ folderId, source: "user" });
+assert.equal(senderTrustOf(allowed("ada@example.com"), userPref("inbox")), "allowed");
+assert.equal(senderTrustOf(allowed("ada@example.com")), "implicit");
+assert.equal(
+	senderTrustOf(allowed("ada@example.com"), { folderId: "inbox", source: "screener" }),
+	"implicit",
+);
+assert.equal(senderTrustOf(null, userPref("updates")), "implicit");
+assert.equal(senderTrustOf(null, null), "none");
+assert.equal(
+	senderTrustOf({ ...allowed("nope@example.com"), status: "rejected" }, userPref("inbox")),
+	"none",
 );
 
 console.log("sender-triage.test.mjs: ok");

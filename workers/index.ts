@@ -121,8 +121,7 @@ import {
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
 	classifyInboundEmail,
-	isAiSpam,
-	overrideAiSpamForVouchedSender,
+	applySenderTrust,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldFallbackToInbox,
@@ -152,7 +151,7 @@ import {
 import {
 	allowOutboundRecipients,
 	isScreenerDestination,
-	isVouchedSender,
+	senderTrustOf,
 	senderLessonForMove,
 	normalizeTriageSender,
 	parseScreenerEnabled,
@@ -2050,20 +2049,28 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			? await (stub as any).getSenderTriage(triageSender)
 			: null;
 		const purposePref =
-			classification.folderId === Folders.SPAM && !isAiSpam(classification)
+			classification.reason === "auth-failed"
 				? null
 				: await stub.getSenderPreference(fromAddress);
-		// People you've emailed, accepted, or sorted can't be junked by the AI
-		// guess alone. Everything below files, notifies, and drafts on this verdict.
-		const vouchedClassification = overrideAiSpamForVouchedSender(classification, {
-			vouched: isVouchedSender(triageRow, purposePref?.folderId),
-			auth,
-		});
-		if (vouchedClassification !== classification) {
+		// Senders you've allowed, emailed, accepted, or sorted can't be junked by
+		// the AI guess alone; an explicit allow on verified mail also beats
+		// upstream spam headers. Failed auth stays Spam. Everything below files,
+		// notifies, and drafts on this verdict.
+		const trustedClassification = applySenderTrust(
+			classification,
+			{
+				headers: storedHeaders,
+				subject: parsedEmail.subject,
+				sender: fromAddress,
+				auth,
+			},
+			senderTrustOf(triageRow, purposePref),
+		);
+		if (trustedClassification !== classification) {
 			console.log(
-				`Vouched sender ${fromAddress} overrode AI spam verdict for ${mailboxId}`,
+				`Trusted sender ${fromAddress} overrode ${classification.reason} for ${mailboxId}: ${trustedClassification.reason}`,
 			);
-			classification = vouchedClassification;
+			classification = trustedClassification;
 		}
 		const triageDecision = resolveInboundFolder({
 			classification,
