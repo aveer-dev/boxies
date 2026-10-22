@@ -38,6 +38,10 @@ struct HomeShellView: View {
     @State private var composeLastTapAt: Date?
     @State private var composeDoubleTapArmed = false
     @State private var serviceBannerHeight: CGFloat = 0
+    /// Window width; with the size class it picks two- vs three-column (AVE-73).
+    @State private var windowWidth: CGFloat = 0
+    /// Folder column toggle on wide iPads. Persists; off keeps the two-pane layout.
+    @AppStorage("home_folder_column_visible") private var showsFolderColumn = true
     @GestureState private var isComposePressed = false
 
     private let folderTabs: [HomeTab] = [
@@ -87,9 +91,18 @@ struct HomeShellView: View {
     }
 
     /// Regular width (full-screen iPad, wide Split View) reads mail in a side pane;
-    /// compact width keeps the phone layout with the detail sheet.
+    /// compact width keeps the phone layout with the detail sheet. Wide regular windows
+    /// add the leading folder column unless the user hid it.
     private var layoutMode: HomeLayoutMode {
-        HomeLayoutMode(horizontalSizeClass: horizontalSizeClass)
+        HomeLayoutMode(
+            horizontalSizeClass: horizontalSizeClass,
+            width: windowWidth,
+            showsFolderColumn: showsFolderColumn
+        )
+    }
+
+    private var allowsFolderColumn: Bool {
+        HomeLayoutMode.allowsFolderColumn(horizontalSizeClass: horizontalSizeClass, width: windowWidth)
     }
 
     var body: some View {
@@ -149,14 +162,29 @@ struct HomeShellView: View {
             .sensoryFeedback(.selection, trigger: highlightedComposeAction)
     }
 
-    /// List column (everything the phone shows) + reading pane at regular width.
+    /// List column (everything the phone shows) + reading pane at regular width, plus
+    /// the folder column on wide windows.
     private var splitLayout: some View {
         HomeSplitLayout(mode: layoutMode) {
+            HomeFolderColumn(
+                title: mailboxName,
+                subtitle: mailboxTitle,
+                folders: folderTabs,
+                selected: app.selectedTab,
+                onSelect: selectTab,
+                onHide: { setFolderColumnVisible(false) }
+            )
+        } list: {
             shell
         } detail: {
             HomeReadingPane()
         }
         .background(AppTheme.background.ignoresSafeArea())
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            windowWidth = width
+        }
     }
 
     private var shell: some View {
@@ -265,6 +293,7 @@ struct HomeShellView: View {
                     }
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
+                .listColumnNavigationBarMargins(layoutMode)
                 .navigationDestination(isPresented: $showAllNew) {
                     InboxNewListView(bottomInset: listBottomInset)
                 }
@@ -504,6 +533,15 @@ struct HomeShellView: View {
                 }
             }
             Divider()
+            // Not a toolbar item: an extra leading item crowds the list column's toolbar.
+            if allowsFolderColumn {
+                Button(
+                    showsFolderColumn ? "Hide folders" : "Show folders",
+                    systemImage: "sidebar.left"
+                ) {
+                    setFolderColumnVisible(!showsFolderColumn)
+                }
+            }
             Button("Add another email", systemImage: "plus") {
                 showAddMailboxSheet = true
             }
@@ -1040,6 +1078,13 @@ struct HomeShellView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("New chat")
+        }
+    }
+
+    /// Shows / hides the leading folder column (three-column widths only).
+    private func setFolderColumnVisible(_ visible: Bool) {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            showsFolderColumn = visible
         }
     }
 

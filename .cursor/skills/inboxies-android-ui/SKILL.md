@@ -22,7 +22,7 @@ When polishing motion, also load `animate`, `apple-design`, and `emil-design-eng
 - Material 3 (`androidx.compose.material3`) for primitives: `ModalBottomSheet`, `Switch`, `DropdownMenu`, `PullToRefreshBox`, `Button`. Visual language is custom Notion/iOS, not default M3.
 - **No dynamic / wallpaper color.** Comment in `AppTheme.kt`: “Notion-inspired Inboxies palette — not purple Material You.”
 - Navigation Compose is **not a dependency** (removed). Do not introduce `NavHost` / `rememberNavController`.
-- `minSdk 34`, `targetSdk/compileSdk 35`. Resizable activity, any orientation; phones plus tablets / foldables (two-pane at ≥ 840.dp, see below).
+- `minSdk 34`, `targetSdk/compileSdk 35`. Resizable activity, any orientation; phones plus tablets / foldables (two-pane at ≥ 840.dp, three-column at ≥ 1180.dp, see below).
 - HTML mail via `AndroidView` + `WebView` in `EmailBodyView.kt`.
 - Icons: Material Icons Extended.
 - State: `AppModel` `StateFlow`s via `LocalAppModel` / `LocalAuthStore` / `LocalInboxiesPalette`. Collect with `collectAsState()`.
@@ -132,7 +132,8 @@ Folder order: For you (`HomeTab.AiInbox`) then Inbox → Promotions → Updates 
 - **TwoPane** (≥ 840.dp): list column (`listColumnWidth` = 38% clamped 320–420.dp) + 0.5.dp `line` hairline + reading pane (`EmailDetailView(showsGrabber = false)` or `ReadingPanePlaceholder`). The email's close (x) and Back clear to the placeholder. The row open in the pane is tinted (`pillFill` @ 60% over `background`) via `LocalReadingPaneEmail`.
 - Compose, Ask AI and Settings render through `HomeFormSheet`: full-window on phones, centered card (max 600×880.dp, 18.dp corners, `modalScrim`) in two-pane. Add mailbox is already a centered `Dialog`.
 - Selection lives in `AppModel.selectedEmail`, so it survives resizing / fold changes. The manifest handles `screenSize|smallestScreenSize|screenLayout|orientation` itself, so `remember` state isn't lost.
-- A future third column (AVE-73) = another `HomeLayoutMode` case + another column in `HomeSplitLayout`.
+- **ThreeColumn** (≥ `HomeChromeMetrics.threeColumnMinWidth` 1180.dp, tablets in landscape; AVE-73): leading `HomeFolderColumn` (`folderColumnWidth` 240.dp: mailbox name/email header, `swipeFolderIds` folders with unread counts, "Workflow" → Reply Later; selected row `pillFill`, 10.dp corners) + hairline + the two-pane columns. The list keeps its two-pane width; the reading pane gives up the space. Mirrors the web Miller "Folders" column. Unfolded foldables (~840–900.dp) stay two-pane.
+- Folder column toggle: "Hide folders" button in the column header + "Show/Hide folders" in the mailbox avatar menu (not a top-bar button). Persisted in `inboxies_prefs` key `home_folder_column_visible`; off = TwoPane. `HomeLayoutMode.isSplit` covers TwoPane + ThreeColumn.
 
 ## Motion already in this app
 

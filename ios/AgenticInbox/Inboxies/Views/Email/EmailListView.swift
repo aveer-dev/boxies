@@ -284,9 +284,9 @@ struct EmailListView: View {
         }
     }
 
-    /// Two-pane only: the row whose email (or thread) is open in the reading pane.
+    /// Split layouts only: the row whose email (or thread) is open in the reading pane.
     private func isOpenInReadingPane(_ email: Email) -> Bool {
-        guard homeLayoutMode == .twoPane, !isSelectMode, let open = app.selectedEmail else { return false }
+        guard homeLayoutMode.isSplit, !isSelectMode, let open = app.selectedEmail else { return false }
         if open.id == email.id { return true }
         guard let threadId = open.threadId, !threadId.isEmpty else { return false }
         return threadId == email.threadId

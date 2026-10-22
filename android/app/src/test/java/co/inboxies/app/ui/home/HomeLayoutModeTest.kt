@@ -15,7 +15,31 @@ class HomeLayoutModeTest {
         assertEquals(HomeLayoutMode.Stacked, HomeLayoutMode.forWidth(673.dp)) // folded / medium
         assertEquals(HomeLayoutMode.Stacked, HomeLayoutMode.forWidth(839.dp))
         assertEquals(HomeLayoutMode.TwoPane, HomeLayoutMode.forWidth(840.dp))
-        assertEquals(HomeLayoutMode.TwoPane, HomeLayoutMode.forWidth(1280.dp)) // tablet landscape
+        assertEquals(HomeLayoutMode.TwoPane, HomeLayoutMode.forWidth(900.dp)) // unfolded foldable
+        assertEquals(HomeLayoutMode.TwoPane, HomeLayoutMode.forWidth(1179.dp))
+    }
+
+    @Test
+    fun threeColumnOnlyFromWideWidth() {
+        assertEquals(HomeLayoutMode.ThreeColumn, HomeLayoutMode.forWidth(1180.dp))
+        assertEquals(HomeLayoutMode.ThreeColumn, HomeLayoutMode.forWidth(1280.dp)) // tablet landscape
+        assertFalse(HomeLayoutMode.allowsFolderColumn(1179.dp))
+        assertTrue(HomeLayoutMode.allowsFolderColumn(1180.dp))
+    }
+
+    @Test
+    fun hiddenFolderColumnFallsBackToTwoPane() {
+        assertEquals(HomeLayoutMode.TwoPane, HomeLayoutMode.forWidth(1280.dp, showsFolderColumn = false))
+        // The toggle never affects narrower layouts.
+        assertEquals(HomeLayoutMode.Stacked, HomeLayoutMode.forWidth(411.dp, showsFolderColumn = false))
+        assertEquals(HomeLayoutMode.TwoPane, HomeLayoutMode.forWidth(1000.dp, showsFolderColumn = true))
+    }
+
+    @Test
+    fun splitModes() {
+        assertFalse(HomeLayoutMode.Stacked.isSplit)
+        assertTrue(HomeLayoutMode.TwoPane.isSplit)
+        assertTrue(HomeLayoutMode.ThreeColumn.isSplit)
     }
 
     @Test
@@ -23,6 +47,9 @@ class HomeLayoutModeTest {
         assertEquals(320.dp, HomeChromeMetrics.listColumnWidth(840.dp))
         assertEquals(380.dp, HomeChromeMetrics.listColumnWidth(1000.dp))
         assertEquals(420.dp, HomeChromeMetrics.listColumnWidth(1600.dp))
+        // At the three-column threshold the reading pane keeps a phone-plus measure.
+        val reading = 1180.dp - HomeChromeMetrics.folderColumnWidth - HomeChromeMetrics.listColumnWidth(1180.dp)
+        assertTrue(reading >= 500.dp)
     }
 
     @Test
