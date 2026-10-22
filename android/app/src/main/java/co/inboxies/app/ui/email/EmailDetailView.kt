@@ -119,6 +119,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun EmailDetailView(
     onClose: () -> Unit = {},
+    /** Sheet grabber; off in the two-pane reading pane, where there is nothing to drag. */
+    showsGrabber: Boolean = true,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
@@ -252,19 +254,21 @@ fun EmailDetailView(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Column {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 8.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
+                if (showsGrabber) {
                     Box(
                         modifier = Modifier
-                            .width(36.dp)
-                            .height(5.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(colors.muted.copy(alpha = 0.45f)),
-                    )
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp)
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(colors.muted.copy(alpha = 0.45f)),
+                        )
+                    }
                 }
                 Row(
                     modifier = Modifier

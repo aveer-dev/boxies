@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+	<!--
+		Private Email, concept C: "Shadow plane". The master plane at full glyph size with
+		everything below the main crease in solid shadow: one face visible, one hidden.
+		The shadow follows the master's crease and outline (512 grid mapped to 32).
+		32 grid. Paths are read by scripts/generate-logo-assets.mjs; the plane group is
+		refreshed from design/logo/inboxies-mark.svg on every run.
+	-->
+	<path id="shadow-half" fill="#1F1F24" d="M 29.54 3.28 L 10.88 21.15 L 10.28 22.15 L 9.7 24.87 L 9.24 29.62 L 10.25 29.45 L 13.36 25.48 L 18.37 29.7 L 20.76 29.12 L 30.74 5.16 L 30.1 3.81 Z"/>
+	<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+	<g id="plane" data-x="0" data-y="0" data-size="32" data-weight="1">
+		<path d="M 2.02 11.85 L 27.72 2.05 A 2.36 2.36 0 0 1 30.74 5.16 L 20.76 29.12 A 1.52 1.52 0 0 1 18.37 29.7 L 13.36 25.48 L 10.25 29.45 A 1.21 1.21 0 0 1 8.1 28.9 L 6.38 19.01 L 1.52 14.29 A 1.48 1.48 0 0 1 2.02 11.85 Z" fill="none" stroke="#1F1F24" stroke-width="1.714"/>
+		<path d="M 1.07 13.2 L 3.4 13.45 L 14.93 13.41 L 29.54 3.28 M 29.54 3.28 L 10.88 21.15 L 10.28 22.15 L 9.7 24.87 M 17.29 14.96 L 19.2 27.44 L 19.6 30.03 M 29.54 3.28 L 30.23 2.59" fill="none" stroke="#1F1F24" stroke-width="1.429"/>
+		<path d="M 10.63 23.24 L 12.02 21.8 L 12.88 22.08 L 17.45 26.58 L 17.46 27.38 L 16.7 28.14 L 13.36 25.48 L 10.25 29.45 A 1.21 1.21 0 0 1 9.11 29.9 Z" fill="#1F1F24"/>
+	</g>
+	</g>
+</svg>
