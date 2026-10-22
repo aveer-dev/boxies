@@ -17,6 +17,7 @@ import {
 } from "../../shared/folders.ts";
 import { normalizeEmailAddress } from "./mail-automations.ts";
 import { canonicalMailboxId } from "./mailbox-routing.ts";
+import type { SenderTrust } from "./classify-email.ts";
 import type { InboxFilterHit } from "./inbox-filters.ts";
 
 export type SenderTriageStatus = "allowed" | "rejected";
@@ -204,6 +205,21 @@ export function isVouchedSender(
 ): boolean {
 	if (triage?.status === "rejected") return false;
 	return triage?.status === "allowed" || Boolean(preferenceFolderId?.trim());
+}
+
+/**
+ * How much the user vouches for this sender (docs/spam-management-plan.md §5).
+ * An allowed sender with a user-picked purpose box (Not spam into a box,
+ * Settings → Senders) is an explicit allow; other allowed or sorted senders
+ * (emailed, accepted in Screener, bootstrap) are implicit trust.
+ */
+export function senderTrustOf(
+	triage: SenderTriageRow | null,
+	preference?: { folderId: string; source: string } | null,
+): SenderTrust {
+	if (triage?.status === "rejected") return "none";
+	if (triage?.status === "allowed" && preference?.source === "user") return "allowed";
+	return isVouchedSender(triage, preference?.folderId) ? "implicit" : "none";
 }
 
 /** Normalize a From address for triage PK lookup. */
