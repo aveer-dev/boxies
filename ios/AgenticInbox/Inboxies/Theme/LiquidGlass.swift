@@ -59,6 +59,21 @@ enum HomeChromeMetrics {
     static func listColumnWidth(for totalWidth: CGFloat) -> CGFloat {
         min(max(totalWidth * listColumnFraction, listColumnMinWidth), listColumnMaxWidth)
     }
+
+    // MARK: Wide regular width (large iPad landscape) three-column
+
+    /// Window width from which the leading folder column fits beside the list and the
+    /// reading pane (AVE-73). 1180pt is an 11-inch iPad in landscape; 13-inch iPads
+    /// (1366pt) clear it too, while portrait and Split View halves stay two-pane.
+    /// Android uses the same number in dp.
+    static let threeColumnMinWidth: CGFloat = 1180
+    /// Fixed width of the folder column (web Miller "Folders" column).
+    static let folderColumnWidth: CGFloat = 240
+    static let folderRowHeight: CGFloat = 38
+    static let folderRowCornerRadius: CGFloat = 10
+    /// UIKit's regular-width bar margin, restored on the list column when it no longer
+    /// touches the window edge.
+    static let listColumnNavigationBarMargin: CGFloat = 20
 }
 
 extension View {

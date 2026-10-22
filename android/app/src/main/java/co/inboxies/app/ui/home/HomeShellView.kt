@@ -59,6 +59,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.automirrored.outlined.ViewSidebar
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -383,8 +384,11 @@ fun HomeShellView(
     }
 
     // Large screens read mail in a side pane; phones keep the detail sheet (AVE-72).
-    val layoutMode = rememberHomeLayoutMode()
-    val isTwoPane = layoutMode == HomeLayoutMode.TwoPane
+    // Wide windows add the leading folder column unless the user hid it (AVE-73).
+    var showsFolderColumn by rememberFolderColumnVisible()
+    val allowsFolderColumn = rememberAllowsFolderColumn()
+    val layoutMode = rememberHomeLayoutMode(showsFolderColumn)
+    val isTwoPane = layoutMode.isSplit
 
     // Two-pane: back clears the reading pane to its placeholder (the phone's back
     // dismisses the detail sheet). Declared before the home handler so search /
@@ -423,6 +427,18 @@ fun HomeShellView(
     ) {
         HomeSplitLayout(
             mode = layoutMode,
+            folders = {
+                HomeFolderColumn(
+                    title = mailboxName,
+                    subtitle = mailboxTitle,
+                    folders = folderTabs,
+                    selected = selectedTab,
+                    unreadCount = { appModel.unreadCount(forFolderId = it) },
+                    replyLaterCount = replyLaterCount,
+                    onSelect = { selectTab(it) },
+                    onHide = { showsFolderColumn = false },
+                )
+            },
             list = {
         ProgressiveBlurBackground(modifier = Modifier.align(Alignment.TopCenter))
 
@@ -466,6 +482,13 @@ fun HomeShellView(
                             onAddMailbox = {
                                 showMailboxMenu = false
                                 showAddMailbox = true
+                            },
+                            // Not a top-bar button: matches iOS, where an extra toolbar
+                            // item crowds the list column.
+                            folderColumnToggle = if (allowsFolderColumn) showsFolderColumn else null,
+                            onToggleFolderColumn = {
+                                showMailboxMenu = false
+                                showsFolderColumn = !showsFolderColumn
                             },
                             onSettings = {
                                 showMailboxMenu = false
@@ -1257,6 +1280,9 @@ private fun MailboxDropdown(
     onAddMailbox: () -> Unit,
     onSettings: () -> Unit,
     onSignOut: () -> Unit,
+    /** Folder column currently shown; null when the window is too narrow for it. */
+    folderColumnToggle: Boolean? = null,
+    onToggleFolderColumn: () -> Unit = {},
 ) {
     InboxiesDropdownMenu(expanded = expanded, onDismiss = onDismiss) {
         mailboxes.forEach { mailbox ->
@@ -1267,6 +1293,13 @@ private fun MailboxDropdown(
             )
         }
         InboxiesMenuDivider()
+        if (folderColumnToggle != null) {
+            InboxiesMenuItem(
+                text = if (folderColumnToggle) "Hide folders" else "Show folders",
+                onClick = onToggleFolderColumn,
+                icon = Icons.AutoMirrored.Outlined.ViewSidebar,
+            )
+        }
         InboxiesMenuItem(
             text = "Add another email",
             onClick = onAddMailbox,
