@@ -176,6 +176,7 @@ fun ComposeSheetView(
     var showFromMenu by remember { mutableStateOf(false) }
     var showQuotedOriginal by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
+    var unsuppressing by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<ComposeToast?>(null) }
     var headerHeightPx by remember { mutableStateOf(0) }
     val dragY = rememberSheetDragY()
@@ -535,7 +536,7 @@ fun ComposeSheetView(
                     icon = Icons.Outlined.ArrowUpward,
                     contentDescription = "Send",
                     onClick = {
-                        if (!canSend || sending || form.isSending) return@HomeChromeToolbarButton
+                        if (!canSend || sending || unsuppressing || form.isSending) return@HomeChromeToolbarButton
                         sending = true
                         commitTokens()
                         persist()
@@ -547,7 +548,7 @@ fun ComposeSheetView(
                             }
                         }
                     },
-                    enabled = canSend && !sending && !form.isSending,
+                    enabled = canSend && !sending && !unsuppressing && !form.isSending,
                 )
             }
 
@@ -723,6 +724,29 @@ fun ComposeSheetView(
                     )
                 }
             }
+
+            // `form.suppressedRecipients` is a plain field; `sending` / `unsuppressing` flip
+            // back after each attempt, which recomposes and re-reads it. Filtering on the
+            // live token state drops a notice as soon as its address is removed.
+            ComposeSuppressionNotice(
+                suppressed = form.visibleSuppressedRecipients(toTokens, ccTokens, bccTokens),
+                busy = unsuppressing,
+                disabled = sending || form.isSending || overSize,
+                onUnsuppressAndSend = {
+                    if (sending || unsuppressing || form.isSending) return@ComposeSuppressionNotice
+                    unsuppressing = true
+                    commitTokens()
+                    persist()
+                    scope.launch {
+                        try {
+                            app.unsuppressAndSendCompose()
+                        } finally {
+                            unsuppressing = false
+                        }
+                    }
+                },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
 
             val sizeError = if (overSize) co.inboxies.app.util.OutboundLimits.SIZE_ERROR else null
             (form.errorMessage ?: sizeError)?.let { error ->

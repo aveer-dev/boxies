@@ -1895,7 +1895,7 @@ final class AppModel {
     func restoreComposeAfterFailedSend(_ session: ComposeSession, generation: Int? = nil) {
         // The send outlived its session (sign-out timed out): nowhere to dock it.
         if let generation, generation != sessionGeneration { return }
-        let reason = session.form.errorMessage ?? "Couldn’t send message"
+        let reason = session.form.errorMessage ?? session.form.suppressionMessage ?? "Couldn’t send message"
         showToast(reason, isError: true, duration: 5)
         guard composeSession == nil else { return }
         composeSession = session

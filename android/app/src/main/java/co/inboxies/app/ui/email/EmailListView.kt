@@ -1224,6 +1224,18 @@ fun EmailRowView(
                             color = colors.deepDarkRed,
                         )
                     }
+                    // Sent mail the DSN pipeline marked bounced / complained (or a failed send).
+                    email.deliveryStatusLabel?.let { status ->
+                        Text(
+                            status,
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = list.badge,
+                            color = colors.deepDarkRed,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
                 }
 
                 Spacer(Modifier.width(8.dp))

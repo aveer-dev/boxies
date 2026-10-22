@@ -12,6 +12,9 @@ enum APIError: LocalizedError {
     /// 403 `code: "service_ended"`: the domain's subscription ended and its mailboxes are
     /// read-only. Access is intact; never treat this as losing the mailbox or the session.
     case serviceEnded(domain: String?, message: String)
+    /// 409 `code: "recipient_suppressed"`: a recipient bounced or complained earlier, so the
+    /// send was refused before anything went out. `message` is the server's sentence.
+    case recipientSuppressed(message: String, suppressed: [SuppressedRecipient])
 
     /// True for a write refused because the domain's service ended.
     var isServiceEnded: Bool {
@@ -36,6 +39,8 @@ enum APIError: LocalizedError {
         case .serviceEnded(let domain, let message):
             if !message.isEmpty { return message }
             return "The subscription for \(domain ?? "this domain") has ended. Mail on it is read-only until it's renewed."
+        case .recipientSuppressed(let message, _):
+            return message.isEmpty ? "Not sent: a recipient is suppressed." : message
         }
     }
 }
@@ -188,6 +193,9 @@ final class APIClient: @unchecked Sendable {
                         Self.postServiceEnded(domain: domain, message: endedMessage)
                     }
                     throw ended
+                }
+                if let blocked = BounceSuppression.error(statusCode: http.statusCode, data: data) {
+                    throw blocked
                 }
                 if let sentToken, bearerToken == nil,
                    Self.isExpiredSessionResponse(statusCode: http.statusCode, message: message) {
@@ -1047,6 +1055,16 @@ final class APIClient: @unchecked Sendable {
             body: payload,
             bearerToken: bearerToken,
             headers: Self.idempotencyHeaders(idempotencyKey)
+        )
+    }
+
+    /// Lifts a bounce / complaint suppression (AVE-37). 404 means it is already gone;
+    /// 403 `suppression_not_manageable` means only a domain admin can lift it.
+    func unsuppress(mailboxId: String, address: String) async throws {
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/suppressions/\(normalized.urlPathEncoded)",
+            method: "DELETE"
         )
     }
 

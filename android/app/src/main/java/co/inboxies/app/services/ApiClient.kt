@@ -108,10 +108,18 @@ sealed class ApiException(message: String) : Exception(message) {
         message.ifBlank { "This mailbox is read-only because its subscription ended." },
     )
 
+    /**
+     * 409 `{ code: "recipient_suppressed", suppressed }`: a recipient bounced or complained
+     * earlier, so the send was refused before anything went out (AVE-37 / AVE-84).
+     */
+    class RecipientSuppressed(val suppressed: List<SuppressedRecipient>, message: String) : ApiException(
+        message.ifBlank { "Not sent: a recipient is suppressed." },
+    )
+
     /** The server's readable `error` text, for paths that show it as-is. */
     val serverMessage: String?
         get() = when (this) {
-            is Http, is ServiceEnded -> message?.takeIf { it.isNotBlank() }
+            is Http, is ServiceEnded, is RecipientSuppressed -> message?.takeIf { it.isNotBlank() }
             else -> null
         }
 }
@@ -208,7 +216,9 @@ class ApiClient private constructor() {
             sessionExpired.tryEmit(sentToken)
             return ApiException.SessionExpired()
         }
-        return serviceEndedFailure(code, body, message) ?: ApiException.Http(code, message)
+        return serviceEndedFailure(code, body, message)
+            ?: BounceSuppression.failure(code, body, message)
+            ?: ApiException.Http(code, message)
     }
 
     /**
@@ -1018,6 +1028,17 @@ class ApiClient private constructor() {
                 if (emailId != null) put("emailId", emailId)
                 if (displayName != null) put("displayName", displayName)
             },
+        )
+    }
+
+    /**
+     * Lifts a bounce / complaint suppression (AVE-37). 404 means it is already gone;
+     * 403 `suppression_not_manageable` means only a domain admin can lift it.
+     */
+    suspend fun unsuppress(mailboxId: String, address: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/suppressions/${pathEncode(address.trim().lowercase())}",
+            method = "DELETE",
         )
     }
 
