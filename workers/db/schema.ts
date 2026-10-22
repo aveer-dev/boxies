@@ -48,6 +48,11 @@ export const emails = sqliteTable("emails", {
 	source: text("source"),
 	/** Client `Idempotency-Key` for a send/reply/forward; unique when set (migration 33). */
 	idempotency_key: text("idempotency_key"),
+	/**
+	 * ISO time the message entered Spam or Trash; NULL in every other folder.
+	 * Maintained by SQLite triggers (migration 34); retention purges by it.
+	 */
+	retention_since: text("retention_since"),
 });
 
 export const attachments = sqliteTable("attachments", {

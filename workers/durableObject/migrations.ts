@@ -568,6 +568,48 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Spam / Trash retention (AVE-42). `retention_since` is when a message
+		// entered Spam or Trash (NULL anywhere else); the DO alarm deletes
+		// rows whose clock is older than FOLDER_RETENTION_DAYS. Triggers keep
+		// it right for every write path (moves, bulk refiles, inbound spam,
+		// delete-to-trash): any change of folder_id restarts or clears it.
+		// Mail already in Spam / Trash starts its clock now, so nothing is
+		// purged until the retention period after this migration runs.
+		// Additive only: a nullable column, a partial index, two triggers.
+		// Dev's AVE-41 migration took 36_ and left 35_ for this one; the
+		// runner tracks by full name, so DOs that already applied
+		// 36_delivery_recipients still pick this up on their next start.
+		name: "35_spam_trash_retention",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN retention_since TEXT;
+            UPDATE emails
+               SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE folder_id IN ('spam', 'trash');
+            CREATE INDEX IF NOT EXISTS idx_emails_retention_since
+                ON emails(retention_since) WHERE retention_since IS NOT NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_insert
+            AFTER INSERT ON emails
+            WHEN NEW.folder_id IN ('spam', 'trash') AND NEW.retention_since IS NULL
+            BEGIN
+                UPDATE emails
+                   SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = NEW.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_move
+            AFTER UPDATE OF folder_id ON emails
+            WHEN NEW.folder_id IS NOT OLD.folder_id
+            BEGIN
+                UPDATE emails
+                   SET retention_since = CASE
+                       WHEN NEW.folder_id IN ('spam', 'trash')
+                       THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                       ELSE NULL
+                   END
+                 WHERE id = NEW.id;
+            END;
+          `),
+	},
+	{
 		// Per-recipient delivery state from Email Sending events (AVE-41).
 		// emails.delivery_status stays the message-level summary; this says
 		// which recipient bounced / complained / was delivered. Rows go with

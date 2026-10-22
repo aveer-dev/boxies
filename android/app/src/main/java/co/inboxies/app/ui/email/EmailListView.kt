@@ -312,6 +312,24 @@ private fun EmailRows(
             }
         }
 
+        val retentionNotice = FolderIds.retentionNotice(fallbackFolderId)
+        if (retentionNotice != null) {
+            item(key = "retention-notice") {
+                Text(
+                    text = retentionNotice,
+                    color = colors.muted,
+                    fontFamily = InterFontFamily,
+                    fontSize = AppThemeDims.List.preview,
+                    modifier = Modifier.padding(
+                        start = AppThemeDims.List.rowHorizontalPadding,
+                        end = AppThemeDims.List.rowHorizontalPadding,
+                        top = 4.dp,
+                        bottom = 8.dp,
+                    ),
+                )
+            }
+        }
+
         val showNewSeen = fallbackFolderId == FolderIds.INBOX
         if (showNewSeen) {
             // New is capped so Seen always stays in view right below it (AVE-23).

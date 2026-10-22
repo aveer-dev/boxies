@@ -125,6 +125,16 @@ struct EmailListView: View {
                 }
             }
 
+            if let notice = FolderRetention.notice(for: fallbackFolderId) {
+                Text(notice)
+                    .font(.inter(size: AppTheme.List.preview, weight: .regular))
+                    .foregroundStyle(AppTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .listRowInsets(EdgeInsets(top: 4, leading: AppTheme.List.rowHorizontalPadding, bottom: 8, trailing: AppTheme.List.rowHorizontalPadding))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
             if showNewSeenSections {
                 newSeenSections
             } else {
@@ -509,6 +519,20 @@ struct EmailListView: View {
 
     private static let skeletonCount = 9
     private static let prefetchDistance = 5
+}
+
+/// Spam and Trash keep mail for 30 days after it was moved in, then the server
+/// deletes it (AVE-42). Copy matches `folderRetentionNotice` in shared/folders.ts.
+enum FolderRetention {
+    static let days = 30
+
+    static func notice(for folderId: String?) -> String? {
+        switch folderId {
+        case "spam": return "Messages in Spam are deleted after \(days) days."
+        case "trash": return "Messages in Trash are deleted after \(days) days."
+        default: return nil
+        }
+    }
 }
 
 /// Loading placeholder matching the row geometry.

@@ -8,7 +8,11 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders, FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "../../shared/folders";
-import { isPurposeFolderId, type PurposeFolderId } from "../../shared/folders";
+import {
+	isPurposeFolderId,
+	isRetentionFolderId,
+	type PurposeFolderId,
+} from "../../shared/folders";
 import {
 	annotateListSections,
 	folderUsesNewSeen,
@@ -52,6 +56,11 @@ import {
 	forgetPendingBlobDeletes,
 } from "../lib/pending-blob-deletes";
 import { runMailboxPurge } from "../lib/mailbox-purge";
+import {
+	RETENTION_CONTINUE_DELAY_MS,
+	nextRetentionSweepDelayMs,
+	purgeExpiredRetentionEmails,
+} from "../lib/folder-retention";
 import { aliasMetadataKey, mailboxMetadataKey } from "../lib/mailbox-routing";
 import {
 	findEmailIdByIdempotencyKey,
@@ -356,18 +365,74 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#scheduleFtsBackfill();
 		this.#resumePendingBlobDeletes();
 		this.#resumeStuckSendSweep();
+		this.#armRetentionSweep();
 	}
 
 	/**
 	 * One alarm serves every scheduled job: incremental R2 → FTS indexing for
-	 * mail created before FTS existed, the sweep of queued blob deletes, and
-	 * the stuck-send sweeper. Each job reschedules itself; the sweep only ever
-	 * moves the alarm earlier.
+	 * mail created before FTS existed, the Spam / Trash retention purge, the
+	 * sweep of queued blob deletes, and the stuck-send sweeper. Every job runs
+	 * on every firing (each is a cheap no-op when it has nothing to do). FTS
+	 * may set the alarm directly; the others only ever move it earlier, and
+	 * the retention job re-arms last, so a nearer FTS / blob / send alarm
+	 * never cancels its daily run.
 	 */
 	async alarm(): Promise<void> {
 		await this.#runFtsBackfillBatch();
+		const retention = await this.#runRetentionPurge();
 		await this.#sweepPendingBlobDeletes();
 		await this.#sweepStuckSends();
+		if (retention === "more") {
+			await this.#scheduleAlarmWithin(RETENTION_CONTINUE_DELAY_MS);
+		}
+		await this.#scheduleRetentionSweep();
+	}
+
+	/**
+	 * Delete one batch of Spam / Trash mail older than the retention period
+	 * (rows + queued blobs; the caller sweeps the queue). Returns "more" when
+	 * the batch was full. Never throws: the next alarm retries.
+	 */
+	async #runRetentionPurge(): Promise<"more" | "done"> {
+		try {
+			if (await this.#isMailboxDeleted()) return "done";
+			const result = purgeExpiredRetentionEmails({
+				sql: this.ctx.storage.sql,
+				transactionSync: (fn) => this.ctx.storage.transactionSync(fn),
+			});
+			for (const id of result.deletedIds) {
+				this.broadcastEvent("email_deleted", { id });
+			}
+			if (result.deletedIds.length > 0) {
+				console.log(
+					JSON.stringify({
+						event: "retention_purge",
+						deleted: result.deletedIds.length,
+						blobs: result.blobKeys.length,
+					}),
+				);
+			}
+			return result.more ? "more" : "done";
+		} catch (e) {
+			console.error("Retention purge failed:", (e as Error).message);
+			return "done";
+		}
+	}
+
+	/** Arm the alarm for the next retention check, if Spam / Trash hold mail. */
+	async #scheduleRetentionSweep(): Promise<void> {
+		try {
+			if (await this.#isMailboxDeleted()) return;
+			const delay = nextRetentionSweepDelayMs(this.ctx.storage.sql);
+			if (delay != null) await this.#scheduleAlarmWithin(delay);
+		} catch (e) {
+			console.error("Retention schedule failed:", (e as Error).message);
+		}
+	}
+
+	/** Fire-and-forget `#scheduleRetentionSweep` (constructor and move paths). */
+	#armRetentionSweep(): void {
+		void this.#scheduleRetentionSweep();
 	}
 
 	/** Fire the alarm within `delayMs`, keeping an earlier alarm if one is set. */
@@ -2240,6 +2305,8 @@ export class MailboxDO extends DurableObject<Env> {
 				.run();
 			this.broadcastEvent("email_moved", { id, folder_id: folderId });
 			this.broadcastEvent("email_updated", { id, reply_later: false });
+			// retention_since is set by trigger; make sure the purge is armed.
+			this.#armRetentionSweep();
 		} else {
 			this.db
 				.update(schema.emails)
@@ -3053,6 +3120,8 @@ export class MailboxDO extends DurableObject<Env> {
 			reply_later: false,
 			alias_id: email.alias_id ?? null,
 		});
+		// Inbound spam lands with retention_since set by trigger.
+		if (isRetentionFolderId(folderId)) this.#armRetentionSweep();
 		return { id: email.id, replayed: false };
 	}
 
@@ -3427,6 +3496,7 @@ export class MailboxDO extends DurableObject<Env> {
 		for (const id of ids) {
 			this.broadcastEvent("email_moved", { id, folder_id: toFolder });
 		}
+		if (isRetentionFolderId(toFolder)) this.#armRetentionSweep();
 		return { moved: ids.length, ids };
 	}
 
