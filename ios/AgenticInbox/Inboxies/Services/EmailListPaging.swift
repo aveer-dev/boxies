@@ -7,6 +7,9 @@ struct EmailListPaging: Equatable {
     static let pageSize = 25
     /// Rows shown from the local cache before the first page lands.
     static let initialCacheLimit = 50
+    /// Inbox shows at most this many New rows; the rest open on the "All new" screen so Seen
+    /// always stays in view right below (AVE-23). Sent to the server as `new_limit`.
+    static let inboxNewPreviewLimit = 5
 
     /// `mailboxId|folderId` (or `mailboxId|reply_later`). Results for any other key are stale.
     let key: String
@@ -106,6 +109,19 @@ struct EmailListPaging: Equatable {
         return (new, seen + tail.sorted(by: byDate))
     }
 
+    /// Inbox New preview: the newest `limit` New rows, plus how many New conversations sit
+    /// behind "Show all" (`serverNewCount` when known — the page only holds a few).
+    static func inboxNewPreview(
+        _ newRows: [Email],
+        serverNewCount: Int?,
+        limit: Int = inboxNewPreviewLimit
+    ) -> (shown: [Email], hiddenCount: Int) {
+        let sorted = newRows.sorted { $0.date > $1.date }
+        let shown = Array(sorted.prefix(limit))
+        let total = max(serverNewCount ?? 0, sorted.count)
+        return (shown, max(0, total - shown.count))
+    }
+
     /// Date range to prune after fetching page N > 1: rows strictly older than the pages
     /// before it and at/after this page's oldest row. A short (final) page prunes
     /// everything older. Nil when there is no safe upper bound.
@@ -142,6 +158,13 @@ struct EmailListPaging: Equatable {
         }
         return merged
     }
+}
+
+/// Inbox page 1's New window: server New total plus the New row ids it returned.
+struct InboxNewWindow: Equatable {
+    let key: String
+    var count: Int?
+    var ids: [String]
 }
 
 /// What the signed-in root shows once mailboxes have been requested.

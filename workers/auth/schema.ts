@@ -106,6 +106,29 @@ export const account = sqliteTable(
 	],
 );
 
+/**
+ * Sign in with Apple refresh tokens, one per Apple client a user signed in
+ * through: the iOS bundle id (native) or the web Services ID (Apple JS).
+ * Apple only revokes a token when `client_id` matches the client that
+ * issued it, so each token keeps its client. Revoked on account deletion and
+ * Apple unlink (`auth/apple.ts`). Tokens from before this table live in
+ * `account.refresh_token` and belong to the bundle id.
+ */
+export const appleRefreshToken = sqliteTable(
+	"apple_refresh_token",
+	{
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** The bundle id or Services ID the token was issued to. */
+		clientId: text("client_id").notNull(),
+		refreshToken: text("refresh_token").notNull(),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [primaryKey({ columns: [t.userId, t.clientId] })],
+);
+
 export const verification = sqliteTable(
 	"verification",
 	{
@@ -264,4 +287,42 @@ export const auditLog = sqliteTable(
 		detail: text("detail"),
 	},
 	(t) => [index("audit_log_created_at_idx").on(t.createdAt)],
+);
+
+export const SUPPRESSION_REASONS = ["hard_bounce", "complaint"] as const;
+export type SuppressionReason = (typeof SUPPRESSION_REASONS)[number];
+
+export const SUPPRESSION_SOURCES = ["email_sending_event", "inbound_dsn"] as const;
+export type SuppressionSource = (typeof SUPPRESSION_SOURCES)[number];
+
+/**
+ * Recipients we stop sending to from a domain after a hard bounce or a spam
+ * complaint (AVE-37). Keyed by the sending domain (`private.<domain>` folds
+ * into `<domain>`) so one customer's bad address can't keep hurting the
+ * domain's reputation, and customers on other domains are unaffected.
+ * Deleting a row is the un-suppress action.
+ */
+export const emailSuppression = sqliteTable(
+	"email_suppression",
+	{
+		domain: text("domain").notNull(),
+		/** Lower-cased bare address. */
+		recipient: text("recipient").notNull(),
+		reason: text("reason", { enum: SUPPRESSION_REASONS }).notNull(),
+		source: text("source", { enum: SUPPRESSION_SOURCES }).notNull(),
+		/** Email Sending `eventId`, or the DSN's Message-ID. */
+		sourceEventId: text("source_event_id"),
+		/** Mailbox whose send bounced; manages the row with domain admins. */
+		sourceMailboxId: text("source_mailbox_id"),
+		/** Sent row id (DSN) or provider message id (Email Sending event). */
+		sourceMessageId: text("source_message_id"),
+		/** SMTP status / diagnostic or complaint type, for display. */
+		detail: text("detail"),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.domain, t.recipient] }),
+		index("email_suppression_source_mailbox_idx").on(t.sourceMailboxId),
+	],
 );

@@ -22,8 +22,8 @@ type LoginStep = "email" | "password" | "forgot" | "reset";
 
 export default function PasswordLoginRoute() {
 	const routerNavigate = useNavigate();
-	// Worker-rendered pages (the MCP OAuth consent page) need a full page load;
-	// the SPA router would show its not-found route.
+	// Pages the Worker handles first (the MCP OAuth consent page) need a full
+	// page load; a client-side navigation would skip the Worker.
 	const navigate = useCallback(
 		(to: string) => (isWorkerPagePath(to) ? window.location.assign(to) : routerNavigate(to)),
 		[routerNavigate],
@@ -219,7 +219,7 @@ export default function PasswordLoginRoute() {
 		<div className="min-h-screen bg-kumo-recessed flex items-center justify-center px-4">
 			<div className="w-full max-w-md rounded-xl border border-kumo-line bg-kumo-base p-6 md:p-8">
 				<div className="flex items-center gap-3 mb-6">
-					<img src="/favicon.svg" alt="Inboxies" className="w-9 h-9" />
+					<img src="/logo.svg" alt="Inboxies" className="w-9 h-9" />
 					<div>
 						<h1 className="text-xl font-bold text-kumo-default leading-tight">Inboxies</h1>
 						<p className="text-xs text-kumo-subtle">

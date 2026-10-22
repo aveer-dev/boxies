@@ -44,6 +44,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.automirrored.outlined.ReplyAll
 import androidx.compose.material.icons.filled.CheckCircle
@@ -89,12 +90,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -118,6 +122,8 @@ import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.home.LocalReadingPaneEmail
+import co.inboxies.app.ui.home.isOpenInReadingPane
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuItem
@@ -154,6 +160,10 @@ fun EmailListView(
     /** Infinite scroll for this list; null (or no more pages) hides the footer row. */
     paging: EmailPagingState? = null,
     onLoadMore: (suspend () -> Unit)? = null,
+    /** Inbox: server New total (the list shows at most `INBOX_NEW_PREVIEW_LIMIT` New rows). */
+    inboxNewCount: Int? = null,
+    /** Inbox: opens the "All new" screen from the row under the capped New section. */
+    onShowAllNew: (() -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
@@ -202,6 +212,8 @@ fun EmailListView(
                 onLoadMore = { onLoadMore?.invoke() },
                 onOpen = onOpen,
                 onMore = { actionsEmail = it },
+                inboxNewCount = if (isFiltered) null else inboxNewCount,
+                onShowAllNew = onShowAllNew,
             )
         }
     }
@@ -258,6 +270,8 @@ private fun EmailRows(
     onLoadMore: suspend () -> Unit = {},
     onOpen: (Email) -> Unit,
     onMore: (Email) -> Unit,
+    inboxNewCount: Int? = null,
+    onShowAllNew: (() -> Unit)? = null,
 ) {
     val app = LocalAppModel.current
     val swipePreferences by app.swipePreferences.collectAsState()
@@ -300,11 +314,16 @@ private fun EmailRows(
 
         val showNewSeen = fallbackFolderId == FolderIds.INBOX
         if (showNewSeen) {
-            val newEmails = emails.filter { it.resolvedListSection == "new" }
+            // New is capped so Seen always stays in view right below it (AVE-23).
+            val preview = EmailPaging.inboxNewPreview(
+                emails.filter { it.resolvedListSection == "new" },
+                serverNewCount = inboxNewCount,
+            )
+            val newEmails = preview.shown
             val seenEmails = emails.filter { it.resolvedListSection == "seen" }
 
             item(key = "section-new") {
-                ListSectionHeader(title = "New", count = newEmails.size)
+                ListSectionHeader(title = "New", count = newEmails.size + preview.hiddenCount)
             }
             if (newEmails.isEmpty()) {
                 item(key = "empty-new") {
@@ -331,6 +350,11 @@ private fun EmailRows(
                         onOpen = onOpen,
                         onMore = onMore,
                     )
+                }
+                if (preview.hiddenCount > 0 && onShowAllNew != null && !isSelectMode) {
+                    item(key = "show-all-new") {
+                        ShowAllNewRow(hiddenCount = preview.hiddenCount, onClick = onShowAllNew)
+                    }
                 }
             }
             if (seenEmails.isNotEmpty()) {
@@ -455,6 +479,43 @@ private fun LoadMoreSkeletonRow() {
     )
 }
 
+/** Quiet accent link under the capped New rows; opens every New conversation. */
+@Composable
+private fun ShowAllNewRow(hiddenCount: Int, onClick: () -> Unit) {
+    val colors = inboxiesColors()
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(interactionSource = interaction, indication = null, role = Role.Button, onClick = onClick)
+            .alpha(if (pressed) 0.55f else 1f)
+            .semantics { contentDescription = "Show all new emails, $hiddenCount more" }
+            .padding(
+                start = AppThemeDims.List.separatorLeadingInset,
+                end = AppThemeDims.List.rowHorizontalPadding,
+                top = 14.dp,
+                bottom = 14.dp,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = "Show $hiddenCount more new",
+            color = colors.accent,
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.List.subject,
+            fontWeight = FontWeight.Medium,
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = colors.accent,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+}
+
 @Composable
 private fun ListSectionHeader(title: String, count: Int) {
     val colors = inboxiesColors()
@@ -506,6 +567,8 @@ private fun EmailRowItem(
     val readOnly by LocalAppModel.current.selectedMailboxReadOnly.collectAsState()
     val isSelected = selectedEmailIds.contains(email.id)
     val isScreener = fallbackFolderId == FolderIds.SCREENER || email.folderId == FolderIds.SCREENER
+    // Two-pane only (null otherwise): the row whose email / thread is in the reading pane.
+    val isOpenInPane = !isSelectMode && email.isOpenInReadingPane(LocalReadingPaneEmail.current)
     val layout = remember(email.id, email.folderId, fallbackFolderId, swipePreferences, readOnly) {
         EmailSwipeLayout.resolve(email, fallbackFolderId, swipePreferences)
             .let { if (readOnly) it.readOnly() else it }
@@ -520,6 +583,7 @@ private fun EmailRowItem(
         showsTags = showsTags,
         isScreener = isScreener,
         readOnly = readOnly,
+        isOpenInPane = isOpenInPane,
         onOpen = { onOpen(email) },
         onToggleSelect = { onToggleSelect?.invoke(email.id) },
         onMore = { onMore(email) },
@@ -538,11 +602,19 @@ private fun MailRow(
     showsTags: Boolean = true,
     isScreener: Boolean = false,
     readOnly: Boolean = false,
+    isOpenInPane: Boolean = false,
     onOpen: () -> Unit,
     onToggleSelect: () -> Unit,
     onMore: () -> Unit,
 ) {
     val colors = inboxiesColors()
+    // Soft tint (not pillFill) so the row's tag chips stay legible; opaque so swipe
+    // actions underneath never show through.
+    val rowBackground = if (isOpenInPane) {
+        colors.pillFill.copy(alpha = 0.6f).compositeOver(colors.background)
+    } else {
+        colors.background
+    }
     val app = LocalAppModel.current
     val list = AppThemeDims.List
     val scope = rememberCoroutineScope()
@@ -599,7 +671,7 @@ private fun MailRow(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(colors.background),
+                        .background(rowBackground),
                 ) {
                     EmailRowView(
                         email = email,
@@ -607,6 +679,7 @@ private fun MailRow(
                         folderLabel = folderLabel,
                         showsTags = showsTags,
                         showDivider = !isScreener,
+                        rowBackground = rowBackground,
                         modifier = Modifier
                             .fillMaxWidth()
                             .combinedClickable(
@@ -1069,6 +1142,8 @@ fun EmailRowView(
     showsTags: Boolean = true,
     showDivider: Boolean = true,
     modifier: Modifier = Modifier,
+    /** Fill behind the row; the two-pane list tints the row open in the reading pane. */
+    rowBackground: Color = inboxiesColors().background,
 ) {
     val colors = inboxiesColors()
     val list = AppThemeDims.List
@@ -1077,7 +1152,7 @@ fun EmailRowView(
     val senderWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
     val subjectWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
 
-    Box(modifier = modifier.fillMaxWidth().background(colors.background)) {
+    Box(modifier = modifier.fillMaxWidth().background(rowBackground)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

@@ -85,10 +85,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -146,6 +148,7 @@ import co.inboxies.app.ui.compose.ComposeSheetView
 import co.inboxies.app.ui.compose.ComposeStackButton
 import co.inboxies.app.ui.email.EmailDetailView
 import co.inboxies.app.ui.email.EmailListView
+import co.inboxies.app.ui.email.InboxNewListView
 import co.inboxies.app.ui.search.SearchView
 import co.inboxies.app.ui.settings.SettingsSheetView
 import kotlinx.coroutines.delay
@@ -173,6 +176,7 @@ fun HomeShellView(
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
     val paging by appModel.paging.collectAsState()
+    val inboxNewTotal by appModel.inboxNewTotal.collectAsState()
     val emailListError by appModel.emailListError.collectAsState()
     val isDigestLoading by appModel.isDigestLoading.collectAsState()
     val mailboxes by appModel.mailboxes.collectAsState()
@@ -182,6 +186,8 @@ fun HomeShellView(
     val mailbox = appModel.selectedMailbox
 
     var showSearch by remember { mutableStateOf(false) }
+    /** Inbox "Show N more new" replaced the list with the All new screen (AVE-23). */
+    var showAllNew by remember { mutableStateOf(false) }
     var showChat by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showMailboxMenu by remember { mutableStateOf(false) }
@@ -240,6 +246,8 @@ fun HomeShellView(
     // POST_NOTIFICATIONS is a runtime permission (minSdk 34): ask once the user has
     // a mailbox to register for, then register the FCM token if granted.
     val selectedMailboxId by appModel.selectedMailboxId.collectAsState()
+    // A different mailbox or folder closes the All new screen.
+    LaunchedEffect(selectedMailboxId, selectedTab) { showAllNew = false }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -390,6 +398,15 @@ fun HomeShellView(
         highlightedComposeAction = hit
     }
 
+    // Large screens read mail in a side pane; phones keep the detail sheet (AVE-72).
+    val layoutMode = rememberHomeLayoutMode()
+    val isTwoPane = layoutMode == HomeLayoutMode.TwoPane
+
+    // Two-pane: back clears the reading pane to its placeholder (the phone's back
+    // dismisses the detail sheet). Declared before the home handler so search /
+    // select mode / overlays still take precedence.
+    BackHandler(enabled = isTwoPane && selectedEmail != null) { appModel.closeEmail() }
+
     BackHandler(enabled = showSearch || showComposeActions || isSelectMode || selectedTab is HomeTab.ReplyLater) {
         when {
             showComposeActions -> {
@@ -404,14 +421,30 @@ fun HomeShellView(
         }
     }
 
+    CompositionLocalProvider(
+        LocalHomeLayoutMode provides layoutMode,
+        LocalReadingPaneEmail provides if (isTwoPane) selectedEmail else null,
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background),
     ) {
+        HomeSplitLayout(
+            mode = layoutMode,
+            list = {
         ProgressiveBlurBackground(modifier = Modifier.align(Alignment.TopCenter))
 
-        if (!showSearch) {
+        if (showAllNew && !showSearch) {
+            InboxNewListView(
+                onClose = {
+                    showAllNew = false
+                    // Re-sync so the capped New preview reflects what was read.
+                    scope.launch { appModel.refreshCurrentTab() }
+                },
+                bottomInset = listBottomInset,
+            )
+        } else if (!showSearch) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -799,6 +832,8 @@ fun HomeShellView(
                                 loadError = emailListError,
                                 paging = paging,
                                 onLoadMore = { appModel.loadMoreEmails() },
+                                inboxNewCount = if (tab.id == FolderIds.INBOX) appModel.inboxNewCountFor(inboxNewTotal) else null,
+                                onShowAllNew = if (tab.id == FolderIds.INBOX) ({ showAllNew = true }) else null,
                                 onOpen = { email ->
                                     scope.launch {
                                         if (email.isDraft) appModel.openDraft(email) else appModel.openEmail(email)
@@ -1090,27 +1125,65 @@ fun HomeShellView(
             }
         }
 
+            },
+            detail = {
+                val open = selectedEmail
+                if (open != null) {
+                    // Fresh detail state per email; the pane keeps the email's close (x),
+                    // which clears back to the placeholder.
+                    key(open.id) {
+                        EmailDetailView(onClose = { appModel.closeEmail() }, showsGrabber = false)
+                    }
+                } else {
+                    ReadingPanePlaceholder()
+                }
+            },
+        )
+
         if (composeSession?.isExpanded == true) {
-            ComposeSheetView(
-                session = composeSession!!,
-                onMinimize = { appModel.minimizeCompose() },
-                onClose = { appModel.closeCompose() },
-                onSend = { appModel.sendCompose() },
-                onSaveDraft = { appModel.saveDraft() },
-            )
+            // Scrim stays inert: unsaved field edits live in the sheet until it minimizes.
+            HomeFormSheet(mode = layoutMode, onDismissOutside = null) {
+                ComposeSheetView(
+                    session = composeSession!!,
+                    onMinimize = { appModel.minimizeCompose() },
+                    onClose = { appModel.closeCompose() },
+                    onSend = { appModel.sendCompose() },
+                    onSaveDraft = { appModel.saveDraft() },
+                )
+            }
         }
 
         if (showChat) {
-            ChatSheetView(
-                onClose = {
-                    showChat = false
-                    appModel.dismissChatSession()
-                },
-            )
+            val closeChat = {
+                showChat = false
+                appModel.dismissChatSession()
+            }
+            HomeFormSheet(mode = layoutMode, onDismissOutside = closeChat) {
+                ChatSheetView(onClose = closeChat)
+            }
+        }
+
+        if (showSettings && isTwoPane) {
+            val closeSettings = {
+                showSettings = false
+                settingsInitialDomainAdmin = false
+            }
+            HomeFormSheet(mode = layoutMode, onDismissOutside = closeSettings) {
+                SettingsSheetView(
+                    onClose = closeSettings,
+                    onThemeModeChange = onThemeModeChange,
+                    themeMode = themeMode,
+                    initialDomainAdmin = settingsInitialDomainAdmin,
+                )
+            }
         }
     }
+    }
 
-    if (selectedEmail != null) {
+    // Phone detail sheet. In two-pane the email shows in the reading pane instead; if the
+    // window widens with the sheet up it simply leaves composition (no dismiss callback),
+    // so the selection carries over to the pane.
+    if (selectedEmail != null && !isTwoPane) {
         ModalBottomSheet(
             onDismissRequest = { appModel.closeEmail() },
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1123,7 +1196,7 @@ fun HomeShellView(
         }
     }
 
-    if (showSettings) {
+    if (showSettings && !isTwoPane) {
         ModalBottomSheet(
             onDismissRequest = {
                 showSettings = false
