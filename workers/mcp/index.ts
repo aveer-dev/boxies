@@ -19,6 +19,8 @@ import {
 	toolSendEmail,
 	toolMarkEmailRead,
 	toolMoveEmail,
+	toolAllowSender,
+	toolBlockSender,
 } from "../lib/tools";
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
@@ -472,6 +474,42 @@ export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 					};
 				}
 				return mcpText(result);
+			},
+		);
+
+		// ── allow_sender ───────────────────────────────────────────
+		// move_email never teaches a sender; these are the explicit verdicts
+		// (docs/spam-management-plan.md §5), the same as Not spam / Report spam.
+		tool(
+			"allow_sender",
+			"Allow a sender, like the user clicking Not spam: their future mail skips Spam and is filed to folderId (inbox, promotions, or updates; default: their current box, else inbox). Clears a block. Doesn't move existing messages. Only call when the user asked.",
+			{
+				mailboxId: z.string().describe("The mailbox email address"),
+				sender: z.string().describe("The sender's email address"),
+				folderId: z
+					.enum([Folders.INBOX, Folders.PROMOTIONS, Folders.UPDATES])
+					.optional()
+					.describe("Where their future mail goes: inbox, promotions, or updates"),
+			},
+			async ({ mailboxId, sender, folderId }) => {
+				const access = await verifyMailbox(mailboxId);
+				if ("denied" in access) return access.denied;
+				return mcpResult(await toolAllowSender(env, access.mailboxId, { sender, folderId }));
+			},
+		);
+
+		// ── block_sender ───────────────────────────────────────────
+		tool(
+			"block_sender",
+			"Block a sender, like the user clicking Report spam: their future mail goes to Screened out (or Spam with Screener off) and they lose any default folder. Doesn't move existing messages. Only call when the user asked.",
+			{
+				mailboxId: z.string().describe("The mailbox email address"),
+				sender: z.string().describe("The sender's email address"),
+			},
+			async ({ mailboxId, sender }) => {
+				const access = await verifyMailbox(mailboxId);
+				if ("denied" in access) return access.denied;
+				return mcpResult(await toolBlockSender(env, access.mailboxId, { sender }));
 			},
 		);
 	}

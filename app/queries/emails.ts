@@ -323,9 +323,10 @@ export function useMoveEmail() {
 			setSenderPreference?: boolean;
 		}) =>
 			api.moveEmail(mailboxId, id, folderId, { setSenderPreference }),
-		onSuccess: (_data, { mailboxId, setSenderPreference }) => {
+		onSuccess: (data, { mailboxId, setSenderPreference }) => {
 			invalidate(mailboxId);
-			if (setSenderPreference) {
+			// Any move into or out of Spam teaches the sender server-side.
+			if (setSenderPreference || data?.senderStatus) {
 				qc.invalidateQueries({ queryKey: ["sender-preferences", mailboxId] });
 			}
 		},
