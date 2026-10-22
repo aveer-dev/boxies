@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!--
+    Inboxies mark: MASTER ARTWORK. Every logo asset in the repo is derived from this file by
+    scripts/generate-logo-assets.mjs (scale, pad, tile, round corners, recolour, stroke weight).
+    Do not draw the plane anywhere else; edit this file and re-run the script.
+
+    A clean redraw of the original traced paper plane (public/favicon.svg before AVE-82):
+    same silhouette, fold lines, angles and proportions, fitted to the original line centres,
+    with straight segments, exact joins, true circular corner fillets and one stroke weight
+    per layer. Layers (ids are read by the generator):
+      outline  silhouette, with filleted tip / wing / tail corners
+      folds    the main crease (from the wing tip), left keel and right fuselage:
+               drawn at every size
+      fine     the second keel line, right-wing and wing / fuselage thickness edges,
+               dropped at 32 px and below where they would close up into blobs
+      details  short accent creases, dropped at 32 px and below
+      shadow   the filled keel shadow
+  -->
+  <g fill="none" stroke="#1F1F24" stroke-linecap="round" stroke-linejoin="round">
+    <path id="outline" stroke-width="2.5" d="M109.21 212.45 L379.08 109.54 A24.75 24.75 0 0 1 410.75 142.18 L305.93 393.73 A16 16 0 0 1 280.85 399.82 L228.32 355.58 L195.6 397.2 A12.75 12.75 0 0 1 173.01 391.5 L154.99 287.63 L103.93 238.05 A15.5 15.5 0 0 1 109.21 212.45 Z"/>
+    <path id="folds" stroke-width="2.0" d="M99.24 226.56 L123.67 229.18 L244.79 228.83 L398.22 122.4 M398.22 122.4 L202.28 310.03 L195.91 320.62 L189.81 349.17 M269.51 245.12 L289.56 376.09 L293.78 403.36 M398.22 122.4 L405.45 115.21"/>
+    <path id="fine" stroke-width="2.0" d="M398.22 122.4 L231.91 299.36 L218.98 311.78 M398.22 122.4 L289.56 376.09 L271.29 366.23 M123.67 229.18 L398.22 122.4 M123.67 229.18 L176.57 276.46 L156.37 288.97 M176.57 276.46 L179.32 300.79 L183.35 356"/>
+    <path id="details" stroke-width="2.0" d="M244.79 228.83 L247.91 241.97 M194 263.3 L238.2 233.6"/>
+  </g>
+  <path id="shadow" fill="#1F1F24" d="M199.6 332 L214.2 316.9 L223.2 319.8 L271.2 367.1 L271.3 375.5 L263.3 383.5 L228.32 355.58 L195.6 397.2 A12.75 12.75 0 0 1 183.68 401.92 Z"/>
+</svg>

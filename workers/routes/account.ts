@@ -16,7 +16,12 @@ import type { Context, Hono } from "hono";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getAuth, twoFactorApi } from "../auth";
-import { revokeAppleTokens, storeAppleRefreshToken } from "../auth/apple";
+import {
+	appleClientForIdentityToken,
+	deleteAppleTokens,
+	revokeAppleTokens,
+	storeAppleRefreshToken,
+} from "../auth/apple";
 import { authDb, listDomainsForUser, listMailboxesForUser, removeMailboxMember, type AuthDb } from "../auth/authz";
 import { isHostedEmailDomain } from "../auth/hooks";
 import { deleteLegacyIdentityForUser } from "../auth/migrate";
@@ -332,11 +337,17 @@ export function registerAccountRoutes(app: App) {
 		if (!parsed.success) return c.json({ error: "identityToken is required" }, 400);
 		const result = await socialSignIn(c, "apple", parsed.data.identityToken, parsed.data.nonce);
 		if (!result.ok) return c.json({ error: result.error }, result.status as 401);
-		if (parsed.data.authorizationCode) {
+		// The token is verified now; its audience says which Apple client
+		// (iOS bundle id or web Services ID) issued the code.
+		const appleClient = parsed.data.authorizationCode
+			? appleClientForIdentityToken(c.env, parsed.data.identityToken)
+			: null;
+		if (parsed.data.authorizationCode && appleClient) {
 			c.executionCtx.waitUntil(
 				storeAppleRefreshToken(c.env, authDb(c.env.AUTH_DB), {
 					userId: result.user.id,
 					authorizationCode: parsed.data.authorizationCode,
+					client: appleClient,
 				}),
 			);
 		}
@@ -819,9 +830,15 @@ export function registerAccountRoutes(app: App) {
 				console.error("[Auth] Link failed:", message);
 				return c.json({ error: "Couldn't verify that sign-in. Try again." }, 400);
 			}
-			if (body.provider === "apple" && body.authorizationCode) {
+			const appleClient =
+				body.provider === "apple" && body.authorizationCode ? appleClientForIdentityToken(c.env, token) : null;
+			if (body.authorizationCode && appleClient) {
 				c.executionCtx.waitUntil(
-					storeAppleRefreshToken(c.env, db, { userId: user.id, authorizationCode: body.authorizationCode }),
+					storeAppleRefreshToken(c.env, db, {
+						userId: user.id,
+						authorizationCode: body.authorizationCode,
+						client: appleClient,
+					}),
 				);
 			}
 		} else {
@@ -878,7 +895,10 @@ export function registerAccountRoutes(app: App) {
 		if (accounts.length - target.length < 1) {
 			return c.json({ error: "You need at least one way to sign in" }, 400);
 		}
-		if (providerId === "apple") await revokeAppleTokens(c.env, db, principal.userId);
+		if (providerId === "apple") {
+			await revokeAppleTokens(c.env, db, principal.userId);
+			await deleteAppleTokens(db, principal.userId);
+		}
 		for (const a of target) await db.delete(schema.account).where(eq(schema.account.id, a.id));
 		return c.json({ ok: true });
 	});
