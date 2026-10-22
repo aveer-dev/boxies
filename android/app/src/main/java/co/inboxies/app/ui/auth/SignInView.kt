@@ -76,6 +76,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -1181,6 +1182,7 @@ private fun EmailLoginScreen(
     val twoFactorChallenge by auth.twoFactorChallenge.collectAsState()
     var twoFactorCode by remember { mutableStateOf("") }
     var isUsingBackupCode by remember { mutableStateOf(false) }
+    var isVerifyingCode by remember { mutableStateOf(false) }
 
     fun navigateTo(newStep: EmailStep) {
         auth.clearError()
@@ -1217,7 +1219,12 @@ private fun EmailLoginScreen(
         if (twoFactorChallenge != null) {
             twoFactorCode = ""
             isUsingBackupCode = false
-            if (backStack.lastOrNull() != EmailStep.TwoFactor) navigateTo(EmailStep.TwoFactor)
+            if (backStack.lastOrNull() != EmailStep.TwoFactor) {
+                // The code step sits on the password step, also after a reset, so Back and an
+                // expired challenge never return to a reset form whose code is spent.
+                popToPassword()
+                navigateTo(EmailStep.TwoFactor)
+            }
         } else if (backStack.lastOrNull() == EmailStep.TwoFactor && !auth.isAuthenticated) {
             // Expired challenge: back to the password to start over.
             popToPassword()
@@ -1232,14 +1239,21 @@ private fun EmailLoginScreen(
     }
 
     fun submitTwoFactor() {
-        if (!twoFactorCodeReady() || isBusy) return
+        // The sixth digit, IME Done, Verify and autofill can all land in one frame, before the
+        // collected isBusy flips, so guard with a flag set right here.
+        if (!twoFactorCodeReady() || isBusy || isVerifyingCode) return
+        isVerifyingCode = true
         scope.launch {
-            commitApiBase()
-            val ok = auth.verifyTwoFactor(twoFactorCode, useBackupCode = isUsingBackupCode)
-            if (ok && auth.isAuthenticated) {
-                onDismiss()
-            } else if (!ok) {
-                twoFactorCode = ""
+            try {
+                commitApiBase()
+                val ok = auth.verifyTwoFactor(twoFactorCode, useBackupCode = isUsingBackupCode)
+                if (ok && auth.isAuthenticated) {
+                    onDismiss()
+                } else if (!ok) {
+                    twoFactorCode = ""
+                }
+            } finally {
+                isVerifyingCode = false
             }
         }
     }
@@ -1931,7 +1945,7 @@ private fun EmailLoginScreen(
 
                     Button(
                         onClick = { submitTwoFactor() },
-                        enabled = twoFactorCodeReady() && !isBusy,
+                        enabled = twoFactorCodeReady() && !isBusy && !isVerifyingCode,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(50.dp),
@@ -1979,7 +1993,8 @@ private enum class EmailStep {
 
 /**
  * One-time-code autofill hint for the 2FA field (SMS / authenticator code providers).
- * Compose 1.7's autofill tree; the node is registered while the field is composed.
+ * Compose 1.7's autofill tree; the node is registered only while the field is composed and
+ * [enabled], so a stale node can't fill (and submit) after switching to a backup code.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -1990,7 +2005,14 @@ private fun Modifier.oneTimeCodeAutofill(enabled: Boolean, onFill: (String) -> U
     val node = remember {
         AutofillNode(autofillTypes = listOf(AutofillType.SmsOtpCode), onFill = { currentOnFill(it) })
     }
-    LocalAutofillTree.current += node
+    val tree = LocalAutofillTree.current
+    DisposableEffect(tree, node) {
+        tree += node
+        onDispose {
+            tree.children.remove(node.id)
+            autofill?.run { runCatching { cancelAutofillForNode(node) } }
+        }
+    }
     return this
         .onGloballyPositioned { node.boundingBox = it.boundsInWindow() }
         .onFocusChanged { state ->

@@ -1,5 +1,8 @@
 package co.inboxies.app.services
 
+import androidx.credentials.exceptions.domerrors.InvalidStateError
+import androidx.credentials.exceptions.domerrors.NotAllowedError
+import androidx.credentials.exceptions.publickeycredential.CreatePublicKeyCredentialDomException
 import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.PasskeyRow
 import co.inboxies.app.models.ResetPasswordResponse
@@ -14,6 +17,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.ZoneOffset
+import kotlin.coroutines.cancellation.CancellationException
 
 /** Wire handling for passkey sign-in and the two-factor challenge (AVE-77, twin of iOS AVE-76). */
 class PasskeysTwoFactorTest {
@@ -149,6 +153,16 @@ class PasskeysTwoFactorTest {
         assertTrue(Passkeys.friendly(transport, "x") === transport)
         val own = Passkeys.Failure("mine")
         assertTrue(Passkeys.friendly(own, "x") === own)
+        val cancelled = CancellationException("scope left")
+        assertTrue(Passkeys.friendly(cancelled, "x") === cancelled)
+    }
+
+    @Test
+    fun excludedCredentialMeansAlreadyRegistered() {
+        val existing = Passkeys.credentialFailure(CreatePublicKeyCredentialDomException(InvalidStateError(), "excluded"))
+        assertEquals("This device already has a passkey for your account.", existing.message)
+        val other = Passkeys.credentialFailure(CreatePublicKeyCredentialDomException(NotAllowedError(), "nope"))
+        assertEquals("nope", other.message)
     }
 
     @Test

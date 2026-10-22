@@ -12,9 +12,11 @@ import androidx.credentials.exceptions.CreateCredentialException
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
+import androidx.credentials.exceptions.domerrors.InvalidStateError
 import androidx.credentials.exceptions.publickeycredential.CreatePublicKeyCredentialDomException
 import androidx.credentials.exceptions.publickeycredential.GetPublicKeyCredentialDomException
 import co.inboxies.app.models.PasskeyRow
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -186,6 +188,8 @@ object Passkeys {
     fun friendly(error: Throwable, fallback: String): Exception {
         if (error is Failure) return error
         if (error is Cancelled) return error
+        // The caller's scope went away mid-request: keep cancelling, don't report a failure.
+        if (error is CancellationException) return error
         return when (error) {
             is ApiException.Http -> {
                 if (error.code == 429) return Failure("Too many attempts. Wait a minute and try again.")
@@ -211,7 +215,8 @@ object Passkeys {
         is NoCredentialException ->
             Failure("No passkey for Inboxies on this device. Sign in another way, then add one in Settings.")
         is CreatePublicKeyCredentialDomException ->
-            if (e.type.contains("InvalidStateError")) {
+            // `excludeCredentials` matched a passkey the password manager already holds.
+            if (e.domError is InvalidStateError) {
                 Failure("This device already has a passkey for your account.")
             } else {
                 domFailure(e.message)
