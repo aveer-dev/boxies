@@ -45,6 +45,10 @@
 		// Sign in with Apple on the web login page: the Services ID (not secret).
 		// Unset hides the button. See workers/types.ts.
 		"APPLE_WEB_SERVICES_ID": "app.inboxies.web",
+		// Passkeys: the relying party is APP_BASE_URL's host (inboxies.app) and its
+		// origin. Android passkeys also need the app's signing-cert origin here
+		// (comma-separated; see workers/types.ts):
+		// "PASSKEY_EXTRA_ORIGINS": "android:apk-key-hash:…",
 	},
 	"send_email": [
 		{
