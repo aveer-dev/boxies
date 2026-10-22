@@ -6,6 +6,7 @@ import { Button, Input, useKumoToastManager } from "@cloudflare/kumo";
 import { EyeIcon, EyeSlashIcon } from "@phosphor-icons/react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router";
+import { AuthShell, quietLinkClass } from "~/components/AuthShell";
 import api from "~/services/api";
 
 export function meta() {
@@ -24,13 +25,20 @@ export default function ResetPasswordRoute() {
 	const [newPassword, setNewPassword] = useState("");
 	const [showPassword, setShowPassword] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
+	const emailInputRef = useRef<HTMLInputElement>(null);
+	const codeInputRef = useRef<HTMLInputElement>(null);
 	const passwordInputRef = useRef<HTMLInputElement>(null);
 
+	// Focus the first field still to fill: a reset link only needs the new
+	// password; the code form starts at the email (or the code when the email
+	// came in the URL).
 	useEffect(() => {
 		if (tokenParam) {
 			setToken(tokenParam);
+			passwordInputRef.current?.focus();
+			return;
 		}
-		passwordInputRef.current?.focus();
+		(searchParams.get("email") ? codeInputRef : emailInputRef).current?.focus();
 	}, [tokenParam]);
 
 	const handleSubmit = async (e: FormEvent) => {
@@ -73,100 +81,112 @@ export default function ResetPasswordRoute() {
 	};
 
 	return (
-		<div className="min-h-screen bg-kumo-recessed flex items-center justify-center px-4">
-			<div className="w-full max-w-md rounded-xl border border-kumo-line bg-kumo-base p-6 md:p-8">
-				<div className="flex items-center gap-3 mb-6">
-					<img src="/logo.svg" alt="Inboxies" className="w-9 h-9" />
-					<div>
-						<h1 className="text-xl font-bold text-kumo-default leading-tight">Inboxies</h1>
+		<AuthShell title="Set a new password for your account">
+			<form onSubmit={handleSubmit} className="space-y-4">
+				{!tokenParam && (
+					<>
 						<p className="text-xs text-kumo-subtle">
-							Set a new password for your account
+							Enter the email you sign in with and the 6-digit code we sent to your
+							recovery email.
 						</p>
-					</div>
-				</div>
-
-				<form onSubmit={handleSubmit} className="space-y-4">
-					{!tokenParam && (
-						<>
-							<p className="text-xs text-kumo-subtle">
-								Enter the email you sign in with and the 6-digit code we sent to your
-								recovery email.
-							</p>
+						<div>
+							<label
+								htmlFor="reset-email"
+								className="block text-xs font-medium text-kumo-subtle mb-1"
+							>
+								Inboxies email
+							</label>
 							<Input
-								label="Inboxies email"
+								id="reset-email"
+								className="w-full"
 								type="email"
-								size="sm"
 								value={email}
 								onChange={(e) => setEmail(e.target.value)}
 								placeholder="you@example.com"
 								autoComplete="email"
+								ref={emailInputRef}
 								required={!token}
 							/>
+						</div>
+						<div>
+							<label
+								htmlFor="reset-code"
+								className="block text-xs font-medium text-kumo-subtle mb-1"
+							>
+								6-digit reset code
+							</label>
 							<Input
-								label="6-digit reset code"
+								id="reset-code"
+								className="w-full"
 								type="text"
-								size="sm"
 								value={code}
 								onChange={(e) => setCode(e.target.value)}
 								placeholder="123456"
 								maxLength={6}
 								inputMode="numeric"
 								autoComplete="one-time-code"
+								ref={codeInputRef}
 								required={!token}
 							/>
-						</>
-					)}
+						</div>
+					</>
+				)}
 
-					<div className="relative">
+				<div>
+					<label
+						htmlFor="reset-new-password"
+						className="block text-xs font-medium text-kumo-subtle mb-1"
+					>
+						New password
+					</label>
+					<div className="relative flex items-center">
 						<Input
-							label="New password"
+							id="reset-new-password"
 							type={showPassword ? "text" : "password"}
-							size="sm"
 							value={newPassword}
 							onChange={(e) => setNewPassword(e.target.value)}
 							required
 							minLength={10}
 							autoComplete="new-password"
 							ref={passwordInputRef}
-							autoFocus
-							className="pr-10"
+							aria-describedby="reset-new-password-hint"
+							className="w-full pr-10"
 						/>
 						<button
 							type="button"
 							onClick={() => setShowPassword(!showPassword)}
-							className="absolute right-3 top-8 text-kumo-subtle hover:text-kumo-default p-1 cursor-pointer"
+							className="absolute right-3 text-kumo-subtle hover:text-kumo-default p-1 cursor-pointer"
 							title={showPassword ? "Hide password" : "Show password"}
 							aria-label={showPassword ? "Hide password" : "Show password"}
 						>
 							{showPassword ? <EyeSlashIcon size={16} /> : <EyeIcon size={16} />}
 						</button>
 					</div>
-
-					{newPassword.length > 0 && newPassword.length < 10 && (
-						<p className="text-xs text-kumo-subtle">
-							{10 - newPassword.length} more characters needed (minimum 10)
-						</p>
-					)}
-
-					<Button
-						type="submit"
-						variant="primary"
-						className="w-full"
-						loading={submitting}
-						disabled={
-							newPassword.length < 10 || (!token && (!email.trim() || code.length < 6))
-						}
-					>
-						Reset password & sign in
-					</Button>
-				</form>
-
-				<div className="mt-6 text-center text-xs text-kumo-subtle">
-					<Link to="/login" className="text-kumo-accent hover:underline">
-						Back to sign in
-					</Link>
+					<p id="reset-new-password-hint" className="mt-1 text-xs text-kumo-subtle">
+						{newPassword.length > 0 && newPassword.length < 10
+							? `${10 - newPassword.length} more characters needed (minimum 10)`
+							: "At least 10 characters"}
+					</p>
 				</div>
+
+				<Button
+					type="submit"
+					variant="primary"
+					className="w-full"
+					loading={submitting}
+					disabled={
+						newPassword.length < 10 || (!token && (!email.trim() || code.length < 6))
+					}
+				>
+					Reset password & sign in
+				</Button>
+			</form>
+
+			<div className="mt-6 text-center text-xs">
+				<Link to="/login" className={quietLinkClass}>
+					Back to sign in
+				</Link>
 			</div>
-		</div>
+		</AuthShell>
 	);
 }
