@@ -53,6 +53,12 @@ export const emails = sqliteTable("emails", {
 	 * Maintained by SQLite triggers (migration 34); retention purges by it.
 	 */
 	retention_since: text("retention_since"),
+	/** Why inbound mail was filed where it was (shared/spam-reason.ts codes; migration 37). */
+	classification_reason: text("classification_reason"),
+	/** verified | unverified | failed at receive time. Null on outbound and pre-37 rows. */
+	auth_tier: text("auth_tier"),
+	/** Sender rule that decided the folder. Null until sender_rules exists. */
+	matched_rule_id: text("matched_rule_id"),
 });
 
 export const attachments = sqliteTable("attachments", {
