@@ -662,6 +662,15 @@ struct EmailRowView: View {
                     .foregroundStyle(AppTheme.deepDarkRed)
             }
 
+            // Sent mail the DSN pipeline marked bounced / complained (or a failed send).
+            if let status = email.deliveryStatusLabel {
+                Text(status)
+                    .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                    .foregroundStyle(AppTheme.deepDarkRed)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+
             Spacer(minLength: 8)
 
             HStack(alignment: .center, spacing: 4) {
