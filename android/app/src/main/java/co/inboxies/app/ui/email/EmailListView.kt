@@ -774,6 +774,14 @@ private fun MailRow(
                         scope.launch { app.toggleRead(email) }
                     },
                 )
+                InboxiesMenuItem(
+                    text = if (email.replyLater) "Remove from Reply Later" else "Reply later",
+                    icon = Icons.Outlined.Schedule,
+                    onClick = {
+                        showMenu = false
+                        scope.launch { app.toggleReplyLater(email) }
+                    },
+                )
                 InboxiesMenuDivider()
                 InboxiesMenuItem(
                     text = "More Options…",

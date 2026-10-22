@@ -1781,10 +1781,11 @@ final class AppModel {
             updated.replyLaterAt = nil
         }
         applyEmailUpdate(updated)
-        await refreshReplyLaterCount()
-        if selectedTab == .replyLater {
-            await loadEmailsForCurrentTab(showLoading: false)
-        }
+        // Count optimistically. Refetching the pile here races the outbox: the server
+        // still has the old flag, so the count would bounce back and a removed row (and
+        // its local flag, via upsert) would reappear in the Reply Later pile.
+        replyLaterCount = max(0, replyLaterCount + (next ? 1 : -1))
+        showToast(next ? "Added to Reply Later" : "Removed from Reply Later")
     }
 
     func setReplyLater(_ emailIDs: Set<String>, replyLater: Bool) async {
