@@ -47,6 +47,18 @@ enum HomeChromeMetrics {
         }
         return height
     }
+
+    // MARK: Regular width (iPad) two-pane
+
+    /// List column share of the window in the two-pane layout, clamped so rows keep
+    /// their phone proportions and the reading pane gets the rest.
+    static let listColumnFraction: CGFloat = 0.38
+    static let listColumnMinWidth: CGFloat = 320
+    static let listColumnMaxWidth: CGFloat = 420
+
+    static func listColumnWidth(for totalWidth: CGFloat) -> CGFloat {
+        min(max(totalWidth * listColumnFraction, listColumnMinWidth), listColumnMaxWidth)
+    }
 }
 
 extension View {

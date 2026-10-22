@@ -27,6 +27,7 @@ import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import { AUTH_BASE_PATH } from "./auth";
 import { webHostRedirect } from "./lib/web-host-redirect";
 import type { Env } from "./types";
+import type { McpConsentView } from "../shared/mcp-consent";
 
 export { MailboxDO } from "./durableObject";
 export { ExportJobDO } from "./durableObject/export-job";
@@ -39,6 +40,12 @@ declare module "react-router" {
 			env: Env;
 			ctx: ExecutionContext;
 		};
+		/**
+		 * Set only by the Worker's GET /authorize after it validated the OAuth
+		 * request and the session (workers/mcp/oauth.ts); app/routes/authorize.tsx
+		 * renders it. Absent on every other request.
+		 */
+		mcpConsent?: McpConsentView;
 	}
 }
 
@@ -73,7 +80,12 @@ const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
 // /register and /authorize answer before the session middleware (anything
 // they don't own falls through unchanged), and a /mcp 401 names the resource
 // metadata so OAuth clients can discover the authorization server.
-const mcpOAuth = createMcpOAuth(mcpHandler);
+const mcpOAuth = createMcpOAuth(mcpHandler, {
+	// The consent page is the web app's /authorize route (AVE-68), rendered
+	// with the view the Worker built; the Worker adds the security headers.
+	renderConsent: (request, env, ctx, view) =>
+		requestHandler(request, { cloudflare: { env, ctx }, mcpConsent: view }),
+});
 registerMcpOAuthRoutes(app, mcpOAuth);
 
 // Everyone else: a Better Auth session.

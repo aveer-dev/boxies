@@ -26,8 +26,15 @@
     {
       "idx": 3,
       "version": "6",
-      "when": 1792502575884,
-      "tag": "0003_domain_offboarding",
+      "when": 1792470163145,
+      "tag": "0003_email_suppression",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792642596198,
+      "tag": "0004_domain_offboarding",
       "breakpoints": true
     }
   ]

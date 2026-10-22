@@ -95,7 +95,7 @@ export const SETTINGS_PAGES: Record<SettingsPageId, SettingsPage> = {
 	sessions: {
 		id: "sessions",
 		label: "Devices",
-		description: "Where you're signed in; sign out other sessions",
+		description: "Where you're signed in and apps you connected; sign out or disconnect",
 		icon: <DevicesIcon size={18} />,
 		Component: lazy(() => import("./SessionsSettings")),
 	},

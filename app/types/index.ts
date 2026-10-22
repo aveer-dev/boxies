@@ -80,6 +80,20 @@ export interface AccountSession {
 	current: boolean;
 }
 
+/** An app connected over MCP OAuth (Settings → Devices → Connected apps). */
+export interface McpGrant {
+	id: string;
+	clientId: string;
+	/** Self-registered and unverified; null when the app gave none. */
+	clientName: string | null;
+	clientUri: string | null;
+	scopes: string[];
+	/** Mailboxes the app is limited to; null means every mailbox. */
+	mailboxIds: string[] | null;
+	createdAt: string;
+	expiresAt: string | null;
+}
+
 export interface RecoveryEmailStatus {
 	email: string | null;
 	verified: boolean;

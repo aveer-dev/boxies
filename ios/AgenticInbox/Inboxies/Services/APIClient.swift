@@ -74,7 +74,8 @@ final class APIClient: @unchecked Sendable {
         query: [String: String] = [:],
         body: [String: Any]? = nil,
         authed: Bool = true,
-        bearerToken: String? = nil
+        bearerToken: String? = nil,
+        headers: [String: String] = [:]
     ) async throws -> T {
         let (data, http) = try await perform(
             path: path,
@@ -82,7 +83,8 @@ final class APIClient: @unchecked Sendable {
             query: query,
             body: body,
             authed: authed,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: headers
         )
         if http.statusCode == 204 {
             if T.self == EmptyResponse.self {
@@ -110,7 +112,7 @@ final class APIClient: @unchecked Sendable {
         query: [String: String] = [:],
         authed: Bool = true
     ) async throws -> (Data, HTTPURLResponse) {
-        try await perform(path: path, method: method, query: query, body: nil, authed: authed, bearerToken: nil)
+        try await perform(path: path, method: method, query: query, body: nil, authed: authed, bearerToken: nil, headers: [:])
     }
 
     /// Builds an API URL. `path` segments must already be escaped with
@@ -151,13 +153,17 @@ final class APIClient: @unchecked Sendable {
         query: [String: String],
         body: [String: Any]?,
         authed: Bool,
-        bearerToken: String?
+        bearerToken: String?,
+        headers: [String: String]
     ) async throws -> (Data, HTTPURLResponse) {
         guard let url = Self.makeURL(path: path, query: query) else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (name, value) in headers {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
         // `bearerToken` pins a request to a session that is being torn down (sign-out cleanup).
         let sentToken = authed ? (bearerToken ?? authToken) : nil
         if let sentToken {
@@ -307,6 +313,20 @@ final class APIClient: @unchecked Sendable {
 
     func revokeOtherSessions() async throws -> RevokeSessionsResponse {
         try await request(path: "/api/v1/me/sessions/revoke-others", method: "POST", body: [:] as [String: Any])
+    }
+
+    // MARK: Connected apps (MCP OAuth grants)
+
+    func listMcpGrants() async throws -> [McpGrant] {
+        try await request(path: "/api/v1/me/mcp-grants")
+    }
+
+    /// Disconnects the app: the grant and all its tokens are deleted server-side.
+    func revokeMcpGrant(id: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/me/mcp-grants/\(id.urlPathEncoded)",
+            method: "DELETE"
+        )
     }
 
     /// A scoped, revocable session for the AutoFill extension (private emails only).
@@ -764,15 +784,26 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func listEmails(mailboxId: String, folder: String, page: Int = 1) async throws -> EmailListResponse {
-        try await request(
+    /// Threaded folder page. Inbox only: `newLimit` keeps the newest N New conversations above
+    /// every Seen one; `section` (`new` | `seen`) lists one section (AVE-23).
+    func listEmails(
+        mailboxId: String,
+        folder: String,
+        page: Int = 1,
+        newLimit: Int? = nil,
+        section: String? = nil
+    ) async throws -> EmailListResponse {
+        var query = [
+            "folder": folder,
+            "threaded": "true",
+            "page": String(page),
+            "limit": "25",
+        ]
+        if let newLimit { query["new_limit"] = String(newLimit) }
+        if let section { query["section"] = section }
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
-            query: [
-                "folder": folder,
-                "threaded": "true",
-                "page": String(page),
-                "limit": "25",
-            ]
+            query: query
         )
     }
 
@@ -963,30 +994,59 @@ final class APIClient: @unchecked Sendable {
         return response.recipients
     }
 
-    func sendEmail(mailboxId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
+    /// Header for send / reply / forward: one key per compose, reused on every retry.
+    /// The server answers a repeated key with the original `202 { id, status }`.
+    static let idempotencyKeyHeader = "Idempotency-Key"
+
+    static func idempotencyHeaders(_ key: String?) -> [String: String] {
+        guard let key, !key.isEmpty else { return [:] }
+        return [idempotencyKeyHeader: key]
+    }
+
+    func sendEmail(
+        mailboxId: String,
+        payload: [String: Any],
+        bearerToken: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
             method: "POST",
             body: payload,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: Self.idempotencyHeaders(idempotencyKey)
         )
     }
 
-    func replyToEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
+    func replyToEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: [String: Any],
+        bearerToken: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/reply",
             method: "POST",
             body: payload,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: Self.idempotencyHeaders(idempotencyKey)
         )
     }
 
-    func forwardEmail(mailboxId: String, emailId: String, payload: [String: Any], bearerToken: String? = nil) async throws -> SendEmailResponse {
+    func forwardEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: [String: Any],
+        bearerToken: String? = nil,
+        idempotencyKey: String? = nil
+    ) async throws -> SendEmailResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/forward",
             method: "POST",
             body: payload,
-            bearerToken: bearerToken
+            bearerToken: bearerToken,
+            headers: Self.idempotencyHeaders(idempotencyKey)
         )
     }
 

@@ -20,6 +20,7 @@ struct EmailBodyView: View {
     @State private var allowsRemoteImages = false
     /// Sanitized body, computed once per source off the main actor (never during `body`).
     @State private var prepared: PreparedState?
+    @Environment(\.colorScheme) private var colorScheme
 
     private struct PreparedState: Equatable {
         let emailKey: String
@@ -41,6 +42,11 @@ struct EmailBodyView: View {
 
     private var bodyHTML: String {
         prepared?.body.main ?? ""
+    }
+
+    /// Dark mode: designed mail keeps its colours on a light paper card; simple mail goes dark.
+    private var appearance: EmailBodyAppearance {
+        EmailBodyAppearance(colorScheme: colorScheme, hasOwnColors: prepared?.body.mainHasOwnColors ?? false)
     }
 
     private var showLoading: Bool {
@@ -88,6 +94,12 @@ struct EmailBodyView: View {
                         )
                         .frame(maxWidth: .infinity, alignment: .top)
                         .frame(height: max(webHeight, 1))
+                        .background {
+                            if appearance == .paper {
+                                RoundedRectangle(cornerRadius: EmailBodyAppearance.paperCornerRadius, style: .continuous)
+                                    .fill(AppTheme.mailPaper)
+                            }
+                        }
                         .opacity(showLoading ? 0 : 1)
                     }
 
@@ -112,7 +124,8 @@ struct EmailBodyView: View {
                         activeQuotedContent = QuotedMailContent(
                             text: quote,
                             isHTML: isHTML,
-                            allowsRemoteImages: allowsRemoteImages
+                            allowsRemoteImages: allowsRemoteImages,
+                            hasOwnColors: isHTML && (prepared?.body.quoteHasOwnColors ?? false)
                         )
                     }
                 } label: {
@@ -148,7 +161,8 @@ struct EmailBodyView: View {
                 content: quoted.text,
                 isHTML: quoted.isHTML,
                 attachments: attachments,
-                allowsRemoteImages: quoted.allowsRemoteImages
+                allowsRemoteImages: quoted.allowsRemoteImages,
+                hasOwnColors: quoted.hasOwnColors
             )
         }
     }
@@ -275,7 +289,7 @@ struct EmailBodyView: View {
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <meta http-equiv="Content-Security-Policy" content="\(contentSecurityPolicy)">
         <style>
-          :root { color-scheme: light dark; }
+          :root { color-scheme: \(appearance.cssColorScheme); }
           html, body {
             margin: 0;
             padding: 0;
@@ -289,23 +303,17 @@ struct EmailBodyView: View {
             font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: \(Int(AppTheme.FontSize.body))px;
             line-height: 1.45;
-            color: #1f1f23;
+            color: \(appearance.text);
             word-wrap: break-word;
             overflow-wrap: anywhere;
           }
           img { max-width: 100%; height: auto; }
-          a { color: #2659d9; }
+          a { color: \(appearance.link); }
           pre, code { white-space: pre-wrap; }
           [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
             position: relative !important;
           }
-
-          @media (prefers-color-scheme: dark) {
-            body {
-              color: #f7f7f8;
-            }
-            a { color: #5888fb; }
-          }
+          \(appearance == .paper ? "body { padding: \(EmailBodyAppearance.paperPadding); }" : "")
 
           .gmail_quote, .yahoo_quoted, .protonmail_quote, #divRplyFwdMsg, blockquote[type="cite"], #appendonsend {
             display: none !important;
@@ -650,6 +658,36 @@ struct QuotedMailContent: Identifiable {
     let text: String
     let isHTML: Bool
     var allowsRemoteImages = false
+    /// Sanitized quoted HTML sets its own colours (paper card in dark mode).
+    var hasOwnColors = false
+}
+
+/// How an HTML mail body is coloured. Dark mode follows Gmail / Apple Mail / Hey:
+/// simple mail (no colours of its own) takes the app theme; designed mail
+/// (`EmailHTMLSanitizer.hasOwnColors`) is shown as designed on a light paper card,
+/// so it never turns into dark-on-dark text. Light mode is unchanged.
+/// The sanitizer strips `<style>` / `<meta>`, so a mail's own dark variant can't apply.
+enum EmailBodyAppearance: Equatable {
+    case light
+    case dark
+    case paper
+
+    static let paperCornerRadius: CGFloat = 12
+    static let paperPadding = "14px 16px"
+
+    init(colorScheme: ColorScheme, hasOwnColors: Bool) {
+        if colorScheme == .dark {
+            self = hasOwnColors ? .paper : .dark
+        } else {
+            self = .light
+        }
+    }
+
+    var cssColorScheme: String { self == .dark ? "dark" : "light" }
+    var text: String { self == .dark ? "#f7f7f8" : "#1f1f23" }
+    var link: String { self == .dark ? "#5888fb" : "#2659d9" }
+    var quoteBorder: String { self == .dark ? "#3f3f46" : "#d0d0d4" }
+    var quoteText: String { self == .dark ? "#a1a1aa" : "#5a5a60" }
 }
 
 /// Horizontal three-dot toggle button with ghost styling.
@@ -698,7 +736,13 @@ struct QuotedRepliesModalView: View {
     let isHTML: Bool
     var attachments: [Attachment] = []
     var allowsRemoteImages = false
+    var hasOwnColors = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var appearance: EmailBodyAppearance {
+        EmailBodyAppearance(colorScheme: colorScheme, hasOwnColors: hasOwnColors)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -730,8 +774,20 @@ struct QuotedRepliesModalView: View {
                 AppTheme.background.ignoresSafeArea()
 
                 if isHTML {
-                    QuotedHTMLFullView(html: content, allowsRemoteImages: allowsRemoteImages)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if appearance == .paper {
+                        QuotedHTMLFullView(html: content, allowsRemoteImages: allowsRemoteImages, appearance: appearance)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(
+                                AppTheme.mailPaper,
+                                in: RoundedRectangle(cornerRadius: EmailBodyAppearance.paperCornerRadius, style: .continuous)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: EmailBodyAppearance.paperCornerRadius, style: .continuous))
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 12)
+                    } else {
+                        QuotedHTMLFullView(html: content, allowsRemoteImages: allowsRemoteImages, appearance: appearance)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 12) {
@@ -759,6 +815,7 @@ struct QuotedRepliesModalView: View {
 private struct QuotedHTMLFullView: UIViewRepresentable {
     let html: String
     var allowsRemoteImages = false
+    var appearance: EmailBodyAppearance = .light
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -782,16 +839,17 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let key = "\(allowsRemoteImages)|\(EmailHTMLSanitizer.cacheKey(emailId: nil, html: html))"
+        let key = "\(allowsRemoteImages)|\(appearance)|\(EmailHTMLSanitizer.cacheKey(emailId: nil, html: html))"
         guard context.coordinator.loadedKey != key else { return }
         context.coordinator.loadedKey = key
         let source = html
         let allowsRemoteImages = allowsRemoteImages
+        let appearance = appearance
         let coordinator = context.coordinator
         Task { @MainActor [weak webView] in
             let sanitized = await EmailHTMLSanitizer.sanitizeOffMain(source)
             guard let webView, coordinator.loadedKey == key else { return }
-            let fullHTML = Self.wrapQuotedHTML(sanitized, allowsRemoteImages: allowsRemoteImages)
+            let fullHTML = Self.wrapQuotedHTML(sanitized, allowsRemoteImages: allowsRemoteImages, appearance: appearance)
             webView.loadHTMLString(fullHTML, baseURL: EmailHTMLSanitizer.opaqueOrigin)
         }
     }
@@ -817,7 +875,11 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         }
     }
 
-    private static func wrapQuotedHTML(_ sanitized: String, allowsRemoteImages: Bool) -> String {
+    private static func wrapQuotedHTML(
+        _ sanitized: String,
+        allowsRemoteImages: Bool,
+        appearance: EmailBodyAppearance
+    ) -> String {
         let contentSecurityPolicy = allowsRemoteImages
             ? EmailHTMLSanitizer.contentSecurityPolicy
             : EmailHTMLSanitizer.remoteImagesBlockedPolicy
@@ -829,7 +891,7 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
         <meta http-equiv="Content-Security-Policy" content="\(contentSecurityPolicy)">
         <style>
-          :root { color-scheme: light dark; }
+          :root { color-scheme: \(appearance.cssColorScheme); }
           html, body {
             margin: 0;
             padding: 16px 20px 32px 20px;
@@ -841,33 +903,24 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
             font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: \(Int(AppTheme.FontSize.body))px;
             line-height: 1.5;
-            color: #1f1f23;
+            color: \(appearance.text);
             word-wrap: break-word;
             overflow-wrap: anywhere;
           }
           img { max-width: 100%; height: auto; }
-          a { color: #2659d9; }
+          a { color: \(appearance.link); }
           pre, code { white-space: pre-wrap; }
           [style*="position: fixed"], [style*="position:fixed"], [style*="position: absolute"], [style*="position:absolute"] {
             position: relative !important;
           }
           blockquote {
-            border-left: 2px solid #d0d0d4;
+            border-left: 2px solid \(appearance.quoteBorder);
             margin: 10px 0;
             padding-left: 12px;
-            color: #5a5a60;
+            color: \(appearance.quoteText);
           }
           p, div, span, td, th, blockquote {
             font-size: \(Int(AppTheme.FontSize.body))px !important;
-          }
-
-          @media (prefers-color-scheme: dark) {
-            body { color: #f7f7f8; }
-            a { color: #5888fb; }
-            blockquote {
-              border-left-color: #3f3f46;
-              color: #a1a1aa;
-            }
           }
         </style>
         </head>
