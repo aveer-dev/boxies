@@ -44,6 +44,8 @@ import { purgeEmailAgents } from "../lib/email-agent";
 import { getMailboxStub } from "../lib/email-helpers";
 import type { MailboxContext } from "../lib/mailbox";
 import { mailDomainConfig } from "../lib/mail-domain";
+import { listMcpGrants, revokeMcpGrant } from "../mcp/grants";
+import { mcpOAuthApi } from "../mcp/oauth";
 import { canonicalMailboxId } from "../lib/mailbox-routing";
 import { validatePasswordStrength, verifyPassword } from "../lib/password-auth";
 import type { Env } from "../types";
@@ -625,6 +627,28 @@ export function registerAccountRoutes(app: App) {
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
 		const revoked = await revokeUserSessions(c.env, principal.userId, { exceptSessionId: principal.sessionId });
 		return c.json({ ok: true, revoked });
+	});
+
+	// ── Connected apps (MCP OAuth grants, AVE-70) ────────────────
+
+	/** Apps the user connected over MCP OAuth. Empty when OAuth is off. */
+	app.get("/api/v1/me/mcp-grants", async (c) => {
+		const principal = requirePrincipal(c);
+		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		const api = mcpOAuthApi(c.env, new URL(c.req.url));
+		if (!api) return c.json([]);
+		return c.json(await listMcpGrants(api, principal.userId));
+	});
+
+	/** Disconnect an app: the grant and all its tokens are deleted. */
+	app.delete("/api/v1/me/mcp-grants/:grantId", async (c) => {
+		const principal = requirePrincipal(c);
+		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		const api = mcpOAuthApi(c.env, new URL(c.req.url));
+		if (!api) return c.json({ error: "Not found" }, 404);
+		const ok = await revokeMcpGrant(api, principal.userId, c.req.param("grantId"));
+		if (!ok) return c.json({ error: "Not found" }, 404);
+		return c.json({ ok: true });
 	});
 
 	/**

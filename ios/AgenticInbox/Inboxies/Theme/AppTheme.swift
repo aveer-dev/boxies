@@ -14,6 +14,8 @@ enum AppTheme {
     static let uiAccent = dynamicColor(light: UIColor(red: 0.15, green: 0.35, blue: 0.85, alpha: 1), dark: UIColor(red: 0.35, green: 0.55, blue: 1.0, alpha: 1))
     static let uiUnread = dynamicColor(light: UIColor(red: 0.22, green: 0.22, blue: 0.24, alpha: 1), dark: UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1))
     static let uiDeepDarkRed = dynamicColor(light: UIColor(red: 0.42, green: 0.08, blue: 0.10, alpha: 1), dark: UIColor(red: 0.90, green: 0.35, blue: 0.35, alpha: 1))
+    /// Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). Not dynamic.
+    static let uiMailPaper = UIColor.white
 
     // MARK: - SwiftUI Colors
     static let background = Color(uiColor: uiBackground)
@@ -26,6 +28,7 @@ enum AppTheme {
     static let accent = Color(uiColor: uiAccent)
     static let unread = Color(uiColor: uiUnread)
     static let deepDarkRed = Color(uiColor: uiDeepDarkRed)
+    static let mailPaper = Color(uiColor: uiMailPaper)
 
     private static func dynamicColor(light: UIColor, dark: UIColor) -> UIColor {
         return UIColor { traitCollection in

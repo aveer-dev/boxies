@@ -552,5 +552,20 @@ export const mailboxMigrations: Migration[] = [
                 ON emails(idempotency_key) WHERE idempotency_key IS NOT NULL;
         `),
 	},
+	{
+		// Stuck-send sweeper (AVE-66, workers/lib/outbound-send-sweeper.ts).
+		// send_queued_at: epoch ms of the last (re-)enqueue of a queued Sent
+		// row; send_attempts: re-enqueues the sweeper made. The partial index
+		// keeps the alarm's "queued rows" scan off the rest of the mailbox.
+		// Additive only: existing rows get 0 / NULL, and the first sweep
+		// stamps any already-queued row.
+		name: "34_outbound_send_sweeper",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE emails ADD COLUMN send_queued_at INTEGER;
+            CREATE INDEX IF NOT EXISTS idx_emails_queued_sends
+                ON emails(send_queued_at) WHERE delivery_status = 'queued';
+        `),
+	},
 ];
 

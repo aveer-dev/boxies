@@ -30,6 +30,65 @@ enum EmailHTMLSanitizer {
         return remoteImageReference.firstMatch(in: html, range: range) != nil
     }
 
+    // MARK: - Own colours (dark mode)
+
+    private static let tagPattern = try? NSRegularExpression(
+        pattern: #"<([a-zA-Z][^\s/>]*)((?:[^>"']|"[^"]*"|'[^']*')*)>"#
+    )
+    private static let attributePattern = try? NSRegularExpression(
+        pattern: #"([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?"#
+    )
+    private static let colorProperties: Set<String> = ["color", "background", "background-color", "background-image"]
+    private static let neutralColorValues: Set<String> = [
+        "", "transparent", "inherit", "initial", "unset", "revert", "currentcolor", "none",
+    ]
+
+    /// True when sanitized HTML sets its own background or text colours: a non-empty
+    /// `bgcolor` / `background` attribute, `<font color>`, or an inline `color` /
+    /// `background*` declaration with a real value. Such mail renders on a light paper
+    /// card in dark mode; everything else takes the app theme. Same rules as web
+    /// `shared/email-colors.ts` and Android `EmailHtmlSanitizer.hasOwnColors`, checked
+    /// against `shared/email-colors.fixtures.json`.
+    static func hasOwnColors(_ html: String) -> Bool {
+        guard !html.isEmpty, let tagPattern, let attributePattern else { return false }
+        let source = html as NSString
+        for tag in tagPattern.matches(in: html, range: NSRange(location: 0, length: source.length)) {
+            let tagName = source.substring(with: tag.range(at: 1)).lowercased()
+            let attributes = source.substring(with: tag.range(at: 2))
+            let attrSource = attributes as NSString
+            let attrRange = NSRange(location: 0, length: attrSource.length)
+            for attr in attributePattern.matches(in: attributes, range: attrRange) {
+                let name = attrSource.substring(with: attr.range(at: 1)).lowercased()
+                let value = (2...4)
+                    .map { attr.range(at: $0) }
+                    .first { $0.location != NSNotFound }
+                    .map { attrSource.substring(with: $0) } ?? ""
+                if (name == "bgcolor" || name == "background") && !isNeutralColor(value) { return true }
+                if name == "color" && tagName == "font" && !isNeutralColor(value) { return true }
+                if name == "style" && styleSetsColors(value) { return true }
+            }
+        }
+        return false
+    }
+
+    private static func styleSetsColors(_ style: String) -> Bool {
+        for declaration in style.split(separator: ";", omittingEmptySubsequences: true) {
+            guard let colon = declaration.firstIndex(of: ":") else { continue }
+            let property = declaration[..<colon].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let value = String(declaration[declaration.index(after: colon)...])
+            if colorProperties.contains(property) && !isNeutralColor(value) { return true }
+        }
+        return false
+    }
+
+    private static func isNeutralColor(_ value: String) -> Bool {
+        let trimmed = value
+            .replacingOccurrences(of: #"!\s*important\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return neutralColorValues.contains(trimmed)
+    }
+
     struct SplitBody: Sendable, Equatable {
         let main: String
         let quote: String?
@@ -41,6 +100,9 @@ enum EmailHTMLSanitizer {
         let main: String
         let quote: String?
         let hasRemoteImages: Bool
+        /// The main part sets its own colours (paper card in dark mode).
+        let mainHasOwnColors: Bool
+        let quoteHasOwnColors: Bool
     }
 
     static func prepare(_ html: String) -> SplitBody {
@@ -57,7 +119,9 @@ enum EmailHTMLSanitizer {
             return PreparedBody(
                 main: split.main,
                 quote: split.quote,
-                hasRemoteImages: containsRemoteImages(split.main) || containsRemoteImages(split.quote ?? "")
+                hasRemoteImages: containsRemoteImages(split.main) || containsRemoteImages(split.quote ?? ""),
+                mainHasOwnColors: hasOwnColors(split.main),
+                quoteHasOwnColors: hasOwnColors(split.quote ?? "")
             )
         }.value
         PreparedBodyCache.shared.store(prepared, for: key)

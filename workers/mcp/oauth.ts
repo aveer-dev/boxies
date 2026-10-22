@@ -37,12 +37,18 @@ import {
 	OAuthAuthorizationServer,
 	OAuthResourceServer,
 	type AuthRequest,
-	type ConsentDescription,
 	type OAuthResourceTokenValidation,
 } from "@cloudflare/workers-oauth-provider";
 import { eq } from "drizzle-orm";
 import type { Context, Hono } from "hono";
-import { authDb } from "../auth/authz";
+import {
+	CONSENT_FIELDS,
+	initialConsentScopes,
+	MCP_OAUTH_SCOPES,
+	validateConsentSelection,
+	type McpConsentView,
+} from "../../shared/mcp-consent";
+import { authDb, listMailboxesForUser } from "../auth/authz";
 import { hasSessionCredentials } from "../auth/middleware";
 import { principalFromHeaders, type RequestPrincipal } from "../auth/principal";
 import * as schema from "../auth/schema";
@@ -57,20 +63,20 @@ export const OAUTH_AS_METADATA_PATH = "/.well-known/oauth-authorization-server";
 export const OAUTH_PRM_PREFIX = "/.well-known/oauth-protected-resource";
 
 /**
- * Everything this server can grant (planned in AVE-36). Every approval
- * currently grants all of them, i.e. the same access the legacy session
- * token has. TODO(AVE-68): let the user pick scopes on the consent page.
- * TODO(AVE-69): enforce them per tool in workers/mcp/index.ts.
+ * Everything this server can grant (planned in AVE-36); the user picks a
+ * subset on the consent page (AVE-68, shared/mcp-consent.ts).
+ * Enforced per tool in workers/mcp/index.ts (table: workers/mcp/scopes.ts, AVE-69).
  */
-export const MCP_OAUTH_SCOPES = ["read", "draft", "send", "manage"] as const;
+export { MCP_OAUTH_SCOPES };
 
 /** Encrypted grant props, stored by the library and handed back with each token. */
 export type McpGrantProps = {
 	v: 1;
 	userId: string;
 	/**
-	 * Mailboxes this grant may use; null means every mailbox the user can access.
-	 * TODO(AVE-68/69): the consent page's mailbox picker sets this; tools enforce it.
+	 * Mailboxes this grant may use, chosen on the consent page (AVE-68).
+	 * null means every mailbox the user can access; only grants approved
+	 * before AVE-68 have it. workers/mcp/index.ts enforces the list.
 	 */
 	mailboxIds: string[] | null;
 };
@@ -81,9 +87,31 @@ export type McpRequestProps = {
 	oauth?: { clientId: string; scopes: string[]; mailboxIds: string[] | null };
 };
 
+/**
+ * Whether the request's OAuth grant may use `mailboxId`. Session-token
+ * requests (no `oauth`) and grants without a mailbox list (approved before
+ * AVE-68) are limited only by the user's own access, checked separately.
+ */
+export function grantCoversMailbox(oauth: McpRequestProps["oauth"] | undefined, mailboxId: string): boolean {
+	if (!oauth || oauth.mailboxIds === null) return true;
+	return oauth.mailboxIds.includes(mailboxId);
+}
+
 type McpFetchHandler = {
 	fetch(request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response>;
 };
+
+/**
+ * Renders the consent page (the web app's /authorize route, given `view`
+ * through the load context). The Worker adds the security headers and the
+ * consent binding cookie to whatever this returns.
+ */
+export type RenderConsent = (
+	request: Request,
+	env: Env,
+	ctx: ExecutionContext,
+	view: McpConsentView,
+) => Response | Promise<Response>;
 
 type OAuthConfig = { issuer: string; resources: string[]; defaultResource: string };
 
@@ -121,11 +149,32 @@ function oauthEnabled(env: Env): boolean {
 	return Boolean((env as { OAUTH_KV?: unknown }).OAUTH_KV);
 }
 
+/** The authorization server for one configuration. Holds config only, no request state. */
+function newAuthorizationServer(config: OAuthConfig): OAuthAuthorizationServer<Env> {
+	return new OAuthAuthorizationServer<Env>({
+		issuer: config.issuer,
+		resources: config.resources,
+		defaultResource: config.defaultResource,
+		authorizeEndpoint: OAUTH_AUTHORIZE_PATH,
+		tokenEndpoint: OAUTH_TOKEN_PATH,
+		clientRegistrationEndpoint: OAUTH_REGISTER_PATH,
+		scopesSupported: [...MCP_OAUTH_SCOPES],
+		// Defaults, spelled out: 1h access tokens, 30-day refresh, 90-day DCR clients.
+		accessTokenTTL: 60 * 60,
+		refreshTokenTTL: 30 * 24 * 60 * 60,
+		// No private-use (custom scheme) redirect URIs and no Client ID
+		// Metadata Documents for now: https or loopback http, registered via DCR.
+		allowPrivateUseRedirectUris: false,
+		clientIdMetadataDocumentEnabled: false,
+		allowTokenExchangeGrant: false,
+	});
+}
+
 /**
  * The OAuth machinery for one `/mcp` handler. Instances are cached per
  * configuration (they hold only config, no request state).
  */
-export function createMcpOAuth(mcpHandler: McpFetchHandler) {
+export function createMcpOAuth(mcpHandler: McpFetchHandler, options: { renderConsent: RenderConsent }) {
 	type Bundle = {
 		config: OAuthConfig;
 		authorizationServer: OAuthAuthorizationServer<Env>;
@@ -141,23 +190,7 @@ export function createMcpOAuth(mcpHandler: McpFetchHandler) {
 		const cached = bundles.get(key);
 		if (cached) return cached;
 
-		const authorizationServer = new OAuthAuthorizationServer<Env>({
-			issuer: config.issuer,
-			resources: config.resources,
-			defaultResource: config.defaultResource,
-			authorizeEndpoint: OAUTH_AUTHORIZE_PATH,
-			tokenEndpoint: OAUTH_TOKEN_PATH,
-			clientRegistrationEndpoint: OAUTH_REGISTER_PATH,
-			scopesSupported: [...MCP_OAUTH_SCOPES],
-			// Defaults, spelled out: 1h access tokens, 30-day refresh, 90-day DCR clients.
-			accessTokenTTL: 60 * 60,
-			refreshTokenTTL: 30 * 24 * 60 * 60,
-			// No private-use (custom scheme) redirect URIs and no Client ID
-			// Metadata Documents for now: https or loopback http, registered via DCR.
-			allowPrivateUseRedirectUris: false,
-			clientIdMetadataDocumentEnabled: false,
-			allowTokenExchangeGrant: false,
-		});
+		const authorizationServer = newAuthorizationServer(config);
 
 		const resourceServers = new Map<string, OAuthResourceServer<Env, McpRequestProps>>();
 		for (const resource of config.resources) {
@@ -233,14 +266,14 @@ export function createMcpOAuth(mcpHandler: McpFetchHandler) {
 		},
 
 		/** GET/POST /authorize. Null when OAuth is off or this isn't the issuer origin. */
-		async handleAuthorize(request: Request, env: Env): Promise<Response | null> {
+		async handleAuthorize(request: Request, env: Env, ctx: ExecutionContext): Promise<Response | null> {
 			const url = new URL(request.url);
 			const bundle = bundleFor(env, url);
 			if (!bundle || url.origin !== bundle.config.issuer || url.pathname !== OAUTH_AUTHORIZE_PATH) return null;
 			const oauth = bundle.authorizationServer.getOAuthApi(env);
 			try {
 				if (request.method === "GET") {
-					return await showConsent(request, env, oauth);
+					return await showConsent(request, env, ctx, oauth, options.renderConsent);
 				}
 				if (request.method === "POST") {
 					return await submitConsent(request, env, oauth, bundle.config.issuer);
@@ -277,7 +310,11 @@ export function registerMcpOAuthRoutes<E extends McpAppEnv>(app: Hono<E>, mcpOAu
 		async (c, next) =>
 			(await mcpOAuth.handleProtocolRequest(c.req.raw, c.env, c.executionCtx as ExecutionContext)) ?? next(),
 	);
-	app.on(["GET", "POST"], OAUTH_AUTHORIZE_PATH, async (c, next) => (await mcpOAuth.handleAuthorize(c.req.raw, c.env)) ?? next());
+	app.on(
+		["GET", "POST"],
+		OAUTH_AUTHORIZE_PATH,
+		async (c, next) => (await mcpOAuth.handleAuthorize(c.req.raw, c.env, c.executionCtx as ExecutionContext)) ?? next(),
+	);
 
 	for (const path of [MCP_PATH, `${MCP_PATH}/*`]) {
 		app.use(path, async (c, next) => {
@@ -351,7 +388,25 @@ export async function validateMcpAccessToken(
 
 // ── /authorize ───────────────────────────────────────────────────
 
-type OAuthApi = ReturnType<OAuthAuthorizationServer<Env>["getOAuthApi"]>;
+export type OAuthApi = ReturnType<OAuthAuthorizationServer<Env>["getOAuthApi"]>;
+
+/**
+ * OAuth helpers outside a `/mcp` request (Settings → Sessions lists and
+ * revokes the user's grants, AVE-70). Null when OAuth is off.
+ */
+const apiServers = new Map<string, OAuthAuthorizationServer<Env>>();
+export function mcpOAuthApi(env: Env, requestUrl: URL): OAuthApi | null {
+	if (!oauthEnabled(env)) return null;
+	const config = mcpOAuthConfig(env, requestUrl);
+	if (!config) return null;
+	const key = JSON.stringify(config);
+	let server = apiServers.get(key);
+	if (!server) {
+		server = newAuthorizationServer(config);
+		apiServers.set(key, server);
+	}
+	return server.getOAuthApi(env);
+}
 
 /** A full app session (not an extension/AutoFill scoped one) or null. */
 async function signedInPrincipal(env: Env, request: Request): Promise<RequestPrincipal | null> {
@@ -368,7 +423,19 @@ function requirePkce(authRequest: AuthRequest): void {
 	}
 }
 
-async function showConsent(request: Request, env: Env, oauth: OAuthApi): Promise<Response> {
+/** Mailboxes the user can open right now, from AUTH_DB (the same rows the API and MCP use). */
+async function accessibleMailboxes(env: Env, userId: string): Promise<Array<{ id: string; role: string }>> {
+	const rows = await listMailboxesForUser(authDb(env.AUTH_DB), userId);
+	return rows.map(({ mailboxId, role }) => ({ id: mailboxId, role }));
+}
+
+async function showConsent(
+	request: Request,
+	env: Env,
+	ctx: ExecutionContext,
+	oauth: OAuthApi,
+	renderConsent: RenderConsent,
+): Promise<Response> {
 	const authRequest = await oauth.parseAuthRequest(request);
 	try {
 		requirePkce(authRequest);
@@ -387,10 +454,35 @@ async function showConsent(request: Request, env: Env, oauth: OAuthApi): Promise
 	}
 
 	const details = await oauth.describeConsent(authRequest);
+	const mailboxes = await accessibleMailboxes(env, principal.userId);
 	const consent = await oauth.beginConsent(authRequest);
-	consent.headers.set("Content-Type", "text/html; charset=utf-8");
-	consent.headers.set("Referrer-Policy", "no-referrer");
-	return new Response(consentPage(details, consent.handle, principal), { status: 200, headers: consent.headers });
+	const view: McpConsentView = {
+		handle: consent.handle,
+		account: principal.userId,
+		email: principal.email,
+		client: {
+			name: details.clientName,
+			domain: details.clientDomain ?? null,
+			redirectHost: details.redirectHost,
+			redirectIsLoopback: details.redirectIsLoopback,
+		},
+		requestedScopes: initialConsentScopes(details.scope),
+		mailboxes,
+	};
+
+	const rendered = await renderConsent(request, env, ctx, view);
+	const res = new Response(rendered.body, rendered); // headers may be immutable
+	// The library's headers: the binding cookie, no-store and anti-framing.
+	for (const [name, value] of consent.headers) {
+		if (name.toLowerCase() === "set-cookie") continue;
+		res.headers.set(name, value);
+	}
+	for (const cookie of consent.headers.getSetCookie()) res.headers.append("Set-Cookie", cookie);
+	// The URL carries the OAuth request; keep it out of cross-origin Referers
+	// (fonts, links). Not "no-referrer": browsers then send `Origin: null` on
+	// the form post, which submitConsent's same-origin check refuses.
+	res.headers.set("Referrer-Policy", "same-origin");
+	return res;
 }
 
 async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer: string): Promise<Response> {
@@ -416,10 +508,10 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer
 	} catch {
 		return page(400, "Can't continue", "This form is invalid. Start again from your app.");
 	}
-	const handle = String(form.get("handle") ?? "");
-	const decision = String(form.get("decision") ?? "");
+	const handle = String(form.get(CONSENT_FIELDS.handle) ?? "");
+	const decision = String(form.get(CONSENT_FIELDS.decision) ?? "");
 	if (!handle) return page(400, "Can't continue", "This form is invalid. Start again from your app.");
-	if (String(form.get("account") ?? "") !== principal.userId) {
+	if (String(form.get(CONSENT_FIELDS.account) ?? "") !== principal.userId) {
 		return page(409, "Account changed", "You switched accounts after this page opened. Start again from your app.");
 	}
 
@@ -428,11 +520,22 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer
 		return new Response(null, { status: 302, headers: denied.headers });
 	}
 
-	// TODO(AVE-68): scopes and mailboxes from the consent form; for now the
-	// full current access (all scopes, all of the user's mailboxes).
-	const approved = await oauth.approveConsent(request, handle, { scope: [...MCP_OAUTH_SCOPES] });
+	// What the user picked, checked against their mailboxes as of now (not
+	// the list the page showed) before the handle is spent.
+	const selection = validateConsentSelection(
+		{
+			scopes: form.getAll(CONSENT_FIELDS.scope).map(String),
+			mailboxIds: form.getAll(CONSENT_FIELDS.mailbox).map(String),
+		},
+		(await accessibleMailboxes(env, principal.userId)).map((m) => m.id),
+	);
+	if (!selection.ok) {
+		return page(400, "Can't continue", `${selection.error} Go back and try again.`);
+	}
+
+	const approved = await oauth.approveConsent(request, handle, { scope: [...selection.scopes] });
 	requirePkce(approved.request);
-	const props: McpGrantProps = { v: 1, userId: principal.userId, mailboxIds: null };
+	const props: McpGrantProps = { v: 1, userId: principal.userId, mailboxIds: selection.mailboxIds };
 	const { redirectTo } = await oauth.completeAuthorization({
 		request: approved.request,
 		userId: principal.userId,
@@ -452,51 +555,12 @@ export function escapeHtml(value: string): string {
 	return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 }
 
-const SCOPE_LABELS: Record<(typeof MCP_OAUTH_SCOPES)[number], string> = {
-	read: "Read your mail",
-	draft: "Write drafts",
-	send: "Send mail as you",
-	manage: "Move, mark and delete mail",
-};
-
+/** Error pages only; the consent page itself is the web app's /authorize route. */
 const PAGE_STYLE = `
-:root{color-scheme:light dark;--bg:#fff;--fg:#1f1f1f;--muted:#6b6b6b;--line:#e6e6e6;--accent:#2f6fde;--warn:#9a5b00}
-@media (prefers-color-scheme:dark){:root{--bg:#191919;--fg:#ececec;--muted:#9b9b9b;--line:#2f2f2f;--accent:#5b8cf0;--warn:#f0b35b}}
+:root{color-scheme:light dark;--bg:#fff;--fg:#1f1f1f}
+@media (prefers-color-scheme:dark){:root{--bg:#191919;--fg:#ececec}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 Inter,-apple-system,system-ui,sans-serif}
-main{max-width:440px;margin:0 auto;padding:48px 16px}h1{font-size:20px;margin:0 0 12px}p{margin:0 0 12px}
-.muted{color:var(--muted)}.warn{color:var(--warn)}ul{padding-left:20px;margin:0 0 16px}
-.card{border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 16px}
-.actions{display:flex;gap:8px}button{flex:1;font:inherit;padding:10px 12px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--fg);cursor:pointer}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}`;
-
-function consentPage(details: ConsentDescription, handle: string, principal: RequestPrincipal): string {
-	const name = escapeHtml(details.clientName);
-	const origin = details.clientDomain
-		? `Published by <strong>${escapeHtml(details.clientDomain)}</strong>.`
-		: "This app registered itself; its name is not verified.";
-	const scopes = MCP_OAUTH_SCOPES.map((scope) => `<li>${escapeHtml(SCOPE_LABELS[scope])}</li>`).join("");
-	const loopback = details.redirectIsLoopback
-		? `<p class="warn"><strong>This sends access to an app on your computer.</strong> Continue only if you just started connecting from it.</p>`
-		: "";
-	return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect ${name}</title><style>${PAGE_STYLE}</style></head>
-<body><main>
-<h1>Allow ${name} to use your Inboxies mail?</h1>
-<p class="muted">${origin}</p>
-<div class="card">
-<p>Signed in as <strong>${escapeHtml(principal.email)}</strong>. ${name} will be able to:</p>
-<ul>${scopes}</ul>
-<p class="muted">In every mailbox you can open. Access will be sent to <strong>${escapeHtml(details.redirectHost)}</strong>.</p>
-${loopback}
-</div>
-<form method="post" action="${OAUTH_AUTHORIZE_PATH}">
-<input type="hidden" name="handle" value="${escapeHtml(handle)}">
-<input type="hidden" name="account" value="${escapeHtml(principal.userId)}">
-<div class="actions"><button type="submit" name="decision" value="deny">Deny</button><button class="primary" type="submit" name="decision" value="approve">Allow</button></div>
-</form>
-</main></body></html>`;
-}
+main{max-width:440px;margin:0 auto;padding:48px 16px}h1{font-size:20px;margin:0 0 12px}p{margin:0 0 12px}`;
 
 function page(status: number, title: string, message: string): Response {
 	const html = `<!doctype html>

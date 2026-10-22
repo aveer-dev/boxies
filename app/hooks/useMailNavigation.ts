@@ -15,6 +15,11 @@ export function folderPath(mailboxId: string, folderId: string) {
 	return `${mailboxPath(mailboxId)}/emails/${folderId}`;
 }
 
+/** Every New Inbox conversation (the Inbox list shows only the newest few). */
+export function inboxNewPath(mailboxId: string) {
+	return `${mailboxPath(mailboxId)}/new`;
+}
+
 export function searchPath(mailboxId: string, query: string) {
 	return `${mailboxPath(mailboxId)}/search?q=${encodeURIComponent(query)}`;
 }
@@ -24,6 +29,7 @@ export function searchPath(mailboxId: string, query: string) {
  *
  *   /mailbox/:id/emails/:folder/:emailId?   folder list → reader
  *   /mailbox/:id/reply-later/:emailId?      Reply Later → reader
+ *   /mailbox/:id/new/:emailId?              all New Inbox mail → reader
  *   /mailbox/:id/search/:emailId?q=…        results → reader
  *
  * Compose, extra readers, agent and settings are side panels (`useUIStore`):

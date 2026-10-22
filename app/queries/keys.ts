@@ -39,6 +39,7 @@ export const queryKeys = {
 		me: ["me"] as const,
 		identities: ["identities"] as const,
 		sessions: ["account", "sessions"] as const,
+		mcpGrants: ["account", "mcp-grants"] as const,
 		recoveryEmail: ["account", "recovery-email"] as const,
 	},
 	members: {

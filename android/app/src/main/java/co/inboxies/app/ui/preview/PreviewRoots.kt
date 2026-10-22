@@ -93,6 +93,7 @@ object PreviewHarness {
             }
             PreviewMode.Mailbox,
             PreviewMode.LoadMore,
+            PreviewMode.ManyNew,
             PreviewMode.LoadFailed,
             PreviewMode.ListError,
             PreviewMode.Screener,
@@ -180,6 +181,7 @@ fun PreviewRoot(
         PreviewMode.LoadFailed -> MailboxLoadFailedView(appModel = appModel, auth = auth)
         PreviewMode.Mailbox,
         PreviewMode.LoadMore,
+        PreviewMode.ManyNew,
         PreviewMode.ListError,
         PreviewMode.Screener,
         PreviewMode.ScreenerList,
