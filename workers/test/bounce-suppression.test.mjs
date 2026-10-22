@@ -263,8 +263,16 @@ const quiet = async (fn) => {
 			return { id: email.id, replayed: false };
 		},
 	};
-	const { env, db, bucket, email: emailBinding } = createAuthTestEnv({
+	// Fresh sends go through the outbound-send queue (AVE-65): count enqueued messages.
+	const outboundSend = {
+		sent: [],
+		send: async (body) => {
+			outboundSend.sent.push(body);
+		},
+	};
+	const { env, db, bucket } = createAuthTestEnv({
 		MAILBOX: mockMailboxNamespace(stubExtras),
+		OUTBOUND_SEND: outboundSend,
 		DOMAINS: "inboxies.email",
 	});
 	const olivia = await addUser(db, { id: "olivia", email: "olivia@example.org" });
@@ -293,7 +301,7 @@ const quiet = async (fn) => {
 
 	// Second send to a hard-bounced address: blocked with a reason, nothing stored or sent.
 	for (const route of ["/emails", "/emails/orig/reply", "/emails/orig/forward"]) {
-		const before = [created.length, emailBinding.sent.length, slots];
+		const before = [created.length, outboundSend.sent.length, slots];
 		const res = await send(bob, "bob@acme.test", route, ["ok@example.net"], { cc: "Gone@Example.net" });
 		await flushWaitUntil();
 		assert.equal(res.status, 409, `${route}: ${JSON.stringify(res.payload)}`);
@@ -306,7 +314,7 @@ const quiet = async (fn) => {
 		assert.equal(res.payload.suppressed[0].reason, "hard_bounce");
 		assert.equal(res.payload.suppressed[0].canUnsuppress, true);
 		assert.ok(!Number.isNaN(Date.parse(res.payload.suppressed[0].suppressedAt)));
-		assert.deepEqual([created.length, emailBinding.sent.length, slots], before, `${route}: no row, no send, no slot`);
+		assert.deepEqual([created.length, outboundSend.sent.length, slots], before, `${route}: no row, no send, no slot`);
 	}
 
 	// The suppression is per domain: carol (same domain) is blocked too, but can't lift bob's row.
@@ -349,11 +357,11 @@ const quiet = async (fn) => {
 	assert.equal(adminLift.status, 200);
 
 	// After un-suppress the send goes out.
-	const sentBefore = emailBinding.sent.length;
+	const sentBefore = outboundSend.sent.length;
 	const retry = await send(bob, "bob@acme.test", "/emails", "gone@example.net");
 	await flushWaitUntil();
 	assert.equal(retry.status, 202);
-	assert.equal(emailBinding.sent.length, sentBefore + 1);
+	assert.equal(outboundSend.sent.length, sentBefore + 1);
 }
 
 // ── DSN parsing ──────────────────────────────────────────────────
