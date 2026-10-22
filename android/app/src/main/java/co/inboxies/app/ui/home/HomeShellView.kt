@@ -59,6 +59,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.automirrored.outlined.ViewSidebar
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -86,6 +87,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -103,6 +105,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -201,6 +204,8 @@ fun HomeShellView(
     var highlightedComposeAction by remember { mutableStateOf<ComposeActionItem?>(null) }
     var composeActionFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
     var tabNavigatingForward by remember { mutableStateOf(true) }
+    // Entering or leaving Reply Later is a push, not a folder-tab slide.
+    var isReplyLaterPush by remember { mutableStateOf(false) }
     var previousTabBeforeReplyLater by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
     var newMailboxName by remember { mutableStateOf("") }
     var newMailboxEmail by remember { mutableStateOf("") }
@@ -333,6 +338,7 @@ fun HomeShellView(
             isSelectMode = false
             selectedEmailIds = emptySet()
         }
+        isReplyLaterPush = tab is HomeTab.ReplyLater || selectedTab is HomeTab.ReplyLater
         if (tab is HomeTab.ReplyLater) {
             if (selectedTab !is HomeTab.ReplyLater) {
                 previousTabBeforeReplyLater = selectedTab
@@ -346,6 +352,17 @@ fun HomeShellView(
             tabNavigatingForward = next > current
         }
         scope.launch { appModel.selectTab(tab) }
+    }
+
+    /** Back out of Reply Later to the folder it was opened from (iOS: swipe right / pile button). */
+    fun popReplyLater() {
+        if (selectedTab !is HomeTab.ReplyLater) return
+        val target = if (previousTabBeforeReplyLater is HomeTab.ReplyLater) {
+            HomeTab.Folder(FolderIds.INBOX)
+        } else {
+            previousTabBeforeReplyLater
+        }
+        selectTab(target)
     }
 
     fun selectAdjacentTab(forward: Boolean) {
@@ -383,8 +400,11 @@ fun HomeShellView(
     }
 
     // Large screens read mail in a side pane; phones keep the detail sheet (AVE-72).
-    val layoutMode = rememberHomeLayoutMode()
-    val isTwoPane = layoutMode == HomeLayoutMode.TwoPane
+    // Wide windows add the leading folder column unless the user hid it (AVE-73).
+    var showsFolderColumn by rememberFolderColumnVisible()
+    val allowsFolderColumn = rememberAllowsFolderColumn()
+    val layoutMode = rememberHomeLayoutMode(showsFolderColumn)
+    val isTwoPane = layoutMode.isSplit
 
     // Two-pane: back clears the reading pane to its placeholder (the phone's back
     // dismisses the detail sheet). Declared before the home handler so search /
@@ -401,14 +421,7 @@ fun HomeShellView(
                 isSelectMode = false
                 selectedEmailIds = emptySet()
             }
-            selectedTab is HomeTab.ReplyLater -> {
-                val target = if (previousTabBeforeReplyLater is HomeTab.ReplyLater) {
-                    HomeTab.Folder(FolderIds.INBOX)
-                } else {
-                    previousTabBeforeReplyLater
-                }
-                selectTab(target)
-            }
+            selectedTab is HomeTab.ReplyLater -> popReplyLater()
         }
     }
 
@@ -423,6 +436,18 @@ fun HomeShellView(
     ) {
         HomeSplitLayout(
             mode = layoutMode,
+            folders = {
+                HomeFolderColumn(
+                    title = mailboxName,
+                    subtitle = mailboxTitle,
+                    folders = folderTabs,
+                    selected = selectedTab,
+                    unreadCount = { appModel.unreadCount(forFolderId = it) },
+                    replyLaterCount = replyLaterCount,
+                    onSelect = { selectTab(it) },
+                    onHide = { showsFolderColumn = false },
+                )
+            },
             list = {
         ProgressiveBlurBackground(modifier = Modifier.align(Alignment.TopCenter))
 
@@ -466,6 +491,13 @@ fun HomeShellView(
                             onAddMailbox = {
                                 showMailboxMenu = false
                                 showAddMailbox = true
+                            },
+                            // Not a top-bar button: matches iOS, where an extra toolbar
+                            // item crowds the list column.
+                            folderColumnToggle = if (allowsFolderColumn) showsFolderColumn else null,
+                            onToggleFolderColumn = {
+                                showMailboxMenu = false
+                                showsFolderColumn = !showsFolderColumn
                             },
                             onSettings = {
                                 showMailboxMenu = false
@@ -726,7 +758,10 @@ fun HomeShellView(
                             detectHorizontalDragGestures(
                                 onDragStart = { dragAccum = 0f },
                                 onDragEnd = {
-                                    if (abs(dragAccum) >= 40f) {
+                                    if (selectedTab is HomeTab.ReplyLater) {
+                                        // Reply Later is pushed over a folder: swipe right pops back.
+                                        if (dragAccum >= 40f) popReplyLater()
+                                    } else if (abs(dragAccum) >= 40f) {
                                         selectAdjacentTab(forward = dragAccum < 0)
                                     }
                                     dragAccum = 0f
@@ -739,26 +774,58 @@ fun HomeShellView(
                             )
                         },
                 ) {
+                    val density = LocalDensity.current
                     AnimatedContent(
                         targetState = selectedTab,
                         transitionSpec = {
                             val forward = tabNavigatingForward
-                            (
-                                slideInHorizontally { if (forward) 28 else -28 } + fadeIn()
-                            ) togetherWith (
-                                slideOutHorizontally { if (forward) -18 else 18 } + fadeOut()
-                            )
+                            if (isReplyLaterPush) {
+                                // Same push as Settings (iOS twin: spring 0.32 / 0.86): the
+                                // incoming page slides a quarter width, the one under it a sixth.
+                                (
+                                    slideInHorizontally(selectModeSpring()) { full ->
+                                        if (forward) full / 4 else -full / 6
+                                    } + fadeIn(selectModeSpring())
+                                ) togetherWith (
+                                    slideOutHorizontally(selectModeSpring()) { full ->
+                                        if (forward) -full / 6 else full / 4
+                                    } + fadeOut(selectModeSpring())
+                                )
+                            } else {
+                                // 28 / 18 dp, like iOS points (these lambdas take pixels).
+                                val inOffset = with(density) { 28.dp.roundToPx() }
+                                val outOffset = with(density) { 18.dp.roundToPx() }
+                                (
+                                    slideInHorizontally { if (forward) inOffset else -inOffset } + fadeIn()
+                                ) togetherWith (
+                                    slideOutHorizontally { if (forward) -outOffset else outOffset } + fadeOut()
+                                )
+                            }
                         },
                         label = "homeTab",
                     ) { tab ->
+                        // AnimatedContent keeps composing the outgoing page with current
+                        // state; freeze its rows so a folder sliding out under Reply Later
+                        // doesn't show the Reply Later list (and vice versa).
+                        val isCurrentTab = tab == selectedTab
+                        var frozenEmails by remember { mutableStateOf(filteredEmails) }
+                        var frozenLoading by remember { mutableStateOf(isLoading) }
+                        SideEffect {
+                            if (isCurrentTab) {
+                                frozenEmails = filteredEmails
+                                frozenLoading = isLoading
+                            }
+                        }
+                        val tabEmails = if (isCurrentTab) filteredEmails else frozenEmails
+                        val tabLoading = if (isCurrentTab) isLoading else frozenLoading
                         when (tab) {
                             HomeTab.AiInbox -> InboxDigestView(
                                 bottomInset = listBottomInset,
                                 onRefresh = { appModel.refreshCurrentTab() },
                             )
                             is HomeTab.Folder -> EmailListView(
-                                emails = filteredEmails,
-                                isLoading = isLoading,
+                                emails = tabEmails,
+                                isLoading = tabLoading,
                                 bottomInset = listBottomInset,
                                 fallbackFolderId = tab.id,
                                 showsTags = true,
@@ -797,8 +864,8 @@ fun HomeShellView(
                                 },
                             )
                             HomeTab.ReplyLater -> EmailListView(
-                                emails = filteredEmails,
-                                isLoading = isLoading,
+                                emails = tabEmails,
+                                isLoading = tabLoading,
                                 bottomInset = listBottomInset,
                                 fallbackFolderId = null,
                                 showsTags = false,
@@ -963,12 +1030,7 @@ fun HomeShellView(
                             isReplyLaterTab = selectedTab is HomeTab.ReplyLater,
                             onReplyLater = {
                                 if (selectedTab is HomeTab.ReplyLater) {
-                                    val target = if (previousTabBeforeReplyLater is HomeTab.ReplyLater) {
-                                        HomeTab.Folder(FolderIds.INBOX)
-                                    } else {
-                                        previousTabBeforeReplyLater
-                                    }
-                                    selectTab(target)
+                                    popReplyLater()
                                 } else if (replyLaterCount == 0) {
                                     appModel.showToast("There is no reply later mail")
                                     scope.launch { appModel.refreshReplyLaterCount() }
@@ -1257,6 +1319,9 @@ private fun MailboxDropdown(
     onAddMailbox: () -> Unit,
     onSettings: () -> Unit,
     onSignOut: () -> Unit,
+    /** Folder column currently shown; null when the window is too narrow for it. */
+    folderColumnToggle: Boolean? = null,
+    onToggleFolderColumn: () -> Unit = {},
 ) {
     InboxiesDropdownMenu(expanded = expanded, onDismiss = onDismiss) {
         mailboxes.forEach { mailbox ->
@@ -1267,6 +1332,13 @@ private fun MailboxDropdown(
             )
         }
         InboxiesMenuDivider()
+        if (folderColumnToggle != null) {
+            InboxiesMenuItem(
+                text = if (folderColumnToggle) "Hide folders" else "Show folders",
+                onClick = onToggleFolderColumn,
+                icon = Icons.AutoMirrored.Outlined.ViewSidebar,
+            )
+        }
         InboxiesMenuItem(
             text = "Add another email",
             onClick = onAddMailbox,

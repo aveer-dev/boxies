@@ -294,9 +294,9 @@ struct EmailListView: View {
         }
     }
 
-    /// Two-pane only: the row whose email (or thread) is open in the reading pane.
+    /// Split layouts only: the row whose email (or thread) is open in the reading pane.
     private func isOpenInReadingPane(_ email: Email) -> Bool {
-        guard homeLayoutMode == .twoPane, !isSelectMode, let open = app.selectedEmail else { return false }
+        guard homeLayoutMode.isSplit, !isSelectMode, let open = app.selectedEmail else { return false }
         if open.id == email.id { return true }
         guard let threadId = open.threadId, !threadId.isEmpty else { return false }
         return threadId == email.threadId
@@ -421,6 +421,15 @@ struct EmailListView: View {
             Task { await app.toggleRead(on: email) }
         } label: {
             Label(email.read ? "Mark as Unread" : "Mark as Read", systemImage: email.read ? "envelope.badge" : "envelope.open")
+        }
+
+        Button {
+            Task { await app.toggleReplyLater(on: email) }
+        } label: {
+            Label(
+                email.replyLater ? "Remove from Reply Later" : "Reply later",
+                systemImage: email.replyLater ? "clock.arrow.circlepath" : "clock"
+            )
         }
 
         Divider()
@@ -684,6 +693,15 @@ struct EmailRowView: View {
                 Text("Spoofed")
                     .font(.inter(size: AppTheme.List.badge, weight: .medium))
                     .foregroundStyle(AppTheme.deepDarkRed)
+            }
+
+            // Sent mail the DSN pipeline marked bounced / complained (or a failed send).
+            if let status = email.deliveryStatusLabel {
+                Text(status)
+                    .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                    .foregroundStyle(AppTheme.deepDarkRed)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
             Spacer(minLength: 8)

@@ -576,9 +576,9 @@ export const mailboxMigrations: Migration[] = [
 		// Mail already in Spam / Trash starts its clock now, so nothing is
 		// purged until the retention period after this migration runs.
 		// Additive only: a nullable column, a partial index, two triggers.
-		// Open PRs #115 (34_email_summaries) and #137 (35_delivery_recipients)
-		// share these prefixes; the runner tracks by full name, so all of
-		// them apply in either order.
+		// Dev's AVE-41 migration took 36_ and left 35_ for this one; the
+		// runner tracks by full name, so DOs that already applied
+		// 36_delivery_recipients still pick this up on their next start.
 		name: "35_spam_trash_retention",
 		sql: txn(`
             ALTER TABLE emails ADD COLUMN retention_since TEXT;
@@ -607,6 +607,26 @@ export const mailboxMigrations: Migration[] = [
                    END
                  WHERE id = NEW.id;
             END;
+          `),
+	},
+	{
+		// Per-recipient delivery state from Email Sending events (AVE-41).
+		// emails.delivery_status stays the message-level summary; this says
+		// which recipient bounced / complained / was delivered. Rows go with
+		// their email (ON DELETE CASCADE, like attachments).
+		// Additive only: a new table. Numbered 36: dev's highest is
+		// 34_outbound_send_sweeper and open PR #133 (AVE-42) uses 35_; the
+		// runner tracks by name, so landing order doesn't matter.
+		name: "36_delivery_recipients",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS delivery_recipients (
+                email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+                address TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (email_id, address)
+            );
         `),
 	},
 ];

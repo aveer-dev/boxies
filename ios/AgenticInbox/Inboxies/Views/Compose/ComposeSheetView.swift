@@ -49,6 +49,19 @@ struct ComposeSheetView: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
 
+                let blocked = form.visibleSuppressedRecipients
+                if !blocked.isEmpty {
+                    ComposeSuppressionNotice(
+                        suppressed: blocked,
+                        isBusy: form.isUnsuppressing,
+                        isDisabled: form.isSending || form.exceedsOutboundLimit,
+                        onUnsuppressAndSend: { Task { await unsuppressAndSend() } }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
                 if let error = form.errorMessage ?? (form.exceedsOutboundLimit ? OutboundLimits.sizeError : nil) {
                     Text(error)
                         .font(.inter(.footnote))
@@ -89,6 +102,7 @@ struct ComposeSheetView: View {
                 }
             }
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showQuotedOriginal)
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: form.visibleSuppressedRecipients)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showFormatSheet)
             .background(AppTheme.background)
             .background(DetailNavigationTitleFont())
@@ -720,7 +734,21 @@ struct ComposeSheetView: View {
         app.scheduleSend(session)
     }
 
-    private func deleteAndClose() async {
+    /// Lift the shown suppressions, then send again through the normal path
+    /// (undo window, same `Idempotency-Key`).
+    private func unsuppressAndSend() async {
+        form.cancelAutoSave()
+        form.commitPendingTokens()
+        guard await form.unsuppressVisibleRecipients() else {
+            if let message = form.errorMessage {
+                form.showToast(message, isError: true)
+            }
+            return
+        }
+        await send()
+    }
+
+        private func deleteAndClose() async {
         form.cancelAutoSave()
         if let draftId = form.draftId {
             try? await APIClient.shared.deleteEmail(mailboxId: form.fromMailboxId, id: draftId)

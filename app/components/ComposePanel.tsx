@@ -10,6 +10,7 @@ import { useComposeForm } from "~/hooks/useComposeForm";
 import type { ComposeOptions } from "~/hooks/useUIStore";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import ComposeBodyChrome from "./compose/ComposeBodyChrome";
+import ComposeSuppressionNotice from "./compose/ComposeSuppressionNotice";
 import PrivateEmailLogo from "./PrivateEmailLogo";
 
 export default function ComposePanel({ panelKey, options }: { panelKey: string; options: ComposeOptions }) {
@@ -33,6 +34,9 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 		removeAttachment,
 		overSize,
 		error,
+		suppressed,
+		isUnsuppressing,
+		handleUnsuppressAndSend,
 		isSavingDraft,
 		isSending,
 		saveStatus,
@@ -69,6 +73,12 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 			>
 				<div className="p-4 md:p-6 space-y-4">
 					{error && <Banner variant="error" text={error} />}
+					<ComposeSuppressionNotice
+						suppressed={suppressed}
+						busy={isUnsuppressing}
+						disabled={isSending || isSavingDraft || overSize}
+						onUnsuppressAndSend={() => void handleUnsuppressAndSend(closeCompose)}
+					/>
 
 					<div className="space-y-3">
 						{aliasEmail && (
