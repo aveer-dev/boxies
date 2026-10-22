@@ -22,6 +22,8 @@ import type {
 	ExportJob,
 	DecommissionPreflightResponse,
 	DecommissionResponse,
+	FinalizeDomainResponse,
+	OffboardingDomain,
 	MaskedAlias,
 	MeResponse,
 	AccountSession,
@@ -828,6 +830,17 @@ const api = {
 		post<DecommissionResponse>(
 			`/api/v1/admin/domains/${encodeURIComponent(domain)}/decommission`,
 			body,
+		),
+
+	/** Decommissioned domains of the caller still waiting to be deleted. */
+	listOffboardingDomains: (options?: RequestOptions) =>
+		get<{ domains: OffboardingDomain[] }>("/api/v1/admin/offboarding-domains", options),
+
+	/** Delete a decommissioned domain's data now. `confirmDomain` must be the domain name. */
+	finalizeDomain: (domain: string, confirmDomain: string) =>
+		post<FinalizeDomainResponse>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/finalize`,
+			{ confirmDomain },
 		),
 
 	getDomainEppCode: (domain: string) =>

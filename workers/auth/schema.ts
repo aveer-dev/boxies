@@ -396,3 +396,59 @@ export const emailSuppression = sqliteTable(
 		index("email_suppression_source_mailbox_idx").on(t.sourceMailboxId),
 	],
 );
+
+/**
+ * Finalizing a decommissioned domain (AVE-43, lib/domain-offboarding.ts).
+ * One row per decommission: when the grace period ends, whether the admins
+ * were warned, and how far the finalize got, so a crash mid-way resumes
+ * instead of starting over. No foreign key: the row outlives the domain row
+ * it describes, as the record that the domain's data was deleted.
+ */
+export const domainOffboarding = sqliteTable(
+	"domain_offboarding",
+	{
+		domain: text("domain").primaryKey(),
+		decommissionedAt: integer("decommissioned_at", { mode: "timestamp_ms" }).notNull(),
+		/** Earliest time the scheduled finalize may run (decommission + grace, never < warning + 7 days). */
+		finalizeAfter: integer("finalize_after", { mode: "timestamp_ms" }).notNull(),
+		warningSentAt: integer("warning_sent_at", { mode: "timestamp_ms" }),
+		/** Set when an owner asked to finalize now (typed confirmation passed). */
+		finalizeRequestedBy: text("finalize_requested_by"),
+		finalizeRequestedAt: integer("finalize_requested_at", { mode: "timestamp_ms" }),
+		finalizeStartedAt: integer("finalize_started_at", { mode: "timestamp_ms" }),
+		finalizedAt: integer("finalized_at", { mode: "timestamp_ms" }),
+		/** Billing copied from the domain metadata before it is deleted. */
+		subscriptionId: text("subscription_id"),
+		customerId: text("customer_id"),
+		subscriptionCanceledAt: integer("subscription_canceled_at", { mode: "timestamp_ms" }),
+		mailboxesPurged: integer("mailboxes_purged").notNull().default(0),
+		/**
+		 * Copied from the domain metadata before it is deleted: the Cloudflare zone
+		 * Inboxies created for the domain, and whether we registered it
+		 * (Cloudflare Registrar). Null = unknown (metadata already gone).
+		 */
+		zoneId: text("zone_id"),
+		registrarManaged: integer("registrar_managed", { mode: "boolean" }),
+		/** Mailboxes, aliases, access and registry are gone (steps 1-5). */
+		dataDeletedAt: integer("data_deleted_at", { mode: "timestamp_ms" }),
+		/** The Cloudflare zone was deleted (or was already gone / never recorded). */
+		zoneDeletedAt: integer("zone_deleted_at", { mode: "timestamp_ms" }),
+		/**
+		 * Zone deletion is deferred until then: a domain still registered through
+		 * Cloudflare Registrar must stay on Cloudflare nameservers, so its zone
+		 * goes only once the registration has lapsed. Null = not deferred.
+		 */
+		zoneDeleteAfter: integer("zone_delete_after", { mode: "timestamp_ms" }),
+		/** Registrar auto-renew is off (or the domain isn't ours / already gone). */
+		registrarReleasedAt: integer("registrar_released_at", { mode: "timestamp_ms" }),
+		/** Last step reached ("billing", "mailboxes", "aliases", "access", "registry", "cloudflare", "zone_deferred", "done"). */
+		step: text("step"),
+		lastError: text("last_error"),
+		attempts: integer("attempts").notNull().default(0),
+		/** A runner holds the row until then; another runner skips it. */
+		leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [index("domain_offboarding_finalize_after_idx").on(t.finalizeAfter)],
+);
