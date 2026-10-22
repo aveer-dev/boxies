@@ -15,6 +15,7 @@ CREATE TABLE `domain_offboarding` (
 	`registrar_managed` integer,
 	`data_deleted_at` integer,
 	`zone_deleted_at` integer,
+	`zone_delete_after` integer,
 	`registrar_released_at` integer,
 	`step` text,
 	`last_error` text,

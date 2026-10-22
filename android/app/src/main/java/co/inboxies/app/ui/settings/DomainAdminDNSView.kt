@@ -353,7 +353,7 @@ fun DomainAdminDNSView(
                                     if (item.offboarding.finalizeStartedAt != null) {
                                         "Deleting its data now. This finishes within the hour."
                                     } else {
-                                        "Decommissioned. Its mailboxes, aliases, members, subscription and DNS zone are deleted on " +
+                                        "Decommissioned. Its mailboxes, aliases, members and subscription are deleted on " +
                                             "${formatOffboardingDate(item.offboarding.finalizeAfter)}. Export your mail before then."
                                     },
                                     fontFamily = InterFontFamily,
@@ -2140,7 +2140,8 @@ private fun DomainOffboardDialog(
                                 "Your mail stays available to export until ${formatOffboardingDate(date)}. " +
                                     "Then every mailbox, alias, member and invite on $domain is deleted, the subscription " +
                                     "is cancelled and its DNS zone is removed from Cloudflare, so move your nameservers " +
-                                    "before then. We'll email you a week before. To delete it sooner, use Delete Now under " +
+                                    "before then (if you bought the domain through Inboxies, the zone stays until the " +
+                                    "registration ends). We'll email you a week before. To delete it sooner, use Delete Now under " +
                                     "Scheduled for Deletion.",
                                 fontFamily = InterFontFamily,
                                 fontSize = 12.sp,
@@ -2563,8 +2564,9 @@ private fun FinalizeDomainDialog(
                             Text(
                                 "This permanently deletes every mailbox on $domain with its mail and attachments, " +
                                     "its aliases, members and pending invites, and cancels its subscription without a " +
-                                    "refund for the unused time. It also deletes the domain's Cloudflare DNS zone and, if you " +
-                                    "bought the domain through Inboxies, turns off its auto-renew so it lapses when it expires. " +
+                                    "refund for the unused time. It also deletes the domain's Cloudflare DNS zone. If you " +
+                                    "bought the domain through Inboxies, it turns off auto-renew instead: the domain lapses " +
+                                    "when it expires, and its DNS zone is deleted once the registration ends. " +
                                     "Otherwise this happens on ${formatOffboardingDate(finalizeAfter)}.",
                                 fontFamily = InterFontFamily,
                                 fontSize = 12.sp,

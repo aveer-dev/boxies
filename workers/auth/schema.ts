@@ -433,9 +433,15 @@ export const domainOffboarding = sqliteTable(
 		dataDeletedAt: integer("data_deleted_at", { mode: "timestamp_ms" }),
 		/** The Cloudflare zone was deleted (or was already gone / never recorded). */
 		zoneDeletedAt: integer("zone_deleted_at", { mode: "timestamp_ms" }),
+		/**
+		 * Zone deletion is deferred until then: a domain still registered through
+		 * Cloudflare Registrar must stay on Cloudflare nameservers, so its zone
+		 * goes only once the registration has lapsed. Null = not deferred.
+		 */
+		zoneDeleteAfter: integer("zone_delete_after", { mode: "timestamp_ms" }),
 		/** Registrar auto-renew is off (or the domain isn't ours / already gone). */
 		registrarReleasedAt: integer("registrar_released_at", { mode: "timestamp_ms" }),
-		/** Last step reached ("billing", "mailboxes", "aliases", "access", "registry", "cloudflare", "done"). */
+		/** Last step reached ("billing", "mailboxes", "aliases", "access", "registry", "cloudflare", "zone_deferred", "done"). */
 		step: text("step"),
 		lastError: text("last_error"),
 		attempts: integer("attempts").notNull().default(0),

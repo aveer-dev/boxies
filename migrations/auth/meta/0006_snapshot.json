@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a48ade2a-dcb9-4b15-9538-108df6fa19a6",
+  "id": "44159165-114b-4f92-b84b-a92151bc03dc",
   "prevId": "3d77c715-b18e-4b45-8986-8e7fe0ed55d4",
   "tables": {
     "account": {
@@ -537,6 +537,13 @@
         },
         "zone_deleted_at": {
           "name": "zone_deleted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "zone_delete_after": {
+          "name": "zone_delete_after",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

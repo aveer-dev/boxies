@@ -417,6 +417,8 @@ assert.equal((await decommission("now.test")).status, 200);
 	const cfCalls = [];
 	/** Per-test answer for DELETE /zones/{id}: a status code. */
 	let zoneDeleteStatus = () => 200;
+	/** Registrations the account still holds: domain -> expires_at. Anything else is 404 (gone). */
+	const heldRegistrations = new Map();
 	const prev = globalThis.fetch;
 	globalThis.fetch = async (url, init = {}) => {
 		const u = String(url);
@@ -432,6 +434,14 @@ assert.equal((await decommission("now.test")).status, 200);
 			return status === 200
 				? json(200, { success: true, result: { id: path.slice("/zones/".length) } })
 				: json(status, { success: false, errors: [{ code: 1000, message: `zone delete ${status}` }] });
+		}
+		const registrarLookup = path.match(/^\/accounts\/acct_test\/registrar\/(?:registrations|domains)\/([^/?]+)$/);
+		if (method === "GET" && registrarLookup) {
+			const domain = decodeURIComponent(registrarLookup[1]);
+			const expiresAt = heldRegistrations.get(domain);
+			return expiresAt
+				? json(200, { success: true, result: { domain_name: domain, expires_at: expiresAt, auto_renew: false } })
+				: json(404, { success: false, errors: [{ code: 10000, message: "not found" }] });
 		}
 		if (path.endsWith("/transfer_auth_code")) return json(200, { success: true, result: { auth_code: "epp-123" } });
 		// Catch-all disable, transfer unlock, auto-renew off.
@@ -540,6 +550,105 @@ assert.equal((await decommission("now.test")).status, 200);
 		const after = await runDomainOffboarding(env, new Date(Date.now() + 3 * HOUR));
 		assert.deepEqual(after.cloudflareCleaned, []);
 		assert.equal(zoneDeletes("cfdown.test").length, 3);
+	}
+
+	// d) Still registered through us: Cloudflare keeps Registrar domains on its
+	// nameservers, so the zone stays (deferred, not an error) until the
+	// registration lapses, then the cron deletes it.
+	const registrarLookups = (domain) =>
+		cfCalls.filter((c) => c.method === "GET" && c.path === `/accounts/acct_test/registrar/registrations/${domain}`);
+	const expiry = new Date(Date.now() + 100 * DAY);
+	heldRegistrations.set("held.test", expiry.toISOString());
+	await seedDomain("held.test", { subscriptionId: "sub_held", customerId: "cus_held" });
+	await bucket.put(
+		domainR2Key("held.test"),
+		JSON.stringify({
+			...(await getDomainMetadata(bucket, "held.test")),
+			registration: { ...registration, expiresAt: expiry.toISOString() },
+		}),
+	);
+	assert.equal((await decommission("held.test")).status, 200);
+	{
+		const res = await finalizeNow("held.test", { confirmDomain: "held.test" });
+		assert.equal(res.status, 200, JSON.stringify(res.payload));
+		assert.equal(res.payload.finalized, true);
+		assert.equal(res.payload.cloudflareCleanupPending, undefined, "a deferred zone is not a failure");
+		assert.equal(res.payload.zoneDeletionDeferredUntil, expiry.toISOString());
+		await assertDomainGone("held.test");
+		assert.equal(cancels("sub_held").length, 1);
+		assert.equal(autoRenewOffs("held.test").length, 1, "auto-renew off so the registration lapses");
+		assert.equal(zoneDeletes("held.test").length, 0, "zone kept while the registration is active");
+		let row = await getOffboarding(db, "held.test");
+		assert.ok(row.dataDeletedAt && row.registrarReleasedAt);
+		assert.equal(row.zoneDeletedAt, null);
+		assert.equal(row.zoneDeleteAfter.getTime(), expiry.getTime());
+		assert.equal(row.step, "zone_deferred");
+		assert.equal(row.finalizedAt, null);
+		assert.equal(row.lastError, null);
+		assert.equal(row.leaseUntil, null);
+		assert.deepEqual(opsAlerts("held.test"), [], "no ops alert for a deferral");
+
+		// Before expiry the hourly run leaves it alone: no Cloudflare calls at all.
+		const lookupsBefore = registrarLookups("held.test").length;
+		const early = await runDomainOffboarding(env, new Date(Date.now() + 30 * DAY));
+		assert.deepEqual(early.errors, []);
+		assert.deepEqual(early.zoneDeferred, []);
+		assert.equal(registrarLookups("held.test").length, lookupsBefore);
+		assert.equal(zoneDeletes("held.test").length, 0);
+
+		// Expired but the registrar still holds it (renewal grace): re-checked daily.
+		const atExpiry = new Date(expiry.getTime() + HOUR);
+		const grace = await runDomainOffboarding(env, atExpiry);
+		assert.deepEqual(grace.zoneDeferred, ["held.test"]);
+		assert.deepEqual(grace.errors, []);
+		assert.equal(zoneDeletes("held.test").length, 0);
+		row = await getOffboarding(db, "held.test");
+		assert.equal(row.zoneDeleteAfter.getTime(), atExpiry.getTime() + DAY);
+		assert.equal(row.finalizedAt, null);
+		const sameDay = await runDomainOffboarding(env, new Date(atExpiry.getTime() + HOUR));
+		assert.deepEqual(sameDay.zoneDeferred, [], "not re-checked before the next day");
+
+		// Renewed by hand meanwhile: the deferral follows the new expiry.
+		const renewed = new Date(expiry.getTime() + 365 * DAY);
+		heldRegistrations.set("held.test", renewed.toISOString());
+		await runDomainOffboarding(env, new Date(atExpiry.getTime() + DAY));
+		row = await getOffboarding(db, "held.test");
+		assert.equal(row.zoneDeleteAfter.getTime(), renewed.getTime());
+		assert.equal(zoneDeletes("held.test").length, 0);
+
+		// The registration lapsed and the registrar let it go: the zone is deleted.
+		heldRegistrations.delete("held.test");
+		const lapsed = await runDomainOffboarding(env, new Date(renewed.getTime() + HOUR));
+		assert.deepEqual(lapsed.cloudflareCleaned, ["held.test"]);
+		assert.deepEqual(lapsed.errors, []);
+		assert.equal(zoneDeletes("held.test").length, 1);
+		assert.equal(autoRenewOffs("held.test").length, 1, "registrar step not repeated");
+		assert.equal(cancels("sub_held").length, 1, "Stripe not called again");
+		row = await getOffboarding(db, "held.test");
+		assert.ok(row.zoneDeletedAt && row.finalizedAt);
+		assert.equal(row.step, "done");
+		assert.deepEqual(opsAlerts("held.test"), []);
+	}
+
+	// e) Still listed by the registrar long after it should have been released:
+	// stop waiting and try the zone (a failure then is a real error).
+	const longGone = new Date(Date.now() - 200 * DAY);
+	heldRegistrations.set("stale.test", longGone.toISOString());
+	await seedDomain("stale.test", { subscriptionId: "sub_stale", customerId: "cus_stale" });
+	await bucket.put(
+		domainR2Key("stale.test"),
+		JSON.stringify({
+			...(await getDomainMetadata(bucket, "stale.test")),
+			registration: { ...registration, expiresAt: longGone.toISOString() },
+		}),
+	);
+	assert.equal((await decommission("stale.test")).status, 200);
+	{
+		const res = await finalizeNow("stale.test", { confirmDomain: "stale.test" });
+		assert.equal(res.status, 200, JSON.stringify(res.payload));
+		assert.equal(res.payload.zoneDeletionDeferredUntil, undefined);
+		assert.equal(zoneDeletes("stale.test").length, 1);
+		assert.ok((await getOffboarding(db, "stale.test")).finalizedAt);
 	}
 
 	globalThis.fetch = prev;

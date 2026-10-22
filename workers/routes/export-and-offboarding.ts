@@ -408,7 +408,8 @@ export function registerExportAndOffboardingRoutes(
 	/**
 	 * Finalize now: delete the decommissioned domain's mailboxes, aliases,
 	 * access, subscription and registry entry, then its Cloudflare zone (and
-	 * registrar auto-renew), without waiting for the grace period. The caller
+	 * registrar auto-renew; a domain registered through us keeps its zone until
+	 * the registration lapses), without waiting for the grace period. The caller
 	 * types the domain name to confirm; this is checked here, not only in the
 	 * clients. If the run stops part-way, the hourly cron
 	 * finishes it (202).
@@ -461,6 +462,10 @@ export function registerExportAndOffboardingRoutes(
 					subscriptionCanceled: result.subscriptionCanceled,
 					// The data is gone; removing the Cloudflare zone/registration failed and the hourly run retries it.
 					...(result.cloudflareError ? { cloudflareCleanupPending: true } : {}),
+					// Still registered through Cloudflare Registrar: the zone is deleted once the registration lapses.
+					...(result.zoneDeletionDeferredUntil
+						? { zoneDeletionDeferredUntil: result.zoneDeletionDeferredUntil.toISOString() }
+						: {}),
 				});
 			case "busy":
 				return c.json({ success: true, domain, finalized: false, status: "in_progress" }, 202);

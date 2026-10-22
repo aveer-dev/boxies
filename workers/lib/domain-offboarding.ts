@@ -28,7 +28,15 @@
  *                  (deletion needs a token emailed to a Super Admin), so this
  *                  is the closest automatic equivalent. Skipped for BYO domains.
  *   7. zone      - the Cloudflare zone Inboxies created for the domain, by the
- *                  zone id we recorded (never looked up by name).
+ *                  zone id we recorded (never looked up by name). A domain
+ *                  still registered through Cloudflare Registrar must stay on
+ *                  Cloudflare nameservers, so its zone is kept until the
+ *                  registration lapses: the step is deferred (not an error, no
+ *                  alert) to the expiry date, re-checked daily while the
+ *                  registrar still holds the domain, and the zone is deleted
+ *                  once the registrar lets it go (or 75 days after expiry, when
+ *                  Cloudflare releases a lapsed domain). BYO domains lose their
+ *                  zone at finalize.
  * A failure in 6 or 7 never holds back 1-5: the data is already deleted, the
  * error is recorded, ops are alerted, and the hourly cron retries just the
  * Cloudflare steps that haven't finished. A 404 counts as already done.
@@ -52,8 +60,8 @@ import {
 	type DomainMetadata,
 } from "./domain-registry";
 import { CloudflareApiError, deleteZone } from "./cloudflare-client";
-import { setDomainAutoRenew } from "./cloudflare-registrar";
-import { isRegistrarManaged } from "./domain-service";
+import { getOwnedRegistration, setDomainAutoRenew } from "./cloudflare-registrar";
+import { isRegistrarManaged, REGISTRAR_RELEASE_DAYS } from "./domain-service";
 import { purgeEmailAgents } from "./email-agent";
 import { escapeHtml } from "./email-helpers";
 import { mailboxMetadataKey } from "./mailbox-routing";
@@ -91,6 +99,12 @@ export type FinalizeResult =
 			subscriptionCanceled: boolean;
 			/** Set when the data is deleted but the zone/registrar step failed; the cron retries it. */
 			cloudflareError?: string;
+			/**
+			 * Set when the zone is kept because the domain is still registered
+			 * through Cloudflare Registrar; the cron deletes it once the
+			 * registration lapses (re-checked from this time).
+			 */
+			zoneDeletionDeferredUntil?: Date;
 	  }
 	| { status: "blocked"; domain: string; reason: FinalizeBlocker }
 	| { status: "busy"; domain: string }
@@ -378,7 +392,7 @@ export async function finalizeDomainOffboarding(
 
 		// 6-7. Cloudflare: registrar, then zone. Each is recorded on its own, so a
 		// retry only redoes what hasn't finished.
-		const cloudflareError = await cleanUpCloudflare(env, db, row, now);
+		const { error: cloudflareError, zoneDeferredUntil } = await cleanUpCloudflare(env, db, row, now);
 		if (cloudflareError) {
 			await setProgress(db, domain, { lastError: cloudflareError.slice(0, 500), leaseUntil: null });
 			// Alert once per distinct error, not every hour.
@@ -397,6 +411,21 @@ export async function finalizeDomainOffboarding(
 				mailboxesPurged: row.mailboxesPurged,
 				subscriptionCanceled,
 				cloudflareError,
+			};
+		}
+
+		if (zoneDeferredUntil) {
+			// Not an error: the zone waits for the registration to lapse.
+			await setProgress(db, domain, { step: "zone_deferred", leaseUntil: null, lastError: null });
+			console.log(
+				`[Offboarding] ${domain}: still registered through Cloudflare Registrar; zone kept until ${zoneDeferredUntil.toISOString()}`,
+			);
+			return {
+				status: "finalized",
+				domain,
+				mailboxesPurged: row.mailboxesPurged,
+				subscriptionCanceled,
+				zoneDeletionDeferredUntil: zoneDeferredUntil,
 			};
 		}
 
@@ -419,11 +448,40 @@ function isGone(e: unknown): boolean {
 }
 
 /**
- * Steps 6 and 7. Returns null when both are done, else the error(s). Each step
- * stamps its own column, so it never runs again once it has succeeded.
+ * When the zone of a domain registered through us may be deleted, or null for
+ * now. Cloudflare keeps Registrar domains on its nameservers, so the zone stays
+ * while the registration does: first re-check at expiry, then daily while the
+ * registrar still holds the domain (renewal grace, redemption), and give up
+ * waiting once Cloudflare releases a lapsed domain. A registration that's gone
+ * (transferred out or released) frees the zone at once.
  */
-async function cleanUpCloudflare(env: Env, db: AuthDb, row: OffboardingRow, now: Date): Promise<string | null> {
+async function zoneDeferral(env: Env, row: OffboardingRow, now: Date): Promise<Date | null> {
+	const registration = await getOwnedRegistration(env, row.domain);
+	if (!registration) return null;
+	const expiry = Date.parse(registration.registrationInfo?.expiresAt ?? "");
+	if (Number.isNaN(expiry)) {
+		throw new Error(`the registrar reports no expiry date for ${row.domain}, so its zone was kept`);
+	}
+	if (now.getTime() < expiry) return new Date(expiry);
+	const released = expiry + REGISTRAR_RELEASE_DAYS * DAY_MS;
+	if (now.getTime() < released) return new Date(Math.min(now.getTime() + DAY_MS, released));
+	return null;
+}
+
+type CloudflareCleanup = {
+	/** The step(s) that failed, or null. */
+	error: string | null;
+	/** The zone is kept until then (registration still active); not an error. */
+	zoneDeferredUntil: Date | null;
+};
+
+/**
+ * Steps 6 and 7. Each step stamps its own column, so it never runs again once
+ * it has succeeded. Done when there is neither an error nor a deferral.
+ */
+async function cleanUpCloudflare(env: Env, db: AuthDb, row: OffboardingRow, now: Date): Promise<CloudflareCleanup> {
 	const errors: string[] = [];
+	let zoneDeferredUntil: Date | null = null;
 
 	// 6. Registrar: only for domains registered through us.
 	if (!row.registrarReleasedAt) {
@@ -450,29 +508,38 @@ async function cleanUpCloudflare(env: Env, db: AuthDb, row: OffboardingRow, now:
 	}
 
 	// 7. Zone: only the zone id we recorded for this domain.
-	if (!row.zoneDeletedAt) {
+	if (!row.zoneDeletedAt && row.zoneDeleteAfter && now.getTime() < row.zoneDeleteAfter.getTime()) {
+		// Deferred earlier and not due yet.
+		zoneDeferredUntil = row.zoneDeleteAfter;
+	} else if (!row.zoneDeletedAt) {
 		try {
-			if (row.zoneId) {
-				try {
-					await deleteZone(env, row.zoneId);
-				} catch (e) {
-					if (!isGone(e)) throw e;
-					console.log(`[Offboarding] ${row.domain}: zone ${row.zoneId} already gone`);
-				}
-			} else {
+			if (!row.zoneId) {
 				await alertOps(
 					env,
 					`Check the zone of finalized domain ${row.domain}`,
 					`Inboxies has no zone id recorded for ${row.domain}, so it deleted no zone. Remove it by hand if one is left in the account.`,
 				).catch(() => {});
+				await setProgress(db, row.domain, { zoneDeletedAt: now });
+			} else {
+				zoneDeferredUntil = row.registrarManaged ? await zoneDeferral(env, row, now) : null;
+				if (zoneDeferredUntil) {
+					await setProgress(db, row.domain, { zoneDeleteAfter: zoneDeferredUntil });
+				} else {
+					try {
+						await deleteZone(env, row.zoneId);
+					} catch (e) {
+						if (!isGone(e)) throw e;
+						console.log(`[Offboarding] ${row.domain}: zone ${row.zoneId} already gone`);
+					}
+					await setProgress(db, row.domain, { zoneDeletedAt: now });
+				}
 			}
-			await setProgress(db, row.domain, { zoneDeletedAt: now });
 		} catch (e) {
 			errors.push(`zone: ${(e as Error).message || String(e)}`);
 		}
 	}
 
-	return errors.length > 0 ? errors.join("; ") : null;
+	return { error: errors.length > 0 ? errors.join("; ") : null, zoneDeferredUntil };
 }
 
 /** The warning email's subject and paragraphs. Plain text; escaped when sent. */
@@ -487,7 +554,7 @@ export function finalizeWarningContent(domain: string, finalizeAfter: Date): { s
 		subject: `${domain}: your Inboxies data will be deleted on ${date}`,
 		paragraphs: [
 			`${domain} was decommissioned from Inboxies. On ${date} we'll permanently delete everything on it: every mailbox and its mail, attachments, aliases, members and invites, and cancel its subscription.`,
-			`We'll also delete ${domain}'s DNS zone from Cloudflare, so point its nameservers elsewhere before then. If you bought the domain through Inboxies, we turn off its auto-renew and it lapses when it expires, unless you transfer it out first.`,
+			`We'll also delete ${domain}'s DNS zone from Cloudflare, so point its nameservers elsewhere before then. If you bought the domain through Inboxies, we turn off its auto-renew instead: it lapses when it expires, unless you transfer it out first, and its DNS zone is deleted once the registration ends.`,
 			"Export your mail before then if you want to keep it. This can't be undone.",
 		],
 	};
@@ -531,6 +598,8 @@ export type OffboardingReport = {
 	finalized: string[];
 	/** Cloudflare zone/registrar removed this run (after the data was deleted). */
 	cloudflareCleaned: string[];
+	/** Zone kept until the registration lapses (domain still registered through us). */
+	zoneDeferred: string[];
 	errors: string[];
 };
 
@@ -541,7 +610,14 @@ export type OffboardingReport = {
  */
 export async function runDomainOffboarding(env: Env, now = new Date()): Promise<OffboardingReport> {
 	const db = authDb(env.AUTH_DB);
-	const report: OffboardingReport = { tracked: [], warned: [], finalized: [], cloudflareCleaned: [], errors: [] };
+	const report: OffboardingReport = {
+		tracked: [],
+		warned: [],
+		finalized: [],
+		cloudflareCleaned: [],
+		zoneDeferred: [],
+		errors: [],
+	};
 
 	const untracked = await db
 		.select({ domain: schema.domain.domain })
@@ -597,24 +673,38 @@ export async function runDomainOffboarding(env: Env, now = new Date()): Promise<
 		if (result.status === "finalized") {
 			report.finalized.push(domain);
 			if (result.cloudflareError) report.errors.push(`cloudflare ${domain}: ${result.cloudflareError}`);
+			else if (result.zoneDeletionDeferredUntil) report.zoneDeferred.push(domain);
 			else report.cloudflareCleaned.push(domain);
 		} else if (result.status === "failed") report.errors.push(`finalize ${domain}: ${result.error}`);
 	}
 
-	// Data already deleted, Cloudflare cleanup still failing: retried separately
-	// so these never take the slots of domains whose data is waiting.
+	// Data already deleted, Cloudflare cleanup still failing or a deferred zone
+	// now due: retried separately so these never take the slots of domains whose
+	// data is waiting. A zone deferred to a later date is left alone until then.
 	const cleanup = await db
 		.select({ domain: schema.domainOffboarding.domain })
 		.from(schema.domainOffboarding)
-		.where(and(isNull(schema.domainOffboarding.finalizedAt), isNotNull(schema.domainOffboarding.dataDeletedAt)))
+		.where(
+			and(
+				isNull(schema.domainOffboarding.finalizedAt),
+				isNotNull(schema.domainOffboarding.dataDeletedAt),
+				or(
+					isNull(schema.domainOffboarding.registrarReleasedAt),
+					isNull(schema.domainOffboarding.zoneDeleteAfter),
+					lte(schema.domainOffboarding.zoneDeleteAfter, now),
+				),
+			),
+		)
 		.orderBy(schema.domainOffboarding.updatedAt)
 		.limit(CLEANUP_BATCH)
 		.all();
 	for (const { domain } of cleanup) {
 		if (report.finalized.includes(domain)) continue;
 		const result = await finalizeDomainOffboarding(env, domain, { now });
-		if (result.status === "finalized" && !result.cloudflareError) report.cloudflareCleaned.push(domain);
-		else if (result.status === "finalized") report.errors.push(`cloudflare ${domain}: ${result.cloudflareError}`);
+		if (result.status === "finalized" && result.cloudflareError) {
+			report.errors.push(`cloudflare ${domain}: ${result.cloudflareError}`);
+		} else if (result.status === "finalized" && result.zoneDeletionDeferredUntil) report.zoneDeferred.push(domain);
+		else if (result.status === "finalized") report.cloudflareCleaned.push(domain);
 		else if (result.status === "failed") report.errors.push(`finalize ${domain}: ${result.error}`);
 	}
 	return report;
