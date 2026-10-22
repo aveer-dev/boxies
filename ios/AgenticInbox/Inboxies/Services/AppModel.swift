@@ -312,7 +312,9 @@ final class AppModel {
             }
         }
         streamClient.start(mailboxId: mailboxId)
-        PushNotificationManager.shared.requestPermissionAndRegister(mailboxId: mailboxId)
+        PushNotificationManager.shared.requestPermissionAndRegister(
+            mailboxIds: mailboxes.map(\.id) + [mailboxId]
+        )
     }
 
     private func handleIncomingRealTimeEmail(_ email: Email) {
@@ -1582,10 +1584,10 @@ final class AppModel {
             auth.signOut()
             return response
         } catch {
-            // Still signed in: restore push for the mailbox on screen.
-            if let selectedMailboxId {
-                push.requestPermissionAndRegister(mailboxId: selectedMailboxId)
-            }
+            // Still signed in: restore push for the user's mailboxes.
+            push.requestPermissionAndRegister(
+                mailboxIds: mailboxes.map(\.id) + [selectedMailboxId].compactMap { $0 }
+            )
             throw error
         }
     }

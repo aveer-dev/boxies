@@ -373,6 +373,23 @@ export function applySenderTrust(
 	return classification;
 }
 
+/**
+ * With Screener on, an AI-only spam guess on mail that authenticates as its
+ * From domain doesn't go to Spam: the model junked receipts and alerts from
+ * senders like Uber and Checkr. The mail is treated as ham, so an unknown
+ * sender lands in Screener (no push, no draft) and the user decides there.
+ * Rejected senders still go to Screened Out. Spam headers and forged From
+ * stay final, and with Screener off the AI verdict stands.
+ */
+export function deferAuthenticatedAiSpamToScreener(
+	classification: EmailClassification,
+	options: { screenerEnabled: boolean; auth?: EmailAuth | null },
+): EmailClassification {
+	if (!isAiSpam(classification)) return classification;
+	if (!options.screenerEnabled || options.auth?.aligned !== true) return classification;
+	return { ...HAM_CLASSIFICATION, reason: "ai-spam-authenticated" };
+}
+
 /** Rejected envelopes and duplicate Message-IDs must never reach classification. */
 export function shouldClassifyInbound(options: {
 	routeAction: "deliver" | "reject";

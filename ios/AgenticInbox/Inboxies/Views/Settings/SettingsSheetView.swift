@@ -314,14 +314,11 @@ struct SettingsSheetView: View {
         }
         .tint(AppTheme.accent)
         .onChange(of: notificationsEnabled) { _, newValue in
+            let mailboxIds = app.mailboxes.map(\.id) + [app.selectedMailboxId].compactMap { $0 }
             if newValue {
-                if let mailboxId = app.selectedMailboxId {
-                    PushNotificationManager.shared.requestPermissionAndRegister(mailboxId: mailboxId)
-                }
+                PushNotificationManager.shared.requestPermissionAndRegister(mailboxIds: mailboxIds)
             } else {
-                if let mailboxId = app.selectedMailboxId {
-                    PushNotificationManager.shared.unregisterToken(mailboxId: mailboxId)
-                }
+                PushNotificationManager.shared.unregisterToken(mailboxIds: mailboxIds)
             }
         }
     }
