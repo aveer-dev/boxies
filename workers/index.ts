@@ -120,6 +120,11 @@ import {
 } from "./lib/alias-sender";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
+	inboundClassificationReason,
+	storedAuthTier,
+} from "./lib/classification-reason";
+import { ClassificationReasons } from "../shared/spam-reason";
+import {
 	classifyInboundEmail,
 	applySenderTrust,
 	deferAuthenticatedAiSpamToScreener,
@@ -1966,6 +1971,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 						in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 						thread_id: appliedDsn.threadId ?? threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 						auth: serializeEmailAuth(auth),
+						classification_reason: ClassificationReasons.DELIVERY_REPORT,
+						auth_tier: storedAuthTier(auth),
 						alias_id: privateAlias?.aliasId || null,
 						read: true,
 					},
@@ -2016,6 +2023,11 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 			auth: serializeEmailAuth(auth),
 			alias_id: privateAlias?.aliasId || null,
+			// Why it was filed where it was (AVE-94); the reason is set below,
+			// once the folder is decided.
+			classification_reason: classification.reason as string | null,
+			auth_tier: storedAuthTier(auth),
+			matched_rule_id: null as string | null,
 		};
 
 		const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -2100,6 +2112,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				`Sender preference filed ${fromAddress} → ${purposePref.folderId} for ${mailboxId}`,
 			);
 		}
+
+		inboundEmail.classification_reason = inboundClassificationReason(classification, triageDecision);
 
 		const targetFolder = triageDecision.folderId;
 		let filedFolder: string = targetFolder;

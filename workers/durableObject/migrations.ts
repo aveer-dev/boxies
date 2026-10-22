@@ -629,5 +629,22 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		// Spam explainability (AVE-94, docs/spam-management-plan.md §5).
+		// classification_reason: stable machine code for why inbound mail was
+		// filed where it was (see shared/spam-reason.ts). auth_tier: verified /
+		// unverified / failed at receive time. matched_rule_id: the sender rule
+		// that decided it — stays NULL until the sender_rules table lands.
+		// Additive only: three nullable columns, no backfill. Older rows read
+		// their tier from the `auth` JSON (MailboxDO #withDecodedAuth) and have
+		// no reason. Numbered 37: dev's highest is 36_delivery_recipients; the
+		// runner tracks by full name, so landing order doesn't matter.
+		name: "37_email_classification",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN classification_reason TEXT;
+            ALTER TABLE emails ADD COLUMN auth_tier TEXT;
+            ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;
+        `),
+	},
 ];
 

@@ -482,9 +482,11 @@ struct EmailAuth: Codable, Hashable {
     var envelopeFrom: String?
     var aligned: Bool?
     var spoofed: Bool?
+    /// `verified` | `unverified` | `failed` (AVE-92). Absent on older snapshots.
+    var authTier: String? = nil
     var source: String?
 
-    var isSpoofed: Bool { spoofed == true }
+    var isSpoofed: Bool { spoofed == true || authTier == "failed" }
 }
 
 struct Email: Identifiable, Codable, Hashable {
@@ -526,6 +528,12 @@ struct Email: Identifiable, Codable, Hashable {
     var aliasEmail: String? = nil
     /// False when that private email is paused, expired or deleted (detail payloads only).
     var aliasActive: Bool? = nil
+    /// Auth tier stored at receive time (`verified` | `unverified` | `failed`).
+    var authTier: String? = nil
+    /// Why inbound mail was filed where it was (machine code, see `SpamReason`).
+    var classificationReason: String? = nil
+    /// Sender rule that decided the folder (null until sender rules exist).
+    var matchedRuleId: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -550,6 +558,9 @@ struct Email: Identifiable, Codable, Hashable {
         case aliasId = "alias_id"
         case aliasEmail = "alias_email"
         case aliasActive = "alias_active"
+        case authTier = "auth_tier"
+        case classificationReason = "classification_reason"
+        case matchedRuleId = "matched_rule_id"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -748,7 +759,18 @@ struct Email: Identifiable, Codable, Hashable {
         folderId == "draft" || folderName?.lowercased() == "drafts" || folderName?.lowercased() == "draft"
     }
 
-    var isSpoofed: Bool { auth?.isSpoofed == true }
+    var isSpoofed: Bool { auth?.isSpoofed == true || authTier == "failed" }
+
+    /// Stored tier, else the tier inside the auth snapshot (cached rows).
+    var effectiveAuthTier: String? { authTier ?? auth?.authTier }
+
+    /// "Unverified sender" banner — any folder, allowed senders included.
+    var showsUnverifiedBanner: Bool { effectiveAuthTier == "unverified" }
+
+    /// One line explaining why this is in Spam / Screened out, if we know.
+    var spamReasonLine: String? {
+        SpamReason.line(for: classificationReason, folderId: folderId)
+    }
 
     var isDeliveryFailure: Bool { DeliveryStatusHelpers.isFailure(deliveryStatus) }
 
@@ -1891,4 +1913,30 @@ struct CreateAliasResponse: Codable {
     var alias: MaskedAlias
 }
 
+/// Copy for `emails.classification_reason` codes. Mirrors web
+/// `shared/spam-reason.ts` and Android `SpamReason.kt` (parity test:
+/// `android/test/spam-reason-parity.test.mjs`).
+enum SpamReason {
+    static let unverifiedTitle = "Unverified sender"
 
+    static func line(for reason: String?, folderId: String?) -> String? {
+        guard folderId == "spam" || folderId == "screened_out", let reason else { return nil }
+        switch reason {
+        case "auth-failed": return "Failed sender authentication"
+        case "spam-headers": return "Flagged by spam filter"
+        case "ai-spam": return "Marked as spam by AI check"
+        case "sender-rejected": return "You blocked this sender"
+        default: return nil
+        }
+    }
+
+    static func unverifiedDetail(sender: String) -> String {
+        let domain = sender.split(separator: "@").last.map {
+            $0.trimmingCharacters(in: CharacterSet(charactersIn: "> "))
+        } ?? ""
+        guard sender.contains("@"), !domain.isEmpty else {
+            return "We couldn’t confirm who sent this message."
+        }
+        return "We couldn’t confirm this message really came from \(domain)."
+    }
+}
