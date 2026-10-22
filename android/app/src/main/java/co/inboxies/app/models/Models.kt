@@ -117,6 +117,21 @@ data class AccountSession(
     val current: Boolean = false,
 )
 
+/** An app connected over MCP OAuth (Account → Devices & sessions → Connected apps). */
+@Serializable
+data class McpGrant(
+    val id: String,
+    val clientId: String,
+    /** Self-registered and unverified; null when the app gave none. */
+    val clientName: String? = null,
+    val clientUri: String? = null,
+    val scopes: List<String> = emptyList(),
+    /** Mailboxes the app is limited to; null means every mailbox. */
+    val mailboxIds: List<String>? = null,
+    val createdAt: String,
+    val expiresAt: String? = null,
+)
+
 @Serializable
 data class RevokeSessionsResponse(
     val ok: Boolean = false,

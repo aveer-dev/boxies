@@ -9,6 +9,7 @@ private struct ActionsSheetEmail: Identifiable {
 /// unread dot · sender + time · bold subject · 1-line preview.
 struct EmailListView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.homeLayoutMode) private var homeLayoutMode
 
     let emails: [Email]
     var highlightQuery: String = ""
@@ -28,6 +29,10 @@ struct EmailListView: View {
     /// Infinite scroll for this list; nil hides the load-more footer.
     var paging: EmailListPaging? = nil
     var onLoadMore: (() async -> Void)? = nil
+    /// Inbox: server New total (the list shows at most `inboxNewPreviewLimit` New rows).
+    var inboxNewCount: Int? = nil
+    /// Inbox: opens the "All new" screen from the row under the capped New section.
+    var onShowAllNew: (() -> Void)? = nil
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
@@ -206,13 +211,18 @@ struct EmailListView: View {
     /// Prefer sectioned New / Seen when viewing Inbox (even with filters — empty sections hide).
     @ViewBuilder
     private var newSeenSections: some View {
-        // Only the first page's window is split; later pages stay at the end of Seen.
-        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: paging?.sectionFloor)
-        let newEmails = sections.new
+        // The server sends at most a few New rows on page 1 and Seen after that, so the whole
+        // window splits. New is capped so Seen always stays in view (AVE-23).
+        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: nil)
+        let preview = EmailListPaging.inboxNewPreview(
+            sections.new,
+            serverNewCount: isFiltered ? nil : inboxNewCount
+        )
+        let newEmails = preview.shown
         let seenEmails = sections.seen
 
         Section {
-            sectionHeader(title: "New", count: newEmails.count)
+            sectionHeader(title: "New", count: newEmails.count + preview.hiddenCount)
                 .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 4, trailing: 20))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -227,6 +237,9 @@ struct EmailListView: View {
             } else {
                 ForEach(newEmails) { email in
                     emailRow(for: email)
+                }
+                if preview.hiddenCount > 0, let onShowAllNew, !isSelectMode {
+                    showAllNewRow(hiddenCount: preview.hiddenCount, action: onShowAllNew)
                 }
             }
         }
@@ -245,6 +258,29 @@ struct EmailListView: View {
         }
     }
 
+    /// Quiet accent link under the capped New rows; opens every New conversation.
+    private func showAllNewRow(hiddenCount: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("Show \(hiddenCount) more new")
+                    .font(.inter(size: AppTheme.List.subject, weight: .medium))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(AppTheme.accent)
+            .padding(.leading, AppTheme.List.separatorLeadingInset)
+            .padding(.trailing, AppTheme.List.rowHorizontalPadding)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MailRowButtonStyle())
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .accessibilityLabel("Show all new emails, \(hiddenCount) more")
+    }
+
     private func sectionHeader(title: String, count: Int) -> some View {
         HStack(spacing: 6) {
             Text(title.uppercased())
@@ -258,10 +294,20 @@ struct EmailListView: View {
         }
     }
 
+    /// Two-pane only: the row whose email (or thread) is open in the reading pane.
+    private func isOpenInReadingPane(_ email: Email) -> Bool {
+        guard homeLayoutMode == .twoPane, !isSelectMode, let open = app.selectedEmail else { return false }
+        if open.id == email.id { return true }
+        guard let threadId = open.threadId, !threadId.isEmpty else { return false }
+        return threadId == email.threadId
+    }
+
     @ViewBuilder
     private func emailRow(for email: Email) -> some View {
         let isSelected = selectedEmailIDs.wrappedValue.contains(email.id)
         let isScreener = fallbackFolderId == "screener" || email.folderId == "screener"
+        // Softer than pillFill so the row's tag chips stay legible on the highlight.
+        let rowBackground = isOpenInReadingPane(email) ? AppTheme.pillFill.opacity(0.6) : AppTheme.background
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 if isSelectMode {
@@ -287,7 +333,8 @@ struct EmailListView: View {
                         highlightQuery: highlightQuery,
                         folderLabel: folderLabel,
                         showsTags: showsTags,
-                        showsSeparator: !isScreener || app.isReadOnly
+                        showsSeparator: !isScreener || app.isReadOnly,
+                        rowBackground: rowBackground
                     )
                 }
             }
@@ -308,7 +355,7 @@ struct EmailListView: View {
                     .accessibilityHidden(true)
             }
         }
-        .background(AppTheme.background)
+        .background(rowBackground)
         .mailRowChrome()
         .onAppear { prefetchIfNearEnd(email) }
         .contextMenu {
@@ -559,6 +606,8 @@ struct EmailRowView: View {
     var folderLabel: String?
     var showsTags: Bool = true
     var showsSeparator: Bool = true
+    /// Fill behind the row; the two-pane list tints the row open in the reading pane.
+    var rowBackground: Color = AppTheme.background
 
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
@@ -586,7 +635,7 @@ struct EmailRowView: View {
         .padding(.leading, AppTheme.List.rowHorizontalPadding)
         .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.background)
+        .background(rowBackground)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             if showsSeparator {

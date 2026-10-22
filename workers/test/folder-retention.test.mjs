@@ -145,7 +145,7 @@ const setSince = (sql, id, iso) =>
 
 // ── Migration: mail already in Spam / Trash starts its clock at migration time ─
 {
-	const idx = mailboxMigrations.findIndex((m) => m.name === "34_spam_trash_retention");
+	const idx = mailboxMigrations.findIndex((m) => m.name === "35_spam_trash_retention");
 	assert.ok(idx > 0, "retention migration registered");
 	const { sql } = mailboxDb(mailboxMigrations.slice(0, idx));
 	insertEmail(sql, "old-spam", "spam", "2019-01-01T00:00:00.000Z");

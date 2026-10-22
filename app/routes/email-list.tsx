@@ -6,6 +6,7 @@ import { Button } from "@cloudflare/kumo";
 import {
 	ArchiveIcon,
 	ArrowsClockwiseIcon,
+	CaretRightIcon,
 	ChecksIcon,
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
@@ -40,12 +41,12 @@ import ReaderColumn from "~/components/columns/ReaderColumn";
 import { ListEmptyState, ListPagination, ThreadListSkeleton } from "~/components/columns/ListParts";
 import { ListLoadError } from "~/components/ListLoadError";
 import ThreadRow, { RowAction } from "~/components/columns/ThreadRow";
-import { searchPath, useMailNavigation } from "~/hooks/useMailNavigation";
+import { inboxNewPath, searchPath, useMailNavigation } from "~/hooks/useMailNavigation";
 import { hasUnread, useEmailActions } from "~/hooks/useEmailActions";
 import { useEmailMenu } from "~/hooks/useEmailMenu";
 import { useListShortcuts } from "~/hooks/useListShortcuts";
 import { useUIStore } from "~/hooks/useUIStore";
-import { buildInboxListItems } from "~/lib/list-sections";
+import { buildInboxListItems, INBOX_NEW_PREVIEW_LIMIT } from "~/lib/list-sections";
 import { keysFor } from "~/lib/shortcuts";
 import { getSnippetText } from "~/lib/utils";
 import { useEmails } from "~/queries/emails";
@@ -148,9 +149,17 @@ export default function EmailListRoute() {
 		}, []),
 	);
 
+	const showNewSeen = folder === Folders.INBOX;
+	// Inbox: only the newest few New conversations, then Seen (AVE-23), so
+	// Seen stays in view however much is unread. "Show all" opens the rest.
 	const params = useMemo(
-		() => ({ folder, page: String(page), limit: String(PAGE_SIZE) }),
-		[folder, page],
+		() => ({
+			folder,
+			page: String(page),
+			limit: String(PAGE_SIZE),
+			...(showNewSeen ? { new_limit: String(INBOX_NEW_PREVIEW_LIMIT) } : {}),
+		}),
+		[folder, page, showNewSeen],
 	);
 	const {
 		data: emailData,
@@ -161,7 +170,6 @@ export default function EmailListRoute() {
 
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
-	const showNewSeen = folder === Folders.INBOX;
 
 	const listItems = useMemo(() => {
 		if (!showNewSeen || emails.length === 0) {
@@ -171,6 +179,7 @@ export default function EmailListRoute() {
 			page,
 			newCount: emailData?.newCount,
 			seenCount: emailData?.seenCount,
+			newPreviewLimit: INBOX_NEW_PREVIEW_LIMIT,
 		});
 	}, [emails, showNewSeen, emailData?.newCount, emailData?.seenCount, page]);
 
@@ -320,6 +329,19 @@ export default function EmailListRoute() {
 									<p key="empty-new" className="pl-10 pr-4 py-3 text-sm text-kumo-subtle">
 										You’re caught up
 									</p>
+								);
+							}
+							if (item.type === "show-more-new") {
+								return (
+									<button
+										key="show-more-new"
+										type="button"
+										onClick={() => navigate(inboxNewPath(mailboxId))}
+										className="flex w-full items-center gap-1 pl-10 pr-4 py-3 text-left text-sm font-medium text-kumo-link hover:underline focus-visible:underline outline-none"
+									>
+										Show {item.hiddenCount} more new
+										<CaretRightIcon size={12} weight="bold" aria-hidden />
+									</button>
 								);
 							}
 							const email = item.email;

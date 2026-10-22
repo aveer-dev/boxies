@@ -10,6 +10,7 @@
  */
 
 import type { DeliveryStatus } from "../durableObject";
+import { isPermanentRecipientStatus } from "./email-suppression";
 
 export type EmailSendingEventType =
 	| "cf.email.sending.message.delivered"
@@ -178,6 +179,80 @@ export function mapEmailSendingEvent(
 	return null;
 }
 
+/** A suppression an Email Sending event asks for (hard bounce / complaint). */
+export interface EventSuppression {
+	reason: "hard_bounce" | "complaint";
+	recipient: string;
+	sender: string;
+	eventId: string | null;
+	providerMessageId: string;
+	detail: string | null;
+}
+
+/**
+ * Whether a bounced event is a hard bounce. Cloudflare marks hard bounces
+ * with `bounce.type: "hard"` / `classification: "permanent_failure"`;
+ * `message.bounced` also fires when soft-bounce retries run out, which we
+ * ignore. Without a type, fall back to the enhanced status code and only
+ * count recipient-level permanent failures (see isPermanentRecipientStatus).
+ */
+export function isHardBounce(payload: EmailSendingEventPayload): boolean {
+	const type = payload.bounce?.type?.trim().toLowerCase();
+	const classification = payload.bounce?.classification?.trim().toLowerCase();
+	if (type === "soft" || classification === "temporary_failure") return false;
+	if (type === "hard" || classification === "permanent_failure") return true;
+	return isPermanentRecipientStatus(
+		firstNonEmpty(
+			payload.delivery?.smtpEnhancedStatusCode,
+			payload.delivery?.smtpResponse,
+			payload.bounce?.reason,
+		),
+	);
+}
+
+/**
+ * The suppression an event should add, or null. Only hard bounces and
+ * complaints suppress; failed / rejected / deferred / soft bounces don't.
+ */
+export function suppressionFromEmailSendingEvent(
+	event: EmailSendingEvent,
+): EventSuppression | null {
+	const payload = event.payload ?? {};
+	const providerMessageId = payload.messageId?.trim();
+	const recipient = payload.recipient?.trim().toLowerCase();
+	const sender = payload.sender?.trim().toLowerCase();
+	if (!providerMessageId || !recipient || !sender) return null;
+	const type = event.type || "";
+	const base = {
+		recipient,
+		sender,
+		eventId: payload.eventId?.trim() || null,
+		providerMessageId,
+	};
+	if (type.endsWith("message.bounced")) {
+		if (!isHardBounce(payload)) return null;
+		return {
+			...base,
+			reason: "hard_bounce",
+			detail: firstNonEmpty(
+				payload.bounce?.reason,
+				payload.delivery?.smtpResponse,
+				payload.delivery?.smtpEnhancedStatusCode,
+			),
+		};
+	}
+	if (type.endsWith("message.complained")) {
+		return {
+			...base,
+			reason: "complaint",
+			detail: firstNonEmpty(payload.complaint?.feedbackType, payload.complaint?.type),
+		};
+	}
+	return null;
+}
+
+export type RecordEventSuppression = (suppression: EventSuppression) => Promise<unknown>;
+
 export type DeliveryStub = {
 	findEmailByProviderMessageId: (
 		providerMessageId: string,
@@ -201,6 +276,7 @@ export type ResolveDeliveryStub = (sender: string) => DeliveryStub | Promise<Del
 export async function applyEmailSendingEvent(
 	body: unknown,
 	resolveStub: ResolveDeliveryStub,
+	recordSuppression?: RecordEventSuppression,
 ): Promise<boolean> {
 	const event = unwrapEmailSendingEvent(body);
 	const mapped = mapEmailSendingEvent(event);
@@ -229,6 +305,20 @@ export async function applyEmailSendingEvent(
 			(error as Error).message,
 		);
 		return true;
+	}
+
+	// Suppress before looking up the Sent row: the lookup may retry, and the
+	// upsert is idempotent. Best effort; never blocks the delivery update.
+	const suppression = recordSuppression ? suppressionFromEmailSendingEvent(event) : null;
+	if (suppression && recordSuppression) {
+		try {
+			await recordSuppression(suppression);
+		} catch (error) {
+			console.warn(
+				"Recording suppression from email sending event failed:",
+				(error as Error).message,
+			);
+		}
 	}
 
 	try {

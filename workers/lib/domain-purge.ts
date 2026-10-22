@@ -7,7 +7,8 @@
  * (subscription ended, renewal window closed), the registrar releases the name
  * 75 days after expiry. Its mail stays readable and exportable for 30 more
  * days, then this deletes it: every mailbox (mail, attachments, agent chats),
- * the domain's aliases, its Cloudflare zone and its rows. User accounts stay
+ * the domain's aliases, its Cloudflare zone and its rows (including its
+ * bounce / complaint suppressions). User accounts stay
  * (people can still sign in and delete them).
  *
  * Runs from the hourly cron for watched domains. Re-checks everything first,
@@ -24,6 +25,7 @@ import { getOwnedRegistration } from "./cloudflare-registrar";
 import { deleteDomainMetadata, deleteEmailAlias, getDomainMetadata } from "./domain-registry";
 import { purgeDate } from "./domain-service";
 import { purgeEmailAgents } from "./email-agent";
+import { deleteSuppressionsForDomain } from "./email-suppression";
 import { mailboxMetadataKey } from "./mailbox-routing";
 import { alertOps } from "./ops-alert";
 
@@ -68,6 +70,7 @@ export async function purgeExpiredDomain(env: Env, domain: string, now = new Dat
 			),
 		);
 	}
+	await deleteSuppressionsForDomain(db, domain);
 	await db.delete(schema.domain).where(eq(schema.domain.domain, domain));
 	if (meta.billing.customerId) await env.BUCKET.delete(billingCustomerKey(meta.billing.customerId));
 	await deleteDomainMetadata(env.BUCKET, domain);

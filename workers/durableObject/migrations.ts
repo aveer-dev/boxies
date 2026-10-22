@@ -553,6 +553,21 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Stuck-send sweeper (AVE-66, workers/lib/outbound-send-sweeper.ts).
+		// send_queued_at: epoch ms of the last (re-)enqueue of a queued Sent
+		// row; send_attempts: re-enqueues the sweeper made. The partial index
+		// keeps the alarm's "queued rows" scan off the rest of the mailbox.
+		// Additive only: existing rows get 0 / NULL, and the first sweep
+		// stamps any already-queued row.
+		name: "34_outbound_send_sweeper",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE emails ADD COLUMN send_queued_at INTEGER;
+            CREATE INDEX IF NOT EXISTS idx_emails_queued_sends
+                ON emails(send_queued_at) WHERE delivery_status = 'queued';
+        `),
+	},
+	{
 		// Spam / Trash retention (AVE-42). `retention_since` is when a message
 		// entered Spam or Trash (NULL anywhere else); the DO alarm deletes
 		// rows whose clock is older than FOLDER_RETENTION_DAYS. Triggers keep
@@ -561,9 +576,10 @@ export const mailboxMigrations: Migration[] = [
 		// Mail already in Spam / Trash starts its clock now, so nothing is
 		// purged until the retention period after this migration runs.
 		// Additive only: a nullable column, a partial index, two triggers.
-		// PR #115 also uses the "34_" prefix (34_email_summaries); the runner
-		// tracks by full name, so both apply in either order.
-		name: "34_spam_trash_retention",
+		// Open PRs #115 (34_email_summaries) and #137 (35_delivery_recipients)
+		// share these prefixes; the runner tracks by full name, so all of
+		// them apply in either order.
+		name: "35_spam_trash_retention",
 		sql: txn(`
             ALTER TABLE emails ADD COLUMN retention_since TEXT;
             UPDATE emails
