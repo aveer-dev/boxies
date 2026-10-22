@@ -41,6 +41,7 @@ export const queryKeys = {
 		sessions: ["account", "sessions"] as const,
 		mcpGrants: ["account", "mcp-grants"] as const,
 		recoveryEmail: ["account", "recovery-email"] as const,
+		passkeys: ["account", "passkeys"] as const,
 	},
 	suppressions: {
 		list: (mailboxId: string) => ["suppressions", mailboxId] as const,

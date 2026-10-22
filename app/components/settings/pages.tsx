@@ -97,7 +97,7 @@ export const SETTINGS_PAGES: Record<SettingsPageId, SettingsPage> = {
 	"sign-in": {
 		id: "sign-in",
 		label: "Sign-in & recovery",
-		description: "Password, Google, Apple, and your recovery email",
+		description: "Password, passkeys, two-factor, Google, Apple, and your recovery email",
 		icon: <KeyIcon size={18} />,
 		Component: lazy(() => import("./SignInSettings")),
 	},
