@@ -32,6 +32,7 @@ import type {
 	MailboxRole,
 } from "~/types";
 import { idempotencyHeaders } from "~/lib/send-idempotency";
+import { suppressionAddressPath, type SuppressedRecipient } from "~/lib/suppression";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -882,6 +883,19 @@ const api = {
 	deleteAlias: (mailboxId: string, aliasId: string, options?: RequestOptions) =>
 		del<void>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases/${encodeURIComponent(aliasId)}`,
+			options,
+		),
+
+	// Bounce / complaint suppressions on the mailbox's sending domain (AVE-37)
+	listSuppressions: (mailboxId: string, options?: RequestOptions) =>
+		get<{ domain: string; scope: "domain" | "mailbox"; suppressions: SuppressedRecipient[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/suppressions`,
+			options,
+		),
+
+	unsuppress: (mailboxId: string, address: string, options?: RequestOptions) =>
+		del<{ ok: true; address: string; domain: string }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/suppressions/${suppressionAddressPath(address)}`,
 			options,
 		),
 };
