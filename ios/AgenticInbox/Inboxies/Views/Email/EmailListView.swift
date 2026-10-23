@@ -9,6 +9,7 @@ private struct ActionsSheetEmail: Identifiable {
 /// unread dot · sender + time · bold subject · 1-line preview.
 struct EmailListView: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.homeLayoutMode) private var homeLayoutMode
 
     let emails: [Email]
     var highlightQuery: String = ""
@@ -28,6 +29,10 @@ struct EmailListView: View {
     /// Infinite scroll for this list; nil hides the load-more footer.
     var paging: EmailListPaging? = nil
     var onLoadMore: (() async -> Void)? = nil
+    /// Inbox: server New total (the list shows at most `inboxNewPreviewLimit` New rows).
+    var inboxNewCount: Int? = nil
+    /// Inbox: opens the "All new" screen from the row under the capped New section.
+    var onShowAllNew: (() -> Void)? = nil
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
@@ -120,6 +125,16 @@ struct EmailListView: View {
                 }
             }
 
+            if let notice = FolderRetention.notice(for: fallbackFolderId) {
+                Text(notice)
+                    .font(.inter(size: AppTheme.List.preview, weight: .regular))
+                    .foregroundStyle(AppTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .listRowInsets(EdgeInsets(top: 4, leading: AppTheme.List.rowHorizontalPadding, bottom: 8, trailing: AppTheme.List.rowHorizontalPadding))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
             if showNewSeenSections {
                 newSeenSections
             } else {
@@ -196,13 +211,18 @@ struct EmailListView: View {
     /// Prefer sectioned New / Seen when viewing Inbox (even with filters — empty sections hide).
     @ViewBuilder
     private var newSeenSections: some View {
-        // Only the first page's window is split; later pages stay at the end of Seen.
-        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: paging?.sectionFloor)
-        let newEmails = sections.new
+        // The server sends at most a few New rows on page 1 and Seen after that, so the whole
+        // window splits. New is capped so Seen always stays in view (AVE-23).
+        let sections = EmailListPaging.inboxSections(visibleEmails, sectionFloor: nil)
+        let preview = EmailListPaging.inboxNewPreview(
+            sections.new,
+            serverNewCount: isFiltered ? nil : inboxNewCount
+        )
+        let newEmails = preview.shown
         let seenEmails = sections.seen
 
         Section {
-            sectionHeader(title: "New", count: newEmails.count)
+            sectionHeader(title: "New", count: newEmails.count + preview.hiddenCount)
                 .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 4, trailing: 20))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
@@ -217,6 +237,9 @@ struct EmailListView: View {
             } else {
                 ForEach(newEmails) { email in
                     emailRow(for: email)
+                }
+                if preview.hiddenCount > 0, let onShowAllNew, !isSelectMode {
+                    showAllNewRow(hiddenCount: preview.hiddenCount, action: onShowAllNew)
                 }
             }
         }
@@ -235,6 +258,29 @@ struct EmailListView: View {
         }
     }
 
+    /// Quiet accent link under the capped New rows; opens every New conversation.
+    private func showAllNewRow(hiddenCount: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Text("Show \(hiddenCount) more new")
+                    .font(.inter(size: AppTheme.List.subject, weight: .medium))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(AppTheme.accent)
+            .padding(.leading, AppTheme.List.separatorLeadingInset)
+            .padding(.trailing, AppTheme.List.rowHorizontalPadding)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MailRowButtonStyle())
+        .listRowInsets(EdgeInsets())
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .accessibilityLabel("Show all new emails, \(hiddenCount) more")
+    }
+
     private func sectionHeader(title: String, count: Int) -> some View {
         HStack(spacing: 6) {
             Text(title.uppercased())
@@ -248,10 +294,20 @@ struct EmailListView: View {
         }
     }
 
+    /// Split layouts only: the row whose email (or thread) is open in the reading pane.
+    private func isOpenInReadingPane(_ email: Email) -> Bool {
+        guard homeLayoutMode.isSplit, !isSelectMode, let open = app.selectedEmail else { return false }
+        if open.id == email.id { return true }
+        guard let threadId = open.threadId, !threadId.isEmpty else { return false }
+        return threadId == email.threadId
+    }
+
     @ViewBuilder
     private func emailRow(for email: Email) -> some View {
         let isSelected = selectedEmailIDs.wrappedValue.contains(email.id)
         let isScreener = fallbackFolderId == "screener" || email.folderId == "screener"
+        // Softer than pillFill so the row's tag chips stay legible on the highlight.
+        let rowBackground = isOpenInReadingPane(email) ? AppTheme.pillFill.opacity(0.6) : AppTheme.background
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 if isSelectMode {
@@ -277,7 +333,8 @@ struct EmailListView: View {
                         highlightQuery: highlightQuery,
                         folderLabel: folderLabel,
                         showsTags: showsTags,
-                        showsSeparator: !isScreener || app.isReadOnly
+                        showsSeparator: !isScreener || app.isReadOnly,
+                        rowBackground: rowBackground
                     )
                 }
             }
@@ -298,7 +355,7 @@ struct EmailListView: View {
                     .accessibilityHidden(true)
             }
         }
-        .background(AppTheme.background)
+        .background(rowBackground)
         .mailRowChrome()
         .onAppear { prefetchIfNearEnd(email) }
         .contextMenu {
@@ -364,6 +421,15 @@ struct EmailListView: View {
             Task { await app.toggleRead(on: email) }
         } label: {
             Label(email.read ? "Mark as Unread" : "Mark as Read", systemImage: email.read ? "envelope.badge" : "envelope.open")
+        }
+
+        Button {
+            Task { await app.toggleReplyLater(on: email) }
+        } label: {
+            Label(
+                email.replyLater ? "Remove from Reply Later" : "Reply later",
+                systemImage: email.replyLater ? "clock.arrow.circlepath" : "clock"
+            )
         }
 
         Divider()
@@ -455,6 +521,20 @@ struct EmailListView: View {
     private static let prefetchDistance = 5
 }
 
+/// Spam and Trash keep mail for 30 days after it was moved in, then the server
+/// deletes it (AVE-42). Copy matches `folderRetentionNotice` in shared/folders.ts.
+enum FolderRetention {
+    static let days = 30
+
+    static func notice(for folderId: String?) -> String? {
+        switch folderId {
+        case "spam": return "Messages in Spam are deleted after \(days) days."
+        case "trash": return "Messages in Trash are deleted after \(days) days."
+        default: return nil
+        }
+    }
+}
+
 /// Loading placeholder matching the row geometry.
 private struct EmailRowSkeleton: View {
     let index: Int
@@ -535,6 +615,8 @@ struct EmailRowView: View {
     var folderLabel: String?
     var showsTags: Bool = true
     var showsSeparator: Bool = true
+    /// Fill behind the row; the two-pane list tints the row open in the reading pane.
+    var rowBackground: Color = AppTheme.background
 
     var body: some View {
         HStack(alignment: .top, spacing: AppTheme.List.dotToText) {
@@ -571,7 +653,7 @@ struct EmailRowView: View {
         .padding(.leading, AppTheme.List.rowHorizontalPadding)
         .padding(.trailing, AppTheme.List.rowHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.background)
+        .background(rowBackground)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) {
             if showsSeparator {
@@ -620,6 +702,15 @@ struct EmailRowView: View {
                 Text("Spoofed")
                     .font(.inter(size: AppTheme.List.badge, weight: .medium))
                     .foregroundStyle(AppTheme.deepDarkRed)
+            }
+
+            // Sent mail the DSN pipeline marked bounced / complained (or a failed send).
+            if let status = email.deliveryStatusLabel {
+                Text(status)
+                    .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                    .foregroundStyle(AppTheme.deepDarkRed)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
             Spacer(minLength: 8)

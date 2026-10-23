@@ -525,5 +525,126 @@ export const mailboxMigrations: Migration[] = [
                 ON thread_notes(email_id);
         `),
 	},
+	{
+		// R2 keys whose rows are already deleted; the DO alarm sweeps them
+		// until R2 confirms the delete. Additive only: a new table.
+		name: "32_pending_blob_deletes",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS pending_blob_deletes (
+                key TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0
+            );
+        `),
+	},
+	{
+		// Idempotency-Key on send / reply / forward (AVE-63). The key a client
+		// sent is stored on the Sent row; a replay with the same key returns
+		// that row instead of sending again. Unique per mailbox (one DO per
+		// mailbox); the index is partial so rows without a key never collide.
+		// Additive only: a nullable column, existing rows stay NULL.
+		// The runner tracks by name, so the order other open PRs land in
+		// doesn't matter.
+		name: "33_email_idempotency_key",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN idempotency_key TEXT;
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_emails_idempotency_key
+                ON emails(idempotency_key) WHERE idempotency_key IS NOT NULL;
+        `),
+	},
+	{
+		// Stuck-send sweeper (AVE-66, workers/lib/outbound-send-sweeper.ts).
+		// send_queued_at: epoch ms of the last (re-)enqueue of a queued Sent
+		// row; send_attempts: re-enqueues the sweeper made. The partial index
+		// keeps the alarm's "queued rows" scan off the rest of the mailbox.
+		// Additive only: existing rows get 0 / NULL, and the first sweep
+		// stamps any already-queued row.
+		name: "34_outbound_send_sweeper",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE emails ADD COLUMN send_queued_at INTEGER;
+            CREATE INDEX IF NOT EXISTS idx_emails_queued_sends
+                ON emails(send_queued_at) WHERE delivery_status = 'queued';
+        `),
+	},
+	{
+		// Spam / Trash retention (AVE-42). `retention_since` is when a message
+		// entered Spam or Trash (NULL anywhere else); the DO alarm deletes
+		// rows whose clock is older than FOLDER_RETENTION_DAYS. Triggers keep
+		// it right for every write path (moves, bulk refiles, inbound spam,
+		// delete-to-trash): any change of folder_id restarts or clears it.
+		// Mail already in Spam / Trash starts its clock now, so nothing is
+		// purged until the retention period after this migration runs.
+		// Additive only: a nullable column, a partial index, two triggers.
+		// Dev's AVE-41 migration took 36_ and left 35_ for this one; the
+		// runner tracks by full name, so DOs that already applied
+		// 36_delivery_recipients still pick this up on their next start.
+		name: "35_spam_trash_retention",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN retention_since TEXT;
+            UPDATE emails
+               SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE folder_id IN ('spam', 'trash');
+            CREATE INDEX IF NOT EXISTS idx_emails_retention_since
+                ON emails(retention_since) WHERE retention_since IS NOT NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_insert
+            AFTER INSERT ON emails
+            WHEN NEW.folder_id IN ('spam', 'trash') AND NEW.retention_since IS NULL
+            BEGIN
+                UPDATE emails
+                   SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = NEW.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_move
+            AFTER UPDATE OF folder_id ON emails
+            WHEN NEW.folder_id IS NOT OLD.folder_id
+            BEGIN
+                UPDATE emails
+                   SET retention_since = CASE
+                       WHEN NEW.folder_id IN ('spam', 'trash')
+                       THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                       ELSE NULL
+                   END
+                 WHERE id = NEW.id;
+            END;
+          `),
+	},
+	{
+		// Per-recipient delivery state from Email Sending events (AVE-41).
+		// emails.delivery_status stays the message-level summary; this says
+		// which recipient bounced / complained / was delivered. Rows go with
+		// their email (ON DELETE CASCADE, like attachments).
+		// Additive only: a new table. Numbered 36: dev's highest is
+		// 34_outbound_send_sweeper and open PR #133 (AVE-42) uses 35_; the
+		// runner tracks by name, so landing order doesn't matter.
+		name: "36_delivery_recipients",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS delivery_recipients (
+                email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+                address TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (email_id, address)
+            );
+        `),
+	},
+	{
+		// Spam explainability (AVE-94, docs/spam-management-plan.md §5).
+		// classification_reason: stable machine code for why inbound mail was
+		// filed where it was (see shared/spam-reason.ts). auth_tier: verified /
+		// unverified / failed at receive time. matched_rule_id: the sender rule
+		// that decided it — stays NULL until the sender_rules table lands.
+		// Additive only: three nullable columns, no backfill. Older rows read
+		// their tier from the `auth` JSON (MailboxDO #withDecodedAuth) and have
+		// no reason. Numbered 37: dev's highest is 36_delivery_recipients; the
+		// runner tracks by full name, so landing order doesn't matter.
+		name: "37_email_classification",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN classification_reason TEXT;
+            ALTER TABLE emails ADD COLUMN auth_tier TEXT;
+            ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;
+        `),
+	},
 ];
 

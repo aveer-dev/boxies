@@ -16,14 +16,18 @@ export default [
 	route("checkout/cancel", "routes/checkout-cancel.tsx"),
 	route("invite/:token", "routes/invite.tsx"),
 	route("login", "routes/login.tsx"),
+	route("onboarding", "routes/onboarding.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
 	route("extension/connect", "routes/extension-connect.tsx"),
+	// MCP OAuth consent; only the Worker's GET /authorize gives it data.
+	route("authorize", "routes/authorize.tsx"),
 	// Miller columns: each child route renders its own column(s); an optional
 	// trailing :emailId opens the reader beside the list.
 	route("mailbox/:mailboxId", "routes/mailbox.tsx", [
 		index("routes/mailbox-index.tsx"),
 		route("emails/:folder/:emailId?", "routes/email-list.tsx"),
 		route("reply-later/:emailId?", "routes/reply-later.tsx"),
+		route("new/:emailId?", "routes/inbox-new.tsx"),
 		route("search/:emailId?", "routes/search-results.tsx"),
 		// Settings is a side panel (useUIStore); old links open it.
 		route("settings/:page?", "routes/settings.tsx"),

@@ -67,7 +67,11 @@ const count = (sql, query, ...b) => Number(Object.values(sql.exec(query, ...b)[0
 
 // ── Migration: last, additive, idempotent ────────────────────────
 {
-	assert.equal(mailboxMigrations.at(-1).name, MIGRATION, "appended at the end");
+	const names = mailboxMigrations.map((m) => m.name);
+	assert.ok(
+		names.indexOf(MIGRATION) > names.indexOf("30_list_query_indexes"),
+		"appended after the earlier migrations",
+	);
 	assert.equal(mailboxMigrations.filter((m) => m.name === MIGRATION).length, 1);
 
 	// A mailbox from before this migration keeps its mail.
@@ -86,7 +90,7 @@ const count = (sql, query, ...b) => Number(Object.values(sql.exec(query, ...b)[0
 	// The runner skips it by name, and the SQL itself is safe to replay.
 	applyMigrations(sql, mailboxMigrations);
 	assert.equal(count(sql, `SELECT COUNT(*) FROM d1_migrations WHERE name = ?`, MIGRATION), 1);
-	sql.exec(mailboxMigrations.at(-1).sql);
+	sql.exec(mailboxMigrations.find((m) => m.name === MIGRATION).sql);
 	assert.equal(count(sql, `SELECT COUNT(*) FROM emails`), 1);
 
 	// The table refuses an inline note without a message, and unknown types.

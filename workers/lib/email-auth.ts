@@ -31,6 +31,18 @@ export type AuthSource =
 	| "arc-authentication-results"
 	| "none";
 
+/**
+ * How far the visible From can be trusted (docs/spam-management-plan.md §5).
+ * - verified: DMARC pass, or SPF/DKIM pass aligned with the From domain.
+ * - unverified: no trusted verdict, or passes only for another domain
+ *   without an enforcing DMARC policy. Not spam on its own.
+ * - failed: dmarc=fail under p=quarantine/reject, or SPF hard-fail with no
+ *   DKIM pass for any domain. The only tier treated as spoofed.
+ */
+export type AuthTier = "verified" | "unverified" | "failed";
+
+export type DmarcPolicy = "none" | "quarantine" | "reject";
+
 export interface EmailAuth {
 	spf?: AuthVerdict;
 	dkim?: AuthVerdict;
@@ -41,7 +53,13 @@ export interface EmailAuth {
 	envelopeFrom: string;
 	/** null when no trusted Cloudflare verdict is present. */
 	aligned: boolean | null;
-	/** false when source is none (fail-open). */
+	/** Published DMARC policy of the From domain, when the verdict states it. */
+	dmarcPolicy?: DmarcPolicy;
+	authTier: AuthTier;
+	/**
+	 * Compat for stored rows and clients: always `authTier === "failed"`.
+	 * New code should read `authTier`.
+	 */
 	spoofed: boolean;
 	source: AuthSource;
 }
@@ -92,8 +110,34 @@ export function isTrustedAuthserv(id: string | null | undefined): boolean {
 	return host === "cloudflare.net" || host.endsWith(".cloudflare.net");
 }
 
-export function isAuthSpoofed(auth?: EmailAuth | null): boolean {
-	return auth?.spoofed === true;
+const AUTH_TIERS = new Set<AuthTier>(["verified", "unverified", "failed"]);
+
+function isAuthTier(value: unknown): value is AuthTier {
+	return typeof value === "string" && AUTH_TIERS.has(value as AuthTier);
+}
+
+/** Tier of an auth record; records from before tiers fall back to `spoofed`. */
+export function authTierOf(
+	auth?: Pick<EmailAuth, "authTier" | "spoofed" | "aligned"> | null,
+): AuthTier {
+	if (!auth) return "unverified";
+	if (isAuthTier(auth.authTier)) return auth.authTier;
+	if (auth.spoofed === true) return "failed";
+	return auth.aligned === true ? "verified" : "unverified";
+}
+
+/** Proven forgery: the only tier that is spam on auth alone. */
+export function isAuthFailed(auth?: EmailAuth | null): boolean {
+	return authTierOf(auth) === "failed";
+}
+
+/**
+ * The visible From isn't proven: auth failed, or a trusted verdict passed
+ * only for some other domain. Sender filters and auto-drafts stay off for
+ * this mail, as they did before tiers; it is not spam by itself.
+ */
+export function isFromUntrusted(auth?: EmailAuth | null): boolean {
+	return isAuthFailed(auth) || auth?.aligned === false;
 }
 
 export function domainFromAddress(value: string | null | undefined): string | null {
@@ -328,6 +372,17 @@ function pickVerdict(hits: MethodHit[], method: string): MethodHit | null {
 	return matched.find((hit) => hit.result === "pass") ?? matched[matched.length - 1];
 }
 
+function dmarcPolicyOf(hit: MethodHit | null): DmarcPolicy | undefined {
+	if (!hit) return undefined;
+	const raw = (
+		hit.properties["policy.dmarc"] ??
+		hit.properties["policy.published-domain-policy"] ??
+		hit.properties["policy.p"] ??
+		""
+	).toLowerCase();
+	return raw === "none" || raw === "quarantine" || raw === "reject" ? raw : undefined;
+}
+
 const EVALUABLE_VERDICTS = new Set<AuthVerdict>([
 	"pass",
 	"fail",
@@ -365,6 +420,33 @@ function collectHeaderValues(source: HeaderSource, name: string): string[] {
 	return headerMapFromSource(source).get(name.toLowerCase()) ?? [];
 }
 
+/**
+ * Failure wins over a pass: a forged pass must never outvote a real fail.
+ * Without a trusted (Cloudflare) verdict nothing is failed or verified.
+ */
+function tierFor(signals: {
+	trusted: boolean;
+	aligned: boolean | null;
+	dmarcFailEnforced: boolean;
+	dmarcFromMismatch: boolean;
+	spfHardFailNoDkim: boolean;
+}): AuthTier {
+	if (!signals.trusted) return "unverified";
+	if (
+		signals.dmarcFailEnforced ||
+		signals.spfHardFailNoDkim ||
+		(signals.dmarcFromMismatch && signals.aligned === false)
+	) {
+		return "failed";
+	}
+	return signals.aligned === true ? "verified" : "unverified";
+}
+
+/**
+ * ARC: only ARC-Authentication-Results stamped by Cloudflare (our own hop,
+ * the only trusted sealer) are read, via `firstTrusted`. Upstream sealers'
+ * results are ignored.
+ */
 export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	const headerFrom = (input.headerFrom ?? "").trim();
 	const envelopeFrom = (input.envelopeFrom ?? "").trim();
@@ -420,27 +502,40 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 		dmarcHit?.result === "pass" && (!dmarcFromDomain || dmarcFromDomain === headerFromDomain);
 	const hasEvaluableVerdict =
 		isEvaluableHit(dkimHit) || isEvaluableHit(spfHit) || isEvaluableHit(dmarcHit);
+	const dmarcPolicy = dmarcPolicyOf(dmarcHit);
+
+	const aligned =
+		source === "none" || !hasEvaluableVerdict
+			? null
+			: Boolean(dkimAligned || spfAligned || dmarcPass);
+	const authTier = tierFor({
+		trusted: source !== "none",
+		aligned,
+		dmarcFailEnforced:
+			dmarcHit?.result === "fail" &&
+			(dmarcPolicy === "quarantine" || dmarcPolicy === "reject"),
+		// DMARC evaluated a different From than the one we show: the message
+		// carries an ambiguous From, so the verdict can't vouch for it.
+		dmarcFromMismatch: Boolean(
+			dmarcFromDomain && headerFromDomain && dmarcFromDomain !== headerFromDomain,
+		),
+		spfHardFailNoDkim: spfHit?.result === "fail" && dkimHit?.result !== "pass",
+	});
 
 	const auth: EmailAuth = {
 		headerFrom,
 		envelopeFrom,
 		source,
-		aligned:
-			source === "none" || !hasEvaluableVerdict
-				? null
-				: Boolean(dkimAligned || spfAligned || dmarcPass),
-		spoofed: false,
+		aligned,
+		authTier,
+		spoofed: authTier === "failed",
 	};
 	if (dkimHit) auth.dkim = dkimHit.result;
 	if (spfHit) auth.spf = spfHit.result;
 	if (dmarcHit) auth.dmarc = dmarcHit.result;
+	if (dmarcPolicy) auth.dmarcPolicy = dmarcPolicy;
 	if (dkimDomain) auth.dkimDomain = dkimDomain;
 	if (spfMailfrom) auth.spfMailfrom = spfMailfrom;
-
-	// Fail-open when CF only stamped arc=none, or every method is none/neutral.
-	if (source !== "none" && hasEvaluableVerdict) {
-		auth.spoofed = auth.aligned !== true;
-	}
 
 	return auth;
 }
@@ -477,7 +572,24 @@ export function parseStoredEmailAuth(raw: unknown): EmailAuth | null {
 		typeof value.envelopeFrom === "string" ? value.envelopeFrom : "";
 	const source = asSource(value.source);
 	const aligned =
-		value.aligned === true ? true : value.aligned === false ? false : null;
+		source === "none"
+			? null
+			: value.aligned === true
+				? true
+				: value.aligned === false
+					? false
+					: null;
+	const authTier = authTierOf({
+		authTier: value.authTier as AuthTier,
+		spoofed: value.spoofed === true,
+		aligned,
+	});
+	const dmarcPolicy =
+		value.dmarcPolicy === "none" ||
+		value.dmarcPolicy === "quarantine" ||
+		value.dmarcPolicy === "reject"
+			? value.dmarcPolicy
+			: undefined;
 	return {
 		spf: asVerdict(value.spf),
 		dkim: asVerdict(value.dkim),
@@ -488,8 +600,10 @@ export function parseStoredEmailAuth(raw: unknown): EmailAuth | null {
 			typeof value.spfMailfrom === "string" ? value.spfMailfrom : undefined,
 		headerFrom,
 		envelopeFrom,
-		aligned: source === "none" ? null : aligned,
-		spoofed: value.spoofed === true,
+		aligned,
+		dmarcPolicy,
+		authTier,
+		spoofed: authTier === "failed",
 		source,
 	};
 }

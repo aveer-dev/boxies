@@ -112,6 +112,30 @@ object EmailPaging {
     const val PREFETCH_DISTANCE = 5
 
     /**
+     * Inbox shows at most this many New rows; the rest open on the "All new" screen so Seen
+     * always stays in view right below (AVE-23). Sent to the server as `new_limit`.
+     */
+    const val INBOX_NEW_PREVIEW_LIMIT = 5
+
+    /** The capped New rows plus how many New conversations sit behind "Show all". */
+    data class InboxNewPreview(val shown: List<Email>, val hiddenCount: Int)
+
+    /**
+     * Inbox New preview: the newest [limit] New rows, and how many more there are
+     * ([serverNewCount] when known — page 1 only holds a few).
+     */
+    fun inboxNewPreview(
+        newRows: List<Email>,
+        serverNewCount: Int?,
+        limit: Int = INBOX_NEW_PREVIEW_LIMIT,
+    ): InboxNewPreview {
+        val sorted = newRows.sortedByDescending { it.date }
+        val shown = sorted.take(limit)
+        val total = maxOf(serverNewCount ?: 0, sorted.size)
+        return InboxNewPreview(shown, maxOf(0, total - shown.size))
+    }
+
+    /**
      * A short page is the end. Otherwise trust `totalCount` when the server sent one
      * (threads for threaded folders, messages for Reply Later); without it, assume more.
      */

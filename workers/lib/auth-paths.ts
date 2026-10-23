@@ -31,6 +31,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/auth/google" ||
 		pathname === "/api/v1/auth/dev" ||
 		pathname === "/api/v1/auth/password" ||
+		pathname === "/api/v1/auth/two-factor/verify" ||
 		pathname === "/api/v1/auth/password/logout" ||
 		pathname === "/api/v1/auth/logout" ||
 		pathname === "/api/v1/auth/password/forgot" ||
@@ -55,6 +56,8 @@ export function isPublicAuthPath(pathname: string): boolean {
 	if (pathname === "/__manifest") return true;
 	// Invite accept + password login SPA shells (Access bypass required at edge too).
 	if (pathname === "/login" || pathname.startsWith("/login/")) return true;
+	// Onboarding (sign up) page shell; the signup APIs it calls are listed above.
+	if (pathname === "/onboarding" || pathname.startsWith("/onboarding/")) return true;
 	if (pathname === "/reset-password" || pathname.startsWith("/reset-password/")) return true;
 	if (pathname === "/invite" || pathname.startsWith("/invite/")) return true;
 	if (pathname === "/checkout/success" || pathname.startsWith("/checkout/success/")) return true;

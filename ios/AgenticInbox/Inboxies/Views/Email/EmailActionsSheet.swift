@@ -66,6 +66,9 @@ struct EmailActionsSheet: View {
                         source.replyLater ? "Remove from Reply Later" : "Reply later",
                         systemImage: source.replyLater ? "clock.arrow.circlepath" : "clock"
                     ) {
+                        // The sheet holds a snapshot of the email, so close it (as Android
+                        // does) rather than leave a stale label that would re-apply the flag.
+                        dismiss()
                         Task { await app.toggleReplyLater(on: source) }
                     }
 

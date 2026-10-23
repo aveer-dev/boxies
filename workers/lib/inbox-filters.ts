@@ -10,7 +10,7 @@
  * skip auto-draft, and/or forward. First enabled matching rule wins.
  */
 
-import { isAuthSpoofed, type EmailAuth } from "./email-auth.ts";
+import { isFromUntrusted, type EmailAuth } from "./email-auth.ts";
 import {
 	headerMapFromSource,
 	normalizeEmailAddress,
@@ -249,7 +249,7 @@ export function matchInboxFilter(
 	if (!hasCondition(rule)) return false;
 
 	if (rule.from) {
-		if (isAuthSpoofed(input.auth)) return false;
+		if (isFromUntrusted(input.auth)) return false;
 		if (!matchFromCondition(rule.from, input.sender)) return false;
 	}
 	if (rule.list) {

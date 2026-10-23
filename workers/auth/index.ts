@@ -18,11 +18,18 @@
  *   also create the mailbox), so Better Auth's email sign-up is disabled.
  *   Apple/Google sign-in may create a user, but never with an address on a
  *   domain we host: that address would block (or impersonate) its mailbox.
+ * - Passkeys (WebAuthn) are registered while signed in and then sign in on
+ *   their own. TOTP two-factor (with encrypted one-time backup codes) is
+ *   optional for everyone; once a user turns it on, password sign-in answers
+ *   with a two-factor challenge instead of a session. Apple/Google sign-in
+ *   and passkeys are not challenged (Better Auth's default: the provider or
+ *   the authenticator is the second factor).
  */
 
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { bearer } from "better-auth/plugins";
+import { bearer, twoFactor } from "better-auth/plugins";
+import { passkey } from "@better-auth/passkey";
 import { drizzle } from "drizzle-orm/d1";
 import { hashPassword, verifyPassword } from "../lib/password-auth";
 import type { Env } from "../types";
@@ -56,14 +63,43 @@ function socialProviders(env: Env) {
 		};
 	}
 	if (env.APPLE_CLIENT_ID) {
+		const bundleId = env.APPLE_APP_BUNDLE_ID ?? env.APPLE_CLIENT_ID;
 		providers.apple = {
 			clientId: env.APPLE_CLIENT_ID,
 			clientSecret: env.APPLE_CLIENT_SECRET ?? "",
 			// Native iOS ID tokens carry the bundle id as their audience.
-			appBundleIdentifier: env.APPLE_APP_BUNDLE_ID ?? env.APPLE_CLIENT_ID,
+			appBundleIdentifier: bundleId,
+			// Web (Apple JS) ID tokens carry the Services ID instead; accept
+			// both only when one is configured.
+			...(env.APPLE_WEB_SERVICES_ID ? { audience: [bundleId, env.APPLE_WEB_SERVICES_ID] } : {}),
 		};
 	}
 	return providers;
+}
+
+/**
+ * WebAuthn relying party for passkeys, from APP_BASE_URL (the web app's
+ * origin): rpID is its hostname (`inboxies.app`), and the expected origins
+ * are that origin plus `PASSKEY_EXTRA_ORIGINS` (comma-separated, e.g. the
+ * Android app's `android:apk-key-hash:…` origin). iOS native assertions carry
+ * the web origin, so they need no extra entry. Without APP_BASE_URL (local
+ * dev) Better Auth falls back to `localhost` and the request's Origin.
+ */
+export function passkeyRelyingParty(env: Pick<Env, "APP_BASE_URL" | "PASSKEY_EXTRA_ORIGINS">): {
+	rpID?: string;
+	origin: string[] | null;
+} {
+	let base: URL | null = null;
+	try {
+		base = env.APP_BASE_URL ? new URL(env.APP_BASE_URL) : null;
+	} catch {
+		base = null;
+	}
+	if (!base) return { origin: null };
+	return {
+		rpID: base.hostname,
+		origin: [...new Set([base.origin, ...splitList(env.PASSKEY_EXTRA_ORIGINS)])],
+	};
 }
 
 export function isBetterAuthEnabled(env: Env): boolean {
@@ -152,11 +188,56 @@ export function createAuth(env: Env) {
 		// would only be per isolate; the Workers Rate Limiting bindings in front
 		// of the auth routes do this job (see `auth/rate-limit.ts`).
 		rateLimit: { enabled: false },
-		plugins: [bearer()],
+		plugins: [
+			// The passkey and twoFactor plugins are typed as plain plugins: their
+			// endpoint types reference a second zod (v4) and @simplewebauthn that
+			// TypeScript can't name from this package (TS2742 on `createAuth`).
+			// Clients reach them over HTTP; server code uses `twoFactorApi`.
+			passkey({
+				rpName: "Inboxies",
+				...passkeyRelyingParty(env),
+				// Registration needs a signed-in session (the plugin's default,
+				// stated so it can't drift): passkeys never create accounts.
+				registration: { requireSession: true },
+			}) as BetterAuthPlugin,
+			twoFactor({
+				issuer: "Inboxies",
+				// TOTP only: no email/SMS OTP method (no `otpOptions.sendOTP`).
+				// Backup codes are stored encrypted (the plugin default), and
+				// enabling, disabling or regenerating them needs the password.
+				backupCodeOptions: { storeBackupCodes: "encrypted" },
+			}) as BetterAuthPlugin,
+			// Last: its after-hook copies the session cookie into `set-auth-token`,
+			// so it must see the cookie twoFactor clears when it turns a password
+			// sign-in into a challenge (otherwise it would hand out a token for the
+			// session twoFactor just deleted).
+			bearer(),
+		],
 	});
 }
 
 export type Auth = ReturnType<typeof createAuth>;
+
+type TwoFactorVerify = (args: {
+	body: { code: string };
+	headers: Headers;
+	returnHeaders: true;
+}) => Promise<{ headers: Headers; response: { token?: string; user?: { id: string; email: string } } }>;
+
+/**
+ * The twoFactor plugin's server-side verify calls (see the note on the
+ * plugin list for why they aren't on `Auth["api"]`'s type). They finish a
+ * pending password sign-in from the `two_factor` cookie in `headers`.
+ */
+export function twoFactorApi(auth: Auth): { verifyTOTP: TwoFactorVerify; verifyBackupCode: TwoFactorVerify } {
+	const api = auth.api as Record<string, unknown>;
+	const verifyTOTP = api.verifyTOTP;
+	const verifyBackupCode = api.verifyBackupCode;
+	if (typeof verifyTOTP !== "function" || typeof verifyBackupCode !== "function") {
+		throw new Error("twoFactor plugin is not installed");
+	}
+	return { verifyTOTP: verifyTOTP as TwoFactorVerify, verifyBackupCode: verifyBackupCode as TwoFactorVerify };
+}
 
 const authCache = new WeakMap<object, Auth>();
 

@@ -13,7 +13,23 @@ import {
 	applyEmailSendingEvent,
 	type DeliveryStub,
 } from "./email-sending-events";
+import { authDb } from "../auth/authz";
+import { recordSuppression, suppressionDomainFor } from "./email-suppression";
 import type { Env } from "../types";
+
+/** Mail sent from a private alias is stored in the alias's target mailbox. */
+async function mailboxIdForSender(env: Env, sender: string): Promise<string> {
+	const alias = await env.BUCKET.get(aliasMetadataKey(sender.toLowerCase()));
+	if (alias) {
+		try {
+			const meta = (await alias.json()) as { targetMailboxId?: string };
+			if (meta.targetMailboxId) return meta.targetMailboxId;
+		} catch {
+			// Unreadable alias record: fall back to the sender address.
+		}
+	}
+	return sender;
+}
 
 /**
  * Process one Email Sending queue message. Returns whether the message
@@ -22,21 +38,28 @@ import type { Env } from "../types";
 export async function handleEmailSendingQueueMessage(
 	env: Env,
 	body: unknown,
+	attempts = 1,
 ): Promise<boolean> {
-	return applyEmailSendingEvent(body, async (sender) => {
-		// Mail sent from a private alias is stored in the alias's target mailbox.
-		const alias = await env.BUCKET.get(aliasMetadataKey(sender.toLowerCase()));
-		let mailboxId = sender;
-		if (alias) {
-			try {
-				const meta = (await alias.json()) as { targetMailboxId?: string };
-				if (meta.targetMailboxId) mailboxId = meta.targetMailboxId;
-			} catch {
-				// Unreadable alias record: fall back to the sender address.
-			}
-		}
-		return getMailboxStub(env, mailboxId) as unknown as DeliveryStub;
-	});
+	return applyEmailSendingEvent(
+		body,
+		async (sender) =>
+			getMailboxStub(env, await mailboxIdForSender(env, sender)) as unknown as DeliveryStub,
+		async (suppression) => {
+			const domain = suppressionDomainFor(suppression.sender);
+			if (!domain) return;
+			await recordSuppression(authDb(env.AUTH_DB), {
+				domain,
+				recipient: suppression.recipient,
+				reason: suppression.reason,
+				source: "email_sending_event",
+				sourceEventId: suppression.eventId,
+				sourceMailboxId: (await mailboxIdForSender(env, suppression.sender)).toLowerCase(),
+				sourceMessageId: suppression.providerMessageId,
+				detail: suppression.detail,
+			});
+		},
+		attempts,
+	);
 }
 
 export async function handleEmailSendingQueueBatch(
@@ -45,7 +68,11 @@ export async function handleEmailSendingQueueBatch(
 ): Promise<void> {
 	for (const message of batch.messages) {
 		try {
-			const ok = await handleEmailSendingQueueMessage(env, message.body);
+			const ok = await handleEmailSendingQueueMessage(
+				env,
+				message.body,
+				message.attempts,
+			);
 			if (ok) message.ack();
 			else message.retry();
 		} catch (error) {

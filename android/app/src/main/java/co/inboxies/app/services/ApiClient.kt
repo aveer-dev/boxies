@@ -30,6 +30,9 @@ import co.inboxies.app.models.ExportJob
 import co.inboxies.app.models.ForgotPasswordResponse
 import co.inboxies.app.models.DecommissionPreflightResponse
 import co.inboxies.app.models.DecommissionResponse
+import co.inboxies.app.models.FinalizeDomainResponse
+import co.inboxies.app.models.OffboardingDomain
+import co.inboxies.app.models.OffboardingDomainsResponse
 import co.inboxies.app.models.DeleteAccountResponse
 import co.inboxies.app.models.EmptyTrashResponse
 import co.inboxies.app.models.FixEmailDnsResponse
@@ -52,10 +55,13 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.PasswordLoginResponse
+import co.inboxies.app.models.ResetPasswordResponse
+import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.models.MailboxInviteRow
 import co.inboxies.app.models.MailboxMember
 import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.models.RevokeSessionsResponse
+import co.inboxies.app.models.McpGrant
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -107,10 +113,26 @@ sealed class ApiException(message: String) : Exception(message) {
         message.ifBlank { "This mailbox is read-only because its subscription ended." },
     )
 
+    /**
+     * 409 `{ code: "recipient_suppressed", suppressed }`: a recipient bounced or complained
+     * earlier, so the send was refused before anything went out (AVE-37 / AVE-84).
+     */
+    class RecipientSuppressed(val suppressed: List<SuppressedRecipient>, message: String) : ApiException(
+        message.ifBlank { "Not sent: a recipient is suppressed." },
+    )
+
+    /**
+     * 401 `code: "TWO_FACTOR_REQUIRED"` from password sign-in: the password was right, and
+     * the account wants an authenticator or backup code before it hands out a session.
+     */
+    class TwoFactorRequired(val challenge: TwoFactorChallenge) : ApiException(
+        "Enter the code from your authenticator app.",
+    )
+
     /** The server's readable `error` text, for paths that show it as-is. */
     val serverMessage: String?
         get() = when (this) {
-            is Http, is ServiceEnded -> message?.takeIf { it.isNotBlank() }
+            is Http, is ServiceEnded, is RecipientSuppressed -> message?.takeIf { it.isNotBlank() }
             else -> null
         }
 }
@@ -171,6 +193,12 @@ class ApiClient private constructor() {
         val shared: ApiClient by lazy { ApiClient() }
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
+        /** Header for send / reply / forward: one key per compose, reused on retries. */
+        const val IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+
+        fun idempotencyHeaders(key: String?): Map<String, String> =
+            if (key.isNullOrEmpty()) emptyMap() else mapOf(IDEMPOTENCY_KEY_HEADER to key)
+
         /**
          * The Worker answers a bad or expired bearer with 401/403 "Invalid or
          * expired mobile session token". Per-mailbox ACL denials are also 403
@@ -195,13 +223,16 @@ class ApiClient private constructor() {
     /** Tokens the server just rejected as expired; RootView signs out if it's still current. */
     val sessionExpired = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
-    private fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
+    internal fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
+        if (code == 401) TwoFactorChallenge.parse(body)?.let { return ApiException.TwoFactorRequired(it) }
         val message = httpErrorMessage(body)
         if (sentToken != null && isExpiredSessionResponse(code, message)) {
             sessionExpired.tryEmit(sentToken)
             return ApiException.SessionExpired()
         }
-        return serviceEndedFailure(code, body, message) ?: ApiException.Http(code, message)
+        return serviceEndedFailure(code, body, message)
+            ?: BounceSuppression.failure(code, body, message)
+            ?: ApiException.Http(code, message)
     }
 
     /**
@@ -215,22 +246,52 @@ class ApiClient private constructor() {
         body: JsonObject? = null,
         authed: Boolean = true,
         bearerToken: String? = null,
-    ): T = withContext(Dispatchers.IO) {
-        val (data, code, contentType) = perform(path, method, query, body, authed, bearerToken = bearerToken)
+        headers: Map<String, String> = emptyMap(),
+    ): T = requestWithHeaders<T>(path, method, query, body, authed, bearerToken, headers).first
+
+    /**
+     * [request], plus the response headers for callers that need them (the passkey
+     * challenge cookie, `set-auth-token`).
+     */
+    suspend inline fun <reified T> requestWithHeaders(
+        path: String,
+        method: String = "GET",
+        query: Map<String, String> = emptyMap(),
+        body: JsonObject? = null,
+        authed: Boolean = true,
+        bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
+    ): Pair<T, okhttp3.Headers> = withContext(Dispatchers.IO) {
+        val raw = performRaw(
+            path,
+            method,
+            query,
+            body,
+            authed,
+            bearerToken = bearerToken,
+            headers = headers,
+        )
+        Pair(decodeBody<T>(raw.text, raw.code, raw.contentType), raw.headers)
+    }
+
+    inline fun <reified T> decodeBody(data: String, code: Int, contentType: String): T {
         if (code == 204 && T::class == EmptyResponse::class) {
             @Suppress("UNCHECKED_CAST")
-            return@withContext EmptyResponse() as T
+            return EmptyResponse() as T
         }
         if (!contentType.contains("json", ignoreCase = true) && data.isNotBlank()) {
             if (looksLikeCloudflareAccess(data, null)) throw ApiException.CloudflareAccess()
             throw ApiException.NotJson(data.take(160))
         }
-        try {
+        return try {
             json.decodeFromString<T>(data.ifBlank { "{}" })
         } catch (e: Exception) {
             throw ApiException.Decoding(e)
         }
     }
+
+    /** A successful reply: body text, status, `Content-Type` and all headers. */
+    class RawResponse(val text: String, val code: Int, val contentType: String, val headers: okhttp3.Headers)
 
     suspend fun requestBytes(
         path: String,
@@ -250,10 +311,26 @@ class ApiClient private constructor() {
         authed: Boolean,
         asBytes: Boolean = false,
         bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
     ): Triple<String, Int, String> {
+        val raw = performRaw(path, method, query, body, authed, asBytes, bearerToken, headers)
+        return Triple(raw.text, raw.code, raw.contentType)
+    }
+
+    fun performRaw(
+        path: String,
+        method: String,
+        query: Map<String, String>,
+        body: JsonObject?,
+        authed: Boolean,
+        asBytes: Boolean = false,
+        bearerToken: String? = null,
+        headers: Map<String, String> = emptyMap(),
+    ): RawResponse {
         val builder = Request.Builder().url(buildUrl(path, query))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
+        headers.forEach { (name, value) -> builder.header(name, value) }
         val sentToken = if (authed) bearerToken ?: authTokenProvider() else null
         sentToken?.let { builder.header("Authorization", "Bearer $it") }
         val requestBody = body?.let { json.encodeToString(JsonObject.serializer(), it).toRequestBody(JSON_MEDIA) }
@@ -277,7 +354,7 @@ class ApiClient private constructor() {
                     // A pinned outgoing session failing is not "the current session expired".
                     throw httpFailure(response.code, text, sentToken.takeIf { bearerToken == null })
                 }
-                return Triple(text, response.code, response.header("Content-Type").orEmpty())
+                return RawResponse(text, response.code, response.header("Content-Type").orEmpty(), response.headers)
             }
         } catch (e: ApiException) {
             throw e
@@ -383,6 +460,15 @@ class ApiClient private constructor() {
         method = "POST",
         body = buildJsonObject {},
     )
+
+    // ── Connected apps (MCP OAuth grants) ──
+
+    suspend fun listMcpGrants(): List<McpGrant> = request("/api/v1/me/mcp-grants")
+
+    /** Disconnects the app: the grant and all its tokens are deleted server-side. */
+    suspend fun revokeMcpGrant(id: String) {
+        request<EmptyResponse>("/api/v1/me/mcp-grants/${pathEncode(id)}", method = "DELETE")
+    }
 
     // ── Recovery email ──
 
@@ -518,8 +604,27 @@ class ApiClient private constructor() {
         authed = false,
     )
 
-    /** Pass [token] (email link), or [email] + [code] (6-digit code). */
-    suspend fun resetPassword(token: String? = null, email: String? = null, code: String? = null, newPassword: String): PasswordLoginResponse = request(
+    /**
+     * Second step of a password sign-in when the account has two-factor on: the challenge
+     * token from the sign-in reply plus an authenticator code (`method: "totp"`) or a
+     * one-time backup code (`method: "backup_code"`).
+     */
+    suspend fun verifyTwoFactor(challengeToken: String, code: String, method: String): PasswordLoginResponse = request(
+        "/api/v1/auth/two-factor/verify",
+        method = "POST",
+        body = buildJsonObject {
+            put("twoFactorToken", challengeToken)
+            put("code", code)
+            put("method", method)
+        },
+        authed = false,
+    )
+
+    /**
+     * Pass [token] (email link), or [email] + [code] (6-digit code). With two-factor on the
+     * reply carries a challenge instead of a session token.
+     */
+    suspend fun resetPassword(token: String? = null, email: String? = null, code: String? = null, newPassword: String): ResetPasswordResponse = request(
         "/api/v1/auth/password/reset",
         method = "POST",
         body = buildJsonObject {
@@ -833,19 +938,27 @@ class ApiClient private constructor() {
             },
         )
 
+    /**
+     * Threaded folder page. Inbox only: [newLimit] keeps the newest N New conversations above
+     * every Seen one; [section] (`new` | `seen`) lists one section (AVE-23).
+     */
     suspend fun listEmails(
         mailboxId: String,
         folder: String,
         page: Int = 1,
         threaded: Boolean = true,
+        newLimit: Int? = null,
+        section: String? = null,
     ): EmailListResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
-        query = mapOf(
-            "folder" to folder,
-            "threaded" to threaded.toString(),
-            "page" to page.toString(),
-            "limit" to "25",
-        ),
+        query = buildMap {
+            put("folder", folder)
+            put("threaded", threaded.toString())
+            put("page", page.toString())
+            put("limit", "25")
+            newLimit?.let { put("new_limit", it.toString()) }
+            section?.let { put("section", it) }
+        },
     )
 
     suspend fun getEmail(mailboxId: String, id: String): Email =
@@ -986,6 +1099,17 @@ class ApiClient private constructor() {
         )
     }
 
+    /**
+     * Lifts a bounce / complaint suppression (AVE-37). 404 means it is already gone;
+     * 403 `suppression_not_manageable` means only a domain admin can lift it.
+     */
+    suspend fun unsuppress(mailboxId: String, address: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/suppressions/${pathEncode(address.trim().lowercase())}",
+            method = "DELETE",
+        )
+    }
+
     /** Outside Trash this moves to Trash; from Trash/Drafts the server deletes permanently. */
     suspend fun deleteEmail(mailboxId: String, id: String) {
         request<EmptyResponse>(
@@ -1028,10 +1152,20 @@ class ApiClient private constructor() {
     suspend fun search(mailboxId: String, query: String): List<Email> =
         searchEmails(mailboxId, query).emails
 
-    suspend fun sendEmail(mailboxId: String, payload: JsonObject): SendEmailResponse = request(
+    /**
+     * [idempotencyKey]: one per compose, reused on every retry of that send. The server
+     * answers a repeated key with the original `202 { id, status }` (plus
+     * `Idempotent-Replayed: true`), which decodes like any other success.
+     */
+    suspend fun sendEmail(
+        mailboxId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun sendEmail(
@@ -1053,10 +1187,16 @@ class ApiClient private constructor() {
         },
     )
 
-    suspend fun replyToEmail(mailboxId: String, emailId: String, payload: JsonObject): SendEmailResponse = request(
+    suspend fun replyToEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/reply",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun replyEmail(
@@ -1074,10 +1214,16 @@ class ApiClient private constructor() {
         },
     )
 
-    suspend fun forwardEmail(mailboxId: String, emailId: String, payload: JsonObject): SendEmailResponse = request(
+    suspend fun forwardEmail(
+        mailboxId: String,
+        emailId: String,
+        payload: JsonObject,
+        idempotencyKey: String? = null,
+    ): SendEmailResponse = request(
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/forward",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
     )
 
     suspend fun forwardEmail(
@@ -1258,6 +1404,19 @@ class ApiClient private constructor() {
         body = buildJsonObject {
             put("confirmDomain", confirmDomain)
             put("skipExportAcknowledged", skipExportAcknowledged)
+        },
+    )
+
+    /** Decommissioned domains of the caller still waiting to be deleted. */
+    suspend fun listOffboardingDomains(): List<OffboardingDomain> =
+        request<OffboardingDomainsResponse>("/api/v1/admin/offboarding-domains").domains
+
+    /** Delete a decommissioned domain's data now. `confirmDomain` must be the domain name (checked server-side). */
+    suspend fun finalizeDomain(domain: String, confirmDomain: String): FinalizeDomainResponse = request(
+        "/api/v1/admin/domains/${pathEncode(domain)}/finalize",
+        method = "POST",
+        body = buildJsonObject {
+            put("confirmDomain", confirmDomain)
         },
     )
 

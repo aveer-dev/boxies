@@ -2,8 +2,8 @@ import AuthenticationServices
 import SwiftUI
 
 /// Account → Sign-in methods: connected methods (disconnect any but the last),
-/// add Apple / Google / a password, change password, and the recovery email that
-/// password resets go to.
+/// passkeys, two-factor status, add Apple / Google / a password, change
+/// password, and the recovery email that password resets go to.
 struct SignInMethodsSettingsView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
@@ -147,6 +147,10 @@ struct SignInMethodsSettingsView: View {
                     Text("Change the password used to sign in with email.")
                 }
             }
+
+            PasskeysSettingsSection(statusMessage: $statusMessage)
+
+            TwoFactorStatusSection()
 
             if canAddMethod {
                 Section {

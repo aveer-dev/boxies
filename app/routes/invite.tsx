@@ -8,6 +8,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMe } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
+import { AuthShell, quietLinkClass } from "~/components/AuthShell";
 import api, { ApiError } from "~/services/api";
 
 export function meta() {
@@ -44,14 +45,7 @@ function acceptErrorMessage(error: unknown): { message: string; signInInstead: b
 }
 
 function Card({ children }: { children: ReactNode }) {
-	return (
-		<div className="min-h-screen bg-kumo-recessed flex items-center justify-center px-4">
-			<div className="w-full max-w-md rounded-xl border border-kumo-line bg-kumo-base p-6 md:p-8">
-				<h1 className="text-xl font-bold text-kumo-default mb-1">Accept invite</h1>
-				{children}
-			</div>
-		</div>
-	);
+	return <AuthShell title="Accept invite">{children}</AuthShell>;
 }
 
 export default function InviteAcceptRoute() {
@@ -158,9 +152,9 @@ export default function InviteAcceptRoute() {
 	if (invite.error || !invite.data) {
 		return (
 			<Card>
-				<p className="text-sm text-kumo-subtle mt-4">{inviteUnavailableMessage(invite.error)}</p>
+				<p className="text-sm text-kumo-subtle">{inviteUnavailableMessage(invite.error)}</p>
 				<div className="mt-6 text-xs">
-					<Link to="/login" className="text-kumo-accent hover:underline">
+					<Link to="/login" className={quietLinkClass}>
 						Go to sign in
 					</Link>
 				</div>
@@ -184,7 +178,7 @@ export default function InviteAcceptRoute() {
 						{formError.message}
 					</Text>
 					{formError.signInInstead && (
-						<Link to={signInHref} className="text-xs text-kumo-accent hover:underline">
+						<Link to={signInHref} className={`text-xs ${quietLinkClass}`}>
 							Sign in
 						</Link>
 					)}
@@ -199,7 +193,7 @@ export default function InviteAcceptRoute() {
 					<button
 						type="button"
 						onClick={() => void switchAccount()}
-						className="text-kumo-accent hover:underline shrink-0 cursor-pointer"
+						className={`shrink-0 ${quietLinkClass}`}
 					>
 						Not you?
 					</button>
@@ -218,7 +212,7 @@ export default function InviteAcceptRoute() {
 					{!signedInAs && (
 						<p className="text-xs text-kumo-subtle text-center">
 							Already have an Inboxies account?{" "}
-							<Link to={signInHref} className="text-kumo-accent hover:underline">
+							<Link to={signInHref} className={quietLinkClass}>
 								Sign in first
 							</Link>
 						</p>
@@ -233,14 +227,14 @@ export default function InviteAcceptRoute() {
 							type="button"
 							onClick={() => void sendCode()}
 							disabled={busy}
-							className="text-kumo-accent hover:underline cursor-pointer"
+							className={quietLinkClass}
 						>
 							Resend
 						</button>
 					</p>
 					<Input
+						className="w-full"
 						label="6-digit code"
-						size="sm"
 						value={code}
 						onChange={(e) => setCode(e.target.value)}
 						placeholder="123456"
@@ -252,16 +246,16 @@ export default function InviteAcceptRoute() {
 					{!signedInAs && (
 						<>
 							<Input
+								className="w-full"
 								label="Your name (optional)"
-								size="sm"
 								value={displayName}
 								onChange={(e) => setDisplayName(e.target.value)}
 								autoComplete="name"
 							/>
 							<Input
+								className="w-full"
 								label="Choose a password"
 								type="password"
-								size="sm"
 								value={password}
 								onChange={(e) => setPassword(e.target.value)}
 								placeholder="At least 10 characters"
@@ -269,9 +263,9 @@ export default function InviteAcceptRoute() {
 								autoComplete="new-password"
 							/>
 							<Input
+								className="w-full"
 								label="Confirm password"
 								type="password"
-								size="sm"
 								value={confirm}
 								onChange={(e) => setConfirm(e.target.value)}
 								required

@@ -39,6 +39,10 @@ struct ComposeToast: Equatable {
 @MainActor
 final class ComposeFormModel {
     let mode: ComposeMode
+    /// `Idempotency-Key` for this compose: sent on every attempt (undo-window commit,
+    /// retry after a failed send) so a send that did reach the server isn't repeated.
+    /// A new compose gets a new key; a restored pending send keeps its record's key.
+    private(set) var sendIdempotencyKey = UUID().uuidString.lowercased()
     var fromMailboxId: String
     var fromEmail: String
     var fromName: String?
@@ -90,6 +94,13 @@ final class ComposeFormModel {
     var saveStatus: DraftSaveStatus = .idle
     var toast: ComposeToast?
     var errorMessage: String?
+    /// Recipients the last send was refused for (409 `recipient_suppressed`).
+    /// The sheet shows the ones still addressed; see `visibleSuppressedRecipients`.
+    var suppressedRecipients: [SuppressedRecipient] = []
+    /// The server's sentence for that refusal, for the failure toast (the notice
+    /// replaces the inline error, so it doesn't go in `errorMessage`).
+    var suppressionMessage: String?
+    var isUnsuppressing = false
 
     private let signature: String
     private let initialSnapshot: String
@@ -497,6 +508,8 @@ final class ComposeFormModel {
         }
         isSending = true
         errorMessage = nil
+        suppressedRecipients = []
+        suppressionMessage = nil
         defer { isSending = false }
 
         let html = outgoingHTML()
@@ -546,7 +559,8 @@ final class ComposeFormModel {
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
                     payload: payload,
-                    bearerToken: pinnedToken
+                    bearerToken: pinnedToken,
+                    idempotencyKey: sendIdempotencyKey
                 )
             case .forward:
                 guard let originalEmailId else {
@@ -557,10 +571,16 @@ final class ComposeFormModel {
                     mailboxId: fromMailboxId,
                     emailId: originalEmailId,
                     payload: payload,
-                    bearerToken: pinnedToken
+                    bearerToken: pinnedToken,
+                    idempotencyKey: sendIdempotencyKey
                 )
             case .new, .editDraft:
-                _ = try await APIClient.shared.sendEmail(mailboxId: fromMailboxId, payload: payload, bearerToken: pinnedToken)
+                _ = try await APIClient.shared.sendEmail(
+                    mailboxId: fromMailboxId,
+                    payload: payload,
+                    bearerToken: pinnedToken,
+                    idempotencyKey: sendIdempotencyKey
+                )
             }
 
             if let draftId {
@@ -568,10 +588,49 @@ final class ComposeFormModel {
                 onDraftDeleted?(draftId, threadId, originalEmailId)
             }
             return true
+        } catch APIError.recipientSuppressed(let message, let suppressed) {
+            suppressedRecipients = suppressed
+            suppressionMessage = message.isEmpty ? nil : message
+            return false
         } catch {
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    /// Suppressed recipients still in To / Cc / Bcc. Removing one clears its notice.
+    var visibleSuppressedRecipients: [SuppressedRecipient] {
+        BounceSuppression.stillAddressed(
+            suppressedRecipients,
+            recipients: (toTokens + ccTokens + bccTokens).map(\.email)
+        )
+    }
+
+    /// Lifts every shown suppression so the caller can send again with the same
+    /// `Idempotency-Key`. One already lifted (404) is skipped. False, with
+    /// `errorMessage` set, when a lift fails or one can't be lifted from here.
+    func unsuppressVisibleRecipients() async -> Bool {
+        let targets = visibleSuppressedRecipients
+        guard !targets.isEmpty, !isUnsuppressing, !isSending,
+              targets.allSatisfy(\.canUnsuppress) else { return false }
+        isUnsuppressing = true
+        errorMessage = nil
+        defer { isUnsuppressing = false }
+        for target in targets {
+            do {
+                try await APIClient.shared.unsuppress(mailboxId: fromMailboxId, address: target.address)
+            } catch APIError.http(404, _) {
+                // Already lifted (by someone else, or an earlier attempt): carry on.
+                continue
+            } catch {
+                errorMessage = error.localizedDescription
+                return false
+            }
+        }
+        let lifted = Set(targets.map(\.address))
+        suppressedRecipients.removeAll { lifted.contains($0.address) }
+        suppressionMessage = nil
+        return true
     }
 
     /// Snapshot persisted while this message sits in the undo-send window.
@@ -600,7 +659,8 @@ final class ComposeFormModel {
                     base64: $0.base64
                 )
             },
-            createdAt: Date()
+            createdAt: Date(),
+            idempotencyKey: sendIdempotencyKey
         )
     }
 
@@ -622,6 +682,9 @@ final class ComposeFormModel {
         originalEmailId = record.originalEmailId ?? originalEmailId
         threadId = record.threadId ?? threadId
         draftId = record.draftId ?? draftId
+        if let key = record.idempotencyKey, !key.isEmpty {
+            sendIdempotencyKey = key
+        }
     }
 
     private func recipientListValue() -> String {

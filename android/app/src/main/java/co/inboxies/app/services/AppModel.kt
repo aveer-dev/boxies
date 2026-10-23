@@ -75,6 +75,28 @@ class AppModel {
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails.asStateFlow()
 
+    /** Inbox page 1's server New total, for the list it came from (AVE-23). */
+    data class InboxNewTotal(val scope: EmailListScope, val count: Int)
+    private val _inboxNewTotal = MutableStateFlow<InboxNewTotal?>(null)
+    val inboxNewTotal: StateFlow<InboxNewTotal?> = _inboxNewTotal.asStateFlow()
+
+    /** Server New total for the inbox on screen; null before page 1 lands. */
+    fun inboxNewCountFor(total: InboxNewTotal?): Int? =
+        total?.takeIf { it.scope == currentListScope && it.scope.folderId == FolderIds.INBOX }?.count
+
+    private fun rememberInboxNewCount(scope: EmailListScope, count: Int?) {
+        if (scope.folderId != FolderIds.INBOX) return
+        _inboxNewTotal.value = count?.let { InboxNewTotal(scope, it) }
+    }
+
+    /** Optimistic read / unread on the inbox keeps "Show N more new" honest until the next sync. */
+    private fun adjustInboxNewCount(wasUnread: Boolean, isUnread: Boolean) {
+        if (wasUnread == isUnread) return
+        val current = _inboxNewTotal.value ?: return
+        if (current.scope != currentListScope) return
+        _inboxNewTotal.value = current.copy(count = maxOf(0, current.count + if (isUnread) 1 else -1))
+    }
+
     private val _replyLaterCount = MutableStateFlow(0)
     val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
 
@@ -273,6 +295,7 @@ class AppModel {
         if (wasUnread == isUnread) return
         val folderId = email.folderId ?: _selectedTab.value.syncFolderId ?: return
         adjustFolderUnread(folderId, if (isUnread) 1 else -1)
+        if (folderId == FolderIds.INBOX) adjustInboxNewCount(wasUnread, isUnread)
     }
 
     /** Token the last [bootstrap] ran for — lets a recreated Activity skip a redundant reload. */
@@ -892,6 +915,7 @@ class AppModel {
             }
             ifStillShowing(listScope) {
                 rememberFirstPage(listScope, synced.pageIds)
+                rememberInboxNewCount(listScope, synced.newCount)
                 _emails.value = displayOrder(folderId, synced.emails)
                 _emailListError.value = null
                 if (restart || _paging.value.scope != listScope) {
@@ -1033,6 +1057,8 @@ class AppModel {
             }.getOrNull()?.let { synced ->
                 ifStillShowing(listScope) {
                     rememberFirstPage(listScope, synced.pageIds)
+                    rememberInboxNewCount(listScope, synced.newCount)
+                rememberInboxNewCount(listScope, synced.newCount)
                     _emails.value = displayOrder(folderId, synced.emails)
                     // A full prune left exactly page 1; say so, which also voids any page
                     // request started against the old list.
@@ -1686,6 +1712,7 @@ class AppModel {
         if (form.isSending) return
         form.isSending = true
         form.errorMessage = null
+        form.suppressedRecipients = emptyList()
         showToast("Sending…", isLoading = true)
         try {
             runCatching {
@@ -1708,7 +1735,7 @@ class AppModel {
                 when (form.mode) {
                     ComposeMode.Reply, ComposeMode.ReplyAll, ComposeMode.Forward ->
                         sendReplyOrForward(form, mailboxId, payload)
-                    else -> ApiClient.shared.sendEmail(mailboxId, payload)
+                    else -> ApiClient.shared.sendEmail(mailboxId, payload, form.sendIdempotencyKey)
                 }
             }.onSuccess {
                 form.deleteSavedDraft()
@@ -1720,12 +1747,55 @@ class AppModel {
                 // readable `error` message; keep it on the form so the open sheet can show it.
                 val message = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "Send failed"
                 noteServiceEnded(it)
-                form.errorMessage = message
+                if (it is ApiException.RecipientSuppressed) {
+                    // Shown inline with Un-suppress; the server's sentence goes in the toast.
+                    form.suppressedRecipients = it.suppressed
+                } else {
+                    form.errorMessage = message
+                }
                 showToast(message, isError = true)
             }
         } finally {
             form.isSending = false
         }
+    }
+
+    /**
+     * Compose "Un-suppress and send": lifts every suppression the open compose still
+     * addresses, then sends again through [sendCompose] with the same `Idempotency-Key`.
+     * One already lifted (404) is skipped; any other failure stops before sending.
+     */
+    suspend fun unsuppressAndSendCompose() {
+        val form = _composeSession.value?.form ?: return
+        if (form.isSending || form.isUnsuppressing) return
+        form.commitPendingTokens()
+        val targets = form.visibleSuppressedRecipients()
+        if (targets.isEmpty() || targets.any { !it.canUnsuppress }) return
+        form.isUnsuppressing = true
+        form.errorMessage = null
+        try {
+            for (target in targets) {
+                try {
+                    ApiClient.shared.unsuppress(form.fromMailboxId, target.address)
+                } catch (e: ApiException.Http) {
+                    // Already lifted (by someone else, or an earlier attempt): carry on.
+                    if (e.code != 404) throw e
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val message = e.message?.takeIf { it.isNotBlank() } ?: "Couldn't un-suppress the address."
+            noteServiceEnded(e)
+            form.errorMessage = message
+            showToast(message, isError = true)
+            return
+        } finally {
+            form.isUnsuppressing = false
+        }
+        val lifted = targets.map { it.address }.toSet()
+        form.suppressedRecipients = form.suppressedRecipients.filterNot { it.address in lifted }
+        sendCompose()
     }
 
     /**
@@ -1738,19 +1808,21 @@ class AppModel {
      */
     private suspend fun sendReplyOrForward(form: ComposeFormModel, mailboxId: String, payload: JsonObject) {
         val targetId = form.original?.id ?: form.originalEmailId?.takeIf { it.isNotBlank() }
+        // One key for the whole compose, so the 404 fallback below and any retry share it.
+        val key = form.sendIdempotencyKey
         if (targetId == null) {
-            ApiClient.shared.sendEmail(mailboxId, payload)
+            ApiClient.shared.sendEmail(mailboxId, payload, key)
             return
         }
         try {
             if (form.mode == ComposeMode.Forward) {
-                ApiClient.shared.forwardEmail(mailboxId, targetId, payload)
+                ApiClient.shared.forwardEmail(mailboxId, targetId, payload, key)
             } else {
-                ApiClient.shared.replyToEmail(mailboxId, targetId, payload)
+                ApiClient.shared.replyToEmail(mailboxId, targetId, payload, key)
             }
         } catch (e: ApiException.Http) {
             if (e.code != 404 || form.original != null) throw e
-            ApiClient.shared.sendEmail(mailboxId, payload)
+            ApiClient.shared.sendEmail(mailboxId, payload, key)
         }
     }
 
@@ -1841,10 +1913,13 @@ class AppModel {
         )
         runCatching {
             ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
+        }.onSuccess {
+            showToast(if (next) "Added to Reply Later" else "Removed from Reply Later")
         }.onFailure {
             // Roll back optimistic update on failure
             db.updateEmailFlags(target.id, replyLater = !next)
             applyEmailUpdate(target)
+            showToast("Couldn't update Reply Later", isError = true)
         }
         refreshReplyLaterCount()
         if (_selectedTab.value is HomeTab.ReplyLater) {
