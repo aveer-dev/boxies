@@ -203,6 +203,20 @@ struct AccountSession: Codable, Identifiable, Hashable {
     var current: Bool
 }
 
+/// An app connected over MCP OAuth (Account → Devices & sessions → Connected apps).
+struct McpGrant: Codable, Identifiable, Hashable {
+    var id: String
+    var clientId: String
+    /// Self-registered and unverified; nil when the app gave none.
+    var clientName: String?
+    var clientUri: String?
+    var scopes: [String]
+    /// Mailboxes the app is limited to; nil means every mailbox.
+    var mailboxIds: [String]?
+    var createdAt: String
+    var expiresAt: String?
+}
+
 struct RevokeSessionsResponse: Codable {
     var ok: Bool
     var revoked: Int?
@@ -227,6 +241,8 @@ struct MeResponse: Codable {
     var administeredDomains: [String]?
     var mailDomain: String?
     var domains: [String]?
+    /// TOTP two-factor is on. It only challenges password sign-in.
+    var twoFactorEnabled: Bool?
 }
 
 struct LinkedIdentity: Codable, Identifiable, Hashable {
@@ -466,9 +482,11 @@ struct EmailAuth: Codable, Hashable {
     var envelopeFrom: String?
     var aligned: Bool?
     var spoofed: Bool?
+    /// `verified` | `unverified` | `failed` (AVE-92). Absent on older snapshots.
+    var authTier: String? = nil
     var source: String?
 
-    var isSpoofed: Bool { spoofed == true }
+    var isSpoofed: Bool { spoofed == true || authTier == "failed" }
 }
 
 struct Email: Identifiable, Codable, Hashable {
@@ -510,6 +528,12 @@ struct Email: Identifiable, Codable, Hashable {
     var aliasEmail: String? = nil
     /// False when that private email is paused, expired or deleted (detail payloads only).
     var aliasActive: Bool? = nil
+    /// Auth tier stored at receive time (`verified` | `unverified` | `failed`).
+    var authTier: String? = nil
+    /// Why inbound mail was filed where it was (machine code, see `SpamReason`).
+    var classificationReason: String? = nil
+    /// Sender rule that decided the folder (null until sender rules exist).
+    var matchedRuleId: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -534,6 +558,9 @@ struct Email: Identifiable, Codable, Hashable {
         case aliasId = "alias_id"
         case aliasEmail = "alias_email"
         case aliasActive = "alias_active"
+        case authTier = "auth_tier"
+        case classificationReason = "classification_reason"
+        case matchedRuleId = "matched_rule_id"
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -732,7 +759,18 @@ struct Email: Identifiable, Codable, Hashable {
         folderId == "draft" || folderName?.lowercased() == "drafts" || folderName?.lowercased() == "draft"
     }
 
-    var isSpoofed: Bool { auth?.isSpoofed == true }
+    var isSpoofed: Bool { auth?.isSpoofed == true || authTier == "failed" }
+
+    /// Stored tier, else the tier inside the auth snapshot (cached rows).
+    var effectiveAuthTier: String? { authTier ?? auth?.authTier }
+
+    /// "Unverified sender" banner — any folder, allowed senders included.
+    var showsUnverifiedBanner: Bool { effectiveAuthTier == "unverified" }
+
+    /// One line explaining why this is in Spam / Screened out, if we know.
+    var spamReasonLine: String? {
+        SpamReason.line(for: classificationReason, folderId: folderId)
+    }
 
     var isDeliveryFailure: Bool { DeliveryStatusHelpers.isFailure(deliveryStatus) }
 
@@ -1312,6 +1350,52 @@ struct PasswordLoginResponse: Codable {
     var keys: [String]?
 }
 
+/// `/api/v1/auth/password/reset`. With two-factor on, the reset answers with a
+/// challenge instead of a session (a reset proves the recovery email, not the
+/// second factor).
+struct ResetPasswordResponse: Codable {
+    var ok: Bool?
+    var token: String?
+    var expiresAt: String?
+    var email: String?
+    var twoFactorRequired: Bool?
+    var twoFactorToken: String?
+    var twoFactorMethods: [String]?
+
+    var twoFactorChallenge: TwoFactorChallenge? {
+        guard twoFactorRequired == true, let twoFactorToken, !twoFactorToken.isEmpty else { return nil }
+        return TwoFactorChallenge(token: twoFactorToken, methods: twoFactorMethods ?? [], email: email)
+    }
+}
+
+/// A password sign-in that still needs a second factor: an authenticator
+/// (TOTP) code or a one-time backup code, sent with `token` to
+/// `/api/v1/auth/two-factor/verify`. Good for one sign-in, 10 minutes, 5 codes.
+struct TwoFactorChallenge: Equatable, Sendable {
+    var token: String
+    /// Server methods, e.g. `["totp", "backup_code"]`.
+    var methods: [String]
+    var email: String?
+
+    /// The 401 `TWO_FACTOR_REQUIRED` body of `/api/v1/auth/password`.
+    static func parse(_ data: Data) -> TwoFactorChallenge? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (obj["twoFactorRequired"] as? Bool) == true,
+              let token = obj["twoFactorToken"] as? String, !token.isEmpty else { return nil }
+        let methods = (obj["twoFactorMethods"] as? [Any])?.compactMap { $0 as? String } ?? []
+        return TwoFactorChallenge(token: token, methods: methods, email: nil)
+    }
+}
+
+/// A passkey registered to the signed-in account (`/api/auth/passkey/list-user-passkeys`).
+struct PasskeyRow: Codable, Identifiable, Hashable {
+    var id: String
+    var name: String?
+    var createdAt: String?
+    var deviceType: String?
+    var backedUp: Bool?
+}
+
 struct ForgotPasswordResponse: Codable {
     var ok: Bool
     var message: String?
@@ -1638,6 +1722,57 @@ struct DecommissionResponse: Codable {
     var status: String
     var eppCode: String?
     var message: String
+    /// When the domain's data is deleted unless finalized sooner (ISO 8601).
+    var finalizeAfter: String?
+}
+
+/// Where a decommissioned domain's offboarding stands: the grace period and finalize-now.
+struct DomainOffboardingState: Codable, Hashable {
+    var decommissionedAt: String
+    /// Scheduled deletion (ISO 8601).
+    var finalizeAfter: String
+    var graceDays: Int
+    var warningSentAt: String?
+    var finalizeRequestedAt: String?
+    var finalizeStartedAt: String?
+    var finalizedAt: String?
+    var step: String?
+    var lastError: String?
+    var canFinalizeNow: Bool
+    var scheduledFinalizeDue: Bool
+}
+
+struct OffboardingDomain: Codable, Hashable, Identifiable {
+    var domain: String
+    var offboarding: DomainOffboardingState
+    var id: String { domain }
+}
+
+struct OffboardingDomainsResponse: Codable {
+    var domains: [OffboardingDomain]
+}
+
+struct FinalizeDomainResponse: Codable {
+    var success: Bool
+    var domain: String
+    var finalized: Bool
+    /// "in_progress" or "will_retry" when it didn't finish now; the hourly run does.
+    var status: String?
+    var mailboxesPurged: Int?
+    var subscriptionCanceled: Bool?
+    var error: String?
+}
+
+/// Formats an ISO 8601 offboarding date as "October 20, 2026"; the raw string if it doesn't parse.
+func formatOffboardingDate(_ iso: String) -> String {
+    let parser = ISO8601DateFormatter()
+    parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+    guard let date else { return iso }
+    let out = DateFormatter()
+    out.dateStyle = .long
+    out.timeStyle = .none
+    return out.string(from: date)
 }
 
 struct DomainEppCodeResponse: Codable {
@@ -1778,4 +1913,30 @@ struct CreateAliasResponse: Codable {
     var alias: MaskedAlias
 }
 
+/// Copy for `emails.classification_reason` codes. Mirrors web
+/// `shared/spam-reason.ts` and Android `SpamReason.kt` (parity test:
+/// `android/test/spam-reason-parity.test.mjs`).
+enum SpamReason {
+    static let unverifiedTitle = "Unverified sender"
 
+    static func line(for reason: String?, folderId: String?) -> String? {
+        guard folderId == "spam" || folderId == "screened_out", let reason else { return nil }
+        switch reason {
+        case "auth-failed": return "Failed sender authentication"
+        case "spam-headers": return "Flagged by spam filter"
+        case "ai-spam": return "Marked as spam by AI check"
+        case "sender-rejected": return "You blocked this sender"
+        default: return nil
+        }
+    }
+
+    static func unverifiedDetail(sender: String) -> String {
+        let domain = sender.split(separator: "@").last.map {
+            $0.trimmingCharacters(in: CharacterSet(charactersIn: "> "))
+        } ?? ""
+        guard sender.contains("@"), !domain.isEmpty else {
+            return "We couldn’t confirm who sent this message."
+        }
+        return "We couldn’t confirm this message really came from \(domain)."
+    }
+}

@@ -22,9 +22,12 @@ import type {
 	ExportJob,
 	DecommissionPreflightResponse,
 	DecommissionResponse,
+	FinalizeDomainResponse,
+	OffboardingDomain,
 	MaskedAlias,
 	MeResponse,
 	AccountSession,
+	McpGrant,
 	RecoveryEmailStatus,
 	MailboxMember,
 	MailboxInviteRow,
@@ -33,6 +36,8 @@ import type {
 	CreateThreadNoteRequest,
 	UpdateThreadNoteRequest,
 } from "~/types";
+import { idempotencyHeaders } from "~/lib/send-idempotency";
+import { suppressionAddressPath, type SuppressedRecipient } from "~/lib/suppression";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -46,6 +51,27 @@ export class ApiError extends Error {
 		this.status = status;
 		this.body = body;
 	}
+}
+
+/** A pending password sign-in that needs a second factor (TOTP or backup code). */
+export interface TwoFactorChallenge {
+	twoFactorToken: string;
+	methods: string[];
+}
+
+/**
+ * The challenge in a password sign-in (or reset) reply, when the account has
+ * two-factor on. Sign-in answers it as a 401 `TWO_FACTOR_REQUIRED` error, so
+ * pass the caught error or the reset reply.
+ */
+export function twoFactorChallenge(source: unknown): TwoFactorChallenge | null {
+	const body =
+		source instanceof ApiError ? source.body : (source as Record<string, unknown> | null | undefined);
+	if (!body || body.twoFactorRequired !== true || typeof body.twoFactorToken !== "string") return null;
+	const methods = Array.isArray(body.twoFactorMethods)
+		? body.twoFactorMethods.filter((m): m is string => typeof m === "string")
+		: [];
+	return { twoFactorToken: body.twoFactorToken, methods };
 }
 
 async function request<T>(
@@ -114,10 +140,11 @@ function get<T>(
 	});
 }
 
-function post<T>(url: string, body?: unknown, opts?: RequestOptions) {
+function post<T>(url: string, body?: unknown, opts?: RequestOptions & { headers?: Record<string, string> }) {
 	return request<T>(url, {
 		method: "POST",
 		signal: opts?.signal,
+		headers: opts?.headers,
 		body: body != null ? JSON.stringify(body) : undefined,
 	});
 }
@@ -173,6 +200,8 @@ const api = {
 			emailAddresses?: string[];
 			googleClientId?: string | null;
 			appleSignInConfigured?: boolean;
+			/** Services ID for Sign in with Apple on the web; null hides the button. */
+			appleWebClientId?: string | null;
 		}>("/api/v1/config"),
 
     // Mailboxes
@@ -194,6 +223,11 @@ const api = {
 		del<{ ok: boolean }>(`/api/v1/me/sessions/${encodeURIComponent(sessionId)}`),
 	revokeOtherSessions: () =>
 		post<{ ok: boolean; revoked: number }>("/api/v1/me/sessions/revoke-others"),
+
+	// Connected apps (MCP OAuth grants)
+	listMcpGrants: () => get<McpGrant[]>("/api/v1/me/mcp-grants"),
+	revokeMcpGrant: (grantId: string) =>
+		del<{ ok: boolean }>(`/api/v1/me/mcp-grants/${encodeURIComponent(grantId)}`),
 
 	// Recovery email (where password reset codes go)
 	getRecoveryEmail: () => get<RecoveryEmailStatus>("/api/v1/me/recovery-email"),
@@ -350,9 +384,25 @@ const api = {
 			"/api/v1/auth/password",
 			{ email, password },
 		),
+	/**
+	 * Second step of a password sign-in when the account has two-factor on:
+	 * the `twoFactorToken` from the sign-in reply (see `twoFactorChallenge`)
+	 * plus an authenticator code or a one-time backup code. Sets the session
+	 * cookie like passwordLogin.
+	 */
+	verifyTwoFactor: (body: { twoFactorToken: string; code: string; method: "totp" | "backup_code" }) =>
+		post<{ token: string; expiresAt: string }>("/api/v1/auth/two-factor/verify", body),
 	/** Google ID token from the GIS button; sets the session cookie like passwordLogin. */
 	googleLogin: (idToken: string) =>
 		post<{ token: string; expiresAt: string }>("/api/v1/auth/google", { idToken }),
+	/** Same endpoint as iOS; it also sets the web session cookie. */
+	appleLogin: (body: {
+		identityToken: string;
+		nonce: string;
+		/** Apple's one-time code; the Worker exchanges it so account deletion can revoke. */
+		authorizationCode?: string;
+		fullName?: { givenName?: string; familyName?: string };
+	}) => post<{ token: string; expiresAt: string }>("/api/v1/auth/apple", body),
 	forgotPassword: (email: string) =>
 		post<{
 			ok: boolean;
@@ -372,6 +422,10 @@ const api = {
 			token?: string;
 			expiresAt?: string;
 			email?: string | null;
+			/** Set when the account has two-factor on: no session yet, finish with verifyTwoFactor. */
+			twoFactorRequired?: boolean;
+			twoFactorToken?: string;
+			twoFactorMethods?: string[];
 		}>("/api/v1/auth/password/reset", body),
 	/** Revokes this session and clears the session cookie. */
 	logout: () => post<{ ok: boolean }>("/api/v1/auth/logout"),
@@ -415,8 +469,9 @@ const api = {
 	// Emails
 	listEmails: (mailboxId: string, params: Record<string, string>, opts?: { signal?: AbortSignal }) =>
 		get<EmailListResponse | Email[]>(`/api/v1/mailboxes/${mailboxId}/emails`, { params, signal: opts?.signal }),
-	sendEmail: (mailboxId: string, email: unknown) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/emails`, email),
+	/** `idempotencyKey`: one per compose, reused on retries (a replay is a 202 too). */
+	sendEmail: (mailboxId: string, email: unknown, idempotencyKey?: string) =>
+		post<void>(`/api/v1/mailboxes/${mailboxId}/emails`, email, { headers: idempotencyHeaders(idempotencyKey) }),
 	getEmail: (mailboxId: string, id: string, opts?: { signal?: AbortSignal }) =>
 		get<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, { signal: opts?.signal }),
 	updateEmail: (mailboxId: string, id: string, data: unknown) =>
@@ -522,10 +577,14 @@ const api = {
 			draft_id?: string;
 		},
 	) => post<{ id: string; draft_id?: string }>(`/api/v1/mailboxes/${mailboxId}/drafts`, draft),
-	replyToEmail: (mailboxId: string, emailId: string, email: unknown) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/reply`, email),
-	forwardEmail: (mailboxId: string, emailId: string, email: unknown) =>
-		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/forward`, email),
+	replyToEmail: (mailboxId: string, emailId: string, email: unknown, idempotencyKey?: string) =>
+		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/reply`, email, {
+			headers: idempotencyHeaders(idempotencyKey),
+		}),
+	forwardEmail: (mailboxId: string, emailId: string, email: unknown, idempotencyKey?: string) =>
+		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/forward`, email, {
+			headers: idempotencyHeaders(idempotencyKey),
+		}),
 
 	// Folders
 	listFolders: (mailboxId: string) =>
@@ -827,6 +886,17 @@ const api = {
 			body,
 		),
 
+	/** Decommissioned domains of the caller still waiting to be deleted. */
+	listOffboardingDomains: (options?: RequestOptions) =>
+		get<{ domains: OffboardingDomain[] }>("/api/v1/admin/offboarding-domains", options),
+
+	/** Delete a decommissioned domain's data now. `confirmDomain` must be the domain name. */
+	finalizeDomain: (domain: string, confirmDomain: string) =>
+		post<FinalizeDomainResponse>(
+			`/api/v1/admin/domains/${encodeURIComponent(domain)}/finalize`,
+			{ confirmDomain },
+		),
+
 	getDomainEppCode: (domain: string) =>
 		get<{ domain: string; eppCode: string }>(
 			`/api/v1/admin/domains/${encodeURIComponent(domain)}/epp-code`,
@@ -880,6 +950,19 @@ const api = {
 	deleteAlias: (mailboxId: string, aliasId: string, options?: RequestOptions) =>
 		del<void>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/aliases/${encodeURIComponent(aliasId)}`,
+			options,
+		),
+
+	// Bounce / complaint suppressions on the mailbox's sending domain (AVE-37)
+	listSuppressions: (mailboxId: string, options?: RequestOptions) =>
+		get<{ domain: string; scope: "domain" | "mailbox"; suppressions: SuppressedRecipient[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/suppressions`,
+			options,
+		),
+
+	unsuppress: (mailboxId: string, address: string, options?: RequestOptions) =>
+		del<{ ok: true; address: string; domain: string }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/suppressions/${suppressionAddressPath(address)}`,
 			options,
 		),
 };

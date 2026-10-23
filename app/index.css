@@ -279,6 +279,37 @@ button[class*="ring-kumo-hairline"]:focus-visible {
 }
 
 /*
+ * Sign in, reset password, invites and the onboarding sheet (AuthShell,
+ * OnboardingFlow) wear the inboxies.co look, so the walk from the website
+ * into the app doesn't change product halfway: the site's pill buttons
+ * (site global.css `.btn`: pill, 500 weight, tight tracking) on Kumo's
+ * base-size buttons, the Apple button and the Google face (plus the
+ * invisible GIS frame over it, so its hit area matches).
+ */
+.brand-surface :is(button, [aria-hidden="true"]).h-9,
+.brand-surface .group\/google > div {
+  border-radius: 999px;
+}
+.brand-surface :is(button, [aria-hidden="true"]).h-9 {
+  justify-content: center;
+  letter-spacing: -0.005em;
+  font-size: var(--text-13);
+}
+/* Fields span their column, as the buttons under them do. */
+.brand-surface input.h-9 {
+  width: 100%;
+  min-width: 0;
+}
+/* The site's micro label (changelog months): 10px, uppercase, wide tracking. */
+.brand-micro {
+  font-size: var(--text-3xs);
+  line-height: 1rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/*
  * Icon buttons: a soft background blooms in behind the glyph, which lifts on
  * hover and dips on press. `.icon-btn-close` turns its ✕ a quarter.
  */

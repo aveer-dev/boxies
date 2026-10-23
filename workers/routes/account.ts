@@ -15,8 +15,13 @@
 import type { Context, Hono } from "hono";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { getAuth } from "../auth";
-import { revokeAppleTokens, storeAppleRefreshToken } from "../auth/apple";
+import { getAuth, twoFactorApi } from "../auth";
+import {
+	appleClientForIdentityToken,
+	deleteAppleTokens,
+	revokeAppleTokens,
+	storeAppleRefreshToken,
+} from "../auth/apple";
 import { authDb, listDomainsForUser, listMailboxesForUser, removeMailboxMember, type AuthDb } from "../auth/authz";
 import { isHostedEmailDomain } from "../auth/hooks";
 import { deleteLegacyIdentityForUser } from "../auth/migrate";
@@ -44,6 +49,8 @@ import { purgeEmailAgents } from "../lib/email-agent";
 import { getMailboxStub } from "../lib/email-helpers";
 import type { MailboxContext } from "../lib/mailbox";
 import { mailDomainConfig } from "../lib/mail-domain";
+import { listMcpGrants, revokeMcpGrant } from "../mcp/grants";
+import { mcpOAuthApi } from "../mcp/oauth";
 import { canonicalMailboxId } from "../lib/mailbox-routing";
 import { validatePasswordStrength, verifyPassword } from "../lib/password-auth";
 import type { Env } from "../types";
@@ -102,6 +109,77 @@ function apiErrorStatus(e: unknown): number {
 function apiErrorMessage(e: unknown): string {
 	const body = (e as { body?: { message?: string } })?.body;
 	return body?.message || (e as Error)?.message || "";
+}
+
+function apiErrorCode(e: unknown): string {
+	return (e as { body?: { code?: string } })?.body?.code ?? "";
+}
+
+/** Forward every Set-Cookie Better Auth produced (they can't be comma-joined). */
+function forwardSetCookies(c: C, headers: Headers): void {
+	for (const cookie of headers.getSetCookie()) c.header("Set-Cookie", cookie, { append: true });
+}
+
+// ── Two-factor (password sign-in only) ───────────────────────────
+
+/** Better Auth's cookie name for a pending two-factor sign-in. */
+const TWO_FACTOR_COOKIE = "two_factor";
+/** A signed challenge as Better Auth sets it (URL-encoded `id.signature`); nothing that could break a Cookie header. */
+const CHALLENGE_TOKEN = /^[A-Za-z0-9%._~+/=-]{1,512}$/;
+
+async function twoFactorCookieName(env: Env): Promise<string> {
+	return (await getAuth(env).$context).createAuthCookie(TWO_FACTOR_COOKIE).name;
+}
+
+/**
+ * The signed `two_factor` challenge Better Auth set while answering a
+ * password sign-in for a user with 2FA on. Native clients don't keep cookies,
+ * so it is also returned in the body as `twoFactorToken` and sent back to
+ * `/api/v1/auth/two-factor/verify`. It is only good for one sign-in, for 10
+ * minutes and 5 codes.
+ */
+async function twoFactorChallengeToken(env: Env, headers: Headers): Promise<string | null> {
+	const prefix = `${await twoFactorCookieName(env)}=`;
+	for (const cookie of headers.getSetCookie()) {
+		if (!cookie.startsWith(prefix)) continue;
+		const value = cookie.slice(prefix.length).split(";")[0];
+		if (value && CHALLENGE_TOKEN.test(value)) return value;
+	}
+	return null;
+}
+
+type PasswordSignInResult =
+	| { kind: "session"; headers: Headers; session: MintedSession; user: { id: string; email: string } }
+	| { kind: "two-factor"; headers: Headers; methods: string[]; token: string };
+
+/**
+ * Better Auth's email sign-in, so its hooks run (the twoFactor plugin turns
+ * the session into a challenge when the user has 2FA on). Throws Better
+ * Auth's APIError on bad credentials.
+ */
+async function passwordSignIn(env: Env, requestHeaders: Headers, email: string, password: string): Promise<PasswordSignInResult | null> {
+	const { headers, response } = await getAuth(env).api.signInEmail({
+		body: { email, password },
+		headers: requestHeaders,
+		returnHeaders: true,
+	});
+	const body = response as { twoFactorRedirect?: boolean; twoFactorMethods?: string[]; token?: string; user?: { id: string; email: string } };
+	if (body.twoFactorRedirect) {
+		const token = await twoFactorChallengeToken(env, headers);
+		if (!token) {
+			console.error("[Auth] Two-factor challenge cookie missing from sign-in response");
+			throw new Error("two-factor challenge cookie missing");
+		}
+		// Backup codes always work alongside the authenticator app.
+		return { kind: "two-factor", headers, methods: [...(body.twoFactorMethods ?? []), "backup_code"], token };
+	}
+	const session = body.token ? await sessionByToken(authDb(env.AUTH_DB), body.token) : null;
+	if (!session || !body.user) return null;
+	return { kind: "session", headers, session, user: body.user };
+}
+
+function twoFactorChallengeFields(result: { methods: string[]; token: string }) {
+	return { twoFactorRequired: true as const, twoFactorMethods: result.methods, twoFactorToken: result.token };
 }
 
 // ── Identities (sign-in methods) ─────────────────────────────────
@@ -236,6 +314,11 @@ const AppleBody = z.object({
 
 const GoogleBody = z.object({ idToken: z.string().min(1), nonce: z.string().min(1).optional() });
 const PasswordLoginBody = z.object({ email: z.string().min(3).max(320), password: z.string().min(1).max(200) });
+const TwoFactorVerifyBody = z.object({
+	twoFactorToken: z.string().min(1).max(512),
+	code: z.string().trim().min(1).max(64),
+	method: z.enum(["totp", "backup_code"]).default("totp"),
+});
 const ForgotBody = z.object({ email: z.string().email() });
 const ResetBody = z.object({
 	token: z.string().optional(),
@@ -254,14 +337,22 @@ export function registerAccountRoutes(app: App) {
 		if (!parsed.success) return c.json({ error: "identityToken is required" }, 400);
 		const result = await socialSignIn(c, "apple", parsed.data.identityToken, parsed.data.nonce);
 		if (!result.ok) return c.json({ error: result.error }, result.status as 401);
-		if (parsed.data.authorizationCode) {
+		// The token is verified now; its audience says which Apple client
+		// (iOS bundle id or web Services ID) issued the code.
+		const appleClient = parsed.data.authorizationCode
+			? appleClientForIdentityToken(c.env, parsed.data.identityToken)
+			: null;
+		if (parsed.data.authorizationCode && appleClient) {
 			c.executionCtx.waitUntil(
 				storeAppleRefreshToken(c.env, authDb(c.env.AUTH_DB), {
 					userId: result.user.id,
 					authorizationCode: parsed.data.authorizationCode,
+					client: appleClient,
 				}),
 			);
 		}
+		// The web login page uses this too; it needs the session cookie (mobile uses the token).
+		c.header("Set-Cookie", await sessionCookieHeader(c.env, result.session));
 		return c.json({
 			token: result.session.token,
 			expiresAt: result.session.expiresAt.toISOString(),
@@ -313,22 +404,69 @@ export function registerAccountRoutes(app: App) {
 		const parsed = PasswordLoginBody.safeParse(await c.req.json().catch(() => ({})));
 		if (!parsed.success) return c.json({ error: "Email and password are required" }, 400);
 		if (await isRateLimited(c.env, "sign-in", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
-		const db = authDb(c.env.AUTH_DB);
 		try {
-			const { headers, response } = await getAuth(c.env).api.signInEmail({
-				body: { email: loginEmail(parsed.data.email), password: parsed.data.password },
-				headers: c.req.raw.headers,
-				returnHeaders: true,
-			});
-			const session = await sessionByToken(db, response.token);
-			if (!session) return c.json({ error: "Invalid email or password" }, 401);
-			const cookie = headers.get("set-cookie");
-			if (cookie) c.header("Set-Cookie", cookie);
-			return c.json(await sessionResponseFields(c.env, session, response.user));
+			const result = await passwordSignIn(c.env, c.req.raw.headers, loginEmail(parsed.data.email), parsed.data.password);
+			if (!result) return c.json({ error: "Invalid email or password" }, 401);
+			forwardSetCookies(c, result.headers);
+			if (result.kind === "two-factor") {
+				// 401 like a failed sign-in, so builds that predate 2FA show the
+				// message instead of treating this as signed in.
+				return c.json(
+					{ error: "Enter the code from your authenticator app.", code: "TWO_FACTOR_REQUIRED", ...twoFactorChallengeFields(result) },
+					401,
+				);
+			}
+			return c.json(await sessionResponseFields(c.env, result.session, result.user));
 		} catch (e) {
 			const status = apiErrorStatus(e);
 			if (status >= 500) console.error("[Auth] Password sign-in failed:", apiErrorMessage(e));
 			return c.json({ error: "Invalid email or password" }, 401);
+		}
+	});
+
+	/**
+	 * Second step of a password sign-in for a user with 2FA on, for clients
+	 * that don't keep cookies: `twoFactorToken` from the sign-in reply plus a
+	 * TOTP code (`method: "totp"`, default) or a one-time backup code
+	 * (`method: "backup_code"`). Answers like `/api/v1/auth/password`. The web
+	 * app may instead call Better Auth's `/api/auth/two-factor/verify-*` with
+	 * the challenge cookie.
+	 */
+	app.post("/api/v1/auth/two-factor/verify", async (c) => {
+		const parsed = TwoFactorVerifyBody.safeParse(await c.req.json().catch(() => ({})));
+		if (!parsed.success || !CHALLENGE_TOKEN.test(parsed.data.twoFactorToken)) {
+			return c.json({ error: "twoFactorToken and code are required" }, 400);
+		}
+		if (await isRateLimited(c.env, "otp-verify", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
+		// Only the challenge: no bearer or session cookie, so this can't act on
+		// (or rotate) a signed-in session.
+		const headers = new Headers({ cookie: `${await twoFactorCookieName(c.env)}=${parsed.data.twoFactorToken}` });
+		for (const name of ["user-agent", "cf-connecting-ip", "origin"]) {
+			const value = c.req.raw.headers.get(name);
+			if (value) headers.set(name, value);
+		}
+		const { code, method } = parsed.data;
+		const api = twoFactorApi(getAuth(c.env));
+		try {
+			const { headers: out, response } =
+				method === "backup_code"
+					? await api.verifyBackupCode({ body: { code }, headers, returnHeaders: true })
+					: await api.verifyTOTP({ body: { code }, headers, returnHeaders: true });
+			const session = response.token ? await sessionByToken(authDb(c.env.AUTH_DB), response.token) : null;
+			if (!session || !response.user) return c.json({ error: "Sign-in failed" }, 401);
+			forwardSetCookies(c, out);
+			return c.json(await sessionResponseFields(c.env, session, response.user));
+		} catch (e) {
+			const status = apiErrorStatus(e);
+			const errorCode = apiErrorCode(e);
+			if (status === 429 || errorCode === "ACCOUNT_TEMPORARILY_LOCKED") {
+				return c.json({ error: "Too many wrong codes. Try again in 15 minutes.", code: "TWO_FACTOR_LOCKED" }, 429);
+			}
+			if (errorCode === "INVALID_TWO_FACTOR_COOKIE" || errorCode === "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE") {
+				return c.json({ error: "This sign-in has expired. Sign in again.", code: "TWO_FACTOR_EXPIRED" }, 401);
+			}
+			if (status >= 500) console.error("[Auth] Two-factor verify failed:", apiErrorMessage(e));
+			return c.json({ error: "Invalid code", code: "TWO_FACTOR_INVALID_CODE" }, 401);
 		}
 	});
 
@@ -402,6 +540,19 @@ export function registerAccountRoutes(app: App) {
 		await setUserPassword(db, user.id, newPassword);
 		await revokeLinkTokens(db, "password-reset", user.id);
 		await revokeUserSessions(c.env, user.id);
+		if (user.twoFactorEnabled) {
+			// A reset proves the recovery email, not the second factor: sign in
+			// with the new password so the user still gets the 2FA challenge.
+			const result = await passwordSignIn(c.env, c.req.raw.headers, user.email, newPassword).catch((e) => {
+				console.error("[Auth] Sign-in after reset failed:", apiErrorMessage(e));
+				return null;
+			});
+			if (!result) return c.json({ ok: true });
+			forwardSetCookies(c, result.headers);
+			if (result.kind === "two-factor") return c.json({ ok: true, ...twoFactorChallengeFields(result) });
+			// Better Auth skipped the challenge (a device the user chose to trust).
+			return c.json({ ok: true, ...(await sessionResponseFields(c.env, result.session, result.user)) });
+		}
 		const session = await createSessionForUser(c.env, user.id, { headers: c.req.raw.headers });
 		c.header("Set-Cookie", await sessionCookieHeader(c.env, session));
 		return c.json({ ok: true, ...(await sessionResponseFields(c.env, session, user)) });
@@ -429,6 +580,7 @@ export function registerAccountRoutes(app: App) {
 			mailDomain,
 			domains,
 			sessionScope: principal.scope,
+			twoFactorEnabled: user.twoFactorEnabled,
 		});
 	});
 
@@ -486,6 +638,28 @@ export function registerAccountRoutes(app: App) {
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
 		const revoked = await revokeUserSessions(c.env, principal.userId, { exceptSessionId: principal.sessionId });
 		return c.json({ ok: true, revoked });
+	});
+
+	// ── Connected apps (MCP OAuth grants, AVE-70) ────────────────
+
+	/** Apps the user connected over MCP OAuth. Empty when OAuth is off. */
+	app.get("/api/v1/me/mcp-grants", async (c) => {
+		const principal = requirePrincipal(c);
+		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		const api = mcpOAuthApi(c.env, new URL(c.req.url));
+		if (!api) return c.json([]);
+		return c.json(await listMcpGrants(api, principal.userId));
+	});
+
+	/** Disconnect an app: the grant and all its tokens are deleted. */
+	app.delete("/api/v1/me/mcp-grants/:grantId", async (c) => {
+		const principal = requirePrincipal(c);
+		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		const api = mcpOAuthApi(c.env, new URL(c.req.url));
+		if (!api) return c.json({ error: "Not found" }, 404);
+		const ok = await revokeMcpGrant(api, principal.userId, c.req.param("grantId"));
+		if (!ok) return c.json({ error: "Not found" }, 404);
+		return c.json({ ok: true });
 	});
 
 	/**
@@ -656,9 +830,15 @@ export function registerAccountRoutes(app: App) {
 				console.error("[Auth] Link failed:", message);
 				return c.json({ error: "Couldn't verify that sign-in. Try again." }, 400);
 			}
-			if (body.provider === "apple" && body.authorizationCode) {
+			const appleClient =
+				body.provider === "apple" && body.authorizationCode ? appleClientForIdentityToken(c.env, token) : null;
+			if (body.authorizationCode && appleClient) {
 				c.executionCtx.waitUntil(
-					storeAppleRefreshToken(c.env, db, { userId: user.id, authorizationCode: body.authorizationCode }),
+					storeAppleRefreshToken(c.env, db, {
+						userId: user.id,
+						authorizationCode: body.authorizationCode,
+						client: appleClient,
+					}),
 				);
 			}
 		} else {
@@ -715,7 +895,10 @@ export function registerAccountRoutes(app: App) {
 		if (accounts.length - target.length < 1) {
 			return c.json({ error: "You need at least one way to sign in" }, 400);
 		}
-		if (providerId === "apple") await revokeAppleTokens(c.env, db, principal.userId);
+		if (providerId === "apple") {
+			await revokeAppleTokens(c.env, db, principal.userId);
+			await deleteAppleTokens(db, principal.userId);
+		}
 		for (const a of target) await db.delete(schema.account).where(eq(schema.account.id, a.id));
 		return c.json({ ok: true });
 	});

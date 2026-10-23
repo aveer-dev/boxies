@@ -50,6 +50,10 @@ final class AppModel {
     var emailListError: String?
     /// Infinite-scroll state for the visible email list (folder or Reply Later).
     var listPaging: EmailListPaging?
+    /// Inbox page 1's New window (AVE-23): the server's New total and the New rows it sent,
+    /// scoped to `mailboxId|inbox`. Those rows can be older than the page's Seen rows, so
+    /// they're merged into the cached window explicitly.
+    var inboxNewWindow: InboxNewWindow?
     var selectedEmail: Email?
     var threadEmails: [Email] = []
     var composeSession: ComposeSession?
@@ -139,9 +143,33 @@ final class AppModel {
         let key = EmailListPaging.key(mailboxId: mailboxId, listId: folderId)
         let paging = listPaging?.key == key ? listPaging : nil
         let window = paging?.cacheWindow ?? EmailListPaging(key: key).cacheWindow
-        let rows = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: window.limit, since: window.since)
+        var rows = db.getEmails(mailboxId: mailboxId, folderId: folderId, limit: window.limit, since: window.since)
         guard folderId == "inbox" else { return rows }
-        return EmailListPaging.inboxOrder(rows, sectionFloor: paging?.sectionFloor)
+        if let newWindow = inboxNewWindow, newWindow.key == key {
+            let present = Set(rows.map(\.id))
+            for id in newWindow.ids where !present.contains(id) {
+                if let email = db.getEmail(id: id), email.folderId == folderId {
+                    rows.append(email)
+                }
+            }
+        }
+        // The server caps New at `inboxNewPreviewLimit` on page 1 and later pages carry Seen
+        // only, so the whole window splits New / Seen (no page-1 floor needed).
+        return EmailListPaging.inboxOrder(rows, sectionFloor: nil)
+    }
+
+    /// Optimistic read/unread on the inbox keeps the "Show all N new" count honest until the
+    /// next page-1 sync replaces it.
+    private func adjustInboxNewCount(wasUnread: Bool, isUnread: Bool) {
+        guard wasUnread != isUnread, selectedTab.syncFolderId == "inbox",
+              let count = inboxNewWindow?.count else { return }
+        inboxNewWindow?.count = max(0, count + (isUnread ? 1 : -1))
+    }
+
+    /// Server New total for the inbox on screen; nil before page 1 lands.
+    var inboxNewCount: Int? {
+        guard let inboxNewWindow, inboxNewWindow.key == currentListKey else { return nil }
+        return inboxNewWindow.count
     }
 
     /// The active mailbox's domain service ended: read, flag and export only.
@@ -284,7 +312,9 @@ final class AppModel {
             }
         }
         streamClient.start(mailboxId: mailboxId)
-        PushNotificationManager.shared.requestPermissionAndRegister(mailboxId: mailboxId)
+        PushNotificationManager.shared.requestPermissionAndRegister(
+            mailboxIds: mailboxes.map(\.id) + [mailboxId]
+        )
     }
 
     private func handleIncomingRealTimeEmail(_ email: Email) {
@@ -663,6 +693,13 @@ final class AppModel {
             guard currentListKey == key else { return }
             if let page {
                 applyFirstPage(page, resetPaging: resetPaging)
+                if folderId == "inbox" {
+                    inboxNewWindow = InboxNewWindow(
+                        key: key,
+                        count: page.newCount,
+                        ids: page.emails.filter(\.isUnread).map(\.id)
+                    )
+                }
                 emailListError = nil
                 lastSyncedAt = Date()
             }
@@ -956,6 +993,7 @@ final class AppModel {
                 emails[idx].threadUnreadCount = 0
                 emails[idx].listSection = "seen"
             }
+            adjustInboxNewCount(wasUnread: true, isUnread: false)
             // Keep inbox New→Seen order after optimistic read
             if selectedTab.syncFolderId == "inbox" {
                 emails = Self.orderNewThenSeen(emails)
@@ -1546,10 +1584,10 @@ final class AppModel {
             auth.signOut()
             return response
         } catch {
-            // Still signed in: restore push for the mailbox on screen.
-            if let selectedMailboxId {
-                push.requestPermissionAndRegister(mailboxId: selectedMailboxId)
-            }
+            // Still signed in: restore push for the user's mailboxes.
+            push.requestPermissionAndRegister(
+                mailboxIds: mailboxes.map(\.id) + [selectedMailboxId].compactMap { $0 }
+            )
             throw error
         }
     }
@@ -1745,10 +1783,11 @@ final class AppModel {
             updated.replyLaterAt = nil
         }
         applyEmailUpdate(updated)
-        await refreshReplyLaterCount()
-        if selectedTab == .replyLater {
-            await loadEmailsForCurrentTab(showLoading: false)
-        }
+        // Count optimistically. Refetching the pile here races the outbox: the server
+        // still has the old flag, so the count would bounce back and a removed row (and
+        // its local flag, via upsert) would reappear in the Reply Later pile.
+        replyLaterCount = max(0, replyLaterCount + (next ? 1 : -1))
+        showToast(next ? "Added to Reply Later" : "Removed from Reply Later")
     }
 
     func setReplyLater(_ emailIDs: Set<String>, replyLater: Bool) async {
@@ -1814,6 +1853,9 @@ final class AppModel {
             } else {
                 emails[idx].listSection = "new"
             }
+            if let previous {
+                adjustInboxNewCount(wasUnread: previous.isUnread, isUnread: emails[idx].isUnread)
+            }
         }
         if selectedTab == .replyLater && !updated.replyLater {
             emails.removeAll(where: { $0.id == updated.id })
@@ -1856,7 +1898,7 @@ final class AppModel {
     func restoreComposeAfterFailedSend(_ session: ComposeSession, generation: Int? = nil) {
         // The send outlived its session (sign-out timed out): nowhere to dock it.
         if let generation, generation != sessionGeneration { return }
-        let reason = session.form.errorMessage ?? "Couldn’t send message"
+        let reason = session.form.errorMessage ?? session.form.suppressionMessage ?? "Couldn’t send message"
         showToast(reason, isError: true, duration: 5)
         guard composeSession == nil else { return }
         composeSession = session

@@ -10,6 +10,7 @@ import { generateKeyPair, exportPKCS8, decodeJwt, decodeProtectedHeader } from "
 import { mailboxRole, isDomainAdmin } from "../auth/authz.ts";
 import { revokeAppleTokens, storeAppleRefreshToken } from "../auth/apple.ts";
 import { issueOtp } from "../auth/otp.ts";
+import { eq } from "drizzle-orm";
 import * as schema from "../auth/schema.ts";
 import { runScheduledMaintenance } from "../lib/maintenance.ts";
 import { setDevRuntimeForTesting } from "../lib/dev-runtime.ts";
@@ -130,11 +131,12 @@ import { addDomain, addMailbox, addUser, authedRequest, createAuthTestEnv, signI
 		return new Response("", { status: 200 });
 	};
 
-	assert.equal(await storeAppleRefreshToken(appleEnv, db, { userId: ada.id, authorizationCode: "code-1" }, fakeFetch), true);
+	assert.equal(await storeAppleRefreshToken(appleEnv, db, { userId: ada.id, authorizationCode: "code-1", client: { clientId: "co.inboxies.app" } }, fakeFetch), true);
 	const exchange = calls[0];
 	assert.equal(exchange.url, "https://appleid.apple.com/auth/token");
 	assert.equal(exchange.body.get("code"), "code-1");
 	assert.equal(exchange.body.get("client_id"), "co.inboxies.app");
+	assert.equal(exchange.body.get("redirect_uri"), null, "native codes have no redirect_uri");
 	const secret = exchange.body.get("client_secret");
 	assert.deepEqual(
 		{ alg: decodeProtectedHeader(secret).alg, kid: decodeProtectedHeader(secret).kid },
@@ -152,8 +154,27 @@ import { addDomain, addMailbox, addUser, authedRequest, createAuthTestEnv, signI
 	assert.equal(revoke.body.get("token_type_hint"), "refresh_token");
 
 	// Without a key configured nothing is sent (and sign-in isn't blocked).
-	assert.equal(await storeAppleRefreshToken(env, db, { userId: ada.id, authorizationCode: "c" }, fakeFetch), false);
+	assert.equal(await storeAppleRefreshToken(env, db, { userId: ada.id, authorizationCode: "c", client: { clientId: "co.inboxies.app" } }, fakeFetch), false);
 	assert.equal(calls.length, 2);
+
+	// A legacy token on the account row (stored before apple_refresh_token)
+	// is revoked too, as the bundle id; Apple failing doesn't throw.
+	await db.update(schema.account).set({ refreshToken: "legacy-ios-refresh" }).where(eq(schema.account.id, "apple_1"));
+	calls.length = 0;
+	assert.equal(await revokeAppleTokens(appleEnv, db, ada.id, fakeFetch), 2);
+	assert.deepEqual(
+		calls.map((c) => [c.body.get("token"), c.body.get("client_id"), decodeJwt(c.body.get("client_secret")).sub]).sort(),
+		[
+			["apple-refresh-1", "co.inboxies.app", "co.inboxies.app"],
+			["legacy-ios-refresh", "co.inboxies.app", "co.inboxies.app"],
+		],
+	);
+	const failingFetch = async () => new Response("", { status: 500 });
+	assert.equal(await revokeAppleTokens(appleEnv, db, ada.id, failingFetch), 0);
+	const throwingFetch = async () => {
+		throw new Error("network down");
+	};
+	assert.equal(await revokeAppleTokens(appleEnv, db, ada.id, throwingFetch), 0);
 }
 
 console.log("auth-ops-maintenance: ok");

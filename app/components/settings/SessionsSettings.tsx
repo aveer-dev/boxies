@@ -7,10 +7,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams } from "react-router";
 import { describeSession } from "~/lib/session-label";
-import { useSessions } from "~/queries/account";
+import { useMcpGrants, useSessions } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
-import type { AccountSession } from "~/types";
+import type { AccountSession, McpGrant } from "~/types";
 import ConfirmDialog from "./ConfirmDialog";
 import SettingsSubpage from "./SettingsSubpage";
 
@@ -51,6 +51,113 @@ function SessionRow({
 				</Button>
 			)}
 		</li>
+	);
+}
+
+const SCOPE_LABELS: Record<string, string> = {
+	read: "Read",
+	draft: "Drafts",
+	send: "Send",
+	manage: "Organize",
+};
+
+function grantName(grant: McpGrant): string {
+	return grant.clientName ?? "Unnamed app";
+}
+
+/** "Read, Drafts, Send · All mailboxes", in the server's order. */
+function describeGrantAccess(grant: McpGrant): string {
+	const scopes = grant.scopes.map((scope) => SCOPE_LABELS[scope] ?? scope).join(", ");
+	const mailboxes =
+		grant.mailboxIds === null
+			? "All mailboxes"
+			: grant.mailboxIds.length === 1
+				? grant.mailboxIds[0]
+				: `${grant.mailboxIds.length} mailboxes`;
+	return [scopes, mailboxes].filter(Boolean).join(" · ");
+}
+
+function GrantRow({ grant, onRevoke }: { grant: McpGrant; onRevoke: () => void }) {
+	return (
+		<li className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
+			<div className="min-w-0">
+				<div className="text-sm text-kumo-default truncate">{grantName(grant)}</div>
+				<div className="text-xs text-kumo-subtle truncate">
+					{[`Connected ${formatWhen(grant.createdAt)}`, describeGrantAccess(grant)]
+						.filter(Boolean)
+						.join(" · ")}
+				</div>
+			</div>
+			<Button variant="ghost" size="sm" onClick={onRevoke}>
+				Disconnect
+			</Button>
+		</li>
+	);
+}
+
+/**
+ * Apps connected over MCP (OAuth grants). Disconnecting deletes the grant
+ * and its tokens, so the app loses access on its next request.
+ */
+function ConnectedApps() {
+	const toastManager = useKumoToastManager();
+	const queryClient = useQueryClient();
+	const { data: grants, isLoading, error } = useMcpGrants();
+	const [revoking, setRevoking] = useState<McpGrant | null>(null);
+	const [busy, setBusy] = useState(false);
+
+	const handleRevoke = async () => {
+		if (!revoking) return;
+		setBusy(true);
+		try {
+			await api.revokeMcpGrant(revoking.id);
+			toastManager.add({ title: `Disconnected ${grantName(revoking)}` });
+			setRevoking(null);
+			await queryClient.invalidateQueries({ queryKey: queryKeys.account.mcpGrants });
+		} catch (err) {
+			toastManager.add({ title: errorMessage(err, "Couldn't disconnect it"), variant: "error" });
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<section className="mt-10">
+			<h2 className="text-sm font-medium text-kumo-default mb-1">Connected apps</h2>
+			<p className="text-sm text-kumo-subtle mb-4">
+				AI assistants and other apps you allowed to use your mail over MCP. Disconnect one to
+				cut off its access right away.
+			</p>
+			{isLoading ? (
+				<div className="flex justify-center py-6">
+					<Loader />
+				</div>
+			) : error || !grants ? (
+				<p className="text-sm text-kumo-subtle">
+					{errorMessage(error, "Couldn't load your connected apps.")}
+				</p>
+			) : grants.length === 0 ? (
+				<p className="text-sm text-kumo-subtle">No apps connected.</p>
+			) : (
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
+					<ul className="divide-y divide-kumo-line">
+						{grants.map((grant) => (
+							<GrantRow key={grant.id} grant={grant} onRevoke={() => setRevoking(grant)} />
+						))}
+					</ul>
+				</div>
+			)}
+
+			<ConfirmDialog
+				open={revoking !== null}
+				title="Disconnect this app?"
+				description={`${revoking ? grantName(revoking) : "It"} will lose access to your mail immediately. To use it again, connect it again from the app.`}
+				confirmLabel="Disconnect"
+				busy={busy}
+				onConfirm={() => void handleRevoke()}
+				onCancel={() => setRevoking(null)}
+			/>
+		</section>
 	);
 }
 
@@ -141,6 +248,8 @@ export default function SessionsSettings() {
 					</div>
 				</div>
 			)}
+
+			<ConnectedApps />
 
 			<ConfirmDialog
 				open={revoking !== null}

@@ -78,6 +78,8 @@ actor MailboxSyncService {
         let totalCount: Int
         let oldestDate: String?
         let emails: [Email]
+        /// Inbox only: every New conversation on the server (the page holds at most a few).
+        var newCount: Int? = nil
     }
 
     /// Cached rows after syncing page 1 (callers that don't paginate).
@@ -108,10 +110,12 @@ actor MailboxSyncService {
 
         let db = self.db
         let task = Task<FolderPage, Error> {
+            // Inbox: newest few New, then Seen, so Seen is never pushed off the first page.
             let response = try await APIClient.shared.listEmails(
                 mailboxId: mailboxId,
                 folder: folderId,
-                page: page
+                page: page,
+                newLimit: folderId == "inbox" ? EmailListPaging.inboxNewPreviewLimit : nil
             )
 
             // Atomic batch upsert into SQLite
@@ -149,7 +153,8 @@ actor MailboxSyncService {
                 receivedCount: response.emails.count,
                 totalCount: response.totalCount,
                 oldestDate: oldestDate,
-                emails: response.emails
+                emails: response.emails,
+                newCount: response.newCount
             )
         }
         inFlightSyncFolders[syncKey] = task

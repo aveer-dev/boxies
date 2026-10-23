@@ -13,6 +13,7 @@ import { displaySenderName } from 'shared/sender';
 import type { Email } from '~/types';
 import { deliveryStatusLabel, isDeliveryFailure } from '~/lib/delivery-status';
 import { isAuthSpoofed } from '~/lib/email-auth';
+import { SpamReasonLine, UnverifiedSenderBanner } from './SenderTrustNotices';
 
 interface ThreadMessageProps {
     email: Email;
@@ -100,6 +101,7 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                             </div>
                             {!isDraft && !isSelf && senderName !== email.sender && <div className="text-xs text-kumo-subtle truncate">{email.sender}</div>}
                             <div className="text-xs text-kumo-subtle">To: {email.recipient}</div>
+                            <SpamReasonLine email={email} className="mt-1" />
                         </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
@@ -110,6 +112,8 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                         <IconButton label="Collapse message" icon={CaretUpIcon} onClick={onToggleExpand} />
                     </div>
                 </div>
+
+                <UnverifiedSenderBanner email={email} className="mb-3 md:ml-10.5" />
 
                 {spoofed && (
                     <div className="mb-3 md:ml-10.5 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">

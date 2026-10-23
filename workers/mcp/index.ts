@@ -3,7 +3,8 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { McpAgent } from "agents/mcp";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { z } from "zod";
 import {
 	toolListEmails,
@@ -22,8 +23,9 @@ import {
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
 import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "../auth/authz";
-import type { RequestPrincipal } from "../auth/principal";
+import { grantCoversMailbox, type McpRequestProps } from "./oauth";
 import { serviceEndedErrorForMailbox } from "../lib/domain-service";
+import { scopeDeniedMessage, toolAllowed, type McpToolName } from "./scopes";
 
 /** Wrap a plain result object into MCP content format. */
 function mcpText(result: unknown) {
@@ -63,7 +65,7 @@ function mcpResult(result: Record<string, unknown>) {
  * `/mcp` endpoint and can list mailboxes, read/search emails,
  * draft replies, send messages, and manage folders.
  */
-export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrincipal }> {
+export class EmailMCP extends McpAgent<Env, unknown, McpRequestProps> {
 	server = new McpServer({
 		name: "agentic-inbox",
 		version: "1.0.0",
@@ -71,6 +73,26 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 
 	async init() {
 		const env = this.env;
+
+		/**
+		 * Register a tool behind its OAuth scope (AVE-69, table in ./scopes.ts).
+		 * A tool the grant doesn't cover is never registered, so it is absent
+		 * from tools/list and a call gets the SDK's "not found" error; the
+		 * handler re-checks the current props on every call as well.
+		 */
+		const tool = <Args extends ZodRawShapeCompat>(
+			name: McpToolName,
+			description: string,
+			params: Args,
+			handler: ToolCallback<Args>,
+		): void => {
+			if (!toolAllowed(this.props?.oauth, name)) return;
+			const guarded = (...args: unknown[]): unknown =>
+				toolAllowed(this.props?.oauth, name)
+					? Reflect.apply(handler, undefined, args)
+					: mcpError(scopeDeniedMessage(name));
+			this.server.tool(name, description, params, guarded as ToolCallback<Args>);
+		};
 
 		/**
 		 * Verify the caller can access this mailbox, claiming it when unclaimed
@@ -89,6 +111,10 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 				}
 				return { denied: mcpError(`Not allowed to access mailbox "${mailboxId}".`) };
 			}
+			// An OAuth grant covers only the mailboxes picked on the consent page (AVE-68).
+			if (!grantCoversMailbox(this.props?.oauth, authz.mailboxId)) {
+				return { denied: mcpError(`Not allowed to access mailbox "${mailboxId}".`) };
+			}
 			// AI access is part of the service, which ends with the domain's subscription.
 			const ended = await serviceEndedErrorForMailbox(env, authz.mailboxId);
 			if (ended) return { denied: mcpError(ended.error) };
@@ -96,7 +122,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		};
 
 		// ── list_mailboxes ─────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"list_mailboxes",
 			"List mailboxes the caller can access",
 			{},
@@ -105,13 +131,15 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 				if (!principal) {
 					return mcpError("Not authenticated");
 				}
-				const rows = await listMailboxesForUser(authDb(env.AUTH_DB), principal.userId);
+				const rows = (await listMailboxesForUser(authDb(env.AUTH_DB), principal.userId)).filter(({ mailboxId }) =>
+					grantCoversMailbox(this.props?.oauth, mailboxId),
+				);
 				return mcpText(rows.map(({ mailboxId, role }) => ({ id: mailboxId, email: mailboxId, role })));
 			},
 		);
 
 		// ── list_emails ────────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"list_emails",
 			"List emails in a mailbox folder. Returns email metadata (id, subject, sender, recipient, date, read/starred status, thread_id).",
 			{
@@ -140,7 +168,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── get_email ──────────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"get_email",
 			"Get a single email with its full body content. Use this to read the actual content of an email.",
 			{
@@ -162,7 +190,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── get_thread ─────────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"get_thread",
 			"Get all emails in a conversation thread. Returns all messages sorted chronologically.",
 			{
@@ -180,7 +208,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── search_emails ──────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"search_emails",
 			"Search for emails matching a query across subject and body fields.",
 			{
@@ -200,7 +228,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── draft_reply ────────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"draft_reply",
 			"Draft a reply to an email and save it to the Drafts folder. Does NOT send — saves a draft for review.",
 			{
@@ -230,7 +258,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── create_draft ───────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"create_draft",
 			"Create a new draft email. Can be a new email or a reply draft.",
 			{
@@ -276,7 +304,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── update_draft ───────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"update_draft",
 			"Update an existing draft email's content.",
 			{
@@ -312,7 +340,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── delete_email ───────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"delete_email",
 			"Permanently delete an email by ID.",
 			{
@@ -328,7 +356,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── send_reply ─────────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"send_reply",
 			"Send a reply to an email. Only call after drafting and getting confirmation.",
 			{
@@ -370,7 +398,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── send_email ─────────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"send_email",
 			"Send a new email (not a reply). Only call after getting confirmation.",
 			{
@@ -401,7 +429,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── mark_email_read ────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"mark_email_read",
 			"Mark an email as read or unread.",
 			{
@@ -418,7 +446,7 @@ export class EmailMCP extends McpAgent<Env, unknown, { principal?: RequestPrinci
 		);
 
 		// ── move_email ─────────────────────────────────────────────
-		this.server.tool(
+		tool(
 			"move_email",
 			"Move an email to a different folder (inbox, screener, promotions, updates, sent, draft, archive, spam, screened_out, trash).",
 			{

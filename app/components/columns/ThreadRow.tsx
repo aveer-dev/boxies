@@ -17,6 +17,7 @@ import { formatListDate } from "shared/dates";
 import { useContextMenu } from "~/components/ContextMenu";
 import { IconButton, Tip } from "~/components/IconButton";
 import { isAuthSpoofed } from "~/lib/email-auth";
+import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
 import { notePreviewText } from "~/lib/thread-notes";
 import { getNonInlineAttachments, hasFileAttachment } from "~/lib/utils";
 import type { Email } from "~/types";
@@ -129,6 +130,11 @@ export default function ThreadRow({
 					{email.has_draft && (
 						<span className="shrink-0 rounded-full bg-[var(--bg-badge)] px-1.5 text-xs font-medium leading-[18px] text-kumo-strong">
 							Draft
+						</span>
+					)}
+					{isDeliveryFailure(email.delivery_status) && (
+						<span className="shrink-0 rounded-full bg-[var(--bg-badge)] px-1.5 text-xs font-medium leading-[18px] text-kumo-strong">
+							{deliveryStatusLabel(email.delivery_status)}
 						</span>
 					)}
 					{isAuthSpoofed(email) && (

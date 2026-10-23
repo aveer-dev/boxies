@@ -16,6 +16,11 @@
  * - Billed domains get their due emails (charge notices, end of service,
  *   renewal countdown), and released domains past their 30-day retention have
  *   their mail deleted (see service-reminders.ts, domain-purge.ts).
+ * - Decommissioned domains get their admins warned 7 days before finalize,
+ *   and are finalized once their 30-day grace period ends: mailboxes,
+ *   aliases, access, subscription and registry entry deleted, then the
+ *   Cloudflare zone deleted and registrar auto-renew turned off
+ *   (domain-offboarding.ts). An interrupted finalize resumes here.
  *
  * Each step is independent: one failing doesn't stop the others.
  */
@@ -27,6 +32,7 @@ import { deleteExpiredVerifications } from "../auth/otp";
 import * as schema from "../auth/schema";
 import type { Env } from "../types";
 import { deleteZone, getZone } from "./cloudflare-client";
+import { runDomainOffboarding } from "./domain-offboarding";
 import { deleteDomainMetadata, getDomainMetadata, saveDomainMetadata } from "./domain-registry";
 import { EXPORTS_JOB_PREFIX, deleteExportScratch, type ExportJob } from "./email-exporter";
 import { listAllR2Objects } from "./r2-list";
@@ -43,6 +49,9 @@ export type MaintenanceReport = {
 	exportsDeleted: number;
 	serviceReminders: string[];
 	domainsPurged: string[];
+	offboardingWarned: string[];
+	offboardingFinalized: string[];
+	offboardingCloudflareCleaned: string[];
 	errors: string[];
 };
 
@@ -64,6 +73,9 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		exportsDeleted: 0,
 		serviceReminders: [],
 		domainsPurged: [],
+		offboardingWarned: [],
+		offboardingFinalized: [],
+		offboardingCloudflareCleaned: [],
 		errors: [],
 	};
 	const db = authDb(env.AUTH_DB);
@@ -135,6 +147,14 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		report.domainsPurged = purged;
 	});
 
+	await step(report, "domain offboarding", async () => {
+		const offboarding = await runDomainOffboarding(env, now);
+		report.offboardingWarned = offboarding.warned;
+		report.offboardingFinalized = offboarding.finalized;
+		report.offboardingCloudflareCleaned = offboarding.cloudflareCleaned;
+		report.errors.push(...offboarding.errors);
+	});
+
 	await step(report, "exports", async () => {
 		for (const obj of await listAllR2Objects(env.BUCKET, EXPORTS_JOB_PREFIX)) {
 			const blob = await env.BUCKET.get(obj.key);
@@ -154,7 +174,14 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 		}
 	});
 
-	if (report.domainsActivated.length || report.claimsReleased.length || report.staleClaims.length) {
+	if (
+		report.domainsActivated.length ||
+		report.claimsReleased.length ||
+		report.staleClaims.length ||
+		report.offboardingWarned.length ||
+		report.offboardingFinalized.length ||
+		report.offboardingCloudflareCleaned.length
+	) {
 		console.log("[Maintenance]", JSON.stringify(report));
 	}
 	return report;

@@ -13,7 +13,13 @@ import {
 	assertOutboundMessageSize,
 	OutboundSizeError,
 } from "./lib/outbound-limits";
-import { deliverOutboundInBackground } from "./lib/outbound-delivery";
+import { enqueueOutboundSendFromEnv } from "./lib/outbound-send-queue";
+import {
+	checkIdempotencyKey,
+	discardReplayedSend,
+	idempotentReplayResponse,
+	type CreateEmailResult,
+} from "./lib/outbound-idempotency";
 import { storeAttachments, attachmentKey, sanitizeAttachmentFilename, deleteR2Keys, type StoredAttachment } from "./lib/attachments";
 import {
 	computeSnippet,
@@ -38,6 +44,7 @@ import {
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
+import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
 import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
@@ -77,6 +84,13 @@ import { registerDomainDnsRoutes } from "./routes/domain-dns";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerExportAndOffboardingRoutes } from "./routes/export-and-offboarding";
 import { registerAliasRoutes } from "./routes/aliases";
+import { blockSuppressedSend, registerSuppressionRoutes } from "./routes/suppressions";
+import {
+	applyInboundDsn,
+	parseDeliveryStatusReport,
+	type AppliedDsn,
+	type DsnStub,
+} from "./lib/inbound-dsn";
 import { getDomainMetadata } from "./lib/domain-registry";
 import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { sendAPNsPush, type APNsPayload } from "./lib/apns";
@@ -106,9 +120,14 @@ import {
 } from "./lib/alias-sender";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
+	inboundClassificationReason,
+	storedAuthTier,
+} from "./lib/classification-reason";
+import { ClassificationReasons } from "../shared/spam-reason";
+import {
 	classifyInboundEmail,
-	isAiSpam,
-	overrideAiSpamForVouchedSender,
+	applySenderTrust,
+	deferAuthenticatedAiSpamToScreener,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldFallbackToInbox,
@@ -138,7 +157,7 @@ import {
 import {
 	allowOutboundRecipients,
 	isScreenerDestination,
-	isVouchedSender,
+	senderTrustOf,
 	senderLessonForMove,
 	normalizeTriageSender,
 	parseScreenerEnabled,
@@ -269,8 +288,10 @@ app.get("/api/v1/config", (c) => {
 		emailAddresses,
 		/** OAuth Web client id for GIS / Connect Google (same aud as mobile). */
 		googleClientId: c.env.GOOGLE_CLIENT_ID ?? null,
-		/** True when Sign in with Apple can be verified (iOS bundle aud). Web Apple needs a Services ID — use mobile Connect or link code. */
+		/** True when Sign in with Apple can be verified (iOS bundle aud). */
 		appleSignInConfigured: Boolean(c.env.APPLE_CLIENT_ID),
+		/** Services ID for Sign in with Apple on the web login page; null hides the button. */
+		appleWebClientId: c.env.APPLE_CLIENT_ID ? (c.env.APPLE_WEB_SERVICES_ID ?? null) : null,
 	});
 });
 
@@ -281,6 +302,7 @@ registerDomainDnsRoutes(app);
 registerBillingRoutes(app);
 registerExportAndOffboardingRoutes(app);
 registerAliasRoutes(app);
+registerSuppressionRoutes(app);
 
 // -- Mailboxes ------------------------------------------------------
 
@@ -437,22 +459,29 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const stub = c.var.mailboxStub;
 
 	if (threaded && folder && !reply_later) {
+		// Inbox: `section=new|seen` lists one section; `new_limit=N` keeps the
+		// newest N New conversations above every Seen one (AVE-23).
+		const inboxSections =
+			folder === Folders.INBOX
+				? parseInboxSectionQuery(c.req.query("section"), c.req.query("new_limit"))
+				: undefined;
 		const emails = await (stub as any).getThreadedEmails({
 			folder,
 			page,
 			limit,
 			userId: c.get("principal")?.userId,
+			inboxSections,
 		});
-		const totalCount = await (stub as any).countThreadedEmails(folder);
 		if (folder === Folders.INBOX) {
 			const sections = await (stub as any).countThreadedEmailSections(folder);
 			return c.json({
 				emails,
-				totalCount: sections.totalCount ?? totalCount,
+				totalCount: inboxSectionTotal(sections, inboxSections ?? {}),
 				newCount: sections.newCount,
 				seenCount: sections.seenCount,
 			});
 		}
+		const totalCount = await (stub as any).countThreadedEmails(folder);
 		return c.json({ emails, totalCount });
 	}
 
@@ -480,10 +509,13 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 
 app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	const mailboxId = c.var.mailboxId;
+	const stub = c.var.mailboxStub;
+	// A retried send with a stored Idempotency-Key returns the original row.
+	const idem = await checkIdempotencyKey(c, stub);
+	if ("response" in idem) return idem.response;
+
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
-
-	const stub = c.var.mailboxStub;
 
 	let resolvedThreadId = thread_id;
 	if (!resolvedThreadId && (in_reply_to || (references && references.length > 0))) {
@@ -522,6 +554,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		throw e;
 	}
 
+	// Suppressed recipients (hard bounce / complaint) block the send before a
+	// slot is reserved or a Sent row exists.
+	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
+	if (suppressed) return suppressed;
+
 	const { messageId, outgoingMessageId } = generateMessageId(fromDomain);
 	// Validate before reserving a send slot, so a refused message is free.
 	try {
@@ -537,9 +574,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		resolvedThreadId = messageId;
 	}
 
+	let created: CreateEmailResult | undefined;
+	let attachmentData: Awaited<ReturnType<typeof storeAttachments>> = [];
 	try {
-		const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
-		await stub.createEmail(Folders.SENT, {
+		attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
+		created = await stub.createEmail(Folders.SENT, {
 			id: messageId, subject, sender: fromEmail,
 			sender_name: displayNameFromAddressField(from),
 			recipient: toStr,
@@ -550,6 +589,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 			thread_id: resolvedThreadId, message_id: outgoingMessageId,
 			delivery_status: "queued", delivery_error: null,
 			alias_id: sender.aliasId,
+			idempotency_key: idem.key,
 			raw_headers: JSON.stringify([
 				{ key: "from", value: typeof from === "string" ? from : `${from.name} <${from.email}>` },
 				{ key: "to", value: Array.isArray(to) ? to.join(", ") : to },
@@ -564,6 +604,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		await (stub as any).releaseSendSlot().catch(() => {});
 		throw e;
 	}
+	if (created?.replayed) {
+		// A concurrent request with this key won: send nothing more.
+		await discardReplayedSend(c.env, stub, messageId, attachmentData);
+		return idempotentReplayResponse(c, created.id);
+	}
 
 	// Screener-lite: people you email bypass the review queue on reply.
 	await allowOutboundRecipients(stub as any, to, cc, bcc);
@@ -571,13 +616,11 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		await (stub as any).clearReplyLaterForThread(resolvedThreadId);
 	}
 
-	c.executionCtx.waitUntil(
-		deliverOutboundInBackground(c.env, mailboxId, messageId, {
-			to, cc, bcc, from, subject, html, text,
-			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
-			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
-		}),
-	);
+	await enqueueOutboundSendFromEnv(c.env, mailboxId, messageId, {
+		to, cc, bcc, from, subject, html, text,
+		attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
+		...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
+	});
 	return c.json({ id: messageId, status: "sent" }, 202);
 });
 
@@ -1392,6 +1435,8 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 const MAX_EMAIL_SIZE = 25 * 1024 * 1024;
 /** SMTP reply for mail over MAX_EMAIL_SIZE (RFC 3463 5.3.4: message too big for system). */
 const OVERSIZE_REJECT_REASON = "552 5.3.4 Message size exceeds fixed limit";
+/** A mailbox being purged (or already purged) refuses mail with a permanent error. */
+const MAILBOX_UNAVAILABLE_REJECT_REASON = "550 5.2.1 Mailbox unavailable";
 
 /** Thrown when an inbound message is (or turns out to be) larger than MAX_EMAIL_SIZE. */
 class EmailTooLargeError extends Error {
@@ -1805,7 +1850,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 
 	const stub = getMailboxStub(env, mailboxId);
 	if (!(await stub.isWritable())) {
-		console.log(`Skipping inbound for deleted mailbox ${mailboxId}`);
+		console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
+		message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 		return;
 	}
 	const fromRaw = (parsedEmail.from?.address || message.from || "").toLowerCase();
@@ -1890,6 +1936,60 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			normalizeDisplayName(parsedEmail.from?.name) ??
 			senderNameFromRawHeaders(fromHeaders);
 
+		// A bounce report for one of our Sent messages updates that message
+		// (and the suppression list) and is archived in its thread instead of
+		// being filed as new mail. Unmatched reports fall through as normal mail.
+		const dsnReport = parseDeliveryStatusReport(rawEmail);
+		if (dsnReport) {
+			let appliedDsn: AppliedDsn | null = null;
+			try {
+				appliedDsn = await applyInboundDsn({
+					report: dsnReport,
+					stub: stub as unknown as DsnStub,
+					db: authDb(env.AUTH_DB),
+					mailboxId,
+					dsnMessageId: originalMessageId,
+				});
+			} catch (e) {
+				console.error(`Applying inbound DSN failed for ${mailboxId}, filing normally:`, (e as Error).message);
+			}
+			if (appliedDsn) {
+				console.log(
+					`Inbound DSN for ${mailboxId} matched ${appliedDsn.originalId} (${appliedDsn.status}); suppressed ${appliedDsn.suppressed.length}`,
+				);
+				const dsnBody = parsedEmail.html || parsedEmail.text || "";
+				await storeEmailContent(env.BUCKET, messageId, { htmlOrText: dsnBody, rawMime: rawEmail });
+				await stub.createEmail(
+					Folders.ARCHIVE,
+					{
+						id: messageId, subject: parsedEmail.subject || "",
+						sender: fromAddress, sender_name: senderName, recipient,
+						cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
+						date: new Date().toISOString(),
+						snippet: computeSnippet(dsnBody),
+						search_text: computeSearchText(dsnBody, { plainText: parsedEmail.text }),
+						in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
+						thread_id: appliedDsn.threadId ?? threadId, message_id: originalMessageId, raw_headers: fromHeaders,
+						auth: serializeEmailAuth(auth),
+						classification_reason: ClassificationReasons.DELIVERY_REPORT,
+						auth_tier: storedAuthTier(auth),
+						alias_id: privateAlias?.aliasId || null,
+						read: true,
+					},
+					attachmentData,
+				);
+				stored = true;
+				if (originalMessageId) {
+					await stub
+						.completeInboundMessageClaim(originalMessageId, messageId)
+						.catch((e: unknown) =>
+							console.error(`Inbound claim completion failed for ${mailboxId}:`, (e as Error).message),
+						);
+				}
+				return;
+			}
+		}
+
 		let classification = await classifyInboundEmail(
 			{
 				headers: storedHeaders,
@@ -1923,6 +2023,11 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 			auth: serializeEmailAuth(auth),
 			alias_id: privateAlias?.aliasId || null,
+			// Why it was filed where it was (AVE-94); the reason is set below,
+			// once the folder is decided.
+			classification_reason: classification.reason as string | null,
+			auth_tier: storedAuthTier(auth),
+			matched_rule_id: null as string | null,
 		};
 
 		const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -1957,20 +2062,40 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			? await (stub as any).getSenderTriage(triageSender)
 			: null;
 		const purposePref =
-			classification.folderId === Folders.SPAM && !isAiSpam(classification)
+			classification.reason === "auth-failed"
 				? null
 				: await stub.getSenderPreference(fromAddress);
-		// People you've emailed, accepted, or sorted can't be junked by the AI
-		// guess alone. Everything below files, notifies, and drafts on this verdict.
-		const vouchedClassification = overrideAiSpamForVouchedSender(classification, {
-			vouched: isVouchedSender(triageRow, purposePref?.folderId),
+		// Senders you've allowed, emailed, accepted, or sorted can't be junked by
+		// the AI guess alone; an explicit allow on verified mail also beats
+		// upstream spam headers. Failed auth stays Spam. Everything below files,
+		// notifies, and drafts on this verdict.
+		const trustedClassification = applySenderTrust(
+			classification,
+			{
+				headers: storedHeaders,
+				subject: parsedEmail.subject,
+				sender: fromAddress,
+				auth,
+			},
+			senderTrustOf(triageRow, purposePref),
+		);
+		if (trustedClassification !== classification) {
+			console.log(
+				`Trusted sender ${fromAddress} overrode ${classification.reason} for ${mailboxId}: ${trustedClassification.reason}`,
+			);
+			classification = trustedClassification;
+		}
+		// Authenticated mail from a stranger goes to Screener, not Spam, on an
+		// AI guess alone (see deferAuthenticatedAiSpamToScreener).
+		const deferredClassification = deferAuthenticatedAiSpamToScreener(classification, {
+			screenerEnabled,
 			auth,
 		});
-		if (vouchedClassification !== classification) {
+		if (deferredClassification !== classification) {
 			console.log(
-				`Vouched sender ${fromAddress} overrode AI spam verdict for ${mailboxId}`,
+				`Authenticated sender ${fromAddress} deferred AI spam verdict to Screener for ${mailboxId}`,
 			);
-			classification = vouchedClassification;
+			classification = deferredClassification;
 		}
 		const triageDecision = resolveInboundFolder({
 			classification,
@@ -1988,23 +2113,23 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			);
 		}
 
+		inboundEmail.classification_reason = inboundClassificationReason(classification, triageDecision);
+
 		const targetFolder = triageDecision.folderId;
 		let filedFolder: string = targetFolder;
 		try {
 			await stub.createEmail(targetFolder, inboundEmail, attachmentData);
 			stored = true;
-			if (privateAlias) {
-				await (stub as any).recordAliasInbound(privateAlias.aliasEmail, false);
-			}
 		} catch (e) {
 			if ((e as Error).message === "Mailbox has been deleted") {
-				console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+				console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
 				await abandonUnstoredInbound(env, stub, {
 					emailId: messageId,
 					originalMessageId,
 					blobKeys: inboundBlobKeys(),
 					knownUnstored: true,
 				});
+				message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 				return;
 			}
 			if (!shouldFallbackToInbox(targetFolder, e)) throw e;
@@ -2017,18 +2142,28 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				stored = true;
 			} catch (inboxErr) {
 				if ((inboxErr as Error).message === "Mailbox has been deleted") {
-					console.log(`Discarding inbound for deleted mailbox ${mailboxId}`);
+					console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
 					await abandonUnstoredInbound(env, stub, {
 						emailId: messageId,
 						originalMessageId,
 						blobKeys: inboundBlobKeys(),
 						knownUnstored: true,
 					});
+					message.setReject(MAILBOX_UNAVAILABLE_REJECT_REASON);
 					return;
 				}
 				throw inboxErr;
 			}
 			filedFolder = Folders.INBOX;
+		}
+		if (privateAlias) {
+			// Best effort: the message is stored, so a failed counter must not
+			// throw into a retry that dedup drops (losing the push and forward).
+			await (stub as any)
+				.recordAliasInbound(privateAlias.aliasEmail, false)
+				.catch((e: unknown) =>
+					console.error(`Recording private email inbound failed for ${mailboxId}:`, (e as Error).message),
+				);
 		}
 		if (originalMessageId) {
 			// Best effort: the stored row already blocks redelivery.
