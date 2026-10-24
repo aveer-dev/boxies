@@ -14,7 +14,9 @@ import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
 import ScreenerTriageBar from "~/components/email-panel/ScreenerTriageBar";
 import SingleMessageView from "~/components/email-panel/SingleMessageView";
 import ThreadMessage from "~/components/email-panel/ThreadMessage";
-import { splitEmailList, toEmailListValue } from "~/lib/utils";
+import AISummaryCard from "~/components/email-panel/AISummaryCard";
+import { isSummaryFolderEligible, MIN_SUMMARY_CHARS } from "shared/ai-summaries";
+import { splitEmailList, stripHtml, toEmailListValue } from "~/lib/utils";
 import { createSendKeyStore } from "~/lib/send-idempotency";
 import api from "~/services/api";
 import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
@@ -114,6 +116,35 @@ export default function EmailPanel({
 		const nonDrafts = allMessages.filter((msg) => !draftMessageIds.has(msg.id));
 		return nonDrafts.length > 0 ? nonDrafts[0] : email;
 	}, [allMessages, draftMessageIds, currentMailbox?.email, email]);
+
+	// AI summary (AVE-20): only for mail that reached the mailbox and has
+	// enough text. The server re-checks both; this just skips pointless calls.
+	const summaryMessages = useMemo(
+		() => allMessages.filter((msg) => !draftMessageIds.has(msg.id) && isSummaryFolderEligible(msg.folder_id)),
+		[allMessages, draftMessageIds],
+	);
+	const summaryEnabled = useMemo(() => {
+		if (!email || !isSummaryFolderEligible(email.folder_id) || isDraftFolder) return false;
+		let chars = 0;
+		for (const msg of summaryMessages) {
+			chars += stripHtml(msg.body || "").length;
+			if (chars >= MIN_SUMMARY_CHARS) return true;
+		}
+		return false;
+	}, [email, isDraftFolder, summaryMessages]);
+	// Quick summaries: per message, only in a thread with more than one
+	// message, and not on messages too short to be worth it.
+	const quickSummaryIds = useMemo(
+		() =>
+			new Set(
+				summaryMessages.length > 1
+					? summaryMessages
+							.filter((msg) => stripHtml(msg.body || "").length >= MIN_SUMMARY_CHARS)
+							.map((msg) => msg.id)
+					: [],
+			),
+		[summaryMessages],
+	);
 
 	const moveToFolders = useMemo(() => { const cur = folder || email?.folder_id; return folders.filter((f) => f.id !== cur); }, [folders, folder, email?.folder_id]);
 
@@ -347,6 +378,12 @@ export default function EmailPanel({
 				chips={chips}
 			/>
 
+			<AISummaryCard
+				mailboxId={mailboxId}
+				threadId={email.thread_id || email.id}
+				enabled={summaryEnabled}
+			/>
+
 			{/* A single message fills the reader and its body scrolls itself. */}
 			<ScrollArea className="flex-1" contentClassName={`animate-reveal ${hasThread ? "" : "h-full"}`}>
 				{hasThread ? (
@@ -367,6 +404,7 @@ export default function EmailPanel({
 								onEditDraft={isDraft ? () => handleEditDraft(msg) : undefined}
 								onDeleteDraft={isDraft ? () => handleDeleteDraft(msg) : undefined}
 								onViewSource={() => setSourceViewEmail(msg)}
+								quickSummary={quickSummaryIds.has(msg.id)}
 								onPreviewImage={(url, filename) =>
 									setPreviewImage({ url, filename })
 								}
