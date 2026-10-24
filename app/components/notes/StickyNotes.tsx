@@ -17,13 +17,24 @@ import { IconButton } from "~/components/IconButton";
 import NoteEditor from "~/components/notes/NoteEditor";
 import NoteMarkdown from "~/components/notes/NoteMarkdown";
 import {
+	NOTE_REDUCED_SPRING,
+	NOTE_SETTLE_SPRING,
+	NOTE_TILT_SPRING,
 	type Point,
+	type PointerSample,
 	type Size,
+	type SpringState,
 	clampNotePosition,
 	keyboardNudge,
 	notePreviewText,
 	passedDragThreshold,
+	pointerVelocity,
+	settleVelocity,
+	springAtRest,
+	stepSpring,
 	stickyNotePosition,
+	throwTarget,
+	tiltForVelocity,
 } from "~/lib/thread-notes";
 import { useCreateThreadNote, useDeleteThreadNote, useUpdateThreadNote } from "~/queries/thread-notes";
 import type { ThreadNote } from "~/types";
@@ -31,6 +42,30 @@ import type { ThreadNote } from "~/types";
 /** Draft id for a sticky being written that isn't saved yet. */
 const DRAFT_ID = "__new_sticky__";
 const KEYBOARD_SAVE_DELAY_MS = 450;
+
+const prefersReducedMotion = () =>
+	typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/**
+ * A note in hand: following the pointer ("drag"), or let go and springing to
+ * where the throw lands ("settle"). Driven by requestAnimationFrame and
+ * written straight to the DOM, so a drag never re-renders the note's body.
+ */
+interface NoteMotion {
+	pointerId: number | null;
+	from: Point;
+	start: Point;
+	moved: boolean;
+	phase: "press" | "drag" | "settle";
+	reduced: boolean;
+	samples: PointerSample[];
+	x: SpringState;
+	y: SpringState;
+	tilt: SpringState;
+	target: Point;
+	frame: number;
+	lastTime: number;
+}
 
 function useElementSize<T extends HTMLElement>(): [React.RefObject<T | null>, Size | null] {
 	const ref = useRef<T>(null);
@@ -144,13 +179,24 @@ function StickyNote({
 	const [noteRef, measured] = useElementSize<HTMLDivElement>();
 	const [editing, setEditing] = useState(isDraft);
 	const [collapsed, setCollapsed] = useState(false);
-	// While dragging (or nudging with keys) the note shows here, not at its saved spot.
+	// After a drag settles (or while nudging with keys) the note shows here, not at its saved spot.
 	const [livePosition, setLivePosition] = useState<Point | null>(null);
+	// Picked up: lifted (scale + deeper shadow) from press until let go.
+	const [pressed, setPressed] = useState(false);
 	const [isDragging, setIsDragging] = useState(false);
-	const drag = useRef<{ pointerId: number; from: Point; start: Point; moved: boolean } | null>(null);
+	// Following the pointer or springing home: the rAF loop owns transform + tilt.
+	const [animating, setAnimating] = useState(false);
+	const paperRef = useRef<HTMLDivElement>(null);
+	const motion = useRef<NoteMotion | null>(null);
 	const keySave = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-	useEffect(() => () => clearTimeout(keySave.current), []);
+	useEffect(
+		() => () => {
+			clearTimeout(keySave.current);
+			if (motion.current) cancelAnimationFrame(motion.current.frame);
+		},
+		[],
+	);
 
 	const size = measured ?? { width: 260, height: 120 };
 	const resting = stickyNotePosition(note, index, size, view);
@@ -167,42 +213,126 @@ function StickyNote({
 		);
 	};
 
+	/** Paint the current motion values: position on the note, tilt on its paper. */
+	const paint = (m: NoteMotion) => {
+		if (noteRef.current) noteRef.current.style.transform = `translate3d(${m.x.value}px, ${m.y.value}px, 0)`;
+		if (paperRef.current) paperRef.current.style.rotate = `${m.tilt.value.toFixed(3)}deg`;
+	};
+
+	/** Let go of the motion: the paper's resting tilt (CSS) comes back. */
+	const finishMotion = () => {
+		const m = motion.current;
+		if (m) cancelAnimationFrame(m.frame);
+		motion.current = null;
+		if (paperRef.current) paperRef.current.style.rotate = "";
+		setAnimating(false);
+	};
+
+	const tick = (now: number) => {
+		const m = motion.current;
+		if (!m) return;
+		const dt = Math.min(0.064, Math.max(0, (now - m.lastTime) / 1000));
+		m.lastTime = now;
+		if (m.phase === "drag") {
+			// Tilt chases the pointer's horizontal speed, and springs back as it slows.
+			const tiltTarget = m.reduced ? 0 : tiltForVelocity(pointerVelocity(m.samples, now).x);
+			m.tilt = stepSpring(m.tilt, tiltTarget, NOTE_TILT_SPRING, dt);
+		} else if (m.phase === "settle") {
+			const spring = m.reduced ? NOTE_REDUCED_SPRING : NOTE_SETTLE_SPRING;
+			m.x = stepSpring(m.x, m.target.x, spring, dt);
+			m.y = stepSpring(m.y, m.target.y, spring, dt);
+			m.tilt = stepSpring(m.tilt, 0, NOTE_TILT_SPRING, dt);
+			if (springAtRest(m.x, m.target.x) && springAtRest(m.y, m.target.y) && springAtRest(m.tilt, 0)) {
+				const end = m.target;
+				m.x = { value: end.x, velocity: 0 };
+				m.y = { value: end.y, velocity: 0 };
+				m.tilt = { value: 0, velocity: 0 };
+				paint(m);
+				finishMotion();
+				// The settled spot is what's saved.
+				setLivePosition(end);
+				if (end.x !== resting.x || end.y !== resting.y) savePosition(end);
+				else setLivePosition(null);
+				return;
+			}
+		}
+		paint(m);
+		m.frame = requestAnimationFrame(tick);
+	};
+
 	const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
 		if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input, textarea")) return;
 		onFocus();
-		drag.current = { pointerId: e.pointerId, from: { x: e.clientX, y: e.clientY }, start: position, moved: false };
+		const live = motion.current;
+		// Caught mid-settle: pick it up from where it is now.
+		const start = live ? { x: live.x.value, y: live.y.value } : position;
+		if (live) cancelAnimationFrame(live.frame);
+		motion.current = {
+			pointerId: e.pointerId,
+			from: { x: e.clientX, y: e.clientY },
+			start,
+			moved: false,
+			phase: "press",
+			reduced: prefersReducedMotion(),
+			samples: [{ t: e.timeStamp, x: e.clientX, y: e.clientY }],
+			x: { value: start.x, velocity: 0 },
+			y: { value: start.y, velocity: 0 },
+			tilt: live ? live.tilt : { value: 0, velocity: 0 },
+			target: start,
+			frame: 0,
+			lastTime: performance.now(),
+		};
+		setPressed(true);
 		e.currentTarget.setPointerCapture(e.pointerId);
 	};
 	const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-		const d = drag.current;
-		if (!d || d.pointerId !== e.pointerId) return;
+		const m = motion.current;
+		if (!m || m.pointerId !== e.pointerId) return;
 		const pointer = { x: e.clientX, y: e.clientY };
-		if (!d.moved) {
-			if (!passedDragThreshold(d.from, pointer)) return;
-			d.moved = true;
+		if (!m.moved) {
+			if (!passedDragThreshold(m.from, pointer)) return;
+			m.moved = true;
+			m.phase = "drag";
 			setIsDragging(true);
+			setAnimating(true);
 			onDragChange(true);
+			m.lastTime = performance.now();
+			m.frame = requestAnimationFrame(tick);
 		}
-		setLivePosition(
-			clampNotePosition({ x: d.start.x + pointer.x - d.from.x, y: d.start.y + pointer.y - d.from.y }, size, view),
-		);
-	};
-	const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-		const d = drag.current;
-		if (!d || d.pointerId !== e.pointerId) return;
-		drag.current = null;
-		if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-		if (!d.moved) return;
-		setIsDragging(false);
-		onDragChange(false);
-		const end = clampNotePosition(
-			{ x: d.start.x + e.clientX - d.from.x, y: d.start.y + e.clientY - d.from.y },
+		// 1:1 with the pointer, held inside the view.
+		const next = clampNotePosition(
+			{ x: m.start.x + pointer.x - m.from.x, y: m.start.y + pointer.y - m.from.y },
 			size,
 			view,
 		);
-		setLivePosition(end);
-		if (end.x !== resting.x || end.y !== resting.y) savePosition(end);
-		else setLivePosition(null);
+		m.x = { value: next.x, velocity: 0 };
+		m.y = { value: next.y, velocity: 0 };
+		m.samples.push({ t: e.timeStamp, x: pointer.x, y: pointer.y });
+		if (m.samples.length > 12) m.samples.shift();
+		paint(m);
+	};
+	const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+		const m = motion.current;
+		if (!m || m.pointerId !== e.pointerId) return;
+		m.pointerId = null;
+		if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+		setPressed(false);
+		if (!m.moved) {
+			// A press without a drag: just set it back down.
+			motion.current = null;
+			return;
+		}
+		setIsDragging(false);
+		onDragChange(false);
+		// Throw: carry the release velocity a short way, land inside the view, spring there.
+		const cancelled = e.type === "pointercancel";
+		const velocity = cancelled ? { x: 0, y: 0 } : pointerVelocity(m.samples, e.timeStamp);
+		const release = { x: m.x.value, y: m.y.value };
+		const target = m.reduced ? release : throwTarget(release, velocity, size, view);
+		m.target = target;
+		m.x = { value: release.x, velocity: m.reduced ? 0 : settleVelocity(release.x, target.x, velocity.x) };
+		m.y = { value: release.y, velocity: m.reduced ? 0 : settleVelocity(release.y, target.y, velocity.y) };
+		m.phase = "settle";
 	};
 	const onHandleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
 		if (e.target !== e.currentTarget) return;
@@ -242,7 +372,7 @@ function StickyNote({
 		);
 	};
 
-	const lifted = isDragging || editing;
+	const lifted = pressed || animating || editing;
 
 	return (
 		<div
@@ -255,17 +385,21 @@ function StickyNote({
 			style={
 				{
 					transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
-					zIndex: inFront ? 2 : 1,
+					zIndex: inFront || animating ? 2 : 1,
 				} as CSSProperties
 			}
 			className={`note-paper pointer-events-auto absolute left-0 top-0 ${editing ? "w-[min(340px,calc(100%-24px))]" : "w-[min(260px,calc(100%-24px))]"} ${
-				livePosition && !isDragging ? "transition-transform duration-200 ease-[var(--ease-out)]" : ""
+				livePosition && !animating ? "transition-transform duration-200 ease-[var(--ease-out)]" : ""
 			}`}
 		>
 			<div
-				className={`group/sticky relative rounded-[3px] rounded-br-[14px] bg-[var(--note-paper)] text-[var(--note-ink)] shadow-[var(--note-shadow)] transition-[rotate,scale,box-shadow] duration-300 ease-[var(--spring)] motion-safe:animate-reveal ${
-					lifted ? "rotate-0" : "motion-safe:-rotate-[1.2deg] hover:rotate-0"
-				} ${isDragging ? "scale-[1.02]" : ""}`}
+				ref={paperRef}
+				className={`group/sticky relative rounded-[3px] rounded-br-[14px] bg-[var(--note-paper)] text-[var(--note-ink)] ease-[var(--spring)] motion-safe:animate-reveal ${
+					// While the rAF loop drives the tilt, CSS only eases the lift.
+					animating ? "transition-[scale,box-shadow] duration-200" : "transition-[rotate,scale,box-shadow] duration-300"
+				} ${lifted ? "rotate-0" : "motion-safe:-rotate-[1.2deg] hover:rotate-0"} ${
+					pressed ? "motion-safe:scale-[1.03] shadow-[var(--note-shadow-lifted)]" : "shadow-[var(--note-shadow)]"
+				}`}
 			>
 				{/* The pin, top-centre. */}
 				<PushPinIcon

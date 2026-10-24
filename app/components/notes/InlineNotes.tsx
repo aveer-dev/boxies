@@ -12,15 +12,16 @@ import NoteMarkdown from "~/components/notes/NoteMarkdown";
 import { useCreateThreadNote, useDeleteThreadNote, useUpdateThreadNote } from "~/queries/thread-notes";
 import type { ThreadNote } from "~/types";
 
+// The note palette (--note-*), so a note to self never reads as a message.
 const CARD =
-	"rounded-xl border border-dashed border-kumo-hairline bg-kumo-tint px-3 py-2.5 text-kumo-default";
+	"note-paper rounded-xl border border-solid border-[var(--note-paper-edge)] bg-[var(--note-paper)] px-3 py-2.5 text-[var(--note-ink)]";
 
 function PrivateLabel({ date, edited }: { date?: string; edited?: boolean }) {
 	return (
-		<span className="flex min-w-0 items-center gap-1.5 text-2xs text-kumo-subtle">
-			<LockSimpleIcon size={12} weight="bold" className="shrink-0" aria-hidden />
+		<span className="flex min-w-0 items-center gap-1.5 text-2xs text-[var(--note-muted)]">
+			<LockSimpleIcon size={12} weight="bold" className="shrink-0 text-[var(--note-pin)]" aria-hidden />
 			<span className="truncate">
-				<span className="font-medium text-kumo-strong">Private note to self</span> · Only visible to you
+				<span className="font-medium text-[var(--note-ink)]">Private note to self</span> · Only visible to you
 				{date && (
 					<>
 						{" · "}

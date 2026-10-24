@@ -6,6 +6,10 @@
 // clamping, grouping, list preview text and the editor's markdown buttons.
 import assert from "node:assert/strict";
 import {
+	NOTE_MAX_THROW,
+	NOTE_MAX_TILT,
+	NOTE_REDUCED_SPRING,
+	NOTE_SETTLE_SPRING,
 	STICKY_CASCADE,
 	STICKY_EDGE,
 	applyNoteFormat,
@@ -14,8 +18,15 @@ import {
 	keyboardNudge,
 	notePreviewText,
 	passedDragThreshold,
+	pointerVelocity,
+	projectThrow,
+	settleVelocity,
+	springAtRest,
+	stepSpring,
 	stickyNotePosition,
 	threadKeyFor,
+	throwTarget,
+	tiltForVelocity,
 } from "../../app/lib/thread-notes.ts";
 
 const note = { width: 240, height: 120 };
@@ -156,5 +167,75 @@ assert.deepEqual(applyNoteFormat("x", 1, 1, "code"), { text: "x``", selectionSta
 }
 // Selection given backwards still works.
 assert.equal(applyNoteFormat("hello", 5, 0, "bold").text, "**hello**");
+
+// ── Sticky motion ──
+// Tilt follows horizontal speed, clamped to ±6°.
+assert.equal(tiltForVelocity(0), 0);
+assert.ok(tiltForVelocity(500) > 0 && tiltForVelocity(500) < NOTE_MAX_TILT);
+assert.equal(tiltForVelocity(99999), NOTE_MAX_TILT);
+assert.equal(tiltForVelocity(-99999), -NOTE_MAX_TILT);
+assert.equal(tiltForVelocity(Number.NaN), 0);
+
+// Pointer velocity: recent samples only; a pointer that stopped reads as 0.
+{
+	const samples = [
+		{ t: 0, x: 0, y: 0 },
+		{ t: 16, x: 16, y: 8 },
+		{ t: 32, x: 32, y: 16 },
+	];
+	const v = pointerVelocity(samples, 32);
+	assert.equal(Math.round(v.x), 1000);
+	assert.equal(Math.round(v.y), 500);
+	assert.deepEqual(pointerVelocity(samples, 500), { x: 0, y: 0 });
+	assert.deepEqual(pointerVelocity([{ t: 0, x: 0, y: 0 }], 0), { x: 0, y: 0 });
+}
+
+// Throw projection: v · r / (1 − r) / 1000, proportional and signed.
+assert.equal(projectThrow(0), 0);
+assert.ok(Math.abs(projectThrow(1000) - 99) < 0.01);
+assert.ok(Math.abs(projectThrow(-1000) + 99) < 0.01);
+assert.equal(projectThrow(Number.POSITIVE_INFINITY), 0);
+
+// Throw target: carried a short way, capped, clamped inside the view.
+assert.deepEqual(throwTarget({ x: 100, y: 100 }, { x: 0, y: 0 }, note, view), { x: 100, y: 100 });
+assert.deepEqual(throwTarget({ x: 100, y: 100 }, { x: 500, y: 0 }, note, view), { x: Math.round(100 + projectThrow(500)), y: 100 });
+{
+	const far = throwTarget({ x: 200, y: 200 }, { x: 20000, y: 0 }, note, view);
+	assert.equal(far.x, 200 + NOTE_MAX_THROW);
+	// Thrown past an edge: lands on it.
+	const edge = throwTarget({ x: 500, y: 400 }, { x: 3000, y: 3000 }, note, view);
+	assert.deepEqual(edge, { x: view.width - note.width - STICKY_EDGE, y: view.height - note.height - STICKY_EDGE });
+	const corner = throwTarget({ x: 20, y: 20 }, { x: -3000, y: -3000 }, note, view);
+	assert.deepEqual(corner, { x: STICKY_EDGE, y: STICKY_EDGE });
+}
+
+// Settle velocity: only toward the target, capped so the overshoot stays small.
+assert.equal(settleVelocity(100, 100, 800), 0);
+assert.equal(settleVelocity(100, 150, -800), 0);
+assert.equal(settleVelocity(100, 150, 200), 200);
+assert.ok(settleVelocity(100, 110, 5000) < 5000);
+
+// The settle spring overshoots a little (damping 0.7) and comes to rest on target.
+function settle(config, from, to, velocity) {
+	let x = { value: from, velocity };
+	let peak = from;
+	for (let i = 0; i < 240; i++) {
+		x = stepSpring(x, to, config, 1 / 60);
+		peak = Math.max(peak, x.value);
+	}
+	return { x, peak };
+}
+{
+	const v = settleVelocity(0, 96, 2000);
+	const { x, peak } = settle(NOTE_SETTLE_SPRING, 0, 96, v);
+	assert.ok(springAtRest(x, 96));
+	assert.ok(peak > 96 && peak < 96 + 16, `small overshoot, got ${peak}`);
+	// Reduce motion: critically damped, no overshoot.
+	const reduced = settle(NOTE_REDUCED_SPRING, 0, 96, 0);
+	assert.ok(springAtRest(reduced.x, 96));
+	assert.ok(reduced.peak <= 96.001, `no overshoot, got ${reduced.peak}`);
+}
+// A long frame stays stable (sub-stepped).
+assert.ok(Number.isFinite(stepSpring({ value: 0, velocity: 0 }, 100, NOTE_SETTLE_SPRING, 1).value));
 
 console.log("thread-notes-web ok");

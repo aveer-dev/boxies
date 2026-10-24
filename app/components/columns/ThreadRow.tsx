@@ -199,8 +199,8 @@ export default function ThreadRow({
 							</span>
 						)}
 						{inlineNotes > 0 && (
-							<span className="inline-flex items-center gap-1 text-xs text-kumo-subtle">
-								<LockSimpleIcon size={12} weight="bold" aria-hidden />
+							<span className="inline-flex items-center gap-1 rounded-full bg-[var(--note-paper)] px-1.5 py-px text-xs text-[var(--note-muted)] shadow-[inset_0_0_0_1px_var(--note-paper-edge)]">
+								<LockSimpleIcon size={12} weight="bold" aria-hidden className="text-[var(--note-pin)]" />
 								{inlineNotes} private note{inlineNotes === 1 ? "" : "s"}
 							</span>
 						)}

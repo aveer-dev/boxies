@@ -77,6 +77,134 @@ export function stickyNotePosition(
 	return clampNotePosition(start, noteSize, view);
 }
 
+// ── Sticky motion (AVE-60 review): picked up, tilted by speed, thrown, sprung ──
+// Shared feel with iOS (AVE-61) and Android (AVE-62); see NOTES-SPEC.
+
+export interface SpringConfig {
+	/** Seconds for one undamped oscillation (SwiftUI's `response`). */
+	response: number;
+	/** Damping fraction: 1 = critically damped, below 1 overshoots. */
+	damping: number;
+}
+
+export interface SpringState {
+	value: number;
+	velocity: number;
+}
+
+/** Release settle: slightly underdamped, so a thrown note overshoots a touch. */
+export const NOTE_SETTLE_SPRING: SpringConfig = { response: 0.4, damping: 0.7 };
+/** Reduce motion: a plain short ease, no overshoot. */
+export const NOTE_REDUCED_SPRING: SpringConfig = { response: 0.24, damping: 1 };
+/** The drag tilt chasing the pointer's speed, and springing back as it slows. */
+export const NOTE_TILT_SPRING: SpringConfig = { response: 0.3, damping: 0.75 };
+/** Scale while held. */
+export const NOTE_LIFT_SCALE = 1.03;
+/** Tilt cap while dragging, in degrees. */
+export const NOTE_MAX_TILT = 6;
+/** Degrees of tilt per px/s of horizontal speed (1000 px/s → 6°). */
+export const NOTE_TILT_PER_VELOCITY = 0.006;
+/** Per-millisecond deceleration a throw coasts through (UIScrollView-style; 0.99 ≈ 0.1s of carry). */
+export const NOTE_THROW_DECELERATION = 0.99;
+/** The furthest a throw carries a note past where it was let go, in px. */
+export const NOTE_MAX_THROW = 120;
+/** Pointer samples older than this don't count toward the drag velocity. */
+export const NOTE_VELOCITY_WINDOW_MS = 80;
+
+/**
+ * Advance a unit-mass spring toward `target` by `dt` seconds (semi-implicit
+ * Euler in small sub-steps, so a long frame stays stable).
+ */
+export function stepSpring(state: SpringState, target: number, config: SpringConfig, dt: number): SpringState {
+	const stiffness = ((2 * Math.PI) / config.response) ** 2;
+	const friction = (4 * Math.PI * config.damping) / config.response;
+	let { value, velocity } = state;
+	const steps = Math.max(1, Math.ceil(dt / (1 / 240)));
+	const h = dt / steps;
+	for (let i = 0; i < steps; i++) {
+		velocity += (-stiffness * (value - target) - friction * velocity) * h;
+		value += velocity * h;
+	}
+	return { value, velocity };
+}
+
+/** True once a spring is close enough to its target (and slow enough) to stop. */
+export function springAtRest(state: SpringState, target: number, epsilon = 0.1): boolean {
+	return Math.abs(state.value - target) < epsilon && Math.abs(state.velocity) < epsilon * 10;
+}
+
+export interface PointerSample {
+	/** Milliseconds (performance.now / event.timeStamp). */
+	t: number;
+	x: number;
+	y: number;
+}
+
+/**
+ * Pointer velocity in px/s at `now`, from the samples in the last
+ * NOTE_VELOCITY_WINDOW_MS. A pointer that has stopped (no recent samples)
+ * reads as 0, so the tilt settles and a held-then-released note isn't thrown.
+ */
+export function pointerVelocity(samples: readonly PointerSample[], now: number): Point {
+	const recent = samples.filter((s) => now - s.t <= NOTE_VELOCITY_WINDOW_MS);
+	if (recent.length < 2) return { x: 0, y: 0 };
+	const first = recent[0];
+	const last = recent[recent.length - 1];
+	const dt = (last.t - first.t) / 1000;
+	if (dt <= 0) return { x: 0, y: 0 };
+	return { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt };
+}
+
+/** Drag tilt for a horizontal speed (px/s): proportional, clamped to ±NOTE_MAX_TILT. */
+export function tiltForVelocity(velocityX: number): number {
+	if (!Number.isFinite(velocityX)) return 0;
+	const tilt = velocityX * NOTE_TILT_PER_VELOCITY;
+	return Math.max(-NOTE_MAX_TILT, Math.min(NOTE_MAX_TILT, tilt));
+}
+
+/**
+ * How far a release velocity (px/s) carries while decelerating at `rate` per
+ * millisecond: v · rate / (1 − rate) / 1000, as UIKit projects a scroll.
+ */
+export function projectThrow(velocity: number, rate = NOTE_THROW_DECELERATION): number {
+	if (!Number.isFinite(velocity) || rate <= 0 || rate >= 1) return 0;
+	return ((velocity / 1000) * rate) / (1 - rate);
+}
+
+/**
+ * Where a thrown note comes to rest: the release velocity projected through
+ * deceleration (at most NOTE_MAX_THROW px), then clamped inside the view, so
+ * a throw past an edge lands on that edge.
+ */
+export function throwTarget(release: Point, velocity: Point, note: Size, view: Size): Point {
+	let dx = projectThrow(velocity.x);
+	let dy = projectThrow(velocity.y);
+	const distance = Math.hypot(dx, dy);
+	if (distance > NOTE_MAX_THROW) {
+		dx = (dx / distance) * NOTE_MAX_THROW;
+		dy = (dy / distance) * NOTE_MAX_THROW;
+	}
+	return clampNotePosition({ x: release.x + dx, y: release.y + dy }, note, view);
+}
+
+/**
+ * The velocity one axis of the settle spring starts with: the release speed
+ * toward the target, capped so the overshoot stays small (a note thrown into
+ * an edge lands on it softly rather than bouncing far past it). Speed away
+ * from the target is dropped.
+ */
+export function settleVelocity(
+	from: number,
+	target: number,
+	velocity: number,
+	config: SpringConfig = NOTE_SETTLE_SPRING,
+): number {
+	const distance = target - from;
+	if (!Number.isFinite(velocity) || distance === 0 || Math.sign(velocity) !== Math.sign(distance)) return 0;
+	const cap = Math.abs(distance) * ((2 * Math.PI) / config.response);
+	return Math.sign(velocity) * Math.min(Math.abs(velocity), cap);
+}
+
 /** True once a pointer has moved far enough from where it pressed to count as a drag. */
 export function passedDragThreshold(from: Point, to: Point, threshold = DRAG_THRESHOLD): boolean {
 	return Math.hypot(to.x - from.x, to.y - from.y) >= threshold;
