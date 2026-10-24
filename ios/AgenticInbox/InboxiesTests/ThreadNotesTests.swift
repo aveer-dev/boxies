@@ -60,19 +60,93 @@ final class ThreadNotesTests: XCTestCase {
         XCTAssertEqual(shown, CGPoint(x: 118, y: 30))
     }
 
-    func testDragThresholdAndMomentumDrop() {
+    func testDragThreshold() {
         XCTAssertFalse(StickyNoteLayout.passedDragThreshold(CGSize(width: 1, height: 2)))
         XCTAssertTrue(StickyNoteLayout.passedDragThreshold(CGSize(width: 3, height: 0)))
+    }
 
-        let drop = StickyNoteLayout.dropPosition(
-            start: CGPoint(x: 100, y: 100),
-            translation: CGSize(width: 10, height: 20),
-            predicted: CGSize(width: 60, height: 20),
+    func testThrowCarriesReleaseVelocityAShortWay() {
+        // 250 pt/s * 0.08 s = 20 pt on; -100 pt/s * 0.08 s = -8 pt.
+        let target = StickyNoteLayout.throwTarget(
+            release: CGPoint(x: 40, y: 200),
+            velocity: CGSize(width: 250, height: -100),
             note: noteSize,
             view: view
         )
-        // 100 + 10 + (60 - 10) * 0.2 = 120
-        XCTAssertEqual(drop, CGPoint(x: 118, y: 120)) // clamped to the right edge (118)
+        XCTAssertEqual(target, CGPoint(x: 60, y: 192))
+    }
+
+    func testStillReleaseStaysWhereLetGo() {
+        let target = StickyNoteLayout.throwTarget(
+            release: CGPoint(x: 50, y: 300), velocity: .zero, note: noteSize, view: view
+        )
+        XCTAssertEqual(target, CGPoint(x: 50, y: 300))
+    }
+
+    func testFastThrowIsCappedAlongItsDirection() {
+        // 3000 pt/s straight down would carry 240 pt; capped to 48.
+        let down = StickyNoteLayout.throwTarget(
+            release: CGPoint(x: 50, y: 100), velocity: CGSize(width: 0, height: 3000), note: noteSize, view: view
+        )
+        XCTAssertEqual(down, CGPoint(x: 50, y: 148))
+        // Diagonal: the cap applies to the length, so both axes keep their ratio (34 each).
+        let diagonal = StickyNoteLayout.throwTarget(
+            release: CGPoint(x: 50, y: 100), velocity: CGSize(width: 2000, height: 2000), note: noteSize, view: view
+        )
+        XCTAssertEqual(diagonal, CGPoint(x: 84, y: 134))
+    }
+
+    func testThrowOutOfBoundsLandsOnTheEdge() {
+        let target = StickyNoteLayout.throwTarget(
+            release: CGPoint(x: 110, y: 20), velocity: CGSize(width: 900, height: -900), note: noteSize, view: view
+        )
+        XCTAssertEqual(target, CGPoint(x: 118, y: 12))
+    }
+
+    func testThrowIgnoresNonFiniteVelocity() {
+        let target = StickyNoteLayout.throwTarget(
+            release: CGPoint(x: 50, y: 100), velocity: CGSize(width: CGFloat.nan, height: .infinity), note: noteSize, view: view
+        )
+        XCTAssertEqual(target, CGPoint(x: 50, y: 100))
+    }
+
+    func testTiltFollowsHorizontalSpeedAndClamps() {
+        XCTAssertEqual(StickyNoteLayout.tilt(forVelocityX: 0), 0)
+        XCTAssertEqual(StickyNoteLayout.tilt(forVelocityX: 500), 3, accuracy: 0.0001)
+        XCTAssertEqual(StickyNoteLayout.tilt(forVelocityX: -500), -3, accuracy: 0.0001)
+        XCTAssertEqual(StickyNoteLayout.tilt(forVelocityX: 5000), 6)
+        XCTAssertEqual(StickyNoteLayout.tilt(forVelocityX: -5000), -6)
+        XCTAssertEqual(StickyNoteLayout.tilt(forVelocityX: .nan), 0)
+    }
+
+    func testSettleVelocityIsRelativeToDistanceAndCapped() {
+        let from = CGPoint(x: 100, y: 100)
+        // 40 pt left at 200 pt/s along the path = 5 distances per second.
+        XCTAssertEqual(
+            StickyNoteLayout.settleVelocity(from: from, to: CGPoint(x: 140, y: 100), velocity: CGSize(width: 200, height: 0)),
+            5, accuracy: 0.0001
+        )
+        // An unclamped throw always launches at 1 / throwSeconds (12.5), whatever its direction.
+        let release = CGPoint(x: 60, y: 200)
+        let velocity = CGSize(width: 150, height: 200)
+        let target = StickyNoteLayout.throwTarget(release: release, velocity: velocity, note: noteSize, view: view)
+        XCTAssertEqual(StickyNoteLayout.settleVelocity(from: release, to: target, velocity: velocity), 12.5, accuracy: 0.0001)
+        // Only the part of the velocity along the path counts; moving away is negative.
+        XCTAssertEqual(
+            StickyNoteLayout.settleVelocity(from: from, to: CGPoint(x: 140, y: 100), velocity: CGSize(width: -80, height: 500)),
+            -2, accuracy: 0.0001
+        )
+        // Landing nearly where it is (a throw into an edge): capped, not a spike.
+        XCTAssertEqual(
+            StickyNoteLayout.settleVelocity(from: from, to: CGPoint(x: 102, y: 100), velocity: CGSize(width: 1000, height: 0)),
+            20
+        )
+        // No distance left, or a bad velocity: nothing to launch.
+        XCTAssertEqual(StickyNoteLayout.settleVelocity(from: from, to: from, velocity: CGSize(width: 1000, height: 0)), 0)
+        XCTAssertEqual(
+            StickyNoteLayout.settleVelocity(from: from, to: CGPoint(x: 140, y: 100), velocity: CGSize(width: CGFloat.nan, height: 0)),
+            0
+        )
     }
 
     func testNoteWidthShrinksOnNarrowViews() {

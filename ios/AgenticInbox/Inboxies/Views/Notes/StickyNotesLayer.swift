@@ -91,7 +91,12 @@ struct StickyNoteView: View {
     @State private var dragStart: CGPoint?
     /// Shown instead of the saved spot while dragging and until the save lands.
     @State private var livePosition: CGPoint?
+    /// Lifted: picked up and following the finger.
     @State private var isDragging = false
+    /// Lean from the finger's horizontal speed while lifted (degrees).
+    @State private var dragTilt: Double = 0
+    /// Eases `dragTilt` back to level once the finger stops moving.
+    @State private var tiltSettle: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var noteWidth: CGFloat { StickyNoteLayout.noteWidth(in: view) }
@@ -102,6 +107,12 @@ struct StickyNoteView: View {
 
     private var position: CGPoint {
         livePosition.map { StickyNoteLayout.clamp($0, note: size, view: view) } ?? resting
+    }
+
+    /// Lifted: the speed lean (level under Reduce Motion). Resting: the paper's tilt.
+    private var rotation: Double {
+        if reduceMotion { return 0 }
+        return isDragging ? dragTilt : AppTheme.Note.tilt
     }
 
     var body: some View {
@@ -115,13 +126,13 @@ struct StickyNoteView: View {
             .onPreferenceChange(StickyNoteSizeKey.self) { measured in
                 if measured.width > 0, measured.height > 0 { size = measured }
             }
-            .rotationEffect(.degrees(isDragging || reduceMotion ? 0 : AppTheme.Note.tilt))
-            .scaleEffect(isDragging ? 1.03 : 1)
+            .rotationEffect(.degrees(rotation))
+            .scaleEffect(isDragging ? AppTheme.Note.liftScale : 1)
             .shadow(
-                color: AppTheme.Note.shadow,
-                radius: isDragging ? 18 : 9,
+                color: isDragging ? AppTheme.Note.shadowLifted : AppTheme.Note.shadow,
+                radius: isDragging ? AppTheme.Note.liftedShadowRadius : AppTheme.Note.restingShadowRadius,
                 x: 0,
-                y: isDragging ? 12 : 4
+                y: isDragging ? AppTheme.Note.liftedShadowY : AppTheme.Note.restingShadowY
             )
             .offset(x: position.x, y: position.y)
             .gesture(dragGesture)
@@ -130,6 +141,16 @@ struct StickyNoteView: View {
                 // The model now holds the dropped spot (or put it back after a failed save).
                 if dragStart == nil { livePosition = nil }
             }
+            .onDisappear { tiltSettle?.cancel() }
+            #if DEBUG
+            // Steps arrive through the live view (not a captured copy), so they see the
+            // current size, spot and saved position.
+            .onReceive(NotificationCenter.default.publisher(for: PreviewSupport.scriptedDragNotification)) { note in
+                guard index == 0, let step = note.object as? PreviewSupport.ScriptedDragStep else { return }
+                scriptedDrag(step)
+            }
+            .task { await PreviewSupport.runScriptedStickyThrow(index: index) }
+            #endif
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Sticky note to self")
             .accessibilityAction(named: "Move to top right") {
@@ -169,7 +190,9 @@ struct StickyNoteView: View {
             .padding(.bottom, 12)
         }
         .background(paperShape.fill(AppTheme.Note.paper))
-        .overlay(paperShape.strokeBorder(AppTheme.Note.paperEdge, lineWidth: 0.5))
+        .overlay(paperShape.strokeBorder(AppTheme.Note.paperEdge, lineWidth: 1))
+        // Dark mode: a faint mint ring so the paper's edge holds against the black shadow.
+        .overlay(paperShape.strokeBorder(AppTheme.Note.ring, lineWidth: 1).padding(-1))
         .overlay(alignment: .top) { pin }
     }
 
@@ -178,7 +201,7 @@ struct StickyNoteView: View {
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(AppTheme.Note.pin)
             .rotationEffect(.degrees(20))
-            .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
+            .shadow(color: AppTheme.Note.shadowLifted, radius: 1, y: 1)
             .offset(y: -9)
             .accessibilityHidden(true)
     }
@@ -260,44 +283,106 @@ struct StickyNoteView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: StickyNoteLayout.dragThreshold, coordinateSpace: .global)
             .onChanged { value in
-                if dragStart == nil {
-                    dragStart = position
-                    onFocus()
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    withAnimation(Self.spring) { isDragging = true }
-                }
-                guard let start = dragStart else { return }
-                livePosition = StickyNoteLayout.clamp(
-                    CGPoint(x: start.x + value.translation.width, y: start.y + value.translation.height),
-                    note: size,
-                    view: view
-                )
+                if dragStart == nil { pickUp() }
+                follow(translation: value.translation, velocity: value.velocity)
             }
             .onEnded { value in
-                guard let start = dragStart else { return }
-                let end = StickyNoteLayout.dropPosition(
-                    start: start,
-                    translation: value.translation,
-                    predicted: value.predictedEndTranslation,
-                    note: size,
-                    view: view
-                )
-                dragStart = nil
-                withAnimation(Self.spring) {
-                    livePosition = end
-                    isDragging = false
-                }
-                if end != resting {
-                    onMove(end)
-                } else {
-                    livePosition = nil
-                }
+                release(translation: value.translation, velocity: value.velocity)
             }
     }
+
+    /// Pick up: lift (scale + deeper shadow), level the resting tilt, light haptic.
+    private func pickUp() {
+        dragStart = position
+        onFocus()
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        withAnimation(reduceMotion ? AppTheme.Note.reducedSettle : AppTheme.Note.liftSpring) {
+            isDragging = true
+            dragTilt = 0
+        }
+    }
+
+    /// Follow the finger 1:1, leaning with its horizontal speed.
+    private func follow(translation: CGSize, velocity: CGSize) {
+        guard let start = dragStart else { return }
+        var still = Transaction()
+        still.disablesAnimations = true
+        withTransaction(still) {
+            livePosition = StickyNoteLayout.clamp(
+                CGPoint(x: start.x + translation.width, y: start.y + translation.height),
+                note: size,
+                view: view
+            )
+        }
+        guard !reduceMotion else { return }
+        withAnimation(AppTheme.Note.tiltSpring) {
+            dragTilt = StickyNoteLayout.tilt(forVelocityX: velocity.width)
+        }
+        // No new touch events once the finger stops, so ease the lean back after a beat.
+        tiltSettle?.cancel()
+        tiltSettle = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(90))
+            guard !Task.isCancelled else { return }
+            withAnimation(AppTheme.Note.tiltSpring) { dragTilt = 0 }
+        }
+    }
+
+    /// Let go: carry the throw a short way, clamp, settle on a slightly underdamped
+    /// spring launched at the release speed; scale, shadow and resting tilt return.
+    private func release(translation: CGSize, velocity: CGSize) {
+        guard let start = dragStart else { return }
+        tiltSettle?.cancel()
+        let letGo = StickyNoteLayout.clamp(
+            CGPoint(x: start.x + translation.width, y: start.y + translation.height),
+            note: size,
+            view: view
+        )
+        let end = StickyNoteLayout.throwTarget(
+            release: letGo,
+            velocity: reduceMotion ? .zero : velocity,
+            note: size,
+            view: view
+        )
+        dragStart = nil
+        let settle: Animation = reduceMotion
+            ? AppTheme.Note.reducedSettle
+            : .interpolatingSpring(
+                AppTheme.Note.settle,
+                initialVelocity: StickyNoteLayout.settleVelocity(from: letGo, to: end, velocity: velocity)
+            )
+        withAnimation(settle) {
+            livePosition = end
+            isDragging = false
+            dragTilt = 0
+        }
+        if end != resting {
+            onMove(end)
+        } else {
+            livePosition = nil
+        }
+    }
+
+    #if DEBUG
+    /// Drives the same pick-up / follow / release path as a finger, for the
+    /// `-previewNotesThrow` recording (see `PreviewSupport.runScriptedStickyThrow`).
+    private func scriptedDrag(_ step: PreviewSupport.ScriptedDragStep) {
+        switch step {
+        case .pickUp:
+            pickUp()
+            PreviewSupport.scriptedStart = position
+            PreviewSupport.scriptedView = view
+        case let .move(translation, velocity):
+            follow(translation: translation, velocity: velocity)
+        case let .release(translation, velocity):
+            release(translation: translation, velocity: velocity)
+        }
+    }
+    #endif
 }
 
-/// Notes to self on one message, in line under it in the thread. Neutral card with
-/// a dashed hairline and the private indicator. Only their author sees them.
+/// Notes to self on one message, in line under it in the thread: on the same mint
+/// note paper as the sticky (paper fill, solid paper-edge border, note ink), so they
+/// read as the user's own and never as mail. Only their author sees them.
 struct InlineNotesView: View {
     let notes: [ThreadNote]
     var onEdit: (ThreadNote) -> Void
@@ -321,13 +406,13 @@ struct PrivateNoteLabel: View {
         HStack(spacing: 5) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(AppTheme.muted)
+                .foregroundStyle(AppTheme.Note.pin)
             (Text("Private note to self")
                 .font(.inter(size: 11, weight: .medium))
-                .foregroundColor(AppTheme.ink)
+                .foregroundColor(AppTheme.Note.muted)
              + Text(" · Only visible to you\(dateSuffix)")
                 .font(.inter(size: 11))
-                .foregroundColor(AppTheme.muted))
+                .foregroundColor(AppTheme.Note.muted))
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
@@ -362,26 +447,27 @@ private struct InlineNoteCard: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.inter(size: 13, weight: .medium))
-                        .foregroundStyle(AppTheme.muted)
+                        .foregroundStyle(AppTheme.Note.muted)
                         .frame(width: 28, height: 24)
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Note options")
             }
-            NoteMarkdownView(note.body, fontSize: 13)
+            NoteMarkdownView(note.body, fontSize: 13, ink: AppTheme.Note.ink)
         }
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .padding(.top, 8)
         .padding(.bottom, 10)
         .background(
-            AppTheme.pillFill.opacity(0.45),
+            AppTheme.Note.paper,
             in: RoundedRectangle(cornerRadius: AppTheme.Note.inlineCornerRadius, style: .continuous)
         )
         .overlay(
             RoundedRectangle(cornerRadius: AppTheme.Note.inlineCornerRadius, style: .continuous)
-                .strokeBorder(AppTheme.line, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                .strokeBorder(AppTheme.Note.paperEdge, lineWidth: 1)
         )
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: AppTheme.Note.inlineCornerRadius, style: .continuous))
         .contextMenu {
             Button(action: onEdit) {
                 Label("Edit Note", systemImage: "pencil")
@@ -393,7 +479,7 @@ private struct InlineNoteCard: View {
     }
 }
 
-/// The list row's sticky strip: the note's text on warm paper, clamped to two lines.
+/// The list row's sticky strip: the note's text on the mint note paper, clamped to two lines.
 struct StickyNoteRowStrip: View {
     let text: String
 
@@ -414,7 +500,7 @@ struct StickyNoteRowStrip: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(stripShape.fill(AppTheme.Note.paper))
-        .overlay(stripShape.strokeBorder(AppTheme.Note.paperEdge, lineWidth: 0.5))
+        .overlay(stripShape.strokeBorder(AppTheme.Note.paperEdge, lineWidth: 1))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Note to self: \(text)")
     }
@@ -430,7 +516,7 @@ struct StickyNoteRowStrip: View {
     }
 }
 
-/// "🔒 N private notes" chip on a list row (notes on single messages).
+/// "🔒 N private notes" chip on a list row (notes on single messages), on note paper.
 struct PrivateNotesChip: View {
     let count: Int
 
@@ -438,15 +524,20 @@ struct PrivateNotesChip: View {
         HStack(spacing: 4) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(AppTheme.Note.pin)
             Text("\(count) private note\(count == 1 ? "" : "s")")
                 .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                .foregroundStyle(AppTheme.Note.muted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(AppTheme.pillFill)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .foregroundStyle(AppTheme.muted)
+        .background(chipShape.fill(AppTheme.Note.paper))
+        .overlay(chipShape.strokeBorder(AppTheme.Note.paperEdge, lineWidth: 1))
         .lineLimit(1)
         .accessibilityElement(children: .combine)
+    }
+
+    private var chipShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
     }
 }

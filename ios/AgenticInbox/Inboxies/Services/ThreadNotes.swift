@@ -16,8 +16,17 @@ enum StickyNoteLayout {
     static let cascade: CGFloat = 24
     /// Points a finger must travel before a press on the note becomes a drag.
     static let dragThreshold: CGFloat = 3
-    /// Share of the flick's projected travel added on release, so a throw carries a little.
-    static let momentum: CGFloat = 0.2
+    /// Seconds of the release velocity a throw carries, so a flick travels a little on.
+    static let throwSeconds: CGFloat = 0.08
+    /// Farthest a throw carries the note past where it was let go, in points.
+    static let maxThrow: CGFloat = 48
+    /// Degrees of drag tilt per point/second of horizontal speed.
+    static let tiltPerVelocity: Double = 0.006
+    /// Most a dragged note leans with its horizontal speed, in degrees either way.
+    static let maxTilt: Double = 6
+    /// Cap on the settle spring's relative launch speed, so a fast throw that lands
+    /// close (say, against an edge) overshoots a little instead of flying past.
+    static let maxSettleVelocity: CGFloat = 20
     /// Resting width of a sticky note (narrower views shrink it to fit).
     static let width: CGFloat = 260
 
@@ -54,18 +63,40 @@ enum StickyNoteLayout {
         hypot(translation.width, translation.height) >= threshold
     }
 
-    /// Where a released note settles: the drop point plus a little of the flick's
-    /// momentum (`predicted` is the gesture's projected end translation), clamped.
-    static func dropPosition(
-        start: CGPoint,
-        translation: CGSize,
-        predicted: CGSize,
-        note: CGSize,
-        view: CGSize
-    ) -> CGPoint {
-        let x = start.x + translation.width + (predicted.width - translation.width) * momentum
-        let y = start.y + translation.height + (predicted.height - translation.height) * momentum
-        return clamp(CGPoint(x: x, y: y), note: note, view: view)
+    /// The lean of a note dragged at `velocityX` points/second: proportional,
+    /// clamped to ±`maxTilt`, like paper dragged through air. Positive leans clockwise.
+    static func tilt(forVelocityX velocityX: CGFloat) -> Double {
+        guard velocityX.isFinite else { return 0 }
+        return min(max(Double(velocityX) * tiltPerVelocity, -maxTilt), maxTilt)
+    }
+
+    /// Where a released note comes to rest: where it was let go plus the release
+    /// `velocity` (points/second) carried for `throwSeconds`, at most `maxThrow`
+    /// points along the throw, then clamped inside the view (an out-of-bounds throw
+    /// lands on the edge).
+    static func throwTarget(release: CGPoint, velocity: CGSize, note: CGSize, view: CGSize) -> CGPoint {
+        var dx = velocity.width.isFinite ? velocity.width * throwSeconds : 0
+        var dy = velocity.height.isFinite ? velocity.height * throwSeconds : 0
+        let distance = hypot(dx, dy)
+        if distance > maxThrow {
+            dx = dx / distance * maxThrow
+            dy = dy / distance * maxThrow
+        }
+        return clamp(CGPoint(x: release.x + dx, y: release.y + dy), note: note, view: view)
+    }
+
+    /// The settle spring's initial velocity, relative to the distance left to travel
+    /// (SwiftUI's `interpolatingSpring(initialVelocity:)` unit), so the note leaves the
+    /// finger at the speed it was thrown: the release `velocity` (points/second)
+    /// projected onto the path from `from` to `to`. Zero when there's no distance
+    /// left; capped at ±`maxSettleVelocity`.
+    static func settleVelocity(from: CGPoint, to: CGPoint, velocity: CGSize) -> Double {
+        let dx = to.x - from.x
+        let dy = to.y - from.y
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared >= 0.25, velocity.width.isFinite, velocity.height.isFinite else { return 0 }
+        let relative = (velocity.width * dx + velocity.height * dy) / lengthSquared
+        return Double(min(max(relative, -maxSettleVelocity), maxSettleVelocity))
     }
 }
 

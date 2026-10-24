@@ -341,7 +341,8 @@ enum PreviewSupport {
 
     /// `-previewNotes` (with `-previewMailbox` or `-previewDetail`): seeds notes to self.
     /// `-previewDetail -previewNotes` opens the Q3 thread with a sticky and inline notes;
-    /// add `-previewNotesMoved` for a sticky already dragged to the lower left, and
+    /// add `-previewNotesMoved` for a sticky already dragged to the lower left,
+    /// `-previewNotesThrow` for a scripted drag-and-throw loop (screen recordings), and
     /// `-previewNoteEditor` / `-previewNoteEditorPreview` to open its editor.
     @MainActor
     private static func applyNotesFixtures(to app: AppModel, args: [String]) {
@@ -360,6 +361,83 @@ enum PreviewSupport {
         if args.contains("-previewDetail"), let latest = app.emails.first(where: { $0.id == "preview-1" }) {
             app.selectedEmail = latest
             app.threadEmails = noteThread
+        }
+    }
+
+    /// One step of the scripted sticky drag (`-previewNotesThrow`).
+    enum ScriptedDragStep {
+        /// Lift the first sticky where it sits.
+        case pickUp
+        /// Finger at this translation from the pick-up point, moving at this velocity (pt/s).
+        case move(CGSize, CGSize)
+        /// Let go at this translation and velocity.
+        case release(CGSize, CGSize)
+    }
+
+    static let scriptedDragNotification = Notification.Name("InboxiesPreviewScriptedStickyDrag")
+    /// Written back by the sticky on pick-up: where it was lifted from, in its view.
+    @MainActor static var scriptedStart: CGPoint = .zero
+    @MainActor static var scriptedView: CGSize = .zero
+    @MainActor private static var scriptedThrowStarted = false
+
+    /// `-previewDetail -previewNotes -previewNotesThrow`: after a beat, the first sticky is
+    /// picked up and thrown around the reader by the same code a finger drives (lift,
+    /// speed tilt, projected throw, spring settle), so a screen recording shows the
+    /// motion without touch injection. Throws: a fast fling to the lower left (lands on
+    /// the edge), a slow drag that stops before letting go (the lean eases back), and a
+    /// curved toss back up to the top right. Runs twice.
+    @MainActor
+    static func runScriptedStickyThrow(index: Int) async {
+        guard index == 0, !scriptedThrowStarted,
+              ProcessInfo.processInfo.arguments.contains("-previewNotesThrow") else { return }
+        scriptedThrowStarted = true
+        func send(_ step: ScriptedDragStep) {
+            NotificationCenter.default.post(name: scriptedDragNotification, object: step)
+        }
+
+        /// One drag to `target(view)`: lift, follow a bowed path, optionally rest, let go.
+        func gesture(to target: (CGSize) -> CGPoint, seconds: Double, bow: CGFloat, accelerate: Bool, hold: Double) async {
+            send(.pickUp)
+            let start = scriptedStart
+            let end = target(scriptedView)
+            try? await Task.sleep(for: .milliseconds(140))
+            let delta = CGSize(width: end.x - start.x, height: end.y - start.y)
+            let tick = 0.016
+            let steps = max(2, Int(seconds / tick))
+            var last = CGSize.zero
+            var velocity = CGSize.zero
+            for step in 1...steps {
+                let t = CGFloat(step) / CGFloat(steps)
+                // Accelerating fling (t²), or an eased drag that slows to a stop.
+                let progress = accelerate ? t * t : t * t * (3 - 2 * t)
+                // A sideways bow so the path curves and the lean changes direction.
+                let side = sin(.pi * t) * bow
+                let translation = CGSize(width: delta.width * progress + side, height: delta.height * progress)
+                velocity = CGSize(
+                    width: (translation.width - last.width) / tick,
+                    height: (translation.height - last.height) / tick
+                )
+                last = translation
+                send(.move(translation, velocity))
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            if hold > 0 {
+                // The finger rests before letting go: no speed left to carry.
+                try? await Task.sleep(for: .seconds(hold))
+                velocity = .zero
+            }
+            send(.release(last, velocity))
+        }
+
+        let edge = StickyNoteLayout.edge
+        try? await Task.sleep(for: .seconds(1.5))
+        for _ in 0..<2 {
+            await gesture(to: { CGPoint(x: edge + 30, y: $0.height * 0.55) }, seconds: 0.42, bow: -40, accelerate: true, hold: 0)
+            try? await Task.sleep(for: .seconds(1.3))
+            await gesture(to: { CGPoint(x: $0.width * 0.2, y: $0.height * 0.25) }, seconds: 0.9, bow: 70, accelerate: false, hold: 0.45)
+            try? await Task.sleep(for: .seconds(1.1))
+            await gesture(to: { CGPoint(x: $0.width - 200, y: edge + 20) }, seconds: 0.5, bow: 50, accelerate: true, hold: 0)
+            try? await Task.sleep(for: .seconds(1.6))
         }
     }
 
