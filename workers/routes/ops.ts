@@ -7,8 +7,9 @@
  * They replace the cross-tenant powers DOMAIN_ADMINS used to give app users:
  * listing every domain and mailbox, creating addresses anywhere (reserved
  * names included), managing domain admins, reading the audit log, and
- * signing a user out everywhere, and replaying dead-lettered Email Sending
- * events. Every write is audited with the operator.
+ * signing a user out everywhere, replaying dead-lettered Email Sending
+ * events, and the spam metrics dashboard. Every write is audited with the
+ * operator.
  */
 
 import type { Hono } from "hono";
@@ -20,6 +21,7 @@ import type { Operator } from "../auth/operators";
 import type { RequestPrincipal } from "../auth/principal";
 import * as schema from "../auth/schema";
 import { findUserByEmail, findUserById, revokeUserSessions } from "../auth/users";
+import { getMailboxStub } from "../lib/email-helpers";
 import { strictMailboxId } from "../lib/mailbox-routing";
 import {
 	discardDeadLetter,
@@ -29,9 +31,21 @@ import {
 } from "../lib/email-sending-dlq";
 import { RECIPIENT_ONLY_EVENT_MAX_ATTEMPTS } from "../lib/email-sending-events";
 import { handleEmailSendingQueueMessage } from "../lib/email-sending-queue";
+import {
+	mergeMailboxSpamCounts,
+	renderSpamMetricsHtml,
+	summarizeSpamMetrics,
+	type MailboxSpamCounts,
+	type SpamMetricsReport,
+} from "../lib/spam-metrics";
 import type { Env } from "../types";
 
 type OpsApp = Hono<{ Bindings: Env; Variables: { principal?: RequestPrincipal; operator?: Operator } }>;
+
+/** Mailboxes per dashboard request; filter by domain beyond this. */
+const SPAM_METRICS_MAX_MAILBOXES = 200;
+/** Mailbox Durable Objects queried at once. */
+const SPAM_METRICS_CONCURRENCY = 20;
 
 async function auditOps(db: AuthDb, operator: Operator | undefined, action: string, target: string, detail?: unknown) {
 	await db.insert(schema.auditLog).values({
@@ -170,6 +184,69 @@ export function registerOpsRoutes(app: OpsApp) {
 		if (!(await discardDeadLetter(c.env.BUCKET, id))) return c.json({ error: "Not found" }, 404);
 		await auditOps(authDb(c.env.AUTH_DB), c.get("operator"), "dead_letter.discard", EMAIL_SENDING_EVENTS_QUEUE, { id });
 		return c.json({ ok: true });
+	});
+
+	// ── Spam metrics (AVE-100, lib/spam-metrics) ──
+
+	/**
+	 * Content-free spam metrics for the last 7 and 30 days, per mailbox and in
+	 * total. HTML for browsers (the dashboard), JSON with `?format=json` or a
+	 * non-HTML Accept. Filter with `?domain=` or `?mailbox=`.
+	 */
+	app.get("/ops/spam-metrics", async (c) => {
+		const db = authDb(c.env.AUTH_DB);
+		const domain = c.req.query("domain")?.trim().toLowerCase() || null;
+		const mailboxParam = c.req.query("mailbox");
+		const mailbox = mailboxParam ? strictMailboxId(mailboxParam) : null;
+		if (mailboxParam && !mailbox) return c.json({ error: "Invalid mailbox" }, 400);
+		const conditions = [isNull(schema.mailbox.deletedAt)];
+		if (domain) conditions.push(eq(schema.mailbox.domain, domain));
+		if (mailbox) conditions.push(eq(schema.mailbox.id, mailbox));
+		const rows = await db
+			.select({ id: schema.mailbox.id })
+			.from(schema.mailbox)
+			.where(and(...conditions))
+			.orderBy(schema.mailbox.id)
+			.limit(SPAM_METRICS_MAX_MAILBOXES + 1)
+			.all();
+		const truncated = rows.length > SPAM_METRICS_MAX_MAILBOXES;
+		const ids = rows.slice(0, SPAM_METRICS_MAX_MAILBOXES).map((r) => r.id);
+
+		const results: Array<{ id: string; counts: MailboxSpamCounts }> = [];
+		const failed: string[] = [];
+		for (let i = 0; i < ids.length; i += SPAM_METRICS_CONCURRENCY) {
+			const chunk = ids.slice(i, i + SPAM_METRICS_CONCURRENCY);
+			const settled = await Promise.allSettled(
+				chunk.map(
+					async (id): Promise<MailboxSpamCounts> => getMailboxStub(c.env, id).getSpamMetricsCounts(),
+				),
+			);
+			settled.forEach((r, j) => {
+				if (r.status === "fulfilled") results.push({ id: chunk[j], counts: r.value });
+				else {
+					failed.push(chunk[j]);
+					console.error("ops spam-metrics: mailbox failed", chunk[j], r.reason);
+				}
+			});
+		}
+
+		const generatedAt = new Date().toISOString();
+		const report: SpamMetricsReport = {
+			generatedAt,
+			filter: { domain, mailbox },
+			mailboxCount: results.length,
+			truncated,
+			failed,
+			total: summarizeSpamMetrics(mergeMailboxSpamCounts(results.map((r) => r.counts), generatedAt)),
+			mailboxes: results.map((r) => ({ id: r.id, metrics: summarizeSpamMetrics(r.counts) })),
+		};
+		const format = c.req.query("format");
+		const wantsHtml =
+			format === "html" || (format !== "json" && (c.req.header("accept") || "").includes("text/html"));
+		if (!wantsHtml) return c.json(report);
+		c.header("Cache-Control", "no-store");
+		c.header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'");
+		return c.html(renderSpamMetricsHtml(report));
 	});
 
 	app.get("/ops/audit", async (c) => {
