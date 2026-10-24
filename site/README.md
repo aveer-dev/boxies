@@ -2,7 +2,7 @@
 
 The marketing site for Inboxies: a landing page with a scroll-pinned phone tour, Pricing, Roadmap, Support (with a contact form) and Legal. It's Astro 7 with `@astrojs/cloudflare`, plain CSS and a few small TypeScript modules, deployed as one Cloudflare Worker at https://inboxies.co. The web app is at https://inboxies.app; mail addresses stay @inboxies.email.
 
-Every page is prerendered except `POST /api/contact`, so the Worker mostly serves static assets. Its entry, `src/worker.ts`, wraps Astro's handler: it answers byte-range requests for `/media/*` (the static asset server ignores `Range`, and Safari and iOS won't play video without `206`s) and adds the security headers that `public/_headers` can't reach (Worker responses: the 404 page, `/api/contact`, `/media`).
+Every page is prerendered except `POST /api/contact` and `GET /api/roadmap`, so the Worker mostly serves static assets. Its entry, `src/worker.ts`, wraps Astro's handler: it answers byte-range requests for `/media/*` (the static asset server ignores `Range`, and Safari and iOS won't play video without `206`s) and adds the security headers that `public/_headers` can't reach (Worker responses: the 404 page, `/api/contact`, `/media`).
 
 ## Commands
 
@@ -101,6 +101,31 @@ How it behaves:
 - **Logs:** one JSON line per request (outcome and topic), never the message, name or address.
 
 Local test: `pnpm preview`, then submit the form. Wrangler simulates `send_email` locally (nothing is sent) and logs where it saved the message.
+
+## Roadmap from Linear
+
+`GET /api/roadmap` reads the issues labelled `public-roadmap` from Linear's GraphQL API and answers JSON. Linear is the only source; GitHub issues aren't mirrored. The roadmap page doesn't read it yet (AVE-87 will, falling back to its static list).
+
+To turn it on (owner):
+
+1. In Linear's settings, create a personal API key with **read** permission only, limited to the teams that hold roadmap issues if you can.
+2. `cd site && npx wrangler secret put LINEAR_ROADMAP_API_KEY` and paste the key. For `pnpm preview`, put `LINEAR_ROADMAP_API_KEY=...` in `site/.dev.vars` (gitignored).
+3. Label the issues you want public with `public-roadmap`. To give one a blurb, add a `## Public summary` section to its description (a bold `**Public summary:**` line or a `Public summary:` line also works); the text up to the next heading or rule is used. Without one, the page shows the title alone.
+
+What it answers:
+
+```json
+{ "items": [{ "id": "3f9a…", "title": "Snooze", "summary": "Hide a thread until later.", "status": "Planned" }],
+  "source": "linear", "fetchedAt": "2026-10-20T09:00:00.000Z" }
+```
+
+- **Status:** Linear's state type decides it: triage, backlog and unstarted → Planned; started → In progress; completed → Shipped. Canceled (and duplicates) are left out. Sorted In progress, Planned, Shipped, latest first.
+- **Public fields only:** the title (plain text, 120 characters at most), the Public summary (plain text with links, URLs, HTML, code and images stripped, 280 characters at most) and the status. `id` is a hash of the Linear id, stable but not a link into Linear. No identifiers, assignees, estimates, comments or the rest of the description.
+- **No key:** 503 with `source: "unconfigured"` and no items. **Linear failing** (HTTP error, GraphQL error, 5s timeout): the last good answer this isolate holds (up to a day old) if there is one, otherwise 503 with `source: "error"`. The page should treat anything but `source: "linear"` as "use the static list".
+- **Caching:** 10 minutes in the Cache API (a failure for 1 minute), plus a copy in the isolate's memory, because the Cache API does nothing on `workers.dev`. Browsers may cache the answer for 10 minutes too.
+- **Logs:** one JSON line per request (outcome, item count), never the key or Linear's response.
+
+The parsing and mapping live in `src/lib/roadmap-linear.ts`, tested by `site/test/roadmap-linear.test.mjs` (`pnpm test:unit roadmap` from the repo root).
 
 ## Re-shooting the iOS media
 
