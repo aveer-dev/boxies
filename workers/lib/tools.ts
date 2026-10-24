@@ -42,6 +42,7 @@ import {
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { allowOutboundRecipients } from "./sender-triage";
+import { allowSenderForAgent, blockSenderForAgent } from "./sender-verdicts";
 import {
 	findThreadAliasId,
 	isInboundEmail,
@@ -405,6 +406,11 @@ export async function toolMarkEmailRead(
 
 // ── move_email ─────────────────────────────────────────────────────
 
+/**
+ * Moves a message and nothing else. Unlike a user's move into or out of
+ * Spam, an agent's move writes no sender rule (docs/spam-management-plan.md
+ * §5): agents teach senders only through `allow_sender` / `block_sender`.
+ */
 export async function toolMoveEmail(
 	env: Env,
 	mailboxId: string,
@@ -417,6 +423,28 @@ export async function toolMoveEmail(
 		return { status: "moved", emailId, folder: folderId };
 	}
 	return { error: "Failed to move email" };
+}
+
+// ── allow_sender / block_sender ────────────────────────────────────
+
+/** Not spam for a sender, without moving any message. */
+export async function toolAllowSender(
+	env: Env,
+	mailboxId: string,
+	params: { sender: string; folderId?: string | null },
+) {
+	const stub = getMailboxStub(env, mailboxId);
+	return allowSenderForAgent(stub, mailboxId, params);
+}
+
+/** Report spam for a sender, without moving any message. */
+export async function toolBlockSender(
+	env: Env,
+	mailboxId: string,
+	params: { sender: string },
+) {
+	const stub = getMailboxStub(env, mailboxId);
+	return blockSenderForAgent(stub, mailboxId, params);
 }
 
 // ── discard_draft ──────────────────────────────────────────────────

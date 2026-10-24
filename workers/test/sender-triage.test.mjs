@@ -11,6 +11,7 @@ import {
 	isVouchedSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
+	isSpamVerdictMove,
 	senderLessonForMove,
 	senderTrustOf,
 	screenerSettingsError,
@@ -259,6 +260,33 @@ const allowed = (sender, destination_folder_id = null) => ({
 		"your own address is never rejected",
 	);
 	assert.deepEqual(senderLessonForMove({ ...base, sender: null, fromFolderId: "inbox", toFolderId: "spam" }), { kind: "none" });
+
+	// AVE-95: crossing Spam always teaches, "remember" or not (move menu, swipe, multi-select).
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "spam", toFolderId: "inbox", remember: false }),
+		{ kind: "allow", sender: "a@x.com", destination: "inbox" },
+	);
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "archive", toFolderId: "spam", remember: false }),
+		{ kind: "reject", sender: "a@x.com" },
+	);
+	// Other moves only teach when the user said "remember".
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "inbox", toFolderId: "updates", remember: false }),
+		{ kind: "none" },
+	);
+	// Deleting or screening out spam isn't a vote, even with "remember".
+	for (const toFolderId of ["trash", "screened_out"]) {
+		assert.deepEqual(
+			senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "spam", toFolderId, remember: true }),
+			{ kind: "none" },
+			`spam → ${toFolderId} teaches nothing`,
+		);
+	}
+	assert.equal(isSpamVerdictMove("spam", "spam"), false);
+	assert.equal(isSpamVerdictMove(null, "spam"), true);
+	assert.equal(isSpamVerdictMove("spam", "archive"), true);
+	assert.equal(isSpamVerdictMove("inbox", "archive"), false);
 }
 
 // ── Destination helper ────────────────────────────────────────────

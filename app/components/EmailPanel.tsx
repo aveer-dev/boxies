@@ -185,6 +185,12 @@ export default function EmailPanel({
 		const isSelf =
 			Boolean(currentMailbox?.email) &&
 			email.sender?.toLowerCase() === currentMailbox?.email?.toLowerCase();
+		// Into or out of Spam is Not spam / Report spam: leaving Spam is the
+		// signal, so there's no "remember?" prompt (the server teaches the sender).
+		if (email.folder_id === Folders.SPAM || folderId === Folders.SPAM) {
+			runMove(folderId, true);
+			return;
+		}
 		if (isPurposeFolderId(folderId) && email.sender && !isSelf) {
 			setPendingPurposeMove(folderId);
 			return;

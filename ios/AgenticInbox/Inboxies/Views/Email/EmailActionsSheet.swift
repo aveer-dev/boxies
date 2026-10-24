@@ -293,7 +293,11 @@ private struct MoveToFolderView: View {
     var body: some View {
         List(folders) { folder in
             Button(folder.name) {
-                if Self.purposeFolderIds.contains(folder.id),
+                // Into or out of Spam is Not spam / Report spam: leaving Spam is
+                // the signal, so there's no "remember?" prompt.
+                if sender.folderId == "spam" || folder.id == "spam" {
+                    onMove(folder.id, true)
+                } else if Self.purposeFolderIds.contains(folder.id),
                    !sender.sender.isEmpty,
                    !isSelfSender {
                     pendingFolderId = folder.id

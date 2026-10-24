@@ -23,7 +23,7 @@ export const MCP_SCOPE_COPY: Record<McpOAuthScope, { label: string; description:
 	read: { label: "Read mail", description: "See your mailboxes, folders, messages and threads, and search them." },
 	draft: { label: "Write drafts", description: "Create and edit drafts. Drafts aren't sent until you send them." },
 	send: { label: "Send mail", description: "Send new messages and replies from the mailboxes you pick." },
-	manage: { label: "Organize mail", description: "Mark messages read or unread, move them between folders, and delete them." },
+	manage: { label: "Organize mail", description: "Mark messages read or unread, move them between folders, delete them, and allow or block senders." },
 };
 
 /** What the Worker gives the consent page to render. Plain JSON. */
