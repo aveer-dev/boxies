@@ -3,9 +3,11 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Badge, Button } from '@cloudflare/kumo';
-import { ArrowClockwiseIcon, CaretDownIcon, CaretUpIcon, CodeIcon, PaperclipIcon, PaperPlaneTiltIcon, PencilSimpleIcon, SparkleIcon, TrashIcon } from '@phosphor-icons/react';
-import { useState } from 'react';
-import { SummarySkeleton, SummaryText } from '~/components/email-panel/AISummaryCard';
+import { CaretDownIcon, CaretUpIcon, CodeIcon, DotsThreeIcon, PaperclipIcon, PaperPlaneTiltIcon, PencilSimpleIcon, TrashIcon } from '@phosphor-icons/react';
+import { useCallback, useRef, useState } from 'react';
+import { SummaryBlock } from '~/components/email-panel/AISummaryCard';
+import FloatingPanel from '~/components/FloatingPanel';
+import { SummaryIcon } from '~/components/icons/SummaryIcon';
 import { useEmailQuickSummary, useRegenerateEmailSummary } from '~/queries/summaries';
 import EmailAttachmentList from '~/components/EmailAttachmentList';
 import { IconButton } from '~/components/IconButton';
@@ -15,6 +17,7 @@ import { displaySenderName } from 'shared/sender';
 import type { Email } from '~/types';
 import { deliveryStatusLabel, isDeliveryFailure } from '~/lib/delivery-status';
 import { isAuthSpoofed } from '~/lib/email-auth';
+import { SpamReasonLine, UnverifiedSenderBanner } from './SenderTrustNotices';
 
 interface ThreadMessageProps {
     email: Email;
@@ -30,24 +33,15 @@ interface ThreadMessageProps {
     onDeleteDraft?: () => void;
     onViewSource?: () => void;
     onPreviewImage?: (url: string, filename: string) => void;
-    /** Offer "Quick summary" (AVE-20): only for messages in a multi-message thread. */
+    /** Offer a quick summary (AVE-20): only for messages in a multi-message thread. */
     quickSummary?: boolean;
 }
 
-/** Inline AI summary of one thread message, generated when the user asks. */
-function QuickSummary({ mailboxId, emailId }: { mailboxId?: string; emailId: string }) {
-    const [requested, setRequested] = useState(false);
-    const { data, isFetching, isError, refetch } = useEmailQuickSummary(mailboxId, emailId, requested);
+/** Inline AI summary of one thread message, fetched once the user asks for it. */
+function QuickSummary({ mailboxId, emailId, onClose }: { mailboxId: string; emailId: string; onClose: () => void }) {
+    const { data, isFetching, isError, refetch } = useEmailQuickSummary(mailboxId, emailId, true);
     const regenerate = useRegenerateEmailSummary();
 
-    if (!mailboxId) return null;
-    if (!requested && !data) {
-        return (
-            <Button variant="ghost" size="sm" icon={<SparkleIcon size={14} />} onClick={() => setRequested(true)} className="mb-3 md:ml-10.5">
-                Quick summary
-            </Button>
-        );
-    }
     if (data && data.status === 'not_eligible') {
         return (
             <p className="mb-3 md:ml-10.5 text-xs text-kumo-subtle" role="status">
@@ -56,37 +50,55 @@ function QuickSummary({ mailboxId, emailId }: { mailboxId?: string; emailId: str
         );
     }
     return (
-        <div className="mb-3 md:ml-10.5 rounded-xl border border-kumo-line bg-kumo-tint px-3.5 py-2.5" aria-label="Quick summary">
-            <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="flex items-center gap-1.5 text-xs font-medium text-kumo-subtle">
-                    <SparkleIcon size={14} weight="fill" className="text-kumo-brand" aria-hidden />
-                    Quick summary
-                </span>
-                {data?.status === 'ready' && (
-                    <IconButton
-                        label="Regenerate quick summary"
-                        icon={ArrowClockwiseIcon}
-                        iconClassName={regenerate.isPending ? 'animate-spin' : undefined}
-                        disabled={regenerate.isPending}
-                        onClick={() => regenerate.mutate({ mailboxId, emailId })}
-                    />
-                )}
-            </div>
-            {regenerate.isPending || (isFetching && !data) ? (
-                <SummarySkeleton />
-            ) : data?.status === 'ready' ? (
-                <SummaryText summary={data.summary} />
-            ) : isError ? (
-                <p className="text-xs text-kumo-subtle" role="status">
-                    Couldn’t summarize this message.{' '}
-                    <button type="button" className="underline underline-offset-2 hover:text-kumo-default" onClick={() => refetch()}>
-                        Try again
+        <SummaryBlock
+            label="Quick summary"
+            className="mb-3 md:ml-10.5 animate-reveal"
+            summary={data?.status === 'ready' ? data.summary : undefined}
+            loading={isFetching && !data}
+            errorText={isError && !data ? 'Couldn’t summarize this message.' : undefined}
+            onRetry={() => refetch()}
+            onRegenerate={() => regenerate.mutate({ mailboxId, emailId })}
+            regenerating={regenerate.isPending}
+            regenerateFailed={regenerate.isError}
+            onClose={onClose}
+        />
+    );
+}
+
+/** The message's "More" menu: Summarize (when offered) and View source. */
+function MessageOptionsMenu({ onSummarize, summaryOpen, onViewSource }: { onSummarize?: () => void; summaryOpen: boolean; onViewSource?: () => void }) {
+    const [open, setOpen] = useState(false);
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    const close = useCallback(() => setOpen(false), []);
+    const itemClass = 'w-full flex items-center gap-2.5 text-left px-2.5 py-2 rounded-lg text-sm text-kumo-default hover:bg-kumo-overlay focus-visible:bg-kumo-overlay focus-visible:outline-none transition-colors duration-100';
+
+    if (!onSummarize && !onViewSource) return null;
+    return (
+        <>
+            <IconButton
+                ref={triggerRef}
+                label="More options"
+                icon={DotsThreeIcon}
+                weight="bold"
+                onClick={() => setOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={open}
+            />
+            <FloatingPanel anchorRef={triggerRef} open={open} onClose={close} role="menu" aria-label="Message options" className="min-w-[180px]">
+                {onSummarize && (
+                    <button type="button" role="menuitem" className={itemClass} onClick={() => { onSummarize(); close(); }}>
+                        <SummaryIcon size={16} className="text-kumo-subtle" aria-hidden />
+                        {summaryOpen ? 'Hide summary' : 'Summarize'}
                     </button>
-                </p>
-            ) : (
-                <SummarySkeleton />
-            )}
-        </div>
+                )}
+                {onViewSource && (
+                    <button type="button" role="menuitem" className={itemClass} onClick={() => { onViewSource(); close(); }}>
+                        <CodeIcon size={16} className="text-kumo-subtle" aria-hidden />
+                        View source
+                    </button>
+                )}
+            </FloatingPanel>
+        </>
     );
 }
 
@@ -110,6 +122,10 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
     const containerClassName = `${!isLast ? 'border-b border-kumo-line' : ''} ${accent}`;
     const senderName = displaySenderName(email);
     const senderLabel = isDraft ? 'Draft reply' : isSelf ? 'You' : senderName;
+    // Quick summary stays hidden until asked for (icon button or the More menu).
+    const canSummarize = Boolean(quickSummary && !isDraft && mailboxId);
+    const [summaryOpen, setSummaryOpen] = useState(false);
+    const toggleSummary = useCallback(() => setSummaryOpen((v) => !v), []);
 
     if (!isExpanded) {
         return (
@@ -155,15 +171,27 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                             </div>
                             {!isDraft && !isSelf && senderName !== email.sender && <div className="text-xs text-kumo-subtle truncate">{email.sender}</div>}
                             <div className="text-xs text-kumo-subtle">To: {email.recipient}</div>
+                            <SpamReasonLine email={email} className="mt-1" />
                         </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                         {hasFileAttachment(email) && <PaperclipIcon size={12} className="text-kumo-subtle shrink-0" aria-label="Has attachment" />}
                         <span className="text-xs text-kumo-subtle">{formatShortDate(email.date)}</span>
-                        {onViewSource && <IconButton label="View source" icon={CodeIcon} onClick={onViewSource} />}
+                        {canSummarize && (
+                            <IconButton
+                                label={summaryOpen ? 'Hide summary' : 'Summarize'}
+                                icon={SummaryIcon}
+                                className={summaryOpen ? 'text-kumo-default' : 'text-kumo-subtle'}
+                                aria-pressed={summaryOpen}
+                                onClick={toggleSummary}
+                            />
+                        )}
+                        <MessageOptionsMenu onSummarize={canSummarize ? toggleSummary : undefined} summaryOpen={summaryOpen} onViewSource={onViewSource} />
                         <IconButton label="Collapse message" icon={CaretUpIcon} onClick={onToggleExpand} />
                     </div>
                 </div>
+
+                <UnverifiedSenderBanner email={email} className="mb-3 md:ml-10.5" />
 
                 {spoofed && (
                     <div className="mb-3 md:ml-10.5 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
@@ -181,7 +209,9 @@ export default function ThreadMessage({ email, mailboxId, mailboxEmail, isLast, 
                     </div>
                 )}
 
-                {quickSummary && !isDraft && <QuickSummary mailboxId={mailboxId} emailId={email.id} />}
+                {canSummarize && summaryOpen && mailboxId && (
+                    <QuickSummary mailboxId={mailboxId} emailId={email.id} onClose={() => setSummaryOpen(false)} />
+                )}
 
                 <div className="md:ml-10.5">
                     <EmailIframe body={rewriteInlineImages(email.body || '', mailboxId || '', email.id, email.attachments)} autoSize />

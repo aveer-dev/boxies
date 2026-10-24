@@ -18,7 +18,7 @@ When polishing motion, also load `animate`, `apple-design`, and `emil-design-eng
 ## Stack
 
 - SwiftUI-first, iOS 17+, iPhone (portrait only) + iPad (all orientations, Split View / Slide Over) — `TARGETED_DEVICE_FAMILY: "1,2"`.
-- iPad: `horizontalSizeClass == .regular` → `HomeSplitLayout` two-pane (list column + reading pane, `Views/Home/HomeSplitLayout.swift`); compact width is the phone layout. Sheets use `.formSheetSizing()` (centered form sheet on iPad, iOS 18+).
+- iPad: `horizontalSizeClass == .regular` → `HomeSplitLayout` two-pane (list column + reading pane, `Views/Home/HomeSplitLayout.swift`); compact width is the phone layout. Regular width ≥ `HomeChromeMetrics.threeColumnMinWidth` (1180pt, 11"/13" iPad landscape) adds a leading `HomeFolderColumn` (240pt; folders + Reply Later, web Miller "Folders" twin; AVE-73). Toggle lives in the column header + mailbox avatar menu, never the toolbar (an extra leading item crowds it); `@AppStorage("home_folder_column_visible")`. The list keeps its two-pane width; `listColumnNavigationBarMargins` restores the bar's 20pt margins once the list is off the window edge. Sheets use `.formSheetSizing()` (centered form sheet on iPad, iOS 18+).
 - Swift **5.10** (`project.yml`). Do not migrate language/concurrency for a UI change.
 - UIKit only for appearance proxies, `WKWebView` (HTML mail), Sign in with Apple, Quick Look, and hosting-VC theme override.
 - `@Observable` `AppModel` + `AuthStore` via `.environment`. Views own local `@State` for presentation flags.
@@ -196,6 +196,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | --- | --- |
 | `-previewDomainAdmin` | Domain Admin console |
 | `-previewPasswordSignIn` | Password sign-in |
+| `-previewPasswordSignIn -previewTwoFactorChallenge` | Two-factor code step after a password sign-in (fixture challenge, no API) |
 | `-previewInviteAccept` | Invite accept (signed out: code + create account) |
 | `-previewInviteAcceptSignedIn` | Invite accept into the signed-in account |
 | `-previewSignInMethods` | Sign-in & recovery (methods + recovery email) |

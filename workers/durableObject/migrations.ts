@@ -568,14 +568,93 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Spam / Trash retention (AVE-42). `retention_since` is when a message
+		// entered Spam or Trash (NULL anywhere else); the DO alarm deletes
+		// rows whose clock is older than FOLDER_RETENTION_DAYS. Triggers keep
+		// it right for every write path (moves, bulk refiles, inbound spam,
+		// delete-to-trash): any change of folder_id restarts or clears it.
+		// Mail already in Spam / Trash starts its clock now, so nothing is
+		// purged until the retention period after this migration runs.
+		// Additive only: a nullable column, a partial index, two triggers.
+		// Dev's AVE-41 migration took 36_ and left 35_ for this one; the
+		// runner tracks by full name, so DOs that already applied
+		// 36_delivery_recipients still pick this up on their next start.
+		name: "35_spam_trash_retention",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN retention_since TEXT;
+            UPDATE emails
+               SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE folder_id IN ('spam', 'trash');
+            CREATE INDEX IF NOT EXISTS idx_emails_retention_since
+                ON emails(retention_since) WHERE retention_since IS NOT NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_insert
+            AFTER INSERT ON emails
+            WHEN NEW.folder_id IN ('spam', 'trash') AND NEW.retention_since IS NULL
+            BEGIN
+                UPDATE emails
+                   SET retention_since = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 WHERE id = NEW.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_retention_on_move
+            AFTER UPDATE OF folder_id ON emails
+            WHEN NEW.folder_id IS NOT OLD.folder_id
+            BEGIN
+                UPDATE emails
+                   SET retention_since = CASE
+                       WHEN NEW.folder_id IN ('spam', 'trash')
+                       THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                       ELSE NULL
+                   END
+                 WHERE id = NEW.id;
+            END;
+          `),
+	},
+	{
+		// Per-recipient delivery state from Email Sending events (AVE-41).
+		// emails.delivery_status stays the message-level summary; this says
+		// which recipient bounced / complained / was delivered. Rows go with
+		// their email (ON DELETE CASCADE, like attachments).
+		// Additive only: a new table. Numbered 36: dev's highest is
+		// 34_outbound_send_sweeper and open PR #133 (AVE-42) uses 35_; the
+		// runner tracks by name, so landing order doesn't matter.
+		name: "36_delivery_recipients",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS delivery_recipients (
+                email_id TEXT NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+                address TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (email_id, address)
+            );
+        `),
+	},
+	{
+		// Spam explainability (AVE-94, docs/spam-management-plan.md §5).
+		// classification_reason: stable machine code for why inbound mail was
+		// filed where it was (see shared/spam-reason.ts). auth_tier: verified /
+		// unverified / failed at receive time. matched_rule_id: the sender rule
+		// that decided it — stays NULL until the sender_rules table lands.
+		// Additive only: three nullable columns, no backfill. Older rows read
+		// their tier from the `auth` JSON (MailboxDO #withDecodedAuth) and have
+		// no reason. Numbered 37: dev's highest is 36_delivery_recipients; the
+		// runner tracks by full name, so landing order doesn't matter.
+		name: "37_email_classification",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN classification_reason TEXT;
+            ALTER TABLE emails ADD COLUMN auth_tier TEXT;
+            ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;
+        `),
+	},
+	{
 		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
 		// or per message (quick summary). Generated lazily on open and reused
-		// until the thread gains a message. Additive only. Renumbered from 31 to 37
-		// after 31_thread_notes_to_self (AVE-59), 32_pending_blob_deletes (AVE-46),
-		// 33_email_idempotency_key, 34_outbound_send_sweeper (AVE-66) and the
-		// open PRs' 35_ (AVE-42) and 36_ (AVE-41) took the earlier slots; the runner tracks
-		// migrations by name, so gaps and either order apply cleanly.
-		name: "37_email_summaries",
+		// until the thread gains a message. Additive only. Renumbered to 39: dev
+		// already has 37_email_classification and open PR #159 claims
+		// 38_sender_rules. The runner tracks migrations by name and the table
+		// is CREATE IF NOT EXISTS, so a DO that already ran an earlier name
+		// re-runs it harmlessly.
+		name: "39_email_summaries",
 		sql: txn(`
             CREATE TABLE IF NOT EXISTS email_summaries (
                 target_type TEXT NOT NULL CHECK (target_type IN ('thread', 'email')),

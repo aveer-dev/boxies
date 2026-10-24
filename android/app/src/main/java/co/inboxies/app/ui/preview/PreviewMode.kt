@@ -22,6 +22,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     DomainOnboarding("domainOnboarding", "previewDomainOnboarding"),
     PasswordSignIn("passwordSignIn", "previewPasswordSignIn"),
     ForgotPassword("forgotPassword", "previewForgotPassword"),
+    /** Email sign-in at the 2FA code step (iOS `-previewTwoFactorChallenge`). */
+    TwoFactorChallenge("twoFactorChallenge", "previewTwoFactorChallenge"),
     InviteAccept("inviteAccept", "previewInviteAccept"),
     InviteAcceptSignedIn("inviteAcceptSignedIn", "previewInviteAcceptSignedIn"),
     SignInMethods("signInMethods", "previewSignInMethods"),

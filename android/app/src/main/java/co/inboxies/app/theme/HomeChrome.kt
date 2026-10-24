@@ -117,6 +117,19 @@ object HomeChromeMetrics {
     fun listColumnWidth(totalWidth: Dp): Dp =
         (totalWidth * listColumnFraction).coerceIn(listColumnMinWidth, listColumnMaxWidth)
 
+    /**
+     * Window width from which the leading folder column fits beside the list and the
+     * reading pane (AVE-73). Same number as iOS (an 11-inch iPad in landscape, 1180pt);
+     * tablets in landscape (Material "Large", ≥ 1200.dp) clear it, while unfolded
+     * foldables (~840–900.dp) and portrait tablets stay two-pane.
+     */
+    val threeColumnMinWidth: Dp = 1180.dp
+
+    /** Fixed width of the folder column (web Miller "Folders" column). */
+    val folderColumnWidth: Dp = 240.dp
+    val folderRowHeight: Dp = 38.dp
+    val folderRowCornerRadius: Dp = 10.dp
+
     /** Centered form sheet (compose, settings, Ask AI) on large screens. */
     val formSheetMaxWidth: Dp = 600.dp
     val formSheetMaxHeight: Dp = 880.dp

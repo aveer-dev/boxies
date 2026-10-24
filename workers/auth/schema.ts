@@ -5,7 +5,8 @@
 /**
  * D1 schema for identity and permissions (`AUTH_DB`).
  *
- * The first four tables belong to Better Auth: their JS property names must
+ * The first four tables belong to Better Auth, plus `passkey` (passkey
+ * plugin) and `twoFactor` (twoFactor plugin): their JS property names must
  * match Better Auth's field names (the drizzle adapter maps by key). The rest
  * are ours. Every permission is a row keyed by `user.id`; emails are
  * attributes, never identities.
@@ -47,6 +48,14 @@ export const user = sqliteTable("user", {
 	image: text("image"),
 	createdAt: createdAt(),
 	updatedAt: updatedAt(),
+	/**
+	 * Set by the twoFactor plugin once the user confirms a TOTP code. Password
+	 * sign-in then answers with a two-factor challenge instead of a session.
+	 * Optional for everyone; nothing enforces it.
+	 */
+	twoFactorEnabled: integer("two_factor_enabled", { mode: "boolean" })
+		.notNull()
+		.default(false),
 });
 
 export const session = sqliteTable(
@@ -140,6 +149,67 @@ export const verification = sqliteTable(
 		updatedAt: updatedAt(),
 	},
 	(t) => [index("verification_identifier_idx").on(t.identifier)],
+);
+
+/**
+ * WebAuthn credentials (`@better-auth/passkey`). A passkey signs the user in
+ * by itself, with no password and no two-factor step.
+ */
+export const passkey = sqliteTable(
+	"passkey",
+	{
+		id: text("id").primaryKey(),
+		/** User-chosen label ("MacBook", "iPhone"). */
+		name: text("name"),
+		/** COSE public key, base64. */
+		publicKey: text("public_key").notNull(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** base64url credential id; unique across all users. */
+		credentialID: text("credential_id").notNull(),
+		/** Signature counter (replay detection). */
+		counter: integer("counter").notNull(),
+		/** "singleDevice" or "multiDevice" (synced). */
+		deviceType: text("device_type").notNull(),
+		backedUp: integer("backed_up", { mode: "boolean" }).notNull(),
+		/** Comma-separated transports ("internal,hybrid"). */
+		transports: text("transports"),
+		createdAt: integer("created_at", { mode: "timestamp_ms" }).default(
+			sql`(unixepoch('subsecond') * 1000)`,
+		),
+		/** Authenticator model id (all zeros for Apple and other private platforms). */
+		aaguid: text("aaguid"),
+	},
+	(t) => [
+		index("passkey_user_id_idx").on(t.userId),
+		uniqueIndex("passkey_credential_id_uidx").on(t.credentialID),
+	],
+);
+
+/**
+ * TOTP secret and backup (recovery) codes (Better Auth twoFactor plugin).
+ * Both are encrypted with BETTER_AUTH_SECRET by the plugin before they get
+ * here; nothing in this table is usable without that secret.
+ */
+export const twoFactor = sqliteTable(
+	"two_factor",
+	{
+		id: text("id").primaryKey(),
+		/** Encrypted TOTP secret. */
+		secret: text("secret").notNull(),
+		/** Encrypted JSON array of one-time backup codes. */
+		backupCodes: text("backup_codes").notNull(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** False until the user confirms a first TOTP code while enabling. */
+		verified: integer("verified", { mode: "boolean" }).notNull().default(true),
+		/** Consecutive failed codes across challenges; locks the account at 10. */
+		failedVerificationCount: integer("failed_verification_count").notNull().default(0),
+		lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
+	},
+	(t) => [uniqueIndex("two_factor_user_id_uidx").on(t.userId)],
 );
 
 // ── Inboxies permissions ─────────────────────────────────────────
@@ -325,4 +395,60 @@ export const emailSuppression = sqliteTable(
 		primaryKey({ columns: [t.domain, t.recipient] }),
 		index("email_suppression_source_mailbox_idx").on(t.sourceMailboxId),
 	],
+);
+
+/**
+ * Finalizing a decommissioned domain (AVE-43, lib/domain-offboarding.ts).
+ * One row per decommission: when the grace period ends, whether the admins
+ * were warned, and how far the finalize got, so a crash mid-way resumes
+ * instead of starting over. No foreign key: the row outlives the domain row
+ * it describes, as the record that the domain's data was deleted.
+ */
+export const domainOffboarding = sqliteTable(
+	"domain_offboarding",
+	{
+		domain: text("domain").primaryKey(),
+		decommissionedAt: integer("decommissioned_at", { mode: "timestamp_ms" }).notNull(),
+		/** Earliest time the scheduled finalize may run (decommission + grace, never < warning + 7 days). */
+		finalizeAfter: integer("finalize_after", { mode: "timestamp_ms" }).notNull(),
+		warningSentAt: integer("warning_sent_at", { mode: "timestamp_ms" }),
+		/** Set when an owner asked to finalize now (typed confirmation passed). */
+		finalizeRequestedBy: text("finalize_requested_by"),
+		finalizeRequestedAt: integer("finalize_requested_at", { mode: "timestamp_ms" }),
+		finalizeStartedAt: integer("finalize_started_at", { mode: "timestamp_ms" }),
+		finalizedAt: integer("finalized_at", { mode: "timestamp_ms" }),
+		/** Billing copied from the domain metadata before it is deleted. */
+		subscriptionId: text("subscription_id"),
+		customerId: text("customer_id"),
+		subscriptionCanceledAt: integer("subscription_canceled_at", { mode: "timestamp_ms" }),
+		mailboxesPurged: integer("mailboxes_purged").notNull().default(0),
+		/**
+		 * Copied from the domain metadata before it is deleted: the Cloudflare zone
+		 * Inboxies created for the domain, and whether we registered it
+		 * (Cloudflare Registrar). Null = unknown (metadata already gone).
+		 */
+		zoneId: text("zone_id"),
+		registrarManaged: integer("registrar_managed", { mode: "boolean" }),
+		/** Mailboxes, aliases, access and registry are gone (steps 1-5). */
+		dataDeletedAt: integer("data_deleted_at", { mode: "timestamp_ms" }),
+		/** The Cloudflare zone was deleted (or was already gone / never recorded). */
+		zoneDeletedAt: integer("zone_deleted_at", { mode: "timestamp_ms" }),
+		/**
+		 * Zone deletion is deferred until then: a domain still registered through
+		 * Cloudflare Registrar must stay on Cloudflare nameservers, so its zone
+		 * goes only once the registration has lapsed. Null = not deferred.
+		 */
+		zoneDeleteAfter: integer("zone_delete_after", { mode: "timestamp_ms" }),
+		/** Registrar auto-renew is off (or the domain isn't ours / already gone). */
+		registrarReleasedAt: integer("registrar_released_at", { mode: "timestamp_ms" }),
+		/** Last step reached ("billing", "mailboxes", "aliases", "access", "registry", "cloudflare", "zone_deferred", "done"). */
+		step: text("step"),
+		lastError: text("last_error"),
+		attempts: integer("attempts").notNull().default(0),
+		/** A runner holds the row until then; another runner skips it. */
+		leaseUntil: integer("lease_until", { mode: "timestamp_ms" }),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [index("domain_offboarding_finalize_after_idx").on(t.finalizeAfter)],
 );

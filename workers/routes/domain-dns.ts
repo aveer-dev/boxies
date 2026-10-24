@@ -103,7 +103,7 @@ export async function authorizeDomainAdmin(
  * Domain changes an owner may still make after the subscription ended: get
  * their mail out, or take the domain elsewhere.
  */
-const ALLOWED_WHEN_ENDED = /^\/(export|decommission-preflight|decommission|transfer-lock)$/;
+const ALLOWED_WHEN_ENDED = /^\/(export|decommission-preflight|decommission|transfer-lock|finalize)$/;
 
 export function registerDomainDnsRoutes(app: Hono<MailboxContext>) {
 	// A domain whose subscription ended is frozen: no DNS, alias or user changes.

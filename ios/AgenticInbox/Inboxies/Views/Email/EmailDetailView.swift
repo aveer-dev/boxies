@@ -324,6 +324,16 @@ struct EmailDetailView: View {
                     }
                 )
 
+                if let reason = message.spamReasonLine {
+                    SpamReasonLine(text: reason)
+                        .padding(.top, 10)
+                }
+
+                if message.showsUnverifiedBanner {
+                    UnverifiedSenderBanner(sender: message.sender)
+                        .padding(.top, 10)
+                }
+
                 if message.isSpoofed {
                     SpoofWarningBanner()
                         .padding(.top, 10)
@@ -824,6 +834,57 @@ private struct SpoofWarningBanner: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(AppTheme.deepDarkRed.opacity(0.35), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One muted line saying why a message is in Spam / Screened out.
+private struct SpamReasonLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.inter(size: AppTheme.FontSize.meta))
+                .lineLimit(1)
+        }
+        .foregroundStyle(AppTheme.muted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// `unverified` mail: the From domain isn't proven, but it isn't spam either.
+private struct UnverifiedSenderBanner: View {
+    let sender: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(SpamReason.unverifiedTitle)
+                    .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+                Text(SpamReason.unverifiedDetail(sender: sender))
+                    .font(.inter(size: AppTheme.FontSize.meta))
+                    .foregroundStyle(AppTheme.muted)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.pillFill)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.orange.opacity(0.4), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .combine)

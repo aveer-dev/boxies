@@ -7,7 +7,8 @@
  * They replace the cross-tenant powers DOMAIN_ADMINS used to give app users:
  * listing every domain and mailbox, creating addresses anywhere (reserved
  * names included), managing domain admins, reading the audit log, and
- * signing a user out everywhere. Every write is audited with the operator.
+ * signing a user out everywhere, and replaying dead-lettered Email Sending
+ * events. Every write is audited with the operator.
  */
 
 import type { Hono } from "hono";
@@ -20,6 +21,14 @@ import type { RequestPrincipal } from "../auth/principal";
 import * as schema from "../auth/schema";
 import { findUserByEmail, findUserById, revokeUserSessions } from "../auth/users";
 import { strictMailboxId } from "../lib/mailbox-routing";
+import {
+	discardDeadLetter,
+	EMAIL_SENDING_EVENTS_QUEUE,
+	listDeadLetters,
+	replayDeadLetters,
+} from "../lib/email-sending-dlq";
+import { RECIPIENT_ONLY_EVENT_MAX_ATTEMPTS } from "../lib/email-sending-events";
+import { handleEmailSendingQueueMessage } from "../lib/email-sending-queue";
 import type { Env } from "../types";
 
 type OpsApp = Hono<{ Bindings: Env; Variables: { principal?: RequestPrincipal; operator?: Operator } }>;
@@ -132,6 +141,35 @@ export function registerOpsRoutes(app: OpsApp) {
 		const revoked = await revokeUserSessions(c.env, userId);
 		await auditOps(db, c.get("operator"), "user.revoke_sessions", userId, { revoked });
 		return c.json({ ok: true, revoked });
+	});
+
+	// ── Dead-lettered Email Sending events (AVE-41, lib/email-sending-dlq) ──
+
+	app.get(`/ops/dead-letters/${EMAIL_SENDING_EVENTS_QUEUE}`, async (c) => {
+		const limit = Number(c.req.query("limit")) || 100;
+		const cursor = c.req.query("cursor") || undefined;
+		return c.json(await listDeadLetters(c.env.BUCKET, { limit, cursor }));
+	});
+
+	/** Re-run the event handler on the given dead letters; handled ones are removed. */
+	app.post(`/ops/dead-letters/${EMAIL_SENDING_EVENTS_QUEUE}/replay`, async (c) => {
+		const { ids } = z
+			.object({ ids: z.array(z.string().min(1).max(128)).min(1).max(100) })
+			.parse(await c.req.json());
+		const results = await replayDeadLetters(c.env.BUCKET, ids, (body) =>
+			handleEmailSendingQueueMessage(c.env, body, RECIPIENT_ONLY_EVENT_MAX_ATTEMPTS),
+		);
+		await auditOps(authDb(c.env.AUTH_DB), c.get("operator"), "dead_letter.replay", EMAIL_SENDING_EVENTS_QUEUE, {
+			results,
+		});
+		return c.json({ results });
+	});
+
+	app.delete(`/ops/dead-letters/${EMAIL_SENDING_EVENTS_QUEUE}/:id`, async (c) => {
+		const id = c.req.param("id");
+		if (!(await discardDeadLetter(c.env.BUCKET, id))) return c.json({ error: "Not found" }, 404);
+		await auditOps(authDb(c.env.AUTH_DB), c.get("operator"), "dead_letter.discard", EMAIL_SENDING_EVENTS_QUEUE, { id });
+		return c.json({ ok: true });
 	});
 
 	app.get("/ops/audit", async (c) => {

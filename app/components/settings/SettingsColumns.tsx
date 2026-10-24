@@ -20,6 +20,7 @@ import AppearanceCard from "./AppearanceCard";
 import {
 	ACCOUNT_PAGES,
 	INCOMING_MAIL_PAGES,
+	OUTGOING_MAIL_PAGES,
 	SETTINGS_PAGES,
 	type SettingsPageId,
 } from "./pages";
@@ -115,6 +116,22 @@ function SettingsContent() {
 					</div>
 					<div className="divide-y divide-kumo-line -mx-2">
 						{INCOMING_MAIL_PAGES.map((id) => (
+							<SettingsLink
+								key={id}
+								id={id}
+								isOpen={settingsPage === id}
+								onOpen={() => openSettings(id)}
+							/>
+						))}
+					</div>
+				</div>
+
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
+					<div className="text-sm font-medium text-kumo-default mb-4">
+						Outgoing mail
+					</div>
+					<div className="divide-y divide-kumo-line -mx-2">
+						{OUTGOING_MAIL_PAGES.map((id) => (
 							<SettingsLink
 								key={id}
 								id={id}

@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, primaryKey } from "drizzle-orm/sqlite-core";
 
 export const folders = sqliteTable("folders", {
 	id: text("id").primaryKey(),
@@ -48,6 +48,17 @@ export const emails = sqliteTable("emails", {
 	source: text("source"),
 	/** Client `Idempotency-Key` for a send/reply/forward; unique when set (migration 33). */
 	idempotency_key: text("idempotency_key"),
+	/**
+	 * ISO time the message entered Spam or Trash; NULL in every other folder.
+	 * Maintained by SQLite triggers (migration 34); retention purges by it.
+	 */
+	retention_since: text("retention_since"),
+	/** Why inbound mail was filed where it was (shared/spam-reason.ts codes; migration 37). */
+	classification_reason: text("classification_reason"),
+	/** verified | unverified | failed at receive time. Null on outbound and pre-37 rows. */
+	auth_tier: text("auth_tier"),
+	/** Sender rule that decided the folder. Null until sender_rules exists. */
+	matched_rule_id: text("matched_rule_id"),
 });
 
 export const attachments = sqliteTable("attachments", {
@@ -61,6 +72,25 @@ export const attachments = sqliteTable("attachments", {
 	content_id: text("content_id"),
 	disposition: text("disposition"),
 });
+
+/**
+ * Per-recipient delivery state from Email Sending events (migration
+ * 36_delivery_recipients). Written and read with raw SQL in
+ * workers/lib/delivery-recipients.ts; mirrored here for types.
+ */
+export const deliveryRecipients = sqliteTable(
+	"delivery_recipients",
+	{
+		email_id: text("email_id")
+			.notNull()
+			.references(() => emails.id, { onDelete: "cascade" }),
+		address: text("address").notNull(),
+		status: text("status").notNull(),
+		error: text("error"),
+		updated_at: text("updated_at").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.email_id, table.address] })],
+);
 
 /** Registry of AI chat conversations for a mailbox (messages live in EmailAgent DOs). */
 export const agentConversations = sqliteTable("agent_conversations", {

@@ -150,6 +150,8 @@ data class MeResponse(
     val administeredDomains: List<String> = emptyList(),
     val mailDomain: String? = null,
     val domains: List<String> = emptyList(),
+    /** TOTP two-factor is on. It only challenges password sign-in. */
+    val twoFactorEnabled: Boolean? = null,
 )
 
 @Serializable
@@ -231,6 +233,63 @@ data class PasswordLoginResponse(
     val email: String? = null,
     val sub: String? = null,
     val keys: List<String> = emptyList(),
+)
+
+/**
+ * `/api/v1/auth/password/reset`. With two-factor on, the reset answers with a challenge
+ * instead of a session (a reset proves the recovery email, not the second factor).
+ */
+@Serializable
+data class ResetPasswordResponse(
+    val ok: Boolean? = null,
+    val token: String? = null,
+    val expiresAt: String? = null,
+    val email: String? = null,
+    val twoFactorRequired: Boolean? = null,
+    val twoFactorToken: String? = null,
+    val twoFactorMethods: List<String> = emptyList(),
+) {
+    val twoFactorChallenge: TwoFactorChallenge?
+        get() = if (twoFactorRequired == true && !twoFactorToken.isNullOrEmpty()) {
+            TwoFactorChallenge(twoFactorToken, twoFactorMethods, email)
+        } else {
+            null
+        }
+}
+
+/**
+ * A password sign-in that still needs a second factor: an authenticator (TOTP) code or a
+ * one-time backup code, sent with [token] to `/api/v1/auth/two-factor/verify`. Good for
+ * one sign-in, 10 minutes, 5 codes.
+ */
+data class TwoFactorChallenge(
+    val token: String,
+    /** Server methods, e.g. `["totp", "backup_code"]`. */
+    val methods: List<String>,
+    val email: String? = null,
+) {
+    companion object {
+        /** The 401 `TWO_FACTOR_REQUIRED` body of `/api/v1/auth/password`, else null. */
+        fun parse(body: String): TwoFactorChallenge? {
+            val obj = runCatching { Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return null
+            if ((obj["twoFactorRequired"] as? JsonPrimitive)?.booleanOrNull != true) return null
+            val token = (obj["twoFactorToken"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return null
+            val methods = (obj["twoFactorMethods"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                .orEmpty()
+            return TwoFactorChallenge(token, methods)
+        }
+    }
+}
+
+/** A passkey registered to the signed-in account (`/api/auth/passkey/list-user-passkeys`). */
+@Serializable
+data class PasskeyRow(
+    val id: String,
+    val name: String? = null,
+    val createdAt: String? = null,
+    val deviceType: String? = null,
+    val backedUp: Boolean? = null,
 )
 
 @Serializable
@@ -466,9 +525,11 @@ data class EmailAuth(
     val envelopeFrom: String? = null,
     val aligned: Boolean? = null,
     val spoofed: Boolean = false,
+    /** `verified` | `unverified` | `failed` (AVE-92). Absent on older snapshots. */
+    val authTier: String? = null,
     val source: String? = null,
 ) {
-    val isSpoofed: Boolean get() = spoofed
+    val isSpoofed: Boolean get() = spoofed || authTier == "failed"
 }
 
 @Serializable
@@ -512,6 +573,12 @@ data class Email(
     @SerialName("alias_email") val aliasEmail: String? = null,
     /** Alias still active and unexpired; `null` when not a private-email thread. */
     @SerialName("alias_active") val aliasActive: Boolean? = null,
+    /** Auth tier stored at receive time (`verified` | `unverified` | `failed`). */
+    @SerialName("auth_tier") val authTier: String? = null,
+    /** Why inbound mail was filed where it was (machine code, see [SpamReason]). */
+    @SerialName("classification_reason") val classificationReason: String? = null,
+    /** Sender rule that decided the folder (null until sender rules exist). */
+    @SerialName("matched_rule_id") val matchedRuleId: String? = null,
 ) {
     val isDraft: Boolean
         get() {
@@ -520,7 +587,19 @@ data class Email(
         }
 
     val isSpoofed: Boolean
-        get() = auth?.isSpoofed == true
+        get() = auth?.isSpoofed == true || authTier == "failed"
+
+    /** Stored tier, else the tier inside the auth snapshot (cached rows). */
+    val effectiveAuthTier: String?
+        get() = authTier ?: auth?.authTier
+
+    /** "Unverified sender" banner — any folder, allowed senders included. */
+    val showsUnverifiedBanner: Boolean
+        get() = effectiveAuthTier == "unverified"
+
+    /** One line explaining why this is in Spam / Screened out, if we know. */
+    val spamReasonLine: String?
+        get() = SpamReason.line(classificationReason, folderId)
 
     val isDeliveryFailure: Boolean
         get() = DeliveryStatus.isFailure(deliveryStatus)
@@ -1040,6 +1119,16 @@ object FolderIds {
 
     fun isPurposeFolder(id: String): Boolean = id in purposeFolderIds
 
+    /** Spam and Trash keep mail this many days after it was moved in (AVE-42). */
+    const val RETENTION_DAYS = 30
+
+    /** Quiet notice at the top of Spam / Trash; matches `folderRetentionNotice` in shared/folders.ts. */
+    fun retentionNotice(id: String?): String? = when (id) {
+        SPAM -> "Messages in Spam are deleted after $RETENTION_DAYS days."
+        TRASH -> "Messages in Trash are deleted after $RETENTION_DAYS days."
+        else -> null
+    }
+
     fun purposeDisplayName(id: String): String = when (id) {
         INBOX -> "Inbox"
         PROMOTIONS -> "Promotions"
@@ -1315,7 +1404,59 @@ data class DecommissionResponse(
     val status: String,
     val eppCode: String? = null,
     val message: String = "",
+    /** When the domain's data is deleted unless finalized sooner (ISO 8601). */
+    val finalizeAfter: String? = null,
 )
+
+/** Where a decommissioned domain's offboarding stands: the grace period and finalize-now. */
+@Serializable
+data class DomainOffboardingState(
+    val decommissionedAt: String,
+    /** Scheduled deletion (ISO 8601). */
+    val finalizeAfter: String,
+    val graceDays: Int = 30,
+    val warningSentAt: String? = null,
+    val finalizeRequestedAt: String? = null,
+    val finalizeStartedAt: String? = null,
+    val finalizedAt: String? = null,
+    val step: String? = null,
+    val lastError: String? = null,
+    val canFinalizeNow: Boolean = false,
+    val scheduledFinalizeDue: Boolean = false,
+)
+
+@Serializable
+data class OffboardingDomain(
+    val domain: String,
+    val offboarding: DomainOffboardingState,
+)
+
+@Serializable
+data class OffboardingDomainsResponse(
+    val domains: List<OffboardingDomain> = emptyList(),
+)
+
+@Serializable
+data class FinalizeDomainResponse(
+    val success: Boolean = false,
+    val domain: String,
+    val finalized: Boolean = false,
+    /** "in_progress" or "will_retry" when it didn't finish now; the hourly run does. */
+    val status: String? = null,
+    val mailboxesPurged: Int? = null,
+    val subscriptionCanceled: Boolean? = null,
+    val error: String? = null,
+)
+
+/** Formats an ISO 8601 offboarding date as "October 20, 2026"; the raw string if it doesn't parse. */
+fun formatOffboardingDate(iso: String): String =
+    try {
+        java.time.Instant.parse(iso)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofLocalizedDate(java.time.format.FormatStyle.LONG))
+    } catch (_: Exception) {
+        iso
+    }
 
 @Serializable
 data class DomainEppCodeResponse(

@@ -125,6 +125,16 @@ struct EmailListView: View {
                 }
             }
 
+            if let notice = FolderRetention.notice(for: fallbackFolderId) {
+                Text(notice)
+                    .font(.inter(size: AppTheme.List.preview, weight: .regular))
+                    .foregroundStyle(AppTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .listRowInsets(EdgeInsets(top: 4, leading: AppTheme.List.rowHorizontalPadding, bottom: 8, trailing: AppTheme.List.rowHorizontalPadding))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+
             if showNewSeenSections {
                 newSeenSections
             } else {
@@ -284,9 +294,9 @@ struct EmailListView: View {
         }
     }
 
-    /// Two-pane only: the row whose email (or thread) is open in the reading pane.
+    /// Split layouts only: the row whose email (or thread) is open in the reading pane.
     private func isOpenInReadingPane(_ email: Email) -> Bool {
-        guard homeLayoutMode == .twoPane, !isSelectMode, let open = app.selectedEmail else { return false }
+        guard homeLayoutMode.isSplit, !isSelectMode, let open = app.selectedEmail else { return false }
         if open.id == email.id { return true }
         guard let threadId = open.threadId, !threadId.isEmpty else { return false }
         return threadId == email.threadId
@@ -413,6 +423,15 @@ struct EmailListView: View {
             Label(email.read ? "Mark as Unread" : "Mark as Read", systemImage: email.read ? "envelope.badge" : "envelope.open")
         }
 
+        Button {
+            Task { await app.toggleReplyLater(on: email) }
+        } label: {
+            Label(
+                email.replyLater ? "Remove from Reply Later" : "Reply later",
+                systemImage: email.replyLater ? "clock.arrow.circlepath" : "clock"
+            )
+        }
+
         Divider()
 
         Button {
@@ -500,6 +519,20 @@ struct EmailListView: View {
 
     private static let skeletonCount = 9
     private static let prefetchDistance = 5
+}
+
+/// Spam and Trash keep mail for 30 days after it was moved in, then the server
+/// deletes it (AVE-42). Copy matches `folderRetentionNotice` in shared/folders.ts.
+enum FolderRetention {
+    static let days = 30
+
+    static func notice(for folderId: String?) -> String? {
+        switch folderId {
+        case "spam": return "Messages in Spam are deleted after \(days) days."
+        case "trash": return "Messages in Trash are deleted after \(days) days."
+        default: return nil
+        }
+    }
 }
 
 /// Loading placeholder matching the row geometry.
@@ -660,6 +693,15 @@ struct EmailRowView: View {
                 Text("Spoofed")
                     .font(.inter(size: AppTheme.List.badge, weight: .medium))
                     .foregroundStyle(AppTheme.deepDarkRed)
+            }
+
+            // Sent mail the DSN pipeline marked bounced / complained (or a failed send).
+            if let status = email.deliveryStatusLabel {
+                Text(status)
+                    .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                    .foregroundStyle(AppTheme.deepDarkRed)
+                    .lineLimit(1)
+                    .fixedSize()
             }
 
             Spacer(minLength: 8)

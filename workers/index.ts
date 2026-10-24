@@ -122,9 +122,14 @@ import {
 } from "./lib/alias-sender";
 import { mailDomainConfig } from "./lib/mail-domain";
 import {
+	inboundClassificationReason,
+	storedAuthTier,
+} from "./lib/classification-reason";
+import { ClassificationReasons } from "../shared/spam-reason";
+import {
 	classifyInboundEmail,
-	isAiSpam,
-	overrideAiSpamForVouchedSender,
+	applySenderTrust,
+	deferAuthenticatedAiSpamToScreener,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldFallbackToInbox,
@@ -154,7 +159,7 @@ import {
 import {
 	allowOutboundRecipients,
 	isScreenerDestination,
-	isVouchedSender,
+	senderTrustOf,
 	senderLessonForMove,
 	normalizeTriageSender,
 	parseScreenerEnabled,
@@ -2026,6 +2031,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 						in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 						thread_id: appliedDsn.threadId ?? threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 						auth: serializeEmailAuth(auth),
+						classification_reason: ClassificationReasons.DELIVERY_REPORT,
+						auth_tier: storedAuthTier(auth),
 						alias_id: privateAlias?.aliasId || null,
 						read: true,
 					},
@@ -2076,6 +2083,11 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			thread_id: threadId, message_id: originalMessageId, raw_headers: fromHeaders,
 			auth: serializeEmailAuth(auth),
 			alias_id: privateAlias?.aliasId || null,
+			// Why it was filed where it was (AVE-94); the reason is set below,
+			// once the folder is decided.
+			classification_reason: classification.reason as string | null,
+			auth_tier: storedAuthTier(auth),
+			matched_rule_id: null as string | null,
 		};
 
 		const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -2110,20 +2122,40 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			? await (stub as any).getSenderTriage(triageSender)
 			: null;
 		const purposePref =
-			classification.folderId === Folders.SPAM && !isAiSpam(classification)
+			classification.reason === "auth-failed"
 				? null
 				: await stub.getSenderPreference(fromAddress);
-		// People you've emailed, accepted, or sorted can't be junked by the AI
-		// guess alone. Everything below files, notifies, and drafts on this verdict.
-		const vouchedClassification = overrideAiSpamForVouchedSender(classification, {
-			vouched: isVouchedSender(triageRow, purposePref?.folderId),
+		// Senders you've allowed, emailed, accepted, or sorted can't be junked by
+		// the AI guess alone; an explicit allow on verified mail also beats
+		// upstream spam headers. Failed auth stays Spam. Everything below files,
+		// notifies, and drafts on this verdict.
+		const trustedClassification = applySenderTrust(
+			classification,
+			{
+				headers: storedHeaders,
+				subject: parsedEmail.subject,
+				sender: fromAddress,
+				auth,
+			},
+			senderTrustOf(triageRow, purposePref),
+		);
+		if (trustedClassification !== classification) {
+			console.log(
+				`Trusted sender ${fromAddress} overrode ${classification.reason} for ${mailboxId}: ${trustedClassification.reason}`,
+			);
+			classification = trustedClassification;
+		}
+		// Authenticated mail from a stranger goes to Screener, not Spam, on an
+		// AI guess alone (see deferAuthenticatedAiSpamToScreener).
+		const deferredClassification = deferAuthenticatedAiSpamToScreener(classification, {
+			screenerEnabled,
 			auth,
 		});
-		if (vouchedClassification !== classification) {
+		if (deferredClassification !== classification) {
 			console.log(
-				`Vouched sender ${fromAddress} overrode AI spam verdict for ${mailboxId}`,
+				`Authenticated sender ${fromAddress} deferred AI spam verdict to Screener for ${mailboxId}`,
 			);
-			classification = vouchedClassification;
+			classification = deferredClassification;
 		}
 		const triageDecision = resolveInboundFolder({
 			classification,
@@ -2141,14 +2173,13 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			);
 		}
 
+		inboundEmail.classification_reason = inboundClassificationReason(classification, triageDecision);
+
 		const targetFolder = triageDecision.folderId;
 		let filedFolder: string = targetFolder;
 		try {
 			await stub.createEmail(targetFolder, inboundEmail, attachmentData);
 			stored = true;
-			if (privateAlias) {
-				await (stub as any).recordAliasInbound(privateAlias.aliasEmail, false);
-			}
 		} catch (e) {
 			if ((e as Error).message === "Mailbox has been deleted") {
 				console.log(`Rejecting inbound for deleted mailbox ${mailboxId}`);
@@ -2184,6 +2215,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				throw inboxErr;
 			}
 			filedFolder = Folders.INBOX;
+		}
+		if (privateAlias) {
+			// Best effort: the message is stored, so a failed counter must not
+			// throw into a retry that dedup drops (losing the push and forward).
+			await (stub as any)
+				.recordAliasInbound(privateAlias.aliasEmail, false)
+				.catch((e: unknown) =>
+					console.error(`Recording private email inbound failed for ${mailboxId}:`, (e as Error).message),
+				);
 		}
 		if (originalMessageId) {
 			// Best effort: the stored row already blocks redelivery.

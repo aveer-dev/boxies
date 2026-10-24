@@ -8,8 +8,10 @@ import { useCallback, useState } from "react";
 import { useParams } from "react-router";
 import { GoogleSignInButton } from "~/components/GoogleSignInButton";
 import ConfirmDialog from "./ConfirmDialog";
+import PasskeysSection from "./PasskeysSection";
 import RecoveryEmailSection from "./RecoveryEmailSection";
 import SettingsSubpage from "./SettingsSubpage";
+import TwoFactorSection from "./TwoFactorSection";
 import { useIdentities } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
@@ -333,6 +335,10 @@ export default function SignInSettings() {
 							)}
 						</div>
 					)}
+
+					<PasskeysSection />
+
+					<TwoFactorSection hasPassword={Boolean(hasPassword)} />
 
 					{canAddMethod && (
 						<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5 space-y-4">

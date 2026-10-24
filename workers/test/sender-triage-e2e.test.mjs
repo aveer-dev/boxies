@@ -10,15 +10,16 @@ import {
 	parseInboxFilters,
 } from "../lib/inbox-filters.ts";
 import {
-	overrideAiSpamForVouchedSender,
+	applySenderTrust,
+	classifyFromHeaders,
 	shouldAutoDraft,
 	shouldSendPush,
 } from "../lib/classify-email.ts";
 import {
-	isVouchedSender,
 	normalizeTriageSender,
 	parseScreenerEnabled,
 	resolveInboundFolder,
+	senderTrustOf,
 } from "../lib/sender-triage.ts";
 
 const ham = { class: "ham", folderId: "inbox", reason: "ai-ham" };
@@ -33,7 +34,9 @@ function inboundPipeline({
 	sender,
 	subject = "Hi",
 	auth = null,
+	headers = [],
 	preferenceFolderId = null,
+	preferenceSource = "user",
 }) {
 	const filterHit = applyInboxFilters(parseInboxFilters(rawSettings), {
 		sender,
@@ -41,10 +44,14 @@ function inboundPipeline({
 		headers: [],
 		auth,
 	});
-	const classification = overrideAiSpamForVouchedSender(rawClassification, {
-		vouched: isVouchedSender(triage, preferenceFolderId),
-		auth,
-	});
+	const preference = preferenceFolderId
+		? { folderId: preferenceFolderId, source: preferenceSource }
+		: null;
+	const classification = applySenderTrust(
+		rawClassification,
+		{ headers, subject, sender, auth },
+		senderTrustOf(triage, preference),
+	);
 	const decision = resolveInboundFolder({
 		classification,
 		triage,
@@ -251,15 +258,144 @@ function inboundPipeline({
 	assert.equal(stranger.folderId, "spam");
 	assert.equal(stranger.push, false);
 
-	// Allowed address but mail doesn't authenticate as them → stays in Spam.
+	// No trusted auth verdict counts as unverified: implicit trust still
+	// beats the AI guess alone.
 	const unproven = inboundPipeline({
 		classification: aiSpam,
 		triage: emailedThem,
 		sender: "osato@inboxies.email",
 		auth: null,
 	});
-	assert.equal(unproven.folderId, "spam");
-	assert.equal(unproven.push, false);
+	assert.equal(unproven.folderId, "inbox");
+
+	// Forged From (auth failed) stays in Spam even for someone you emailed.
+	const forged = inboundPipeline({
+		classification: { class: "spam", folderId: "spam", reason: "auth-failed" },
+		triage: emailedThem,
+		sender: "osato@inboxies.email",
+		auth: { ...authed, aligned: false, authTier: "failed", spoofed: true },
+	});
+	assert.equal(forged.folderId, "spam");
+	assert.equal(forged.push, false);
+}
+
+// AVE-93: after Not spam, an unverified ESP sender's next AI-spam message
+// lands in Inbox; a failed message from the same address still lands in Spam.
+{
+	const sender = "ada@smallbiz.example";
+	// Not spam → Inbox writes an allowed triage row plus a user purpose box.
+	const notSpammed = {
+		sender,
+		status: "allowed",
+		destination_folder_id: "inbox",
+		decided_at: "t",
+		updated_at: "t",
+	};
+	const viaEsp = {
+		authTier: "unverified",
+		spoofed: false,
+		source: "authentication-results",
+		aligned: false,
+		dkim: "pass",
+		dkimDomain: "sendgrid.net",
+		headerFrom: sender,
+		envelopeFrom: "bounces@sendgrid.net",
+	};
+	const next = inboundPipeline({
+		classification: { class: "spam", folderId: "spam", reason: "ai-spam" },
+		triage: notSpammed,
+		sender,
+		auth: viaEsp,
+		preferenceFolderId: "inbox",
+	});
+	assert.equal(next.folderId, "inbox");
+	assert.equal(next.push, true);
+	// Unaligned From: never auto-drafted.
+	assert.equal(next.autoDraft, false);
+
+	const failedAuth = { ...viaEsp, authTier: "failed", spoofed: true, dmarc: "fail", dmarcPolicy: "reject" };
+	// Even list mail with failed auth is spam before it can be sorted as bulk.
+	const failedHeaders = [{ key: "List-Unsubscribe", value: "<mailto:u@smallbiz.example>" }];
+	const failedClass = classifyFromHeaders({ headers: failedHeaders, sender, auth: failedAuth });
+	assert.equal(failedClass.reason, "auth-failed");
+	const failed = inboundPipeline({
+		classification: failedClass,
+		triage: notSpammed,
+		sender,
+		auth: failedAuth,
+		headers: failedHeaders,
+		preferenceFolderId: "inbox",
+	});
+	assert.equal(failed.folderId, "spam");
+	assert.equal(failed.push, false);
+}
+
+// Spam headers: only an explicit allow on verified mail skips them.
+{
+	const sender = "news@club.example";
+	const verified = {
+		authTier: "verified",
+		spoofed: false,
+		source: "authentication-results",
+		aligned: true,
+		headerFrom: sender,
+		envelopeFrom: "bounces@club.example",
+	};
+	const allowedRow = {
+		sender,
+		status: "allowed",
+		destination_folder_id: null,
+		decided_at: "t",
+		updated_at: "t",
+	};
+	const flaggedList = [
+		{ key: "X-Spam-Flag", value: "YES" },
+		{ key: "List-Id", value: "<news.club.example>" },
+	];
+	const flagged = { class: "spam", folderId: "spam", reason: "spam-headers" };
+
+	// Explicit allow + verified: re-sorted as bulk, not Spam.
+	const allowed = inboundPipeline({
+		classification: flagged,
+		triage: allowedRow,
+		sender,
+		subject: "This week at the club",
+		auth: verified,
+		headers: flaggedList,
+		preferenceFolderId: "promotions",
+	});
+	assert.equal(allowed.folderId, "promotions");
+	assert.equal(allowed.triageAction, "allowed");
+
+	// Explicit allow + unverified: spam headers stand.
+	const unverified = inboundPipeline({
+		classification: flagged,
+		triage: allowedRow,
+		sender,
+		auth: { ...verified, aligned: null, source: "none", authTier: "unverified" },
+		headers: flaggedList,
+		preferenceFolderId: "promotions",
+	});
+	assert.equal(unverified.folderId, "spam");
+
+	// Implicit trust only (emailed them, no user-picked box): spam headers stand.
+	const implicit = inboundPipeline({
+		classification: flagged,
+		triage: allowedRow,
+		sender,
+		auth: verified,
+		headers: flaggedList,
+	});
+	assert.equal(implicit.folderId, "spam");
+
+	// Blocked sender: no override, never Inbox.
+	const blocked = inboundPipeline({
+		classification: { class: "spam", folderId: "spam", reason: "ai-spam" },
+		triage: { ...allowedRow, status: "rejected" },
+		sender,
+		auth: verified,
+	});
+	assert.equal(blocked.folderId, "spam");
 }
 
 // Angle-bracket From normalizes for triage PK

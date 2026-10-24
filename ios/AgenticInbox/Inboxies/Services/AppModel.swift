@@ -312,7 +312,9 @@ final class AppModel {
             }
         }
         streamClient.start(mailboxId: mailboxId)
-        PushNotificationManager.shared.requestPermissionAndRegister(mailboxId: mailboxId)
+        PushNotificationManager.shared.requestPermissionAndRegister(
+            mailboxIds: mailboxes.map(\.id) + [mailboxId]
+        )
     }
 
     private func handleIncomingRealTimeEmail(_ email: Email) {
@@ -1582,10 +1584,10 @@ final class AppModel {
             auth.signOut()
             return response
         } catch {
-            // Still signed in: restore push for the mailbox on screen.
-            if let selectedMailboxId {
-                push.requestPermissionAndRegister(mailboxId: selectedMailboxId)
-            }
+            // Still signed in: restore push for the user's mailboxes.
+            push.requestPermissionAndRegister(
+                mailboxIds: mailboxes.map(\.id) + [selectedMailboxId].compactMap { $0 }
+            )
             throw error
         }
     }
@@ -1781,10 +1783,11 @@ final class AppModel {
             updated.replyLaterAt = nil
         }
         applyEmailUpdate(updated)
-        await refreshReplyLaterCount()
-        if selectedTab == .replyLater {
-            await loadEmailsForCurrentTab(showLoading: false)
-        }
+        // Count optimistically. Refetching the pile here races the outbox: the server
+        // still has the old flag, so the count would bounce back and a removed row (and
+        // its local flag, via upsert) would reappear in the Reply Later pile.
+        replyLaterCount = max(0, replyLaterCount + (next ? 1 : -1))
+        showToast(next ? "Added to Reply Later" : "Removed from Reply Later")
     }
 
     func setReplyLater(_ emailIDs: Set<String>, replyLater: Bool) async {
@@ -1895,7 +1898,7 @@ final class AppModel {
     func restoreComposeAfterFailedSend(_ session: ComposeSession, generation: Int? = nil) {
         // The send outlived its session (sign-out timed out): nowhere to dock it.
         if let generation, generation != sessionGeneration { return }
-        let reason = session.form.errorMessage ?? "Couldn’t send message"
+        let reason = session.form.errorMessage ?? session.form.suppressionMessage ?? "Couldn’t send message"
         showToast(reason, isError: true, duration: 5)
         guard composeSession == nil else { return }
         composeSession = session
