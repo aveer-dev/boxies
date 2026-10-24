@@ -123,6 +123,12 @@ import {
 	inboundClassificationReason,
 	storedAuthTier,
 } from "./lib/classification-reason";
+import {
+	decidingSenderRuleId,
+	normalizeSenderRuleInput,
+	triageWithSenderRule,
+	type SenderRule,
+} from "./lib/sender-rules";
 import { ClassificationReasons } from "../shared/spam-reason";
 import {
 	classifyInboundEmail,
@@ -930,6 +936,48 @@ app.delete(
 		return c.body(null, 204);
 	},
 );
+
+// -- Sender rules (explicit allow / block list) ----------------------
+// docs/spam-management-plan.md §5, §7. Same mailbox access as the other
+// sender settings: any owner or member of the mailbox.
+
+app.get("/api/v1/mailboxes/:mailboxId/sender-rules", async (c: AppContext) => {
+	const rules = await c.var.mailboxStub.listSenderRules({
+		verdict: c.req.query("verdict") || null,
+		kind: c.req.query("kind") || null,
+		q: c.req.query("q") || null,
+		limit: intQuery(c, "limit") ?? null,
+	});
+	return c.json({ rules });
+});
+
+/**
+ * Create or update the rule for an address or domain: `{kind, value,
+ * verdict}`. Domains are stored as the registrable domain; public suffixes
+ * (`co.uk`) and free-mail providers (`gmail.com`) are refused with a `code`
+ * clients can show inline. 201 when created, 200 when an existing rule for
+ * the same value changed.
+ */
+app.put("/api/v1/mailboxes/:mailboxId/sender-rules", async (c: AppContext) => {
+	let body: unknown;
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	const checked = normalizeSenderRuleInput(body, { mailboxId: c.var.mailboxId });
+	if (!checked.ok) return c.json({ error: checked.error, code: checked.code }, 400);
+	const { rule, created } = await c.var.mailboxStub.upsertSenderRule(checked.rule);
+	return c.json({ rule }, created ? 201 : 200);
+});
+
+app.delete("/api/v1/mailboxes/:mailboxId/sender-rules/:ruleId", async (c: AppContext) => {
+	const ruleId = c.req.param("ruleId")!;
+	if (!ruleId || ruleId.length > 128) return c.json({ error: "Invalid rule id" }, 400);
+	const deleted = await c.var.mailboxStub.deleteSenderRule(ruleId);
+	if (!deleted) return c.json({ error: "Not found" }, 404);
+	return c.body(null, 204);
+});
 
 // -- Threads --------------------------------------------------------
 
@@ -2058,9 +2106,27 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			}
 		}
 		const triageSender = normalizeTriageSender(fromAddress);
-		const triageRow = triageSender
+		const storedTriage = triageSender
 			? await (stub as any).getSenderTriage(triageSender)
 			: null;
+		// An explicit sender rule (Settings → Senders, AVE-96) beats the
+		// Screener row: a block files like a rejected sender, an allow is an
+		// explicit allow. Address rules beat domain rules; a domain allow
+		// needs verified mail, and failed auth matches no rule.
+		let senderRule: SenderRule | null = null;
+		if (triageSender) {
+			try {
+				senderRule = await stub.matchSenderRule(triageSender, inboundEmail.auth_tier);
+			} catch (e) {
+				console.error(`Sender rule lookup failed for ${mailboxId}:`, (e as Error).message);
+			}
+		}
+		if (senderRule) {
+			console.log(
+				`Sender rule ${senderRule.id} (${senderRule.kind} ${senderRule.verdict}) matched ${fromAddress} for ${mailboxId}`,
+			);
+		}
+		const triageRow = triageWithSenderRule(storedTriage, senderRule, triageSender ?? "");
 		const purposePref =
 			classification.reason === "auth-failed"
 				? null
@@ -2077,7 +2143,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				sender: fromAddress,
 				auth,
 			},
-			senderTrustOf(triageRow, purposePref),
+			senderRule?.verdict === "allow" ? "allowed" : senderTrustOf(triageRow, purposePref),
 		);
 		if (trustedClassification !== classification) {
 			console.log(
@@ -2114,6 +2180,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		}
 
 		inboundEmail.classification_reason = inboundClassificationReason(classification, triageDecision);
+		inboundEmail.matched_rule_id = decidingSenderRuleId(senderRule, triageDecision);
 
 		const targetFolder = triageDecision.folderId;
 		let filedFolder: string = targetFolder;

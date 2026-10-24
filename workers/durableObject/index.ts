@@ -85,10 +85,20 @@ import { aggregateRecentRecipients } from "../../shared/recent-recipients";
 import {
 	parseStoredEmailAuth,
 	serializeEmailAuth,
+	type AuthTier,
 	type EmailAuth,
 } from "../lib/email-auth";
 import { storedAuthTier } from "../lib/classification-reason";
 import { buildBootstrapAllowSeeds } from "../lib/sender-triage";
+import {
+	deleteSenderRule,
+	listSenderRules,
+	matchSenderRule,
+	upsertSenderRule,
+	type SenderRule,
+	type SenderRuleKind,
+	type SenderRuleVerdict,
+} from "../lib/sender-rules";
 import {
 	normalizeSenderPreferenceAddress,
 	parseSenderPreferenceSource,
@@ -3470,6 +3480,49 @@ export class MailboxDO extends DurableObject<Env> {
 			.run();
 		this.broadcastEvent("sender_triage_deleted", { sender: normalized });
 		return true;
+	}
+
+	// ── Sender rules (explicit allow / block list) ─────────────────
+
+	async listSenderRules(options: {
+		verdict?: string | null;
+		kind?: string | null;
+		q?: string | null;
+		limit?: number | null;
+	} = {}): Promise<SenderRule[]> {
+		return listSenderRules(this.ctx.storage.sql, options);
+	}
+
+	/** Input must come from normalizeSenderRuleInput (the route validates it). */
+	async upsertSenderRule(input: {
+		kind: SenderRuleKind;
+		value: string;
+		verdict: SenderRuleVerdict;
+		source: string;
+	}): Promise<{ rule: SenderRule; created: boolean }> {
+		await this.#assertMailboxWritable();
+		const result = upsertSenderRule(this.ctx.storage.sql, input);
+		this.broadcastEvent("sender_rule_updated", { rule: result.rule });
+		return result;
+	}
+
+	async deleteSenderRule(id: string): Promise<boolean> {
+		await this.#assertMailboxWritable();
+		const deleted = this.ctx.storage.transactionSync(() =>
+			deleteSenderRule(this.ctx.storage.sql, id),
+		);
+		if (!deleted) return false;
+		this.broadcastEvent("sender_rule_deleted", { id, kind: deleted.kind, value: deleted.value });
+		return true;
+	}
+
+	/**
+	 * The rule that decides inbound mail from `sender` (address beats domain;
+	 * a domain allow needs `verified`; `failed` matches nothing), with its
+	 * match count bumped. Null when none applies.
+	 */
+	async matchSenderRule(sender: string, authTier: AuthTier | null): Promise<SenderRule | null> {
+		return matchSenderRule(this.ctx.storage.sql, sender, authTier);
 	}
 
 	/** Move all messages from a sender in fromFolder into toFolder. */
