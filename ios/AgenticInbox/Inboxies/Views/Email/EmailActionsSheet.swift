@@ -7,6 +7,8 @@ struct EmailActionsSheet: View {
 
     let email: Email
     var onRemoveFromList: ((String) -> Void)? = nil
+    /// Detail message menu: starts a private note to self on this message.
+    var onAddNote: (() -> Void)? = nil
 
     private var source: Email {
         email
@@ -118,6 +120,13 @@ struct EmailActionsSheet: View {
                         }
                     }
 
+                    if let onAddNote {
+                        actionRow("Add Private Note", systemImage: "note.text.badge.plus") {
+                            dismiss()
+                            onAddNote()
+                        }
+                    }
+
                     NavigationLink {
                         EmailSourceView(email: source, onClose: dismissSheet)
                     } label: {
@@ -186,6 +195,7 @@ struct EmailActionsSheet: View {
         if !moveTargets.isEmpty { rows += 1 }
         if showsSpamAction { rows += 1 }
         rows += 1 // View Source
+        if onAddNote != nil { rows += 1 }
         if availability.showsDelete { rows += 1 }
         
         h += CGFloat(rows) * 44 // standard list row height
