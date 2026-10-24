@@ -20,6 +20,7 @@ import {
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FolderSimpleIcon,
+	NotePencilIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
 	ShieldCheckIcon,
@@ -57,6 +58,8 @@ interface EmailPanelToolbarProps {
 	onSpamAction?: () => void;
 	onViewSource: () => void;
 	onDelete: () => void;
+	/** Pins a new sticky note to the conversation (AVE-60). */
+	onAddStickyNote?: () => void;
 }
 
 export default function EmailPanelToolbar({
@@ -81,6 +84,7 @@ export default function EmailPanelToolbar({
 	onSpamAction,
 	onViewSource,
 	onDelete,
+	onAddStickyNote,
 }: EmailPanelToolbarProps) {
 	// Icons pop when switched on (not when a starred message first renders).
 	const [starPops, setStarPops] = useState(0);
@@ -158,6 +162,9 @@ export default function EmailPanelToolbar({
 				size="md"
 				onClick={onToggleRead}
 			/>
+			{onAddStickyNote && (
+				<IconButton label="Add sticky note" icon={NotePencilIcon} size="md" onClick={onAddStickyNote} />
+			)}
 			{onArchive && !isReadOnly && (
 				<IconButton label="Archive" shortcut={keysFor("archive")} icon={ArchiveIcon} size="md" onClick={onArchive} />
 			)}

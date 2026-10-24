@@ -124,6 +124,20 @@
   color-scheme: light;
   /* Text size (Settings → Appearance, T): 1 = 100%. */
   --font-scale: 1;
+
+  /*
+   * Notes to self (AVE-60): a cool mint-sage paper, the one tinted surface in
+   * the monochrome UI, so notes read as the user's own and never as mail.
+   * Shared with iOS (AppTheme) and Android (InboxiesColors).
+   */
+  --note-paper: #edf7f4;
+  --note-paper-edge: #d3eae3;
+  --note-ink: #1f3a34;
+  --note-muted: #5e7d75;
+  --note-pin: #4f9a8a;
+  --note-shadow: 0 1px 1px rgba(20, 60, 50, 0.06), 0 4px 10px rgba(20, 60, 50, 0.08), 0 14px 28px -8px rgba(20, 60, 50, 0.18);
+  /* Picked up while dragging: a deeper, softer drop. */
+  --note-shadow-lifted: 0 2px 3px rgba(20, 60, 50, 0.08), 0 10px 20px rgba(20, 60, 50, 0.12), 0 28px 48px -12px rgba(20, 60, 50, 0.28);
 }
 
 /*
@@ -160,6 +174,14 @@
   --color-kumo-elevated: #1a1a1a;
   --color-kumo-brand-hover: #d0d0d0;
   color-scheme: dark;
+
+  --note-paper: #1c2a27;
+  --note-paper-edge: #27403a;
+  --note-ink: #ddefea;
+  --note-muted: #8fb2a9;
+  --note-pin: #6cc2ae;
+  --note-shadow: 0 0 0 1px rgba(200, 240, 230, 0.06), 0 4px 12px rgba(0, 0, 0, 0.45), 0 16px 32px -8px rgba(0, 0, 0, 0.6);
+  --note-shadow-lifted: 0 0 0 1px rgba(200, 240, 230, 0.06), 0 10px 22px rgba(0, 0, 0, 0.5), 0 30px 52px -12px rgba(0, 0, 0, 0.7);
 }
 
 /*
@@ -320,6 +342,16 @@ button[class*="ring-kumo-hairline"]:focus-visible {
 .icon-btn[aria-expanded="true"]::before {
   opacity: 1;
   transform: scale(1);
+}
+/* On a sticky note's paper the controls take the note's ink. */
+.note-paper .icon-btn {
+  color: var(--note-muted);
+}
+.note-paper .icon-btn:hover {
+  color: var(--note-ink);
+}
+.note-paper .icon-btn::before {
+  background: color-mix(in srgb, var(--note-ink) 9%, transparent);
 }
 .icon-btn > svg,
 .icon-motion svg {
