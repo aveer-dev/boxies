@@ -37,6 +37,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.withLink
+import co.inboxies.app.services.NoteText
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -68,6 +72,10 @@ fun MarkdownContentView(
     onCompose: ((MailAddress) -> Unit)? = null,
     onSearch: ((String) -> Unit)? = null,
     onAskAI: ((String) -> Unit)? = null,
+    /** Text colour; notes to self pass their paper ink. */
+    ink: Color? = null,
+    /** Notes: `[label](url)` links (web / mail only) and `_italic_`. */
+    richInline: Boolean = false,
 ) {
     val blocks = remember(markdown) { parseMarkdownBlocks(markdown) }
     Column(
@@ -97,6 +105,8 @@ fun MarkdownContentView(
                         onCompose = onCompose,
                         onSearch = onSearch,
                         onAskAI = onAskAI,
+                        ink = ink,
+                        richInline = richInline,
                     )
                 }
                 is MdBlock.Paragraph -> InlineMarkdownText(
@@ -105,13 +115,15 @@ fun MarkdownContentView(
                     onCompose = onCompose,
                     onSearch = onSearch,
                     onAskAI = onAskAI,
+                    ink = ink,
+                    richInline = richInline,
                 )
                 is MdBlock.Bullet -> Row(modifier = Modifier.padding(start = (block.indent * 12).dp)) {
                     Text(
                         "• ",
                         fontFamily = InterFontFamily,
                         fontSize = fontSize,
-                        color = inboxiesColors().ink,
+                        color = ink ?: inboxiesColors().ink,
                     )
                     InlineMarkdownText(
                         text = block.text,
@@ -119,6 +131,8 @@ fun MarkdownContentView(
                         onCompose = onCompose,
                         onSearch = onSearch,
                         onAskAI = onAskAI,
+                        ink = ink,
+                        richInline = richInline,
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
@@ -127,7 +141,7 @@ fun MarkdownContentView(
                         "${block.index} ",
                         fontFamily = InterFontFamily,
                         fontSize = fontSize,
-                        color = inboxiesColors().ink,
+                        color = ink ?: inboxiesColors().ink,
                     )
                     InlineMarkdownText(
                         text = block.text,
@@ -135,6 +149,8 @@ fun MarkdownContentView(
                         onCompose = onCompose,
                         onSearch = onSearch,
                         onAskAI = onAskAI,
+                        ink = ink,
+                        richInline = richInline,
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
@@ -147,7 +163,7 @@ fun MarkdownContentView(
                         Text(
                             if (block.isDone) "☑" else "☐",
                             fontSize = fontSize,
-                            color = if (block.isDone) colors.muted else colors.ink,
+                            color = if (block.isDone) colors.muted else (ink ?: colors.ink),
                         )
                         InlineMarkdownText(
                             text = block.text,
@@ -155,6 +171,8 @@ fun MarkdownContentView(
                             onCompose = onCompose,
                             onSearch = onSearch,
                             onAskAI = onAskAI,
+                            ink = ink,
+                            richInline = richInline,
                             modifier = Modifier.weight(1f, fill = false),
                         )
                     }
@@ -180,6 +198,8 @@ fun MarkdownContentView(
                             onCompose = onCompose,
                             onSearch = onSearch,
                             onAskAI = onAskAI,
+                            ink = ink,
+                            richInline = richInline,
                         )
                     }
                 }
@@ -216,8 +236,11 @@ private fun InlineMarkdownText(
     onCompose: ((MailAddress) -> Unit)? = null,
     onSearch: ((String) -> Unit)? = null,
     onAskAI: ((String) -> Unit)? = null,
+    ink: Color? = null,
+    richInline: Boolean = false,
 ) {
     val colors = inboxiesColors()
+    val textColor = ink ?: colors.ink
     val interactive = onCompose != null || onSearch != null || onAskAI != null
 
     if (interactive && ContactPillParser.containsContactOrEmail(text)) {
@@ -231,12 +254,12 @@ private fun InlineMarkdownText(
             items.forEach { item ->
                 when (item) {
                     is InlineFlowItem.Word -> Text(
-                        parseInlineMarkdown(item.text),
+                        parseInlineMarkdown(item.text, richInline, textColor),
                         fontFamily = InterFontFamily,
                         fontSize = fontSize,
                         fontWeight = fontWeight,
                         letterSpacing = AppThemeDims.Chat.tracking,
-                        color = colors.ink,
+                        color = textColor,
                         lineHeight = (fontSize.value * (1f + AppThemeDims.Chat.bodyLineSpacingRatio)).sp,
                     )
                     is InlineFlowItem.Contact -> ContactPillMenu(
@@ -251,13 +274,13 @@ private fun InlineMarkdownText(
         }
     } else {
         Text(
-            parseInlineMarkdown(text),
+            parseInlineMarkdown(text, richInline, textColor),
             modifier = modifier,
             fontFamily = InterFontFamily,
             fontSize = fontSize,
             fontWeight = fontWeight,
             letterSpacing = AppThemeDims.Chat.tracking,
-            color = colors.ink,
+            color = textColor,
             lineHeight = (fontSize.value * (1f + AppThemeDims.Chat.bodyLineSpacingRatio)).sp,
         )
     }
@@ -594,10 +617,37 @@ private fun parseTableAlignments(line: String, columnCount: Int): List<TextAlign
 }
 
 /** Lightweight inline markdown: **bold**, *italic*, `code`. */
-private fun parseInlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
+private fun parseInlineMarkdown(
+    text: String,
+    richInline: Boolean = false,
+    linkColor: Color = Color.Unspecified,
+): AnnotatedString = buildAnnotatedString {
     var i = 0
     while (i < text.length) {
+        val link = if (richInline && text[i] == '[') noteLinkAt(text, i) else null
         when {
+            link != null -> {
+                val (label, url, next) = link
+                if (NoteText.isOpenableLink(url)) {
+                    withLink(
+                        LinkAnnotation.Url(
+                            url,
+                            TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)),
+                        ),
+                    ) { append(label) }
+                } else {
+                    append(label)
+                }
+                i = next
+            }
+            richInline && text[i] == '_' && (i == 0 || !text[i - 1].isLetterOrDigit()) &&
+                text.indexOf('_', i + 1).let { end -> end > i + 1 && (end + 1 >= text.length || !text[end + 1].isLetterOrDigit()) } -> {
+                val end = text.indexOf('_', i + 1)
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                    append(text.substring(i + 1, end))
+                }
+                i = end + 1
+            }
             text.startsWith("**", i) -> {
                 val end = text.indexOf("**", i + 2)
                 if (end > i) {
@@ -645,4 +695,15 @@ private fun parseInlineMarkdown(text: String): AnnotatedString = buildAnnotatedS
             }
         }
     }
+}
+
+/** `[label](url)` starting at [start]: label, url and the index after `)`, else null. */
+private fun noteLinkAt(text: String, start: Int): Triple<String, String, Int>? {
+    val labelEnd = text.indexOf(']', start + 1)
+    if (labelEnd < 0 || labelEnd + 1 >= text.length || text[labelEnd + 1] != '(') return null
+    val urlEnd = text.indexOf(')', labelEnd + 2)
+    if (urlEnd < 0) return null
+    val url = text.substring(labelEnd + 2, urlEnd).trim()
+    if (url.isEmpty() || url.contains(' ')) return null
+    return Triple(text.substring(start + 1, labelEnd), url, urlEnd + 1)
 }

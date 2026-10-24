@@ -107,8 +107,33 @@ class DatabaseService private constructor() {
             } else {
                 email
             }
-            emails[merged.id] = merged
+            // Only list rows carry note fields; detail/thread payloads keep the cached ones.
+            val existing = emails[merged.id]
+            val withNotes = if (merged.hasStickyNote == null && existing?.hasStickyNote != null) {
+                merged.copy(
+                    hasStickyNote = existing.hasStickyNote,
+                    stickyNoteText = existing.stickyNoteText,
+                    inlineNoteCount = merged.inlineNoteCount ?: existing.inlineNoteCount,
+                )
+            } else {
+                merged
+            }
+            emails[merged.id] = withNotes
             emailMailboxIds[merged.id] = mailboxId
+        }
+    }
+
+    /**
+     * Writes a conversation's note summary onto every cached row of it, so the list
+     * shows a note change before the next sync.
+     */
+    fun updateThreadNoteSummary(mailboxId: String, threadKey: String, summary: ThreadNoteSummary) {
+        emailsIn(mailboxId).filter { it.noteThreadKey == threadKey }.toList().forEach { email ->
+            emails[email.id] = email.copy(
+                hasStickyNote = summary.hasStickyNote,
+                stickyNoteText = summary.stickyNoteText,
+                inlineNoteCount = summary.inlineNoteCount,
+            )
         }
     }
 
