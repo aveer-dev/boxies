@@ -76,6 +76,31 @@ export function isPurposeFolderId(folderId: string): folderId is PurposeFolderId
 }
 
 /**
+ * Spam and Trash keep mail for this many days after it was moved in, then
+ * the mailbox deletes it for good (AVE-42). Age counts from the move into the
+ * folder, not the message date.
+ */
+export const FOLDER_RETENTION_DAYS = 30;
+
+/** Folders whose mail is deleted after `FOLDER_RETENTION_DAYS`. */
+export const RETENTION_FOLDER_IDS = [Folders.SPAM, Folders.TRASH] as const;
+
+export function isRetentionFolderId(folderId: string | null | undefined): boolean {
+	return !!folderId && (RETENTION_FOLDER_IDS as readonly string[]).includes(folderId);
+}
+
+/** Quiet notice shown at the top of Spam / Trash on every client. */
+export function folderRetentionNotice(folderId: string | null | undefined): string | null {
+	if (folderId === Folders.SPAM) {
+		return `Messages in Spam are deleted after ${FOLDER_RETENTION_DAYS} days.`;
+	}
+	if (folderId === Folders.TRASH) {
+		return `Messages in Trash are deleted after ${FOLDER_RETENTION_DAYS} days.`;
+	}
+	return null;
+}
+
+/**
  * Human-readable display names for folder IDs.
  * Used in the sidebar, search result badges, and tool descriptions.
  */

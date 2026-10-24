@@ -315,6 +315,24 @@ private fun EmailRows(
             }
         }
 
+        val retentionNotice = FolderIds.retentionNotice(fallbackFolderId)
+        if (retentionNotice != null) {
+            item(key = "retention-notice") {
+                Text(
+                    text = retentionNotice,
+                    color = colors.muted,
+                    fontFamily = InterFontFamily,
+                    fontSize = AppThemeDims.List.preview,
+                    modifier = Modifier.padding(
+                        start = AppThemeDims.List.rowHorizontalPadding,
+                        end = AppThemeDims.List.rowHorizontalPadding,
+                        top = 4.dp,
+                        bottom = 8.dp,
+                    ),
+                )
+            }
+        }
+
         val showNewSeen = fallbackFolderId == FolderIds.INBOX
         if (showNewSeen) {
             // New is capped so Seen always stays in view right below it (AVE-23).
@@ -777,6 +795,14 @@ private fun MailRow(
                         scope.launch { app.toggleRead(email) }
                     },
                 )
+                InboxiesMenuItem(
+                    text = if (email.replyLater) "Remove from Reply Later" else "Reply later",
+                    icon = Icons.Outlined.Schedule,
+                    onClick = {
+                        showMenu = false
+                        scope.launch { app.toggleReplyLater(email) }
+                    },
+                )
                 InboxiesMenuDivider()
                 InboxiesMenuItem(
                     text = "More Options…",
@@ -1229,6 +1255,18 @@ fun EmailRowView(
                             fontWeight = FontWeight.Medium,
                             fontSize = list.badge,
                             color = colors.deepDarkRed,
+                        )
+                    }
+                    // Sent mail the DSN pipeline marked bounced / complained (or a failed send).
+                    email.deliveryStatusLabel?.let { status ->
+                        Text(
+                            status,
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = list.badge,
+                            color = colors.deepDarkRed,
+                            maxLines = 1,
+                            softWrap = false,
                         )
                     }
                 }

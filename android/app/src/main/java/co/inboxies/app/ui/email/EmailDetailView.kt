@@ -45,6 +45,8 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -95,6 +97,7 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.MailAddress
+import co.inboxies.app.models.SpamReason
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.EmailActionAvailability
 import co.inboxies.app.theme.AppThemeDims
@@ -501,6 +504,20 @@ fun EmailDetailView(
                                     onSearch = { personSearchQuery = it },
                                 )
 
+                                message.spamReasonLine?.let { reason ->
+                                    SpamReasonLine(
+                                        text = reason,
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+
+                                if (message.showsUnverifiedBanner) {
+                                    UnverifiedSenderBanner(
+                                        sender = message.sender,
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+
                                 if (message.isSpoofed) {
                                     SpoofWarningBanner(
                                         modifier = Modifier.padding(top = 10.dp),
@@ -806,6 +823,72 @@ private fun SpoofWarningBanner(modifier: Modifier = Modifier) {
     }
 }
 
+/** Warning tint shared by the delivery-failure and unverified-sender banners. */
+private val BannerWarningTint = Color(0xFFFFC107)
+
+/** One muted line saying why a message is in Spam / Screened out. */
+@Composable
+private fun SpamReasonLine(text: String, modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Outlined.Info,
+            contentDescription = null,
+            tint = colors.muted,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text,
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** `unverified` mail: the From domain isn't proven, but it isn't spam either. */
+@Composable
+private fun UnverifiedSenderBanner(sender: String, modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, BannerWarningTint.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Outlined.ErrorOutline,
+            contentDescription = null,
+            tint = BannerWarningTint,
+            modifier = Modifier.size(15.dp),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                SpamReason.UNVERIFIED_TITLE,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.ink,
+            )
+            Text(
+                SpamReason.unverifiedDetail(sender),
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+            )
+        }
+    }
+}
+
 @Composable
 private fun DeliveryFailureBanner(
     title: String,
@@ -813,7 +896,7 @@ private fun DeliveryFailureBanner(
     modifier: Modifier = Modifier,
 ) {
     val colors = inboxiesColors()
-    val warning = Color(0xFFFFC107)
+    val warning = BannerWarningTint
     Column(
         modifier = modifier
             .fillMaxWidth()

@@ -1875,6 +1875,7 @@ class AppModel {
         if (form.isSending) return
         form.isSending = true
         form.errorMessage = null
+        form.suppressedRecipients = emptyList()
         showToast("Sending…", isLoading = true)
         try {
             runCatching {
@@ -1909,12 +1910,55 @@ class AppModel {
                 // readable `error` message; keep it on the form so the open sheet can show it.
                 val message = it.message?.takeIf { msg -> msg.isNotBlank() } ?: "Send failed"
                 noteServiceEnded(it)
-                form.errorMessage = message
+                if (it is ApiException.RecipientSuppressed) {
+                    // Shown inline with Un-suppress; the server's sentence goes in the toast.
+                    form.suppressedRecipients = it.suppressed
+                } else {
+                    form.errorMessage = message
+                }
                 showToast(message, isError = true)
             }
         } finally {
             form.isSending = false
         }
+    }
+
+    /**
+     * Compose "Un-suppress and send": lifts every suppression the open compose still
+     * addresses, then sends again through [sendCompose] with the same `Idempotency-Key`.
+     * One already lifted (404) is skipped; any other failure stops before sending.
+     */
+    suspend fun unsuppressAndSendCompose() {
+        val form = _composeSession.value?.form ?: return
+        if (form.isSending || form.isUnsuppressing) return
+        form.commitPendingTokens()
+        val targets = form.visibleSuppressedRecipients()
+        if (targets.isEmpty() || targets.any { !it.canUnsuppress }) return
+        form.isUnsuppressing = true
+        form.errorMessage = null
+        try {
+            for (target in targets) {
+                try {
+                    ApiClient.shared.unsuppress(form.fromMailboxId, target.address)
+                } catch (e: ApiException.Http) {
+                    // Already lifted (by someone else, or an earlier attempt): carry on.
+                    if (e.code != 404) throw e
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val message = e.message?.takeIf { it.isNotBlank() } ?: "Couldn't un-suppress the address."
+            noteServiceEnded(e)
+            form.errorMessage = message
+            showToast(message, isError = true)
+            return
+        } finally {
+            form.isUnsuppressing = false
+        }
+        val lifted = targets.map { it.address }.toSet()
+        form.suppressedRecipients = form.suppressedRecipients.filterNot { it.address in lifted }
+        sendCompose()
     }
 
     /**
@@ -2032,10 +2076,13 @@ class AppModel {
         )
         runCatching {
             ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
+        }.onSuccess {
+            showToast(if (next) "Added to Reply Later" else "Removed from Reply Later")
         }.onFailure {
             // Roll back optimistic update on failure
             db.updateEmailFlags(target.id, replyLater = !next)
             applyEmailUpdate(target)
+            showToast("Couldn't update Reply Later", isError = true)
         }
         refreshReplyLaterCount()
         if (_selectedTab.value is HomeTab.ReplyLater) {

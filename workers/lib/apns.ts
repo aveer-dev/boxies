@@ -33,6 +33,7 @@ let cachedKey: CryptoKey | null = null;
 let cachedKeyPem: string | null = null;
 let cachedJwt: string | null = null;
 let cachedJwtIssuedAt = 0;
+let cachedJwtKey: string | null = null;
 
 /**
  * Parses and imports the APNs .p8 EC private key.
@@ -62,7 +63,8 @@ async function getAPNsBearerToken(env: APNsEnv): Promise<string | null> {
 
 	const now = Math.floor(Date.now() / 1000);
 	// Apple permits JWTs to be reused for up to 60 minutes; refresh every 45 minutes
-	if (cachedJwt && now - cachedJwtIssuedAt < 45 * 60) {
+	const jwtKey = `${env.APNS_KEY_ID}:${env.APNS_TEAM_ID}`;
+	if (cachedJwt && cachedJwtKey === jwtKey && now - cachedJwtIssuedAt < 45 * 60) {
 		return cachedJwt;
 	}
 
@@ -74,11 +76,17 @@ async function getAPNsBearerToken(env: APNsEnv): Promise<string | null> {
 			.setIssuedAt(now)
 			.sign(key);
 		cachedJwtIssuedAt = now;
+		cachedJwtKey = jwtKey;
 		return cachedJwt;
 	} catch (err) {
 		console.error("[APNs] Failed to sign APNs JWT:", err);
 		return null;
 	}
+}
+
+/** APNs refused our provider JWT (expired, or signed with a stale key). */
+export function isRejectedProviderToken(status: number, body: string): boolean {
+	return status === 403 && /ExpiredProviderToken|InvalidProviderToken/.test(body);
 }
 
 /**
@@ -187,6 +195,11 @@ export async function sendAPNsPush(
 						`[APNs] ✗ Failed to send push to ${token.slice(0, 8)}... status=${response.status} body=${respText} host=${usedHost}`,
 					);
 					details.push({ token: token.slice(0, 8) + "...", status: response.status, body: respText, host: usedHost });
+					if (isRejectedProviderToken(response.status, respText)) {
+						// Re-sign on the next push instead of reusing a JWT Apple refuses
+						// for the rest of the 45-minute cache window.
+						cachedJwt = null;
+					}
 					if (
 						response.status === 410 ||
 						(response.status === 400 && respText.includes("BadDeviceToken"))

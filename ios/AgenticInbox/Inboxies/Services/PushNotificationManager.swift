@@ -10,7 +10,12 @@ struct PushDeepLink: Equatable {
 }
 
 /// Coordinates Apple Push Notification registration, device token persistence,
-/// and synchronization with the Cloudflare backend for the active mailbox.
+/// and synchronization with the Cloudflare backend.
+///
+/// Policy (same as Android): while notifications are on, the device token is
+/// registered for **every** mailbox the signed-in user has, not only the one on
+/// screen, and unregistered from all of them when notifications are turned off
+/// or the user signs out.
 @Observable
 @MainActor
 final class PushNotificationManager {
@@ -19,7 +24,10 @@ final class PushNotificationManager {
     private let tokenStorageKey = "apns_device_token_hex"
     private(set) var deviceToken: String?
     private(set) var isRegistered = false
-    private var activeMailboxId: String?
+    /// The signed-in user's mailboxes (the token is registered for each).
+    private var knownMailboxIds: Set<String> = []
+    /// Mailboxes `deviceToken` was registered for in this process.
+    private var registeredMailboxIds: Set<String> = []
     /// Set when the user taps a push; consumed by RootView once the app is ready.
     var pendingDeepLink: PushDeepLink?
 
@@ -27,15 +35,19 @@ final class PushNotificationManager {
         self.deviceToken = UserDefaults.standard.string(forKey: tokenStorageKey)
     }
 
-    func requestPermissionAndRegister(mailboxId: String) {
-        self.activeMailboxId = mailboxId
+    private var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: "push_notifications_enabled") as? Bool ?? true
+    }
 
-        let isEnabled = UserDefaults.standard.object(forKey: "push_notifications_enabled") as? Bool ?? true
-        guard isEnabled else { return }
+    /// Remember the user's mailboxes and, when notifications are on, ask for
+    /// permission and register the device token for each one not registered yet.
+    func requestPermissionAndRegister(mailboxIds: [String]) {
+        knownMailboxIds = Set(mailboxIds.filter { !$0.isEmpty })
+        guard isEnabled, !knownMailboxIds.isEmpty else { return }
 
         // If we already have a token, sync it immediately
         if let token = deviceToken {
-            syncTokenWithServer(mailboxId: mailboxId, token: token)
+            syncToken(token)
         }
 
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
@@ -49,13 +61,16 @@ final class PushNotificationManager {
     func handleTokenReceived(data: Data) {
         let hexString = data.map { String(format: "%02.2hhx", $0) }.joined()
         print("[PushManager] Received APNs device token: \(hexString)")
+        if hexString != deviceToken {
+            // Registrations were for the old token; the server prunes it on APNs' 410.
+            registeredMailboxIds.removeAll()
+        }
         self.deviceToken = hexString
         self.isRegistered = true
         UserDefaults.standard.set(hexString, forKey: tokenStorageKey)
 
-        if let mailboxId = activeMailboxId {
-            syncTokenWithServer(mailboxId: mailboxId, token: hexString)
-        }
+        guard isEnabled else { return }
+        syncToken(hexString)
     }
 
     func handleRegistrationError(_ error: Error) {
@@ -63,22 +78,32 @@ final class PushNotificationManager {
         self.isRegistered = false
     }
 
-    func syncTokenWithServer(mailboxId: String, token: String) {
-        Task {
-            do {
-                print("[PushManager] Registering device token with server for mailbox \(mailboxId)...")
-                try await APIClient.shared.registerDeviceToken(mailboxId: mailboxId, token: token)
-                print("[PushManager] ✓ Device token successfully registered with Cloudflare Worker!")
-            } catch {
-                print("[PushManager] ✗ Failed to register device token with server: \(error)")
+    private func syncToken(_ token: String) {
+        for mailboxId in knownMailboxIds.subtracting(registeredMailboxIds) {
+            // Claim up front so overlapping calls don't double-POST; release on failure.
+            registeredMailboxIds.insert(mailboxId)
+            Task {
+                do {
+                    try await APIClient.shared.registerDeviceToken(mailboxId: mailboxId, token: token)
+                    print("[PushManager] ✓ Device token registered for mailbox \(mailboxId)")
+                } catch {
+                    registeredMailboxIds.remove(mailboxId)
+                    print("[PushManager] ✗ Failed to register device token for \(mailboxId): \(error)")
+                }
             }
         }
     }
 
-    func unregisterToken(mailboxId: String) {
+    /// Settings toggle off: unregister this device from every mailbox (not just
+    /// the selected one), so no mailbox keeps pushing to it.
+    func unregisterToken(mailboxIds: [String]) {
+        let targets = knownMailboxIds.union(registeredMailboxIds).union(mailboxIds)
+        registeredMailboxIds.removeAll()
         guard let token = deviceToken else { return }
         Task {
-            try? await APIClient.shared.unregisterDeviceToken(mailboxId: mailboxId, token: token)
+            for mailboxId in targets {
+                try? await APIClient.shared.unregisterDeviceToken(mailboxId: mailboxId, token: token)
+            }
         }
     }
 
@@ -91,10 +116,12 @@ final class PushNotificationManager {
     }
 
     func unregisterAllAndWait(mailboxIds: [String], sessionToken: String?) async {
-        activeMailboxId = nil
-        guard let token = deviceToken, !mailboxIds.isEmpty else { return }
+        let targets = knownMailboxIds.union(registeredMailboxIds).union(mailboxIds)
+        knownMailboxIds.removeAll()
+        registeredMailboxIds.removeAll()
+        guard let token = deviceToken, !targets.isEmpty else { return }
         await withTaskGroup(of: Void.self) { group in
-            for mailboxId in Set(mailboxIds) {
+            for mailboxId in targets {
                 group.addTask {
                     try? await APIClient.shared.unregisterDeviceToken(
                         mailboxId: mailboxId,

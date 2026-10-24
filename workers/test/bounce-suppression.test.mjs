@@ -146,9 +146,12 @@ const quiet = async (fn) => {
 {
 	const recorded = [];
 	const updates = [];
+	const recipientUpdates = [];
 	const stub = {
 		findEmailByProviderMessageId: async () => ({ id: "sent-1" }),
 		setDeliveryState: async (id, state) => updates.push({ id, state }),
+		// AVE-41: bounces are also recorded per recipient.
+		recordRecipientDelivery: async (id, update) => recipientUpdates.push({ id, update }),
 	};
 	const event = (type, extra = {}) => ({
 		type: `cf.email.sending.message.${type}`,
@@ -162,6 +165,11 @@ const quiet = async (fn) => {
 	assert.equal(recorded.length, 1);
 	assert.equal(recorded[0].reason, "hard_bounce");
 	assert.equal(updates.at(-1).state.status, "bounced", "Sent row still stamped");
+	assert.deepEqual(
+		recipientUpdates.at(-1),
+		{ id: "sent-1", update: { address: "gone@example.net", status: "bounced", error: "Message bounced" } },
+		"bounced recipient recorded alongside the suppression",
+	);
 
 	await applyEmailSendingEvent(event("complained"), () => stub, async (s) => recorded.push(s));
 	assert.equal(recorded.at(-1).reason, "complaint");

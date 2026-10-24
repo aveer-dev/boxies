@@ -8,7 +8,11 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders, FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "../../shared/folders";
-import { isPurposeFolderId, type PurposeFolderId } from "../../shared/folders";
+import {
+	isPurposeFolderId,
+	isRetentionFolderId,
+	type PurposeFolderId,
+} from "../../shared/folders";
 import {
 	annotateListSections,
 	folderUsesNewSeen,
@@ -40,6 +44,11 @@ import {
 } from "../lib/email-content";
 import { attachmentKey } from "../lib/attachments";
 import {
+	listDeliveryRecipients,
+	upsertDeliveryRecipient,
+	type RecipientDeliveryUpdate,
+} from "../lib/delivery-recipients";
+import {
 	blobDeleteRetryDelayMs,
 	countPendingBlobDeletes,
 	drainPendingBlobDeletes,
@@ -47,6 +56,11 @@ import {
 	forgetPendingBlobDeletes,
 } from "../lib/pending-blob-deletes";
 import { runMailboxPurge } from "../lib/mailbox-purge";
+import {
+	RETENTION_CONTINUE_DELAY_MS,
+	nextRetentionSweepDelayMs,
+	purgeExpiredRetentionEmails,
+} from "../lib/folder-retention";
 import { aliasMetadataKey, mailboxMetadataKey } from "../lib/mailbox-routing";
 import {
 	findEmailIdByIdempotencyKey,
@@ -73,6 +87,7 @@ import {
 	serializeEmailAuth,
 	type EmailAuth,
 } from "../lib/email-auth";
+import { storedAuthTier } from "../lib/classification-reason";
 import { buildBootstrapAllowSeeds } from "../lib/sender-triage";
 import {
 	normalizeSenderPreferenceAddress,
@@ -223,6 +238,12 @@ interface EmailData {
 	delivery_status?: DeliveryStatus | null;
 	delivery_error?: string | null;
 	auth?: EmailAuth | string | null;
+	/** Why inbound mail was filed where it was (shared/spam-reason.ts code). */
+	classification_reason?: string | null;
+	/** Defaults to the tier of `auth`; null when there's no auth snapshot. */
+	auth_tier?: string | null;
+	/** Sender rule that decided the folder (null until sender_rules exists). */
+	matched_rule_id?: string | null;
 	alias_id?: string | null;
 	/** "agent" for AI-written drafts; omitted for the user's own mail. */
 	source?: "agent" | null;
@@ -351,18 +372,74 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#scheduleFtsBackfill();
 		this.#resumePendingBlobDeletes();
 		this.#resumeStuckSendSweep();
+		this.#armRetentionSweep();
 	}
 
 	/**
 	 * One alarm serves every scheduled job: incremental R2 → FTS indexing for
-	 * mail created before FTS existed, the sweep of queued blob deletes, and
-	 * the stuck-send sweeper. Each job reschedules itself; the sweep only ever
-	 * moves the alarm earlier.
+	 * mail created before FTS existed, the Spam / Trash retention purge, the
+	 * sweep of queued blob deletes, and the stuck-send sweeper. Every job runs
+	 * on every firing (each is a cheap no-op when it has nothing to do). FTS
+	 * may set the alarm directly; the others only ever move it earlier, and
+	 * the retention job re-arms last, so a nearer FTS / blob / send alarm
+	 * never cancels its daily run.
 	 */
 	async alarm(): Promise<void> {
 		await this.#runFtsBackfillBatch();
+		const retention = await this.#runRetentionPurge();
 		await this.#sweepPendingBlobDeletes();
 		await this.#sweepStuckSends();
+		if (retention === "more") {
+			await this.#scheduleAlarmWithin(RETENTION_CONTINUE_DELAY_MS);
+		}
+		await this.#scheduleRetentionSweep();
+	}
+
+	/**
+	 * Delete one batch of Spam / Trash mail older than the retention period
+	 * (rows + queued blobs; the caller sweeps the queue). Returns "more" when
+	 * the batch was full. Never throws: the next alarm retries.
+	 */
+	async #runRetentionPurge(): Promise<"more" | "done"> {
+		try {
+			if (await this.#isMailboxDeleted()) return "done";
+			const result = purgeExpiredRetentionEmails({
+				sql: this.ctx.storage.sql,
+				transactionSync: (fn) => this.ctx.storage.transactionSync(fn),
+			});
+			for (const id of result.deletedIds) {
+				this.broadcastEvent("email_deleted", { id });
+			}
+			if (result.deletedIds.length > 0) {
+				console.log(
+					JSON.stringify({
+						event: "retention_purge",
+						deleted: result.deletedIds.length,
+						blobs: result.blobKeys.length,
+					}),
+				);
+			}
+			return result.more ? "more" : "done";
+		} catch (e) {
+			console.error("Retention purge failed:", (e as Error).message);
+			return "done";
+		}
+	}
+
+	/** Arm the alarm for the next retention check, if Spam / Trash hold mail. */
+	async #scheduleRetentionSweep(): Promise<void> {
+		try {
+			if (await this.#isMailboxDeleted()) return;
+			const delay = nextRetentionSweepDelayMs(this.ctx.storage.sql);
+			if (delay != null) await this.#scheduleAlarmWithin(delay);
+		} catch (e) {
+			console.error("Retention schedule failed:", (e as Error).message);
+		}
+	}
+
+	/** Fire-and-forget `#scheduleRetentionSweep` (constructor and move paths). */
+	#armRetentionSweep(): void {
+		void this.#scheduleRetentionSweep();
 	}
 
 	/** Fire the alarm within `delayMs`, keeping an earlier alarm if one is set. */
@@ -689,12 +766,22 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 	}
 
-	#withDecodedAuth<T extends { auth?: unknown }>(
+	/**
+	 * Decode the stored auth JSON and fill `auth_tier` for rows from before
+	 * migration 37, which only have the tier inside `auth`.
+	 */
+	#withDecodedAuth<T extends { auth?: unknown; auth_tier?: unknown }>(
 		email: T,
-	): T & { auth: EmailAuth | null } {
+	): T & { auth: EmailAuth | null; auth_tier: string | null } {
+		const auth = parseStoredEmailAuth(email.auth);
+		const stored =
+			typeof email.auth_tier === "string" && email.auth_tier
+				? email.auth_tier
+				: null;
 		return {
 			...email,
-			auth: parseStoredEmailAuth(email.auth),
+			auth,
+			auth_tier: stored ?? storedAuthTier(auth),
 		};
 	}
 
@@ -770,6 +857,9 @@ export class MailboxDO extends DurableObject<Env> {
 				delivery_error: schema.emails.delivery_error,
 				snippet: schema.emails.snippet,
 				auth: schema.emails.auth,
+				auth_tier: schema.emails.auth_tier,
+				classification_reason: schema.emails.classification_reason,
+				matched_rule_id: schema.emails.matched_rule_id,
 				alias_id: schema.emails.alias_id,
 			})
 			.from(schema.emails)
@@ -1016,7 +1106,7 @@ export class MailboxDO extends DurableObject<Env> {
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
-					lp.auth,
+					lp.auth, lp.auth_tier, lp.classification_reason, lp.matched_rule_id,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
@@ -1118,7 +1208,7 @@ export class MailboxDO extends DurableObject<Env> {
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
-				lif.auth,
+				lif.auth, lif.auth_tier, lif.classification_reason, lif.matched_rule_id,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
 				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
 					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
@@ -1301,7 +1391,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const body = await this.#hydrateBody(id, email.body, email.snippet);
 
-		return {
+		return this.#withDecodedAuth({
 			...email,
 			...this.#aliasFields(email.alias_id),
 			body,
@@ -1309,8 +1399,9 @@ export class MailboxDO extends DurableObject<Env> {
 			starred: !!email.starred,
 			reply_later: !!email.reply_later,
 			attachments: emailAttachments,
-			auth: parseStoredEmailAuth(email.auth),
-		};
+			delivery_recipients:
+				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
+		});
 	}
 
 	/**
@@ -1374,6 +1465,8 @@ export class MailboxDO extends DurableObject<Env> {
 			attachmentsByEmail.set(att.email_id, list);
 		}
 
+		const recipientsByEmail = listDeliveryRecipients(this.ctx.storage.sql, emailIds);
+
 		return await Promise.all(
 			emailRows.map(async (email) => this.#withDecodedAuth({
 				...email,
@@ -1383,6 +1476,7 @@ export class MailboxDO extends DurableObject<Env> {
 				starred: !!email.starred,
 				reply_later: !!email.reply_later,
 				attachments: attachmentsByEmail.get(email.id) || [],
+				delivery_recipients: recipientsByEmail.get(email.id) || [],
 			})),
 		);
 	}
@@ -1672,6 +1766,30 @@ export class MailboxDO extends DurableObject<Env> {
 			delivery_error: state.error ?? null,
 		});
 		return this.getEmail(id);
+	}
+
+	/**
+	 * Email Sending event for one recipient of a Sent row (AVE-41). Stale or
+	 * repeated events are ignored (see lib/delivery-recipients). Returns
+	 * whether anything changed; only then do clients hear about it.
+	 */
+	async recordRecipientDelivery(
+		emailId: string,
+		update: RecipientDeliveryUpdate,
+	): Promise<boolean> {
+		const exists = [
+			...this.ctx.storage.sql.exec(`SELECT 1 FROM emails WHERE id = ?1`, emailId),
+		].length > 0;
+		if (!exists) return false;
+		const changed = upsertDeliveryRecipient(this.ctx.storage.sql, emailId, update);
+		if (changed) {
+			this.broadcastEvent("email_updated", {
+				id: emailId,
+				delivery_recipients:
+					listDeliveryRecipients(this.ctx.storage.sql, [emailId]).get(emailId) ?? [],
+			});
+		}
+		return changed;
 	}
 
 	/**
@@ -2206,6 +2324,8 @@ export class MailboxDO extends DurableObject<Env> {
 				.run();
 			this.broadcastEvent("email_moved", { id, folder_id: folderId });
 			this.broadcastEvent("email_updated", { id, reply_later: false });
+			// retention_since is set by trigger; make sure the purge is armed.
+			this.#armRetentionSweep();
 		} else {
 			this.db
 				.update(schema.emails)
@@ -2647,7 +2767,7 @@ export class MailboxDO extends DurableObject<Env> {
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,
-				e.auth,
+				e.auth, e.auth_tier, e.classification_reason, e.matched_rule_id,
 				f.name as folder_name
 			FROM emails e
 			${ftsJoin}
@@ -2932,6 +3052,11 @@ export class MailboxDO extends DurableObject<Env> {
 		// insert can't interleave with it.
 		// Sent and draft emails are always read — the author already knows the content.
 		// This prevents them from looking unread in lists or inflating thread_unread_count.
+		const decodedAuth =
+			typeof email.auth === "string"
+				? parseStoredEmailAuth(email.auth)
+				: email.auth ?? null;
+		const authTier = email.auth_tier ?? storedAuthTier(decodedAuth);
 		const created = insertOrReplay(this.ctx.storage.sql, idempotencyKey, email.id, () => {
 			this.db
 				.insert(schema.emails)
@@ -2957,11 +3082,10 @@ export class MailboxDO extends DurableObject<Env> {
 					provider_message_id: email.provider_message_id ?? null,
 					delivery_status: email.delivery_status ?? null,
 					delivery_error: email.delivery_error ?? null,
-					auth: serializeEmailAuth(
-						typeof email.auth === "string"
-							? parseStoredEmailAuth(email.auth)
-							: email.auth,
-					),
+					auth: serializeEmailAuth(decodedAuth),
+					classification_reason: email.classification_reason ?? null,
+					auth_tier: authTier,
+					matched_rule_id: email.matched_rule_id ?? null,
 					alias_id: email.alias_id ?? null,
 					source: email.source ?? null,
 					idempotency_key: idempotencyKey,
@@ -3012,13 +3136,16 @@ export class MailboxDO extends DurableObject<Env> {
 			provider_message_id: email.provider_message_id ?? null,
 			delivery_status: email.delivery_status ?? null,
 			delivery_error: email.delivery_error ?? null,
-			auth: typeof email.auth === "string"
-				? parseStoredEmailAuth(email.auth)
-				: email.auth ?? null,
+			auth: decodedAuth,
+			auth_tier: authTier,
+			classification_reason: email.classification_reason ?? null,
+			matched_rule_id: email.matched_rule_id ?? null,
 			// iOS decodes the full Email model from this event; it requires these.
 			reply_later: false,
 			alias_id: email.alias_id ?? null,
 		});
+		// Inbound spam lands with retention_since set by trigger.
+		if (isRetentionFolderId(folderId)) this.#armRetentionSweep();
 		return { id: email.id, replayed: false };
 	}
 
@@ -3393,6 +3520,7 @@ export class MailboxDO extends DurableObject<Env> {
 		for (const id of ids) {
 			this.broadcastEvent("email_moved", { id, folder_id: toFolder });
 		}
+		if (isRetentionFolderId(toFolder)) this.#armRetentionSweep();
 		return { moved: ids.length, ids };
 	}
 

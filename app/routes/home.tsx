@@ -17,7 +17,6 @@ import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { Link as RouterLink, useNavigate } from "react-router";
 import api from "~/services/api";
-import { OnboardingFlow } from "~/components/OnboardingFlow";
 import {
 	useCreateMailbox,
 	useDeleteMailbox,
@@ -60,10 +59,8 @@ export default function HomeRoute() {
 		(d) => d.status === "pending" || d.status === "pending_nameservers",
 	);
 
-	const handleOnboardingSuccess = async (mailboxId: string) => {
-		await refetchMailboxes();
-		navigate(`/mailbox/${encodeURIComponent(mailboxId)}`);
-	};
+	// Onboarding is its own page; it comes back here on Cancel.
+	const openOnboarding = () => navigate("/onboarding?from=mailboxes");
 
 	const { data: adminMailboxes = [] } = useQuery({
 		queryKey: ["admin-mailboxes"],
@@ -182,7 +179,7 @@ export default function HomeRoute() {
 								<Button
 									variant="primary"
 									icon={<PlusIcon size={16} />}
-									onClick={() => setIsCreateOpen(true)}
+									onClick={openOnboarding}
 								>
 									New Mailbox
 								</Button>
@@ -322,7 +319,7 @@ export default function HomeRoute() {
 											<Button
 												variant="primary"
 												icon={<PlusIcon size={16} />}
-												onClick={() => setIsCreateOpen(true)}
+												onClick={openOnboarding}
 											>
 												Create Mailbox
 											</Button>
@@ -334,14 +331,6 @@ export default function HomeRoute() {
 					</div>
 				)}
 			</div>
-
-			{/* HEY-Style Onboarding Flow */}
-			<OnboardingFlow
-				isOpen={isCreateOpen}
-				onClose={() => setIsCreateOpen(false)}
-				mailDomain={mailDomain}
-				onSuccess={handleOnboardingSuccess}
-			/>
 
 			{/* Delete Dialog */}
 			<Dialog.Root

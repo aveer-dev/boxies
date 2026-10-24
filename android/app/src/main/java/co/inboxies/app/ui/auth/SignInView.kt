@@ -58,7 +58,9 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Error
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.Button
@@ -74,6 +76,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -82,10 +85,19 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.AutofillNode
+import androidx.compose.ui.autofill.AutofillType
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalAutofill
+import androidx.compose.ui.platform.LocalAutofillTree
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -155,7 +167,7 @@ enum class AuthSubscreen {
  * 1. Splash handoff transition with logo gliding up.
  * 2. 3-line headline ("Your \n Personal \n email app") + circular downward arrow button.
  * 3. Auth buttons reveal by moving the welcome view UP (not a modal).
- * 4. Side-by-side Apple and Google buttons displaying ONLY company logos in black (no text).
+ * 4. Side-by-side Apple, Google and passkey buttons displaying ONLY logos in black (no text).
  * 5. Email login screen pushes entire view UP from below, with interactive drag-down return.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -501,6 +513,30 @@ fun SignInView(
                                 contentDescription = "Google",
                                 tint = colors.ink,
                                 modifier = Modifier.size(20.dp),
+                            )
+                        }
+
+                        // Passkey: same logo-only capsule. Signs in on its own (no 2FA step).
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .liquidGlass(CircleShape)
+                                .clip(CircleShape)
+                                .clickable(enabled = !isBusy) {
+                                    val activity = context as? Activity ?: return@clickable
+                                    scope.launch {
+                                        commitApiBase()
+                                        auth.signInWithPasskey(activity)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Key,
+                                contentDescription = "Sign in with a passkey",
+                                tint = colors.ink,
+                                modifier = Modifier.size(22.dp),
                             )
                         }
                     }
@@ -1115,7 +1151,10 @@ private fun EmailLoginScreen(
     val view = LocalView.current
 
     val initialStep = remember {
-        if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewPasswordSignIn") == true) {
+        if (auth.twoFactorChallenge.value != null) {
+            // DEBUG preview (or a challenge left from a moment ago): straight to the code step.
+            EmailStep.TwoFactor
+        } else if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewPasswordSignIn") == true) {
             EmailStep.Password
         } else if (BuildConfig.DEBUG && (context as? Activity)?.intent?.extras?.containsKey("previewForgotPassword") == true) {
             EmailStep.ForgotPassword
@@ -1126,28 +1165,45 @@ private fun EmailLoginScreen(
     val backStack = remember(initialStep) {
         mutableStateListOf<EmailStep>().apply {
             add(EmailStep.Email)
+            if (initialStep == EmailStep.TwoFactor) add(EmailStep.Password)
             if (initialStep != EmailStep.Email) {
                 add(initialStep)
             }
         }
     }
     val currentStep = backStack.lastOrNull() ?: EmailStep.Email
-    var email by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf(auth.twoFactorChallenge.value?.email.orEmpty()) }
     var password by remember { mutableStateOf("") }
     var resetCode by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isResetPasswordVisible by remember { mutableStateOf(false) }
     var isSendingReset by remember { mutableStateOf(false) }
     var isResetting by remember { mutableStateOf(false) }
+    val twoFactorChallenge by auth.twoFactorChallenge.collectAsState()
+    var twoFactorCode by remember { mutableStateOf("") }
+    var isUsingBackupCode by remember { mutableStateOf(false) }
+    var isVerifyingCode by remember { mutableStateOf(false) }
 
     fun navigateTo(newStep: EmailStep) {
         auth.clearError()
         backStack.add(newStep)
     }
 
+    /** Back to the password step, keeping any error (expired challenge, reset done). */
+    fun popToPassword() {
+        while (backStack.size > 1 && backStack.last() != EmailStep.Password) {
+            backStack.removeAt(backStack.lastIndex)
+        }
+        if (backStack.last() != EmailStep.Password) backStack.add(EmailStep.Password)
+    }
+
     fun navigateBack() {
         view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
         auth.clearError()
+        if (backStack.lastOrNull() == EmailStep.TwoFactor) {
+            // Backed out of the code step: that challenge is abandoned.
+            auth.cancelTwoFactor()
+        }
         if (backStack.size > 1) {
             backStack.removeAt(backStack.lastIndex)
         } else {
@@ -1159,10 +1215,71 @@ private fun EmailLoginScreen(
         onRootChanged(backStack.size == 1)
     }
 
+    LaunchedEffect(twoFactorChallenge) {
+        if (twoFactorChallenge != null) {
+            twoFactorCode = ""
+            isUsingBackupCode = false
+            if (backStack.lastOrNull() != EmailStep.TwoFactor) {
+                // The code step sits on the password step, also after a reset, so Back and an
+                // expired challenge never return to a reset form whose code is spent.
+                popToPassword()
+                navigateTo(EmailStep.TwoFactor)
+            }
+        } else if (backStack.lastOrNull() == EmailStep.TwoFactor && !auth.isAuthenticated) {
+            // Expired challenge: back to the password to start over.
+            popToPassword()
+        }
+    }
+
+    // A function, not a val: the field's onValueChange submits right after updating the code.
+    fun twoFactorCodeReady(): Boolean = if (isUsingBackupCode) {
+        twoFactorCode.trim().length >= 4
+    } else {
+        twoFactorCode.count(Char::isDigit) == 6
+    }
+
+    fun submitTwoFactor() {
+        // The sixth digit, IME Done, Verify and autofill can all land in one frame, before the
+        // collected isBusy flips, so guard with a flag set right here.
+        if (!twoFactorCodeReady() || isBusy || isVerifyingCode) return
+        isVerifyingCode = true
+        scope.launch {
+            try {
+                commitApiBase()
+                val ok = auth.verifyTwoFactor(twoFactorCode, useBackupCode = isUsingBackupCode)
+                if (ok && auth.isAuthenticated) {
+                    onDismiss()
+                } else if (!ok) {
+                    twoFactorCode = ""
+                }
+            } finally {
+                isVerifyingCode = false
+            }
+        }
+    }
+
+    suspend fun resetAndSignIn() {
+        commitApiBase()
+        isResetting = true
+        try {
+            auth.resetPassword(email = email.trim(), code = resetCode.trim(), newPassword = password)
+            if (auth.isAuthenticated) {
+                onDismiss()
+            } else if (auth.twoFactorChallenge.value == null) {
+                // Password changed but no session: sign in with the new one.
+                popToPassword()
+            }
+        } catch (_: Exception) {
+        } finally {
+            isResetting = false
+        }
+    }
+
     val emailFocusRequester = remember { FocusRequester() }
     val passwordFocusRequester = remember { FocusRequester() }
     val forgotEmailFocusRequester = remember { FocusRequester() }
     val resetCodeFocusRequester = remember { FocusRequester() }
+    val twoFactorFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(isPresented, currentStep, refocusTrigger) {
         if (isPresented) {
@@ -1173,6 +1290,7 @@ private fun EmailLoginScreen(
                 EmailStep.Password -> passwordFocusRequester.requestFocus()
                 EmailStep.ForgotPassword -> forgotEmailFocusRequester.requestFocus()
                 EmailStep.ResetPassword -> resetCodeFocusRequester.requestFocus()
+                EmailStep.TwoFactor -> twoFactorFocusRequester.requestFocus()
             }
         }
     }
@@ -1314,6 +1432,7 @@ private fun EmailLoginScreen(
                     imageVector = when (step) {
                         EmailStep.Email, EmailStep.ForgotPassword -> Icons.Outlined.Email
                         EmailStep.Password, EmailStep.ResetPassword -> Icons.Outlined.Lock
+                        EmailStep.TwoFactor -> Icons.Outlined.Shield
                     },
                     contentDescription = null,
                     tint = colors.muted,
@@ -1328,6 +1447,7 @@ private fun EmailLoginScreen(
                     EmailStep.Password -> "Enter your password"
                     EmailStep.ForgotPassword -> "Forgot password?"
                     EmailStep.ResetPassword -> "Reset your password"
+                    EmailStep.TwoFactor -> "Two-factor authentication"
                 },
                 fontFamily = InterFontFamily,
                 fontWeight = FontWeight.Bold,
@@ -1342,6 +1462,11 @@ private fun EmailLoginScreen(
                     EmailStep.Password -> "Sign in with your email ${email.trim()}"
                     EmailStep.ForgotPassword -> "Enter your sign-in email. We'll send a 6-digit code to the recovery email on your account."
                     EmailStep.ResetPassword -> "If ${email.trim()} has a confirmed recovery email, we sent a code there. No recovery email? Ask a mailbox owner or your domain admin for help."
+                    EmailStep.TwoFactor -> if (isUsingBackupCode) {
+                        "Enter one of the backup codes you saved when you turned on two-factor authentication. Each code works once."
+                    } else {
+                        "Enter the 6-digit code from your authenticator app."
+                    }
                 },
                 fontFamily = InterFontFamily,
                 fontSize = 14.sp,
@@ -1684,19 +1809,7 @@ private fun EmailLoginScreen(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 if (resetCode.length >= 6 && password.length >= 10 && !isResetting) {
-                                    scope.launch {
-                                        commitApiBase()
-                                        isResetting = true
-                                        try {
-                                            auth.resetPassword(email = email.trim(), code = resetCode.trim(), newPassword = password)
-                                            if (auth.isAuthenticated) {
-                                                onDismiss()
-                                            }
-                                        } catch (_: Exception) {
-                                        } finally {
-                                            isResetting = false
-                                        }
-                                    }
+                                    scope.launch { resetAndSignIn() }
                                 }
                             }
                         ),
@@ -1726,19 +1839,7 @@ private fun EmailLoginScreen(
 
                     Button(
                         onClick = {
-                            scope.launch {
-                                commitApiBase()
-                                isResetting = true
-                                try {
-                                    auth.resetPassword(email = email.trim(), code = resetCode.trim(), newPassword = password)
-                                    if (auth.isAuthenticated) {
-                                        onDismiss()
-                                    }
-                                } catch (_: Exception) {
-                                } finally {
-                                    isResetting = false
-                                }
-                            }
+                            scope.launch { resetAndSignIn() }
                         },
                         enabled = resetCode.length >= 6 && password.length >= 10 && !isResetting,
                         modifier = Modifier
@@ -1768,6 +1869,110 @@ private fun EmailLoginScreen(
                         }
                     }
                 }
+
+                EmailStep.TwoFactor -> {
+                    OutlinedTextField(
+                        value = twoFactorCode,
+                        onValueChange = { value ->
+                            twoFactorCode = if (isUsingBackupCode) value.take(32) else value.filter(Char::isDigit).take(6)
+                            // Authenticator codes go as soon as all six digits are in.
+                            if (!isUsingBackupCode && twoFactorCode.length == 6) submitTwoFactor()
+                        },
+                        placeholder = {
+                            Text(
+                                if (isUsingBackupCode) "Backup code" else "6-digit code",
+                                fontFamily = InterFontFamily,
+                                color = colors.muted,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        },
+                        textStyle = TextStyle(
+                            fontFamily = InterFontFamily,
+                            fontWeight = if (isUsingBackupCode) FontWeight.SemiBold else FontWeight.Bold,
+                            fontSize = if (isUsingBackupCode) 17.sp else 20.sp,
+                            textAlign = TextAlign.Center,
+                            color = colors.ink,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(twoFactorFocusRequester)
+                            .oneTimeCodeAutofill(enabled = !isUsingBackupCode) { filled ->
+                                twoFactorCode = filled.filter(Char::isDigit).take(6)
+                                if (twoFactorCode.length == 6) submitTwoFactor()
+                            },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = if (isUsingBackupCode) KeyboardType.Ascii else KeyboardType.NumberPassword,
+                            autoCorrectEnabled = false,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { submitTwoFactor() }),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colors.accent,
+                            unfocusedBorderColor = colors.line,
+                            focusedTextColor = colors.ink,
+                            unfocusedTextColor = colors.ink,
+                            cursorColor = colors.accent,
+                        ),
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        Text(
+                            text = if (isUsingBackupCode) "Use authenticator app" else "Use a backup code",
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            color = colors.accent,
+                            modifier = Modifier
+                                .clickable {
+                                    auth.clearError()
+                                    twoFactorCode = ""
+                                    isUsingBackupCode = !isUsingBackupCode
+                                    twoFactorFocusRequester.requestFocus()
+                                }
+                                .padding(vertical = 4.dp, horizontal = 2.dp),
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Button(
+                        onClick = { submitTwoFactor() },
+                        enabled = twoFactorCodeReady() && !isBusy && !isVerifyingCode,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colors.ink,
+                            contentColor = colors.surface,
+                            disabledContainerColor = colors.pillActive,
+                            disabledContentColor = colors.muted,
+                        ),
+                        shape = CircleShape,
+                    ) {
+                        if (isBusy) {
+                            CircularProgressIndicator(
+                                color = colors.surface,
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(
+                                "Verify",
+                                fontFamily = InterFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 16.sp,
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(48.dp))
@@ -1782,6 +1987,40 @@ private enum class EmailStep {
     Password,
     ForgotPassword,
     ResetPassword,
+    /** Authenticator or backup code after a password sign-in (or reset) for an account with 2FA on. */
+    TwoFactor,
+}
+
+/**
+ * One-time-code autofill hint for the 2FA field (SMS / authenticator code providers).
+ * Compose 1.7's autofill tree; the node is registered only while the field is composed and
+ * [enabled], so a stale node can't fill (and submit) after switching to a backup code.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun Modifier.oneTimeCodeAutofill(enabled: Boolean, onFill: (String) -> Unit): Modifier {
+    if (!enabled) return this
+    val autofill = LocalAutofill.current
+    val currentOnFill by rememberUpdatedState(onFill)
+    val node = remember {
+        AutofillNode(autofillTypes = listOf(AutofillType.SmsOtpCode), onFill = { currentOnFill(it) })
+    }
+    val tree = LocalAutofillTree.current
+    DisposableEffect(tree, node) {
+        tree += node
+        onDispose {
+            tree.children.remove(node.id)
+            autofill?.run { runCatching { cancelAutofillForNode(node) } }
+        }
+    }
+    return this
+        .onGloballyPositioned { node.boundingBox = it.boundsInWindow() }
+        .onFocusChanged { state ->
+            autofill?.run {
+                // Throws if the node hasn't been positioned yet; the hint is best-effort.
+                runCatching { if (state.isFocused) requestAutofillForNode(node) else cancelAutofillForNode(node) }
+            }
+        }
 }
 
 /** Legal pages linked from the sign-in fine print, in sentence order. */

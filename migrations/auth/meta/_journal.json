@@ -36,6 +36,20 @@
       "when": 1792638760703,
       "tag": "0004_apple_refresh_token",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792660402581,
+      "tag": "0005_passkey_two_factor",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792671240984,
+      "tag": "0006_domain_offboarding",
+      "breakpoints": true
     }
   ]
 }
