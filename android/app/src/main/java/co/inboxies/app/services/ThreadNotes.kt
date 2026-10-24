@@ -4,6 +4,7 @@ import co.inboxies.app.models.ThreadNote
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * Pure helpers for notes to self (AVE-62), the Android twin of iOS `ThreadNotes.swift`
@@ -25,10 +26,10 @@ object StickyNoteLayout {
     const val EDGE = 12f
     /** Each further sticky without a saved spot opens this much lower and to the left. */
     const val CASCADE = 24f
-    /** Share of the flick's projected travel added on release, so a throw carries a little. */
-    const val MOMENTUM = 0.2f
-    /** Seconds of the release velocity treated as the flick's projected travel. */
-    const val PROJECTION_SECONDS = 0.25f
+    /** How long a throw carries the release velocity, in seconds (same as web `NOTE_THROW_SECONDS`). */
+    const val THROW_SECONDS = 0.08f
+    /** Farthest a throw carries the note past where it was let go, in dp (same as web `NOTE_MAX_THROW`). */
+    const val MAX_THROW = 48f
     /** Resting width of a sticky note (narrower views shrink it to fit). */
     const val WIDTH = 260f
 
@@ -63,8 +64,9 @@ object StickyNoteLayout {
     }
 
     /**
-     * Where a released note settles: the drop point plus a little of the flick's
-     * momentum ([velocity] in dp/s), clamped.
+     * Where a released note settles: the drop point plus the release [velocity] (dp/s)
+     * carried a short way, at most [MAX_THROW] dp along the throw, then clamped inside
+     * the view. A throw past an edge lands on that edge (the spring takes it there).
      */
     fun dropPosition(
         start: NotePoint,
@@ -73,15 +75,40 @@ object StickyNoteLayout {
         note: NoteSize,
         view: NoteSize,
     ): NotePoint {
-        val carry = PROJECTION_SECONDS * MOMENTUM
+        var dx = if (velocity.x.isFinite()) velocity.x * THROW_SECONDS else 0f
+        var dy = if (velocity.y.isFinite()) velocity.y * THROW_SECONDS else 0f
+        val distance = sqrt(dx * dx + dy * dy)
+        if (distance > MAX_THROW) {
+            dx = dx / distance * MAX_THROW
+            dy = dy / distance * MAX_THROW
+        }
         return clamp(
-            NotePoint(
-                start.x + translation.x + velocity.x * carry,
-                start.y + translation.y + velocity.y * carry,
-            ),
+            NotePoint(start.x + translation.x + dx, start.y + translation.y + dy),
             note,
             view,
         )
+    }
+}
+
+/**
+ * The sticky's drag feel (AVE-62 review), same numbers as web `thread-notes.ts` and
+ * iOS `AppTheme.Note`: it leans with its horizontal speed like paper pulled through
+ * air, and the lean eases back as it slows.
+ */
+object StickyNoteMotion {
+    /** Most a dragged note leans, in degrees either way. */
+    const val MAX_TILT = 6f
+    /** Degrees of lean per dp/s of horizontal speed (6° at 1000 dp/s). */
+    const val TILT_PER_VELOCITY = 0.006f
+    /** Scale while a note is held. */
+    const val LIFT_SCALE = 1.03f
+    /** Spring damping on release: a little under 1, so the settle shows a small overshoot. */
+    const val SETTLE_DAMPING = 0.7f
+
+    /** Drag lean for a horizontal speed (dp/s): proportional, clamped to ±[MAX_TILT]. */
+    fun tiltFor(velocityX: Float): Float {
+        if (!velocityX.isFinite()) return 0f
+        return (velocityX * TILT_PER_VELOCITY).coerceIn(-MAX_TILT, MAX_TILT)
     }
 }
 

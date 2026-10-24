@@ -47,15 +47,68 @@ class ThreadNotesTest {
     }
 
     @Test
-    fun dropAddsALittleMomentumAndClamps() {
+    fun throwCarriesTheReleaseVelocityAShortWay() {
         val end = StickyNoteLayout.dropPosition(
             start = NotePoint(100f, 100f),
             translation = NotePoint(10f, 20f),
             velocity = NotePoint(400f, 0f),
             note = note,
+            view = NoteSize(1000f, 1000f),
+        )
+        // 400 dp/s × 0.08 s = 32 dp past the release point.
+        assertEquals(NotePoint(142f, 120f), end)
+    }
+
+    @Test
+    fun hardThrowIsCappedAlongItsDirection() {
+        val end = StickyNoteLayout.dropPosition(
+            start = NotePoint(100f, 100f),
+            translation = NotePoint(0f, 0f),
+            velocity = NotePoint(6000f, 8000f),
+            note = NoteSize(100f, 50f),
+            view = NoteSize(1000f, 1000f),
+        )
+        // Capped at MAX_THROW (48) along the 3:4:5 throw: (28.8, 38.4), rounded by clamp.
+        assertEquals(NotePoint(129f, 138f), end)
+    }
+
+    @Test
+    fun throwPastAnEdgeLandsOnTheEdge() {
+        val end = StickyNoteLayout.dropPosition(
+            start = NotePoint(20f, 100f),
+            translation = NotePoint(0f, 0f),
+            velocity = NotePoint(-3000f, 0f),
+            note = note,
             view = view,
         )
-        assertEquals(NotePoint(118f, 120f), end)
+        assertEquals(NotePoint(StickyNoteLayout.EDGE, 100f), end)
+    }
+
+    @Test
+    fun noVelocityDropsWhereLetGo() {
+        val end = StickyNoteLayout.dropPosition(
+            start = NotePoint(100f, 100f),
+            translation = NotePoint(5f, -5f),
+            velocity = NotePoint(Float.NaN, 0f),
+            note = note,
+            view = view,
+        )
+        assertEquals(NotePoint(105f, 95f), end)
+    }
+
+    @Test
+    fun dragTiltFollowsSpeedAndIsClamped() {
+        assertEquals(0f, StickyNoteMotion.tiltFor(0f), 0.0001f)
+        assertEquals(3f, StickyNoteMotion.tiltFor(500f), 0.0001f)
+        assertEquals(-3f, StickyNoteMotion.tiltFor(-500f), 0.0001f)
+        assertEquals(StickyNoteMotion.MAX_TILT, StickyNoteMotion.tiltFor(5000f), 0.0001f)
+        assertEquals(-StickyNoteMotion.MAX_TILT, StickyNoteMotion.tiltFor(-5000f), 0.0001f)
+        assertEquals(0f, StickyNoteMotion.tiltFor(Float.NaN), 0.0001f)
+    }
+
+    @Test
+    fun settleSpringIsSlightlyUnderdamped() {
+        assertTrue(StickyNoteMotion.SETTLE_DAMPING in 0.6f..0.8f)
     }
 
     @Test

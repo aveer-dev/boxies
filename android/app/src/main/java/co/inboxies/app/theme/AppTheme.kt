@@ -47,9 +47,9 @@ object InboxiesColors {
 }
 
 /**
- * Notes to self: the one warm surface in the monochrome shell, so a sticky note
- * reads as paper stuck on the page. Soft, low-chroma; same values as iOS
- * `AppTheme.Note` and web `--note-*`.
+ * Notes to self: a cool mint-sage paper, the one tinted surface in the monochrome
+ * shell, so a note reads as paper stuck on the page and stays apart from the mail
+ * itself. Calm and low-chroma; same values as iOS `AppTheme.Note` and web `--note-*`.
  */
 @Immutable
 data class NotePalette(
@@ -59,35 +59,44 @@ data class NotePalette(
     val muted: Color,
     val pin: Color,
     val shadow: Color,
+    /** 1dp outer ring on the floating sticky: none in light, a faint sage line in dark. */
+    val ring: Color,
 ) {
     companion object {
         val Light = NotePalette(
-            paper = Color(0xFFFFF7CF),
-            paperEdge = Color(0xFFEFE1A1),
-            ink = Color(0xFF3A3214),
-            muted = Color(0xFF7A6C3A),
-            pin = Color(0xFFC2541C),
-            shadow = Color(0x334F3C00),
+            paper = Color(0xFFEDF7F4),
+            paperEdge = Color(0xFFD3EAE3),
+            ink = Color(0xFF1F3A34),
+            muted = Color(0xFF5E7D75),
+            pin = Color(0xFF4F9A8A),
+            // rgb(20,60,50) at the old 20% opacity.
+            shadow = Color(0x33143C32),
+            ring = Color.Transparent,
         )
         val Dark = NotePalette(
-            paper = Color(0xFF2A2617),
-            paperEdge = Color(0xFF3D3720),
-            ink = Color(0xFFF1E9CC),
-            muted = Color(0xFFB3A678),
-            pin = Color(0xFFE58A52),
+            paper = Color(0xFF1C2A27),
+            paperEdge = Color(0xFF27403A),
+            ink = Color(0xFFDDEFEA),
+            muted = Color(0xFF8FB2A9),
+            pin = Color(0xFF6CC2AE),
             shadow = Color(0x8C000000),
+            // rgba(200,240,230,0.06)
+            ring = Color(0x0FC8F0E6),
         )
     }
 }
 
-/** Note geometry — mirrors iOS `AppTheme.Note`. */
+/** Note geometry and motion — mirrors iOS `AppTheme.Note`. */
 object NoteDims {
-    /** Resting tilt of a sticky note, in degrees (flat while lifted). */
+    /** Resting tilt of a sticky note, in degrees. */
     const val tilt = -1.2f
+    /** Resting / lifted sticky shadow (lifted is deeper and softer). */
+    val restingElevation = 6.dp
+    val liftedElevation = 18.dp
     /** Paper corners: tight, with one softer curled corner (bottom-right). */
     val cornerRadius = 3.dp
     val curlRadius = 14.dp
-    /** Inline notes: neutral card with a dashed hairline. */
+    /** Inline notes: note paper with a solid paper-edge hairline. */
     val inlineCornerRadius = 12.dp
 }
 

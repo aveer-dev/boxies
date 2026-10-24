@@ -1,15 +1,18 @@
 package co.inboxies.app.ui.notes
 
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -50,27 +53,29 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -88,6 +93,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -96,6 +102,7 @@ import co.inboxies.app.services.NotePoint
 import co.inboxies.app.services.NoteSize
 import co.inboxies.app.services.NoteText
 import co.inboxies.app.services.StickyNoteLayout
+import co.inboxies.app.services.StickyNoteMotion
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.NoteDims
@@ -110,6 +117,21 @@ import kotlin.math.roundToInt
 
 /** Default chrome spring (dampingRatio 0.86, StiffnessMediumLow). */
 private fun <T> noteSpring() = spring<T>(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
+
+/** A dropped sticky's settle: slightly underdamped (~0.4s), so it overshoots a touch. */
+private fun <T> settleSpring() = spring<T>(
+    dampingRatio = StickyNoteMotion.SETTLE_DAMPING,
+    stiffness = Spring.StiffnessMediumLow,
+)
+
+/** The quick pick-up (scale + shadow), ~120ms with no bounce. */
+private fun <T> liftSpring() = spring<T>(dampingRatio = 1f, stiffness = Spring.StiffnessMedium)
+
+/** Share of the gap to the drag lean closed each frame, so the lean eases rather than jitters. */
+private const val DRAG_TILT_SMOOTHING = 0.25f
+
+/** A held note that hasn't moved for this long eases its lean back to flat. */
+private const val DRAG_IDLE_MILLIS = 60L
 
 /**
  * A note's markdown, compact and in the surrounding ink, so it reads on the sticky's
@@ -209,10 +231,21 @@ private fun StickyNoteView(
     val target = pendingDrop?.let { StickyNoteLayout.clamp(it, size, view) } ?: resting
 
     val position = remember { Animatable(Offset(resting.x, resting.y), Offset.VectorConverter) }
-    // Settle on the target: a drop, the model's spot after a save or a failed save
+    /** The release velocity (dp/s) the next settle starts from, set once by a drop. */
+    val throwVelocity = remember { arrayOfNulls<Offset>(1) }
+    // Settle on the target: a throw (a slightly underdamped spring carrying the release
+    // velocity, so it overshoots a touch), the model's spot after a save or a failed save
     // (put back), a measured height or a rotated / resized view (re-clamped).
     LaunchedEffect(target, isDragging) {
-        if (!isDragging) position.animateTo(Offset(target.x, target.y), noteSpring())
+        if (isDragging) return@LaunchedEffect
+        val thrown = throwVelocity[0]
+        throwVelocity[0] = null
+        val goal = Offset(target.x, target.y)
+        when {
+            reduceMotion -> position.animateTo(goal, tween(160, easing = FastOutSlowInEasing))
+            thrown != null -> position.animateTo(goal, settleSpring(), initialVelocity = thrown)
+            else -> position.animateTo(goal, noteSpring())
+        }
     }
 
     val currentSize by rememberUpdatedState(size)
@@ -220,14 +253,39 @@ private fun StickyNoteView(
     val currentResting by rememberUpdatedState(resting)
     val currentOnMove by rememberUpdatedState(onMove)
     val currentOnFocus by rememberUpdatedState(onFocus)
+    val currentReduceMotion by rememberUpdatedState(reduceMotion)
 
-    val tilt by animateFloatAsState(
-        targetValue = if (isDragging || reduceMotion) 0f else NoteDims.tilt,
-        animationSpec = noteSpring(),
-        label = "noteTilt",
+    // Tilt: the resting lean, or while held a lean that follows horizontal speed and
+    // eases back to flat as the drag slows or stops. Springs home on release.
+    val restTilt = if (reduceMotion) 0f else NoteDims.tilt
+    val tilt = remember { Animatable(restTilt) }
+    /** Lean the drag is heading toward and when the pointer last moved (uptime ms). */
+    var dragTiltTarget by remember { mutableFloatStateOf(0f) }
+    var lastMoveMillis by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(isDragging, restTilt) {
+        if (!isDragging) {
+            tilt.animateTo(restTilt, settleSpring())
+            return@LaunchedEffect
+        }
+        while (true) {
+            withFrameMillis { }
+            val idle = SystemClock.uptimeMillis() - lastMoveMillis > DRAG_IDLE_MILLIS
+            val goal = if (idle || reduceMotion) 0f else dragTiltTarget
+            tilt.snapTo(tilt.value + (goal - tilt.value) * DRAG_TILT_SMOOTHING)
+        }
+    }
+
+    val liftedNow = isDragging
+    val lift by animateFloatAsState(
+        targetValue = if (liftedNow && !reduceMotion) StickyNoteMotion.LIFT_SCALE else 1f,
+        animationSpec = if (liftedNow) liftSpring() else settleSpring(),
+        label = "noteLift",
     )
-    val lift by animateFloatAsState(if (isDragging) 1.03f else 1f, noteSpring(), label = "noteLift")
-    val elevation by animateDpAsState(if (isDragging) 16.dp else 6.dp, noteSpring(), label = "noteShadow")
+    val elevation by animateDpAsState(
+        targetValue = if (liftedNow) NoteDims.liftedElevation else NoteDims.restingElevation,
+        animationSpec = if (liftedNow) liftSpring() else settleSpring(),
+        label = "noteShadow",
+    )
 
     val paperShape = RoundedCornerShape(
         topStart = NoteDims.cornerRadius,
@@ -250,7 +308,7 @@ private fun StickyNoteView(
                 if (h > 0f) measuredHeight = h
             }
             .graphicsLayer {
-                rotationZ = tilt
+                rotationZ = tilt.value
                 scaleX = lift
                 scaleY = lift
             }
@@ -260,17 +318,24 @@ private fun StickyNoteView(
                 var translation = Offset.Zero
                 detectDragGestures(
                     onDragStart = {
+                        // Pick up: lift, deepen the shadow, ease the resting tilt to flat.
                         start = NotePoint(position.value.x, position.value.y)
                         translation = Offset.Zero
                         tracker.resetTracking()
+                        dragTiltTarget = 0f
+                        lastMoveMillis = SystemClock.uptimeMillis()
+                        scope.launch { position.stop() }
                         isDragging = true
                         currentOnFocus()
-                        androidView.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                        androidView.performHapticFeedback(HapticFeedbackConstants.GESTURE_START)
                     },
                     onDrag = { change, amount ->
                         change.consume()
+                        // Follow the finger 1:1 (clamped inside the view).
                         translation += Offset(amount.x / density, amount.y / density)
                         tracker.addPosition(change.uptimeMillis, translation)
+                        lastMoveMillis = change.uptimeMillis
+                        dragTiltTarget = StickyNoteMotion.tiltFor(tracker.calculateVelocity().x)
                         val live = StickyNoteLayout.clamp(
                             NotePoint(start.x + translation.x, start.y + translation.y),
                             currentSize,
@@ -279,7 +344,12 @@ private fun StickyNoteView(
                         scope.launch { position.snapTo(Offset(live.x, live.y)) }
                     },
                     onDragEnd = {
-                        val velocity = tracker.calculateVelocity()
+                        val velocity = if (currentReduceMotion) {
+                            Velocity.Zero
+                        } else {
+                            tracker.calculateVelocity()
+                        }
+                        // Throw: carry the release velocity a short way, then clamp.
                         val end = StickyNoteLayout.dropPosition(
                             start = start,
                             translation = NotePoint(translation.x, translation.y),
@@ -287,6 +357,7 @@ private fun StickyNoteView(
                             note = currentSize,
                             view = currentView,
                         )
+                        throwVelocity[0] = Offset(velocity.x, velocity.y)
                         if (end != currentResting) {
                             pendingDrop = end
                             currentOnMove(end)
@@ -309,6 +380,24 @@ private fun StickyNoteView(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .drawWithContent {
+                    drawContent()
+                    // Dark only: a faint 1dp ring so the paper lifts off the dark page.
+                    if (paletteNote.ring.alpha > 0f) {
+                        val inset = 0.5.dp.toPx()
+                        translate(-inset, -inset) {
+                            drawOutline(
+                                paperShape.createOutline(
+                                    Size(size.width + inset * 2, size.height + inset * 2),
+                                    layoutDirection,
+                                    this,
+                                ),
+                                color = paletteNote.ring,
+                                style = Stroke(1.dp.toPx()),
+                            )
+                        }
+                    }
+                }
                 .shadow(elevation, paperShape, ambientColor = paletteNote.shadow, spotColor = paletteNote.shadow)
                 .clip(paperShape)
                 .background(paletteNote.paper)
@@ -455,8 +544,9 @@ private fun NoteHeaderButton(
 }
 
 /**
- * Notes to self on one message, in line under it in the thread. Neutral card with a
- * dashed hairline and the private indicator. Only their author sees them.
+ * Notes to self on one message, in line under it in the thread. Drawn on the same
+ * note paper as the sticky (paper fill, paper-edge hairline, note ink), so they read
+ * as the user's own and never as part of the mail. Only their author sees them.
  */
 @Composable
 fun InlineNotesView(
@@ -468,7 +558,7 @@ fun InlineNotesView(
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         notes.forEach { note ->
             key(note.id) {
-                InlineNoteCard(note = note, onEdit = { onEdit(note) }, onDelete = { onDelete(note) })
+                InlineNoteCard(threadNote = note, onEdit = { onEdit(note) }, onDelete = { onDelete(note) })
             }
         }
     }
@@ -481,7 +571,7 @@ fun PrivateNoteLabel(
     date: String? = null,
     edited: Boolean = false,
 ) {
-    val colors = inboxiesColors()
+    val note = inboxiesColors().note
     val formatted = date?.let { DateUtils.formatListDate(it) }.orEmpty()
     val suffix = if (formatted.isEmpty()) "" else " · ${if (edited) "Edited " else ""}$formatted"
     Row(
@@ -489,13 +579,13 @@ fun PrivateNoteLabel(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Icon(Icons.Filled.Lock, contentDescription = null, tint = colors.muted, modifier = Modifier.size(10.dp))
+        Icon(Icons.Filled.Lock, contentDescription = null, tint = note.pin, modifier = Modifier.size(10.dp))
         Text(
             buildAnnotatedString {
-                withStyle(SpanStyle(color = colors.ink, fontWeight = FontWeight.Medium)) {
+                withStyle(SpanStyle(color = note.ink, fontWeight = FontWeight.Medium)) {
                     append("Private note to self")
                 }
-                withStyle(SpanStyle(color = colors.muted)) {
+                withStyle(SpanStyle(color = note.muted)) {
                     append(" · Only visible to you$suffix")
                 }
             },
@@ -510,31 +600,19 @@ fun PrivateNoteLabel(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun InlineNoteCard(
-    note: ThreadNote,
+    threadNote: ThreadNote,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val colors = inboxiesColors()
+    val note = inboxiesColors().note
     val shape = RoundedCornerShape(NoteDims.inlineCornerRadius)
     var menuOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(colors.pillFill.copy(alpha = 0.45f))
-            .drawBehind {
-                val stroke = 1.dp.toPx()
-                drawRoundRect(
-                    color = colors.line,
-                    topLeft = Offset(stroke / 2, stroke / 2),
-                    size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
-                    cornerRadius = CornerRadius(NoteDims.inlineCornerRadius.toPx()),
-                    style = Stroke(
-                        width = stroke,
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())),
-                    ),
-                )
-            }
+            .background(note.paper)
+            .border(1.dp, note.paperEdge, shape)
             .combinedClickable(onClick = {}, onLongClick = { menuOpen = true })
             .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -542,8 +620,8 @@ private fun InlineNoteCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             PrivateNoteLabel(
                 modifier = Modifier.weight(1f),
-                date = note.updatedAt,
-                edited = note.updatedAt != note.createdAt,
+                date = threadNote.updatedAt,
+                edited = threadNote.updatedAt != threadNote.createdAt,
             )
             Box {
                 Box(
@@ -557,7 +635,7 @@ private fun InlineNoteCard(
                     Icon(
                         Icons.Outlined.MoreHoriz,
                         contentDescription = null,
-                        tint = colors.muted,
+                        tint = note.muted,
                         modifier = Modifier.size(16.dp),
                     )
                 }
@@ -574,12 +652,12 @@ private fun InlineNoteCard(
             }
         }
         Box(modifier = Modifier.padding(end = 6.dp)) {
-            NoteMarkdownView(note.body, fontSize = 13f)
+            NoteMarkdownView(threadNote.body, fontSize = 13f, ink = note.ink)
         }
     }
 }
 
-/** The list row's sticky strip: the note's text on warm paper, clamped to two lines. */
+/** The list row's sticky strip: the note's text on note paper, clamped to two lines. */
 @Composable
 fun StickyNoteRowStrip(text: String, modifier: Modifier = Modifier) {
     val note = inboxiesColors().note
@@ -617,26 +695,28 @@ fun StickyNoteRowStrip(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** "🔒 N private notes" chip on a list row (notes on single messages). */
+/** "🔒 N private notes" chip on a list row (notes on single messages), on note paper. */
 @Composable
 fun PrivateNotesChip(count: Int) {
-    val colors = inboxiesColors()
+    val note = inboxiesColors().note
+    val shape = RoundedCornerShape(6.dp)
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(colors.pillFill)
+            .clip(shape)
+            .background(note.paper)
+            .border(0.5.dp, note.paperEdge, shape)
             .padding(horizontal = 8.dp, vertical = 3.dp)
             .semantics(mergeDescendants = true) {},
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Icon(Icons.Filled.Lock, contentDescription = null, tint = colors.muted, modifier = Modifier.size(9.dp))
+        Icon(Icons.Filled.Lock, contentDescription = null, tint = note.pin, modifier = Modifier.size(9.dp))
         Text(
             "$count private note${if (count == 1) "" else "s"}",
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.Medium,
             fontSize = AppThemeDims.List.badge,
-            color = colors.muted,
+            color = note.muted,
             maxLines = 1,
         )
     }

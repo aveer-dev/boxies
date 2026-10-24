@@ -9,15 +9,15 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { applyMigrations, mailboxMigrations } from "../durableObject/migrations.ts";
-import { classifyInboundEmail, overrideAiSpamForVouchedSender } from "../lib/classify-email.ts";
+import { applySenderTrust, classifyInboundEmail } from "../lib/classify-email.ts";
 import {
 	inboundClassificationReason,
 	storedAuthTier,
 } from "../lib/classification-reason.ts";
 import { parseAuthSignals } from "../lib/email-auth.ts";
 import {
-	isVouchedSender,
 	resolveInboundFolder,
+	senderTrustOf,
 } from "../lib/sender-triage.ts";
 import {
 	ClassificationReasons,
@@ -67,16 +67,11 @@ const rejected = (sender) => ({ ...allowed(sender), status: "rejected" });
 const spamAi = { run: async () => ({ response: "SPAM" }) };
 const hamAi = { run: async () => ({ response: "HAM" }) };
 
-/** Mirrors receiveEmail: classify → vouch override → route → stored fields. */
+/** Mirrors receiveEmail: classify → sender trust (§5 precedence) → route → stored fields. */
 async function inbound({ auth, triage = null, ai = hamAi, screenerEnabled = true, mailHeaders = [] }) {
-	let classification = await classifyInboundEmail(
-		{ headers: mailHeaders, subject: "Hi", sender: auth.headerFrom, bodyText: "hello", auth },
-		ai,
-	);
-	classification = overrideAiSpamForVouchedSender(classification, {
-		vouched: isVouchedSender(triage, null),
-		auth,
-	});
+	const input = { headers: mailHeaders, subject: "Hi", sender: auth.headerFrom, bodyText: "hello", auth };
+	let classification = await classifyInboundEmail(input, ai);
+	classification = applySenderTrust(classification, input, senderTrustOf(triage, null));
 	const decision = resolveInboundFolder({
 		classification,
 		triage,
