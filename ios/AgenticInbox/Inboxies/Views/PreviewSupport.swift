@@ -203,6 +203,9 @@ enum PreviewSupport {
             app.emails = app.emails.filter { $0.folderId == "inbox" }
             app.replyLaterCount = emails.filter(\.replyLater).count
         }
+        if args.contains("-previewNotes") {
+            applyNotesFixtures(to: app, args: args)
+        }
         applyLoadStateFixtures(to: app, args: args)
         if args.contains("-previewManyNew") {
             applyManyNewFixtures(to: app)
@@ -211,6 +214,231 @@ enum PreviewSupport {
             applyPreviewService(service, to: app)
         }
         return app
+    }
+
+    // MARK: Notes to self (AVE-61)
+
+    /// In-memory notes per conversation key while a DEBUG preview runs (no server).
+    @MainActor static var threadNotes: [String: [ThreadNote]] = [:]
+
+    static let notesThreadKey = "thread-preview-q3"
+
+    static let noteThread: [Email] = [
+        Email(
+            id: "preview-1a",
+            threadId: notesThreadKey,
+            folderId: "inbox",
+            subject: "Quarterly planning notes",
+            sender: "jordan@example.com",
+            senderName: "Jordan Hale",
+            recipient: "you@inboxies.email",
+            date: "2026-09-01T09:05:00.000Z",
+            read: true,
+            starred: false,
+            body: "<p>Hi team — here is the proposal for the Q3 review. Section 3 covers the SLA requirements and the pricing tiers we discussed.</p><p>Let me know what you think.</p>",
+            snippet: "Hi team — here is the proposal for the Q3 review."
+        ),
+        Email(
+            id: "preview-1b",
+            threadId: notesThreadKey,
+            folderId: "inbox",
+            subject: "Re: Quarterly planning notes",
+            sender: "you@inboxies.email",
+            senderName: "Alex Rivera",
+            recipient: "jordan@example.com",
+            date: "2026-09-02T16:40:00.000Z",
+            read: true,
+            starred: false,
+            body: "<p>Looks solid. Legal is reviewing section 3 now; I'll confirm pricing by Friday.</p>",
+            snippet: "Looks solid. Legal is reviewing section 3 now."
+        ),
+        Email(
+            id: "preview-1",
+            threadId: notesThreadKey,
+            folderId: "inbox",
+            subject: "Re: Quarterly planning notes",
+            sender: "jordan@example.com",
+            senderName: "Jordan Hale",
+            recipient: "you@inboxies.email",
+            date: "2026-09-03T14:30:00.000Z",
+            read: false,
+            starred: false,
+            body: "<p>Thanks! Can we move Thursday's sync to the morning instead? I have a conflict at 3pm.</p><p>— Jordan</p>",
+            snippet: "Can we move Thursday's sync to the morning instead?",
+            threadCount: 3
+        ),
+    ]
+
+    /// Sticky + inline notes for the Q3 thread, and a sticky / note count on two other rows.
+    static func noteFixtures(stickyAt position: CGPoint? = nil) -> [String: [ThreadNote]] {
+        func note(
+            _ id: String,
+            thread: String,
+            type: String,
+            emailId: String? = nil,
+            body: String,
+            created: String,
+            updated: String? = nil,
+            position: CGPoint? = nil
+        ) -> ThreadNote {
+            ThreadNote(
+                id: id,
+                threadId: thread,
+                emailId: emailId,
+                noteType: type,
+                body: body,
+                posX: position.map { Double($0.x) },
+                posY: position.map { Double($0.y) },
+                createdAt: created,
+                updatedAt: updated ?? created
+            )
+        }
+        return [
+            notesThreadKey: [
+                note(
+                    "note-sticky-q3",
+                    thread: notesThreadKey,
+                    type: ThreadNote.stickyType,
+                    body: "**Call Jordan before Thursday** re: pricing — keep it under $15k.\n\n- [x] Loop in Sam\n- [ ] Send the revised deck",
+                    created: "2026-09-03T15:02:00.000Z",
+                    position: position
+                ),
+                note(
+                    "note-inline-q3-1",
+                    thread: notesThreadKey,
+                    type: ThreadNote.inlineType,
+                    emailId: "preview-1a",
+                    body: "Discussed section 3 on SLA requirements; _approved by legal_.",
+                    created: "2026-09-01T10:25:00.000Z"
+                ),
+                note(
+                    "note-inline-q3-2",
+                    thread: notesThreadKey,
+                    type: ThreadNote.inlineType,
+                    emailId: "preview-1b",
+                    body: "Follow up if Jordan hasn't confirmed by **Friday**. See [the pricing sheet](https://example.com/pricing).",
+                    created: "2026-09-02T17:00:00.000Z",
+                    updated: "2026-09-02T18:10:00.000Z"
+                ),
+            ],
+            "preview-2": [
+                note(
+                    "note-sticky-invoice",
+                    thread: "preview-2",
+                    type: ThreadNote.stickyType,
+                    body: "Paid by wire on Sep 4 — ref `INV-2291`",
+                    created: "2026-09-04T09:00:00.000Z"
+                ),
+            ],
+            "preview-3": [
+                note("note-inline-design-1", thread: "preview-3", type: ThreadNote.inlineType, emailId: "preview-3",
+                     body: "Bring the mobile frames.", created: "2026-08-28T19:00:00.000Z"),
+                note("note-inline-design-2", thread: "preview-3", type: ThreadNote.inlineType, emailId: "preview-3",
+                     body: "Ask about the icon set.", created: "2026-08-28T19:05:00.000Z"),
+            ],
+        ]
+    }
+
+    /// `-previewNotes` (with `-previewMailbox` or `-previewDetail`): seeds notes to self.
+    /// `-previewDetail -previewNotes` opens the Q3 thread with a sticky and inline notes;
+    /// add `-previewNotesMoved` for a sticky already dragged to the lower left,
+    /// `-previewNotesThrow` for a scripted drag-and-throw loop (screen recordings), and
+    /// `-previewNoteEditor` / `-previewNoteEditorPreview` to open its editor.
+    @MainActor
+    private static func applyNotesFixtures(to app: AppModel, args: [String]) {
+        let moved = args.contains("-previewNotesMoved") ? CGPoint(x: 16, y: 340) : nil
+        threadNotes = noteFixtures(stickyAt: moved)
+        for index in app.emails.indices {
+            if app.emails[index].id == "preview-1" {
+                app.emails[index] = noteThread[2]
+            }
+            let summary = ThreadNoteSummary(notes: threadNotes[app.emails[index].noteThreadKey] ?? [])
+            app.emails[index].hasStickyNote = summary.hasStickyNote
+            app.emails[index].stickyNoteText = summary.stickyNoteText
+            app.emails[index].inlineNoteCount = summary.inlineNoteCount
+        }
+        DatabaseService.shared.upsertEmails(mailboxId: "mb-preview", emails: noteThread)
+        if args.contains("-previewDetail"), let latest = app.emails.first(where: { $0.id == "preview-1" }) {
+            app.selectedEmail = latest
+            app.threadEmails = noteThread
+        }
+    }
+
+    /// One step of the scripted sticky drag (`-previewNotesThrow`).
+    enum ScriptedDragStep {
+        /// Lift the first sticky where it sits.
+        case pickUp
+        /// Finger at this translation from the pick-up point, moving at this velocity (pt/s).
+        case move(CGSize, CGSize)
+        /// Let go at this translation and velocity.
+        case release(CGSize, CGSize)
+    }
+
+    static let scriptedDragNotification = Notification.Name("InboxiesPreviewScriptedStickyDrag")
+    /// Written back by the sticky on pick-up: where it was lifted from, in its view.
+    @MainActor static var scriptedStart: CGPoint = .zero
+    @MainActor static var scriptedView: CGSize = .zero
+    @MainActor private static var scriptedThrowStarted = false
+
+    /// `-previewDetail -previewNotes -previewNotesThrow`: after a beat, the first sticky is
+    /// picked up and thrown around the reader by the same code a finger drives (lift,
+    /// speed tilt, projected throw, spring settle), so a screen recording shows the
+    /// motion without touch injection. Throws: a fast fling to the lower left (lands on
+    /// the edge), a slow drag that stops before letting go (the lean eases back), and a
+    /// curved toss back up to the top right. Runs twice.
+    @MainActor
+    static func runScriptedStickyThrow(index: Int) async {
+        guard index == 0, !scriptedThrowStarted,
+              ProcessInfo.processInfo.arguments.contains("-previewNotesThrow") else { return }
+        scriptedThrowStarted = true
+        func send(_ step: ScriptedDragStep) {
+            NotificationCenter.default.post(name: scriptedDragNotification, object: step)
+        }
+
+        /// One drag to `target(view)`: lift, follow a bowed path, optionally rest, let go.
+        func gesture(to target: (CGSize) -> CGPoint, seconds: Double, bow: CGFloat, accelerate: Bool, hold: Double) async {
+            send(.pickUp)
+            let start = scriptedStart
+            let end = target(scriptedView)
+            try? await Task.sleep(for: .milliseconds(140))
+            let delta = CGSize(width: end.x - start.x, height: end.y - start.y)
+            let tick = 0.016
+            let steps = max(2, Int(seconds / tick))
+            var last = CGSize.zero
+            var velocity = CGSize.zero
+            for step in 1...steps {
+                let t = CGFloat(step) / CGFloat(steps)
+                // Accelerating fling (t²), or an eased drag that slows to a stop.
+                let progress = accelerate ? t * t : t * t * (3 - 2 * t)
+                // A sideways bow so the path curves and the lean changes direction.
+                let side = sin(.pi * t) * bow
+                let translation = CGSize(width: delta.width * progress + side, height: delta.height * progress)
+                velocity = CGSize(
+                    width: (translation.width - last.width) / tick,
+                    height: (translation.height - last.height) / tick
+                )
+                last = translation
+                send(.move(translation, velocity))
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            if hold > 0 {
+                // The finger rests before letting go: no speed left to carry.
+                try? await Task.sleep(for: .seconds(hold))
+                velocity = .zero
+            }
+            send(.release(last, velocity))
+        }
+
+        let edge = StickyNoteLayout.edge
+        try? await Task.sleep(for: .seconds(1.5))
+        for _ in 0..<2 {
+            await gesture(to: { CGPoint(x: edge + 30, y: $0.height * 0.55) }, seconds: 0.42, bow: -40, accelerate: true, hold: 0)
+            try? await Task.sleep(for: .seconds(1.3))
+            await gesture(to: { CGPoint(x: $0.width * 0.2, y: $0.height * 0.25) }, seconds: 0.9, bow: 70, accelerate: false, hold: 0.45)
+            try? await Task.sleep(for: .seconds(1.1))
+            await gesture(to: { CGPoint(x: $0.width - 200, y: edge + 20) }, seconds: 0.5, bow: 50, accelerate: true, hold: 0)
+            try? await Task.sleep(for: .seconds(1.6))
+        }
     }
 
     /// Modifiers for `-previewMailbox`: first-load failure, list fetch failure, load-more footer.

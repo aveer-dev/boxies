@@ -47,6 +47,7 @@ export const MAILBOX_PURGE_TABLES = [
 	"sender_preferences",
 	"inbound_message_claims",
 	"thread_notes",
+	"email_summaries",
 ] as const;
 
 /**

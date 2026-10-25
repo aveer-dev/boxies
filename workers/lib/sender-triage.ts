@@ -355,25 +355,53 @@ export type SenderLesson =
 	| { kind: "none" };
 
 /**
+ * Whether moving a message from `fromFolderId` to `toFolderId` is a spam
+ * verdict on its sender (docs/spam-management-plan.md §5–6, AVE-95): into
+ * Spam is "Report spam", out of Spam is "Not spam". Leaving Spam for Trash
+ * or Screened out is clean-up, not a vote, so it isn't one.
+ */
+export function isSpamVerdictMove(
+	fromFolderId: string | null | undefined,
+	toFolderId: string,
+): boolean {
+	if (fromFolderId === toFolderId) return false;
+	if (toFolderId === Folders.SPAM) return true;
+	return (
+		fromFolderId === Folders.SPAM &&
+		toFolderId !== Folders.TRASH &&
+		toFolderId !== Folders.SCREENED_OUT
+	);
+}
+
+/**
  * The sender lesson for a user moving one message from `fromFolderId` to
- * `toFolderId` with "remember this sender" on. Your own address is never
+ * `toFolderId`. A move into or out of Spam always teaches (leaving Spam is
+ * the signal; no "remember?" prompt). Other moves teach a purpose-box
+ * default only when the user said `remember`. Your own address is never
  * judged (a sent copy or a note to self can land in Spam).
+ *
+ * Agent/MCP `move_email` never calls this: agents use the explicit
+ * `allow_sender` / `block_sender` tools instead.
  */
 export function senderLessonForMove(input: {
 	sender: string | null | undefined;
 	mailboxId: string;
 	fromFolderId: string | null | undefined;
 	toFolderId: string;
+	/** "Put future mail here" for a move between ordinary boxes. Defaults to true. */
+	remember?: boolean;
 }): SenderLesson {
 	const sender = normalizeTriageSender(input.sender);
 	if (!sender || canonicalMailboxId(sender) === canonicalMailboxId(input.mailboxId)) return { kind: "none" };
-	if (input.toFolderId === Folders.SPAM) return { kind: "reject", sender };
-	if (input.fromFolderId === Folders.SPAM) {
+	if (isSpamVerdictMove(input.fromFolderId, input.toFolderId)) {
+		if (input.toFolderId === Folders.SPAM) return { kind: "reject", sender };
 		return {
 			kind: "allow",
 			sender,
 			destination: isScreenerDestination(input.toFolderId) ? input.toFolderId : null,
 		};
 	}
+	if (input.fromFolderId === Folders.SPAM) return { kind: "none" };
+	if (input.remember === false) return { kind: "none" };
 	return { kind: "preference", sender, destination: input.toFolderId };
 }

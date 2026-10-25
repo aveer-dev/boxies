@@ -65,7 +65,7 @@ function insertEmail(sql, id, threadId, date = "2026-01-01T00:00:00.000Z") {
 
 const count = (sql, query, ...b) => Number(Object.values(sql.exec(query, ...b)[0])[0]);
 
-// ── Migration: last, additive, idempotent ────────────────────────
+// ── Migration: ordered after 30, additive, idempotent ────────────
 {
 	const names = mailboxMigrations.map((m) => m.name);
 	assert.ok(

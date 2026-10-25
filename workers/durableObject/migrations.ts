@@ -646,5 +646,30 @@ export const mailboxMigrations: Migration[] = [
             ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;
         `),
 	},
+	{
+		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
+		// or per message (quick summary). Generated lazily on open and reused
+		// until the thread gains a message. Additive only. Renumbered to 39: dev
+		// already has 37_email_classification and open PR #159 claims
+		// 38_sender_rules. The runner tracks migrations by name and the table
+		// is CREATE IF NOT EXISTS, so a DO that already ran an earlier name
+		// re-runs it harmlessly.
+		name: "39_email_summaries",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS email_summaries (
+                target_type TEXT NOT NULL CHECK (target_type IN ('thread', 'email')),
+                target_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                key_points TEXT NOT NULL DEFAULT '[]',
+                model TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                last_email_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (target_type, target_id)
+            );
+        `),
+	},
 ];
 

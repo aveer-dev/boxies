@@ -11,12 +11,14 @@ import {
 	domainsAligned,
 	isAuthFailed,
 	isFromUntrusted,
+	isTrustedArcSealer,
 	isTrustedAuthserv,
 	mergeTrustedAuthHeaders,
 	parseAuthSignals,
 	parseAuthenticationResultsValue,
 	parseStoredEmailAuth,
 	serializeEmailAuth,
+	TRUSTED_ARC_SEALERS,
 } from "../lib/email-auth.ts";
 import {
 	classifyFromHeaders,
@@ -747,6 +749,508 @@ const CF_BLOG_ARC =
 	assert.equal(stored?.authTier, "unverified");
 	assert.equal(stored?.spoofed, false);
 	assert.equal(authTierOf(null), "unverified");
+}
+
+// --- Trusted ARC sealers (AVE-101) ---------------------------------------
+// Forwarded mail: Cloudflare's own SPF/DKIM/DMARC fail after the forwarder
+// rewrites the envelope (and here the body), but Cloudflare validated the
+// ARC chain and the last sealer is a trusted mailbox provider that saw it pass.
+
+assert.deepEqual(
+	[...TRUSTED_ARC_SEALERS],
+	[
+		"google.com",
+		"outlook.com",
+		"microsoft.com",
+		"icloud.com",
+		"protonmail.ch",
+		"proton.me",
+		"messagingengine.com",
+		"zohomail.com",
+		"zohomail.eu",
+		"yahoo.com",
+		"aol.com",
+	],
+);
+assert.equal(isTrustedArcSealer("google.com"), true);
+assert.equal(isTrustedArcSealer("GOOGLE.COM."), true);
+assert.equal(isTrustedArcSealer("eur.outlook.com"), true);
+assert.equal(isTrustedArcSealer("microsoft.com"), true);
+assert.equal(isTrustedArcSealer("evilgoogle.com"), false);
+assert.equal(isTrustedArcSealer("google.com.evil.io"), false);
+assert.equal(isTrustedArcSealer("notoutlook.com"), false);
+assert.equal(isTrustedArcSealer("google.co"), false);
+assert.equal(isTrustedArcSealer("evil.io/google.com"), false);
+assert.equal(isTrustedArcSealer(""), false);
+for (const d of [
+	"icloud.com",
+	"protonmail.ch",
+	"proton.me",
+	"messagingengine.com",
+	"zohomail.com",
+	"zohomail.eu",
+	"yahoo.com",
+	"aol.com",
+]) {
+	assert.equal(isTrustedArcSealer(d), true, d);
+}
+for (const d of [
+	"evilicloud.com",
+	"icloud.com.evil.io",
+	"icloud.co",
+	"me.com",
+	"protonmail.com.attacker.example",
+	"proton.me.uk",
+	"fakemessagingengine.com",
+	"fastmail.com",
+	"zoho.com",
+	"zohomail.com.evil.io",
+	"notyahoo.com",
+	"yahoo.co",
+	"aol.co",
+	"hey.com",
+]) {
+	assert.equal(isTrustedArcSealer(d), false, d);
+}
+assert.equal(isTrustedArcSealer(null), false);
+
+// Cloudflare's verdict on Gmail-forwarded mail: SPF passes only for Gmail's
+// SRS address, DKIM broke, so DMARC fails under p=reject → `failed` alone.
+const CF_FORWARDED_ARC_PASS =
+	"mx.cloudflare.net; dkim=fail header.d=example.com; spf=pass smtp.mailfrom=me+caf_=me=inboxies.example@gmail.com; dmarc=fail header.from=example.com policy.dmarc=reject; arc=pass smtp.remote-ip=209.85.220.41";
+const GOOGLE_SEAL_1 =
+	"i=1; a=rsa-sha256; t=1729500000; cv=none; d=google.com; s=arc-20240605; b=Zm9vYmFy+/K1x2Y3==";
+const GOOGLE_AAR_1 =
+	"i=1; mx.google.com; dkim=pass header.i=@example.com header.s=s1 header.b=AbCd; spf=pass (google.com: domain of ada@example.com designates 192.0.2.1 as permitted sender) smtp.mailfrom=ada@example.com; dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=example.com";
+const MICROSOFT_SEAL_1 =
+	"i=1; a=rsa-sha256; s=arcselector10001; d=microsoft.com; cv=none; b=UVdFUlRZ\r\n\tYWJj==";
+const MICROSOFT_AAR_1 =
+	"i=1; mx.microsoft.com 1; spf=pass smtp.mailfrom=contoso.com; dmarc=pass action=none header.from=contoso.com; dkim=pass header.d=contoso.com; arc=none";
+
+function forwarded(extra, { cf = CF_FORWARDED_ARC_PASS, from = "Ada <ada@example.com>" } = {}) {
+	return parseAuthSignals({
+		envelopeHeaders: headers(["Authentication-Results", cf], ...extra),
+		headerFrom: from,
+		envelopeFrom: "me+caf_=me=inboxies.example@gmail.com",
+	});
+}
+
+{
+	// Baseline: without ARC sets the same Cloudflare verdict is `failed`.
+	const auth = forwarded([]);
+	assert.equal(auth.authTier, "failed");
+	assert.equal(auth.arcSealer, undefined);
+}
+
+{
+	// Gmail forward → verified via google.com's seal.
+	const auth = forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Message-Signature", "i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605; h=from:to; bh=x; b=y"],
+		["ARC-Authentication-Results", GOOGLE_AAR_1],
+	]);
+	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.spoofed, false);
+	assert.equal(auth.aligned, true);
+	assert.equal(auth.arcSealer, "google.com");
+	assert.equal(isFromUntrusted(auth), false);
+	// Cloudflare's own verdicts are kept as reported.
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.source, "authentication-results");
+	// Round-trips through storage.
+	const stored = parseStoredEmailAuth(serializeEmailAuth(auth));
+	assert.equal(stored?.authTier, "verified");
+	assert.equal(stored?.arcSealer, "google.com");
+}
+
+{
+	// Microsoft 365 forward (d=microsoft.com) → verified.
+	const auth = forwarded(
+		[
+			["ARC-Seal", MICROSOFT_SEAL_1],
+			["ARC-Authentication-Results", MICROSOFT_AAR_1],
+		],
+		{
+			cf: "mx.cloudflare.net; dkim=fail header.d=contoso.com; spf=fail smtp.mailfrom=user@contoso.com; dmarc=fail header.from=contoso.com policy.dmarc=quarantine; arc=pass",
+			from: "user@contoso.com",
+		},
+	);
+	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.arcSealer, "microsoft.com");
+}
+
+{
+	// outlook.com subdomain sealing as the second hop (cv=pass) after a list
+	// at i=1; DKIM-aligned pass is enough without a DMARC verdict.
+	const auth = forwarded(
+		[
+			["ARC-Seal", "i=2; a=rsa-sha256; s=arcselector9901; d=eur.outlook.com; cv=pass; b=AAAA"],
+			["ARC-Authentication-Results", "i=2; mx.microsoft.com 1; dkim=pass header.d=mail.fabrikam.example; arc=pass (0 oda=0 ltdi=0)"],
+			["ARC-Seal", "i=1; a=rsa-sha256; d=lists.example; s=s1; cv=none; b=BBBB"],
+			["ARC-Authentication-Results", "i=1; lists.example; dkim=pass header.d=fabrikam.example"],
+		],
+		{
+			cf: "mx.cloudflare.net; dkim=fail header.d=fabrikam.example; spf=softfail smtp.mailfrom=bounce@lists.example; dmarc=none header.from=fabrikam.example; arc=pass",
+			from: "ana@fabrikam.example",
+		},
+	);
+	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.arcSealer, "eur.outlook.com");
+}
+
+{
+	// Unverified (not failed) mail is upgraded too.
+	const auth = forwarded(
+		[
+			["ARC-Seal", GOOGLE_SEAL_1],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+		],
+		{ cf: "mx.cloudflare.net; dkim=none; spf=pass smtp.mailfrom=me@gmail.com; dmarc=none header.from=example.com; arc=pass" },
+	);
+	assert.equal(auth.authTier, "verified");
+}
+
+{
+	// workerd Headers: get() comma-joins duplicates, getAll() throws.
+	const values = new Map([
+		["authentication-results", CF_FORWARDED_ARC_PASS],
+		["arc-seal", GOOGLE_SEAL_1],
+		["arc-authentication-results", GOOGLE_AAR_1],
+	]);
+	const auth = parseAuthSignals({
+		envelopeHeaders: {
+			get: (name) => values.get(name.toLowerCase()) ?? null,
+			getAll: () => {
+				throw new TypeError("getAll only supports Set-Cookie");
+			},
+		},
+		headerFrom: "ada@example.com",
+		envelopeFrom: "x@gmail.com",
+	});
+	assert.equal(auth.authTier, "verified");
+}
+
+// Each additional mailbox provider, sealing a forward from Ada at
+// example.com, is upgraded by its own seal. Fixtures mirror each provider's
+// header shape (selector, authserv-id); signatures are placeholders since
+// Cloudflare's arc=pass is the signature check.
+const PROVIDER_SEALS = [
+	{
+		d: "icloud.com",
+		seal: "i=1; a=rsa-sha256; d=icloud.com; s=1a1hai; t=1729500000; cv=none; b=SWNsb3Vk",
+		aar: "i=1; mx.icloud.com; dkim=pass (2048-bit key) header.d=example.com header.i=@example.com header.b=AbCd; spf=pass (mx.icloud.com: domain of ada@example.com designates 192.0.2.1 as permitted sender) smtp.mailfrom=ada@example.com; dmarc=pass (p=reject sp=reject) header.from=example.com",
+	},
+	{
+		d: "protonmail.ch",
+		seal: "i=1; a=rsa-sha256; s=protonmail3; d=protonmail.ch; t=1729500000; cv=none; b=UHJvdG9u",
+		aar: "i=1; mail.protonmail.ch; dkim=pass (2048-bit key) header.d=example.com header.i=@example.com header.b=\"AbCd\"; spf=pass smtp.mailfrom=example.com; dmarc=pass (p=reject dis=none) header.from=example.com",
+	},
+	{
+		d: "proton.me",
+		seal: "i=1; a=rsa-sha256; s=protonmail; d=proton.me; t=1729500000; cv=none; b=UHJvdG9uTWU=",
+		aar: "i=1; mail.protonmail.ch; dmarc=pass (p=reject dis=none) header.from=example.com",
+	},
+	{
+		d: "messagingengine.com",
+		seal: "i=1; a=rsa-sha256; cv=none; d=messagingengine.com; s=fm2; t=1729500000; b=RmFzdG1haWw=",
+		aar: "i=1; mx.messagingengine.com; x-csa=none; x-me-sender=none; x-ptr=pass smtp.helo=mail.example.com policy.ptr=mail.example.com; bimi=none (No BIMI records found); arc=none (no signatures found); dkim=pass (2048-bit rsa key sha256) header.d=example.com header.i=@example.com header.b=AbCd header.a=rsa-sha256 header.s=s1 x-bits=2048; dmarc=pass policy.published-domain-policy=reject policy.applied-disposition=none policy.evaluated-disposition=none (p=reject,d=none,d.eval=none) policy.policy-from=p header.from=example.com; spf=pass smtp.mailfrom=ada@example.com smtp.helo=mail.example.com",
+	},
+	{
+		d: "zohomail.com",
+		seal: "i=1; a=rsa-sha256; t=1729500000; cv=none; d=zohomail.com; s=zohoarc; b=Wm9obw==",
+		aar: "i=1; mx.zohomail.com; dkim=pass header.i=example.com; spf=pass smtp.mailfrom=ada@example.com; dmarc=pass header.from=<ada@example.com>",
+	},
+	{
+		d: "zohomail.eu",
+		seal: "i=1; a=rsa-sha256; t=1729500000; cv=none; d=zohomail.eu; s=zohoarc; b=Wm9ob0VV",
+		aar: "i=1; mx.zohomail.eu; dkim=pass header.i=example.com; spf=pass smtp.mailfrom=ada@example.com; dmarc=pass header.from=<ada@example.com>",
+	},
+	{
+		d: "yahoo.com",
+		seal: "i=1; a=rsa-sha256; t=1729500000; cv=none; d=yahoo.com; s=arc-20240116; b=WWFob28=",
+		aar: "i=1; atlas-production.v2-mail-prod1-gq1.omega.yahoo.com; dkim=pass header.i=@example.com header.s=s1; spf=pass smtp.mailfrom=example.com; dmarc=pass(p=REJECT) header.from=example.com;",
+	},
+	{
+		d: "aol.com",
+		seal: "i=1; a=rsa-sha256; t=1729500000; cv=none; d=aol.com; s=arc-20240116; b=QU9M",
+		aar: "i=1; atlas-production.v2-mail-prod1-gq1.omega.yahoo.com; dkim=pass header.i=@example.com header.s=s1; spf=pass smtp.mailfrom=example.com; dmarc=pass(p=REJECT) header.from=example.com;",
+	},
+];
+
+for (const { d, seal, aar } of PROVIDER_SEALS) {
+	const auth = forwarded([
+		["ARC-Seal", seal],
+		["ARC-Message-Signature", `i=1; a=rsa-sha256; c=relaxed/relaxed; d=${d}; s=s1; h=from:to; bh=x; b=y`],
+		["ARC-Authentication-Results", aar],
+	]);
+	assert.equal(auth.authTier, "verified", d);
+	assert.equal(auth.arcSealer, d, d);
+	assert.equal(isFromUntrusted(auth), false, d);
+}
+
+{
+	// Fastmail sealing as the second hop (cv=pass) over a list's i=1 set.
+	const fastmail = PROVIDER_SEALS.find((p) => p.d === "messagingengine.com");
+	const auth = forwarded([
+		["ARC-Seal", fastmail.seal.replace("i=1", "i=2").replace("cv=none", "cv=pass")],
+		["ARC-Authentication-Results", fastmail.aar.replace("i=1", "i=2")],
+		["ARC-Seal", "i=1; a=rsa-sha256; d=lists.example; s=s1; cv=none; b=BBBB"],
+		["ARC-Authentication-Results", "i=1; lists.example; dkim=pass header.d=example.com"],
+	]);
+	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.arcSealer, "messagingengine.com");
+}
+
+// --- Negative cases: each must stay at Cloudflare's own tier. ------------
+
+function assertNotUpgraded(auth, expected = "failed") {
+	assert.equal(auth.authTier, expected);
+	assert.equal(auth.arcSealer, undefined);
+}
+
+// Look-alike / untrusted sealers.
+for (const d of ["evilgoogle.com", "google.com.evil.io", "attacker.example", "outlook.com.attacker.example"]) {
+	assertNotUpgraded(
+		forwarded([
+			["ARC-Seal", GOOGLE_SEAL_1.replace("d=google.com", `d=${d}`)],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+		]),
+	);
+}
+
+// Cloudflare reports the chain failed, absent, or says nothing about ARC:
+// a forged google.com set must not count.
+for (const arc of ["arc=fail", "arc=none", "arc=permerror", ""]) {
+	const cf = CF_FORWARDED_ARC_PASS.replace(/; arc=pass smtp\.remote-ip=\S+$/, arc ? `; ${arc}` : "");
+	assert.notEqual(cf, CF_FORWARDED_ARC_PASS);
+	assertNotUpgraded(
+		forwarded(
+			[
+				["ARC-Seal", GOOGLE_SEAL_1],
+				["ARC-Authentication-Results", GOOGLE_AAR_1],
+			],
+			{ cf },
+		),
+	);
+}
+
+{
+	// Our real Authentication-Results says arc=fail; a forged Cloudflare ARC
+	// results header claiming arc=pass lower down must not outvote it.
+	const auth = forwarded(
+		[
+			["ARC-Seal", GOOGLE_SEAL_1],
+			["ARC-Authentication-Results", "i=2; mx.cloudflare.net; dmarc=pass header.from=example.com; arc=pass"],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+		],
+		{ cf: CF_FORWARDED_ARC_PASS.replace("arc=pass", "arc=fail") },
+	);
+	assertNotUpgraded(auth);
+}
+
+{
+	// No trusted Cloudflare header at all: upstream ARC is never enough.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Seal", GOOGLE_SEAL_1],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+			["Authentication-Results", "evil.example; arc=pass"],
+		),
+		headerFrom: "ada@example.com",
+		envelopeFrom: "ada@example.com",
+	});
+	assertNotUpgraded(auth, "unverified");
+}
+
+// Broken chain shapes.
+assertNotUpgraded(
+	forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1.replace("cv=none", "cv=fail")],
+		["ARC-Authentication-Results", GOOGLE_AAR_1],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		// i=2 must carry cv=pass.
+		["ARC-Seal", GOOGLE_SEAL_1.replace("i=1", "i=2")],
+		["ARC-Authentication-Results", GOOGLE_AAR_1.replace("i=1", "i=2")],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		// Duplicate seal at the top instance.
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Authentication-Results", GOOGLE_AAR_1],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		// Results header with no matching seal at its instance.
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Authentication-Results", "i=2; mx.google.com; dmarc=pass header.from=example.com"],
+		["ARC-Authentication-Results", GOOGLE_AAR_1],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		// Seal with no results header at the top instance.
+		["ARC-Seal", GOOGLE_SEAL_1],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		// Seal with a duplicated tag is malformed.
+		["ARC-Seal", `${GOOGLE_SEAL_1}; d=google.com`],
+		["ARC-Authentication-Results", GOOGLE_AAR_1],
+	]),
+);
+
+{
+	// Google sealed first, then an untrusted hop sealed on top (and could
+	// have rewritten the message): the older trusted set is not used.
+	const auth = forwarded([
+		["ARC-Seal", "i=2; a=rsa-sha256; d=attacker.example; s=s1; cv=pass; b=CCCC"],
+		["ARC-Authentication-Results", "i=2; attacker.example; dmarc=pass header.from=example.com; arc=pass"],
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Authentication-Results", GOOGLE_AAR_1],
+	]);
+	assertNotUpgraded(auth);
+}
+
+{
+	// Top results header claims to be ours: never treat it as upstream's.
+	const auth = forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Authentication-Results", GOOGLE_AAR_1.replace("mx.google.com", "mx.cloudflare.net")],
+	]);
+	assertNotUpgraded(auth);
+}
+
+// The trusted sealer's verdict must prove the visible From.
+assertNotUpgraded(
+	forwarded(
+		[
+			["ARC-Seal", GOOGLE_SEAL_1],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+		],
+		// Google vouched for example.com; the From we show is paypal.com.
+		{ from: "service@paypal.com", cf: CF_FORWARDED_ARC_PASS.replace("header.from=example.com", "header.from=paypal.com") },
+	),
+);
+assertNotUpgraded(
+	forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Authentication-Results", "i=1; mx.google.com; dkim=pass header.d=sendgrid.net; spf=pass smtp.mailfrom=bounce@sendgrid.net; dmarc=pass header.from=other.example"],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1],
+		// A DMARC fail at the sealer vetoes an aligned DKIM pass.
+		["ARC-Authentication-Results", "i=1; mx.google.com; dkim=pass header.d=example.com; dmarc=fail header.from=example.com"],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1],
+		// A bare TLD never aligns.
+		["ARC-Authentication-Results", "i=1; mx.google.com; dkim=pass header.d=com; spf=pass smtp.mailfrom=x@com"],
+	]),
+);
+assertNotUpgraded(
+	forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1],
+		// dmarc=pass without saying which From it evaluated.
+		["ARC-Authentication-Results", "i=1; mx.google.com; dmarc=pass"],
+	]),
+);
+
+{
+	// Cloudflare's DMARC evaluated a different From than the one we show
+	// (ambiguous From): ARC can't vouch for it either.
+	const auth = forwarded(
+		[
+			["ARC-Seal", GOOGLE_SEAL_1],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+		],
+		{ cf: CF_FORWARDED_ARC_PASS.replace("header.from=example.com", "header.from=other.example") },
+	);
+	assertNotUpgraded(auth);
+}
+
+{
+	// No visible From → nothing to prove.
+	const auth = forwarded(
+		[
+			["ARC-Seal", GOOGLE_SEAL_1],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+		],
+		{ from: "" },
+	);
+	assert.equal(auth.arcSealer, undefined);
+	assert.notEqual(auth.authTier, "verified");
+}
+
+// The new providers get the same negative treatment.
+for (const { d, seal, aar } of PROVIDER_SEALS) {
+	// Look-alike sealer domains carrying the provider's own results.
+	for (const fake of [`evil${d}`, `${d}.evil.io`, `${d.split(".")[0]}.attacker.example`]) {
+		assertNotUpgraded(
+			forwarded([
+				["ARC-Seal", seal.replace(`d=${d}`, `d=${fake}`)],
+				["ARC-Authentication-Results", aar],
+			]),
+		);
+	}
+	// Broken chain: Cloudflare says arc=fail, or the seal itself says cv=fail.
+	assertNotUpgraded(
+		forwarded(
+			[
+				["ARC-Seal", seal],
+				["ARC-Authentication-Results", aar],
+			],
+			{ cf: CF_FORWARDED_ARC_PASS.replace("arc=pass", "arc=fail") },
+		),
+	);
+	assertNotUpgraded(
+		forwarded([
+			["ARC-Seal", seal.replace("cv=none", "cv=fail")],
+			["ARC-Authentication-Results", aar],
+		]),
+	);
+	// An untrusted hop sealed on top of the provider's set.
+	assertNotUpgraded(
+		forwarded([
+			["ARC-Seal", "i=2; a=rsa-sha256; d=attacker.example; s=s1; cv=pass; b=CCCC"],
+			["ARC-Authentication-Results", "i=2; attacker.example; dmarc=pass header.from=example.com"],
+			["ARC-Seal", seal],
+			["ARC-Authentication-Results", aar],
+		]),
+	);
+	// The provider vouched for example.com, but the visible From is someone else.
+	assertNotUpgraded(
+		forwarded(
+			[
+				["ARC-Seal", seal],
+				["ARC-Authentication-Results", aar],
+			],
+			{ from: "service@paypal.com", cf: CF_FORWARDED_ARC_PASS.replace("header.from=example.com", "header.from=paypal.com") },
+		),
+	);
+}
+
+{
+	// Providers not on the list (Hey, plain fastmail.com) are not trusted
+	// even with an otherwise perfect chain.
+	for (const d of ["hey.com", "fastmail.com", "me.com"]) {
+		assertNotUpgraded(
+			forwarded([
+				["ARC-Seal", GOOGLE_SEAL_1.replace("d=google.com", `d=${d}`)],
+				["ARC-Authentication-Results", GOOGLE_AAR_1],
+			]),
+		);
+	}
 }
 
 console.log("email-auth tests passed");
