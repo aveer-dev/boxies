@@ -29,8 +29,20 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 			invalidateEmailData();
 		};
 
+		// A stored thread summary goes stale when its thread gains a message;
+		// refetching the open thread's summary regenerates it (AVE-20).
+		const invalidateSummaries = () => {
+			qc.invalidateQueries({ queryKey: queryKeys.summaries.all(mailboxId) });
+		};
+
 		const onNewEmail = () => {
 			invalidateEmailData();
+			invalidateSummaries();
+		};
+
+		const onEmailMoved = () => {
+			invalidateEmailData();
+			invalidateSummaries();
 		};
 
 		// Private emails created elsewhere (extension, phone) show up live.
@@ -40,8 +52,8 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 
 		source.addEventListener("email_updated", onEmailUpdated);
 		source.addEventListener("new_email", onNewEmail);
-		source.addEventListener("email_moved", onEmailUpdated);
-		source.addEventListener("emails_refiled", onEmailUpdated);
+		source.addEventListener("email_moved", onEmailMoved);
+		source.addEventListener("emails_refiled", onEmailMoved);
 		source.addEventListener("sender_preference_updated", onEmailUpdated);
 		source.addEventListener("alias_created", onAliasChanged);
 		source.addEventListener("alias_updated", onAliasChanged);
@@ -54,8 +66,8 @@ export function useMailboxEvents(mailboxId: string | undefined) {
 		return () => {
 			source.removeEventListener("email_updated", onEmailUpdated);
 			source.removeEventListener("new_email", onNewEmail);
-			source.removeEventListener("email_moved", onEmailUpdated);
-			source.removeEventListener("emails_refiled", onEmailUpdated);
+			source.removeEventListener("email_moved", onEmailMoved);
+			source.removeEventListener("emails_refiled", onEmailMoved);
 			source.removeEventListener("sender_preference_updated", onEmailUpdated);
 			source.removeEventListener("alias_created", onAliasChanged);
 			source.removeEventListener("alias_updated", onAliasChanged);

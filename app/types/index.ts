@@ -476,6 +476,13 @@ export type {
 } from "shared/inbox-digest";
 
 export type {
+	AiSummary,
+	AiSummaryIneligibleReason,
+	AiSummaryResponse,
+	AiSummaryTargetType,
+} from "shared/ai-summaries";
+
+export type {
 	ThreadNote,
 	ThreadNoteType,
 	CreateThreadNoteRequest,

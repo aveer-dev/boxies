@@ -54,6 +54,8 @@ import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
 import type { Env } from "./types";
+import type { AiSummaryResponse } from "../shared/ai-summaries";
+import type { MailboxSummaryResult } from "./durableObject";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import {
 	CreateThreadNoteSchema,
@@ -940,6 +942,64 @@ app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) 
 app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppContext) => {
 	await c.var.mailboxStub.markThreadRead(c.req.param("threadId")!);
 	return c.json({ status: "marked_read" });
+});
+
+// -- AI summaries (AVE-20) ------------------------------------------
+// Generated lazily on first open and stored in the mailbox DO. Gating
+// (folder, screened-out sender, length, multi-message for quick summaries)
+// lives in lib/ai-summary.ts; responses are AiSummaryResponse.
+
+const MAX_SUMMARY_ROUTE_ID = 512;
+
+const GenerateEmailSummaryBody = z.object({ regenerate: z.boolean().optional() }).strict();
+
+async function summaryResponse(
+	c: AppContext,
+	run: () => Promise<MailboxSummaryResult | null>,
+	notFound: string,
+) {
+	const result = await run();
+	if (!result) return c.json({ error: notFound }, 404);
+	if (result.status === "generation_failed") {
+		console.error("AI summary failed:", result.error);
+		return c.json({ error: "Couldn't generate a summary. Try again." }, 502);
+	}
+	return c.json(result satisfies AiSummaryResponse);
+}
+
+function summaryRouteId(c: AppContext, name: string): string | null {
+	const id = c.req.param(name);
+	return id && id.length <= MAX_SUMMARY_ROUTE_ID ? id : null;
+}
+
+app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId/summary", async (c: AppContext) => {
+	const threadId = summaryRouteId(c, "threadId");
+	if (!threadId) return c.json({ error: "Thread not found" }, 404);
+	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "lazy"), "Thread not found");
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/summary/regenerate", async (c: AppContext) => {
+	const threadId = summaryRouteId(c, "threadId");
+	if (!threadId) return c.json({ error: "Thread not found" }, 404);
+	return summaryResponse(c, () => c.var.mailboxStub.getThreadSummary(threadId, "force"), "Thread not found");
+});
+
+app.get("/api/v1/mailboxes/:mailboxId/emails/:id/summary", async (c: AppContext) => {
+	const emailId = summaryRouteId(c, "id");
+	if (!emailId) return c.json({ error: "Email not found" }, 404);
+	return summaryResponse(c, () => c.var.mailboxStub.getEmailSummary(emailId, "cached"), "Email not found");
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/summary/generate", async (c: AppContext) => {
+	const emailId = summaryRouteId(c, "id");
+	if (!emailId) return c.json({ error: "Email not found" }, 404);
+	const raw = await c.req.text();
+	const { regenerate } = GenerateEmailSummaryBody.parse(raw.trim() ? JSON.parse(raw) : {});
+	return summaryResponse(
+		c,
+		() => c.var.mailboxStub.getEmailSummary(emailId, regenerate ? "force" : "lazy"),
+		"Email not found",
+	);
 });
 
 // -- Notes to self --------------------------------------------------
