@@ -33,10 +33,12 @@ export const MCP_TOOL_SCOPES = {
 	// send: send new messages and replies.
 	send_email: "send",
 	send_reply: "send",
-	// manage: mark read/unread, move between folders, delete.
+	// manage: mark read/unread, move between folders, delete, allow or block senders.
 	mark_email_read: "manage",
 	move_email: "manage",
 	delete_email: "manage",
+	allow_sender: "manage",
+	block_sender: "manage",
 } as const satisfies Record<string, McpOAuthScope>;
 
 export type McpToolName = keyof typeof MCP_TOOL_SCOPES;

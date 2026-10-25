@@ -4,6 +4,7 @@
 
 import type {
 	AgentConversation,
+	AiSummaryResponse,
 	Email,
 	Folder,
 	InboxDigest,
@@ -489,6 +490,8 @@ const api = {
 			preference?: SenderPreference | null;
 			refiledCount?: number;
 			preferenceError?: string;
+			/** Set when the move crossed Spam and taught the sender (AVE-95). */
+			senderStatus?: "allowed" | "rejected";
 		}>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, {
 			folderId,
 			setSenderPreference: opts?.setSenderPreference,
@@ -539,6 +542,27 @@ const api = {
 			{ params: query, signal: opts?.signal },
 		);
 	},
+	/** Cached thread summary, generated on first open (AVE-20). */
+	getThreadSummary: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
+		get<AiSummaryResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/summary`,
+			{ signal: opts?.signal },
+		),
+	regenerateThreadSummary: (mailboxId: string, threadId: string) =>
+		post<AiSummaryResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/summary/regenerate`,
+		),
+	/** Quick summary of one message in a multi-message thread. */
+	generateEmailSummary: (
+		mailboxId: string,
+		emailId: string,
+		opts?: { regenerate?: boolean; signal?: AbortSignal },
+	) =>
+		post<AiSummaryResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/emails/${encodeURIComponent(emailId)}/summary/generate`,
+			{ regenerate: opts?.regenerate ?? false },
+			{ signal: opts?.signal },
+		),
 	markThreadRead: (mailboxId: string, threadId: string) =>
 		post<void>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}/read`),
 	getAttachment: (mailboxId: string, emailId: string, attachmentId: string) =>

@@ -25,7 +25,7 @@ import { addDomain, addMailbox, addUser, authedRequest, createAuthTestEnv, signI
 
 	// Without Access config, /ops is closed to everyone, app sessions included.
 	const session = await signIn(env, ada);
-	for (const [method, path] of [["GET", "/ops/domains"], ["GET", "/ops/audit"], ["POST", "/ops/mailboxes"]]) {
+	for (const [method, path] of [["GET", "/ops/domains"], ["GET", "/ops/audit"], ["GET", "/ops/spam-metrics"], ["POST", "/ops/mailboxes"]]) {
 		const res = await authedRequest(env, { method, path, token: session.token, body: method === "POST" ? {} : undefined });
 		assert.equal(res.status, 403, `${path} needs Access`);
 	}

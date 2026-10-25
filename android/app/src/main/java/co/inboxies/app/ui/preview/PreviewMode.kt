@@ -42,6 +42,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
+    /** Inbox rows with notes to self: sticky strip + private note chip (iOS `-previewMailbox -previewNotes`). */
+    Notes("notes", "previewNotes"),
+    /** Q3 thread open with a sticky note and inline notes (iOS `-previewDetail -previewNotes`). */
+    NotesDetail("notesDetail", "previewNotesDetail"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),

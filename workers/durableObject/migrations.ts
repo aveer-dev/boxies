@@ -657,8 +657,9 @@ export const mailboxMigrations: Migration[] = [
 		// implicit trust in sender_triage (§7). Nothing is deleted or
 		// changed in sender_triage. INSERT OR IGNORE on UNIQUE (kind, value)
 		// makes the SQL safe to replay; the runner applies it once per DO.
-		// Numbered 38: dev's highest is 37_email_classification (open PR #115
-		// also claims 37_); the runner tracks by full name.
+		// Numbered 38: 37_email_classification precedes it and
+		// 39_email_summaries (AVE-20) landed on dev first. The runner tracks
+		// by full name, so a DO that already ran 39 still applies 38.
 		name: "38_sender_rules",
 		sql: txn(`
             CREATE TABLE IF NOT EXISTS sender_rules (
@@ -682,6 +683,31 @@ export const mailboxMigrations: Migration[] = [
               FROM sender_triage
              WHERE status = 'rejected'
                AND instr(trim(sender), '@') > 1;
+        `),
+	},
+	{
+		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
+		// or per message (quick summary). Generated lazily on open and reused
+		// until the thread gains a message. Additive only. Renumbered to 39: dev
+		// already has 37_email_classification and open PR #159 claims
+		// 38_sender_rules. The runner tracks migrations by name and the table
+		// is CREATE IF NOT EXISTS, so a DO that already ran an earlier name
+		// re-runs it harmlessly.
+		name: "39_email_summaries",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS email_summaries (
+                target_type TEXT NOT NULL CHECK (target_type IN ('thread', 'email')),
+                target_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                key_points TEXT NOT NULL DEFAULT '[]',
+                model TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                last_email_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (target_type, target_id)
+            );
         `),
 	},
 ];
