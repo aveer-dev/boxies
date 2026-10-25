@@ -898,6 +898,63 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    // MARK: Notes to self (private to the signed-in user)
+
+    func listThreadNotes(mailboxId: String, threadId: String) async throws -> [ThreadNote] {
+        let response: ThreadNotesResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/notes"
+        )
+        return response.notes
+    }
+
+    func createThreadNote(
+        mailboxId: String,
+        threadId: String,
+        body: String,
+        noteType: String,
+        emailId: String? = nil,
+        position: CGPoint? = nil
+    ) async throws -> ThreadNote {
+        var payload: [String: Any] = ["body": body, "noteType": noteType]
+        if let emailId { payload["emailId"] = emailId }
+        if let position {
+            payload["posX"] = Double(position.x)
+            payload["posY"] = Double(position.y)
+        }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/notes",
+            method: "POST",
+            body: payload
+        )
+    }
+
+    /// PATCH a note's body and/or position (at least one).
+    func updateThreadNote(
+        mailboxId: String,
+        noteId: String,
+        body: String? = nil,
+        position: CGPoint? = nil
+    ) async throws -> ThreadNote {
+        var payload: [String: Any] = [:]
+        if let body { payload["body"] = body }
+        if let position {
+            payload["posX"] = Double(position.x)
+            payload["posY"] = Double(position.y)
+        }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/notes/\(noteId.urlPathEncoded)",
+            method: "PATCH",
+            body: payload
+        )
+    }
+
+    func deleteThreadNote(mailboxId: String, noteId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/notes/\(noteId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
     func listReplyLaterEmails(mailboxId: String, page: Int = 1) async throws -> EmailListResponse {
         try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails",
