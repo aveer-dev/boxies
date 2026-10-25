@@ -9,6 +9,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
@@ -178,6 +179,17 @@ class AppModel {
 
     private val _threadEmails = MutableStateFlow<List<Email>>(emptyList())
     val threadEmails: StateFlow<List<Email>> = _threadEmails.asStateFlow()
+
+    /** Notes to self on the open conversation (the signed-in user's own only). */
+    private val _threadNotes = MutableStateFlow<List<ThreadNote>>(emptyList())
+    val threadNotes: StateFlow<List<ThreadNote>> = _threadNotes.asStateFlow()
+
+    /** `mailboxId|threadKey` that [threadNotes] belongs to; null before the first load. */
+    private val _threadNotesKey = MutableStateFlow<String?>(null)
+    val threadNotesKey: StateFlow<String?> = _threadNotesKey.asStateFlow()
+
+    /** DEBUG previews keep notes in memory per conversation key (no server). */
+    val previewThreadNotes: MutableMap<String, List<ThreadNote>> = mutableMapOf()
 
     private val _composeSession = MutableStateFlow<ComposeSession?>(null)
     val composeSession: StateFlow<ComposeSession?> = _composeSession.asStateFlow()
@@ -1373,6 +1385,154 @@ class AppModel {
         _isEmailDetailLoading.value = false
     }
 
+    // Notes to self (AVE-62). Private to the signed-in user; the Worker scopes every
+    // call to them. DEBUG previews keep notes in memory.
+
+    fun threadNotesStoreKey(mailboxId: String, threadKey: String): String = "$mailboxId|$threadKey"
+
+    suspend fun loadThreadNotes(threadKey: String) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val key = threadNotesStoreKey(mailboxId, threadKey)
+        if (_threadNotesKey.value != key) {
+            _threadNotes.value = emptyList()
+            _threadNotesKey.value = key
+        }
+        if (isDebugPreview) {
+            _threadNotes.value = previewThreadNotes[threadKey].orEmpty()
+            return
+        }
+        try {
+            val notes = ApiClient.shared.listThreadNotes(mailboxId, threadKey)
+            // Another conversation opened while the request was out: drop the result.
+            if (_threadNotesKey.value != key) return
+            _threadNotes.value = notes
+            applyThreadNoteSummary(threadKey)
+        } catch (_: Exception) {
+            // Notes are extra context; the conversation still reads fine without them.
+        }
+    }
+
+    /** Adds a note. A sticky with no position opens top-right (cascading), like web/iOS. */
+    suspend fun createThreadNote(
+        threadKey: String,
+        body: String,
+        noteType: String,
+        emailId: String? = null,
+    ): Boolean {
+        val mailboxId = _selectedMailboxId.value ?: return false
+        val key = threadNotesStoreKey(mailboxId, threadKey)
+        val created = if (isDebugPreview) {
+            val now = Instant.now().toString()
+            ThreadNote(
+                id = UUID.randomUUID().toString(),
+                threadId = threadKey,
+                emailId = emailId,
+                noteType = noteType,
+                body = body,
+                createdAt = now,
+                updatedAt = now,
+            )
+        } else {
+            try {
+                ApiClient.shared.createThreadNote(mailboxId, threadKey, body, noteType, emailId)
+            } catch (_: Exception) {
+                showToast("Couldn’t save the note", isError = true)
+                return false
+            }
+        }
+        if (_threadNotesKey.value != key) return true
+        _threadNotes.update { it + created }
+        didChangeThreadNotes(threadKey)
+        return true
+    }
+
+    suspend fun updateThreadNoteBody(note: ThreadNote, body: String): Boolean {
+        val mailboxId = _selectedMailboxId.value ?: return false
+        val updated = if (isDebugPreview) {
+            note.copy(body = body, updatedAt = Instant.now().toString())
+        } else {
+            try {
+                ApiClient.shared.updateThreadNote(mailboxId, note.id, body = body)
+            } catch (_: Exception) {
+                showToast("Couldn’t save the note", isError = true)
+                return false
+            }
+        }
+        replaceThreadNote(updated)
+        didChangeThreadNotes(note.threadId)
+        return true
+    }
+
+    /** Saves where a sticky was dropped (dp). Moves at once; puts it back if the save fails. */
+    suspend fun moveThreadNote(note: ThreadNote, x: Float, y: Float) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        replaceThreadNote(note.copy(posX = x.toDouble(), posY = y.toDouble()))
+        if (isDebugPreview) {
+            previewThreadNotes[note.threadId] = _threadNotes.value
+            return
+        }
+        try {
+            val saved = ApiClient.shared.updateThreadNote(
+                mailboxId,
+                note.id,
+                posX = x.toDouble(),
+                posY = y.toDouble(),
+            )
+            replaceThreadNote(saved)
+        } catch (_: Exception) {
+            replaceThreadNote(note)
+            showToast("Couldn’t move the note", isError = true)
+        }
+    }
+
+    /** Deletes a note at once; restores it if the server refuses. */
+    suspend fun deleteThreadNote(note: ThreadNote) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val index = _threadNotes.value.indexOfFirst { it.id == note.id }
+        if (index < 0) return
+        _threadNotes.update { list -> list.filter { it.id != note.id } }
+        didChangeThreadNotes(note.threadId)
+        if (isDebugPreview) return
+        try {
+            ApiClient.shared.deleteThreadNote(mailboxId, note.id)
+        } catch (_: Exception) {
+            if (_threadNotes.value.none { it.id == note.id }) {
+                _threadNotes.update { list ->
+                    list.toMutableList().apply { add(index.coerceAtMost(size), note) }
+                }
+                didChangeThreadNotes(note.threadId)
+            }
+            showToast("Couldn’t delete the note", isError = true)
+        }
+    }
+
+    private fun replaceThreadNote(note: ThreadNote) {
+        _threadNotes.update { list -> list.map { if (it.id == note.id) note else it } }
+    }
+
+    private fun didChangeThreadNotes(threadKey: String) {
+        if (isDebugPreview) previewThreadNotes[threadKey] = _threadNotes.value
+        applyThreadNoteSummary(threadKey)
+    }
+
+    /**
+     * Mirrors the open conversation's notes onto its list row (memory and cache),
+     * so the sticky strip and private-note count update before the next sync.
+     */
+    private fun applyThreadNoteSummary(threadKey: String) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        if (_threadNotesKey.value != threadNotesStoreKey(mailboxId, threadKey)) return
+        val summary = ThreadNoteSummary.of(_threadNotes.value)
+        fun Email.withSummary() = copy(
+            hasStickyNote = summary.hasStickyNote,
+            stickyNoteText = summary.stickyNoteText,
+            inlineNoteCount = summary.inlineNoteCount,
+        )
+        _emails.update { list -> list.map { if (it.noteThreadKey == threadKey) it.withSummary() else it } }
+        _selectedEmail.update { if (it?.noteThreadKey == threadKey) it.withSummary() else it }
+        db.updateThreadNoteSummary(mailboxId, threadKey, summary)
+    }
+
     /** Preview / Simulator fixture — open a thread without hitting the network. */
     fun seedOpenThreadForPreview(email: Email, thread: List<Email> = listOf(email)) {
         _selectedEmail.value = email
@@ -1621,6 +1781,9 @@ class AppModel {
         _inboxDigest.value = null
         _selectedEmail.value = null
         _threadEmails.value = emptyList()
+        _threadNotes.value = emptyList()
+        _threadNotesKey.value = null
+        previewThreadNotes.clear()
         _composeSession.value = null
         _chatSession.value = ChatSession.Dismissed
         _conversations.value = emptyList()

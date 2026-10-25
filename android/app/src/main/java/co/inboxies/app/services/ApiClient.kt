@@ -2,6 +2,8 @@ package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AccountSession
+import co.inboxies.app.models.ThreadNote
+import co.inboxies.app.models.ThreadNotesResponse
 import co.inboxies.app.models.AdminCreateMailboxResponse
 import co.inboxies.app.models.AdminDomainConnectResponse
 import co.inboxies.app.models.AdminDomainInfo
@@ -966,6 +968,61 @@ class ApiClient private constructor() {
 
     suspend fun getThread(mailboxId: String, threadId: String): List<Email> =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}")
+
+    // Notes to self (private to the signed-in user)
+
+    suspend fun listThreadNotes(mailboxId: String, threadId: String): List<ThreadNote> =
+        request<ThreadNotesResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/notes",
+        ).notes
+
+    suspend fun createThreadNote(
+        mailboxId: String,
+        threadId: String,
+        body: String,
+        noteType: String,
+        emailId: String? = null,
+        posX: Double? = null,
+        posY: Double? = null,
+    ): ThreadNote = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/notes",
+        method = "POST",
+        body = buildJsonObject {
+            put("body", body)
+            put("noteType", noteType)
+            emailId?.let { put("emailId", it) }
+            if (posX != null && posY != null) {
+                put("posX", posX)
+                put("posY", posY)
+            }
+        },
+    )
+
+    /** PATCH a note's body and/or position (at least one). */
+    suspend fun updateThreadNote(
+        mailboxId: String,
+        noteId: String,
+        body: String? = null,
+        posX: Double? = null,
+        posY: Double? = null,
+    ): ThreadNote = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/notes/${pathEncode(noteId)}",
+        method = "PATCH",
+        body = buildJsonObject {
+            body?.let { put("body", it) }
+            if (posX != null && posY != null) {
+                put("posX", posX)
+                put("posY", posY)
+            }
+        },
+    )
+
+    suspend fun deleteThreadNote(mailboxId: String, noteId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/notes/${pathEncode(noteId)}",
+            method = "DELETE",
+        )
+    }
 
     suspend fun updateEmail(
         mailboxId: String,

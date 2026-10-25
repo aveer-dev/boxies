@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ForwardToInbox
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.NoteAdd
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.automirrored.outlined.ReplyAll
 import androidx.compose.material.icons.outlined.Archive
@@ -94,6 +95,8 @@ fun EmailActionsSheetModal(
     onDismiss: () -> Unit,
     onDone: () -> Unit = onDismiss,
     onRemoveFromList: ((String) -> Unit)? = null,
+    /** Detail message menu: starts a private note to self on this message. */
+    onAddNote: (() -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     val view = LocalView.current
@@ -148,6 +151,7 @@ fun EmailActionsSheetModal(
                     onDismiss = onDismiss,
                     onDone = onDone,
                     onRemoveFromList = onRemoveFromList,
+                    onAddNote = onAddNote,
                 )
             }
         }
@@ -160,6 +164,7 @@ fun EmailActionsSheet(
     onDismiss: () -> Unit,
     onDone: () -> Unit = onDismiss,
     onRemoveFromList: ((String) -> Unit)? = null,
+    onAddNote: (() -> Unit)? = null,
 ) {
     val app = LocalAppModel.current
     val colors = inboxiesColors()
@@ -360,6 +365,11 @@ fun EmailActionsSheet(
                             if (fromList) onRemoveFromList?.invoke(email.id)
                             else onDone()
                         }
+                    }
+                }
+                if (onAddNote != null) {
+                    ActionRow("Add Private Note", Icons.AutoMirrored.Outlined.NoteAdd) {
+                        onAddNote()
                     }
                 }
                 ActionRow(

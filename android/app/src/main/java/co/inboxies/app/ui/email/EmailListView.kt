@@ -113,6 +113,9 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.services.NoteText
+import co.inboxies.app.ui.notes.PrivateNotesChip
+import co.inboxies.app.ui.notes.StickyNoteRowStrip
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.services.EmailActionAvailability
 import co.inboxies.app.services.EmailSwipeLayout
@@ -1167,6 +1170,10 @@ fun EmailRowView(
     val list = AppThemeDims.List
     val previewText = email.previewText
     val tags = rowTags(email, highlightQuery, folderLabel)
+    val stickyNotePreview = remember(email.hasStickyNote, email.stickyNoteText) {
+        if (email.hasStickyNote == true) NoteText.preview(email.stickyNoteText) else ""
+    }
+    val inlineNoteCount = (email.inlineNoteCount ?: 0).coerceAtLeast(0)
     val senderWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
     val subjectWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
 
@@ -1321,12 +1328,14 @@ fun EmailRowView(
                 )
             }
 
-            if (showsTags && tags.isNotEmpty()) {
+            val shownTags = if (showsTags) tags else emptyList()
+            if (shownTags.isNotEmpty() || inlineNoteCount > 0) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(top = 3.dp),
                 ) {
-                    tags.forEach { tag ->
+                    shownTags.forEach { tag ->
                         Text(
                             tag,
                             fontFamily = InterFontFamily,
@@ -1341,7 +1350,15 @@ fun EmailRowView(
                                 .padding(horizontal = 8.dp, vertical = 3.dp),
                         )
                     }
+                    if (inlineNoteCount > 0) {
+                        PrivateNotesChip(count = inlineNoteCount)
+                    }
                 }
+            }
+
+            // Notes to self: the latest sticky's text on the bottom row.
+            if (stickyNotePreview.isNotEmpty()) {
+                StickyNoteRowStrip(text = stickyNotePreview, modifier = Modifier.padding(top = 4.dp))
             }
         }
         }

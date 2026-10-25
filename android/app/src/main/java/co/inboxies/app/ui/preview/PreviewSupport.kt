@@ -4,6 +4,8 @@ import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.ThreadNote
+import co.inboxies.app.services.ThreadNoteSummary
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
@@ -153,6 +155,36 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.SPAM),
                     selectedEmail = spam.firstOrNull(),
                     threadEmails = spam.take(1),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.Notes, PreviewMode.NotesDetail -> {
+                val notes = noteFixtures()
+                val thread = noteThread(you)
+                DatabaseService.shared.upsertEmails(mailbox.id, thread)
+                val inbox = allEmails
+                    .filter { it.folderId == FolderIds.INBOX }
+                    .map { if (it.id == "preview-1") thread.last() else it }
+                    .map { email ->
+                        val summary = ThreadNoteSummary.of(notes[email.noteThreadKey].orEmpty())
+                        email.copy(
+                            hasStickyNote = summary.hasStickyNote,
+                            stickyNoteText = summary.stickyNoteText,
+                            inlineNoteCount = summary.inlineNoteCount,
+                        )
+                    }
+                app.previewThreadNotes.clear()
+                app.previewThreadNotes.putAll(notes)
+                val opened = inbox.firstOrNull { it.id == "preview-1" }.takeIf { mode == PreviewMode.NotesDetail }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = inbox,
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = opened,
+                    threadEmails = if (opened != null) thread else emptyList(),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
@@ -378,6 +410,118 @@ object PreviewSupport {
                 listSection = "seen",
             )
         }
+    }
+
+    // Notes to self (AVE-62) — same fixtures as iOS `PreviewSupport.noteFixtures`.
+
+    const val NOTES_THREAD_KEY = "thread-preview-q3"
+
+    fun noteThread(you: String = addr("you")): List<Email> = listOf(
+        Email(
+            id = "preview-1a",
+            threadId = NOTES_THREAD_KEY,
+            folderId = FolderIds.INBOX,
+            subject = "Quarterly planning notes",
+            sender = "jordan@example.com",
+            senderName = "Jordan Hale",
+            recipient = you,
+            date = "2026-09-01T09:05:00.000Z",
+            read = true,
+            body = "<p>Hi team — here is the proposal for the Q3 review. Section 3 covers the SLA " +
+                "requirements and the pricing tiers we discussed.</p><p>Let me know what you think.</p>",
+            snippet = "Hi team — here is the proposal for the Q3 review.",
+        ),
+        Email(
+            id = "preview-1b",
+            threadId = NOTES_THREAD_KEY,
+            folderId = FolderIds.INBOX,
+            subject = "Re: Quarterly planning notes",
+            sender = you,
+            senderName = "Alex Rivera",
+            recipient = "jordan@example.com",
+            date = "2026-09-02T16:40:00.000Z",
+            read = true,
+            body = "<p>Looks solid. Legal is reviewing section 3 now; I'll confirm pricing by Friday.</p>",
+            snippet = "Looks solid. Legal is reviewing section 3 now.",
+        ),
+        Email(
+            id = "preview-1",
+            threadId = NOTES_THREAD_KEY,
+            folderId = FolderIds.INBOX,
+            subject = "Re: Quarterly planning notes",
+            sender = "jordan@example.com",
+            senderName = "Jordan Hale",
+            recipient = you,
+            date = "2026-09-03T14:30:00.000Z",
+            read = false,
+            body = "<p>Thanks! Can we move Thursday's sync to the morning instead? I have a conflict at 3pm.</p>" +
+                "<p>— Jordan</p>",
+            snippet = "Can we move Thursday's sync to the morning instead?",
+            threadCount = 3,
+            listSection = "new",
+        ),
+    )
+
+    /** Sticky + inline notes for the Q3 thread, and a sticky / note count on two other rows. */
+    fun noteFixtures(): Map<String, List<ThreadNote>> {
+        fun note(
+            id: String,
+            thread: String,
+            type: String,
+            body: String,
+            created: String,
+            emailId: String? = null,
+            updated: String = created,
+        ) = ThreadNote(
+            id = id,
+            threadId = thread,
+            emailId = emailId,
+            noteType = type,
+            body = body,
+            createdAt = created,
+            updatedAt = updated,
+        )
+        return mapOf(
+            NOTES_THREAD_KEY to listOf(
+                note(
+                    "note-sticky-q3", NOTES_THREAD_KEY, ThreadNote.STICKY,
+                    "**Call Jordan before Thursday** re: pricing — keep it under \$15k.\n\n" +
+                        "- [x] Loop in Sam\n- [ ] Send the revised deck",
+                    "2026-09-03T15:02:00.000Z",
+                ),
+                note(
+                    "note-inline-q3-1", NOTES_THREAD_KEY, ThreadNote.INLINE,
+                    "Discussed section 3 on SLA requirements; _approved by legal_.",
+                    "2026-09-01T10:25:00.000Z",
+                    emailId = "preview-1a",
+                ),
+                note(
+                    "note-inline-q3-2", NOTES_THREAD_KEY, ThreadNote.INLINE,
+                    "Follow up if Jordan hasn't confirmed by **Friday**. " +
+                        "See [the pricing sheet](https://example.com/pricing).",
+                    "2026-09-02T17:00:00.000Z",
+                    emailId = "preview-1b",
+                    updated = "2026-09-02T18:10:00.000Z",
+                ),
+            ),
+            "preview-2" to listOf(
+                note(
+                    "note-sticky-invoice", "preview-2", ThreadNote.STICKY,
+                    "Paid by wire on Sep 4 — ref `INV-2291`",
+                    "2026-09-04T09:00:00.000Z",
+                ),
+            ),
+            "preview-3" to listOf(
+                note(
+                    "note-inline-design-1", "preview-3", ThreadNote.INLINE,
+                    "Bring the mobile frames.", "2026-08-28T19:00:00.000Z", emailId = "preview-3",
+                ),
+                note(
+                    "note-inline-design-2", "preview-3", ThreadNote.INLINE,
+                    "Ask about the icon set.", "2026-08-28T19:05:00.000Z", emailId = "preview-3",
+                ),
+            ),
+        )
     }
 
     fun emails(you: String = addr("you")): List<Email> = listOf(
