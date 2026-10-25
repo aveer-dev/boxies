@@ -166,6 +166,7 @@ import {
 	resolveInboundFolder,
 	screenerSettingsError,
 } from "./lib/sender-triage";
+import { recordSenderAllow, recordSenderBlock } from "./lib/sender-verdicts";
 import {
 	normalizeSenderPreferenceAddress,
 	senderPreferenceUpsertError,
@@ -732,13 +733,17 @@ app.post("/api/v1/mailboxes/:mailboxId/folders/trash/empty", async (c: AppContex
 });
 
 /**
- * Move a message. With `setSenderPreference`, the move also teaches the
- * mailbox about the sender:
+ * Move a message. Every move into or out of Spam teaches the mailbox about
+ * the sender, whichever client path made it (Not spam / Report spam, the
+ * move menu, swipe, multi-select; docs/spam-management-plan.md §5–6):
  * - into Spam ("Report spam"): the sender is rejected (future mail is
  *   screened out) and loses any purpose-box default;
  * - out of Spam ("Not spam"): the sender is allowed, filed to the
- *   destination when it's a purpose box;
- * - between purpose boxes: the sender's default box changes.
+ *   destination when it's a purpose box. Leaving Spam for Trash or
+ *   Screened out teaches nothing.
+ * With `setSenderPreference`, a move between purpose boxes also changes the
+ * sender's default box. Agent/MCP `move_email` doesn't come through here and
+ * stays neutral.
  */
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
 	const body = (await c.req.json()) as {
@@ -749,51 +754,33 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	const emailId = c.req.param("id")!;
 	const stub = c.var.mailboxStub;
 
-	const before = setSenderPreference ? await stub.getEmail(emailId) : null;
+	// Read first: whether the move crosses Spam depends on where it came from.
+	const before = await stub.getEmail(emailId);
 	const success = await stub.moveEmail(emailId, folderId);
 	if (!success) return c.json({ error: "Email or destination folder not found" }, 400);
-
-	if (!setSenderPreference) {
-		return c.json({ status: "moved" });
-	}
 
 	const lesson = senderLessonForMove({
 		sender: before?.sender,
 		mailboxId: c.var.mailboxId,
 		fromFolderId: before?.folder_id,
 		toFolderId: folderId,
+		remember: setSenderPreference === true,
 	});
 	if (lesson.kind === "none") return c.json({ status: "moved" });
 	const { sender } = lesson;
 	const displayName = before?.sender_name ?? null;
 
 	if (lesson.kind === "reject") {
-		const triage = await stub.upsertSenderTriage({
-			sender,
-			status: "rejected",
-			destination_folder_id: null,
-			display_name: displayName,
-		});
-		await stub.deleteSenderPreference(sender);
+		const triage = await recordSenderBlock(stub, { sender, displayName });
 		return c.json({ status: "moved", senderStatus: "rejected", triage });
 	}
 
 	if (lesson.kind === "allow") {
-		const triage = await stub.upsertSenderTriage({
+		const triage = await recordSenderAllow(stub, {
 			sender,
-			status: "allowed",
-			destination_folder_id: lesson.destination,
-			display_name: displayName,
+			destination: lesson.destination,
+			displayName,
 		});
-		if (lesson.destination) {
-			await stub.upsertSenderPreference({
-				address: sender,
-				folderId: lesson.destination,
-				displayName,
-				source: "user",
-				refile: false,
-			});
-		}
 		return c.json({ status: "moved", senderStatus: "allowed", triage });
 	}
 

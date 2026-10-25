@@ -490,6 +490,8 @@ const api = {
 			preference?: SenderPreference | null;
 			refiledCount?: number;
 			preferenceError?: string;
+			/** Set when the move crossed Spam and taught the sender (AVE-95). */
+			senderStatus?: "allowed" | "rejected";
 		}>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, {
 			folderId,
 			setSenderPreference: opts?.setSenderPreference,

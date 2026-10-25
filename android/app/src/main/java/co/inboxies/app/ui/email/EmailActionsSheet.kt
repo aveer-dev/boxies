@@ -573,7 +573,11 @@ private fun MoveToFolderScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            if (FolderIds.isPurposeFolder(folder.id) &&
+                            // Into or out of Spam is Not spam / Report spam: leaving
+                            // Spam is the signal, so there's no "remember?" prompt.
+                            if (email.folderId == FolderIds.SPAM || folder.id == FolderIds.SPAM) {
+                                onMove(folder.id, true)
+                            } else if (FolderIds.isPurposeFolder(folder.id) &&
                                 email.sender.isNotBlank() &&
                                 !isSelf
                             ) {
