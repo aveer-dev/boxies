@@ -540,6 +540,8 @@ struct Email: Identifiable, Codable, Hashable {
     var classificationReason: String? = nil
     /// Sender rule that decided the folder (null until sender rules exist).
     var matchedRuleId: String? = nil
+    /// RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99).
+    var oneClickUnsubscribe: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -570,6 +572,19 @@ struct Email: Identifiable, Codable, Hashable {
         case authTier = "auth_tier"
         case classificationReason = "classification_reason"
         case matchedRuleId = "matched_rule_id"
+        case oneClickUnsubscribe = "one_click_unsubscribe"
+    }
+
+    /// Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
+    /// server's flag wins; cached rows fall back to the stored headers (the
+    /// Worker re-checks before it sends anything).
+    var offersOneClickUnsubscribe: Bool {
+        if let oneClickUnsubscribe { return oneClickUnsubscribe }
+        guard let post = Self.headerValue(fromRawHeaders: rawHeaders, keys: ["list-unsubscribe-post"]),
+              post.replacingOccurrences(of: " ", with: "").lowercased().contains("list-unsubscribe=one-click"),
+              let list = Self.headerValue(fromRawHeaders: rawHeaders, keys: ["list-unsubscribe"])
+        else { return false }
+        return list.lowercased().contains("<https://")
     }
 
     /// The conversation key notes are filed under: the thread id, or the email's own id.

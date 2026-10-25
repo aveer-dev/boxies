@@ -38,6 +38,10 @@ struct EmailActionsSheet: View {
         !isSelfSender && (availability.showsReportSpam || availability.showsNotSpam)
     }
 
+    private var offersUnsubscribe: Bool {
+        availability.showsReportSpam && !availability.showsNotSpam && source.offersOneClickUnsubscribe
+    }
+
     private var previewLine: String {
         source.previewText.isEmpty ? "(no preview)" : source.previewText
     }
@@ -103,7 +107,21 @@ struct EmailActionsSheet: View {
                         }
                     }
 
-                    if showsSpamAction {
+                    if showsSpamAction, offersUnsubscribe {
+                        // RFC 8058 bulk mail: confirm first, with an
+                        // "Unsubscribe" toggle that starts off (AVE-99).
+                        NavigationLink {
+                            ReportSpamConfirmView(sender: source, onClose: dismissSheet) { unsubscribe in
+                                Task {
+                                    dismiss()
+                                    await app.reportSpam(source, fromList: fromList, unsubscribe: unsubscribe)
+                                    if fromList { onRemoveFromList?(source.id) }
+                                }
+                            }
+                        } label: {
+                            Label("Report Spam", systemImage: "exclamationmark.triangle")
+                        }
+                    } else if showsSpamAction {
                         actionRow(
                             availability.showsNotSpam ? "Not Spam" : "Report Spam",
                             systemImage: availability.showsNotSpam ? "checkmark.shield" : "exclamationmark.triangle"
@@ -348,6 +366,53 @@ private struct MoveToFolderView: View {
     }
 }
 
+/// Report spam confirmation for RFC 8058 bulk mail: an "Unsubscribe" toggle,
+/// off by default, then one Report Spam button (web/Android twins: AVE-99).
+struct ReportSpamConfirmView: View {
+    let sender: Email
+    var onClose: () -> Void
+    var onReport: (Bool) -> Void
+
+    @State private var unsubscribe = false
+
+    var body: some View {
+        List {
+            Section {
+                Toggle(isOn: $unsubscribe) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Unsubscribe")
+                            .font(.inter(size: 15, weight: .medium))
+                            .foregroundStyle(AppTheme.ink)
+                        Text("Also ask the sender to stop sending to this list.")
+                            .font(.inter(size: AppTheme.FontSize.meta))
+                            .foregroundStyle(AppTheme.muted)
+                    }
+                }
+                .tint(AppTheme.accent)
+                .accessibilityIdentifier("reportSpamUnsubscribeToggle")
+            } footer: {
+                Text("Future mail from \(sender.displaySender) will go to Spam.")
+                    .font(.inter(size: AppTheme.FontSize.meta))
+                    .foregroundStyle(AppTheme.muted)
+            }
+
+            Section {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onReport(unsubscribe)
+                } label: {
+                    Label("Report Spam", systemImage: "exclamationmark.triangle")
+                        .font(.inter(size: 15, weight: .medium))
+                        .foregroundStyle(AppTheme.ink)
+                }
+                .accessibilityIdentifier("reportSpamConfirmButton")
+            }
+        }
+        .navigationTitle("Report spam?")
+        .actionsSheetChrome(onClose: onClose)
+    }
+}
+
 private struct EmailSourceView: View {
     let email: Email
     var onClose: () -> Void
@@ -408,5 +473,13 @@ private extension View {
 #Preview("Actions sheet") {
     PreviewHost {
         EmailActionsSheet(email: PreviewSupport.emails[0])
+    }
+}
+
+#Preview("Report spam + unsubscribe") {
+    PreviewHost {
+        NavigationStack {
+            ReportSpamConfirmView(sender: PreviewSupport.emails[3], onClose: {}, onReport: { _ in })
+        }
     }
 }

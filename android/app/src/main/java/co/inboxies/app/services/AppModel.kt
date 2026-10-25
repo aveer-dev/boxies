@@ -2229,6 +2229,7 @@ class AppModel {
         email: Email,
         folderId: String,
         setSenderPreference: Boolean = false,
+        unsubscribe: Boolean = false,
     ) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (blockIfReadOnly()) return
@@ -2240,6 +2241,7 @@ class AppModel {
                 email.id,
                 folderId,
                 setSenderPreference = setSenderPreference,
+                unsubscribe = unsubscribe,
             )
         }.onFailure {
             if (noteServiceEnded(it)) {
@@ -2258,9 +2260,10 @@ class AppModel {
     }
 
     /** Move to Spam and reject the sender: their future mail is screened out. */
-    suspend fun reportSpam(email: Email) {
-        moveEmailToFolder(email, "spam", setSenderPreference = true)
-        showToast("Reported as spam")
+    /** With [unsubscribe], the Worker also sends the RFC 8058 one-click POST. */
+    suspend fun reportSpam(email: Email, unsubscribe: Boolean = false) {
+        moveEmailToFolder(email, "spam", setSenderPreference = true, unsubscribe = unsubscribe)
+        showToast(if (unsubscribe) "Reported as spam · unsubscribing" else "Reported as spam")
     }
 
     /** Move back to Inbox and allow the sender. */
