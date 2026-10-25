@@ -1950,11 +1950,6 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
-	 * Outbound-send queue consumer: take the right to call the Email binding
-	 * for a queued Sent row. Status check and claim happen in one DO turn, so
-	 * a duplicate queue delivery sees `in_flight` instead of sending twice.
-	 */
-	/**
 	 * AVE-99: take the one right to send an RFC 8058 one-click unsubscribe
 	 * for a message. Check and mark happen in one DO turn, so a retried or
 	 * double-tapped Report spam never POSTs twice.
@@ -1966,6 +1961,11 @@ export class MailboxDO extends DurableObject<Env> {
 		return true;
 	}
 
+	/**
+	 * Outbound-send queue consumer: take the right to call the Email binding
+	 * for a queued Sent row. Status check and claim happen in one DO turn, so
+	 * a duplicate queue delivery sees `in_flight` instead of sending twice.
+	 */
 	async claimOutboundSend(id: string, leaseMs: number): Promise<OutboundSendClaim> {
 		const row = [
 			...this.ctx.storage.sql.exec(
