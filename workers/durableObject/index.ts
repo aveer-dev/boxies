@@ -88,7 +88,22 @@ import {
 	type EmailAuth,
 } from "../lib/email-auth";
 import { storedAuthTier } from "../lib/classification-reason";
-import { buildBootstrapAllowSeeds } from "../lib/sender-triage";
+import { buildBootstrapAllowSeeds, normalizeTriageSender } from "../lib/sender-triage";
+import {
+	applyFeedbackEvent,
+	feedbackDayKey,
+	feedbackPruneBeforeKey,
+	feedbackWindowKeys,
+	inboundSpamCounts,
+	mergeFeedbackCounts,
+	senderRuleCounts,
+	spamFeedbackForMove,
+	SPAM_METRICS_KEY_PREFIX,
+	SPAM_METRICS_WINDOW_DAYS,
+	windowSinceIso,
+	type MailboxSpamCounts,
+	type SpamFeedbackCounts,
+} from "../lib/spam-metrics";
 import {
 	normalizeSenderPreferenceAddress,
 	parseSenderPreferenceSource,
@@ -2436,7 +2451,12 @@ export class MailboxDO extends DurableObject<Env> {
 
 		if (!folder) return false;
 		const current = this.db
-			.select({ folder_id: schema.emails.folder_id })
+			.select({
+				folder_id: schema.emails.folder_id,
+				sender: schema.emails.sender,
+				date: schema.emails.date,
+				classification_reason: schema.emails.classification_reason,
+			})
 			.from(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.get();
@@ -2474,7 +2494,74 @@ export class MailboxDO extends DurableObject<Env> {
 				.run();
 			this.broadcastEvent("email_moved", { id, folder_id: folderId });
 		}
+		await this.#recordSpamFeedback(current, folderId);
 		return true;
+	}
+
+	// ── Spam metrics (AVE-100, lib/spam-metrics) ───────────────────
+
+	/** Count a move into / out of Spam; never fails the move. */
+	async #recordSpamFeedback(
+		email: {
+			folder_id: string;
+			sender: string | null;
+			date: string | null;
+			classification_reason: string | null;
+		},
+		toFolderId: string,
+	) {
+		try {
+			const sender = normalizeTriageSender(email.sender);
+			const triage =
+				email.folder_id === Folders.SPAM && sender
+					? await this.getSenderTriage(sender)
+					: null;
+			const event = spamFeedbackForMove({
+				fromFolderId: email.folder_id,
+				toFolderId,
+				reason: email.classification_reason,
+				receivedAt: email.date,
+				senderTriage: triage,
+			});
+			if (!event) return;
+			const now = Date.now();
+			const key = feedbackDayKey(now);
+			const day = await this.ctx.storage.get<SpamFeedbackCounts>(key);
+			await this.ctx.storage.put(key, applyFeedbackEvent(day, event));
+			if (!day) {
+				const stale = await this.ctx.storage.list({
+					prefix: SPAM_METRICS_KEY_PREFIX,
+					end: feedbackPruneBeforeKey(now),
+				});
+				if (stale.size > 0) await this.ctx.storage.delete([...stale.keys()]);
+			}
+		} catch (e) {
+			console.error("spam metrics: failed to record feedback", e);
+		}
+	}
+
+	/** Content-free spam counts for the last 7 and 30 days (ops dashboard). */
+	async getSpamMetricsCounts(): Promise<MailboxSpamCounts> {
+		const now = Date.now();
+		const sql = this.ctx.storage.sql;
+		const allKeys = feedbackWindowKeys(now, Math.max(...SPAM_METRICS_WINDOW_DAYS));
+		const stored = await this.ctx.storage.get<SpamFeedbackCounts>(allKeys);
+		const windows = SPAM_METRICS_WINDOW_DAYS.map((days) => {
+			const since = windowSinceIso(now, days);
+			return {
+				days,
+				since,
+				inbound: inboundSpamCounts(sql, since),
+				feedback: mergeFeedbackCounts(
+					feedbackWindowKeys(now, days).map((k) => stored.get(k)),
+				),
+			};
+		});
+		return {
+			generatedAt: new Date(now).toISOString(),
+			rules: senderRuleCounts(sql),
+			windows,
+		};
 	}
 
 	// ── Sender purpose-box preferences ─────────────────────────────
