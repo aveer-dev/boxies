@@ -14,6 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { applyMigrations, mailboxMigrations } from "../durableObject/migrations.ts";
 import {
 	checkRegistrableDomain,
+	clearAddressBlockRule,
 	decidingSenderRuleId,
 	deleteSenderRule,
 	isFreeMailDomain,
@@ -22,6 +23,7 @@ import {
 	normalizeSenderRuleInput,
 	pickSenderRule,
 	senderRegistrableDomain,
+	setAddressSenderRule,
 	triageWithSenderRule,
 	upsertSenderRule,
 } from "../lib/sender-rules.ts";
@@ -75,11 +77,14 @@ function insertTriage(sql, sender, status, at = "2026-01-01T00:00:00.000Z") {
 // ── Migration and backfill ───────────────────────────────────────
 {
 	const names = mailboxMigrations.map((m) => m.name);
-	assert.equal(names.at(-1), MIGRATION, "appended last");
 	assert.ok(names.indexOf(MIGRATION) > names.indexOf("37_email_classification"));
 	assert.equal(names.filter((n) => n === MIGRATION).length, 1);
+	assert.equal(new Set(names).size, names.length, "migration names are unique");
 
 	// An existing mailbox with Screener decisions from before this migration.
+	// It already ran every other migration, including 39_email_summaries,
+	// which reached dev first: the runner still applies 38 by name.
+	assert.ok(names.includes("39_email_summaries"));
 	const before = mailboxMigrations.filter((m) => m.name !== MIGRATION);
 	const { sql } = mailboxDb(before);
 	insertTriage(sql, "spammer@junk.example", "rejected", "2025-05-01T00:00:00.000Z");
@@ -277,6 +282,18 @@ function insertTriage(sql, sender, status, at = "2026-01-01T00:00:00.000Z") {
 	deleteSenderRule(sql, palRule.id);
 	assert.equal(count(sql, `SELECT COUNT(*) FROM sender_triage WHERE sender = 'pal@friends.example'`), 1, "allowed row kept");
 	assert.equal(deleteSenderRule(sql, "addr"), null);
+
+	// Sender verdicts (Not spam, Report spam, Screener) write address rules.
+	insertTriage(sql, "verdict@shop.example", "rejected");
+	assert.equal(setAddressSenderRule(sql, "Shop <Verdict@Shop.example>", "block", "report_spam").created, true);
+	assert.equal(setAddressSenderRule(sql, "verdict@shop.example", "allow", "not_spam").created, false, "one rule per address");
+	assert.equal(listSenderRules(sql).find((r) => r.value === "verdict@shop.example").verdict, "allow");
+	assert.equal(setAddressSenderRule(sql, "not an address", "block", "screener"), null);
+	assert.equal(clearAddressBlockRule(sql, "verdict@shop.example"), null, "only a block is cleared");
+	setAddressSenderRule(sql, "verdict@shop.example", "block", "screener");
+	assert.equal(clearAddressBlockRule(sql, "VERDICT@shop.example")?.verdict, "block");
+	assert.equal(count(sql, `SELECT COUNT(*) FROM sender_rules WHERE value = 'verdict@shop.example'`), 0);
+	assert.equal(count(sql, `SELECT COUNT(*) FROM sender_triage WHERE sender = 'verdict@shop.example'`), 1, "triage left to the caller");
 }
 
 // ── HTTP routes ──────────────────────────────────────────────────

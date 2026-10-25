@@ -484,6 +484,38 @@ export function deleteSenderRule(sql: Sql, id: string): SenderRule | null {
 }
 
 /**
+ * The address rule a sender verdict writes (Not spam, Report spam, Screener
+ * decline, agent allow/block; see sender-verdicts.ts). Replaces whatever
+ * address rule the sender already had. Null when `sender` isn't an address.
+ */
+export function setAddressSenderRule(
+	sql: Sql,
+	sender: string,
+	verdict: SenderRuleVerdict,
+	source: SenderRuleSource,
+	now?: string,
+): { rule: SenderRule; created: boolean } | null {
+	const address = normalizeEmailAddress(sender);
+	if (!address) return null;
+	return upsertSenderRule(sql, { kind: "address", value: address, verdict, source }, { now });
+}
+
+/**
+ * Drops the sender's address **block** rule, if any, without touching
+ * `sender_triage` (the caller is writing the new triage status). Used when
+ * an allow that isn't an explicit allow (Screener approve, Not spam into a
+ * non-purpose folder) has to stop an earlier block from winning.
+ */
+export function clearAddressBlockRule(sql: Sql, sender: string): SenderRule | null {
+	const address = normalizeEmailAddress(sender);
+	if (!address) return null;
+	const rule = findSenderRule(sql, "address", address);
+	if (!rule || rule.verdict !== "block") return null;
+	sql.exec(`DELETE FROM sender_rules WHERE id = ?1`, rule.id);
+	return rule;
+}
+
+/**
  * The rule that decides inbound mail from `sender` with this auth tier
  * (pickSenderRule), with its match stats bumped. Null when none applies.
  */

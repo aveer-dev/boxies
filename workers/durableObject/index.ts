@@ -106,12 +106,15 @@ import {
 	type SpamFeedbackCounts,
 } from "../lib/spam-metrics";
 import {
+	clearAddressBlockRule,
 	deleteSenderRule,
 	listSenderRules,
 	matchSenderRule,
+	setAddressSenderRule,
 	upsertSenderRule,
 	type SenderRule,
 	type SenderRuleKind,
+	type SenderRuleSource,
 	type SenderRuleVerdict,
 } from "../lib/sender-rules";
 import {
@@ -3740,6 +3743,32 @@ export class MailboxDO extends DurableObject<Env> {
 		);
 		if (!deleted) return false;
 		this.broadcastEvent("sender_rule_deleted", { id, kind: deleted.kind, value: deleted.value });
+		return true;
+	}
+
+	/** The address rule a sender verdict writes (sender-verdicts.ts); replaces the sender's old one. */
+	async setAddressSenderRule(
+		sender: string,
+		verdict: SenderRuleVerdict,
+		source: SenderRuleSource,
+	): Promise<SenderRule | null> {
+		await this.#assertMailboxWritable();
+		const result = setAddressSenderRule(this.ctx.storage.sql, sender, verdict, source);
+		if (!result) return null;
+		this.broadcastEvent("sender_rule_updated", { rule: result.rule });
+		return result.rule;
+	}
+
+	/** Drops the sender's address block rule (sender_triage is left to the caller). */
+	async clearAddressBlockRule(sender: string): Promise<boolean> {
+		await this.#assertMailboxWritable();
+		const deleted = clearAddressBlockRule(this.ctx.storage.sql, sender);
+		if (!deleted) return false;
+		this.broadcastEvent("sender_rule_deleted", {
+			id: deleted.id,
+			kind: deleted.kind,
+			value: deleted.value,
+		});
 		return true;
 	}
 

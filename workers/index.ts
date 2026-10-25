@@ -1282,6 +1282,9 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/approve", async (c: AppCont
 		source: "screener",
 		refile: false,
 	});
+	// Accepting is implicit trust, not an allow rule; it only stops an earlier
+	// address block (a backfilled or Report spam one) from still winning.
+	await stub.clearAddressBlockRule(sender);
 
 	const refileQueued = body.refileQueued !== false;
 	let moved = { moved: 0, ids: [] as string[] };
@@ -1317,6 +1320,8 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/reject", async (c: AppConte
 		display_name: body.displayName ?? null,
 	});
 	await stub.deleteSenderPreference(sender);
+	// The decline shows in Settings → Blocked as an address block rule.
+	await stub.setAddressSenderRule(sender, "block", "screener");
 
 	const refileQueued = body.refileQueued !== false;
 	let moved = { moved: 0, ids: [] as string[] };
@@ -1384,6 +1389,10 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 	} else if (status === "rejected") {
 		await stub.deleteSenderPreference(sender);
 	}
+	// Same rule writes as approve / reject, so an address block rule never
+	// outlives an unblock here.
+	if (status === "rejected") await stub.setAddressSenderRule(sender, "block", "screener");
+	else await stub.clearAddressBlockRule(sender);
 
 	let moved = { moved: 0, ids: [] as string[] };
 	if (body.refileQueued) {
@@ -1415,7 +1424,9 @@ app.delete("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCo
 	);
 	if (!sender) return c.json({ error: "Invalid sender" }, 400);
 	const ok = await stub.deleteSenderTriage(sender);
-	return ok ? c.body(null, 204) : c.json({ error: "Not found" }, 404);
+	// Back to undecided: a leftover address block rule would keep them out.
+	const clearedRule = await stub.clearAddressBlockRule(sender);
+	return ok || clearedRule ? c.body(null, 204) : c.json({ error: "Not found" }, 404);
 });
 
 // -- Agent conversations (multi-chat registry for mobile / future web) ----
