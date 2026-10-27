@@ -31,6 +31,7 @@ import {
 import {
 	senderNameFromRawHeaders,
 } from "../../shared/sender";
+import { supportsOneClickUnsubscribe } from "../lib/list-unsubscribe";
 import {
 	buildInboxDigest,
 	type DigestEmailRow,
@@ -1438,6 +1439,7 @@ export class MailboxDO extends DurableObject<Env> {
 		return this.#withDecodedAuth({
 			...email,
 			...this.#aliasFields(email.alias_id),
+			one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
 			body,
 			read: !!email.read,
 			starred: !!email.starred,
@@ -1515,6 +1517,7 @@ export class MailboxDO extends DurableObject<Env> {
 			emailRows.map(async (email) => this.#withDecodedAuth({
 				...email,
 				...this.#aliasFields(email.alias_id),
+				one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
 				body: await this.#hydrateBody(email.id, email.body, email.snippet),
 				read: !!email.read,
 				starred: !!email.starred,
@@ -1957,6 +1960,18 @@ export class MailboxDO extends DurableObject<Env> {
 			});
 		}
 		return changed;
+	}
+
+	/**
+	 * AVE-99: take the one right to send an RFC 8058 one-click unsubscribe
+	 * for a message. Check and mark happen in one DO turn, so a retried or
+	 * double-tapped Report spam never POSTs twice.
+	 */
+	async claimOneClickUnsubscribe(emailId: string): Promise<boolean> {
+		const key = `one_click_unsubscribe:${emailId}`;
+		if ((await this.ctx.storage.get(key)) !== undefined) return false;
+		await this.ctx.storage.put(key, Date.now());
+		return true;
 	}
 
 	/**

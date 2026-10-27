@@ -1070,6 +1070,7 @@ class ApiClient private constructor() {
         id: String,
         folderId: String,
         setSenderPreference: Boolean = false,
+        unsubscribe: Boolean = false,
     ) {
         request<EmptyResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}/move",
@@ -1077,6 +1078,8 @@ class ApiClient private constructor() {
             body = buildJsonObject {
                 put("folderId", folderId)
                 if (setSenderPreference) put("setSenderPreference", true)
+                // Report spam: the Worker sends the RFC 8058 POST at most once per message.
+                if (unsubscribe) put("unsubscribe", true)
             },
         )
     }

@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { oneClickUnsubscribeUrl, sendOneClickUnsubscribe } from "./lib/list-unsubscribe";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
@@ -755,6 +756,8 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	const body = (await c.req.json()) as {
 		folderId: string;
 		setSenderPreference?: boolean;
+		/** Report spam on RFC 8058 bulk mail: also send the one-click unsubscribe (AVE-99). */
+		unsubscribe?: boolean;
 	};
 	const { folderId, setSenderPreference } = body;
 	const emailId = c.req.param("id")!;
@@ -778,6 +781,15 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 
 	if (lesson.kind === "reject") {
 		const triage = await recordSenderBlock(stub, { sender, displayName });
+		// Only a real move into Spam unsubscribes, and only once per message:
+		// a retry sees the message already in Spam (lesson "none"), and the
+		// DO claim stops a concurrent double tap.
+		const unsubscribeUrl =
+			body.unsubscribe === true ? oneClickUnsubscribeUrl(before?.raw_headers) : null;
+		if (unsubscribeUrl && (await stub.claimOneClickUnsubscribe(emailId))) {
+			const result = await sendOneClickUnsubscribe(unsubscribeUrl);
+			return c.json({ status: "moved", senderStatus: "rejected", triage, unsubscribe: result.status });
+		}
 		return c.json({ status: "moved", senderStatus: "rejected", triage });
 	}
 

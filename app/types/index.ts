@@ -410,6 +410,8 @@ export interface Email {
 	auth?: EmailAuthSnapshot | null;
 	/** Auth tier at receive time; null on outbound mail. */
 	auth_tier?: "verified" | "unverified" | "failed" | null;
+	/** RFC 8058 one-click unsubscribe is available (AVE-99); set on reader fetches. */
+	one_click_unsubscribe?: boolean;
 	/** Why inbound mail was filed where it was (code; see shared/spam-reason). */
 	classification_reason?: string | null;
 	/** Sender rule that decided the folder (null until sender rules exist). */

@@ -85,7 +85,8 @@ extension AppModel {
         _ email: Email,
         to folderId: String,
         fromList: Bool = false,
-        setSenderPreference: Bool = false
+        setSenderPreference: Bool = false,
+        unsubscribe: Bool = false
     ) async {
         guard let mailboxId = selectedMailboxId else { return }
 
@@ -94,6 +95,11 @@ extension AppModel {
         var payload: [String: Any] = ["folderId": folderId]
         if setSenderPreference {
             payload["setSenderPreference"] = true
+        }
+        if unsubscribe {
+            // The Worker sends the RFC 8058 POST at most once per message,
+            // so an outbox retry is safe.
+            payload["unsubscribe"] = true
         }
         DatabaseService.shared.enqueueMutation(
             mailboxId: mailboxId,
@@ -123,9 +129,10 @@ extension AppModel {
     }
 
     /// Move to Spam and reject the sender: their future mail is screened out.
-    func reportSpam(_ email: Email, fromList: Bool = false) async {
-        await moveEmail(email, to: "spam", fromList: fromList, setSenderPreference: true)
-        showToast("Reported as spam")
+    /// With `unsubscribe`, the Worker also sends the RFC 8058 one-click POST.
+    func reportSpam(_ email: Email, fromList: Bool = false, unsubscribe: Bool = false) async {
+        await moveEmail(email, to: "spam", fromList: fromList, setSenderPreference: true, unsubscribe: unsubscribe)
+        showToast(unsubscribe ? "Reported as spam · unsubscribing" : "Reported as spam")
     }
 
     /// Move back to Inbox and allow the sender.

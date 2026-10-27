@@ -486,7 +486,7 @@ const api = {
 		mailboxId: string,
 		id: string,
 		folderId: string,
-		opts?: { setSenderPreference?: boolean },
+		opts?: { setSenderPreference?: boolean; unsubscribe?: boolean },
 	) =>
 		post<{
 			status: string;
@@ -495,9 +495,12 @@ const api = {
 			preferenceError?: string;
 			/** Set when the move crossed Spam and taught the sender (AVE-95). */
 			senderStatus?: "allowed" | "rejected";
+			/** Report spam with `unsubscribe`: outcome of the one-click POST (AVE-99). */
+			unsubscribe?: "sent" | "failed";
 		}>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, {
 			folderId,
 			setSenderPreference: opts?.setSenderPreference,
+			...(opts?.unsubscribe ? { unsubscribe: true } : {}),
 		}),
 	listSenderPreferences: (
 		mailboxId: string,

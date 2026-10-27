@@ -316,13 +316,16 @@ export function useMoveEmail() {
 			id,
 			folderId,
 			setSenderPreference,
+			unsubscribe,
 		}: {
 			mailboxId: string;
 			id: string;
 			folderId: string;
 			setSenderPreference?: boolean;
+			/** Report spam: also send the RFC 8058 one-click unsubscribe. */
+			unsubscribe?: boolean;
 		}) =>
-			api.moveEmail(mailboxId, id, folderId, { setSenderPreference }),
+			api.moveEmail(mailboxId, id, folderId, { setSenderPreference, unsubscribe }),
 		onSuccess: (data, { mailboxId, setSenderPreference }) => {
 			invalidate(mailboxId);
 			// Any move into or out of Spam teaches the sender server-side.

@@ -585,7 +585,26 @@ data class Email(
     @SerialName("sticky_note_text") val stickyNoteText: String? = null,
     /** How many private notes sit on single messages of this conversation. */
     @SerialName("inline_note_count") val inlineNoteCount: Int? = null,
+    /** RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99). */
+    @SerialName("one_click_unsubscribe") val oneClickUnsubscribe: Boolean? = null,
 ) {
+    /**
+     * Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
+     * server's flag wins; cached rows fall back to the stored headers (the
+     * Worker re-checks before it sends anything).
+     */
+    val offersOneClickUnsubscribe: Boolean
+        get() {
+            oneClickUnsubscribe?.let { return it }
+            if (rawHeaders.isNullOrEmpty()) return false
+            val headers = sourceHeaders
+            fun values(name: String) = headers.filter { it.first.equals(name, ignoreCase = true) }.map { it.second }
+            val oneClick = values("List-Unsubscribe-Post").any {
+                it.replace(" ", "").equals("List-Unsubscribe=One-Click", ignoreCase = true)
+            }
+            return oneClick && values("List-Unsubscribe").any { it.contains("<https://", ignoreCase = true) }
+        }
+
     /** The conversation key notes are filed under: the thread id, or the email's own id. */
     val noteThreadKey: String
         get() = threadId?.takeIf { it.isNotEmpty() } ?: id

@@ -974,11 +974,15 @@ final class APIClient: @unchecked Sendable {
         mailboxId: String,
         id: String,
         folderId: String,
-        setSenderPreference: Bool = false
+        setSenderPreference: Bool = false,
+        unsubscribe: Bool = false
     ) async throws {
         var body: [String: Any] = ["folderId": folderId]
         if setSenderPreference {
             body["setSenderPreference"] = true
+        }
+        if unsubscribe {
+            body["unsubscribe"] = true
         }
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)/move",

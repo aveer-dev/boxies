@@ -49,7 +49,12 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.outlined.WarningAmber
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -178,6 +183,10 @@ fun EmailActionsSheet(
     // Your own messages are never judged as spam.
     val isSelfSender = app.selectedMailbox?.email?.equals(email.sender, ignoreCase = true) == true
     val showsSpamAction = !isSelfSender && (availability.showsReportSpam || availability.showsNotSpam)
+    // RFC 8058 bulk mail: Report spam confirms first, with an "Unsubscribe"
+    // switch that starts off (AVE-99).
+    val offersUnsubscribe = showsSpamAction && availability.showsReportSpam &&
+        !availability.showsNotSpam && email.offersOneClickUnsubscribe
 
     var screen by remember { mutableStateOf(ActionsScreen.Main) }
     var showDeleteMenu by remember { mutableStateOf(false) }
@@ -354,7 +363,15 @@ fun EmailActionsSheet(
                         screen = ActionsScreen.Move
                     }
                 }
-                if (showsSpamAction) {
+                if (offersUnsubscribe) {
+                    ActionRow(
+                        "Report Spam",
+                        Icons.Outlined.WarningAmber,
+                        trailing = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    ) {
+                        screen = ActionsScreen.ReportSpam
+                    }
+                } else if (showsSpamAction) {
                     ActionRow(
                         if (availability.showsNotSpam) "Not Spam" else "Report Spam",
                         if (availability.showsNotSpam) Icons.Outlined.GppGood else Icons.Outlined.WarningAmber,
@@ -424,6 +441,20 @@ fun EmailActionsSheet(
             },
         )
 
+            ActionsScreen.ReportSpam -> ReportSpamConfirmScreen(
+                email = email,
+                onClose = onDismiss,
+                onBack = { screen = ActionsScreen.Main },
+                onReport = { unsubscribe ->
+                    scope.launch {
+                        onDismiss()
+                        app.reportSpam(email, unsubscribe = unsubscribe)
+                        if (fromList) onRemoveFromList?.invoke(email.id)
+                        else onDone()
+                    }
+                },
+            )
+
             ActionsScreen.Source -> EmailSourceScreen(
                 email = email,
                 onClose = onDismiss,
@@ -433,7 +464,7 @@ fun EmailActionsSheet(
     }
 }
 
-private enum class ActionsScreen { Main, Move, Source }
+private enum class ActionsScreen { Main, Move, ReportSpam, Source }
 
 @Composable
 private fun QuickActionButton(
@@ -646,6 +677,85 @@ private fun EmailSourceScreen(
                         color = colors.ink,
                     )
                 }
+            }
+        }
+    }
+}
+
+/** Report spam on RFC 8058 bulk mail: "Unsubscribe" switch (off by default) + one button. iOS twin: ReportSpamConfirmView. */
+@Composable
+internal fun ReportSpamConfirmScreen(
+    email: Email,
+    onClose: () -> Unit,
+    onBack: () -> Unit,
+    onReport: (unsubscribe: Boolean) -> Unit,
+    initialUnsubscribe: Boolean = false,
+) {
+    val colors = inboxiesColors()
+    val view = LocalView.current
+    var unsubscribe by remember { mutableStateOf(initialUnsubscribe) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 48.dp),
+    ) {
+        SubScreenHeader(title = "Report spam?", onClose = onClose, onBack = onBack)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(colors.surface)
+                .toggleable(
+                    value = unsubscribe,
+                    role = Role.Switch,
+                    onValueChange = { unsubscribe = it },
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Unsubscribe",
+                    fontFamily = InterFontFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 15.sp,
+                    color = colors.ink,
+                )
+                Text(
+                    "Also ask the sender to stop sending to this list.",
+                    fontFamily = InterFontFamily,
+                    fontSize = 12.sp,
+                    color = colors.muted,
+                )
+            }
+            Switch(
+                checked = unsubscribe,
+                onCheckedChange = null,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = colors.accent,
+                    checkedThumbColor = Color.White,
+                ),
+            )
+        }
+        Text(
+            "Future mail from ${email.displaySender} will go to Spam.",
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            color = colors.muted,
+            modifier = Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(colors.surface),
+        ) {
+            ActionRow("Report Spam", Icons.Outlined.WarningAmber) {
+                view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                onReport(unsubscribe)
             }
         }
     }

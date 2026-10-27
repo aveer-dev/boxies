@@ -585,6 +585,8 @@ object PreviewSupport {
             starred = false,
             snippet = "Your itinerary for next week's trip is ready to view.",
             listSection = "seen",
+            // AVE-99: RFC 8058 bulk mail, so Report Spam offers "Unsubscribe".
+            oneClickUnsubscribe = true,
         ),
         Email(
             id = "preview-screener-1",
