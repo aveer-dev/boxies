@@ -25,9 +25,9 @@ import {
 
 const MAILBOX = "ada@inboxies.email";
 
-/** A mailbox DO double that keeps emails, sender_triage and sender_preferences in memory. */
+/** A mailbox DO double that keeps emails, sender_triage, sender_preferences and address sender_rules in memory. */
 function fakeMailbox() {
-	const state = { emails: new Map(), triage: new Map(), prefs: new Map(), writes: [] };
+	const state = { emails: new Map(), triage: new Map(), prefs: new Map(), rules: new Map(), writes: [] };
 	const stub = {
 		getEmail: async (id) => {
 			const email = state.emails.get(id);
@@ -62,6 +62,17 @@ function fakeMailbox() {
 			state.writes.push(["pref-delete", address]);
 			return state.prefs.delete(address);
 		},
+		setAddressSenderRule: async (sender, verdict, source) => {
+			state.writes.push(["rule", sender, verdict]);
+			const rule = { kind: "address", value: sender, verdict, source };
+			state.rules.set(sender, rule);
+			return rule;
+		},
+		clearAddressBlockRule: async (sender) => {
+			if (state.rules.get(sender)?.verdict !== "block") return false;
+			state.writes.push(["rule-delete", sender]);
+			return state.rules.delete(sender);
+		},
 	};
 	const put = (id, folder_id, sender) =>
 		state.emails.set(id, { id, folder_id, sender, sender_name: null });
@@ -92,14 +103,27 @@ const move = (id, folderId, extra = {}) =>
 	assert.equal(mailbox.state.triage.get("news@shop.example").status, "allowed");
 	assert.equal(mailbox.state.prefs.get("news@shop.example").folderId, "promotions");
 	assert.equal(mailbox.state.prefs.get("news@shop.example").source, "user", "explicit allow");
+	assert.deepEqual(
+		mailbox.state.rules.get("news@shop.example"),
+		{ kind: "address", value: "news@shop.example", verdict: "allow", source: "not_spam" },
+		"an explicit allow is an address allow rule",
+	);
 }
 {
 	// Swipe-archive out of Spam allows the sender without a default box.
+	// That's implicit trust: no allow rule, but an old address block goes.
+	mailbox.state.rules.set("ada.friend@example.com", {
+		kind: "address",
+		value: "ada.friend@example.com",
+		verdict: "block",
+		source: "screener",
+	});
 	mailbox.put("m2", "spam", "ada.friend@example.com");
 	const res = await move("m2", "archive");
 	assert.equal(res.payload.senderStatus, "allowed");
 	assert.equal(mailbox.state.triage.get("ada.friend@example.com").status, "allowed");
 	assert.equal(mailbox.state.prefs.has("ada.friend@example.com"), false);
+	assert.equal(mailbox.state.rules.has("ada.friend@example.com"), false, "block cleared, no allow rule");
 }
 {
 	// Moving into Spam from the move menu is Report spam.
@@ -108,6 +132,8 @@ const move = (id, folderId, extra = {}) =>
 	assert.equal(res.payload.senderStatus, "rejected");
 	assert.equal(mailbox.state.triage.get("news@shop.example").status, "rejected");
 	assert.equal(mailbox.state.prefs.has("news@shop.example"), false, "drops the purpose box");
+	assert.equal(mailbox.state.rules.get("news@shop.example").verdict, "block", "allow rule becomes a block");
+	assert.equal(mailbox.state.rules.get("news@shop.example").source, "report_spam");
 }
 {
 	// Not spam (the button) still works the same with the flag.
@@ -182,10 +208,12 @@ console.log("✓ every client move across Spam teaches the sender");
 	});
 	assert.equal(box.state.triage.get("news@x.example").status, "rejected");
 	assert.equal(box.state.prefs.has("news@x.example"), false);
+	assert.equal(box.state.rules.get("news@x.example").verdict, "block");
 
 	// Allowing again clears the block.
 	await allowSenderForAgent(box.stub, MAILBOX, { sender: "news@x.example" });
 	assert.equal(box.state.triage.get("news@x.example").status, "allowed");
+	assert.equal(box.state.rules.get("news@x.example").verdict, "allow");
 	console.log("✓ allow_sender / block_sender write what Not spam / Report spam write");
 }
 

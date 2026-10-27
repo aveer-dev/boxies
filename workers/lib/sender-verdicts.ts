@@ -8,14 +8,20 @@
  * the move endpoint (every client path into or out of Spam) and the agent
  * `allow_sender` / `block_sender` tools, so they can't drift apart.
  *
- * Until `sender_rules` lands (AVE-88 #5), the allow is `sender_triage =
- * allowed` plus a user purpose-box preference (the explicit allow that
- * `senderTrustOf` reads), and the block is `sender_triage = rejected`.
+ * Each verdict writes `sender_triage` (Screener status), the purpose-box
+ * preference, and the sender's address rule in `sender_rules` (AVE-96), so
+ * the three never disagree on inbound (an address rule beats triage there):
+ * - Block: `rejected`, no purpose box, address `block` rule.
+ * - Allow into a purpose box (explicit allow, as `senderTrustOf` reads it):
+ *   `allowed`, user preference, address `allow` rule (replaces any block).
+ * - Allow without a purpose box (Not spam into Archive or a custom folder):
+ *   `allowed` as implicit trust; only an address block rule is cleared.
  */
 
 import { isScreenerDestination, normalizeTriageSender } from "./sender-triage.ts";
 import { canonicalMailboxId } from "./mailbox-routing.ts";
 import type { ScreenerDestinationId } from "../../shared/folders.ts";
+import type { SenderRuleSource } from "./sender-rules.ts";
 
 type TriageRow = {
 	status: string;
@@ -40,6 +46,12 @@ export interface SenderVerdictStub {
 	}): Promise<unknown>;
 	deleteSenderPreference(address: string): Promise<boolean>;
 	getSenderPreference(address: string): Promise<{ folderId: string; source: string } | null>;
+	setAddressSenderRule(
+		sender: string,
+		verdict: "allow" | "block",
+		source: SenderRuleSource,
+	): Promise<unknown>;
+	clearAddressBlockRule(sender: string): Promise<boolean>;
 }
 
 /**
@@ -65,6 +77,9 @@ export async function recordSenderAllow(
 			source: "user",
 			refile: false,
 		});
+		await stub.setAddressSenderRule(input.sender, "allow", "not_spam");
+	} else {
+		await stub.clearAddressBlockRule(input.sender);
 	}
 	return triage as TriageRow | null;
 }
@@ -81,6 +96,7 @@ export async function recordSenderBlock(
 		display_name: input.displayName ?? null,
 	});
 	await stub.deleteSenderPreference(input.sender);
+	await stub.setAddressSenderRule(input.sender, "block", "report_spam");
 	return triage as TriageRow | null;
 }
 

@@ -647,6 +647,45 @@ export const mailboxMigrations: Migration[] = [
         `),
 	},
 	{
+		// Sender rules (AVE-96, docs/spam-management-plan.md §5, §7): the
+		// explicit per-mailbox allow / block list, by address or registrable
+		// domain (see workers/lib/sender-rules.ts). The §7 emails columns
+		// (classification_reason, matched_rule_id) already came with
+		// 37_email_classification.
+		// Backfill: every rejected Screener sender becomes an address block
+		// rule, so Settings → Blocked shows them. Allowed senders stay
+		// implicit trust in sender_triage (§7). Nothing is deleted or
+		// changed in sender_triage. INSERT OR IGNORE on UNIQUE (kind, value)
+		// makes the SQL safe to replay; the runner applies it once per DO.
+		// Numbered 38: 37_email_classification precedes it and
+		// 39_email_summaries (AVE-20) landed on dev first. The runner tracks
+		// by full name, so a DO that already ran 39 still applies 38.
+		name: "38_sender_rules",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS sender_rules (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK (kind IN ('address', 'domain')),
+                value TEXT NOT NULL,
+                verdict TEXT NOT NULL CHECK (verdict IN ('allow', 'block')),
+                source TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_matched_at TEXT,
+                match_count INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (kind, value)
+            );
+            CREATE INDEX IF NOT EXISTS idx_sender_rules_verdict_updated
+                ON sender_rules(verdict, updated_at);
+            INSERT OR IGNORE INTO sender_rules
+                (id, kind, value, verdict, source, created_at, updated_at)
+            SELECT lower(hex(randomblob(16))), 'address', lower(trim(sender)), 'block', 'screener',
+                   COALESCE(decided_at, updated_at), COALESCE(updated_at, decided_at)
+              FROM sender_triage
+             WHERE status = 'rejected'
+               AND instr(trim(sender), '@') > 1;
+        `),
+	},
+	{
 		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
 		// or per message (quick summary). Generated lazily on open and reused
 		// until the thread gains a message. Additive only. Renumbered to 39: dev
