@@ -151,12 +151,9 @@ final class ClientContractTests: XCTestCase {
 
     // MARK: - Remote images
 
-    func testRemoteImageDetection() {
-        XCTAssertTrue(EmailHTMLSanitizer.containsRemoteImages(#"<img src="https://t.example.com/p.gif">"#))
-        XCTAssertTrue(EmailHTMLSanitizer.containsRemoteImages(#"<td style="background: url('//cdn.example.com/bg.png')">"#))
-        XCTAssertFalse(EmailHTMLSanitizer.containsRemoteImages(#"<img src="data:image/png;base64,AAAA">"#))
-        XCTAssertFalse(EmailHTMLSanitizer.containsRemoteImages(#"<a href="https://example.com">link</a>"#))
-        XCTAssertFalse(EmailHTMLSanitizer.remoteImagesBlockedPolicy.contains("https:"))
+    func testRemoteImagesLoadByDefault() {
+        XCTAssertTrue(EmailHTMLSanitizer.contentSecurityPolicy.contains("img-src data: cid: https:"))
+        XCTAssertTrue(EmailHTMLSanitizer.contentSecurityPolicy.contains("default-src 'none'"))
     }
 
     // MARK: - Service end (read-only domains)

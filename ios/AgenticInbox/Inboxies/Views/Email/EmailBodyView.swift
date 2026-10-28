@@ -16,8 +16,6 @@ struct EmailBodyView: View {
     @State private var isWebLoading = true
     @State private var isResolvingImages = false
     @State private var activeQuotedContent: QuotedMailContent? = nil
-    /// Remote images stay blocked until the reader taps "Load images" (per message).
-    @State private var allowsRemoteImages = false
     /// Sanitized body, computed once per source off the main actor (never during `body`).
     @State private var prepared: PreparedState?
     @Environment(\.colorScheme) private var colorScheme
@@ -53,16 +51,9 @@ struct EmailBodyView: View {
         isHTML && (prepared == nil || isWebLoading || webHeight <= 1)
     }
 
-    private var hasBlockedRemoteImages: Bool {
-        guard isHTML, !allowsRemoteImages else { return false }
-        return prepared?.body.hasRemoteImages ?? false
-    }
-
-    /// Opted-in policy only after "Load images"; otherwise remote `https:` images are blocked.
+    /// Remote `https:` images load by default (web and Android parity).
     private var contentSecurityPolicy: String {
-        allowsRemoteImages
-            ? EmailHTMLSanitizer.contentSecurityPolicy
-            : EmailHTMLSanitizer.remoteImagesBlockedPolicy
+        EmailHTMLSanitizer.contentSecurityPolicy
     }
 
     private var hasQuotedReplies: Bool {
@@ -78,11 +69,6 @@ struct EmailBodyView: View {
             if isHTML {
                 if isResolvingImages && !showLoading {
                     inlineImageLoadingBar
-                }
-
-                if hasBlockedRemoteImages && !showLoading {
-                    remoteImagesBar
-                        .transition(.opacity)
                 }
 
                 ZStack(alignment: .topLeading) {
@@ -124,7 +110,6 @@ struct EmailBodyView: View {
                         activeQuotedContent = QuotedMailContent(
                             text: quote,
                             isHTML: isHTML,
-                            allowsRemoteImages: allowsRemoteImages,
                             hasOwnColors: isHTML && (prepared?.body.quoteHasOwnColors ?? false)
                         )
                     }
@@ -151,7 +136,6 @@ struct EmailBodyView: View {
         }
         .onChange(of: emailId) { _, _ in
             activeQuotedContent = nil
-            allowsRemoteImages = false
             prepared = nil
             webHeight = 1
             isWebLoading = true
@@ -161,41 +145,9 @@ struct EmailBodyView: View {
                 content: quoted.text,
                 isHTML: quoted.isHTML,
                 attachments: attachments,
-                allowsRemoteImages: quoted.allowsRemoteImages,
                 hasOwnColors: quoted.hasOwnColors
             )
         }
-    }
-
-    /// Web parity: remote images are opt-in per message.
-    private var remoteImagesBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "photo")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(AppTheme.muted)
-            Text("Remote images are hidden")
-                .font(.inter(size: 12, weight: .medium))
-                .foregroundStyle(AppTheme.muted)
-            Text("·")
-                .font(.inter(size: 12, weight: .medium))
-                .foregroundStyle(AppTheme.muted)
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    allowsRemoteImages = true
-                }
-            } label: {
-                Text("Load images")
-                    .font(.inter(size: 12, weight: .semibold))
-                    .foregroundStyle(AppTheme.accent)
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Loads images from the sender's servers for this message")
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(AppTheme.pillFill)
-        .clipShape(Capsule())
     }
 
     private var inlineImageLoadingBar: some View {
@@ -717,7 +669,6 @@ struct QuotedMailContent: Identifiable {
     let id = UUID()
     let text: String
     let isHTML: Bool
-    var allowsRemoteImages = false
     /// Sanitized quoted HTML sets its own colours (paper card in dark mode).
     var hasOwnColors = false
 }
@@ -795,7 +746,6 @@ struct QuotedRepliesModalView: View {
     let content: String
     let isHTML: Bool
     var attachments: [Attachment] = []
-    var allowsRemoteImages = false
     var hasOwnColors = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -835,7 +785,7 @@ struct QuotedRepliesModalView: View {
 
                 if isHTML {
                     if appearance == .paper {
-                        QuotedHTMLFullView(html: content, allowsRemoteImages: allowsRemoteImages, appearance: appearance)
+                        QuotedHTMLFullView(html: content, appearance: appearance)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(
                                 AppTheme.mailPaper,
@@ -845,7 +795,7 @@ struct QuotedRepliesModalView: View {
                             .padding(.horizontal, 12)
                             .padding(.bottom, 12)
                     } else {
-                        QuotedHTMLFullView(html: content, allowsRemoteImages: allowsRemoteImages, appearance: appearance)
+                        QuotedHTMLFullView(html: content, appearance: appearance)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 } else {
@@ -874,7 +824,6 @@ struct QuotedRepliesModalView: View {
 /// Full scrollable web view for quoted HTML in a modal.
 private struct QuotedHTMLFullView: UIViewRepresentable {
     let html: String
-    var allowsRemoteImages = false
     var appearance: EmailBodyAppearance = .light
 
     func makeCoordinator() -> Coordinator {
@@ -899,17 +848,16 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {
-        let key = "\(allowsRemoteImages)|\(appearance)|\(EmailHTMLSanitizer.cacheKey(emailId: nil, html: html))"
+        let key = "\(appearance)|\(EmailHTMLSanitizer.cacheKey(emailId: nil, html: html))"
         guard context.coordinator.loadedKey != key else { return }
         context.coordinator.loadedKey = key
         let source = html
-        let allowsRemoteImages = allowsRemoteImages
         let appearance = appearance
         let coordinator = context.coordinator
         Task { @MainActor [weak webView] in
             let sanitized = await EmailHTMLSanitizer.sanitizeOffMain(source)
             guard let webView, coordinator.loadedKey == key else { return }
-            let fullHTML = Self.wrapQuotedHTML(sanitized, allowsRemoteImages: allowsRemoteImages, appearance: appearance)
+            let fullHTML = Self.wrapQuotedHTML(sanitized, appearance: appearance)
             webView.loadHTMLString(fullHTML, baseURL: EmailHTMLSanitizer.opaqueOrigin)
         }
     }
@@ -937,12 +885,9 @@ private struct QuotedHTMLFullView: UIViewRepresentable {
 
     private static func wrapQuotedHTML(
         _ sanitized: String,
-        allowsRemoteImages: Bool,
         appearance: EmailBodyAppearance
     ) -> String {
-        let contentSecurityPolicy = allowsRemoteImages
-            ? EmailHTMLSanitizer.contentSecurityPolicy
-            : EmailHTMLSanitizer.remoteImagesBlockedPolicy
+        let contentSecurityPolicy = EmailHTMLSanitizer.contentSecurityPolicy
         return """
         <!DOCTYPE html>
         <html>
@@ -1005,8 +950,8 @@ enum HTMLHardenFixture {
       <a href="https://inboxies.invalid/stay">opaque origin</a>
       <img src="x" onerror="alert(1)">
     </p>
-    <p>Remote image (hidden until "Load images"):
-      <img src="https://example.com/pixel.gif" width="1" height="1" alt="">
+    <p>Remote image (loads by default):
+      <img src="https://www.cloudflare.com/favicon.ico" width="48" height="48" alt="Cloudflare logo">
     </p>
     <script>document.title = "xss"</script>
     <blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em;">

@@ -385,10 +385,9 @@ final class HardeningTests: XCTestCase {
     // MARK: - Body sanitizing
 
     func testMailCSPRunsNoPageScript() {
-        for policy in [EmailHTMLSanitizer.contentSecurityPolicy, EmailHTMLSanitizer.remoteImagesBlockedPolicy] {
-            XCTAssertTrue(policy.contains("script-src 'none'"))
-            XCTAssertFalse(policy.contains("script-src 'unsafe-inline'"))
-        }
+        let policy = EmailHTMLSanitizer.contentSecurityPolicy
+        XCTAssertTrue(policy.contains("script-src 'none'"))
+        XCTAssertFalse(policy.contains("script-src 'unsafe-inline'"))
     }
 
     func testPrepareOffMainMatchesSyncPrepare() async {
@@ -401,7 +400,6 @@ final class HardeningTests: XCTestCase {
         let prepared = await EmailHTMLSanitizer.prepareOffMain(html, key: key)
         XCTAssertEqual(prepared.main, sync.main)
         XCTAssertEqual(prepared.quote, sync.quote)
-        XCTAssertTrue(prepared.hasRemoteImages)
         XCTAssertFalse(prepared.main.lowercased().contains("<script"))
         let cached = await EmailHTMLSanitizer.prepareOffMain("<p>ignored</p>", key: key)
         XCTAssertEqual(cached, prepared, "Same key is served from the cache")

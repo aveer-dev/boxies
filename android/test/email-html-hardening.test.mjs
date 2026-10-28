@@ -41,14 +41,14 @@ const iosCsp =
 	"default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'";
 
 assert.match(webIframe, /DOMPurify\.sanitize/);
-// Web fills img-src per message: remote images are blocked until the reader
-// opts in, and the opted-in policy is the shared one below.
+// Remote images load by default everywhere: web's img-src is native's plus its
+// own origin (inline cid images in local dev), and there is no opt-in state.
 assert.match(
 	webIframe,
 	/default-src 'none'; style-src 'unsafe-inline'; img-src \$\{imgSrc\}; script-src 'unsafe-inline'/,
 );
-assert.match(webIframe, /\? "data: cid: https:"/, "opted-in img-src matches native");
-assert.match(webIframe, /`data: cid: \$\{window\.location\.origin\}`/, "default blocks remote images");
+assert.match(webIframe, /const imgSrc = `data: cid: https: \$\{window\.location\.origin\}`/, "web img-src allows https like native");
+assert.doesNotMatch(webIframe, /allowRemoteImages|Load images/, "web has no remote-image opt-in");
 
 for (const [name, src] of [
 	["android sanitizer", androidSanitizer],
@@ -61,10 +61,15 @@ for (const [name, src] of [
 
 assert.ok(androidSanitizer.includes(csp), "android CSP matches web's opted-in policy");
 assert.ok(iosSanitizer.includes(iosCsp), "ios CSP matches web's opted-in policy with page script off");
-assert.ok(
-	iosSanitizer.includes("img-src data: cid:; script-src 'none'"),
-	"ios blocks remote images by default",
-);
+for (const [name, src] of [
+	["android sanitizer", androidSanitizer],
+	["ios sanitizer", iosSanitizer],
+	["android EmailBodyView", androidView],
+	["ios EmailBodyView", iosView],
+]) {
+	assert.doesNotMatch(src, /img-src data: cid:;/, `${name} has no remote-image-blocking policy`);
+	assert.doesNotMatch(src, /allowsRemoteImages|allowRemoteImages|Load images/, `${name} has no remote-image opt-in`);
+}
 assert.doesNotMatch(iosSanitizer, /script-src 'unsafe-inline'/, "ios never allows page script");
 assert.doesNotMatch(iosView, /allowsJavaScript: true/, "ios body views keep page JS off");
 assert.match(androidSanitizer, /CONTENT_SECURITY_POLICY/);

@@ -4,31 +4,13 @@ import SwiftSoup
 /// Native analogue of web `EmailIframe` DOMPurify options:
 /// HTML profile, forbid `<style>` tags, keep `target` on links.
 enum EmailHTMLSanitizer {
-    /// Policy once the reader taps "Load images" (same as web's opted-in policy).
+    /// Remote `https:` images load by default (same image policy as web and Android).
     /// No page script ever runs: height measuring is an app-world `WKUserScript`,
     /// which CSP and `allowsContentJavaScript = false` do not block.
     static let contentSecurityPolicy =
         "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'"
 
-    /// Default policy: remote images stay blocked (tracking pixels, read receipts)
-    /// until the reader opts in; inline `data:` / `cid:` images still render.
-    static let remoteImagesBlockedPolicy =
-        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'none'"
-
     static let opaqueOrigin = URL(string: "https://inboxies.invalid/")!
-
-    private static let remoteImageReference = try? NSRegularExpression(
-        pattern: #"(?:\bsrc|\bbackground)\s*=\s*["']?\s*(?:https:)?//|url\(\s*["']?\s*(?:https:)?//"#,
-        options: [.caseInsensitive]
-    )
-
-    /// True when sanitized HTML references images the default policy would block
-    /// (`https:` or protocol-relative, which resolves to https on the opaque origin).
-    static func containsRemoteImages(_ html: String) -> Bool {
-        guard let remoteImageReference, !html.isEmpty else { return false }
-        let range = NSRange(html.startIndex..<html.endIndex, in: html)
-        return remoteImageReference.firstMatch(in: html, range: range) != nil
-    }
 
     // MARK: - Own colours (dark mode)
 
@@ -99,7 +81,6 @@ enum EmailHTMLSanitizer {
     struct PreparedBody: Sendable, Equatable {
         let main: String
         let quote: String?
-        let hasRemoteImages: Bool
         /// The main part sets its own colours (paper card in dark mode).
         let mainHasOwnColors: Bool
         let quoteHasOwnColors: Bool
@@ -111,7 +92,6 @@ enum EmailHTMLSanitizer {
 
     /// One SwiftSoup pass per body, off the main actor. Results are cached by `key`
     /// (email id + source fingerprint) so reopening a message or remounting the view is free.
-    /// Remote-image consent only swaps the CSP, so it is not part of the key.
     static func prepareOffMain(_ html: String, key: String) async -> PreparedBody {
         if let cached = PreparedBodyCache.shared.value(for: key) { return cached }
         let prepared = await Task.detached(priority: .userInitiated) {
@@ -119,7 +99,6 @@ enum EmailHTMLSanitizer {
             return PreparedBody(
                 main: split.main,
                 quote: split.quote,
-                hasRemoteImages: containsRemoteImages(split.main) || containsRemoteImages(split.quote ?? ""),
                 mainHasOwnColors: hasOwnColors(split.main),
                 quoteHasOwnColors: hasOwnColors(split.quote ?? "")
             )
