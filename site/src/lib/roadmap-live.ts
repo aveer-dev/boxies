@@ -62,12 +62,18 @@ export async function loadLiveItems(
 	url = "/api/roadmap",
 	timeoutMs = LIVE_TIMEOUT_MS,
 ): Promise<LiveItem[] | null> {
+	// A plain setTimeout rather than AbortSignal.timeout(): Node (< 24) runs the latter on
+	// an unref'd timer, so a hung fetch in the unit test let the event loop exit first.
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), timeoutMs);
 	try {
-		const res = await fetchImpl(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) });
+		const res = await fetchImpl(url, { headers: { accept: "application/json" }, signal: controller.signal });
 		if (!res.ok) return null;
 		return liveItems(await res.json());
 	} catch {
 		return null;
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
