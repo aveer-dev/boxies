@@ -440,4 +440,27 @@ final class HardeningTests: XCTestCase {
         XCTAssertEqual(EmailBodyAppearance(colorScheme: .dark, hasOwnColors: false), .dark)
         XCTAssertEqual(EmailBodyAppearance(colorScheme: .light, hasOwnColors: true), .light)
     }
+
+    // MARK: - Last active mailbox (AVE-90)
+
+    func testInitialMailboxPrefersRememberedWhileListed() {
+        XCTAssertEqual(LastMailboxStore.initialMailboxId(remembered: "b", available: ["a", "b"]), "b")
+        XCTAssertEqual(LastMailboxStore.initialMailboxId(remembered: "gone", available: ["a", "b"]), "a")
+        XCTAssertEqual(LastMailboxStore.initialMailboxId(remembered: nil, available: ["a", "b"]), "a")
+        XCTAssertNil(LastMailboxStore.initialMailboxId(remembered: "b", available: []))
+    }
+
+    func testLastMailboxStoreRoundTripsAndClears() throws {
+        let suite = "LastMailboxStoreTests-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = LastMailboxStore(defaults: defaults)
+        XCTAssertNil(store.mailboxId)
+        store.save("b@x.test")
+        XCTAssertEqual(store.mailboxId, "b@x.test")
+        store.clear()
+        XCTAssertNil(store.mailboxId)
+        defaults.set("", forKey: LastMailboxStore.key)
+        XCTAssertNil(store.mailboxId, "An empty value is no mailbox")
+    }
 }

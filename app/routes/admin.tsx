@@ -15,6 +15,7 @@ import { EnvelopeIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/re
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link as RouterLink, Navigate, useSearchParams } from "react-router";
+import { SHOW_ALL_MAILBOXES_STATE } from "~/lib/last-mailbox";
 import api from "~/services/api";
 import { queryKeys } from "~/queries/keys";
 import { AdminDnsSuite } from "~/components/AdminDnsSuite";
@@ -203,6 +204,7 @@ export default function AdminRoute() {
 					<div className="flex items-center gap-2">
 						<RouterLink
 							to="/"
+							state={SHOW_ALL_MAILBOXES_STATE}
 							className="text-sm text-kumo-subtle hover:text-kumo-default no-underline"
 						>
 							My mailboxes

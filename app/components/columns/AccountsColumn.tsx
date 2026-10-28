@@ -18,6 +18,7 @@ import { folderPath } from "~/hooks/useMailNavigation";
 import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { useInboxUnreadCounts } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
+import { SHOW_ALL_MAILBOXES_STATE } from "~/lib/last-mailbox";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
 import { signOut } from "~/lib/sign-out";
 import { useMailboxDetails, useMailboxes } from "~/queries/mailboxes";
@@ -60,7 +61,7 @@ export default function AccountsColumn() {
 		{
 			label: "All mailboxes",
 			icon: SquaresFourIcon,
-			onSelect: () => navigate("/"),
+			onSelect: () => navigate("/", { state: SHOW_ALL_MAILBOXES_STATE }),
 		},
 		...(me?.isAdmin
 			? [

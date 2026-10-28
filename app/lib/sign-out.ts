@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { forgetAllLastMailboxes } from "~/lib/last-mailbox";
 import api from "~/services/api";
 
 /**
@@ -14,5 +15,7 @@ export async function signOut(): Promise<void> {
 	} catch {
 		// Already signed out or unreachable: still leave the app.
 	}
+	// The next sign-in here may be someone else; don't reopen this user's mailbox.
+	forgetAllLastMailboxes();
 	window.location.href = "/login";
 }
