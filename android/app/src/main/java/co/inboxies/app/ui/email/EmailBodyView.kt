@@ -6,7 +6,6 @@ import android.content.Intent
 import android.view.HapticFeedbackConstants
 import android.util.Base64
 import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -43,7 +42,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -449,7 +447,6 @@ private fun HtmlBodyWebView(
         (typeof inboxiesFitBody === 'function' && inboxiesFitBody(), Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight)))
         """.trimIndent()
     }
-    val currentOnHeight by rememberUpdatedState(onHeight)
     AndroidView(
         factory = { context ->
             WebView(context).apply {
@@ -457,18 +454,25 @@ private fun HtmlBodyWebView(
                 applyEmailHtmlWebViewSettings(javaScriptEnabled = true)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
-                // Live height after fit / image loads (twin of the iOS `bodyHeight` handler).
-                // Only a number crosses the bridge; the sanitized mail has no scripts of its own.
-                addJavascriptInterface(
-                    EmailBodyHeightBridge { h -> post { currentOnHeight(h) } },
-                    EmailBodyFit.BRIDGE_NAME,
-                )
+                // No page-world JavascriptInterface (see email-html-hardening.test.mjs): the
+                // height is pulled with evaluateJavascript on load, on each resource load, and
+                // on a short re-measure schedule so late image loads still grow the body.
                 webViewClient = object : EmailLinkWebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         view?.evaluateJavascript(heightMeasurer) { result ->
                             val measured = result?.trim('"')?.toFloatOrNull()
                             if (measured != null && measured > 0f) onHeight(measured)
                             onLoadingChanged(false)
+                        }
+                        view?.let { v ->
+                            REMEASURE_DELAYS_MS.forEach { delay ->
+                                v.postDelayed({
+                                    v.evaluateJavascript(heightMeasurer) { result ->
+                                        val measured = result?.trim('"')?.toFloatOrNull()
+                                        if (measured != null && measured > 0f) onHeight(measured)
+                                    }
+                                }, delay)
+                            }
                         }
                     }
 
@@ -496,13 +500,8 @@ private fun HtmlBodyWebView(
     )
 }
 
-/** Receives `InboxiesBody.postHeight(h)` from [EmailBodyFit.SCRIPT] (JavaBridge thread). */
-private class EmailBodyHeightBridge(private val onHeight: (Float) -> Unit) {
-    @JavascriptInterface
-    fun postHeight(height: Float) {
-        if (height > 0f) onHeight(height)
-    }
-}
+/** Re-measure points after page finish, for images and fonts that settle late. */
+private val REMEASURE_DELAYS_MS = longArrayOf(250L, 750L, 1500L, 3000L)
 
 /**
  * Wide mail (fixed 600px+ newsletter cards, rigid tables) on a phone-width body (AVE-89).
@@ -517,7 +516,6 @@ internal object EmailBodyFit {
     const val BOX_ID = "inboxies-fit-box"
     const val CONTENT_ID = "inboxies-fit"
     const val MIN_SCALE = 0.5
-    const val BRIDGE_NAME = "InboxiesBody"
 
     const val CSS = """
       #$SCROLLER_ID { overflow-x: auto; overflow-y: hidden; }
@@ -553,27 +551,18 @@ internal object EmailBodyFit {
       box.style.height = Math.ceil(content.offsetHeight * scale) + 'px';
     }
     (function () {
-      function postHeight() {
-        var h = Math.ceil(Math.max(
-          document.body.offsetHeight,
-          document.body.getBoundingClientRect().height,
-          document.body.scrollHeight
-        ));
-        if (window.$BRIDGE_NAME) { window.$BRIDGE_NAME.postHeight(h); }
-      }
-      function refitAndPost() { inboxiesFitBody(); postHeight(); }
-      window.addEventListener('load', refitAndPost);
-      window.addEventListener('resize', refitAndPost);
+      // Refits only; the native side pulls the height with evaluateJavascript.
+      window.addEventListener('load', inboxiesFitBody);
+      window.addEventListener('resize', inboxiesFitBody);
       document.querySelectorAll('img').forEach(function (img) {
-        img.addEventListener('load', refitAndPost);
-        img.addEventListener('error', refitAndPost);
+        img.addEventListener('load', inboxiesFitBody);
+        img.addEventListener('error', inboxiesFitBody);
       });
       if (typeof ResizeObserver !== 'undefined') {
         var content = document.getElementById('$CONTENT_ID');
-        if (content) { new ResizeObserver(refitAndPost).observe(content); }
-        new ResizeObserver(postHeight).observe(document.body);
+        if (content) { new ResizeObserver(inboxiesFitBody).observe(content); }
       }
-      refitAndPost();
+      inboxiesFitBody();
     })();
     """
 }
