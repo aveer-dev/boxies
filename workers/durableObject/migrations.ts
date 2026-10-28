@@ -710,5 +710,28 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		// Undo for Not spam / Report spam (AVE-98, docs/spam-management-plan.md
+		// §5, §7): one short-lived row per sender verdict, holding the sender's
+		// triage / preference / address-rule snapshot and the messages the
+		// verdict moved (see workers/lib/sender-verdict-undo.ts). Rows expire
+		// after minutes and are swept on every write. Additive only: a new
+		// table. Numbered 40: dev's highest is 39_email_summaries.
+		name: "40_sender_verdict_undo",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS sender_verdict_undo (
+                token TEXT PRIMARY KEY,
+                sender TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('allow', 'block')),
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sender_verdict_undo_sender
+                ON sender_verdict_undo(sender);
+            CREATE INDEX IF NOT EXISTS idx_sender_verdict_undo_expires
+                ON sender_verdict_undo(expires_at);
+        `),
+	},
 ];
 

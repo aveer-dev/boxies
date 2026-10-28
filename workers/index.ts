@@ -751,6 +751,12 @@ app.post("/api/v1/mailboxes/:mailboxId/folders/trash/empty", async (c: AppContex
  * With `setSenderPreference`, a move between purpose boxes also changes the
  * sender's default box. Agent/MCP `move_email` doesn't come through here and
  * stays neutral.
+ *
+ * A Spam verdict is retroactive and undoable (AVE-98, lib/sender-verdict-undo):
+ * Not spam also rescues the sender's other Spam from the last 30 days, and
+ * Report spam also moves their Inbox / Promotions / Updates mail to Spam
+ * unless `refileSender` is false. The response carries `rescuedCount` (other
+ * messages moved) and an `undoToken` for `POST sender-rules/undo`.
  */
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
 	const body = (await c.req.json()) as {
@@ -758,6 +764,8 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 		setSenderPreference?: boolean;
 		/** Report spam on RFC 8058 bulk mail: also send the one-click unsubscribe (AVE-99). */
 		unsubscribe?: boolean;
+		/** Report spam: also move the sender's Inbox / Promotions / Updates mail to Spam. Default true (AVE-98). */
+		refileSender?: boolean;
 	};
 	const { folderId, setSenderPreference } = body;
 	const emailId = c.req.param("id")!;
@@ -778,9 +786,28 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	if (lesson.kind === "none") return c.json({ status: "moved" });
 	const { sender } = lesson;
 	const displayName = before?.sender_name ?? null;
+	// What the verdict overwrites, so Undo can put it back (AVE-98).
+	const verdictState =
+		lesson.kind === "reject" || lesson.kind === "allow"
+			? await stub.captureSenderVerdictState(sender)
+			: null;
 
 	if (lesson.kind === "reject") {
 		const triage = await recordSenderBlock(stub, { sender, displayName });
+		const retro = verdictState
+			? await stub.finishSenderVerdict({
+					kind: "block",
+					state: verdictState,
+					primary: {
+						id: emailId,
+						from: before!.folder_id,
+						to: folderId,
+						replyLater: Boolean(before?.reply_later),
+						replyLaterAt: before?.reply_later_at ?? null,
+					},
+					refile: body.refileSender !== false,
+				})
+			: { rescuedCount: 0, undoToken: null };
 		// Only a real move into Spam unsubscribes, and only once per message:
 		// a retry sees the message already in Spam (lesson "none"), and the
 		// DO claim stops a concurrent double tap.
@@ -788,9 +815,15 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 			body.unsubscribe === true ? oneClickUnsubscribeUrl(before?.raw_headers) : null;
 		if (unsubscribeUrl && (await stub.claimOneClickUnsubscribe(emailId))) {
 			const result = await sendOneClickUnsubscribe(unsubscribeUrl);
-			return c.json({ status: "moved", senderStatus: "rejected", triage, unsubscribe: result.status });
+			return c.json({
+				status: "moved",
+				senderStatus: "rejected",
+				triage,
+				unsubscribe: result.status,
+				...retro,
+			});
 		}
-		return c.json({ status: "moved", senderStatus: "rejected", triage });
+		return c.json({ status: "moved", senderStatus: "rejected", triage, ...retro });
 	}
 
 	if (lesson.kind === "allow") {
@@ -799,7 +832,15 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 			destination: lesson.destination,
 			displayName,
 		});
-		return c.json({ status: "moved", senderStatus: "allowed", triage });
+		const retro = verdictState
+			? await stub.finishSenderVerdict({
+					kind: "allow",
+					state: verdictState,
+					primary: { id: emailId, from: before!.folder_id, to: folderId },
+					refile: true,
+				})
+			: { rescuedCount: 0, undoToken: null };
+		return c.json({ status: "moved", senderStatus: "allowed", triage, ...retro });
 	}
 
 	const upsertError = senderPreferenceUpsertError({
@@ -970,6 +1011,26 @@ app.put("/api/v1/mailboxes/:mailboxId/sender-rules", async (c: AppContext) => {
 	if (!checked.ok) return c.json({ error: checked.error, code: checked.code }, 400);
 	const { rule, created } = await c.var.mailboxStub.upsertSenderRule(checked.rule);
 	return c.json({ rule }, created ? 201 : 200);
+});
+
+/**
+ * Undo a Not spam / Report spam (AVE-98): `{undoToken}` from the move
+ * response. Puts the sender's rule, Screener status and purpose box back and
+ * moves the messages back where they were (unless moved again since). 404
+ * when the token is unknown, already used or expired.
+ */
+app.post("/api/v1/mailboxes/:mailboxId/sender-rules/undo", async (c: AppContext) => {
+	let body: { undoToken?: unknown };
+	try {
+		body = (await c.req.json()) as { undoToken?: unknown };
+	} catch {
+		return c.json({ error: "Invalid JSON body" }, 400);
+	}
+	const token = typeof body?.undoToken === "string" ? body.undoToken.trim() : "";
+	if (!token || token.length > 128) return c.json({ error: "undoToken is required" }, 400);
+	const result = await c.var.mailboxStub.undoSenderVerdict(token);
+	if (!result) return c.json({ error: "Nothing to undo", code: "undo_expired" }, 404);
+	return c.json({ status: "undone", restoredCount: result.restoredCount });
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/sender-rules/:ruleId", async (c: AppContext) => {

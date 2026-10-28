@@ -46,6 +46,7 @@ export const MAILBOX_PURGE_TABLES = [
 	"sender_triage",
 	"sender_preferences",
 	"sender_rules",
+	"sender_verdict_undo",
 	"inbound_message_claims",
 	"thread_notes",
 	"email_summaries",

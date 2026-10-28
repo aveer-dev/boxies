@@ -119,6 +119,14 @@ import {
 	type SenderRuleVerdict,
 } from "../lib/sender-rules";
 import {
+	captureSenderVerdictState,
+	finishSenderVerdict,
+	undoSenderVerdict,
+	type SenderVerdictKind,
+	type SenderVerdictState,
+	type VerdictMove,
+} from "../lib/sender-verdict-undo";
+import {
 	normalizeSenderPreferenceAddress,
 	parseSenderPreferenceSource,
 	purposeFoldersSqlList,
@@ -3794,6 +3802,67 @@ export class MailboxDO extends DurableObject<Env> {
 	 */
 	async matchSenderRule(sender: string, authTier: AuthTier | null): Promise<SenderRule | null> {
 		return matchSenderRule(this.ctx.storage.sql, sender, authTier);
+	}
+
+	// ── Retroactive rescue / refile, with Undo (AVE-98, lib/sender-verdict-undo) ──
+
+	/** Snapshot of what a Not spam / Report spam verdict is about to overwrite for `sender`. */
+	async captureSenderVerdictState(sender: string): Promise<SenderVerdictState | null> {
+		return captureSenderVerdictState(this.ctx.storage.sql, sender);
+	}
+
+	/**
+	 * After the verdict is written: Not spam rescues the sender's recent Spam,
+	 * Report spam (with `refile`) moves their purpose-box mail to Spam. Stores
+	 * an undo record covering `primary` (the message the user moved) too.
+	 */
+	async finishSenderVerdict(input: {
+		kind: SenderVerdictKind;
+		state: SenderVerdictState;
+		primary: VerdictMove;
+		refile: boolean;
+	}): Promise<{ rescuedCount: number; undoToken: string }> {
+		await this.#assertMailboxWritable();
+		const { rescued, undoToken } = this.ctx.storage.transactionSync(() =>
+			finishSenderVerdict(this.ctx.storage.sql, input),
+		);
+		for (const move of rescued) {
+			this.broadcastEvent("email_moved", { id: move.id, folder_id: move.to });
+		}
+		if (rescued.some((move) => move.to === Folders.SPAM)) this.#armRetentionSweep();
+		return { rescuedCount: rescued.length, undoToken };
+	}
+
+	/**
+	 * Undo a Not spam / Report spam: restore the sender's triage, preference
+	 * and address rule, and move the messages back. Null when the token is
+	 * unknown, used or expired.
+	 */
+	async undoSenderVerdict(
+		token: string,
+	): Promise<{ sender: string; kind: SenderVerdictKind; restoredCount: number } | null> {
+		await this.#assertMailboxWritable();
+		const result = this.ctx.storage.transactionSync(() =>
+			undoSenderVerdict(this.ctx.storage.sql, token),
+		);
+		if (!result) return null;
+		for (const move of result.reverted) {
+			this.broadcastEvent("email_moved", { id: move.id, folder_id: move.from });
+		}
+		if (result.reverted.some((move) => move.from === Folders.SPAM)) this.#armRetentionSweep();
+		const triage = await this.getSenderTriage(result.sender);
+		if (triage) {
+			this.broadcastEvent("sender_triage_updated", {
+				sender: result.sender,
+				status: triage.status,
+				destination_folder_id: triage.destination_folder_id,
+			});
+		} else {
+			this.broadcastEvent("sender_triage_deleted", { sender: result.sender });
+		}
+		this.broadcastEvent("sender_rules_changed", { value: result.sender });
+		this.broadcastEvent("sender_preference_updated", { address: result.sender });
+		return { sender: result.sender, kind: result.kind, restoredCount: result.reverted.length };
 	}
 
 	/** Move all messages from a sender in fromFolder into toFolder. */
