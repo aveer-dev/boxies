@@ -671,13 +671,10 @@ struct PreviewAdminAuthRoot: View {
                 }
                 .environment(PreviewSupport.appModel())
             } else if args.contains("-previewSenders") {
-                // `-previewSenders` (Allowed), add `-previewSendersBlocked` or
-                // `-previewSendersSorting` for the other tabs. Fixture rules, no API.
+                // `-previewSenders` (Allowed); add `-previewSendersBlocked` for the
+                // Blocked tab. Fixture rules, no API (Android: `senders` / `sendersBlocked`).
                 NavigationStack {
-                    SendersSettingsView(
-                        initialTab: args.contains("-previewSendersBlocked") ? .blocked
-                            : args.contains("-previewSendersSorting") ? .sorting : .allowed
-                    )
+                    SendersSettingsView(initialTab: args.contains("-previewSendersBlocked") ? .blocked : .allowed)
                 }
                 .environment(PreviewSupport.appModel())
             } else if args.contains("-previewSessions") {

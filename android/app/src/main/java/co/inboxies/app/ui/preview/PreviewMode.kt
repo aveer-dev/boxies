@@ -29,6 +29,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     SignInMethods("signInMethods", "previewSignInMethods"),
     Members("members", "previewMembers"),
     Sessions("sessions", "previewSessions"),
+    /** Settings → Senders, Allowed tab with fixture rules (iOS `-previewSenders`). */
+    Senders("senders", "previewSenders"),
+    /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */
+    SendersBlocked("sendersBlocked", "previewSendersBlocked"),
     Mailbox("mailbox", "previewMailbox"),
     /** Inbox with more pages to load: the bottom skeleton row (iOS `-previewLoadMore`). */
     LoadMore("loadMore", "previewLoadMore"),

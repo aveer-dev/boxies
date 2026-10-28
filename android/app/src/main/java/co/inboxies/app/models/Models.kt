@@ -364,6 +364,32 @@ data class SenderPreference(
     val updatedAt: String? = null,
 )
 
+/** Explicit allow / block rule (Settings → Senders, AVE-97). */
+@Serializable
+data class SenderRule(
+    val id: String,
+    /** `address` or `domain` */
+    val kind: String,
+    val value: String,
+    /** `allow` or `block` */
+    val verdict: String,
+    val source: String = "",
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val lastMatchedAt: String? = null,
+    val matchCount: Int = 0,
+)
+
+@Serializable
+data class SenderRulesResponse(
+    val rules: List<SenderRule> = emptyList(),
+)
+
+@Serializable
+data class SenderRuleResponse(
+    val rule: SenderRule,
+)
+
 @Serializable
 data class SenderPreferencesResponse(
     val preferences: List<SenderPreference> = emptyList(),
