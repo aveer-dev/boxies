@@ -38,6 +38,9 @@ const jumps = [
 		meta={`Updated ${date(asOf)}`}
 	>
 		<MicroLine parts={jumps} />
+		<p class="request-line">
+			Missing something, or found a bug? <a class="inline-link" href="/request">Send a request</a>.
+		</p>
 	</PageIntro>
 
 	<StatusLegend />
@@ -70,6 +73,13 @@ const jumps = [
 </Base>
 
 <style>
+	.request-line {
+		margin-top: 4px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
 	.roadmap-foot {
 		margin-top: 40px;
 		font-size: var(--fs-meta);

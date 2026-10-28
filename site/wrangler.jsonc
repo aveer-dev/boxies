@@ -23,8 +23,18 @@
   // account, and the From domain (inboxies.co) must be onboarded to Email Service:
   // `npx wrangler email sending enable inboxies.co`, then check `npx wrangler email sending list`.
   // That needs inboxies.co to be an active zone in this account first (README, Deploying).
-  "send_email": [{ "name": "SUPPORT_INBOX", "destination_address": "support@inboxies.email" }],
+  "send_email": [
+    { "name": "SUPPORT_INBOX", "destination_address": "support@inboxies.email" },
+    // /api/requests → the "we got your request" email to the person who sent it (AVE-81). Any
+    // recipient, one sender: support@inboxies.email, so inboxies.email must be onboarded to Email
+    // Sending in this account (it is for the mail app). Optional; without it no confirmation goes out.
+    { "name": "REQUEST_MAIL", "allowed_sender_addresses": ["support@inboxies.email"] }
+  ],
   // Optional; /api/contact skips the check if the binding is missing. 5 requests / 60 s per IP.
-  "ratelimits": [{ "name": "CONTACT_RATE", "namespace_id": "4101", "simple": { "limit": 5, "period": 60 } }],
+  "ratelimits": [
+    { "name": "CONTACT_RATE", "namespace_id": "4101", "simple": { "limit": 5, "period": 60 } },
+    // Optional, like CONTACT_RATE: /api/requests skips the check without it. 3 requests / 60 s per IP.
+    { "name": "REQUESTS_RATE", "namespace_id": "4102", "simple": { "limit": 3, "period": 60 } }
+  ],
   "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "enabled": true, "invocation_logs": true } }
 }

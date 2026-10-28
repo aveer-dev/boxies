@@ -1,6 +1,6 @@
 ---
-// The portfolio's two fixed footer rows. "Write to us" opens mail; the
-// copyright row shows the app icon at the far right on hover or focus.
+// The portfolio's fixed footer rows. "Write to us" opens mail, "Send a request"
+// goes to /request (AVE-81); the copyright row shows the app icon at the far right on hover or focus.
 import { SUPPORT_EMAIL, availabilityShort } from "../config";
 import AppIcon from "./AppIcon.astro";
 import Icon from "./Icon.astro";
@@ -14,6 +14,10 @@ import ProgressiveBlur from "./ProgressiveBlur.astro";
 		<a href={`mailto:${SUPPORT_EMAIL}`} class="footer-item">
 			<span class="footer-label"><span class="footer-label-inner">Write to us</span></span>
 			<span class="item-content"><Icon name="mail" /><span class="row-info"><span class="row-name">{SUPPORT_EMAIL}</span><span class="row-arrow" aria-hidden="true">↗</span></span></span>
+		</a>
+		<a href="/request" class="footer-item">
+			<span class="footer-label"><span class="footer-label-inner">Feature, bug or feedback</span></span>
+			<span class="item-content"><Icon name="message" /><span class="row-info"><span class="row-name">Send a request</span></span></span>
 		</a>
 		<div class="footer-item" tabindex="0" data-preview="about">
 			<span class="footer-label"><span class="footer-label-inner"><span>Runs on Cloudflare</span><span class="label-dot" aria-hidden="true">·</span><span>Apache-2.0</span></span></span>
@@ -84,7 +88,7 @@ import ProgressiveBlur from "./ProgressiveBlur.astro";
 		.footer-blur {
 			display: block;
 			top: auto;
-			height: calc(124px + 2.5rem);
+			height: calc(128px + 3.75rem);
 		}
 	}
 

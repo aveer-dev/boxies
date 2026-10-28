@@ -5,7 +5,7 @@
 // to the mark (the source's 512 box leaves ~30% empty), so it fills its size,
 // and the shield is drawn larger in the empty corner above the wing than in the
 // source, so it's still a shield at 20px.
-type Name = "mail" | "info" | "play" | "pause" | "search" | "private";
+type Name = "mail" | "info" | "play" | "pause" | "search" | "message" | "private";
 
 interface Props {
 	name: Name;
@@ -49,6 +49,7 @@ const { name, class: className, ...rest } = Astro.props;
 					<path d="M7 6.417v3.5M7 4.375h.006" />
 				</>
 			)}
+			{name === "message" && <path d="M2.333 3.5c0-.644.523-1.167 1.167-1.167h7c.644 0 1.167.523 1.167 1.167v4.667c0 .644-.523 1.166-1.167 1.166H5.25l-2.917 2.334z" />}
 			{name === "play" && <path d="M4.375 2.917v8.166L11.083 7z" />}
 			{name === "pause" && <path d="M5.25 3.5v7M8.75 3.5v7" />}
 			{name === "search" && (

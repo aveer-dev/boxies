@@ -11,6 +11,15 @@ interface Window {
 declare namespace Cloudflare {
 	interface Env {
 		LINEAR_ROADMAP_API_KEY?: string;
+		// /api/requests (AVE-81; README, Request forms). All optional for the same reason:
+		// without the first three the form says it's offline instead of the Worker failing.
+		// A Linear key that can create issues, labels and attachments (not the roadmap's read-only one).
+		LINEAR_REQUESTS_API_KEY?: string;
+		// Turnstile: the site key is public (the page fetches it from GET /api/requests), the secret isn't.
+		TURNSTILE_SITE_KEY?: string;
+		TURNSTILE_SECRET_KEY?: string;
+		// The Linear team requests are filed in; "AVE" when unset.
+		LINEAR_REQUESTS_TEAM_KEY?: string;
 	}
 }
 

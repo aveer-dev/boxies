@@ -10,6 +10,7 @@ import { env } from "cloudflare:workers";
 import { EmailMessage } from "cloudflare:email";
 import { EMAIL_RE, LIMITS, type FieldError, type FieldName } from "../../components/support/contact-rules";
 import { CONTACT_TOPICS, topicLabel } from "../../components/support/contact-topics";
+import { hostOf, rateKey, readCapped } from "../../lib/http";
 
 export const prerender = false;
 
@@ -104,54 +105,6 @@ export const POST: APIRoute = async ({ request }) => {
 
 	return respond("sent", 200, { ok: true }, topic);
 };
-
-// The body, or null once it runs past `limit`. Stops reading there, so an
-// oversized post is never held in memory.
-async function readCapped(request: Request, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
-	if (!request.body) return new Uint8Array(0);
-	const reader = request.body.getReader();
-	const chunks: Uint8Array[] = [];
-	let size = 0;
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		size += value.byteLength;
-		if (size > limit) {
-			reader.cancel().catch(() => {});
-			return null;
-		}
-		chunks.push(value);
-	}
-	const bytes = new Uint8Array(size);
-	let at = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, at);
-		at += chunk.byteLength;
-	}
-	return bytes;
-}
-
-// Who the rate limit counts. An IPv6 visitor holds a whole /64 and can rotate
-// through it, so the key is that prefix; IPv4 (and IPv4-mapped) as is.
-function rateKey(ip: string | null): string {
-	if (!ip) return "anon";
-	if (!ip.includes(":") || ip.includes(".")) return ip;
-	const [head, tail] = ip.toLowerCase().split("::");
-	const groups = head ? head.split(":") : [];
-	if (tail !== undefined) {
-		const rest = tail ? tail.split(":") : [];
-		groups.push(...Array<string>(Math.max(0, 8 - groups.length - rest.length)).fill("0"), ...rest);
-	}
-	return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
-}
-
-function hostOf(url: string): string | null {
-	try {
-		return new URL(url).host;
-	} catch {
-		return null;
-	}
-}
 
 // JSON from the page's script; urlencoded or multipart from a plain form post.
 async function parse(raw: Uint8Array<ArrayBuffer>, contentType: string): Promise<Fields | null> {
