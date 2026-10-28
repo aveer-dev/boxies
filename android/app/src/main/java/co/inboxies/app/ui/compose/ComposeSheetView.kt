@@ -1,5 +1,9 @@
 package co.inboxies.app.ui.compose
 
+import co.inboxies.app.theme.ToastMetrics
+import co.inboxies.app.ui.components.toastIcon
+import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.components.AnimatedToast
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -845,12 +849,17 @@ fun ComposeSheetView(
             }
         }
 
-        toast?.let { current ->
-            ComposeSheetToast(
-                toast = current,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp),
+        AnimatedToast(
+            value = toast,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = ToastMetrics.screenInset)
+                .padding(bottom = ToastMetrics.standaloneBottomInset),
+        ) { current ->
+            InboxiesToast(
+                message = current.message,
+                icon = current.toastIcon,
+                onDismiss = { toast = null },
             )
         }
 
@@ -1559,38 +1568,6 @@ private fun QuotedOriginalSheet(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun ComposeSheetToast(
-    toast: ComposeToast,
-    modifier: Modifier = Modifier,
-) {
-    val colors = inboxiesColors()
-    Row(
-        modifier = modifier
-            .shadow(12.dp, RoundedCornerShape(50))
-            .clip(RoundedCornerShape(50))
-            .background(colors.surface)
-            .border(0.5.dp, colors.line.copy(alpha = 0.6f), RoundedCornerShape(50))
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            if (toast.isError) Icons.Outlined.Error else Icons.Outlined.CheckCircle,
-            contentDescription = null,
-            tint = if (toast.isError) colors.deepDarkRed else colors.ink,
-            modifier = Modifier.size(14.dp),
-        )
-        Text(
-            toast.message,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 13.sp,
-            color = colors.ink,
-        )
     }
 }
 

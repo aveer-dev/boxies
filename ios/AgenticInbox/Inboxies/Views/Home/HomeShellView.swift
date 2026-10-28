@@ -372,40 +372,18 @@ struct HomeShellView: View {
         VStack(spacing: 0) {
             VStack(spacing: HomeChromeMetrics.chromeSpacing) {
                 if let toast = app.toast {
-                    HStack(spacing: 8) {
-                        if toast.isLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                                .font(.inter(size: 13, weight: .semibold))
-                                .foregroundStyle(toast.isError ? .red : AppTheme.ink)
-                        }
-
-                        Text(toast.message)
-                            .font(.inter(size: 13, weight: .medium))
-                            .foregroundStyle(AppTheme.ink)
-                            
-                        if toast.isUndo {
-                            Spacer(minLength: 8)
-                            Button("Undo") {
+                    InboxiesToast(
+                        message: toast.message,
+                        icon: toast.toastIcon,
+                        action: toast.isUndo
+                            ? ToastAction(title: "Undo", accessibilityHint: "Reverses the last action") {
                                 app.undoPendingAction()
                             }
-                            .font(.inter(size: 13, weight: .semibold))
-                            .foregroundStyle(AppTheme.accent)
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay {
-                        Capsule()
-                            .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
-                    }
-                    .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-                    .padding(.horizontal, HomeChromeMetrics.chromeHorizontalPadding)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            : toast.action,
+                        onDismiss: { app.hideToast() }
+                    )
+                    .padding(.horizontal, ToastMetrics.screenInset)
+                    .padding(.bottom, ToastMetrics.barGap)
                 }
 
                 if hasServiceBanner, let serviceNotice {
@@ -448,7 +426,7 @@ struct HomeShellView: View {
             }
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.pendingUndoAction?.id)
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.toast?.id)
+        .animation(ToastMetrics.animation, value: app.toast?.id)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasServiceBanner)
         .animation(tabAnimation, value: app.selectedTab)

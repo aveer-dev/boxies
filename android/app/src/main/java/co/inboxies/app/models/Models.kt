@@ -1164,12 +1164,22 @@ enum class ComposePresentation {
     Minimized,
 }
 
+/** Trailing button on a toast: Undo, Add reminder, … */
+data class ToastAction(
+    val title: String,
+    val onClick: () -> Unit,
+)
+
 data class AppToast(
     val id: String = UUID.randomUUID().toString(),
     val message: String,
     val isError: Boolean = false,
     val isLoading: Boolean = false,
     val isUndo: Boolean = false,
+    /** Leading glyph override (defaults to a check, or the error mark). */
+    val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    /** Trailing button; `isUndo` supplies Undo instead. */
+    val action: ToastAction? = null,
 )
 
 sealed class HomeTab {

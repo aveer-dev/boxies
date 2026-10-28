@@ -318,6 +318,10 @@ object PreviewSupport {
                 )
             }
         }
+        if (mode == PreviewMode.Toast) {
+            // Pinned sample toast with an action (AVE-134): icon + message + Undo.
+            app.showToast("Archived", isUndo = true, durationMs = 0)
+        }
     }
 
     fun invite() = InvitePublic(

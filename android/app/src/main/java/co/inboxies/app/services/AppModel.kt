@@ -1,9 +1,11 @@
 package co.inboxies.app.services
 
+import androidx.compose.ui.graphics.vector.ImageVector
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AiUsageSnapshot
 import co.inboxies.app.models.AppToast
+import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.ChatSession
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.ComposeMode
@@ -1733,10 +1735,19 @@ class AppModel {
         isError: Boolean = false,
         isLoading: Boolean = false,
         isUndo: Boolean = false,
+        icon: ImageVector? = null,
+        action: ToastAction? = null,
         durationMs: Long = 2500,
     ) {
         toastDismissJob?.cancel()
-        _toast.value = AppToast(message = message, isError = isError, isLoading = isLoading, isUndo = isUndo)
+        _toast.value = AppToast(
+            message = message,
+            isError = isError,
+            isLoading = isLoading,
+            isUndo = isUndo,
+            icon = icon,
+            action = action,
+        )
         if (durationMs > 0) {
             toastDismissJob = scope.launch {
                 delay(durationMs)
