@@ -66,4 +66,27 @@ class ServerContractDecodingTest {
         assertTrue(res.success)
         assertFalse(res.locked)
     }
+
+    @Test
+    fun moveResponseDecodesRescueAndUndo() {
+        val res = json.decodeFromString<MoveEmailResponse>(
+            """{"status":"moved","senderStatus":"allowed","triage":{"sender":"a@x.com"},"rescuedCount":3,"undoToken":"tok-1"}""",
+        )
+        assertEquals(3, res.rescuedCount)
+        assertEquals("tok-1", res.undoToken)
+        assertEquals(
+            "Moved to Inbox · future mail from ada@x.example will skip Spam · 3 more moved",
+            SpamVerdictToast.title(res, "inbox", "ada@x.example"),
+        )
+        val plain = json.decodeFromString<MoveEmailResponse>("""{"status":"moved"}""")
+        assertEquals(null, SpamVerdictToast.title(plain, "archive", "a@x.com"))
+        assertEquals(
+            "Reported as spam · 2 more moved",
+            SpamVerdictToast.title(MoveEmailResponse(senderStatus = "rejected", rescuedCount = 2), "spam", null),
+        )
+        assertEquals(
+            "Reported as spam and unsubscribed",
+            SpamVerdictToast.title(MoveEmailResponse(senderStatus = "rejected", unsubscribe = "sent"), "spam", null),
+        )
+    }
 }

@@ -9,6 +9,7 @@ import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.SpamVerdictToast
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
@@ -2230,6 +2231,7 @@ class AppModel {
         folderId: String,
         setSenderPreference: Boolean = false,
         unsubscribe: Boolean = false,
+        refileSender: Boolean = true,
     ) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (blockIfReadOnly()) return
@@ -2242,7 +2244,19 @@ class AppModel {
                 folderId,
                 setSenderPreference = setSenderPreference,
                 unsubscribe = unsubscribe,
+                refileSender = refileSender,
             )
+        }.onSuccess { response ->
+            // Into / out of Spam is Not spam / Report spam: "· N more moved"
+            // toast with Undo (AVE-98).
+            if ((response.rescuedCount ?: 0) > 0) loadEmailsForCurrentTab(showLoading = false)
+            val title = SpamVerdictToast.title(response, folderId, email.sender)
+            val token = response.undoToken
+            if (title != null && !token.isNullOrEmpty()) {
+                showSpamVerdictUndoToast(title, mailboxId, token)
+            } else if (title != null) {
+                showToast(title)
+            }
         }.onFailure {
             if (noteServiceEnded(it)) {
                 loadEmailsForCurrentTab(showLoading = false)
@@ -2259,17 +2273,55 @@ class AppModel {
         }
     }
 
-    /** Move to Spam and reject the sender: their future mail is screened out. */
-    /** With [unsubscribe], the Worker also sends the RFC 8058 one-click POST. */
-    suspend fun reportSpam(email: Email, unsubscribe: Boolean = false) {
-        moveEmailToFolder(email, "spam", setSenderPreference = true, unsubscribe = unsubscribe)
-        showToast(if (unsubscribe) "Reported as spam · unsubscribing" else "Reported as spam")
+    /**
+     * Move to Spam and reject the sender: their future mail is screened out.
+     * With [unsubscribe], the Worker also sends the RFC 8058 one-click POST;
+     * with [refileSender] (the default), their Inbox / Promotions / Updates
+     * mail moves to Spam too (AVE-98). The toast comes from [moveEmailToFolder].
+     */
+    suspend fun reportSpam(email: Email, unsubscribe: Boolean = false, refileSender: Boolean = true) {
+        moveEmailToFolder(
+            email,
+            "spam",
+            setSenderPreference = true,
+            unsubscribe = unsubscribe,
+            refileSender = refileSender,
+        )
     }
 
-    /** Move back to Inbox and allow the sender. */
+    /** Move back to Inbox and allow the sender; their other recent Spam is rescued (AVE-98). */
     suspend fun markNotSpam(email: Email) {
         moveEmailToFolder(email, "inbox", setSenderPreference = true)
-        showToast("Moved to Inbox")
+    }
+
+    /**
+     * Verdict toast with Undo. The verdict is already on the server, so Undo
+     * calls `sender-rules/undo` instead of cancelling a delayed commit.
+     */
+    private fun showSpamVerdictUndoToast(message: String, mailboxId: String, undoToken: String) {
+        commitPendingActionImmediately()
+        val action = UndoableAction(
+            message = message,
+            execute = {},
+            rollback = {
+                scope.launch {
+                    runCatching { ApiClient.shared.undoSenderVerdict(mailboxId, undoToken) }
+                        .onSuccess {
+                            loadEmailsForCurrentTab(showLoading = false)
+                            refreshReplyLaterCount()
+                            showToast("Undone")
+                        }
+                        .onFailure { showToast("Couldn't undo", isError = true) }
+                }
+            },
+        )
+        val actionId = action.id
+        _pendingUndoAction.value = action
+        showToast(message, isUndo = true, durationMs = 6000)
+        pendingUndoJob = scope.launch {
+            delay(6000)
+            if (_pendingUndoAction.value?.id == actionId) _pendingUndoAction.value = null
+        }
     }
 
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {

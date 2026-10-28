@@ -183,10 +183,10 @@ fun EmailActionsSheet(
     // Your own messages are never judged as spam.
     val isSelfSender = app.selectedMailbox?.email?.equals(email.sender, ignoreCase = true) == true
     val showsSpamAction = !isSelfSender && (availability.showsReportSpam || availability.showsNotSpam)
-    // RFC 8058 bulk mail: Report spam confirms first, with an "Unsubscribe"
-    // switch that starts off (AVE-99).
-    val offersUnsubscribe = showsSpamAction && availability.showsReportSpam &&
-        !availability.showsNotSpam && email.offersOneClickUnsubscribe
+    // Report spam confirms first: "Move their other mail to Spam" starts on
+    // (AVE-98); RFC 8058 bulk mail adds "Unsubscribe", which starts off (AVE-99).
+    val confirmsReportSpam = showsSpamAction && availability.showsReportSpam && !availability.showsNotSpam
+    val offersUnsubscribe = confirmsReportSpam && email.offersOneClickUnsubscribe
 
     var screen by remember { mutableStateOf(ActionsScreen.Main) }
     var showDeleteMenu by remember { mutableStateOf(false) }
@@ -363,7 +363,7 @@ fun EmailActionsSheet(
                         screen = ActionsScreen.Move
                     }
                 }
-                if (offersUnsubscribe) {
+                if (confirmsReportSpam) {
                     ActionRow(
                         "Report Spam",
                         Icons.Outlined.WarningAmber,
@@ -443,12 +443,13 @@ fun EmailActionsSheet(
 
             ActionsScreen.ReportSpam -> ReportSpamConfirmScreen(
                 email = email,
+                offersUnsubscribe = offersUnsubscribe,
                 onClose = onDismiss,
                 onBack = { screen = ActionsScreen.Main },
-                onReport = { unsubscribe ->
+                onReport = { unsubscribe, refileSender ->
                     scope.launch {
                         onDismiss()
-                        app.reportSpam(email, unsubscribe = unsubscribe)
+                        app.reportSpam(email, unsubscribe = unsubscribe, refileSender = refileSender)
                         if (fromList) onRemoveFromList?.invoke(email.id)
                         else onDone()
                     }
@@ -682,62 +683,51 @@ private fun EmailSourceScreen(
     }
 }
 
-/** Report spam on RFC 8058 bulk mail: "Unsubscribe" switch (off by default) + one button. iOS twin: ReportSpamConfirmView. */
+/**
+ * Report spam confirmation: "Move their other mail to Spam" switch (on by
+ * default, AVE-98), plus "Unsubscribe" (off by default) for RFC 8058 bulk
+ * mail (AVE-99), then one button. iOS twin: ReportSpamConfirmView.
+ */
 @Composable
 internal fun ReportSpamConfirmScreen(
     email: Email,
     onClose: () -> Unit,
     onBack: () -> Unit,
-    onReport: (unsubscribe: Boolean) -> Unit,
+    onReport: (unsubscribe: Boolean, refileSender: Boolean) -> Unit,
+    offersUnsubscribe: Boolean = true,
     initialUnsubscribe: Boolean = false,
 ) {
     val colors = inboxiesColors()
     val view = LocalView.current
     var unsubscribe by remember { mutableStateOf(initialUnsubscribe) }
+    var refileSender by remember { mutableStateOf(true) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(bottom = 48.dp),
     ) {
         SubScreenHeader(title = "Report spam?", onClose = onClose, onBack = onBack)
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(colors.surface)
-                .toggleable(
-                    value = unsubscribe,
-                    role = Role.Switch,
-                    onValueChange = { unsubscribe = it },
-                )
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .background(colors.surface),
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Unsubscribe",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 15.sp,
-                    color = colors.ink,
-                )
-                Text(
-                    "Also ask the sender to stop sending to this list.",
-                    fontFamily = InterFontFamily,
-                    fontSize = 12.sp,
-                    color = colors.muted,
+            ReportSpamSwitchRow(
+                title = "Move their other mail to Spam",
+                detail = "Also moves what they sent to Inbox, Promotions and Updates.",
+                checked = refileSender,
+                onCheckedChange = { refileSender = it },
+            )
+            if (offersUnsubscribe) {
+                ReportSpamSwitchRow(
+                    title = "Unsubscribe",
+                    detail = "Also ask the sender to stop sending to this list.",
+                    checked = unsubscribe,
+                    onCheckedChange = { unsubscribe = it },
                 )
             }
-            Switch(
-                checked = unsubscribe,
-                onCheckedChange = null,
-                colors = SwitchDefaults.colors(
-                    checkedTrackColor = colors.accent,
-                    checkedThumbColor = Color.White,
-                ),
-            )
         }
         Text(
             "Future mail from ${email.displaySender} will go to Spam.",
@@ -755,9 +745,55 @@ internal fun ReportSpamConfirmScreen(
         ) {
             ActionRow("Report Spam", Icons.Outlined.WarningAmber) {
                 view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                onReport(unsubscribe)
+                onReport(offersUnsubscribe && unsubscribe, refileSender)
             }
         }
+    }
+}
+
+@Composable
+private fun ReportSpamSwitchRow(
+    title: String,
+    detail: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onCheckedChange,
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = 15.sp,
+                color = colors.ink,
+            )
+            Text(
+                detail,
+                fontFamily = InterFontFamily,
+                fontSize = 12.sp,
+                color = colors.muted,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = colors.accent,
+                checkedThumbColor = Color.White,
+            ),
+        )
     }
 }
 

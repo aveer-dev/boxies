@@ -2,6 +2,7 @@ package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AccountSession
+import co.inboxies.app.models.MoveEmailResponse
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.ThreadNotesResponse
 import co.inboxies.app.models.AdminCreateMailboxResponse
@@ -1071,8 +1072,9 @@ class ApiClient private constructor() {
         folderId: String,
         setSenderPreference: Boolean = false,
         unsubscribe: Boolean = false,
-    ) {
-        request<EmptyResponse>(
+        refileSender: Boolean = true,
+    ): MoveEmailResponse =
+        request<MoveEmailResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}/move",
             method = "POST",
             body = buildJsonObject {
@@ -1080,7 +1082,17 @@ class ApiClient private constructor() {
                 if (setSenderPreference) put("setSenderPreference", true)
                 // Report spam: the Worker sends the RFC 8058 POST at most once per message.
                 if (unsubscribe) put("unsubscribe", true)
+                // Report spam with "Move their other mail to Spam" off (AVE-98).
+                if (!refileSender) put("refileSender", false)
             },
+        )
+
+    /** Undo a Not spam / Report spam: the sender's rule and every message it moved (AVE-98). */
+    suspend fun undoSenderVerdict(mailboxId: String, undoToken: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules/undo",
+            method = "POST",
+            body = buildJsonObject { put("undoToken", undoToken) },
         )
     }
 
