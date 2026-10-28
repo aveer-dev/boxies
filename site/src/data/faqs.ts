@@ -540,8 +540,8 @@ const data: Faq[] = [
 		id: "tracking",
 		group: "data-topic",
 		q: "Does Inboxies block tracking pixels?",
-		a: ["It holds back remote images, which is where tracking pixels live. In every message they stay hidden until you choose Load images, so a sender can’t tell you opened the message before then. Once you load them, they can. Inboxies doesn’t send read receipts."],
-		src: "dev 061e0ea EmailIframe.tsx (CSP img-src blocks remote until Load images; a new message starts blocked); eda481f EmailHTMLSanitizer.swift remoteImagesBlockedPolicy, EmailBodyView.kt allowRemoteImages; RM#3 (read receipts)",
+		a: ["Only in Spam. Tracking pixels live in remote images, and outside Spam those load when you open a message, so a sender can tell you opened it. In Spam they stay hidden until you choose Load images on that message. Inboxies doesn’t send read receipts."],
+		src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam); a new Spam message starts blocked; RM#3 (read receipts)",
 	},
 	{
 		id: "export",

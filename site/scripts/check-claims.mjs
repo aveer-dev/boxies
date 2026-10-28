@@ -57,8 +57,16 @@ const bannedFull = [
 	// Deleting mail moves it to Trash first, MCP included (tools.ts
 	// toolDeleteEmail); only a delete from Trash or Drafts is final.
 	/\bpermanently delet\w*\s+(?:mail|emails?)\b/i,
-	// Remote images wait for Load images on every client (061e0ea, eda481f).
-	/remote images load/i,
+	// Remote images load by default; only Spam holds them back until Load
+	// images (AVE-132, #168: shared/remote-images.ts). So no claim that every
+	// message hides them, and none that they're hidden or blocked unless the
+	// same sentence says Spam.
+	/\b(?:every|all|each|any)\b[^.]{0,30}\b(?:remote )?images?\b[^.]{0,30}\b(?:wait|hidden|held back|blocked)/i,
+	/\bin (?:every|all|each) (?:message|email)s?\b[^.]{0,40}\b(?:hidden|blocked|wait)/i,
+	/(?<!\bSpam\b[^.]{0,80})\bremote images?\b(?![^.]{0,80}\bSpam\b)[^.]{0,40}\b(?:hidden|blocked|wait\w*|held back|on request)\b/i,
+	/\bhidden in (?:every|all|each) (?:message|email)/i,
+	/(?<!\bSpam\b[^.]{0,80})\bblock\w* remote images?\b(?![^.]{0,80}\bSpam\b)/i,
+	/\b(?:always|never) load\w* remote images\b|\bremote images (?:never|always) load/i,
 	// ⌘K only focuses search on the web (FloatingDock.tsx); there are no commands.
 	/command (?:bar|palette)/i,
 	/⌘K bar/,
