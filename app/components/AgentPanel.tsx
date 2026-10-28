@@ -17,6 +17,7 @@ import {
 	CheckCircleIcon,
 	StopIcon,
 	PencilSimpleIcon,
+	WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
@@ -25,6 +26,7 @@ import remarkGfm from "remark-gfm";
 import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { UIMessage } from "ai";
+import { parseAiQuotaError } from "../../shared/ai-quota";
 
 const TOOL_LABELS: Record<string, { label: string; icon: React.ReactNode }> = {
 	list_emails: {
@@ -318,8 +320,10 @@ function AgentChatConnected({
 	}, [pendingAgentPrompt, consumeAgentPrompt]);
 
 	const agent = useAgent({ agent: "EmailAgent", name: mailboxId });
-	const { messages, sendMessage, status, clearHistory, stop } =
+	const { messages, sendMessage, status, clearHistory, stop, error } =
 		useAgentChat({ agent });
+	// Daily AI chat limit reached (AVE-45): the agent replies with a typed error.
+	const quotaError = parseAiQuotaError(error?.message);
 	const isStreaming = status === "streaming" || status === "submitted";
 
 	useEffect(() => {
@@ -479,6 +483,19 @@ function AgentChatConnected({
 
 			{/* Input */}
 			<div className="shrink-0 border-t border-kumo-line px-3 py-2">
+				{quotaError && !isStreaming && (
+					<div
+						role="status"
+						className="mb-2 flex items-start gap-1.5 rounded-lg border border-kumo-warning/40 bg-kumo-warning/10 px-2.5 py-2 text-xs text-kumo-default"
+					>
+						<WarningCircleIcon
+							size={14}
+							weight="fill"
+							className="mt-px shrink-0 text-kumo-warning"
+						/>
+						<span>{quotaError.message}</span>
+					</div>
+				)}
 				{isStreaming ? (
 					<div className="flex justify-center">
 						<Button

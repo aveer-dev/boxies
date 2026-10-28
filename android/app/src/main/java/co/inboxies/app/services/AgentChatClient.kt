@@ -498,12 +498,28 @@ class AgentChatClient(
         _statusText.value = null
         streamingAssistantId = null
         pendingToolCalls.clear()
+        val text = displayErrorText(errorMsg)
+        // The agent sends a stream error both as an error frame and as an
+        // `error` chunk; show it once.
+        val last = _messages.value.lastOrNull()
+        if (last != null && last.isError && last.text == text) return
         _messages.value = _messages.value + ChatMessage(
             id = UUID.randomUUID().toString(),
             role = "assistant",
-            text = errorMsg,
+            text = text,
             isError = true,
         )
+    }
+
+    /**
+     * Typed agent errors arrive as JSON (`shared/ai-quota.ts`, e.g. the daily
+     * AI chat limit, AVE-45); show their `message`. Other errors pass through.
+     */
+    private fun displayErrorText(errorMsg: String): String {
+        if (!errorMsg.startsWith("{")) return errorMsg
+        val obj = runCatching { Json.parseToJsonElement(errorMsg).jsonObject }.getOrNull() ?: return errorMsg
+        if (obj["type"]?.jsonPrimitive?.contentOrNull != "ai_quota_exceeded") return errorMsg
+        return obj["message"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() } ?: errorMsg
     }
 
     private fun jsonBoolean(el: JsonElement?): Boolean {

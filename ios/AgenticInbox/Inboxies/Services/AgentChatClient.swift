@@ -479,8 +479,24 @@ final class AgentChatClient: NSObject, ObservableObject {
         statusText = nil
         streamingAssistantId = nil
         pendingToolCalls = [:]
+        let text = Self.displayErrorText(errorMsg)
+        // The agent sends a stream error both as an error frame and as an
+        // `error` chunk; show it once.
+        if let last = messages.last, last.isError, last.text == text { return }
         let id = UUID().uuidString
-        messages.append(ChatMessage(id: id, role: "assistant", text: errorMsg, isError: true))
+        messages.append(ChatMessage(id: id, role: "assistant", text: text, isError: true))
+    }
+
+    /// Typed agent errors arrive as JSON (`shared/ai-quota.ts`, e.g. the daily
+    /// AI chat limit, AVE-45); show their `message`. Other errors pass through.
+    static func displayErrorText(_ errorMsg: String) -> String {
+        guard errorMsg.hasPrefix("{"),
+              let data = errorMsg.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              obj["type"] as? String == "ai_quota_exceeded",
+              let message = obj["message"] as? String, !message.isEmpty
+        else { return errorMsg }
+        return message
     }
 
     static func parseMessages(_ dict: [String: Any]) -> [ChatMessage] {

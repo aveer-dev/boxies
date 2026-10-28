@@ -51,6 +51,7 @@ import {
 	agentInstanceName,
 } from "../shared/agent-conversations";
 import { getEmailAgent, purgeEmailAgent, purgeEmailAgents } from "./lib/email-agent";
+import { tryConsumeAiQuota } from "./lib/ai-quota";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
@@ -2179,6 +2180,19 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				auth,
 			},
 			env.AI as ClassifyAi,
+			{
+				// Over the daily inbound AI quota (AVE-45): rules-only verdict.
+				allowAi: async () => {
+					const quota = await tryConsumeAiQuota(stub, mailboxId, "inbound");
+					if (quota && !quota.allowed) {
+						console.warn(
+							`Inbound AI quota reached for ${mailboxId} (${quota.used}/${quota.limit}); classifying by rules only`,
+						);
+						return false;
+					}
+					return true;
+				},
+			},
 		);
 		console.log(
 			`Classified inbound mail for ${mailboxId} as ${classification.class} (${classification.folderId}): ${classification.reason}`,
@@ -2422,6 +2436,14 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		) {
 			ctx.waitUntil(
 				(async () => {
+					// Over the daily inbound AI quota (AVE-45): no auto-draft.
+					const quota = await tryConsumeAiQuota(stub, mailboxId, "inbound");
+					if (quota && !quota.allowed) {
+						console.warn(
+							`Inbound AI quota reached for ${mailboxId} (${quota.used}/${quota.limit}); skipping auto-draft`,
+						);
+						return;
+					}
 					await stub.ensureAutoAgentConversation();
 					const agent = await getEmailAgent(
 						env,

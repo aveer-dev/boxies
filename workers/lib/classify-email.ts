@@ -309,13 +309,24 @@ async function classifySpamVsHam(
 	}
 }
 
+export interface ClassifyOptions {
+	/**
+	 * Called once, only when the AI step would run. Resolve false (e.g. the
+	 * mailbox is over its daily inbound AI quota, AVE-45) to skip the AI and
+	 * keep the rules-only verdict.
+	 */
+	allowAi?: () => Promise<boolean>;
+}
+
 export async function classifyInboundEmail(
 	input: ClassifyEmailInput,
 	ai?: ClassifyAi | null,
+	options: ClassifyOptions = {},
 ): Promise<EmailClassification> {
 	const decided = classifyFromHeaders(input);
 	if (decided) return decided;
 	if (!ai) return HAM_CLASSIFICATION;
+	if (options.allowAi && !(await options.allowAi())) return HAM_CLASSIFICATION;
 	return classifySpamVsHam(ai, input);
 }
 
