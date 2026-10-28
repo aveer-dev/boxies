@@ -50,6 +50,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
+    /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
+    Newsletter("newsletter", "previewNewsletter"),
     /** Inbox rows with notes to self: sticky strip + private note chip (iOS `-previewMailbox -previewNotes`). */
     Notes("notes", "previewNotes"),
     /** Q3 thread open with a sticky note and inline notes (iOS `-previewDetail -previewNotes`). */
