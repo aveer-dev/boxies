@@ -73,6 +73,9 @@ function fakeMailbox() {
 			state.writes.push(["rule-delete", sender]);
 			return state.rules.delete(sender);
 		},
+		// AVE-98 retroactive rescue / refile; covered in sender-verdict-undo.test.mjs.
+		captureSenderVerdictState: async (sender) => ({ sender, triage: null, preference: null, addressRule: null }),
+		finishSenderVerdict: async () => ({ rescuedCount: 0, undoToken: "undo-token" }),
 	};
 	const put = (id, folder_id, sender) =>
 		state.emails.set(id, { id, folder_id, sender, sender_name: null });

@@ -511,6 +511,49 @@ struct EmailAuth: Codable, Hashable {
     var isSpoofed: Bool { spoofed == true || authTier == "failed" }
 }
 
+/// `POST /emails/:id/move` response. Spam verdicts carry the sender lesson
+/// (AVE-95), the one-click unsubscribe outcome (AVE-99), and the retroactive
+/// rescue / refile count plus an undo token (AVE-98).
+struct MoveEmailResponse: Decodable, Equatable {
+    var status: String?
+    var senderStatus: String?
+    var unsubscribe: String?
+    var rescuedCount: Int?
+    var undoToken: String?
+}
+
+/// Toast copy for a move that crossed Spam (docs/spam-management-plan.md §6).
+/// Twins: web `app/lib/spam-verdict.ts`, Android `SpamVerdictToast`.
+enum SpamVerdictToast {
+    private static let folderNames: [String: String] = [
+        "inbox": "Inbox",
+        "promotions": "Promotions",
+        "updates": "Updates",
+        "archive": "Archive",
+    ]
+
+    /// "Moved to Inbox · future mail from ada@x will skip Spam · 3 more moved",
+    /// "Reported as spam · 3 more moved". Nil when the move taught nothing.
+    static func title(for response: MoveEmailResponse, folderId: String, sender: String?) -> String? {
+        guard let status = response.senderStatus else { return nil }
+        let count = response.rescuedCount ?? 0
+        let more = count > 0 ? " · \(count) more moved" : ""
+        if status == "rejected" {
+            let base: String
+            switch response.unsubscribe {
+            case "sent": base = "Reported as spam and unsubscribed"
+            case "failed": base = "Reported as spam · couldn't unsubscribe"
+            default: base = "Reported as spam"
+            }
+            return base + more
+        }
+        let moved = folderNames[folderId].map { "Moved to \($0)" } ?? "Moved out of Spam"
+        let trimmed = sender?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let skip = trimmed.isEmpty ? "" : " · future mail from \(trimmed) will skip Spam"
+        return moved + skip + more
+    }
+}
+
 struct Email: Identifiable, Codable, Hashable {
     let id: String
     var threadId: String?

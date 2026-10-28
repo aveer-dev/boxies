@@ -5,6 +5,7 @@
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { useCallback, useMemo } from "react";
 import { Folders } from "shared/folders";
+import { useSpamVerdictToast } from "~/hooks/useSpamVerdictToast";
 import { useUIStore } from "~/hooks/useUIStore";
 import {
 	useDeleteEmail,
@@ -33,6 +34,7 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 	const markThreadRead = useMarkThreadRead();
 	const deleteEmail = useDeleteEmail();
 	const moveEmail = useMoveEmail();
+	const showSpamVerdictToast = useSpamVerdictToast(mailboxId);
 	const startCompose = useUIStore((s) => s.startCompose);
 	const openReader = useUIStore((s) => s.openReader);
 	const openPopOut = useUIStore((s) => s.openPopOut);
@@ -61,12 +63,27 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 				updateEmail.mutate({ mailboxId, id: email.id, data: { reply_later: !email.reply_later } }),
 			archive: (email: Email) => {
 				if (email.folder_id === Folders.ARCHIVE) return;
-				moveEmail.mutate({ mailboxId, id: email.id, folderId: Folders.ARCHIVE });
+				const fromSpam = email.folder_id === Folders.SPAM;
+				moveEmail.mutate(
+					{ mailboxId, id: email.id, folderId: Folders.ARCHIVE },
+					// Archiving out of Spam is Not spam: that toast, with Undo (AVE-98).
+					fromSpam
+						? { onSuccess: (result) => showSpamVerdictToast(result, { folderId: Folders.ARCHIVE, sender: email.sender }) }
+						: undefined,
+				);
 				onGone?.(email);
-				toastManager.add({ title: "Archived" });
+				if (!fromSpam) toastManager.add({ title: "Archived" });
 			},
 			move: (email: Email, folderId: string) => {
-				moveEmail.mutate({ mailboxId, id: email.id, folderId });
+				moveEmail.mutate(
+					{ mailboxId, id: email.id, folderId },
+					{
+						// Into / out of Spam is Report spam / Not spam: toast with Undo (AVE-98).
+						onSuccess: (result) => {
+							showSpamVerdictToast(result, { folderId, sender: email.sender });
+						},
+					},
+				);
 				onGone?.(email);
 			},
 			remove: (email: Email) => {
@@ -90,7 +107,7 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 				if (hasUnread(email)) setRead(email, true);
 			},
 		}),
-		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, openPopOut, onGone, toastManager],
+		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, openPopOut, onGone, toastManager, showSpamVerdictToast],
 	);
 }
 

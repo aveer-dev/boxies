@@ -90,8 +90,26 @@ extension AppModel {
     ) async {
         guard let mailboxId = selectedMailboxId else { return }
 
+        // Into or out of Spam is Not spam / Report spam: toast with Undo (AVE-98).
+        if email.folderId != folderId, email.folderId == "spam" || folderId == "spam" {
+            _ = await applySpamVerdict(email, to: folderId, fromList: fromList, unsubscribe: unsubscribe)
+            return
+        }
+
         // 1. Instant local optimistic move (<1ms)
         DatabaseService.shared.moveEmail(id: email.id, toFolderId: folderId)
+        enqueueMove(mailboxId: mailboxId, email: email, folderId: folderId, setSenderPreference: setSenderPreference, unsubscribe: unsubscribe)
+        await removeMovedEmailLocally(email, to: folderId)
+    }
+
+    private func enqueueMove(
+        mailboxId: String,
+        email: Email,
+        folderId: String,
+        setSenderPreference: Bool,
+        unsubscribe: Bool,
+        refileSender: Bool = true
+    ) {
         var payload: [String: Any] = ["folderId": folderId]
         if setSenderPreference {
             payload["setSenderPreference"] = true
@@ -101,6 +119,9 @@ extension AppModel {
             // so an outbox retry is safe.
             payload["unsubscribe"] = true
         }
+        if !refileSender {
+            payload["refileSender"] = false
+        }
         DatabaseService.shared.enqueueMutation(
             mailboxId: mailboxId,
             emailId: email.id,
@@ -108,7 +129,94 @@ extension AppModel {
             payload: payload
         )
         OutboxQueueWorker.shared.trigger()
+    }
 
+    /// Not spam / Report spam, any path (AVE-95, AVE-98). Moves locally at once,
+    /// then calls the Worker directly so the toast can say "· N more moved" and
+    /// offer Undo. Offline, it falls back to the outbox (no Undo then).
+    /// Returns whether the server took the move now.
+    @discardableResult
+    func applySpamVerdict(
+        _ email: Email,
+        to folderId: String,
+        fromList: Bool = false,
+        unsubscribe: Bool = false,
+        refileSender: Bool = true
+    ) async -> Bool {
+        guard let mailboxId = selectedMailboxId else { return false }
+        DatabaseService.shared.moveEmail(id: email.id, toFolderId: folderId)
+        await removeMovedEmailLocally(email, to: folderId)
+        do {
+            let response = try await APIClient.shared.moveEmail(
+                mailboxId: mailboxId,
+                id: email.id,
+                folderId: folderId,
+                setSenderPreference: true,
+                unsubscribe: unsubscribe,
+                refileSender: refileSender
+            )
+            if (response.rescuedCount ?? 0) > 0 {
+                // Other messages from the sender moved server-side.
+                await loadEmailsForCurrentTab(showLoading: false)
+            }
+            if let title = SpamVerdictToast.title(for: response, folderId: folderId, sender: email.sender) {
+                if let token = response.undoToken, !token.isEmpty {
+                    showSpamVerdictUndoToast(title, mailboxId: mailboxId, undoToken: token)
+                } else {
+                    showToast(title)
+                }
+            }
+            return true
+        } catch {
+            enqueueMove(
+                mailboxId: mailboxId,
+                email: email,
+                folderId: folderId,
+                setSenderPreference: true,
+                unsubscribe: unsubscribe,
+                refileSender: refileSender
+            )
+            if folderId == "spam" {
+                showToast("Reported as spam")
+            } else if email.folderId == "spam", folderId != "trash" {
+                showToast("Moved out of Spam")
+            }
+            return false
+        }
+    }
+
+    /// Verdict toast with Undo. The verdict is already on the server, so Undo
+    /// calls `sender-rules/undo` instead of cancelling a delayed commit.
+    private func showSpamVerdictUndoToast(_ message: String, mailboxId: String, undoToken: String) {
+        commitPendingActionImmediately()
+        let action = UndoableAction(
+            message: message,
+            execute: {},
+            rollback: { @MainActor in
+                Task { @MainActor in
+                    do {
+                        try await APIClient.shared.undoSenderVerdict(mailboxId: mailboxId, undoToken: undoToken)
+                        await self.loadEmailsForCurrentTab(showLoading: false)
+                        await self.refreshReplyLaterCount()
+                        self.showToast("Undone")
+                    } catch {
+                        self.showToast("Couldn't undo", isError: true)
+                    }
+                }
+            }
+        )
+        pendingUndoAction = action
+        showToast(message, isUndo: true, duration: 6.0)
+        let actionID = action.id
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            if self.pendingUndoAction?.id == actionID {
+                self.pendingUndoAction = nil
+            }
+        }
+    }
+
+    private func removeMovedEmailLocally(_ email: Email, to folderId: String) async {
         threadEmails.removeAll { $0.id == email.id }
         emails.removeAll { $0.id == email.id }
 
@@ -129,16 +237,16 @@ extension AppModel {
     }
 
     /// Move to Spam and reject the sender: their future mail is screened out.
-    /// With `unsubscribe`, the Worker also sends the RFC 8058 one-click POST.
-    func reportSpam(_ email: Email, fromList: Bool = false, unsubscribe: Bool = false) async {
-        await moveEmail(email, to: "spam", fromList: fromList, setSenderPreference: true, unsubscribe: unsubscribe)
-        showToast(unsubscribe ? "Reported as spam · unsubscribing" : "Reported as spam")
+    /// With `unsubscribe`, the Worker also sends the RFC 8058 one-click POST;
+    /// with `refileSender` (the default), their Inbox / Promotions / Updates
+    /// mail moves to Spam too (AVE-98).
+    func reportSpam(_ email: Email, fromList: Bool = false, unsubscribe: Bool = false, refileSender: Bool = true) async {
+        await applySpamVerdict(email, to: "spam", fromList: fromList, unsubscribe: unsubscribe, refileSender: refileSender)
     }
 
-    /// Move back to Inbox and allow the sender.
+    /// Move back to Inbox and allow the sender; their other recent Spam is rescued (AVE-98).
     func markNotSpam(_ email: Email, fromList: Bool = false) async {
-        await moveEmail(email, to: "inbox", fromList: fromList, setSenderPreference: true)
-        showToast("Moved to Inbox")
+        await applySpamVerdict(email, to: "inbox", fromList: fromList)
     }
 
     func deleteCurrentEmail() async {

@@ -65,12 +65,14 @@ actor OutboxQueueWorker {
             guard let folderId = payload["folderId"] as? String else { return }
             let setPref = (payload["setSenderPreference"] as? Bool) ?? false
             let unsubscribe = (payload["unsubscribe"] as? Bool) ?? false
+            let refileSender = (payload["refileSender"] as? Bool) ?? true
             try await APIClient.shared.moveEmail(
                 mailboxId: mailboxId,
                 id: emailId,
                 folderId: folderId,
                 setSenderPreference: setPref,
-                unsubscribe: unsubscribe
+                unsubscribe: unsubscribe,
+                refileSender: refileSender
             )
 
         case "delete":

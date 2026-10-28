@@ -23,6 +23,7 @@ import { isSummaryFolderEligible, MIN_SUMMARY_CHARS } from "shared/ai-summaries"
 import { splitEmailList, stripHtml, toEmailListValue } from "~/lib/utils";
 import { createSendKeyStore } from "~/lib/send-idempotency";
 import api from "~/services/api";
+import { useSpamVerdictToast } from "~/hooks/useSpamVerdictToast";
 import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
@@ -88,9 +89,11 @@ export default function EmailPanel({
 	const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
 	const [previewImage, setPreviewImage] = useState<{ url: string; filename: string } | null>(null);
 	const [pendingPurposeMove, setPendingPurposeMove] = useState<string | null>(null);
-	/** Report spam confirmation, only for RFC 8058 bulk mail (AVE-99). */
+	/** Report spam confirmation: "move their other mail" (AVE-98) and, for RFC 8058 bulk mail, "Unsubscribe" (AVE-99). */
 	const [reportSpamOpen, setReportSpamOpen] = useState(false);
 	const [alsoUnsubscribe, setAlsoUnsubscribe] = useState(false);
+	const [alsoRefile, setAlsoRefile] = useState(true);
+	const showSpamVerdictToast = useSpamVerdictToast(mailboxId);
 	const isDraftFolder = folder === Folders.DRAFT;
 	// Notes to self (AVE-60): stickies float over the messages, inline notes sit under theirs.
 	const threadKey = email ? threadKeyFor(email) : undefined;
@@ -214,6 +217,11 @@ export default function EmailPanel({
 			{ mailboxId, id: email.id, folderId, setSenderPreference },
 			{
 				onSuccess: (result) => {
+					// Into / out of Spam: Not spam / Report spam toast with Undo (AVE-98).
+					if (showSpamVerdictToast(result, { folderId, sender: email.sender })) {
+						closePanel();
+						return;
+					}
 					if (setSenderPreference && result?.refiledCount && result.refiledCount > 0) {
 						toastManager.add({
 							title: `Moved — updated ${result.refiledCount} from this sender`,
@@ -253,37 +261,40 @@ export default function EmailPanel({
 			: isDraftFolder || email.folder_id === Folders.DRAFT || email.folder_id === Folders.SENT
 				? null
 				: "report";
-	const runSpamAction = (unsubscribe: boolean) => {
+	const runSpamAction = (options: { unsubscribe?: boolean; refileSender?: boolean } = {}) => {
 		if (!mailboxId || !spamAction) return;
 		const folderId = spamAction === "report" ? Folders.SPAM : Folders.INBOX;
 		moveEmailMut.mutate(
-			{ mailboxId, id: email.id, folderId, setSenderPreference: true, unsubscribe },
+			{
+				mailboxId,
+				id: email.id,
+				folderId,
+				setSenderPreference: true,
+				unsubscribe: options.unsubscribe,
+				refileSender: options.refileSender,
+			},
 			{
 				onSuccess: (result) => {
-					const title =
-						spamAction !== "report"
-							? "Moved to Inbox"
-							: result?.unsubscribe === "sent"
-								? "Reported as spam and unsubscribed"
-								: result?.unsubscribe === "failed"
-									? "Reported as spam · couldn't unsubscribe"
-									: "Reported as spam";
-					toastManager.add({ title });
+					if (!showSpamVerdictToast(result, { folderId, sender: email.sender })) {
+						toastManager.add({ title: spamAction === "report" ? "Reported as spam" : "Moved to Inbox" });
+					}
 					closePanel();
 				},
 			},
 		);
 	};
 	const handleSpamAction = () => {
-		// Bulk mail with RFC 8058 one-click unsubscribe gets a confirmation
-		// offering "Unsubscribe", unchecked by default; everything else
-		// reports straight away as before.
-		if (spamAction === "report" && email.one_click_unsubscribe) {
+		// Report spam confirms first: "Also move their other mail to Spam"
+		// (checked by default, AVE-98) and, for RFC 8058 bulk mail,
+		// "Unsubscribe" (unchecked by default, AVE-99). Not spam runs
+		// straight away; its toast has Undo.
+		if (spamAction === "report") {
 			setAlsoUnsubscribe(false);
+			setAlsoRefile(true);
 			setReportSpamOpen(true);
 			return;
 		}
-		runSpamAction(false);
+		runSpamAction();
 	};
 	const handleDelete = () => { if (mailboxId) { if (!window.confirm("Are you sure you want to delete this email?")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
 
@@ -511,20 +522,38 @@ export default function EmailPanel({
 						</span>{" "}
 						will go to Spam.
 					</p>
-					<label className="flex items-start gap-2.5 mb-5 cursor-pointer select-none">
-						<input
-							type="checkbox"
-							checked={alsoUnsubscribe}
-							onChange={(e) => setAlsoUnsubscribe(e.target.checked)}
-							className="mt-0.5 h-4 w-4 rounded border-kumo-line accent-[var(--accent)] cursor-pointer"
-						/>
-						<span className="text-sm">
-							<span className="font-medium text-kumo-default">Unsubscribe</span>
-							<span className="block text-kumo-subtle">
-								Also ask the sender to stop sending to this list.
+					<div className="flex flex-col gap-3 mb-5">
+						<label className="flex items-start gap-2.5 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								checked={alsoRefile}
+								onChange={(e) => setAlsoRefile(e.target.checked)}
+								className="mt-0.5 h-4 w-4 rounded border-kumo-line accent-[var(--accent)] cursor-pointer"
+							/>
+							<span className="text-sm">
+								<span className="font-medium text-kumo-default">Move their other mail to Spam</span>
+								<span className="block text-kumo-subtle">
+									Also moves what they sent to Inbox, Promotions and Updates.
+								</span>
 							</span>
-						</span>
-					</label>
+						</label>
+						{email.one_click_unsubscribe ? (
+							<label className="flex items-start gap-2.5 cursor-pointer select-none">
+								<input
+									type="checkbox"
+									checked={alsoUnsubscribe}
+									onChange={(e) => setAlsoUnsubscribe(e.target.checked)}
+									className="mt-0.5 h-4 w-4 rounded border-kumo-line accent-[var(--accent)] cursor-pointer"
+								/>
+								<span className="text-sm">
+									<span className="font-medium text-kumo-default">Unsubscribe</span>
+									<span className="block text-kumo-subtle">
+										Also ask the sender to stop sending to this list.
+									</span>
+								</span>
+							</label>
+						) : null}
+					</div>
 					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
 						<Dialog.Close>
 							<Button variant="ghost">Cancel</Button>
@@ -533,7 +562,10 @@ export default function EmailPanel({
 							variant="primary"
 							onClick={() => {
 								setReportSpamOpen(false);
-								runSpamAction(alsoUnsubscribe);
+								runSpamAction({
+									unsubscribe: email.one_click_unsubscribe ? alsoUnsubscribe : false,
+									refileSender: alsoRefile,
+								});
 							}}
 						>
 							Report spam
