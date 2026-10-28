@@ -119,7 +119,7 @@ object PreviewSupport {
         val domainServices = service?.let { mapOf(mailbox.domain to it) } ?: emptyMap()
         val folders = listOf(
             Folder(id = FolderIds.INBOX, name = "Inbox", unreadCount = 3),
-            Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 1),
+            Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 2),
             Folder(id = FolderIds.PROMOTIONS, name = "Promotions", unreadCount = 0),
             Folder(id = FolderIds.UPDATES, name = "Updates", unreadCount = 0),
             Folder(id = FolderIds.SENT, name = "Sent", unreadCount = 0),
@@ -318,6 +318,10 @@ object PreviewSupport {
                 )
             }
         }
+        // Screening room queue behind the Inbox "N waiting to be screened" row (AVE-136).
+        app.setScreenerQueueForPreview(
+            if (mode == PreviewMode.SettingsScreenerOff) emptyList() else allEmails.filter { it.folderId == FolderIds.SCREENER },
+        )
         if (mode == PreviewMode.Toast) {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo = true, durationMs = 0)
@@ -694,6 +698,34 @@ object PreviewSupport {
             starred = false,
             body = "<p>Hi — we'd love to show you Acme. No pressure.</p>",
             snippet = "Hi — we'd love to show you Acme. No pressure.",
+            folderName = "Screener",
+        ),
+        Email(
+            id = "preview-screener-2",
+            folderId = FolderIds.SCREENER,
+            subject = "Coffee next week?",
+            sender = "maya@lumen.example",
+            senderName = "Maya Patel",
+            recipient = you,
+            date = "2026-09-18T16:40:00.000Z",
+            read = false,
+            starred = false,
+            body = "<p>Saw your talk at the meetup and would love to compare notes.</p>",
+            snippet = "Saw your talk at the meetup and would love to compare notes.",
+            folderName = "Screener",
+        ),
+        Email(
+            id = "preview-screener-3",
+            folderId = FolderIds.SCREENER,
+            subject = "Your free trial is waiting",
+            sender = "team@northwind.example",
+            senderName = "Northwind",
+            recipient = you,
+            date = "2026-09-17T09:05:00.000Z",
+            read = true,
+            starred = false,
+            body = "<p>Start your 14-day trial of Northwind Analytics today.</p>",
+            snippet = "Start your 14-day trial of Northwind Analytics today.",
             folderName = "Screener",
         ),
         Email(
