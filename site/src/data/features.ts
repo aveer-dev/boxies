@@ -118,9 +118,9 @@ const rows: Feature[] = [
 		title: "Safe HTML",
 		href: "/support#html",
 		platforms: ["ios", "android", "web"],
-		description: "Email HTML is cleaned, scripts never run, and messages render in a sandbox. Remote images wait until you choose Load images, and you can view any message’s headers.",
+		description: "Email HTML is cleaned, scripts never run, and messages render in a sandbox. In Spam, remote images wait until you choose Load images, and you can view any message’s headers.",
 		status: "available",
-		src: "FSW#supporting-features (safe HTML); FC#4.5; EmailPanelDialogs.tsx and EmailActionsSheet.swift (headers only, no raw MIME); dev 061e0ea EmailIframe.tsx, eda481f EmailHTMLSanitizer.swift / EmailBodyView.kt (remote images blocked until Load images)",
+		src: "FSW#supporting-features (safe HTML); FC#4.5; EmailPanelDialogs.tsx and EmailActionsSheet.swift (headers only, no raw MIME); dev AVE-132 (Spam blocks remote images until Load images) (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)",
 	},
 	{
 		id: "sign-in",

@@ -12,7 +12,7 @@ import { APP_HOST, GITHUB_URL, SUPPORT_EMAIL, flags } from "../config";
 import type { LegalDoc } from "./types";
 
 /** The date these documents last changed. Bump it with any edit to the copy below. */
-export const legalUpdated = "2026-10-15";
+export const legalUpdated = "2026-10-28";
 
 const MAIL_US = `[${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL})`;
 
@@ -60,7 +60,7 @@ export const privacy: LegalDoc = {
 				{
 					list: [
 						"To run the service: receive, store, sort, search, display and send your mail, and keep your apps in sync.",
-						"To protect you: check incoming mail for spam and spoofing, hold new senders in the Screener, block remote images until you load them, and limit sign-in attempts and sending.",
+						"To protect you: check incoming mail for spam and spoofing, hold new senders in the Screener, block remote images in Spam until you load them, and limit sign-in attempts and sending.",
 						"To run the assistant, as described in [AI and your mail](#privacy-ai).",
 						"To notify you about new mail, if you’ve allowed notifications.",
 						"To set up and bill custom domains, and to email you about renewals and a domain’s service ending.",
@@ -138,9 +138,9 @@ export const privacy: LegalDoc = {
 						],
 					],
 				},
-				"Mail you send goes to its recipients and their providers, and forwarding sends copies where you’ve told it to. We may also disclose data when the law requires it, to protect people’s safety or our service from abuse, or to a successor if Inboxies is reorganised or sold, in which case this policy keeps applying to your data.",
+				"Mail you send goes to its recipients and their providers, and forwarding sends copies where you’ve told it to. Outside Spam, images in a message load from the sender’s servers when you open it, so the sender can see that it was opened and the IP address it was opened from. We may also disclose data when the law requires it, to protect people’s safety or our service from abuse, or to a successor if Inboxies is reorganised or sold, in which case this policy keeps applying to your data.",
 			],
-			src: "wrangler.jsonc bindings; workers/lib/cloudflare-registrar.ts; workers/lib/stripe.ts, workers/routes/billing.ts:336-344; workers/auth/apple.ts; workers/lib/apns.ts, push-payload.ts (title, subtitle, 140-char preview); workers/lib/fcm.ts; app/root.tsx:98-106 (Google Fonts); app/components/settings/SignInSettings.tsx:79 (GSI)",
+			src: "wrangler.jsonc bindings; workers/lib/cloudflare-registrar.ts; workers/lib/stripe.ts, workers/routes/billing.ts:336-344; workers/auth/apple.ts; workers/lib/apns.ts, push-payload.ts (title, subtitle, 140-char preview); workers/lib/fcm.ts; app/root.tsx:98-106 (Google Fonts); app/components/settings/SignInSettings.tsx:79 (GSI); shared/remote-images.ts (remote images load outside Spam, AVE-132)",
 		},
 		{
 			id: "privacy-location",
@@ -184,7 +184,7 @@ export const privacy: LegalDoc = {
 						"**See and take your data.** Your mail is in the apps. Domain admins can export every mailbox on a domain to .mbox from Admin → Export.",
 						`**Correct it.** Change your backup email, password, sign-in methods and the name your mail is sent from in Settings, or write to ${MAIL_US} to fix anything else.`,
 						"**Delete it.** Delete a mailbox in its settings, or your whole account in Settings → Account → Delete account, on the web or in the iPhone app.",
-						"**Control what reaches you.** Keep new senders in the Screener, leave remote images blocked, turn notifications off, and sign out other sessions from Settings.",
+						"**Control what reaches you.** Keep new senders in the Screener, leave remote images in Spam blocked, turn notifications off, and sign out other sessions from Settings.",
 					],
 				},
 				`Depending on where you live, you may also have the right to access, correct, delete or port your data, to object to or restrict how we use it, and to withdraw consent. To use any of these rights, or to get a copy of data you can’t export yourself, write to ${MAIL_US} from the address on your account. We’ll answer within the time the law sets, usually a month.`,

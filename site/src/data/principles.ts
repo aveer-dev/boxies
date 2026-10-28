@@ -39,9 +39,9 @@ export const facts: Principle[] = [
 export const plainly: CalloutCopy = {
 	id: "plainly",
 	title: "Plainly:",
-	body: "Inboxies doesn’t add end-to-end encryption. Cloudflare encrypts stored mail at rest, and the service that runs Inboxies can technically read it, as with most hosted email. Remote images stay hidden until you choose Load images; once you do, a sender’s tracking pixel can fire. [More in Support](/support#encryption)",
+	body: "Inboxies doesn’t add end-to-end encryption. Cloudflare encrypts stored mail at rest, and the service that runs Inboxies can technically read it, as with most hosted email. Remote images load when you open a message, so a sender’s tracking pixel can fire. In Spam they stay hidden until you choose Load images. [More in Support](/support#encryption)",
 	claim: "negated",
-	src: "PS#5 (privacy of mail at rest); dev 061e0ea EmailIframe.tsx, eda481f EmailHTMLSanitizer.swift / EmailBodyView.kt (remote images opt-in per message)",
+	src: "PS#5 (privacy of mail at rest); dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)",
 	ownerConfirm: "approve candid wording",
 };
 

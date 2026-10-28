@@ -7,7 +7,9 @@
 // working version on 8 Oct), iPhone AutoFill and the Chrome extension until
 // people can install them, internal fixes (Stripe webhook signing, CI, type
 // errors), the hidden "For you" digest from 11 Sep (that entry is "Dark
-// mode"), and the 20 Aug deploy fix.
+// mode"), the 20 Aug deploy fix, and 11 Oct "Remote images wait for you"
+// (superseded by AVE-132, #168: images load, and only Spam holds them back;
+// its own entry waits until asOf in config.ts moves past its merge date).
 import { flags } from "../config";
 import type { ChangeEntry } from "./types";
 
@@ -20,12 +22,6 @@ export const entries: ChangeEntry[] = [
 		description:
 			"The web app puts your mailboxes, folders, the list and the message side by side, and every view has its own link, so back, reload and bookmarks work. Reply from the box under a message, press C to write, ⌘K to search and ⌘J to ask the assistant. On a phone, each column gets its own screen.",
 		src: "PR #53 (87720b1, 4545317; main 10 Oct), on dev via 6ebc554 \"Merge main into dev\" 11 Oct; FloatingDock.tsx, QuickReplyBar.tsx, ColumnCanvas.tsx",
-	},
-	{
-		date: "2026-10-11",
-		title: "Remote images wait for you",
-		description: `Images from a sender’s servers stay hidden until you choose Load images on that message, in the web app and ${appsLine}. Until then, a tracking pixel can’t report that you opened it.`,
-		src: "PR #54 (061e0ea, web EmailIframe.tsx) and PR #59 (eda481f, EmailHTMLSanitizer.swift, EmailBodyView.kt), on dev via #51 → #63 (1df8f99) 11 Oct",
 	},
 	{
 		date: "2026-10-11",
