@@ -56,6 +56,12 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Notes("notes", "previewNotes"),
     /** Q3 thread open with a sticky note and inline notes (iOS `-previewDetail -previewNotes`). */
     NotesDetail("notesDetail", "previewNotesDetail"),
+    /** Agent chat open with the usage meter at the warning level, 42 / 50 (iOS `-previewAiUsage`). */
+    AiUsage("aiUsage", "previewAiUsage"),
+    /** Agent chat at the daily limit, 50 / 50: notice + disabled composer (iOS `-previewAiUsageLimit`). */
+    AiUsageLimit("aiUsageLimit", "previewAiUsageLimit"),
+    /** Settings sheet with the AI usage section filled (42 / 50 chats, 37 / 200 checks). */
+    AiUsageSettings("aiUsageSettings", "previewAiUsageSettings"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),

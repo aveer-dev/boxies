@@ -28,6 +28,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import co.inboxies.app.models.AiUsageFormat
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -56,6 +57,10 @@ class AgentChatClient(
 
     private val _historyError = MutableStateFlow<String?>(null)
     val historyError: StateFlow<String?> = _historyError.asStateFlow()
+
+    /** Set once the agent returns the typed daily-limit error (AVE-45). */
+    private val _quotaExceeded = MutableStateFlow(false)
+    val quotaExceeded: StateFlow<Boolean> = _quotaExceeded.asStateFlow()
 
     var onStreamFinished: ((Boolean) -> Unit)? = null
     var onHistoryLoaded: ((List<ChatMessage>) -> Unit)? = null
@@ -498,12 +503,29 @@ class AgentChatClient(
         _statusText.value = null
         streamingAssistantId = null
         pendingToolCalls.clear()
+        val text = displayErrorText(errorMsg)
+        if (AiUsageFormat.isQuotaError(errorMsg)) _quotaExceeded.value = true
+        // The agent sends a stream error both as an error frame and as an
+        // `error` chunk; show it once.
+        val last = _messages.value.lastOrNull()
+        if (last != null && last.isError && last.text == text) return
         _messages.value = _messages.value + ChatMessage(
             id = UUID.randomUUID().toString(),
             role = "assistant",
-            text = errorMsg,
+            text = text,
             isError = true,
         )
+    }
+
+    /**
+     * Typed agent errors arrive as JSON (`shared/ai-quota.ts`, e.g. the daily
+     * AI chat limit, AVE-45); show their `message`. Other errors pass through.
+     */
+    private fun displayErrorText(errorMsg: String): String {
+        if (!errorMsg.startsWith("{")) return errorMsg
+        val obj = runCatching { Json.parseToJsonElement(errorMsg).jsonObject }.getOrNull() ?: return errorMsg
+        if (obj["type"]?.jsonPrimitive?.contentOrNull != "ai_quota_exceeded") return errorMsg
+        return obj["message"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotEmpty() } ?: errorMsg
     }
 
     private fun jsonBoolean(el: JsonElement?): Boolean {

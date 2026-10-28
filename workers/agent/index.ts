@@ -34,6 +34,8 @@ import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "
 import { mailboxIdFromAgentName } from "../../shared/agent-conversations";
 import type { Env } from "../types";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
+import { AUTO_DRAFT_HISTORY_LIMIT } from "../lib/ai-quota";
+import { chatHistoryForModel, chatQuotaGate } from "../lib/agent-chat-limits";
 
 // AI SDK v6 changed tool() overloads significantly. We define tools as plain
 // objects matching the Tool type to avoid overload resolution issues.
@@ -293,6 +295,11 @@ export class EmailAgent extends AIChatAgent<any> {
 		const env = this.env as Env;
 		// Support legacy `mailboxId` and multi-chat `mailboxId::conversationId` names.
 		const mailboxId = mailboxIdFromAgentName(this.name);
+		// Daily per-mailbox chat quota (AVE-45): over it, reply with the typed
+		// error instead of calling the model.
+		const overQuota = await chatQuotaGate(getMailboxStub(env, mailboxId), mailboxId);
+		if (overQuota) return overQuota;
+
 		const workersai = createWorkersAI({ binding: env.AI });
 		const tools = createEmailTools(env, mailboxId);
 		const systemPrompt = await getSystemPrompt(env, mailboxId);
@@ -300,7 +307,9 @@ export class EmailAgent extends AIChatAgent<any> {
 		const result = streamText({
 			model: workersai("@cf/moonshotai/kimi-k2.5"),
 			system: systemPrompt,
-			messages: await convertToModelMessages(this.messages),
+			// Only the last CHAT_HISTORY_LIMIT messages reach the model; the
+			// full history stays persisted for the UI.
+			messages: await chatHistoryForModel(this.messages),
 			tools,
 			stopWhen: stepCountIs(5),
 			onFinish,
@@ -319,6 +328,33 @@ export class EmailAgent extends AIChatAgent<any> {
 	async purge(): Promise<{ status: string }> {
 		await this.destroy();
 		return { status: "purged" };
+	}
+
+	/**
+	 * Log an auto-draft run (prompt line + outcome) in this conversation,
+	 * which is always the reserved `auto` one. The run itself never reads
+	 * this history; it is capped so it cannot grow without bound.
+	 */
+	private async persistAutoRun(userText: string, assistantText: string) {
+		const now = new Date();
+		const newMessages = [
+			{
+				id: crypto.randomUUID(),
+				role: "user" as const,
+				content: userText,
+				createdAt: now,
+				parts: [{ type: "text" as const, text: userText }],
+			},
+			{
+				id: crypto.randomUUID(),
+				role: "assistant" as const,
+				content: assistantText,
+				createdAt: now,
+				parts: [{ type: "text" as const, text: assistantText }],
+			},
+		];
+		this.maxPersistedMessages = AUTO_DRAFT_HISTORY_LIMIT;
+		await this.persistMessages([...this.messages, ...newMessages]);
 	}
 
 	/**
@@ -363,23 +399,10 @@ export class EmailAgent extends AIChatAgent<any> {
 					console.warn("Skipping auto-draft due to detected prompt injection:", emailData.emailId);
 					
 					// Log to agent chat so the user knows why it skipped
-					const newMessages = [
-						{
-							id: crypto.randomUUID(),
-							role: "user" as const,
-							content: `[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"`,
-							createdAt: new Date(),
-							parts: [{ type: "text" as const, text: `[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"` }],
-						},
-						{
-							id: crypto.randomUUID(),
-							role: "assistant" as const,
-							content: "⚠️ Blocked auto-draft creation: the email appears to contain prompt injection or malicious instructions.",
-							createdAt: new Date(),
-							parts: [{ type: "text" as const, text: "⚠️ Blocked auto-draft creation: the email appears to contain prompt injection or malicious instructions." }],
-						},
-					];
-					await this.persistMessages([...this.messages, ...newMessages]);
+					await this.persistAutoRun(
+						`[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"`,
+						"⚠️ Blocked auto-draft creation: the email appears to contain prompt injection or malicious instructions.",
+					);
 					
 					return;
 				}
@@ -409,23 +432,10 @@ export class EmailAgent extends AIChatAgent<any> {
 				const threadInjection = await isPromptInjection(env.AI, threadContext);
 				if (threadInjection) {
 					console.warn("Skipping auto-draft due to prompt injection in thread context:", emailData.threadId);
-					const newMessages = [
-						{
-							id: crypto.randomUUID(),
-							role: "user" as const,
-							content: `[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"`,
-							createdAt: new Date(),
-							parts: [{ type: "text" as const, text: `[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"` }],
-						},
-						{
-							id: crypto.randomUUID(),
-							role: "assistant" as const,
-							content: "Blocked auto-draft creation: the thread context appears to contain prompt injection or malicious instructions.",
-							createdAt: new Date(),
-							parts: [{ type: "text" as const, text: "Blocked auto-draft creation: the thread context appears to contain prompt injection or malicious instructions." }],
-						},
-					];
-					await this.persistMessages([...this.messages, ...newMessages]);
+					await this.persistAutoRun(
+						`[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"`,
+						"Blocked auto-draft creation: the thread context appears to contain prompt injection or malicious instructions.",
+					);
 					return;
 				}
 			}
@@ -532,34 +542,10 @@ Based on the email content and thread context above, draft a reply using draft_r
 				? `Created draft reply to ${emailData.sender}.`
 				: result.text;
 
-			const newMessages = [
-				{
-					id: crypto.randomUUID(),
-					role: "user" as const,
-					content: `[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"`,
-					createdAt: new Date(),
-					parts: [
-						{
-							type: "text" as const,
-							text: `[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"`,
-						},
-					],
-				},
-				{
-					id: crypto.randomUUID(),
-					role: "assistant" as const,
-					content: assistantText,
-					createdAt: new Date(),
-					parts: [
-						{
-							type: "text" as const,
-							text: assistantText,
-						},
-					],
-				},
-			];
-
-			await this.persistMessages([...this.messages, ...newMessages]);
+			await this.persistAutoRun(
+				`[Auto-triggered] New email from ${emailData.sender}: "${emailData.subject}"`,
+				assistantText,
+			);
 
 			return { status: "draft_generated", text: result.text };
 		} catch (e) {

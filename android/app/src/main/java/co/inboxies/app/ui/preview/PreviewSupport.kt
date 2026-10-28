@@ -13,6 +13,8 @@ import co.inboxies.app.models.InvitePublic
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxAcl
+import co.inboxies.app.models.AiUsageCounter
+import co.inboxies.app.models.AiUsageSnapshot
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.ScreenerSettings
 import co.inboxies.app.models.SignatureSettings
@@ -82,6 +84,19 @@ object PreviewSupport {
             )
             else -> null
         }
+    }
+
+    /** AI usage fixture (AVE-45): warning level 42 / 50, or the limit 50 / 50. Resets next UTC midnight. */
+    fun aiUsage(atLimit: Boolean): AiUsageSnapshot {
+        val today = java.time.LocalDate.now(java.time.ZoneOffset.UTC)
+        val resetsAt = today.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant()
+        return AiUsageSnapshot(
+            tier = "free",
+            day = today.toString(),
+            resetsAt = resetsAt.toString(),
+            chat = AiUsageCounter(used = if (atLimit) 50 else 42, limit = 50),
+            inbound = AiUsageCounter(used = 37, limit = 200),
+        )
     }
 
     fun applyMailboxPreview(app: AppModel, mode: PreviewMode) {

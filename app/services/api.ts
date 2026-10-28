@@ -41,6 +41,7 @@ import type {
 	UpdateThreadNoteRequest,
 } from "~/types";
 import { idempotencyHeaders } from "~/lib/send-idempotency";
+import type { AiUsageSnapshot } from "../../shared/ai-quota";
 import { suppressionAddressPath, type SuppressedRecipient } from "~/lib/suppression";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -547,6 +548,11 @@ const api = {
 		del<void>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-preferences/${encodeURIComponent(address)}`,
 		),
+	/** Today's AI usage meters for the mailbox (AVE-45). */
+	getAiUsage: (mailboxId: string, opts?: { signal?: AbortSignal }) =>
+		get<AiUsageSnapshot>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/ai-usage`, {
+			signal: opts?.signal,
+		}),
 	listSenderRules: (
 		mailboxId: string,
 		params?: { verdict?: SenderRuleVerdict; kind?: SenderRuleKind; q?: string; limit?: number },

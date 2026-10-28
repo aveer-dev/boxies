@@ -733,5 +733,20 @@ export const mailboxMigrations: Migration[] = [
                 ON sender_verdict_undo(expires_at);
         `),
 	},
+	{
+		// LLM quotas (AVE-45, workers/lib/ai-quota.ts): one counter per UTC day
+		// and bucket ('chat' agent turns, 'inbound' classification + auto-draft
+		// runs). Rows older than a week are pruned on write. Additive only: a
+		// new table. Numbered 41: dev's highest is 40_sender_verdict_undo.
+		name: "41_ai_usage",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS ai_usage (
+                day TEXT NOT NULL,
+                bucket TEXT NOT NULL CHECK (bucket IN ('chat', 'inbound')),
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (day, bucket)
+            );
+        `),
+	},
 ];
 

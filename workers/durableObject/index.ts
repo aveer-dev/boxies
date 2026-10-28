@@ -169,6 +169,16 @@ import {
 } from "../lib/ai-summary";
 import { normalizeEmailAddress } from "../lib/mail-automations";
 import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
+import type { AiUsageSnapshot } from "../../shared/ai-quota";
+import {
+	AI_DAILY_LIMITS,
+	aiUsageSnapshot,
+	consumeAiQuota,
+	dailyLimit,
+	type AiQuotaBucket,
+	type AiQuotaResult,
+	type PlanTier,
+} from "../lib/ai-quota";
 
 /**
  * DO-side summary result. Model failures come back as a value rather than a
@@ -415,6 +425,22 @@ export class MailboxDO extends DurableObject<Env> {
 	/** True when the mailbox has not been purged (safe for inbound preflight). */
 	async isWritable(): Promise<boolean> {
 		return !(await this.#isMailboxDeleted());
+	}
+
+	/**
+	 * Count one LLM request against today's (UTC) mailbox quota (AVE-45).
+	 * Refused when the bucket is at its plan-tier limit; see lib/ai-quota.ts.
+	 */
+	async consumeAiQuota(bucket: AiQuotaBucket, tier: PlanTier = "free"): Promise<AiQuotaResult> {
+		if (bucket !== "chat" && bucket !== "inbound") throw new Error(`Unknown AI quota bucket: ${bucket}`);
+		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+		return consumeAiQuota(this.ctx.storage.sql, bucket, dailyLimit(planTier, bucket));
+	}
+
+	/** Today's AI usage against the plan-tier limits, for usage meters (AVE-45). */
+	async getAiUsage(tier: PlanTier = "free"): Promise<AiUsageSnapshot> {
+		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+		return aiUsageSnapshot(this.ctx.storage.sql, planTier);
 	}
 
 	constructor(state: DurableObjectState, env: Env) {

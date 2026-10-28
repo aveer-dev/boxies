@@ -51,6 +51,7 @@ import {
 	agentInstanceName,
 } from "../shared/agent-conversations";
 import { getEmailAgent, purgeEmailAgent, purgeEmailAgents } from "./lib/email-agent";
+import { getPlanTier, tryConsumeAiQuota } from "./lib/ai-quota";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
@@ -1056,6 +1057,14 @@ app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) 
 app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppContext) => {
 	await c.var.mailboxStub.markThreadRead(c.req.param("threadId")!);
 	return c.json({ status: "marked_read" });
+});
+
+// -- AI usage meters (AVE-45) ---------------------------------------
+// Today's per-mailbox AI counters and limits; read-only, one DO query.
+app.get("/api/v1/mailboxes/:mailboxId/ai-usage", async (c: AppContext) => {
+	const usage = await c.var.mailboxStub.getAiUsage(getPlanTier(c.var.mailboxId));
+	c.header("Cache-Control", "no-store");
+	return c.json(usage);
 });
 
 // -- AI summaries (AVE-20) ------------------------------------------
@@ -2185,6 +2194,19 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 				auth,
 			},
 			env.AI as ClassifyAi,
+			{
+				// Over the daily inbound AI quota (AVE-45): rules-only verdict.
+				allowAi: async () => {
+					const quota = await tryConsumeAiQuota(stub, mailboxId, "inbound");
+					if (quota && !quota.allowed) {
+						console.warn(
+							`Inbound AI quota reached for ${mailboxId} (${quota.used}/${quota.limit}); classifying by rules only`,
+						);
+						return false;
+					}
+					return true;
+				},
+			},
 		);
 		console.log(
 			`Classified inbound mail for ${mailboxId} as ${classification.class} (${classification.folderId}): ${classification.reason}`,
@@ -2428,6 +2450,14 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		) {
 			ctx.waitUntil(
 				(async () => {
+					// Over the daily inbound AI quota (AVE-45): no auto-draft.
+					const quota = await tryConsumeAiQuota(stub, mailboxId, "inbound");
+					if (quota && !quota.allowed) {
+						console.warn(
+							`Inbound AI quota reached for ${mailboxId} (${quota.used}/${quota.limit}); skipping auto-draft`,
+						);
+						return;
+					}
 					await stub.ensureAutoAgentConversation();
 					const agent = await getEmailAgent(
 						env,

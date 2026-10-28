@@ -114,6 +114,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import co.inboxies.app.models.ChatSession
 import co.inboxies.app.models.AdminDomainInfo
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.EmailDateFilter
@@ -189,7 +190,10 @@ fun HomeShellView(
     var showSearch by remember { mutableStateOf(false) }
     /** Inbox "Show N more new" replaced the list with the All new screen (AVE-23). */
     var showAllNew by remember { mutableStateOf(false) }
-    var showChat by remember { mutableStateOf(false) }
+    // DEBUG previews (e.g. `aiUsage`) seed an open chat session before first composition.
+    var showChat by remember {
+        mutableStateOf(appModel.isDebugPreview && appModel.chatSession.value !is ChatSession.Dismissed)
+    }
     var showSettings by remember { mutableStateOf(false) }
     var showMailboxMenu by remember { mutableStateOf(false) }
     var showAddMailbox by remember { mutableStateOf(false) }

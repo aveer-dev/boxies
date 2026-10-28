@@ -489,6 +489,11 @@ struct ChatConversationDetailView: View {
     @State private var activeSearchQuery: String?
     @State private var showRenameAlert = false
     @State private var renameText = ""
+    /// Today's AI usage for the mailbox (AVE-45); nil until loaded or when unavailable.
+    @State private var aiUsage: AIUsage?
+    /// The agent refused a turn with the typed daily-limit error.
+    @State private var quotaErrorReceived = false
+    @State private var bottomBarHeight: CGFloat = 52
 
     private let suggestedPrompts = [
         "Show latest inbox emails",
@@ -517,8 +522,14 @@ struct ChatConversationDetailView: View {
         chat.isConnected && !isWaitingForHistory
     }
 
+    /// Today's chat limit is spent: lock the composer until the reset.
+    private var isChatLimitReached: Bool {
+        quotaErrorReceived || aiUsage.map { AIUsageLevel($0.chat) == .exhausted } == true
+    }
+
     private var isSendDisabled: Bool {
         draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || chat.isStreaming || !isChatReady
+            || isChatLimitReached
     }
 
     var body: some View {
@@ -529,10 +540,10 @@ struct ChatConversationDetailView: View {
                     isInputFocused = false
                 }
                 .safeAreaInset(edge: .bottom) {
-                    Color.clear.frame(height: 70)
+                    Color.clear.frame(height: bottomBarHeight + 18)
                 }
 
-            inputBar
+            bottomBar
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
         }
@@ -669,6 +680,19 @@ struct ChatConversationDetailView: View {
                 draft = seed
                 onSeedConsumed?()
             }
+        }
+        .task { await refreshAIUsage() }
+        .onChange(of: chat.isStreaming) { wasStreaming, isStreaming in
+            // A finished turn moved the counter.
+            if wasStreaming && !isStreaming {
+                Task { await refreshAIUsage() }
+            }
+        }
+        .onChange(of: chat.quotaErrorCount) { _, _ in
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                quotaErrorReceived = true
+            }
+            Task { await refreshAIUsage() }
         }
         .onChange(of: conversationId) { _, _ in
             draft = ""
@@ -899,6 +923,39 @@ struct ChatConversationDetailView: View {
         }
     }
 
+    /// Usage meter (or the limit notice) stacked over the composer.
+    private var bottomBar: some View {
+        VStack(spacing: 8) {
+            if isChatLimitReached {
+                AIUsageLimitNotice(resetsAt: aiUsage?.resetsAtDate)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let aiUsage {
+                AIUsageMeter(counter: aiUsage.chat, noun: "AI chats", resetsAt: aiUsage.resetsAtDate)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .liquidGlass(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            inputBar
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { bottomBarHeight = proxy.size.height }
+                    .onChange(of: proxy.size.height) { _, height in bottomBarHeight = height }
+            }
+        }
+    }
+
+    private func refreshAIUsage() async {
+        guard let usage = await app.loadAIUsage() else { return }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            aiUsage = usage
+            // A fresh snapshot under the limit (e.g. after the UTC reset) unlocks the composer.
+            if AIUsageLevel(usage.chat) != .exhausted { quotaErrorReceived = false }
+        }
+    }
+
     private var inputBar: some View {
         HStack(spacing: 10) {
             inputField
@@ -911,8 +968,9 @@ struct ChatConversationDetailView: View {
         HStack(spacing: 10) {
             Image(systemName: "sparkles")
                 .foregroundStyle(AppTheme.muted)
-            TextField("Ask about your inbox…", text: $draft)
+            TextField(isChatLimitReached ? "Daily AI chat limit reached" : "Ask about your inbox…", text: $draft)
                 .font(.inter(size: AppTheme.Chat.input, weight: .regular))
+                .disabled(isChatLimitReached)
                 .focused($isInputFocused)
                 .submitLabel(.send)
                 .onSubmit {
