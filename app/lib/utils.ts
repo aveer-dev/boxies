@@ -10,6 +10,7 @@
  */
 import DOMPurify from "dompurify";
 import { formatQuotedDate } from "shared/dates";
+import { decodeEntities, htmlToQuotedText } from "shared/quoted-text";
 import type { Attachment } from "~/types";
 
 export {
@@ -107,39 +108,10 @@ export function stripHtml(html: string): string {
 		.trim();
 }
 
-/**
- * Plain text that keeps paragraph and line breaks, for quoting a message in a
- * reply or forward (works without a DOM, unlike htmlToPlainText).
- */
-export function htmlToQuotedText(html: string): string {
-	const withBreaks = dropNonContent(html)
-		.replace(/<br\s*\/?>/gi, "\n")
-		.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n")
-		.replace(/<li[^>]*>/gi, "• ")
-		.replace(/<[^>]*>/g, "");
-	return decodeHtmlEntities(withBreaks)
-		.split("\n")
-		.map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
-		.join("\n")
-		.replace(/\n{3,}/g, "\n\n")
-		.trim();
-}
+export { htmlToQuotedText };
 
 function decodeHtmlEntities(text: string): string {
-	return text
-		.replace(/&#(\d+);/g, (_match: string, code: string) =>
-			String.fromCharCode(Number(code)),
-		)
-		.replace(/&#x([0-9a-f]+);/gi, (_match: string, hex: string) =>
-			String.fromCharCode(Number.parseInt(hex, 16)),
-		)
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'")
-		.replace(/&apos;/g, "'")
-		.replace(/&nbsp;/g, " ");
+	return decodeEntities(text).replace(/[\u00ad\u034f\u200b\u200c\ufeff]/g, "");
 }
 
 export function getSnippetText(

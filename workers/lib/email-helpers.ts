@@ -13,6 +13,7 @@ import type { EmailFull } from "./schemas";
 import { Folders } from "../../shared/folders";
 import type { Env } from "../types";
 import { formatQuotedDate } from "../../shared/dates";
+import { htmlToQuotedText } from "../../shared/quoted-text";
 import { canonicalMailboxId } from "./mailbox-routing";
 import { listAllR2Objects } from "./r2-list";
 
@@ -263,7 +264,9 @@ export function buildQuotedReplyBlock(original: {
 	// The original HTML renders safely in the sandboxed iframe, but quoted
 	// reply blocks are injected into the compose editor and outgoing emails
 	// where raw HTML would execute. Convert to escaped plain text instead.
-	const plainBody = stripHtmlToText(original.body);
+	// Keep line structure and drop CSS/preheader junk (AVE-133); same helper as the web composer.
+	const plainBody = htmlToQuotedText(original.body);
+	if (!plainBody) return "";
 	const bodyToQuote = escapeHtml(plainBody).replace(/\n/g, "<br>");
 
 	return `<br><blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;">On ${originalDate}, ${originalSender} wrote:<br><br>${bodyToQuote}</blockquote>`;

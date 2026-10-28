@@ -78,7 +78,7 @@ object ComposeHtml {
     }
 
     fun quotedOriginal(from: Email): QuotedOriginal? {
-        val text = stripHtml(from.body ?: from.snippet.orEmpty())
+        val text = QuotedText.fromHtml(from.body ?: from.snippet.orEmpty())
         if (text.isEmpty()) return null
         return QuotedOriginal(
             header = "On ${DateUtils.formatMediumDateTime(from.date)}, ${from.formattedFrom} wrote:",
@@ -120,7 +120,7 @@ object ComposeHtml {
         parts += "Subject: ${original.subject}"
         parts += "To: ${original.recipient}"
         parts += ""
-        parts += stripHtml(original.body.orEmpty())
+        parts += QuotedText.fromHtml(original.body)
         return parts.joinToString("\n")
     }
 

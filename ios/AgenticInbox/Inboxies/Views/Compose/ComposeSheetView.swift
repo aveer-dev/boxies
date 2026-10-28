@@ -181,6 +181,15 @@ struct ComposeSheetView: View {
                 .keyboardShortcut("s", modifiers: .command)
                 .opacity(0)
             }
+            #if DEBUG
+            .task {
+                // `-previewReplyQuote -previewQuoteOpen` (AVE-133): open the quoted original for screenshots.
+                if ProcessInfo.processInfo.arguments.contains("-previewQuoteOpen"), form.quotedOriginal != nil {
+                    try? await Task.sleep(nanoseconds: 600_000_000)
+                    showQuotedOriginal = true
+                }
+            }
+            #endif
             .sheet(isPresented: $showQuotedOriginal) {
                 if let quoted = form.quotedOriginal {
                     quotedOriginalSheet(quoted)

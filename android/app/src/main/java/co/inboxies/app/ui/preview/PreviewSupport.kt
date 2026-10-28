@@ -562,6 +562,43 @@ object PreviewSupport {
     }
 
     /**
+     * AVE-133: a promo mail whose HTML carries a `<style>` block, a hidden `&shy;`/`&zwnj;`
+     * preheader and layout tables, so the reply's quoted original shows the cleaned text.
+     * iOS twin: `PreviewSupport.promoEmail` (`-previewMailbox -previewReplyQuote`).
+     */
+    fun promoEmail(you: String = addr("you")): Email = Email(
+        id = "preview-promo",
+        folderId = FolderIds.INBOX,
+        subject = "Don’t let the details haunt you",
+        sender = "uber@uber.example",
+        senderName = "Uber",
+        recipient = you,
+        date = "2026-10-27T16:46:00.000Z",
+        read = true,
+        starred = false,
+        body = PROMO_HTML,
+        snippet = "Grab everything for spooky season in one easy order.",
+    )
+
+    private val PROMO_HTML = """
+        <html><head><style type="text/css">body{margin:0;padding:0} .mso td{padding:0}</style></head><body>
+        <div style="display:none;max-height:0;overflow:hidden;mso-hide:all">Grab everything for spooky season in one easy order.&#847; &zwnj; &nbsp; &shy; &#847; &zwnj; &nbsp; &shy; &#847; &zwnj; &nbsp; &shy;</div>
+        <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#000000">
+          <tr><td align="center" style="padding:24px;color:#ffffff;font-size:28px;">Uber</td></tr>
+          <tr><td style="padding:24px;color:#ffffff;">
+            <h1 style="font-size:36px;">Don&rsquo;t let the details haunt you. Save 30%.</h1>
+            <p>Whatever&#39;s on your Halloween list, you&#39;ll find it on Uber&nbsp;Eats. Spend ${'$'}40+ and save up to ${'$'}20. Terms&nbsp;apply.</p>
+            <a href="https://example.com/shop" style="background:#ffffff;color:#000000;padding:12px 20px;">Shop now</a>
+          </td></tr>
+          <tr><td style="padding:24px;color:#ffffff;"><h2>All treats, no tricks</h2><p>${'$'}0 Delivery Fee</p></td></tr>
+          <tr><td style="color:#ffffff;">${'$'}17.09</td><td style="color:#999999;"><s>${'$'}24.39</s></td><td style="color:#00c853;">30% off</td></tr>
+          <tr><td colspan="3" style="color:#ffffff;">REESE&#39;S Assorted Peanut Butter Halloween&hellip;</td></tr>
+        </table>
+        <img src="https://example.com/open.gif" width="1" height="1" style="display:none">
+        </body></html>
+    """.trimIndent()
+
+    /**
      * AVE-89: a long marketing mail with a fixed 640px card, a long unbroken URL and a rigid
      * 900px table, for the fit-to-width / sideways-scroll body. iOS twin:
      * `PreviewSupport.newsletterEmail` (`-previewDetail -previewNewsletter`).

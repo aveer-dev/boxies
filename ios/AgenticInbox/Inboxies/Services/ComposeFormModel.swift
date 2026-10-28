@@ -863,7 +863,7 @@ enum ComposeHTML {
     }
 
     static func quotedOriginal(from original: Email) -> QuotedOriginal? {
-        let text = stripHTML(original.body ?? original.snippet ?? "")
+        let text = QuotedText.fromHTML(original.body ?? original.snippet ?? "")
         guard !text.isEmpty else { return nil }
         return QuotedOriginal(
             header: "On \(formatDate(original.date)), \(original.formattedFrom) wrote:",
@@ -904,7 +904,7 @@ enum ComposeHTML {
         parts.append("Subject: \(original.subject)")
         parts.append("To: \(original.recipient)")
         parts.append("")
-        parts.append(stripHTML(original.body ?? ""))
+        parts.append(QuotedText.fromHTML(original.body))
         return parts.joined(separator: "\n")
     }
 
@@ -990,5 +990,159 @@ enum ComposeHTML {
         out.dateStyle = .medium
         out.timeStyle = .short
         return out.string(from: date)
+    }
+}
+
+/// HTML → plain text for the quoted original in replies and forwards (AVE-133).
+/// Mirrors `shared/quoted-text.ts` (web + Worker) and Android `QuotedText.kt`;
+/// all three are checked against `shared/quoted-text.fixtures.json`.
+enum QuotedText {
+    private static let namedEntities: [String: String] = [
+        "nbsp": " ", "amp": "&", "lt": "<", "gt": ">", "quot": "\"", "apos": "'",
+        "shy": "", "zwnj": "", "zwj": "\u{200D}", "lrm": "", "rlm": "",
+        "ensp": " ", "emsp": " ", "thinsp": " ",
+        "ndash": "–", "mdash": "—", "lsquo": "‘", "rsquo": "’", "sbquo": "‚",
+        "ldquo": "“", "rdquo": "”", "bdquo": "„", "laquo": "«", "raquo": "»",
+        "hellip": "…", "bull": "•", "middot": "·", "copy": "©", "reg": "®", "trade": "™",
+        "euro": "€", "pound": "£", "yen": "¥", "cent": "¢", "deg": "°", "times": "×",
+        "divide": "÷", "plusmn": "±", "sect": "§", "para": "¶", "iexcl": "¡", "iquest": "¿",
+        "rarr": "→", "larr": "←", "uarr": "↑", "darr": "↓", "hearts": "♥", "star": "☆", "check": "✓",
+        "aacute": "á", "eacute": "é", "iacute": "í", "oacute": "ó", "uacute": "ú",
+        "agrave": "à", "egrave": "è", "ugrave": "ù", "acirc": "â", "ecirc": "ê", "ocirc": "ô",
+        "auml": "ä", "euml": "ë", "iuml": "ï", "ouml": "ö", "uuml": "ü",
+        "ntilde": "ñ", "ccedil": "ç", "szlig": "ß",
+        "Aacute": "Á", "Eacute": "É", "Oacute": "Ó", "Auml": "Ä", "Ouml": "Ö", "Uuml": "Ü",
+        "Ntilde": "Ñ", "Ccedil": "Ç",
+    ]
+
+    private static let voidTags: Set<String> = [
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr",
+    ]
+
+    /// Invisible/format characters used as preheader padding. ZWJ is kept (emoji).
+    private static let invisibleChars = "[\\u00AD\\u034F\\u061C\\u180E\\u200B\\u200C\\u200E\\u200F\\u2060-\\u2064\\uFEFF]"
+
+    static func fromHTML(_ html: String?) -> String {
+        guard let html, !html.isEmpty else { return "" }
+        let input = replace(html, "\\r\\n?", "\n")
+        if input.range(of: "<\\/?[a-z][^>]*>|<!--", options: [.regularExpression, .caseInsensitive]) == nil {
+            return tidyLines(decodeEntities(input))
+        }
+        var text = dropHiddenElements(dropNonContent(input))
+        text = replace(text, "[ \\t\\n\\f]+", " ")
+        text = replace(text, "<br\\b[^>]*>", "\n", ci: true)
+        text = replace(text, "<li\\b[^>]*>", "\n• ", ci: true)
+        text = replace(text, "<\\/?(p|h[1-6]|blockquote|pre|ul|ol)\\b[^>]*>", "\n\n", ci: true)
+        text = replace(
+            text,
+            "<\\/?(div|tr|table|tbody|thead|tfoot|section|article|header|footer|dl|dt|dd|center|address)\\b[^>]*>",
+            "\n",
+            ci: true
+        )
+        text = replace(text, "<hr\\b[^>]*>", "\n", ci: true)
+        text = replace(text, "<\\/(td|th)\\s*>", " ", ci: true)
+        text = replace(text, "<[^>]*>", "")
+        text = replace(text, "<[^>]*$", "")
+        return tidyLines(decodeEntities(text))
+    }
+
+    static func decodeEntities(_ text: String) -> String {
+        guard text.contains("&"),
+              let regex = try? NSRegularExpression(
+                pattern: "&(#x[0-9a-f]+|#[0-9]+|[a-z][a-z0-9]*);",
+                options: .caseInsensitive
+              ) else { return text }
+        let ns = text as NSString
+        var out = ""
+        var cursor = 0
+        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            let body = ns.substring(with: match.range(at: 1))
+            out += decodeEntity(body) ?? ns.substring(with: match.range)
+            cursor = match.range.location + match.range.length
+        }
+        out += ns.substring(from: cursor)
+        return out
+    }
+
+    private static func decodeEntity(_ body: String) -> String? {
+        if body.hasPrefix("#") {
+            let digits = body.dropFirst()
+            let code: UInt32?
+            if digits.first == "x" || digits.first == "X" {
+                code = UInt32(digits.dropFirst(), radix: 16)
+            } else {
+                code = UInt32(digits, radix: 10)
+            }
+            guard let code, code > 0, let scalar = Unicode.Scalar(code) else { return "" }
+            return String(Character(scalar))
+        }
+        return namedEntities[body] ?? namedEntities[body.lowercased()]
+    }
+
+    private static func dropNonContent(_ html: String) -> String {
+        var out = replace(html, "<!--[\\s\\S]*?-->", "")
+        out = replace(out, "<(head|style|script|title)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>", "", ci: true)
+        return replace(out, "<(style|script)\\b[^>]*>[\\s\\S]*$", "", ci: true)
+    }
+
+    /// Remove elements styled `display:none` (and everything inside them).
+    private static func dropHiddenElements(_ html: String) -> String {
+        guard let opener = try? NSRegularExpression(
+            pattern: "<([a-z][a-z0-9]*)\\b[^>]*\\bstyle\\s*=\\s*(\"[^\"]*\"|'[^']*')[^>]*>",
+            options: .caseInsensitive
+        ) else { return html }
+        var out = html as NSString
+        var searchFrom = 0
+        while searchFrom <= out.length,
+              let match = opener.firstMatch(
+                in: out as String,
+                range: NSRange(location: searchFrom, length: out.length - searchFrom)
+              ) {
+            let style = out.substring(with: match.range(at: 2)).lowercased()
+            let afterOpen = match.range.location + match.range.length
+            guard style.range(of: "display\\s*:\\s*none", options: .regularExpression) != nil else {
+                searchFrom = afterOpen
+                continue
+            }
+            let tag = out.substring(with: match.range(at: 1)).lowercased()
+            let start = match.range.location
+            let openTag = out.substring(with: match.range)
+            var end = afterOpen
+            if !voidTags.contains(tag), !openTag.hasSuffix("/>"),
+               let tagRegex = try? NSRegularExpression(pattern: "<(/?)\(tag)\\b[^>]*>", options: .caseInsensitive) {
+                var depth = 1
+                for t in tagRegex.matches(
+                    in: out as String,
+                    range: NSRange(location: afterOpen, length: out.length - afterOpen)
+                ) {
+                    depth += t.range(at: 1).length > 0 ? -1 : 1
+                    if depth == 0 {
+                        end = t.range.location + t.range.length
+                        break
+                    }
+                }
+                // Unbalanced markup: drop just the opening tag rather than the rest of the mail.
+            }
+            out = out.replacingCharacters(in: NSRange(location: start, length: end - start), with: "") as NSString
+            searchFrom = start
+        }
+        return out as String
+    }
+
+    private static func tidyLines(_ text: String) -> String {
+        let cleaned = replace(text, invisibleChars, "")
+        let lines = cleaned.components(separatedBy: "\n").map { line in
+            replace(line, "[ \\t\\u00A0\\u2000-\\u200A\\u202F\\u205F\\u3000]+", " ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: " "))
+        }
+        return replace(lines.joined(separator: "\n"), "\\n{3,}", "\n\n")
+            .trimmingCharacters(in: CharacterSet(charactersIn: " \n"))
+    }
+
+    private static func replace(_ text: String, _ pattern: String, _ template: String, ci: Bool = false) -> String {
+        var options: String.CompareOptions = [.regularExpression]
+        if ci { options.insert(.caseInsensitive) }
+        return text.replacingOccurrences(of: pattern, with: template, options: options)
     }
 }

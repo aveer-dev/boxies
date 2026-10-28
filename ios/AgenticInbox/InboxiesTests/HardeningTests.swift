@@ -407,6 +407,36 @@ final class HardeningTests: XCTestCase {
         XCTAssertEqual(cached, prepared, "Same key is served from the cache")
     }
 
+    // MARK: - Quoted original (AVE-133)
+
+    /// Same fixtures as web/Worker (`workers/test/quoted-text.test.mjs`) and Android.
+    func testQuotedTextMatchesSharedFixtures() throws {
+        struct Fixture: Decodable {
+            let name: String
+            let html: String
+            let expected: String
+        }
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // InboxiesTests
+            .deletingLastPathComponent() // AgenticInbox
+            .deletingLastPathComponent() // ios
+            .deletingLastPathComponent() // repo root
+            .appendingPathComponent("shared/quoted-text.fixtures.json")
+        let fixtures = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: url))
+        XCTAssertGreaterThanOrEqual(fixtures.count, 5)
+        for fixture in fixtures {
+            XCTAssertEqual(QuotedText.fromHTML(fixture.html), fixture.expected, fixture.name)
+        }
+    }
+
+    func testQuotedHTMLStaysEscapedAndClean() {
+        let text = QuotedText.fromHTML(#"<div style="display:none">pre&shy;header</div><p>x &lt;b&gt; &amp;shy;</p>"#)
+        XCTAssertEqual(text, "x <b> &shy;")
+        let html = ComposeHTML.quotedHTML(from: QuotedOriginal(header: "On Tue, Uber wrote:", text: text))
+        XCTAssertTrue(html.contains("x &lt;b&gt; &amp;shy;"))
+        XCTAssertFalse(html.contains("preheader"))
+    }
+
     // MARK: - Dark mode: own colours
 
     /// Same fixtures as web (`workers/test/email-colors.test.mjs`) and Android.
