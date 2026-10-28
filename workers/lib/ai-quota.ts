@@ -23,6 +23,7 @@ import {
 	aiQuotaExceededError,
 	type AiQuotaBucket,
 	type AiQuotaExceededError,
+	type AiUsageSnapshot,
 } from "../../shared/ai-quota.ts";
 
 export type { AiQuotaBucket };
@@ -117,6 +118,23 @@ export function readAiUsage(sql: Sql, bucket: AiQuotaBucket, now: number = Date.
 		...sql.exec(`SELECT count FROM ai_usage WHERE day = ?1 AND bucket = ?2`, utcDay(now), bucket),
 	][0] as { count: number } | undefined;
 	return row ? Number(row.count) : 0;
+}
+
+/** Today's counters and limits for both buckets (read-only, one query). */
+export function aiUsageSnapshot(sql: Sql, tier: PlanTier, now: number = Date.now()): AiUsageSnapshot {
+	const day = utcDay(now);
+	const used: Record<AiQuotaBucket, number> = { chat: 0, inbound: 0 };
+	for (const row of sql.exec(`SELECT bucket, count FROM ai_usage WHERE day = ?1`, day) as Iterable<{
+		bucket: string;
+		count: number;
+	}>) {
+		if (row.bucket === "chat" || row.bucket === "inbound") used[row.bucket] = Number(row.count);
+	}
+	const meter = (bucket: AiQuotaBucket) => {
+		const limit = dailyLimit(tier, bucket);
+		return { used: Math.min(used[bucket], limit), limit };
+	};
+	return { tier, day, resetsAt: nextUtcMidnight(now), chat: meter("chat"), inbound: meter("inbound") };
 }
 
 function pruneAiUsage(sql: Sql, now: number): void {

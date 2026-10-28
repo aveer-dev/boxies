@@ -2,6 +2,7 @@ package co.inboxies.app.services
 
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
+import co.inboxies.app.models.AiUsageSnapshot
 import co.inboxies.app.models.AppToast
 import co.inboxies.app.models.ChatSession
 import co.inboxies.app.models.LinkedIdentity
@@ -559,6 +560,7 @@ class AppModel {
             _paging.value = _paging.value.cleared()
             _emailListError.value = null
             _isLoading.value = true
+            _aiUsage.value = null
         }
         _selectedMailboxId.value = id
         setupRealTimeStream()
@@ -2534,6 +2536,32 @@ class AppModel {
             }
         }
         _chatSession.value = ChatSession.Conversation(ChatSession.newConversationId())
+    }
+
+    // ---- AI usage (AVE-45) ----
+
+    private val _aiUsage = MutableStateFlow<AiUsageSnapshot?>(null)
+    /** Today's AI usage for the selected mailbox; null until fetched (or on failure). */
+    val aiUsage: StateFlow<AiUsageSnapshot?> = _aiUsage.asStateFlow()
+
+    /** DEBUG preview fixture: when set, [refreshAiUsage] serves it instead of the network. */
+    private var previewAiUsage: AiUsageSnapshot? = null
+
+    fun applyPreviewAiUsage(snapshot: AiUsageSnapshot) {
+        previewAiUsage = snapshot
+        _aiUsage.value = snapshot
+    }
+
+    /** Fetch today's usage for the selected mailbox. Failures keep the last value. */
+    suspend fun refreshAiUsage() {
+        if (isDebugPreview) {
+            previewAiUsage?.let { _aiUsage.value = it }
+            return
+        }
+        val mailboxId = _selectedMailboxId.value ?: return
+        val usage = runCatching { ApiClient.shared.getAiUsage(mailboxId) }.getOrNull() ?: return
+        // Drop a late reply for a mailbox the user already left.
+        if (_selectedMailboxId.value == mailboxId) _aiUsage.value = usage
     }
 
     fun showChatList() {

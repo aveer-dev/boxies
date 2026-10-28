@@ -348,6 +348,31 @@ struct SenderRuleResponse: Codable {
     var rule: SenderRule
 }
 
+/// Today's AI usage for one mailbox (`GET /mailboxes/:id/ai-usage`, AVE-45).
+/// Counters reset at `resetsAt` (next UTC midnight).
+struct AIUsage: Codable, Equatable {
+    struct Counter: Codable, Equatable {
+        var used: Int
+        var limit: Int
+    }
+
+    var tier: String
+    var day: String
+    var resetsAt: String
+    var chat: Counter
+    var inbound: Counter
+
+    var isPaid: Bool { tier != "free" }
+
+    var resetsAtDate: Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: resetsAt) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: resetsAt)
+    }
+}
+
 struct ForwardingSettings: Codable, Hashable {
     var enabled: Bool?
     var email: String?

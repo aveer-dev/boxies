@@ -19,12 +19,21 @@ import {
 	consumeAiQuota,
 	dailyLimit,
 	getPlanTier,
+	aiUsageSnapshot,
 	nextUtcMidnight,
 	readAiUsage,
 	utcDay,
 } from "../lib/ai-quota.ts";
 import { chatHistoryForModel, chatQuotaGate } from "../lib/agent-chat-limits.ts";
-import { parseAiQuotaError } from "../../shared/ai-quota.ts";
+import { aiUsageLevel, formatAiUsageReset, parseAiQuotaError } from "../../shared/ai-quota.ts";
+import {
+	addMailbox,
+	addUser,
+	createAuthTestEnv,
+	mockMailboxNamespace,
+	principalFor,
+	request,
+} from "./auth-fixtures.mjs";
 import { mailboxMetadataKey } from "../lib/mailbox-routing.ts";
 import { receiveEmail } from "../index.ts";
 
@@ -307,6 +316,73 @@ async function setup() {
 	assert.equal(aiCalls.length, 0, "no AI call over quota");
 	assert.equal(drafts.length, 0, "no auto-draft over quota");
 	assert.equal(readAiUsage(sql, "inbound"), limit, "refused calls aren't counted");
+}
+
+// ── Usage snapshot for meters ────────────────────────────────────
+{
+	const sql = mailboxSql();
+	const now = Date.UTC(2026, 9, 28, 18, 30);
+	const empty = aiUsageSnapshot(sql, "free", now);
+	assert.deepEqual(empty, {
+		tier: "free",
+		day: "2026-10-28",
+		resetsAt: "2026-10-29T00:00:00.000Z",
+		chat: { used: 0, limit: 50 },
+		inbound: { used: 0, limit: 200 },
+	});
+	for (let i = 0; i < 12; i++) consumeAiQuota(sql, "chat", 50, now);
+	for (let i = 0; i < 3; i++) consumeAiQuota(sql, "inbound", 200, now);
+	// Yesterday's counts don't show up today.
+	consumeAiQuota(sql, "chat", 50, now - 86_400_000);
+	const snap = aiUsageSnapshot(sql, "free", now);
+	assert.deepEqual(snap.chat, { used: 12, limit: 50 });
+	assert.deepEqual(snap.inbound, { used: 3, limit: 200 });
+	assert.deepEqual(aiUsageSnapshot(sql, "paid", now).chat, { used: 12, limit: 500 });
+
+	// Meter levels: normal under 80%, warning from 80%, exhausted at the limit.
+	assert.equal(aiUsageLevel({ used: 39, limit: 50 }), "normal");
+	assert.equal(aiUsageLevel({ used: 40, limit: 50 }), "warning");
+	assert.equal(aiUsageLevel({ used: 50, limit: 50 }), "exhausted");
+	assert.equal(aiUsageLevel({ used: 0, limit: 0 }), "exhausted");
+
+	// Reset copy.
+	const midnight = "2026-10-29T00:00:00.000Z";
+	assert.equal(formatAiUsageReset(midnight, now), "Resets in 5h");
+	assert.equal(formatAiUsageReset(midnight, Date.UTC(2026, 9, 28, 22, 20)), "Resets in 1h 40m");
+	assert.equal(formatAiUsageReset(midnight, Date.UTC(2026, 9, 28, 23, 18)), "Resets in 42m");
+	assert.equal(formatAiUsageReset(midnight, Date.UTC(2026, 9, 28, 23, 59, 30)), "Resets in under a minute");
+}
+
+// ── GET /ai-usage: members read their mailbox's meters ───────────
+{
+	const sql = mailboxSql();
+	for (let i = 0; i < 7; i++) consumeAiQuota(sql, "chat", 50);
+	const tiers = [];
+	const mailboxes = mockMailboxNamespace({
+		getAiUsage: async (tier) => {
+			tiers.push(tier);
+			return aiUsageSnapshot(sql, tier);
+		},
+	});
+	const { env, db, bucket } = createAuthTestEnv({ MAILBOX: mailboxes });
+	const ada = await addUser(db, { id: "ada", email: "ada@inboxies.email" });
+	const bob = await addUser(db, { id: "bob", email: "bob@gmail.com" });
+	const eve = await addUser(db, { id: "eve", email: "eve@gmail.com" });
+	await addMailbox(db, bucket, "ada@inboxies.email", { owners: ["ada"], members: ["bob"] });
+	const get = (user) =>
+		request(env, { method: "GET", path: "/api/v1/mailboxes/ada@inboxies.email/ai-usage", principal: principalFor(user) });
+
+	const res = await get(ada);
+	assert.equal(res.status, 200);
+	assert.equal(res.payload.tier, "free");
+	assert.equal(res.payload.day, utcDay(Date.now()));
+	assert.equal(res.payload.resetsAt, nextUtcMidnight(Date.now()));
+	assert.deepEqual(res.payload.chat, { used: 7, limit: 50 });
+	assert.deepEqual(res.payload.inbound, { used: 0, limit: 200 });
+	assert.deepEqual(tiers, ["free"]);
+	assert.equal((await get(bob)).status, 200, "members may read usage");
+	const denied = await get(eve);
+	assert.ok(denied.status === 403 || denied.status === 404, `non-member refused (${denied.status})`);
 }
 
 console.log("ai-quota: ok");

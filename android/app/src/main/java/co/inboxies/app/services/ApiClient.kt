@@ -71,6 +71,7 @@ import co.inboxies.app.models.SendEmailResponse
 import co.inboxies.app.models.SenderPreference
 import co.inboxies.app.models.SenderPreferencesResponse
 import co.inboxies.app.models.SenderRule
+import co.inboxies.app.models.AiUsageSnapshot
 import co.inboxies.app.models.SenderRuleResponse
 import co.inboxies.app.models.SenderRulesResponse
 import co.inboxies.app.models.UpsertSenderPreferenceResponse
@@ -1137,6 +1138,10 @@ class ApiClient private constructor() {
             method = "DELETE",
         )
     }
+
+    /** Today's per-mailbox AI usage and limits (AVE-45). */
+    suspend fun getAiUsage(mailboxId: String): AiUsageSnapshot =
+        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/ai-usage")
 
     suspend fun listSenderRules(mailboxId: String, verdict: String): List<SenderRule> {
         val response: SenderRulesResponse = request(

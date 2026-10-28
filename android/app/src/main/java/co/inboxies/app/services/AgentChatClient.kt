@@ -28,6 +28,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import co.inboxies.app.models.AiUsageFormat
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -56,6 +57,10 @@ class AgentChatClient(
 
     private val _historyError = MutableStateFlow<String?>(null)
     val historyError: StateFlow<String?> = _historyError.asStateFlow()
+
+    /** Set once the agent returns the typed daily-limit error (AVE-45). */
+    private val _quotaExceeded = MutableStateFlow(false)
+    val quotaExceeded: StateFlow<Boolean> = _quotaExceeded.asStateFlow()
 
     var onStreamFinished: ((Boolean) -> Unit)? = null
     var onHistoryLoaded: ((List<ChatMessage>) -> Unit)? = null
@@ -499,6 +504,7 @@ class AgentChatClient(
         streamingAssistantId = null
         pendingToolCalls.clear()
         val text = displayErrorText(errorMsg)
+        if (AiUsageFormat.isQuotaError(errorMsg)) _quotaExceeded.value = true
         // The agent sends a stream error both as an error frame and as an
         // `error` chunk; show it once.
         val last = _messages.value.lastOrNull()

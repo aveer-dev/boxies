@@ -93,6 +93,15 @@ object PreviewHarness {
                 PreviewSupport.applyAdminPreview(appModel)
                 appModel.setIdentities(PreviewSupport.identities())
             }
+            PreviewMode.AiUsage,
+            PreviewMode.AiUsageLimit,
+            PreviewMode.AiUsageSettings,
+            -> {
+                PreviewSupport.applyAuth(auth)
+                PreviewSupport.applyMailboxPreview(appModel, mode)
+                appModel.applyPreviewAiUsage(PreviewSupport.aiUsage(atLimit = mode == PreviewMode.AiUsageLimit))
+                if (mode != PreviewMode.AiUsageSettings) appModel.startNewChat()
+            }
             PreviewMode.Members,
             PreviewMode.Senders,
             PreviewMode.SendersBlocked,
@@ -169,7 +178,7 @@ fun PreviewRoot(
         PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
         PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }
-        PreviewMode.Settings, PreviewMode.SettingsScreenerOff -> SettingsPreviewSurface {
+        PreviewMode.Settings, PreviewMode.SettingsScreenerOff, PreviewMode.AiUsageSettings -> SettingsPreviewSurface {
             SettingsSheetView(onClose = {}, onThemeModeChange = onThemeModeChange, themeMode = themeMode)
         }
         PreviewMode.SendersBlocked -> SettingsPreviewSurface {
@@ -210,6 +219,8 @@ fun PreviewRoot(
         }
         PreviewMode.LoadFailed -> MailboxLoadFailedView(appModel = appModel, auth = auth)
         PreviewMode.Mailbox,
+        PreviewMode.AiUsage,
+        PreviewMode.AiUsageLimit,
         PreviewMode.LoadMore,
         PreviewMode.ManyNew,
         PreviewMode.ListError,

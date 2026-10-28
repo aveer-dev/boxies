@@ -51,7 +51,7 @@ import {
 	agentInstanceName,
 } from "../shared/agent-conversations";
 import { getEmailAgent, purgeEmailAgent, purgeEmailAgents } from "./lib/email-agent";
-import { tryConsumeAiQuota } from "./lib/ai-quota";
+import { getPlanTier, tryConsumeAiQuota } from "./lib/ai-quota";
 import { resolveGreetingName } from "./lib/inbox-digest";
 import { composePushAlert } from "./lib/push-payload";
 import { seedWelcomeEmailsForMailbox } from "./lib/welcome-emails";
@@ -1057,6 +1057,14 @@ app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) 
 app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppContext) => {
 	await c.var.mailboxStub.markThreadRead(c.req.param("threadId")!);
 	return c.json({ status: "marked_read" });
+});
+
+// -- AI usage meters (AVE-45) ---------------------------------------
+// Today's per-mailbox AI counters and limits; read-only, one DO query.
+app.get("/api/v1/mailboxes/:mailboxId/ai-usage", async (c: AppContext) => {
+	const usage = await c.var.mailboxStub.getAiUsage(getPlanTier(c.var.mailboxId));
+	c.header("Cache-Control", "no-store");
+	return c.json(usage);
 });
 
 // -- AI summaries (AVE-20) ------------------------------------------

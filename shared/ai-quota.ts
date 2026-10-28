@@ -48,3 +48,43 @@ export function parseAiQuotaError(text: string | null | undefined): AiQuotaExcee
 		return null;
 	}
 }
+
+/**
+ * Today's AI usage for a mailbox (GET /api/v1/mailboxes/:id/ai-usage), so
+ * clients can show a usage meter before the limit is hit.
+ */
+export interface AiUsageMeter {
+	used: number;
+	limit: number;
+}
+
+export interface AiUsageSnapshot {
+	tier: "free" | "paid";
+	/** UTC day the counters cover, `YYYY-MM-DD`. */
+	day: string;
+	/** ISO timestamp of the next UTC midnight, when both counters reset. */
+	resetsAt: string;
+	chat: AiUsageMeter;
+	inbound: AiUsageMeter;
+}
+
+/** Fraction of the meter at which clients switch to the warning tint. */
+export const AI_USAGE_WARNING_RATIO = 0.8;
+
+export type AiUsageLevel = "normal" | "warning" | "exhausted";
+
+export function aiUsageLevel(meter: AiUsageMeter): AiUsageLevel {
+	if (meter.limit <= 0 || meter.used >= meter.limit) return "exhausted";
+	return meter.used / meter.limit >= AI_USAGE_WARNING_RATIO ? "warning" : "normal";
+}
+
+/** "Resets in 6h" / "Resets in 42m" / "Resets in under a minute". */
+export function formatAiUsageReset(resetsAt: string, now: number = Date.now()): string {
+	const ms = Date.parse(resetsAt) - now;
+	if (!Number.isFinite(ms) || ms <= 60_000) return "Resets in under a minute";
+	const minutes = Math.ceil(ms / 60_000);
+	if (minutes < 60) return `Resets in ${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	const rest = minutes % 60;
+	return rest === 0 || hours >= 3 ? `Resets in ${hours}h` : `Resets in ${hours}h ${rest}m`;
+}

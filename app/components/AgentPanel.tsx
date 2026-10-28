@@ -26,7 +26,9 @@ import remarkGfm from "remark-gfm";
 import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import type { UIMessage } from "ai";
-import { parseAiQuotaError } from "../../shared/ai-quota";
+import { aiUsageLevel, formatAiUsageReset, parseAiQuotaError } from "../../shared/ai-quota";
+import { AiUsageMeter } from "~/components/AiUsageMeter";
+import { useAiUsage } from "~/queries/ai-usage";
 
 const TOOL_LABELS: Record<string, { label: string; icon: React.ReactNode }> = {
 	list_emails: {
@@ -326,6 +328,20 @@ function AgentChatConnected({
 	const quotaError = parseAiQuotaError(error?.message);
 	const isStreaming = status === "streaming" || status === "submitted";
 
+	// Usage meter (AVE-45): refetch when a turn ends so the count stays current.
+	const { data: usage, refetch: refetchUsage } = useAiUsage(mailboxId);
+	const wasStreaming = useRef(false);
+	useEffect(() => {
+		if (wasStreaming.current && !isStreaming) void refetchUsage();
+		wasStreaming.current = isStreaming;
+	}, [isStreaming, refetchUsage]);
+	const chatLevel = usage ? aiUsageLevel(usage.chat) : "normal";
+	const chatExhausted = chatLevel === "exhausted" || Boolean(quotaError);
+	const resetsAt = usage?.resetsAt ?? quotaError?.resetsAt;
+	const resetClock = resetsAt
+		? new Date(resetsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+		: null;
+
 	useEffect(() => {
 		const el = scrollRef.current;
 		if (el) el.scrollTop = el.scrollHeight;
@@ -337,7 +353,7 @@ function AgentChatConnected({
 
 	const handleSend = () => {
 		const text = inputValue.trim();
-		if (!text || isStreaming) return;
+		if (!text || isStreaming || chatExhausted) return;
 		setInputValue("");
 		sendMessage({ text });
 		if (inputRef.current) inputRef.current.style.height = "auto";
@@ -404,10 +420,11 @@ function AgentChatConnected({
 								<button
 									key={prompt}
 									type="button"
+									disabled={chatExhausted}
 									onClick={() =>
 										sendMessage({ text: prompt })
 									}
-									className="text-left px-3 py-2 rounded-lg border border-kumo-line text-xs text-kumo-strong hover:bg-kumo-tint hover:border-kumo-fill-hover transition-colors cursor-pointer bg-transparent"
+									className="disabled:cursor-not-allowed disabled:opacity-50 text-left px-3 py-2 rounded-lg border border-kumo-line text-xs text-kumo-strong hover:bg-kumo-tint hover:border-kumo-fill-hover transition-colors cursor-pointer bg-transparent"
 								>
 									{prompt}
 								</button>
@@ -483,18 +500,31 @@ function AgentChatConnected({
 
 			{/* Input */}
 			<div className="shrink-0 border-t border-kumo-line px-3 py-2">
-				{quotaError && !isStreaming && (
+				{chatExhausted && !isStreaming && (
 					<div
 						role="status"
-						className="mb-2 flex items-start gap-1.5 rounded-lg border border-kumo-warning/40 bg-kumo-warning/10 px-2.5 py-2 text-xs text-kumo-default"
+						className="mb-2 flex items-start gap-1.5 rounded-lg border border-kumo-danger/30 bg-kumo-danger-tint px-2.5 py-2 text-xs text-kumo-default"
 					>
 						<WarningCircleIcon
 							size={14}
 							weight="fill"
-							className="mt-px shrink-0 text-kumo-warning"
+							className="mt-px shrink-0 text-kumo-danger"
 						/>
-						<span>{quotaError.message}</span>
+						<span>
+							<span className="font-medium">Daily AI chat limit reached.</span>{" "}
+							{resetClock
+								? `You can chat again at ${resetClock}${resetsAt ? ` (${formatAiUsageReset(resetsAt).replace("Resets in ", "in ")})` : ""}.`
+								: (quotaError?.message ?? "The limit resets at midnight UTC.")}
+						</span>
 					</div>
+				)}
+				{usage && !chatExhausted && (
+					<AiUsageMeter
+						meter={usage.chat}
+						noun="AI chats"
+						resetsAt={usage.resetsAt}
+						className={`mb-2 ${chatLevel === "warning" ? "" : "opacity-80"}`}
+					/>
 				)}
 				{isStreaming ? (
 					<div className="flex justify-center">
@@ -516,10 +546,13 @@ function AgentChatConnected({
 							value={inputValue}
 							onChange={(e) => setInputValue(e.target.value)}
 							onKeyDown={handleKeyDown}
-							placeholder="Ask your email agent..."
+							placeholder={
+								chatExhausted ? "Daily AI chat limit reached" : "Ask your email agent..."
+							}
+							disabled={chatExhausted}
 							rows={1}
 							aria-label="Chat message input"
-							className="flex-1 resize-none rounded-lg border border-kumo-line bg-kumo-control px-3 py-2 text-xs text-kumo-default placeholder:text-kumo-subtle focus:outline-none focus:ring-1 focus:ring-kumo-ring min-h-[36px] max-h-[100px]"
+							className="flex-1 resize-none rounded-lg border border-kumo-line bg-kumo-control px-3 py-2 text-xs text-kumo-default placeholder:text-kumo-subtle focus:outline-none focus:ring-1 focus:ring-kumo-ring disabled:cursor-not-allowed disabled:opacity-60 min-h-[36px] max-h-[100px]"
 							style={{ height: "auto", overflow: "hidden" }}
 							onInput={(e) => {
 								const t = e.target as HTMLTextAreaElement;
@@ -533,7 +566,7 @@ function AgentChatConnected({
 							variant="primary"
 							shape="square"
 							size="sm"
-							disabled={!inputValue.trim()}
+							disabled={!inputValue.trim() || chatExhausted}
 							icon={<ArrowUpIcon size={14} weight="bold" />}
 							onClick={handleSend}
 							aria-label="Send message"

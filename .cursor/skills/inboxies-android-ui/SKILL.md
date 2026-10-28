@@ -211,6 +211,9 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
+| AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |
+| AI limit reached | `previewAiUsageLimit` | `aiUsageLimit` | Agent chat at 50 / 50: limit notice, composer disabled |
+| AI usage (Settings) | `previewAiUsageSettings` | `aiUsageSettings` | Settings sheet scrolled to the AI usage section |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
 | Screener | `previewScreener` | `screener` | Screener folder + detail open |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |

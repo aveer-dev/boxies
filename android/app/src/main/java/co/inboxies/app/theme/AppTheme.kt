@@ -42,6 +42,13 @@ object InboxiesColors {
     val DarkUnread = Color(0xFFE6E6EB)
     val DarkDeepDarkRed = Color(0xFFE65959)
 
+    /** Meters nearing a limit (AI usage >= 80%, AVE-45). Same hue as web `kumo-warning`. */
+    val LightWarning = Color(0xFFD97706)
+    val DarkWarning = Color(0xFFF59E0B)
+    /** Meters at a limit; brighter than [LightDeepDarkRed] so a 4dp bar still reads red. */
+    val LightDanger = Color(0xFFDC2626)
+    val DarkDanger = Color(0xFFEF5350)
+
     /** Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). */
     val MailPaper = Color(0xFFFFFFFF)
 }

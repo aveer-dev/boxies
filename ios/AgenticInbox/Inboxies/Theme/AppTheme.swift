@@ -30,6 +30,13 @@ enum AppTheme {
     static let deepDarkRed = Color(uiColor: uiDeepDarkRed)
     static let mailPaper = Color(uiColor: uiMailPaper)
 
+    /// Daily AI quota meter tints (AVE-45): system orange from 80%, system red at the
+    /// limit — the same tints swipe actions use for star / delete. Track is `pillFill`.
+    enum Usage {
+        static let warning = Color.orange
+        static let danger = Color.red
+    }
+
     /// Notes to self: a cool mint-sage paper, the one tinted surface in the monochrome
     /// shell, so a note reads as yours and apart from the mail. Calm, low-chroma; same
     /// values as web `--note-*` and Android `InboxiesColors.note*`.

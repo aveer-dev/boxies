@@ -1047,6 +1047,11 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Today's AI chat / inbound AI usage against the mailbox's daily limits (AVE-45).
+    func fetchAIUsage(mailboxId: String) async throws -> AIUsage {
+        try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/ai-usage")
+    }
+
     func listSenderRules(mailboxId: String, verdict: String) async throws -> [SenderRule] {
         let response: SenderRulesResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules",

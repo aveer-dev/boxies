@@ -229,6 +229,44 @@ enum PreviewSupport {
         </table>
         """
 
+    /// `-previewAIUsage normal|warning|exhausted` (AVE-45): stub usage snapshot
+    /// (12/50, 42/50, 50/50 chats) so the meter renders without a backend. Nil
+    /// outside DEBUG previews; `AppModel.loadAIUsage()` returns it instead of fetching.
+    static var aiUsageFixture: AIUsage? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-previewAIUsage") else { return nil }
+        let level = index + 1 < args.count ? args[index + 1] : "warning"
+        let chatUsed: Int
+        let inboundUsed: Int
+        switch level {
+        case "normal": chatUsed = 12; inboundUsed = 37
+        case "exhausted": chatUsed = 50; inboundUsed = 200
+        default: chatUsed = 42; inboundUsed = 168
+        }
+        // Next UTC midnight, like the Worker.
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        let midnight = utc.nextDate(
+            after: .now,
+            matching: DateComponents(hour: 0, minute: 0, second: 0),
+            matchingPolicy: .nextTime
+        ) ?? .now.addingTimeInterval(6 * 3600)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let day = ISO8601DateFormatter.string(from: .now, timeZone: utc.timeZone, formatOptions: [.withFullDate])
+        return AIUsage(
+            tier: "free",
+            day: day,
+            resetsAt: formatter.string(from: midnight),
+            chat: AIUsage.Counter(used: chatUsed, limit: 50),
+            inbound: AIUsage.Counter(used: inboundUsed, limit: 200)
+        )
+        #else
+        return nil
+        #endif
+    }
+
     /// Settings sheet fixture; `screenerOff` stores `screener.enabled = false` (AVE-104).
     @MainActor
     static func settingsPreviewModel(screenerOff: Bool) -> AppModel {
@@ -707,6 +745,7 @@ struct PreviewMailboxRoot: View {
                     await app.startCompose(mode: .new)
                     app.minimizeCompose()
                 } else if ProcessInfo.processInfo.arguments.contains("-previewChat") {
+                    // Add `-previewAIUsage <level>` for the usage meter / limit notice (AVE-45).
                     try? await Task.sleep(nanoseconds: 400_000_000)
                     app.openChatSession(resumeActive: true)
                 }
@@ -752,6 +791,7 @@ struct PreviewAdminAuthRoot: View {
             } else if args.contains("-previewSettings") {
                 // Settings sheet on the fixture mailbox; add `-previewScreenerOff` for the
                 // Screener switch off (AVE-104; Android: `settings` / `settingsScreenerOff`).
+                // Add `-previewAIUsage <level>` to scroll to the AI usage section (AVE-45).
                 SettingsSheetView()
                     .environment(PreviewSupport.settingsPreviewModel(screenerOff: args.contains("-previewScreenerOff")))
             } else if args.contains("-previewSessions") {

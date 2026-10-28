@@ -169,8 +169,10 @@ import {
 } from "../lib/ai-summary";
 import { normalizeEmailAddress } from "../lib/mail-automations";
 import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
+import type { AiUsageSnapshot } from "../../shared/ai-quota";
 import {
 	AI_DAILY_LIMITS,
+	aiUsageSnapshot,
 	consumeAiQuota,
 	dailyLimit,
 	type AiQuotaBucket,
@@ -433,6 +435,12 @@ export class MailboxDO extends DurableObject<Env> {
 		if (bucket !== "chat" && bucket !== "inbound") throw new Error(`Unknown AI quota bucket: ${bucket}`);
 		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
 		return consumeAiQuota(this.ctx.storage.sql, bucket, dailyLimit(planTier, bucket));
+	}
+
+	/** Today's AI usage against the plan-tier limits, for usage meters (AVE-45). */
+	async getAiUsage(tier: PlanTier = "free"): Promise<AiUsageSnapshot> {
+		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+		return aiUsageSnapshot(this.ctx.storage.sql, planTier);
 	}
 
 	constructor(state: DurableObjectState, env: Env) {

@@ -11,6 +11,9 @@ final class AgentChatClient: NSObject, ObservableObject {
     @Published var isLoadingHistory = false
     @Published var statusText: String?
     @Published var historyError: String?
+    /// Bumped each time the agent refuses a turn with the typed daily-limit
+    /// error (`ai_quota_exceeded`, AVE-45) so the view can lock the composer.
+    @Published var quotaErrorCount = 0
 
     var onStreamFinished: ((_ hasToolActions: Bool) -> Void)?
     var onHistoryLoaded: (([ChatMessage]) -> Void)?
@@ -479,12 +482,22 @@ final class AgentChatClient: NSObject, ObservableObject {
         statusText = nil
         streamingAssistantId = nil
         pendingToolCalls = [:]
+        if Self.isQuotaError(errorMsg) { quotaErrorCount += 1 }
         let text = Self.displayErrorText(errorMsg)
         // The agent sends a stream error both as an error frame and as an
         // `error` chunk; show it once.
         if let last = messages.last, last.isError, last.text == text { return }
         let id = UUID().uuidString
         messages.append(ChatMessage(id: id, role: "assistant", text: text, isError: true))
+    }
+
+    /// True for the typed daily AI chat limit error (`shared/ai-quota.ts`).
+    static func isQuotaError(_ errorMsg: String) -> Bool {
+        guard errorMsg.hasPrefix("{"),
+              let data = errorMsg.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return obj["type"] as? String == "ai_quota_exceeded"
     }
 
     /// Typed agent errors arrive as JSON (`shared/ai-quota.ts`, e.g. the daily

@@ -29,6 +29,9 @@
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
 #   ./scripts/run-debug-preview.sh settingsScreenerOff # Settings sheet, Screener off
+#   ./scripts/run-debug-preview.sh aiUsage             # agent chat, usage meter at 42 / 50 (warning)
+#   ./scripts/run-debug-preview.sh aiUsageLimit        # agent chat at 50 / 50: limit notice, composer off
+#   ./scripts/run-debug-preview.sh aiUsageSettings     # Settings sheet with the AI usage section
 #   ./scripts/run-debug-preview.sh serviceEnded        # read-only inbox, admin "Renew"
 #   ./scripts/run-debug-preview.sh serviceEndedMember  # read-only inbox, "Ask an admin"
 #   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
@@ -75,6 +78,9 @@ case "$mode" in
   newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
   notesDetail|NotesDetail|previewNotesDetail) extra=previewNotesDetail; label=notesDetail ;;
+  aiUsage|AiUsage|ai-usage|previewAiUsage) extra=previewAiUsage; label=aiUsage ;;
+  aiUsageLimit|AiUsageLimit|ai-usage-limit|previewAiUsageLimit) extra=previewAiUsageLimit; label=aiUsageLimit ;;
+  aiUsageSettings|AiUsageSettings|ai-usage-settings|previewAiUsageSettings) extra=previewAiUsageSettings; label=aiUsageSettings ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
@@ -83,12 +89,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,30p' "$0"
+    sed -n '2,40p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | loadFailed | listError | screener | replyLater | spam | newsletter | notes | notesDetail | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | loadFailed | listError | screener | replyLater | spam | newsletter | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
     exit 1
     ;;
 esac
