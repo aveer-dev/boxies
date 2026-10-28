@@ -101,6 +101,12 @@ final class AppModel {
     private var isRestoringPendingSend = false
 
     private var persistsPendingSends: Bool { persistsPreferences && !isDebugPreview }
+    /// The mailbox launch reopens (AVE-90). Swappable for tests.
+    var lastMailboxStore = LastMailboxStore()
+    private var persistsLastMailbox: Bool { persistsPreferences && !isDebugPreview }
+    /// The launch pick came from a cache that lacked the remembered mailbox; the
+    /// server list gets a second chance to restore it.
+    private var selectionIsProvisional = false
 
     private let db = DatabaseService.shared
     private let syncService = MailboxSyncService.shared
@@ -273,7 +279,12 @@ final class AppModel {
         if !cachedMailboxes.isEmpty {
             mailboxes = cachedMailboxes
             if selectedMailboxId == nil {
-                selectedMailboxId = cachedMailboxes.first?.id
+                let remembered = persistsLastMailbox ? lastMailboxStore.mailboxId : nil
+                selectedMailboxId = LastMailboxStore.initialMailboxId(
+                    remembered: remembered,
+                    available: cachedMailboxes.map(\.id)
+                )
+                selectionIsProvisional = remembered != nil && selectedMailboxId != remembered
             }
             isMailboxLoading = false
             if let id = selectedMailboxId {
@@ -372,11 +383,18 @@ final class AppModel {
 			mailboxes = try await APIClient.shared.listMailboxes()
             mailboxesLoadFailed = false
             db.upsertMailboxes(mailboxes)
-            if let selected = selectedMailboxId, !mailboxes.contains(where: { $0.id == selected }) {
-                selectedMailboxId = mailboxes.first?.id
+            // Keep the current mailbox while it's listed; otherwise reopen the remembered
+            // one, else the first. loadMailbox below remembers the result.
+            let ids = mailboxes.map(\.id)
+            if selectionIsProvisional || selectedMailboxId.map({ !ids.contains($0) }) ?? true {
+                selectedMailboxId = LastMailboxStore.initialMailboxId(
+                    remembered: persistsLastMailbox ? lastMailboxStore.mailboxId : nil,
+                    available: ids
+                )
             }
-            if selectedMailboxId == nil {
-                selectedMailboxId = mailboxes.first?.id
+            selectionIsProvisional = false
+            if ids.isEmpty, persistsLastMailbox {
+                lastMailboxStore.clear()
             }
             isMailboxLoading = false
             if !leftoverPendingSends.isEmpty {
@@ -465,6 +483,11 @@ final class AppModel {
             }
         }
         selectedMailboxId = id
+        selectionIsProvisional = false
+        // Every real switch (picker, notification tap, refresh) is the next launch's mailbox.
+        if persistsLastMailbox {
+            lastMailboxStore.save(id)
+        }
         setupRealTimeStream()
 
         // Instant local read
@@ -1608,6 +1631,11 @@ final class AppModel {
 
     func reset() {
         sessionGeneration += 1
+        // Sign-out forgets the last mailbox; the next account starts on its own first one.
+        if persistsLastMailbox {
+            lastMailboxStore.clear()
+        }
+        selectionIsProvisional = false
         streamClient.stop()
         APIClient.shared.authToken = nil
         mailboxes = []
@@ -2259,5 +2287,35 @@ enum HomeTab: Hashable {
         case .replyLater:
             return "clock.arrow.circlepath"
         }
+    }
+}
+
+/// The mailbox the app reopens on launch (AVE-90): the last one the user opened,
+/// until another is opened. Cleared on sign-out with the rest of the session.
+struct LastMailboxStore {
+    static let key = "last_mailbox_id"
+
+    var defaults: UserDefaults = .standard
+
+    var mailboxId: String? {
+        guard let id = defaults.string(forKey: Self.key), !id.isEmpty else { return nil }
+        return id
+    }
+
+    func save(_ id: String) {
+        guard defaults.string(forKey: Self.key) != id else { return }
+        defaults.set(id, forKey: Self.key)
+    }
+
+    func clear() {
+        defaults.removeObject(forKey: Self.key)
+    }
+
+    /// The remembered mailbox while the user still has it; otherwise the first listed.
+    static func initialMailboxId(remembered: String?, available: [String]) -> String? {
+        if let remembered, available.contains(remembered) {
+            return remembered
+        }
+        return available.first
     }
 }

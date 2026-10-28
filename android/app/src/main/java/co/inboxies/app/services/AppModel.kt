@@ -320,6 +320,12 @@ class AppModel {
         if (folderId == FolderIds.INBOX) adjustInboxNewCount(wasUnread, isUnread)
     }
 
+    /**
+     * The launch pick came from a cache that lacked the remembered mailbox (AVE-90);
+     * the server list gets a second chance to restore it.
+     */
+    private var selectionIsProvisional = false
+
     /** Token the last [bootstrap] ran for — lets a recreated Activity skip a redundant reload. */
     @Volatile
     private var bootstrappedToken: String? = null
@@ -341,7 +347,13 @@ class AppModel {
         val cached = db.getMailboxes()
         if (cached.isNotEmpty()) {
             _mailboxes.value = cached
-            if (_selectedMailboxId.value == null) _selectedMailboxId.value = cached.first().id
+            if (_selectedMailboxId.value == null) {
+                // Reopen the mailbox the user last had open (AVE-90).
+                val remembered = if (isDebugPreview) null else LastMailboxPreference.mailboxId()
+                val pick = initialMailboxId(remembered, cached.map { it.id })
+                _selectedMailboxId.value = pick
+                selectionIsProvisional = remembered != null && pick != remembered
+            }
             _isMailboxLoading.value = false
             _selectedMailboxId.value?.let { id ->
                 val folders = db.getFolders(id)
@@ -459,9 +471,15 @@ class AppModel {
             _mailboxesLoadFailed.value = false
             db.upsertMailboxes(merged)
             val selected = _selectedMailboxId.value
-            // Keep the selection if it's still listed; otherwise fall back to the first one.
-            // loadMailbox does the switch itself, so the old mailbox's rows are cleared.
-            val target = selected?.takeIf { id -> list.any { it.id == id } } ?: list.firstOrNull()?.id
+            // Keep the selection if it's still listed; otherwise reopen the remembered
+            // mailbox, else the first one. loadMailbox does the switch itself, so the old
+            // mailbox's rows are cleared, and remembers the result.
+            val ids = list.map { it.id }
+            val remembered = if (isDebugPreview) null else LastMailboxPreference.mailboxId()
+            val target = selected?.takeIf { it in ids && !selectionIsProvisional }
+                ?: initialMailboxId(remembered, ids)
+            selectionIsProvisional = false
+            if (ids.isEmpty() && !isDebugPreview) LastMailboxPreference.clear()
             _isMailboxLoading.value = false
             if (target != null) {
                 loadMailbox(target)
@@ -561,6 +579,9 @@ class AppModel {
             _isLoading.value = true
         }
         _selectedMailboxId.value = id
+        selectionIsProvisional = false
+        // Every real switch (picker, notification tap, refresh) is the next launch's mailbox.
+        if (!isDebugPreview) LastMailboxPreference.save(id)
         setupRealTimeStream()
 
         val cachedFolders = db.getFolders(id)
@@ -1806,6 +1827,9 @@ class AppModel {
         // invite screen clears it when it is accepted or closed.
         _errorMessage.value = null
         _toast.value = null
+        // Sign-out forgets the last mailbox; the next account starts on its own first one.
+        if (!isDebugPreview) LastMailboxPreference.clear()
+        selectionIsProvisional = false
         isDebugPreview = false
         AutofillMailboxPreference.clear()
         DatabaseService.shared.clearAll()

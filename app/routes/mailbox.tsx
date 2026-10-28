@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { Outlet, useNavigate, useParams } from "react-router";
 import AccountsColumn from "~/components/columns/AccountsColumn";
@@ -17,8 +18,9 @@ import TextSizeWheelHost from "~/components/TextSizeWheel";
 import ShortcutSheet from "~/components/ShortcutSheet";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
+import { forgetLastMailbox, readLastMailbox, rememberLastMailbox } from "~/lib/last-mailbox";
 import { useMailbox } from "~/queries/mailboxes";
-import { ApiError } from "~/services/api";
+import api, { ApiError } from "~/services/api";
 
 /**
  * Horizontal Miller columns:
@@ -35,6 +37,19 @@ export default function MailboxRoute() {
 	useMailboxEvents(mailboxId);
 	const { panels, resetColumns, setReadOnly } = useUIStore();
 	const readOnly = Boolean(mailboxQuery.data?.readOnly);
+	const { data: me } = useQuery({
+		queryKey: ["me"],
+		queryFn: () => api.getMe(),
+		staleTime: 60_000,
+	});
+	const userId = me?.userId;
+	const openedMailboxId = mailboxQuery.data ? mailboxId : undefined;
+
+	// The next visit to `/` reopens this mailbox (AVE-90). Only once it has
+	// loaded, so a link to a mailbox the user can't open isn't remembered.
+	useEffect(() => {
+		if (openedMailboxId) rememberLastMailbox(userId, openedMailboxId);
+	}, [openedMailboxId, userId]);
 
 	// A mailbox whose domain's subscription ended can't compose or use the agent.
 	useEffect(() => {
@@ -54,9 +69,10 @@ export default function MailboxRoute() {
 	useEffect(() => {
 		const err = mailboxQuery.error;
 		if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+			if (mailboxId && readLastMailbox(userId) === mailboxId) forgetLastMailbox(userId);
 			navigate("/", { replace: true });
 		}
-	}, [mailboxQuery.error, navigate]);
+	}, [mailboxQuery.error, mailboxId, userId, navigate]);
 
 	return (
 		<>
