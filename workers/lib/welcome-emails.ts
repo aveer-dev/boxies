@@ -411,7 +411,7 @@ function buildEmail3AdvancedAndSecurity(recipientEmail: string, displayName: str
         <tbody>
           <tr>
             <td style="padding: 6px 10px; font-weight: 600; color: #178f48; width: 110px;">&check; Approve</td>
-            <td style="padding: 6px 10px; opacity: 0.8;">Moves to your Inbox and automatically approves all future messages from this sender.</td>
+            <td style="padding: 6px 10px; opacity: 0.8;">Moves to your Inbox and approves the sender. Their future mail skips the Screener and is sorted into Inbox, Promotions or Updates.</td>
           </tr>
           <tr>
             <td style="padding: 6px 10px; font-weight: 600; color: #e0393b;">&times; Screen Out</td>

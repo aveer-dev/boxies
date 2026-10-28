@@ -45,8 +45,13 @@ export default function ScreenerTriageBar({
 				emailId,
 				displayName: senderName || undefined,
 			});
+			// Inbox is the default and pins nothing: their mail is sorted
+			// automatically. A picked Promotions / Updates sticks (AVE-139).
 			toastManager.add({
-				title: `Allowed — future mail goes to ${FOLDER_DISPLAY_NAMES[destinationFolderId] ?? destinationFolderId}`,
+				title:
+					destinationFolderId === Folders.INBOX
+						? "Allowed — their mail is sorted automatically"
+						: `Allowed — future mail goes to ${FOLDER_DISPLAY_NAMES[destinationFolderId] ?? destinationFolderId}`,
 			});
 			await invalidate();
 			onDone();

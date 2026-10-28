@@ -178,7 +178,7 @@ const sorting: Faq[] = [
 		id: "screener",
 		group: "sorting-topic",
 		q: "How does the Screener work?",
-		a: ["Mail from a first-time sender goes to the Screener, not your Inbox. Accept the sender and choose where their mail goes: Inbox, Promotions or Updates. Decline, and their mail is filed in Screened out. Mail in the Screener never notifies you, never gets an assistant draft and never gets your auto-reply, but if you forward your mail, a copy still goes out. Mail you’ve screened out is never forwarded or auto-replied to. The sender isn’t told."],
+		a: ["Mail from a first-time sender goes to the Screener, not your Inbox. Accept the sender, and their mail is sorted into Inbox, Promotions or Updates by its headers; accept into Promotions or Updates to keep it there. Decline, and their mail is filed in Screened out. Mail in the Screener never notifies you, never gets an assistant draft and never gets your auto-reply, but if you forward your mail, a copy still goes out. Mail you’ve screened out is never forwarded or auto-replied to. The sender isn’t told."],
 		src: "FSW#the-screener; FC#4.3 (\"screen them out privately\"); dev cb0b217 sender-triage.ts resolveInboundFolder (unknown: skipPush/skipAutoDraft/skipAutoReply, skipForward false; rejected: skips forwarding too)",
 	},
 	{
@@ -206,7 +206,7 @@ const sorting: Faq[] = [
 		id: "sorting",
 		group: "sorting-topic",
 		q: "How does Inboxies decide where an email goes?",
-		a: ["In this order: spam, then senders you’ve screened out, then the Screener for anyone new, then your filters, then the place you chose for the sender, when you accepted them or in Settings → Senders. If you never chose one, as with people you’ve emailed, the email is sorted by its headers: mailing-list mail goes to Promotions, or to Updates when it’s a receipt, an alert or an automatic reply, and everything else goes to Inbox. Spam is mail with spam headers, personal mail that fails sender checks, or mail a Workers AI model flags. The model alone can’t send mail to Spam from someone you’ve accepted, emailed or given a place, as long as it passes their domain’s SPF, DKIM or DMARC check. If the model can’t be reached, the mail is treated as not spam, so nothing is lost."],
+		a: ["In this order: spam, then senders you’ve screened out, then the Screener for anyone new, then your filters, then the place you chose for the sender, when you accepted them into Promotions or Updates or in Settings → Senders. If you never chose one, as with people you’ve emailed or accepted with a plain Accept, the email is sorted by its headers: mailing-list mail goes to Promotions, or to Updates when it’s a receipt, an alert or an automatic reply, and everything else goes to Inbox. Spam is mail with spam headers, personal mail that fails sender checks, or mail a Workers AI model flags. The model alone can’t send mail to Spam from someone you’ve accepted, emailed or given a place, as long as it passes their domain’s SPF, DKIM or DMARC check. If the model can’t be reached, the mail is treated as not spam, so nothing is lost."],
 		src: "dev sender-triage.ts resolveInboundFolder (spam → rejected → unknown → filter → sender preference → explicit destination → classifier folder → Inbox; 31c58c6, PR #56); classify-email.ts (spam headers; Auto-Submitted / List-* / Precedence → Updates or Promotions; spoof check; Llama spam/ham; fail-open to ham); d19cd72 (PR #64): overrideAiSpamForVouchedSender (reason ai-spam only, auth.aligned), isVouchedSender",
 	},
 	{

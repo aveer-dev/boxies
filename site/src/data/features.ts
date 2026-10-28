@@ -11,9 +11,9 @@ const rows: Feature[] = [
 		title: "Promotions and Updates",
 		href: "/support#sorting",
 		platforms: ["ios", "android", "web"],
-		description: "Accept a sender into Inbox, Promotions or Updates, and their mail goes there from then on. Mail from people you’ve emailed is sorted by its headers: list mail to Promotions, or to Updates for receipts and alerts, and the rest to Inbox. Spam goes to Spam, caught by its headers, sender checks or a Workers AI model.",
+		description: "Mail from senders you’ve accepted or emailed is sorted by its headers: list mail to Promotions, or to Updates for receipts and alerts, and the rest to Inbox. Accept a sender into Promotions or Updates to keep their mail there. Spam goes to Spam, caught by its headers, sender checks or a Workers AI model.",
 		status: "available",
-		src: "FSW#the-screener (accept into Inbox, Promotions or Updates); dev 31c58c6 (PR #56): sender-triage.ts resolveInboundFolder uses the classifier's folder for allowed senders with no chosen destination (emailed, bootstrap, welcome); approve stores one (index.ts sender-triage/approve); classify-email.ts classifyFromHeaders (List-*/Precedence → Promotions, Auto-Submitted or receipt words → Updates; Workers AI is spam vs ham only)",
+		src: "FSW#the-screener (accept into Inbox, Promotions or Updates); dev 31c58c6 (PR #56): sender-triage.ts resolveInboundFolder uses the classifier's folder for allowed senders with no chosen destination (emailed, bootstrap, welcome); approve stores one only for Promotions / Updates, Inbox is the unpinned default (AVE-139, screenerAcceptDestination); classify-email.ts classifyFromHeaders (List-*/Precedence → Promotions, Auto-Submitted or receipt words → Updates; Workers AI is spam vs ham only)",
 	},
 	{
 		id: "senders",

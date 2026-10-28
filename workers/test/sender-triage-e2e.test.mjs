@@ -58,6 +58,7 @@ function inboundPipeline({
 		filterHit,
 		screenerEnabled: parseScreenerEnabled(rawSettings),
 		preferenceFolderId,
+		preferenceSource: preference?.source ?? null,
 	});
 	const autoDraft =
 		!decision.skipAutoDraft &&
@@ -159,12 +160,29 @@ function inboundPipeline({
 		decided_at: "t",
 		updated_at: "t",
 	});
+	// AVE-139: a plain Accept (Inbox) doesn't pin, so their newsletter is
+	// still sorted into Promotions, including legacy rows that stored a
+	// Screener-sourced Inbox preference.
 	const inbox = inboundPipeline({
 		classification: newsletter,
 		triage: acceptedTo("inbox"),
 		sender: "letters@writer.example",
 	});
-	assert.equal(inbox.folderId, "inbox");
+	assert.equal(inbox.folderId, "promotions");
+	const legacyAccept = inboundPipeline({
+		classification: newsletter,
+		triage: acceptedTo("inbox"),
+		sender: "letters@writer.example",
+		preferenceFolderId: "inbox",
+		preferenceSource: "screener",
+	});
+	assert.equal(legacyAccept.folderId, "promotions");
+	const personal = inboundPipeline({
+		classification: ham,
+		triage: acceptedTo(null),
+		sender: "letters@writer.example",
+	});
+	assert.equal(personal.folderId, "inbox");
 
 	const promotions = inboundPipeline({
 		classification: ham,
