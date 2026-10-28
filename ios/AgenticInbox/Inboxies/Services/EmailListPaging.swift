@@ -9,7 +9,7 @@ struct EmailListPaging: Equatable {
     static let initialCacheLimit = 50
     /// Inbox shows at most this many New rows; the rest open on the "All new" screen so Seen
     /// always stays in view right below (AVE-23). Sent to the server as `new_limit`.
-    static let inboxNewPreviewLimit = 5
+    static let inboxNewPreviewLimit = 3
 
     /// `mailboxId|folderId` (or `mailboxId|reply_later`). Results for any other key are stale.
     let key: String

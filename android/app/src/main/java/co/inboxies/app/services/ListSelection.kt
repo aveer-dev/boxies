@@ -115,7 +115,7 @@ object EmailPaging {
      * Inbox shows at most this many New rows; the rest open on the "All new" screen so Seen
      * always stays in view right below (AVE-23). Sent to the server as `new_limit`.
      */
-    const val INBOX_NEW_PREVIEW_LIMIT = 5
+    const val INBOX_NEW_PREVIEW_LIMIT = 3
 
     /** The capped New rows plus how many New conversations sit behind "Show all". */
     data class InboxNewPreview(val shown: List<Email>, val hiddenCount: Int)
