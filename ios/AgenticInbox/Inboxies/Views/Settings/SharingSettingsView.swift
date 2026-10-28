@@ -189,14 +189,12 @@ struct SharingSettingsView: View {
         }
         .overlay(alignment: .bottom) {
             if let saveMessage {
-                Text(saveMessage)
-                    .font(.inter(size: 13, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.pillFill, in: Capsule())
-                    .padding(.bottom, 12)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                InboxiesToast(
+                    message: saveMessage,
+                    onDismiss: { withAnimation(ToastMetrics.animation) { self.saveMessage = nil } }
+                )
+                .padding(.horizontal, ToastMetrics.screenInset)
+                .padding(.bottom, ToastMetrics.standaloneBottomInset)
             }
         }
         .task(id: mailboxId) { await load() }
@@ -448,10 +446,12 @@ struct SharingSettingsView: View {
     }
 
     private func showToast(_ message: String) {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { saveMessage = message }
+        withAnimation(ToastMetrics.animation) { saveMessage = message }
         Task {
-            try? await Task.sleep(nanoseconds: 1_800_000_000)
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { saveMessage = nil }
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            // A newer toast keeps its own full timer.
+            guard saveMessage == message else { return }
+            withAnimation(ToastMetrics.animation) { saveMessage = nil }
         }
     }
 

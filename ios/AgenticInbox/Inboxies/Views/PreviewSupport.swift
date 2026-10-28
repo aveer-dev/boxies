@@ -319,6 +319,10 @@ enum PreviewSupport {
             applyNotesFixtures(to: app, args: args)
         }
         applyLoadStateFixtures(to: app, args: args)
+        if args.contains("-previewToast") {
+            // Pinned sample toast with an action (AVE-134): icon + message + Undo.
+            app.showToast("Archived", isUndo: true, duration: 0)
+        }
         if args.contains("-previewManyNew") {
             applyManyNewFixtures(to: app)
         }

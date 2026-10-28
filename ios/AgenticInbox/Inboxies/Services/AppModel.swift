@@ -1553,9 +1553,20 @@ final class AppModel {
     }
 
 
-    func showToast(_ message: String, isError: Bool = false, isLoading: Bool = false, isUndo: Bool = false, duration: TimeInterval = 2.5) {
+    /// - Parameters:
+    ///   - icon: SF Symbol for the leading glyph (defaults to a check, or the error mark).
+    ///   - action: Trailing button (e.g. "Add reminder"); `isUndo` supplies Undo instead.
+    func showToast(
+        _ message: String,
+        isError: Bool = false,
+        isLoading: Bool = false,
+        isUndo: Bool = false,
+        icon: String? = nil,
+        action: ToastAction? = nil,
+        duration: TimeInterval = 2.5
+    ) {
         toastDismissTask?.cancel()
-        toast = AppToast(message: message, isError: isError, isLoading: isLoading, isUndo: isUndo)
+        toast = AppToast(message: message, isError: isError, isLoading: isLoading, isUndo: isUndo, icon: icon, action: action)
         if duration > 0 {
             toastDismissTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(duration))
@@ -2220,6 +2231,8 @@ struct AppToast: Identifiable, Equatable {
     var isError: Bool = false
     var isLoading: Bool = false
     var isUndo: Bool = false
+    var icon: String? = nil
+    var action: ToastAction? = nil
 }
 
 enum HomeTab: Hashable {

@@ -1,5 +1,10 @@
 package co.inboxies.app.ui.home
 
+import co.inboxies.app.theme.ToastMetrics
+import co.inboxies.app.models.ToastAction
+import co.inboxies.app.ui.components.toastIcon
+import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.components.AnimatedToast
 import android.Manifest
 import android.os.Build
 import android.view.HapticFeedbackConstants
@@ -142,7 +147,6 @@ import co.inboxies.app.ui.components.domainServiceCopy
 import co.inboxies.app.ui.components.rememberDomainRenewal
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuItem
-import co.inboxies.app.ui.components.UndoToastBanner
 import co.inboxies.app.ui.compose.ComposeActionItem
 import co.inboxies.app.ui.compose.ComposeActionListOverlay
 import co.inboxies.app.ui.compose.ComposeDockBar
@@ -926,16 +930,20 @@ fun HomeShellView(
                         .animateContentSize(animationSpec = selectModeSpring()),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                toast?.let {
-                    UndoToastBanner(
-                        message = it.message,
-                        isError = it.isError,
-                        isLoading = it.isLoading,
-                        isUndo = it.isUndo,
-                        onUndo = { appModel.undoPendingAction() },
+                AnimatedToast(toast) { current ->
+                    InboxiesToast(
+                        message = current.message,
+                        icon = current.toastIcon,
+                        iconVector = current.icon,
+                        action = if (current.isUndo) {
+                            ToastAction("Undo") { appModel.undoPendingAction() }
+                        } else {
+                            current.action
+                        },
+                        onDismiss = { appModel.hideToast() },
                         modifier = Modifier
-                            .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding)
-                            .padding(bottom = HomeChromeMetrics.chromeSpacing),
+                            .padding(horizontal = ToastMetrics.screenInset)
+                            .padding(bottom = ToastMetrics.barGap),
                     )
                 }
 

@@ -1,5 +1,9 @@
 package co.inboxies.app.ui.settings
 
+import androidx.compose.foundation.layout.navigationBarsPadding
+import co.inboxies.app.theme.ToastMetrics
+import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.components.AnimatedToast
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -117,7 +121,7 @@ fun SharingSettingsView(
     fun toast(message: String) {
         saveMessage = message
         scope.launch {
-            delay(1_800)
+            delay(2_500)
             if (saveMessage == message) saveMessage = null
         }
     }
@@ -418,24 +422,15 @@ fun SharingSettingsView(
             )
         }
 
-        AnimatedVisibility(
-            visible = saveMessage != null,
-            enter = fadeIn(),
-            exit = fadeOut(),
+        AnimatedToast(
+            value = saveMessage,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 16.dp),
-        ) {
-            Text(
-                saveMessage.orEmpty(),
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
-                color = colors.ink,
-                modifier = Modifier
-                    .background(colors.pillFill, RoundedCornerShape(50))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
-            )
+                .navigationBarsPadding()
+                .padding(horizontal = ToastMetrics.screenInset)
+                .padding(bottom = ToastMetrics.standaloneBottomInset),
+        ) { message ->
+            InboxiesToast(message = message, onDismiss = { saveMessage = null })
         }
     }
 }
