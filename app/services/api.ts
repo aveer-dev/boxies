@@ -486,7 +486,7 @@ const api = {
 		mailboxId: string,
 		id: string,
 		folderId: string,
-		opts?: { setSenderPreference?: boolean; unsubscribe?: boolean },
+		opts?: { setSenderPreference?: boolean; unsubscribe?: boolean; refileSender?: boolean },
 	) =>
 		post<{
 			status: string;
@@ -497,11 +497,22 @@ const api = {
 			senderStatus?: "allowed" | "rejected";
 			/** Report spam with `unsubscribe`: outcome of the one-click POST (AVE-99). */
 			unsubscribe?: "sent" | "failed";
+			/** Other messages from the sender moved along with this one (AVE-98). */
+			rescuedCount?: number;
+			/** For `undoSenderVerdict`: reverts the sender verdict and every move (AVE-98). */
+			undoToken?: string | null;
 		}>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, {
 			folderId,
 			setSenderPreference: opts?.setSenderPreference,
 			...(opts?.unsubscribe ? { unsubscribe: true } : {}),
+			...(opts?.refileSender === false ? { refileSender: false } : {}),
 		}),
+	/** Undo a Not spam / Report spam: the sender's rule and the moved messages (AVE-98). */
+	undoSenderVerdict: (mailboxId: string, undoToken: string) =>
+		post<{ status: "undone"; restoredCount: number }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules/undo`,
+			{ undoToken },
+		),
 	listSenderPreferences: (
 		mailboxId: string,
 		params?: { q?: string; folder?: string; limit?: number },

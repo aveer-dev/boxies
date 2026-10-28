@@ -317,6 +317,7 @@ export function useMoveEmail() {
 			folderId,
 			setSenderPreference,
 			unsubscribe,
+			refileSender,
 		}: {
 			mailboxId: string;
 			id: string;
@@ -324,14 +325,30 @@ export function useMoveEmail() {
 			setSenderPreference?: boolean;
 			/** Report spam: also send the RFC 8058 one-click unsubscribe. */
 			unsubscribe?: boolean;
+			/** Report spam: also move the sender's other mail to Spam (default on server-side). */
+			refileSender?: boolean;
 		}) =>
-			api.moveEmail(mailboxId, id, folderId, { setSenderPreference, unsubscribe }),
+			api.moveEmail(mailboxId, id, folderId, { setSenderPreference, unsubscribe, refileSender }),
 		onSuccess: (data, { mailboxId, setSenderPreference }) => {
 			invalidate(mailboxId);
 			// Any move into or out of Spam teaches the sender server-side.
 			if (setSenderPreference || data?.senderStatus) {
 				qc.invalidateQueries({ queryKey: ["sender-preferences", mailboxId] });
 			}
+		},
+	});
+}
+
+/** Undo a Not spam / Report spam from its toast (AVE-98). */
+export function useUndoSenderVerdict() {
+	const invalidate = useInvalidateEmailData();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: ({ mailboxId, undoToken }: { mailboxId: string; undoToken: string }) =>
+			api.undoSenderVerdict(mailboxId, undoToken),
+		onSuccess: (_data, { mailboxId }) => {
+			invalidate(mailboxId);
+			qc.invalidateQueries({ queryKey: ["sender-preferences", mailboxId] });
 		},
 	});
 }
