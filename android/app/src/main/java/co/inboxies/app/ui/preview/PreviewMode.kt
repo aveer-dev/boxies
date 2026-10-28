@@ -33,6 +33,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Senders("senders", "previewSenders"),
     /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */
     SendersBlocked("sendersBlocked", "previewSendersBlocked"),
+    /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
+    Settings("settings", "previewSettings"),
+    /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */
+    SettingsScreenerOff("settingsScreenerOff", "previewSettingsScreenerOff"),
     Mailbox("mailbox", "previewMailbox"),
     /** Inbox with more pages to load: the bottom skeleton row (iOS `-previewLoadMore`). */
     LoadMore("loadMore", "previewLoadMore"),

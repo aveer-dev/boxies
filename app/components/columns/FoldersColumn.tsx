@@ -25,6 +25,7 @@ import {
 	SYSTEM_FOLDER_IDS,
 } from "shared/folders";
 import { folderPath, mailboxPath } from "~/hooks/useMailNavigation";
+import { isScreenerEnabled } from "~/lib/mailbox-settings";
 import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
 import { useCreateFolder, useFolders, useWorkflowPiles } from "~/queries/folders";
@@ -119,6 +120,15 @@ export default function FoldersColumn() {
 		() => folders.filter((f) => !(SYSTEM_FOLDER_IDS as readonly string[]).includes(f.id)),
 		[folders],
 	);
+	// Screener off (AVE-104): hide its row unless something is still unread there.
+	const screenerOn = isScreenerEnabled(mailbox?.settings);
+	const visibleSystemFolders = useMemo(
+		() =>
+			SYSTEM_FOLDER_IDS.filter(
+				(id) => id !== Folders.SCREENER || screenerOn || Boolean(unreadById[id]),
+			),
+		[screenerOn, unreadById],
+	);
 	const replyLaterCount = workflowPiles.find((p) => p.id === "reply_later")?.count ?? 0;
 
 	const displayName = mailboxDisplayName(mailbox, mailboxId);
@@ -149,7 +159,7 @@ export default function FoldersColumn() {
 			<div ref={railRef} className="relative">
 				<span ref={markRef} aria-hidden className={slidingMarkClass} />
 				<nav aria-label="Folders" className="space-y-0.5">
-					{SYSTEM_FOLDER_IDS.map((id) => (
+					{visibleSystemFolders.map((id) => (
 						<FolderRow
 							key={id}
 							to={folderPath(mailboxId, id)}

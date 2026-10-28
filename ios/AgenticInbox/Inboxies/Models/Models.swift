@@ -153,7 +153,13 @@ struct MailboxSettings: Codable, Hashable {
     var signature: SignatureSettings?
     var autoReply: AutoReplySettings?
     var filters: [InboxFilterRule]?
+    /// Screener for first-time senders. Absent means on (AVE-104).
+    var screener: ScreenerSettings?
     var acl: MailboxAcl?
+}
+
+struct ScreenerSettings: Codable, Hashable {
+    var enabled: Bool?
 }
 
 /// Read-only: the server derives it from mailbox members. Sharing changes go

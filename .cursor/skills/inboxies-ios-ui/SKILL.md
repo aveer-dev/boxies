@@ -203,6 +203,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMembers` | Mailbox members + pending invites |
 | `-previewSessions` | Devices & sessions |
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
+| `-previewSettings` | Settings sheet on the fixture mailbox (add `-previewScreenerOff` for the Screener switch off) |
 | `-previewMailbox` | Inbox New/Seen |
 | `-previewScreener` | Screener + detail |
 | `-previewReplyLater` | Reply Later pile |

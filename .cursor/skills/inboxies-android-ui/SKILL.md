@@ -209,6 +209,8 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Devices & sessions | `previewSessions` | `sessions` | Session list |
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
+| Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
+| Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
 | Screener | `previewScreener` | `screener` | Screener folder + detail open |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
