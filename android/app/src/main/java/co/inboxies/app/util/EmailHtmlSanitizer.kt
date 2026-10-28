@@ -13,9 +13,35 @@ import org.jsoup.safety.Safelist
  * HTML profile, forbid `<style>` tags, keep `target` on links.
  */
 object EmailHtmlSanitizer {
-    /** Remote https images load by default; same image policy as web EmailIframe and iOS. */
+    /** Default policy: remote https images load (same image policy as web EmailIframe and iOS). */
     const val CONTENT_SECURITY_POLICY =
         "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'"
+
+    /**
+     * Spam only (Gmail parity): remote images (tracking pixels) stay blocked until the
+     * reader taps "Load images". Inline `cid:` parts are already rewritten to `data:`.
+     */
+    const val BLOCKED_REMOTE_IMAGES_POLICY =
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'unsafe-inline'"
+
+    private val remoteImageRegex = Regex(
+        """(?:\bsrc|\bbackground)\s*=\s*["']?\s*https?:|url\(\s*(?:["']|&quot;)?\s*https?:""",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** True when sanitized HTML references http(s) images the Spam policy would block. */
+    fun hasRemoteImages(html: String): Boolean = remoteImageRegex.containsMatchIn(html)
+
+    /**
+     * Spam keeps remote images blocked until "Load images" (Gmail parity, AVE-132).
+     * Decided by the message's own folder, so a Spam message opened from search or
+     * inside a thread is still blocked. Mirrors web `shared/remote-images.ts`.
+     */
+    fun blocksRemoteImages(folderId: String?): Boolean = folderId == "spam"
+
+    /** Body / quoted-replies policy: remote images load unless Spam and not opted in. */
+    fun contentSecurityPolicy(blocksRemoteImages: Boolean, loadedRemoteImages: Boolean): String =
+        if (!blocksRemoteImages || loadedRemoteImages) CONTENT_SECURITY_POLICY else BLOCKED_REMOTE_IMAGES_POLICY
 
     const val OPAQUE_ORIGIN = "https://inboxies.invalid/"
 

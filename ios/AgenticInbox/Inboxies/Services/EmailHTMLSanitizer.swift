@@ -4,13 +4,44 @@ import SwiftSoup
 /// Native analogue of web `EmailIframe` DOMPurify options:
 /// HTML profile, forbid `<style>` tags, keep `target` on links.
 enum EmailHTMLSanitizer {
-    /// Remote `https:` images load by default (same image policy as web and Android).
+    /// Default policy: remote `https:` images load (same image policy as web and Android).
     /// No page script ever runs: height measuring is an app-world `WKUserScript`,
     /// which CSP and `allowsContentJavaScript = false` do not block.
     static let contentSecurityPolicy =
         "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'"
 
+    /// Spam only (Gmail parity): remote images stay blocked (tracking pixels, read
+    /// receipts) until the reader taps "Load images"; inline `data:` / `cid:` images render.
+    static let remoteImagesBlockedPolicy =
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'none'"
+
+    /// Spam keeps remote images blocked until "Load images" (Gmail parity, AVE-132).
+    /// Decided by the message's own folder, so a Spam message opened from search or
+    /// inside a thread is still blocked. Mirrors web `shared/remote-images.ts`.
+    static func blocksRemoteImages(folderId: String?) -> Bool {
+        folderId == "spam"
+    }
+
+    /// The body / quoted-replies policy: remote images load unless the message is
+    /// in Spam and the reader hasn't tapped "Load images" for it.
+    static func contentSecurityPolicy(blocksRemoteImages: Bool, loadedRemoteImages: Bool) -> String {
+        !blocksRemoteImages || loadedRemoteImages ? contentSecurityPolicy : remoteImagesBlockedPolicy
+    }
+
     static let opaqueOrigin = URL(string: "https://inboxies.invalid/")!
+
+    private static let remoteImageReference = try? NSRegularExpression(
+        pattern: #"(?:\bsrc|\bbackground)\s*=\s*["']?\s*(?:https:)?//|url\(\s*["']?\s*(?:https:)?//"#,
+        options: [.caseInsensitive]
+    )
+
+    /// True when sanitized HTML references images the Spam policy would block
+    /// (`https:` or protocol-relative, which resolves to https on the opaque origin).
+    static func containsRemoteImages(_ html: String) -> Bool {
+        guard let remoteImageReference, !html.isEmpty else { return false }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return remoteImageReference.firstMatch(in: html, range: range) != nil
+    }
 
     // MARK: - Own colours (dark mode)
 
@@ -81,6 +112,7 @@ enum EmailHTMLSanitizer {
     struct PreparedBody: Sendable, Equatable {
         let main: String
         let quote: String?
+        let hasRemoteImages: Bool
         /// The main part sets its own colours (paper card in dark mode).
         let mainHasOwnColors: Bool
         let quoteHasOwnColors: Bool
@@ -92,6 +124,7 @@ enum EmailHTMLSanitizer {
 
     /// One SwiftSoup pass per body, off the main actor. Results are cached by `key`
     /// (email id + source fingerprint) so reopening a message or remounting the view is free.
+    /// Remote-image consent only swaps the CSP, so it is not part of the key.
     static func prepareOffMain(_ html: String, key: String) async -> PreparedBody {
         if let cached = PreparedBodyCache.shared.value(for: key) { return cached }
         let prepared = await Task.detached(priority: .userInitiated) {
@@ -99,6 +132,7 @@ enum EmailHTMLSanitizer {
             return PreparedBody(
                 main: split.main,
                 quote: split.quote,
+                hasRemoteImages: containsRemoteImages(split.main) || containsRemoteImages(split.quote ?? ""),
                 mainHasOwnColors: hasOwnColors(split.main),
                 quoteHasOwnColors: hasOwnColors(split.quote ?? "")
             )

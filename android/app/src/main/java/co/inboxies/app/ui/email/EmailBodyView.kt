@@ -86,11 +86,22 @@ fun EmailBodyView(
     var webHeightPx by remember(email.id) { mutableFloatStateOf(1f) }
     var isWebLoading by remember(email.id) { mutableStateOf(isHtml) }
     var showQuoted by remember(email.id) { mutableStateOf(false) }
+    // Remote images load by default; Spam keeps them blocked until "Load images"
+    // for this message (Gmail parity, same as web and iOS).
+    val blocksRemoteImages = EmailHtmlSanitizer.blocksRemoteImages(email.folderId)
+    var loadedRemoteImages by remember(email.id) { mutableStateOf(false) }
+    val allowRemoteImages = !blocksRemoteImages || loadedRemoteImages
 
     val bodyHtml = htmlWithImages ?: htmlOrText
     val prepared = remember(bodyHtml) { EmailHtmlSanitizer.prepare(bodyHtml) }
     val plainParts = remember(htmlOrText) { splitPlainTextReplies(htmlOrText) }
     val hasQuoted = if (isHtml) prepared.quote != null else plainParts.second != null
+    val hasRemoteImages = remember(prepared) {
+        isHtml && (
+            EmailHtmlSanitizer.hasRemoteImages(prepared.main) ||
+                prepared.quote?.let(EmailHtmlSanitizer::hasRemoteImages) == true
+            )
+    }
     val showLoading = isHtml && (isWebLoading || webHeightPx <= 1f)
     // Dark mode: designed mail keeps its colours on a light paper card; simple mail goes dark.
     val appearance = EmailBodyAppearance.of(
@@ -166,9 +177,13 @@ fun EmailBodyView(
                 }
             }
 
+            if (hasRemoteImages && !allowRemoteImages && !showLoading) {
+                RemoteImagesBar(onLoad = { loadedRemoteImages = true })
+            }
+
             Box(modifier = Modifier.fillMaxWidth()) {
                 HtmlBodyWebView(
-                    html = wrapEmailHtml(prepared.main, appearance),
+                    html = wrapEmailHtml(prepared.main, allowRemoteImages, appearance),
                     onHeight = { webHeightPx = it },
                     onLoadingChanged = { isWebLoading = it },
                     modifier = Modifier
@@ -205,10 +220,51 @@ fun EmailBodyView(
             QuotedRepliesSheet(
                 content = quote,
                 isHtml = isHtml,
+                allowRemoteImages = allowRemoteImages,
                 hasOwnColors = isHtml && quoteHasOwnColors,
                 onClose = { showQuoted = false },
             )
         }
+    }
+}
+
+/** "Remote images are hidden · Load images" — muted pill matching the inline-images loader. */
+@Composable
+private fun RemoteImagesBar(onLoad: () -> Unit) {
+    val colors = inboxiesColors()
+    val view = LocalView.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(colors.pillFill)
+            .clickable {
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                onLoad()
+            }
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Text(
+            "Remote images are hidden",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 12.sp,
+            color = colors.muted,
+        )
+        Text(
+            "·",
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            color = colors.muted,
+        )
+        Text(
+            "Load images",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+            color = colors.accent,
+        )
     }
 }
 
@@ -291,6 +347,7 @@ private fun GhostThreeDotButton(onClick: () -> Unit) {
 private fun QuotedRepliesSheet(
     content: String,
     isHtml: Boolean,
+    allowRemoteImages: Boolean,
     hasOwnColors: Boolean,
     onClose: () -> Unit,
 ) {
@@ -329,7 +386,7 @@ private fun QuotedRepliesSheet(
                         setBackgroundColor(android.graphics.Color.TRANSPARENT)
                         applyEmailHtmlWebViewSettings(javaScriptEnabled = false)
                         webViewClient = EmailLinkWebViewClient()
-                        val wrapped = wrapQuotedHtml(content, appearance)
+                        val wrapped = wrapQuotedHtml(content, allowRemoteImages, appearance)
                         tag = wrapped
                         loadDataWithBaseURL(
                             EmailHtmlSanitizer.OPAQUE_ORIGIN,
@@ -341,7 +398,7 @@ private fun QuotedRepliesSheet(
                     }
                 },
                 update = { view ->
-                    val wrapped = wrapQuotedHtml(content, appearance)
+                    val wrapped = wrapQuotedHtml(content, allowRemoteImages, appearance)
                     if (view.tag != wrapped) {
                         view.tag = wrapped
                         view.loadDataWithBaseURL(
@@ -583,6 +640,14 @@ private fun replaceCid(cid: String, html: String, replacement: String): String {
         .replace("cid:$cid", replacement, ignoreCase = true)
 }
 
+/** Remote images load by default; in Spam only after the reader taps "Load images". */
+private fun emailCsp(allowRemoteImages: Boolean): String =
+    if (allowRemoteImages) {
+        EmailHtmlSanitizer.CONTENT_SECURITY_POLICY
+    } else {
+        EmailHtmlSanitizer.BLOCKED_REMOTE_IMAGES_POLICY
+    }
+
 /**
  * How an HTML mail body is coloured. Dark mode follows Gmail / Apple Mail / Hey:
  * simple mail (no colours of its own) takes the app theme; designed mail
@@ -629,6 +694,7 @@ private fun Modifier.mailPaper(appearance: EmailBodyAppearance): Modifier =
 
 private fun wrapEmailHtml(
     bodyHtml: String,
+    allowRemoteImages: Boolean,
     appearance: EmailBodyAppearance,
 ): String {
     val bodySize = AppThemeDims.FontSize.body.value.toInt()
@@ -638,7 +704,7 @@ private fun wrapEmailHtml(
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="${EmailHtmlSanitizer.CONTENT_SECURITY_POLICY}">
+        <meta http-equiv="Content-Security-Policy" content="${emailCsp(allowRemoteImages)}">
         <style>
           :root { color-scheme: ${appearance.cssColorScheme}; }
           html, body {
@@ -681,6 +747,7 @@ private fun wrapEmailHtml(
 
 private fun wrapQuotedHtml(
     bodyContent: String,
+    allowRemoteImages: Boolean,
     appearance: EmailBodyAppearance,
 ): String {
     val bodySize = AppThemeDims.FontSize.body.value.toInt()
@@ -691,7 +758,7 @@ private fun wrapQuotedHtml(
         <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-        <meta http-equiv="Content-Security-Policy" content="${EmailHtmlSanitizer.CONTENT_SECURITY_POLICY}">
+        <meta http-equiv="Content-Security-Policy" content="${emailCsp(allowRemoteImages)}">
         <style>
           :root { color-scheme: ${appearance.cssColorScheme}; }
           html, body {

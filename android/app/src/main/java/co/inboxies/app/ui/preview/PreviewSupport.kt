@@ -688,7 +688,8 @@ object PreviewSupport {
             read = false,
             starred = false,
             // Designed mail (own colours): a light paper card in dark mode.
-            body = """<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fff4e5"><tr><td style="padding: 16px; color: #7a3e00"><p><b>Claim your reward</b> before it expires.</p></td></tr></table>""",
+            // Remote image: Spam keeps it blocked behind "Load images" (AVE-132).
+            body = """<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fff4e5"><tr><td style="padding: 16px; color: #7a3e00"><img src="https://www.cloudflare.com/favicon.ico" width="48" height="48" alt="Gift card"><p><b>Claim your reward</b> before it expires.</p></td></tr></table>""",
             snippet = "Claim your reward before it expires.",
             folderName = "Spam",
             // AVE-94: reason line + "Unverified sender" banner in the reader.

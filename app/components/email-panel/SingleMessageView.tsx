@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import EmailAttachmentList from "~/components/EmailAttachmentList";
 import EmailIframe from "~/components/EmailIframe";
 import { formatDetailDate, hasFileAttachment, rewriteInlineImages } from "~/lib/utils";
+import { blocksRemoteImages } from "shared/remote-images";
 import { displaySenderName } from "shared/sender";
 import type { Email } from "~/types";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
@@ -110,6 +111,7 @@ export default function SingleMessageView({
 						email.id,
 						email.attachments,
 					)}
+					blockRemoteImages={blocksRemoteImages(email.folder_id)}
 				/>
 			</div>
 
