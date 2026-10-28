@@ -5,6 +5,7 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emailHasOwnColors } from "../../shared/email-colors";
+import { emailImgSrc } from "../../shared/remote-images";
 import { scrollerFor } from "~/lib/scroll-axis";
 import { useTextSize } from "~/lib/text-size";
 import { useTheme } from "~/lib/theme";
@@ -59,6 +60,11 @@ interface EmailIframeProps {
 	body: string;
 	/** When true, iframe auto-sizes to content height instead of filling parent */
 	autoSize?: boolean;
+	/**
+	 * Keep remote images blocked until the reader taps "Load images". Only
+	 * Spam does this (as Gmail does); everywhere else images load by default.
+	 */
+	blockRemoteImages?: boolean;
 }
 
 /**
@@ -75,14 +81,16 @@ interface EmailIframeProps {
  *   The `allow-scripts` flag is required for this, but scripts inside
  *   the opaque-origin sandbox cannot access anything useful.
  * - A strict CSP meta tag blocks external resource loads inside the
- *   iframe as a defense-in-depth layer. Remote images (tracking pixels) are
- *   blocked until the reader opts in; same-origin inline (cid) images load.
+ *   iframe as a defense-in-depth layer. Only images are allowed out: remote
+ *   https images load by default, except in Spam, where they stay blocked
+ *   until the reader opts in. Same-origin inline (cid) images always load.
  * - Links always open in a new tab; the email can't navigate the app away.
  */
-export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
+export default function EmailIframe({ body, autoSize, blockRemoteImages = false }: EmailIframeProps) {
 	const iframeRef = useRef<HTMLIFrameElement>(null);
 	const [height, setHeight] = useState(autoSize ? 100 : 0);
-	const [allowRemoteImages, setAllowRemoteImages] = useState(false);
+	// Spam only: the reader tapped "Load images" for this message.
+	const [loadedRemoteImages, setLoadedRemoteImages] = useState(false);
 	/**
 	 * The sanitised document, and a version that remounts the iframe for each
 	 * new one: re-assigning `srcdoc` on a live sandboxed frame can leave it
@@ -110,9 +118,9 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 		iframeRef.current?.contentWindow?.postMessage({ __emailZoom: zoom }, "*");
 	}, [zoom]);
 
-	// A different message starts blocked again.
+	// A different Spam message starts blocked again.
 	useEffect(() => {
-		setAllowRemoteImages(false);
+		setLoadedRemoteImages(false);
 	}, [body]);
 
 	// Listen for height reports from the sandboxed iframe
@@ -153,9 +161,14 @@ export default function EmailIframe({ body, autoSize }: EmailIframeProps) {
 	useEffect(() => {
 		if (!body) return;
 
-		const imgSrc = allowRemoteImages
-			? "data: cid: https:"
-			: `data: cid: ${window.location.origin}`;
+		// Remote https images load unless this is a Spam message the reader
+		// hasn't opted in on (same as iOS and Android). The app's own origin is
+		// always listed so inline (cid) images load in local dev.
+		const imgSrc = emailImgSrc({
+			blockRemoteImages,
+			loadedRemoteImages,
+			origin: window.location.origin,
+		});
 
 		const padding = autoSize ? (paper ? "16px" : "0") : "24px";
 
@@ -254,7 +267,7 @@ ul, ol { padding-left: 20px; margin: 4px 0; }
 <body>${cleanBody}${heightScript}${wheelScript}${zoomScript}</body>
 </html>`;
 		setDoc((prev) => ({ html, version: (prev?.version ?? 0) + 1 }));
-	}, [body, cleanBody, autoSize, allowRemoteImages, palette, paper]);
+	}, [body, cleanBody, autoSize, blockRemoteImages, loadedRemoteImages, palette, paper]);
 
 	const iframe = (
 		<iframe
@@ -270,7 +283,7 @@ ul, ol { padding-left: 20px; margin: 4px 0; }
 	// A full-height sheet keeps a margin of the dark reader around it. The
 	// wrapper is always there: re-parenting the iframe would blank it.
 	const frame = autoSize ? iframe : <div className={`h-full ${paper ? "p-3" : ""}`}>{iframe}</div>;
-	if (!hasRemoteImages || allowRemoteImages) return frame;
+	if (!blockRemoteImages || loadedRemoteImages || !hasRemoteImages) return frame;
 	return (
 		<div className={autoSize ? undefined : "flex h-full flex-col"}>
 			<div className="flex items-center justify-between gap-3 border-b border-kumo-line bg-kumo-tint px-4 py-2 text-xs text-kumo-subtle">
@@ -278,7 +291,7 @@ ul, ol { padding-left: 20px; margin: 4px 0; }
 				<button
 					type="button"
 					className="font-medium text-kumo-default hover:underline"
-					onClick={() => setAllowRemoteImages(true)}
+					onClick={() => setLoadedRemoteImages(true)}
 				>
 					Load images
 				</button>

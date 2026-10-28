@@ -10,14 +10,17 @@ struct EmailBodyView: View {
     var mailboxId: String?
     var emailId: String?
     var attachments: [Attachment] = []
+    /// Spam only (as Gmail does): remote images stay blocked until "Load images".
+    /// Everywhere else they load by default.
+    var blocksRemoteImages = false
 
     @State private var htmlWithImages: String?
     @State private var webHeight: CGFloat = 1
     @State private var isWebLoading = true
     @State private var isResolvingImages = false
     @State private var activeQuotedContent: QuotedMailContent? = nil
-    /// Remote images stay blocked until the reader taps "Load images" (per message).
-    @State private var allowsRemoteImages = false
+    /// Spam only: the reader tapped "Load images" for this message.
+    @State private var loadedRemoteImages = false
     /// Sanitized body, computed once per source off the main actor (never during `body`).
     @State private var prepared: PreparedState?
     @Environment(\.colorScheme) private var colorScheme
@@ -53,16 +56,21 @@ struct EmailBodyView: View {
         isHTML && (prepared == nil || isWebLoading || webHeight <= 1)
     }
 
+    private var allowsRemoteImages: Bool {
+        !blocksRemoteImages || loadedRemoteImages
+    }
+
     private var hasBlockedRemoteImages: Bool {
         guard isHTML, !allowsRemoteImages else { return false }
         return prepared?.body.hasRemoteImages ?? false
     }
 
-    /// Opted-in policy only after "Load images"; otherwise remote `https:` images are blocked.
+    /// Remote `https:` images load by default; Spam blocks them until "Load images".
     private var contentSecurityPolicy: String {
-        allowsRemoteImages
-            ? EmailHTMLSanitizer.contentSecurityPolicy
-            : EmailHTMLSanitizer.remoteImagesBlockedPolicy
+        EmailHTMLSanitizer.contentSecurityPolicy(
+            blocksRemoteImages: blocksRemoteImages,
+            loadedRemoteImages: loadedRemoteImages
+        )
     }
 
     private var hasQuotedReplies: Bool {
@@ -151,7 +159,7 @@ struct EmailBodyView: View {
         }
         .onChange(of: emailId) { _, _ in
             activeQuotedContent = nil
-            allowsRemoteImages = false
+            loadedRemoteImages = false
             prepared = nil
             webHeight = 1
             isWebLoading = true
@@ -167,7 +175,7 @@ struct EmailBodyView: View {
         }
     }
 
-    /// Web parity: remote images are opt-in per message.
+    /// Spam only (web and Android parity): remote images are opt-in per message.
     private var remoteImagesBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "photo")
@@ -182,7 +190,7 @@ struct EmailBodyView: View {
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    allowsRemoteImages = true
+                    loadedRemoteImages = true
                 }
             } label: {
                 Text("Load images")
@@ -1005,8 +1013,8 @@ enum HTMLHardenFixture {
       <a href="https://inboxies.invalid/stay">opaque origin</a>
       <img src="x" onerror="alert(1)">
     </p>
-    <p>Remote image (hidden until "Load images"):
-      <img src="https://example.com/pixel.gif" width="1" height="1" alt="">
+    <p>Remote image (loads by default outside Spam):
+      <img src="https://www.cloudflare.com/favicon.ico" width="48" height="48" alt="Cloudflare logo">
     </p>
     <script>document.title = "xss"</script>
     <blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em;">

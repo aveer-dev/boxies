@@ -86,8 +86,11 @@ fun EmailBodyView(
     var webHeightPx by remember(email.id) { mutableFloatStateOf(1f) }
     var isWebLoading by remember(email.id) { mutableStateOf(isHtml) }
     var showQuoted by remember(email.id) { mutableStateOf(false) }
-    // Remote images are opt-in per message (parity with web "Load images").
-    var allowRemoteImages by remember(email.id) { mutableStateOf(false) }
+    // Remote images load by default; Spam keeps them blocked until "Load images"
+    // for this message (Gmail parity, same as web and iOS).
+    val blocksRemoteImages = EmailHtmlSanitizer.blocksRemoteImages(email.folderId)
+    var loadedRemoteImages by remember(email.id) { mutableStateOf(false) }
+    val allowRemoteImages = !blocksRemoteImages || loadedRemoteImages
 
     val bodyHtml = htmlWithImages ?: htmlOrText
     val prepared = remember(bodyHtml) { EmailHtmlSanitizer.prepare(bodyHtml) }
@@ -175,7 +178,7 @@ fun EmailBodyView(
             }
 
             if (hasRemoteImages && !allowRemoteImages && !showLoading) {
-                RemoteImagesBar(onLoad = { allowRemoteImages = true })
+                RemoteImagesBar(onLoad = { loadedRemoteImages = true })
             }
 
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -637,7 +640,7 @@ private fun replaceCid(cid: String, html: String, replacement: String): String {
         .replace("cid:$cid", replacement, ignoreCase = true)
 }
 
-/** Remote images load only after the reader taps "Load images". */
+/** Remote images load by default; in Spam only after the reader taps "Load images". */
 private fun emailCsp(allowRemoteImages: Boolean): String =
     if (allowRemoteImages) {
         EmailHtmlSanitizer.CONTENT_SECURITY_POLICY

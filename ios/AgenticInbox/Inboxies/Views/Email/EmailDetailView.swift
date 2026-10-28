@@ -440,7 +440,9 @@ struct EmailDetailView: View {
                             htmlOrText: message.body ?? message.snippet ?? "",
                             mailboxId: app.selectedMailboxId,
                             emailId: message.id,
-                            attachments: message.attachments ?? []
+                            attachments: message.attachments ?? [],
+                            // Spam keeps remote images blocked until "Load images" (Gmail parity).
+                            blocksRemoteImages: EmailHTMLSanitizer.blocksRemoteImages(folderId: message.folderId)
                         )
                             .padding(.top, 20)
 

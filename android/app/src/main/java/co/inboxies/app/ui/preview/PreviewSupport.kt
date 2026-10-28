@@ -625,9 +625,9 @@ object PreviewSupport {
             date = "2026-09-03T14:30:00.000Z",
             read = false,
             starred = false,
-            // Remote pixel exercises the "Load images" bar in DEBUG previews.
+            // Remote image shows that https images load by default in DEBUG previews.
             body = "<p>Can we move Thursday's sync to the morning instead?</p>" +
-                "<img src=\"https://example.com/pixel.gif\" width=\"1\" height=\"1\" alt=\"\">",
+                "<img src=\"https://www.cloudflare.com/favicon.ico\" width=\"48\" height=\"48\" alt=\"Cloudflare logo\">",
             snippet = "Can we move Thursday's sync to the morning instead?",
             threadCount = 3,
             listSection = "new",
@@ -703,7 +703,8 @@ object PreviewSupport {
             read = false,
             starred = false,
             // Designed mail (own colours): a light paper card in dark mode.
-            body = """<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fff4e5"><tr><td style="padding: 16px; color: #7a3e00"><p><b>Claim your reward</b> before it expires.</p></td></tr></table>""",
+            // Remote image: Spam keeps it blocked behind "Load images" (AVE-132).
+            body = """<table width="100%" cellpadding="0" cellspacing="0" bgcolor="#fff4e5"><tr><td style="padding: 16px; color: #7a3e00"><img src="https://www.cloudflare.com/favicon.ico" width="48" height="48" alt="Gift card"><p><b>Claim your reward</b> before it expires.</p></td></tr></table>""",
             snippet = "Claim your reward before it expires.",
             folderName = "Spam",
             // AVE-94: reason line + "Unverified sender" banner in the reader.

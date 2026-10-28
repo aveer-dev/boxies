@@ -14,6 +14,29 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class EmailHtmlSanitizerTest {
+    /** AVE-132: remote images load by default; only Spam blocks them until "Load images". */
+    @Test
+    fun remoteImagesBlockedOnlyInSpam() {
+        assertTrue(EmailHtmlSanitizer.blocksRemoteImages("spam"))
+        for (folder in listOf("inbox", "screener", "promotions", "updates", "sent", "draft", "archive", "screened_out", "trash", null)) {
+            assertFalse(folder ?: "null", EmailHtmlSanitizer.blocksRemoteImages(folder))
+        }
+
+        val inbox = EmailHtmlSanitizer.contentSecurityPolicy(blocksRemoteImages = false, loadedRemoteImages = false)
+        assertEquals(EmailHtmlSanitizer.CONTENT_SECURITY_POLICY, inbox)
+        assertTrue(inbox.contains("img-src data: cid: https:"))
+
+        val spam = EmailHtmlSanitizer.contentSecurityPolicy(blocksRemoteImages = true, loadedRemoteImages = false)
+        assertEquals(EmailHtmlSanitizer.BLOCKED_REMOTE_IMAGES_POLICY, spam)
+        assertFalse(spam.contains("https:"))
+
+        assertEquals(
+            EmailHtmlSanitizer.CONTENT_SECURITY_POLICY,
+            EmailHtmlSanitizer.contentSecurityPolicy(blocksRemoteImages = true, loadedRemoteImages = true),
+        )
+        assertTrue(EmailHtmlSanitizer.hasRemoteImages("""<img src="https://t.example.com/p.gif">"""))
+    }
+
     @Test
     fun stripsScriptTags() {
         val clean = EmailHtmlSanitizer.sanitize(

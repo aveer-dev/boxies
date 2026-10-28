@@ -159,6 +159,26 @@ final class ClientContractTests: XCTestCase {
         XCTAssertFalse(EmailHTMLSanitizer.remoteImagesBlockedPolicy.contains("https:"))
     }
 
+    /// AVE-132: remote images load by default; only Spam blocks them until "Load images".
+    func testRemoteImagesBlockedOnlyInSpam() {
+        XCTAssertTrue(EmailHTMLSanitizer.blocksRemoteImages(folderId: "spam"))
+        for folder in ["inbox", "screener", "promotions", "updates", "sent", "draft", "archive", "screened_out", "trash"] {
+            XCTAssertFalse(EmailHTMLSanitizer.blocksRemoteImages(folderId: folder), folder)
+        }
+        XCTAssertFalse(EmailHTMLSanitizer.blocksRemoteImages(folderId: nil))
+
+        let inbox = EmailHTMLSanitizer.contentSecurityPolicy(blocksRemoteImages: false, loadedRemoteImages: false)
+        XCTAssertEqual(inbox, EmailHTMLSanitizer.contentSecurityPolicy)
+        XCTAssertTrue(inbox.contains("img-src data: cid: https:"))
+
+        let spam = EmailHTMLSanitizer.contentSecurityPolicy(blocksRemoteImages: true, loadedRemoteImages: false)
+        XCTAssertEqual(spam, EmailHTMLSanitizer.remoteImagesBlockedPolicy)
+        XCTAssertFalse(spam.contains("https:"))
+
+        let spamLoaded = EmailHTMLSanitizer.contentSecurityPolicy(blocksRemoteImages: true, loadedRemoteImages: true)
+        XCTAssertEqual(spamLoaded, EmailHTMLSanitizer.contentSecurityPolicy)
+    }
+
     // MARK: - Service end (read-only domains)
 
     func testMailboxDecodesWithoutServiceFields() throws {
