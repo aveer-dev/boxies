@@ -352,6 +352,10 @@ private fun SettingsRootPage(
         )
     }
 
+    // Per-mailbox Screener switch (AVE-104). Absent means on.
+    val savedScreenerEnabled = mailbox?.settings?.screener?.enabled != false
+    var screenerEnabled by remember(mailbox?.id, savedScreenerEnabled) { mutableStateOf(savedScreenerEnabled) }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         val view = LocalView.current
         Row(
@@ -577,6 +581,30 @@ private fun SettingsRootPage(
                     }
                 },
             )
+            if (!readOnly) {
+                SettingsToggleRow(
+                    title = "Screener",
+                    subtitle = if (screenerEnabled) {
+                        "First-time senders wait for you to accept them."
+                    } else {
+                        "First-time senders go to your Inbox. Spam is still filtered."
+                    },
+                    icon = Icons.Outlined.Shield,
+                    checked = screenerEnabled,
+                    onCheckedChange = { enabled ->
+                        screenerEnabled = enabled
+                        scope.launch {
+                            if (app.setScreenerEnabled(enabled)) {
+                                app.showToast(
+                                    if (enabled) "Screener on" else "Screener off: new senders go to your Inbox",
+                                )
+                            } else {
+                                screenerEnabled = app.isScreenerEnabled
+                            }
+                        }
+                    },
+                )
+            }
 
             SettingsSectionHeader("Display")
             SettingsNavRow(

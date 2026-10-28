@@ -401,6 +401,27 @@ extension AppModel {
         }
     }
 
+    /// Screener on/off for the selected mailbox (AVE-104). Turning it off moves the
+    /// server's Screener mail to Inbox; mirror that in the local cache.
+    func setScreenerEnabled(_ enabled: Bool) async -> Bool {
+        let wasEnabled = isScreenerEnabled
+        let ok = await updateMailboxSettings { settings in
+            settings.screener = ScreenerSettings(enabled: enabled)
+        }
+        guard ok, wasEnabled, !enabled, let mailboxId = selectedMailboxId else { return ok }
+        for email in DatabaseService.shared.getEmails(mailboxId: mailboxId, folderId: "screener", limit: nil) {
+            DatabaseService.shared.moveEmail(id: email.id, toFolderId: "inbox")
+        }
+        if selectedTab == .folder("screener") {
+            selectedTab = .folder("inbox")
+        }
+        if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
+            folders = synced
+        }
+        await loadEmailsForCurrentTab(showLoading: false, resetPaging: true)
+        return ok
+    }
+
     func updateMailboxSettings(_ transform: (inout MailboxSettings) -> Void) async -> Bool {
         guard let mailboxId = selectedMailboxId else { return false }
         var settings = selectedMailbox?.settings ?? MailboxSettings()
