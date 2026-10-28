@@ -6,6 +6,7 @@ import android.content.Intent
 import android.view.HapticFeedbackConstants
 import android.util.Base64
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -42,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -444,9 +446,10 @@ private fun HtmlBodyWebView(
 ) {
     val heightMeasurer = remember {
         """
-        Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))
+        (typeof inboxiesFitBody === 'function' && inboxiesFitBody(), Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight)))
         """.trimIndent()
     }
+    val currentOnHeight by rememberUpdatedState(onHeight)
     AndroidView(
         factory = { context ->
             WebView(context).apply {
@@ -454,6 +457,12 @@ private fun HtmlBodyWebView(
                 applyEmailHtmlWebViewSettings(javaScriptEnabled = true)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
+                // Live height after fit / image loads (twin of the iOS `bodyHeight` handler).
+                // Only a number crosses the bridge; the sanitized mail has no scripts of its own.
+                addJavascriptInterface(
+                    EmailBodyHeightBridge { h -> post { currentOnHeight(h) } },
+                    EmailBodyFit.BRIDGE_NAME,
+                )
                 webViewClient = object : EmailLinkWebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         view?.evaluateJavascript(heightMeasurer) { result ->
@@ -485,6 +494,88 @@ private fun HtmlBodyWebView(
         },
         modifier = modifier,
     )
+}
+
+/** Receives `InboxiesBody.postHeight(h)` from [EmailBodyFit.SCRIPT] (JavaBridge thread). */
+private class EmailBodyHeightBridge(private val onHeight: (Float) -> Unit) {
+    @JavascriptInterface
+    fun postHeight(height: Float) {
+        if (height > 0f) onHeight(height)
+    }
+}
+
+/**
+ * Wide mail (fixed 600px+ newsletter cards, rigid tables) on a phone-width body (AVE-89).
+ * The inline mail WebView is sized to its content and the thread column scrolls, so
+ * overflow used to be clipped with no way to reach it. Now the body is scaled down to fit
+ * the width (Gmail / Apple Mail behaviour), never below [MIN_SCALE] so text stays legible;
+ * whatever still overflows scrolls sideways inside [SCROLLER_ID], while vertical drags keep
+ * going to the thread. Twin of iOS `EmailBodyFit` in `EmailBodyView.swift`.
+ */
+internal object EmailBodyFit {
+    const val SCROLLER_ID = "inboxies-scroll"
+    const val BOX_ID = "inboxies-fit-box"
+    const val CONTENT_ID = "inboxies-fit"
+    const val MIN_SCALE = 0.5
+    const val BRIDGE_NAME = "InboxiesBody"
+
+    const val CSS = """
+      #$SCROLLER_ID { overflow-x: auto; overflow-y: hidden; }
+      #$SCROLLER_ID, #$SCROLLER_ID * { -webkit-text-size-adjust: none !important; text-size-adjust: none !important; }
+    """
+
+    /**
+     * Lays the mail out at its natural width, scales it with `transform`, and sizes a
+     * clipping box to the scaled size so the reported body height stays exact. Idempotent:
+     * reruns on load, image load, resize and content growth.
+     */
+    const val SCRIPT = """
+    function inboxiesFitBody() {
+      var scroller = document.getElementById('$SCROLLER_ID');
+      var box = document.getElementById('$BOX_ID');
+      var content = document.getElementById('$CONTENT_ID');
+      if (!scroller || !box || !content) { return; }
+      box.style.overflow = '';
+      box.style.width = '';
+      box.style.height = '';
+      content.style.width = '';
+      content.style.transform = '';
+      var avail = scroller.clientWidth;
+      var natural = scroller.scrollWidth;
+      if (avail <= 0 || natural <= avail + 1) { return; }
+      var scale = Math.max($MIN_SCALE, avail / natural);
+      content.style.width = natural + 'px';
+      content.style.transformOrigin = '0 0';
+      content.style.transform = 'scale(' + scale + ')';
+      // The box clips the unscaled layout, so the scroll range is the scaled width only.
+      box.style.overflow = 'hidden';
+      box.style.width = Math.ceil(natural * scale) + 'px';
+      box.style.height = Math.ceil(content.offsetHeight * scale) + 'px';
+    }
+    (function () {
+      function postHeight() {
+        var h = Math.ceil(Math.max(
+          document.body.offsetHeight,
+          document.body.getBoundingClientRect().height,
+          document.body.scrollHeight
+        ));
+        if (window.$BRIDGE_NAME) { window.$BRIDGE_NAME.postHeight(h); }
+      }
+      function refitAndPost() { inboxiesFitBody(); postHeight(); }
+      window.addEventListener('load', refitAndPost);
+      window.addEventListener('resize', refitAndPost);
+      document.querySelectorAll('img').forEach(function (img) {
+        img.addEventListener('load', refitAndPost);
+        img.addEventListener('error', refitAndPost);
+      });
+      if (typeof ResizeObserver !== 'undefined') {
+        var content = document.getElementById('$CONTENT_ID');
+        if (content) { new ResizeObserver(refitAndPost).observe(content); }
+        new ResizeObserver(postHeight).observe(document.body);
+      }
+      refitAndPost();
+    })();
+    """
 }
 
 private fun WebView.applyEmailHtmlWebViewSettings(javaScriptEnabled: Boolean) {
@@ -630,6 +721,7 @@ private fun wrapEmailHtml(
             height: auto !important;
             min-height: 0 !important;
             overflow: visible;
+            -webkit-text-size-adjust: 100%;
           }
           body {
             display: flow-root;
@@ -651,9 +743,12 @@ private fun wrapEmailHtml(
           .gmail_quote, .yahoo_quoted, .protonmail_quote, #divRplyFwdMsg, blockquote[type="cite"], #appendonsend {
             display: none !important;
           }
+          ${EmailBodyFit.CSS}
         </style>
         </head>
-        <body>$bodyHtml</body>
+        <body><div id="${EmailBodyFit.SCROLLER_ID}"><div id="${EmailBodyFit.BOX_ID}"><div id="${EmailBodyFit.CONTENT_ID}">$bodyHtml</div></div></div>
+        <script>${EmailBodyFit.SCRIPT}</script>
+        </body>
         </html>
     """.trimIndent()
 }
