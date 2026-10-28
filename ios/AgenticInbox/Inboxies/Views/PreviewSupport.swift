@@ -174,6 +174,19 @@ enum PreviewSupport {
         deliveryError: "550 5.1.1 The email account that you tried to reach does not exist."
     )
 
+    /// Settings sheet fixture; `screenerOff` stores `screener.enabled = false` (AVE-104).
+    @MainActor
+    static func settingsPreviewModel(screenerOff: Bool) -> AppModel {
+        let app = appModel()
+        if screenerOff, var mailbox = app.mailboxes.first {
+            var settings = mailbox.settings ?? MailboxSettings()
+            settings.screener = ScreenerSettings(enabled: false)
+            mailbox.settings = settings
+            app.mailboxes = [mailbox]
+        }
+        return app
+    }
+
     @MainActor
     static func previewMailboxModel() -> AppModel {
         let app = appModel()
@@ -677,6 +690,11 @@ struct PreviewAdminAuthRoot: View {
                     SendersSettingsView(initialTab: args.contains("-previewSendersBlocked") ? .blocked : .allowed)
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSettings") {
+                // Settings sheet on the fixture mailbox; add `-previewScreenerOff` for the
+                // Screener switch off (AVE-104; Android: `settings` / `settingsScreenerOff`).
+                SettingsSheetView()
+                    .environment(PreviewSupport.settingsPreviewModel(screenerOff: args.contains("-previewScreenerOff")))
             } else if args.contains("-previewSessions") {
                 NavigationStack {
                     SessionsSettingsView()

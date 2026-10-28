@@ -151,6 +151,8 @@ struct ComposeActionListOverlay: View {
     var isClosing: Bool = false
     /// Read-only mailbox (service ended): folders and settings only.
     var hidesCompose: Bool = false
+    /// Screener turned off for this mailbox (AVE-104).
+    var hidesScreener: Bool = false
     var onSelect: (ComposeActionItem) -> Void
     var onDismiss: () -> Void
     var onRowFramesChange: ([ComposeActionItem.ID: CGRect]) -> Void
@@ -162,7 +164,9 @@ struct ComposeActionListOverlay: View {
     @Namespace private var highlightNamespace
 
     private var actions: [ComposeActionItem] {
-        hidesCompose ? ComposeActionItem.allCases.filter { $0 != .compose } : ComposeActionItem.allCases
+        ComposeActionItem.allCases.filter { item in
+            !(hidesCompose && item == .compose) && !(hidesScreener && item == .screener)
+        }
     }
     private let iconSize: CGFloat = 44
     private let rowSpacing: CGFloat = 10

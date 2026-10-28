@@ -445,6 +445,12 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const screenerError = screenerSettingsError(next);
 	if (screenerError) return c.json({ error: screenerError }, 400);
 	await c.env.BUCKET.put(mailboxMetadataKey(mailboxId), JSON.stringify(next));
+	// Turning Screener off (AVE-104) lets waiting mail through: it moves to
+	// Inbox. Turning it back on screens only new mail.
+	if (parseScreenerEnabled(existing) && !parseScreenerEnabled(next)) {
+		const { moved } = await c.var.mailboxStub.releaseScreenerToInbox();
+		if (moved > 0) console.log(`Screener off for ${mailboxId}: moved ${moved} message(s) to Inbox`);
+	}
 	return c.json(await mailboxResponse(c.env, db, mailboxId, role, next));
 });
 

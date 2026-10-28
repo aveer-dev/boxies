@@ -26,6 +26,7 @@ struct SettingsSheetView: View {
     @State private var editNameDraft = ""
     @State private var showEditName = false
     @State private var signatureEnabled = false
+    @State private var screenerEnabled = true
     @State private var navigationPath: [SettingsDestination] = []
     @State private var loadingDestination: SettingsDestination?
     @State private var showDeleteAccountConfirm = false
@@ -61,6 +62,7 @@ struct SettingsSheetView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
+            ScrollViewReader { proxy in
             List {
                 Section {
                     profileHeader
@@ -94,6 +96,9 @@ struct SettingsSheetView: View {
                     notificationsToggle
                     signatureToggle
                         .lockedWhenReadOnly(app.isReadOnly)
+                    screenerToggle
+                        .lockedWhenReadOnly(app.isReadOnly)
+                        .id("screenerToggle")
                 } header: {
                     Text("Preferences")
                 } footer: {
@@ -171,6 +176,15 @@ struct SettingsSheetView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
+            #if DEBUG
+            .task {
+                // `-previewSettings`: bring the Screener switch into view for screenshots.
+                guard ProcessInfo.processInfo.arguments.contains("-previewSettings") else { return }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                proxy.scrollTo("screenerToggle", anchor: .center)
+            }
+            #endif
+            }
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: SettingsDestination.self) { destination in
                 switch destination {
@@ -239,9 +253,11 @@ struct SettingsSheetView: View {
             }
             .onAppear {
                 signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+                screenerEnabled = app.isScreenerEnabled
             }
             .onChange(of: app.selectedMailboxId) { _, _ in
                 signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+                screenerEnabled = app.isScreenerEnabled
             }
         }
         .applyThemeController()
@@ -335,6 +351,37 @@ struct SettingsSheetView: View {
                 }
             } icon: {
                 Image(systemName: "pencil")
+                    .foregroundStyle(AppTheme.ink)
+            }
+        }
+        .tint(AppTheme.accent)
+    }
+
+    private var screenerBinding: Binding<Bool> {
+        Binding(
+            get: { screenerEnabled },
+            set: { newValue in
+                screenerEnabled = newValue
+                Task { await saveScreenerEnabled(newValue) }
+            }
+        )
+    }
+
+    /// Per-mailbox Screener switch (AVE-104). Off: first-time senders go to Inbox.
+    private var screenerToggle: some View {
+        Toggle(isOn: screenerBinding) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Screener")
+                        .foregroundStyle(AppTheme.ink)
+                    Text(screenerEnabled
+                         ? "First-time senders wait for you to accept them."
+                         : "First-time senders go to your Inbox. Spam is still filtered.")
+                        .font(.inter(size: 12))
+                        .foregroundStyle(AppTheme.muted)
+                }
+            } icon: {
+                Image(systemName: HomeTab.folder("screener").systemImage)
                     .foregroundStyle(AppTheme.ink)
             }
         }
@@ -461,6 +508,14 @@ struct SettingsSheetView: View {
         }
         if !success {
             signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+        }
+    }
+
+    private func saveScreenerEnabled(_ enabled: Bool) async {
+        if await app.setScreenerEnabled(enabled) {
+            app.showToast(enabled ? "Screener on" : "Screener off: new senders go to your Inbox")
+        } else {
+            screenerEnabled = app.isScreenerEnabled
         }
     }
 

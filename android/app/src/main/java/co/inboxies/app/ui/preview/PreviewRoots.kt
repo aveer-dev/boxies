@@ -42,6 +42,7 @@ import co.inboxies.app.ui.settings.DomainAdminSettingsView
 import co.inboxies.app.ui.settings.SendersSettingsView
 import co.inboxies.app.ui.settings.SendersTab
 import co.inboxies.app.ui.settings.SessionsSettingsView
+import co.inboxies.app.ui.settings.SettingsSheetView
 import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
 import co.inboxies.app.models.TwoFactorChallenge
@@ -95,6 +96,8 @@ object PreviewHarness {
             PreviewMode.Members,
             PreviewMode.Senders,
             PreviewMode.SendersBlocked,
+            PreviewMode.Settings,
+            PreviewMode.SettingsScreenerOff,
             -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyMailboxPreview(appModel, mode)
@@ -165,6 +168,9 @@ fun PreviewRoot(
         PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
         PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }
+        PreviewMode.Settings, PreviewMode.SettingsScreenerOff -> SettingsPreviewSurface {
+            SettingsSheetView(onClose = {}, onThemeModeChange = onThemeModeChange, themeMode = themeMode)
+        }
         PreviewMode.SendersBlocked -> SettingsPreviewSurface {
             SendersSettingsView(onBack = {}, initialTab = SendersTab.Blocked)
         }

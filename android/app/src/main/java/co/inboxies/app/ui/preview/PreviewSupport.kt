@@ -14,6 +14,7 @@ import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxAcl
 import co.inboxies.app.models.MailboxSettings
+import co.inboxies.app.models.ScreenerSettings
 import co.inboxies.app.models.SignatureSettings
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
@@ -93,6 +94,7 @@ object PreviewSupport {
             settings = MailboxSettings(
                 fromName = "Alex Rivera",
                 signature = SignatureSettings(enabled = true, text = "Alex"),
+                screener = if (mode == PreviewMode.SettingsScreenerOff) ScreenerSettings(enabled = false) else null,
             ),
             readOnly = service?.isEnded,
             service = service,

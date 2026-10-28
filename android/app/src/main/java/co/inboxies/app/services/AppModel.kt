@@ -18,6 +18,7 @@ import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
+import co.inboxies.app.models.ScreenerSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -277,6 +278,14 @@ class AppModel {
 
     fun unreadCount(forFolderId: String): Int =
         _folders.value.firstOrNull { it.id == forFolderId }?.unreadCount ?: 0
+
+    /** Screener is on unless the selected mailbox turned it off (AVE-104). */
+    val isScreenerEnabled: Boolean
+        get() = selectedMailbox?.settings?.screener?.enabled != false
+
+    /** Screener off: hide its folder unless something unread is still waiting there. */
+    val showsScreenerFolder: Boolean
+        get() = isScreenerEnabled || unreadCount(forFolderId = FolderIds.SCREENER) > 0
 
     val screenerSenderCount: Int
         get() {
@@ -2459,6 +2468,26 @@ class AppModel {
     fun expandCompose() {
         val session = _composeSession.value ?: return
         _composeSession.value = ComposeSession(session.form, ComposePresentation.Expanded)
+    }
+
+    /**
+     * Screener on/off for the selected mailbox (AVE-104). Turning it off moves the
+     * server's Screener mail to Inbox; mirror that in the local cache.
+     */
+    suspend fun setScreenerEnabled(enabled: Boolean): Boolean {
+        val wasEnabled = isScreenerEnabled
+        val ok = updateMailboxSettings { it.copy(screener = ScreenerSettings(enabled = enabled)) }
+        if (!ok || !wasEnabled || enabled) return ok
+        val mailboxId = _selectedMailboxId.value ?: return ok
+        db.getEmails(mailboxId, FolderIds.SCREENER).forEach { db.moveEmail(it.id, FolderIds.INBOX) }
+        if ((_selectedTab.value as? HomeTab.Folder)?.id == FolderIds.SCREENER) {
+            _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
+        }
+        runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
+            ifStillSelected(mailboxId) { _folders.value = folders }
+        }
+        loadEmailsForCurrentTab(showLoading = false)
+        return ok
     }
 
     suspend fun updateMailboxSettings(transform: (MailboxSettings) -> MailboxSettings): Boolean {

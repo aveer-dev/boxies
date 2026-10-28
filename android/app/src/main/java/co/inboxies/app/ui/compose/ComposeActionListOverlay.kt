@@ -192,14 +192,18 @@ fun ComposeActionListOverlay(
     onDismissStarted: () -> Unit = {},
     /** False for a read-only mailbox (service ended): folders and Settings only. */
     showCompose: Boolean = true,
+    /** False when Screener is off for this mailbox (AVE-104). */
+    showScreener: Boolean = true,
 ) {
     val colors = inboxiesColors()
     val density = LocalDensity.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val reduceMotion = rememberReduceMotion()
-    val actions = remember(showCompose) {
-        if (showCompose) ComposeActionItem.entries else ComposeActionItem.entries - ComposeActionItem.Compose
+    val actions = remember(showCompose, showScreener) {
+        ComposeActionItem.entries.filter {
+            (showCompose || it != ComposeActionItem.Compose) && (showScreener || it != ComposeActionItem.Screener)
+        }
     }
     val rowFrames = remember { mutableMapOf<ComposeActionItem, Rect>() }
     var publishedFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
