@@ -9,16 +9,29 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { applyMigrations, mailboxMigrations } from "../durableObject/migrations.ts";
+import {
+	countConversationsFromIndex,
+	countThreadedSectionsByScan,
+	flushConversationIndex,
+	readThreadedListByScan,
+	readThreadedListFromIndex,
+} from "../lib/conversation-index.ts";
 
-/** `ctx.storage.sql` stand-in: multi-statement scripts via exec, else one prepared statement. */
+/** `ctx.storage.sql` stand-in: multi-statement scripts via exec, else one (cached) prepared statement. */
 function sqlStorage(db) {
+	const cache = new Map();
 	return {
 		exec(query, ...bindings) {
 			if (bindings.length === 0 && query.trim().replace(/;\s*$/, "").includes(";")) {
 				db.exec(query);
 				return [];
 			}
-			return db.prepare(query).all(...bindings);
+			let statement = cache.get(query);
+			if (!statement) {
+				statement = db.prepare(query);
+				cache.set(query, statement);
+			}
+			return statement.all(...bindings);
 		},
 	};
 }
@@ -203,5 +216,100 @@ assert.equal(
 );
 sql.exec(`DELETE FROM emails WHERE id = ?`, "e8");
 assert.equal(sql.exec(`SELECT COUNT(*) AS n FROM attachments WHERE email_id = 'e8'`)[0].n, 0, "cascade still deletes");
+
+// ── AVE-105: threaded list page at 50k emails ─────────────────
+// The scan grouped the whole mailbox per page (~300 ms here at 50k); the
+// conversation index reads one page by index. Target: < 30 ms per page.
+{
+	const big = new DatabaseSync(":memory:");
+	const bsql = sqlStorage(big);
+	applyMigrations(bsql, mailboxMigrations);
+	const N = 50_000;
+	const insert = big.prepare(
+		`INSERT INTO emails (id, folder_id, subject, sender, recipient, date, read, starred, thread_id, snippet)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	);
+	big.exec("BEGIN");
+	for (let i = 0; i < N; i++) {
+		const thread = Math.floor(i / 3);
+		insert.run(
+			`e${i}`,
+			i % 10 < 6 ? "inbox" : folders[i % 5],
+			`Subject ${thread}`,
+			`s${i % 200}@example.com`,
+			"me@example.com",
+			new Date(1.7e12 + i * 60_000).toISOString(),
+			i % 7 === 0 ? 0 : 1,
+			i % 50 === 0 ? 1 : 0,
+			i % 20 === 0 ? null : `t${thread}`,
+			"snippet",
+		);
+	}
+	big.exec("COMMIT");
+
+	let start = performance.now();
+	while (!flushConversationIndex(bsql, 2000)) {
+		/* backfill */
+	}
+	const backfillMs = performance.now() - start;
+
+	const time = (fn, runs = 5) => {
+		const samples = [];
+		for (let i = 0; i < runs; i++) {
+			const t = performance.now();
+			fn();
+			samples.push(performance.now() - t);
+		}
+		return samples.sort((a, b) => a - b)[Math.floor(runs / 2)];
+	};
+	const window = { limit: 25, offset: 0, useNewSeen: true };
+	const scanMs = time(
+		() => readThreadedListByScan(bsql, "inbox", { ...window, sectionFilter: "1 = 1" }),
+		3,
+	);
+	const pageMs = time(() => {
+		readThreadedListFromIndex(bsql, "inbox", window);
+		countConversationsFromIndex(bsql, "inbox");
+	});
+	const deepPageMs = time(() => readThreadedListFromIndex(bsql, "inbox", { ...window, offset: 25 * 200 }));
+	const archiveMs = time(() => readThreadedListFromIndex(bsql, "archive", { limit: 25, offset: 0, useNewSeen: false }));
+	console.log(
+		`list page @${N}: scan ${scanMs.toFixed(1)} ms, index ${pageMs.toFixed(2)} ms (inbox p1 + counts), ` +
+			`${deepPageMs.toFixed(2)} ms (inbox p201), ${archiveMs.toFixed(2)} ms (archive p1); backfill ${backfillMs.toFixed(0)} ms`,
+	);
+	for (const [label, ms] of [["inbox page", pageMs], ["deep page", deepPageMs], ["archive page", archiveMs]]) {
+		assert.ok(ms < 30, `${label} at ${N} emails: ${ms.toFixed(2)} ms (target < 30 ms)`);
+	}
+	// Same answer as the scan.
+	assert.deepEqual(
+		readThreadedListFromIndex(bsql, "inbox", window).map((row) => ({ ...row })),
+		readThreadedListByScan(bsql, "inbox", { ...window, sectionFilter: "1 = 1" }).map(
+			({ is_new: _n, section_rank: _r, ...row }) => row,
+		),
+	);
+	assert.deepEqual(countConversationsFromIndex(bsql, "inbox"), countThreadedSectionsByScan(bsql, "inbox"));
+
+	// No full scans on the index read path.
+	const bigPlan = (query, ...params) =>
+		big.prepare(`EXPLAIN QUERY PLAN ${query}`).all(...params).map((r) => r.detail);
+	const page = bigPlan(
+		`SELECT e.id FROM (
+			SELECT * FROM conversations WHERE folder_id = ?1 AND is_new = 1
+			ORDER BY latest_date DESC, conversation_id DESC LIMIT ?2 OFFSET ?3
+		) c JOIN emails e ON e.id = c.latest_email_id`,
+		"inbox",
+		25,
+		0,
+	);
+	assertNoScan(page, "conversations", "index page");
+	assertNoScan(page, "emails", "index page");
+	assertUses(page, "idx_conversations_folder_new_date", "index page");
+	const plain = bigPlan(
+		`SELECT * FROM conversations WHERE folder_id = ?1 ORDER BY latest_date DESC, conversation_id DESC LIMIT 25`,
+		"archive",
+	);
+	assertUses(plain, "idx_conversations_folder_date", "folder page");
+	assert.ok(!plain.some((d) => d.includes("TEMP B-TREE")), `folder page needs no sort\n${plain.join("\n")}`);
+}
 
 console.log("list-query-indexes: ok");
