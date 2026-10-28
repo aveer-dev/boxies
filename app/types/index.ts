@@ -32,6 +32,23 @@ export interface SenderPreference {
 	updatedAt?: string;
 }
 
+export type SenderRuleKind = "address" | "domain";
+export type SenderRuleVerdict = "allow" | "block";
+
+/** An explicit allow / block rule (Settings → Senders, AVE-96 / AVE-97). */
+export interface SenderRule {
+	id: string;
+	kind: SenderRuleKind;
+	value: string;
+	verdict: SenderRuleVerdict;
+	/** not_spam, report_spam, settings, screener, sent, bootstrap */
+	source: string;
+	createdAt: string;
+	updatedAt: string;
+	lastMatchedAt: string | null;
+	matchCount: number;
+}
+
 /**
  * Read-only membership the server synthesizes for older app builds. Never
  * sent back: membership changes go through invites and the members routes.

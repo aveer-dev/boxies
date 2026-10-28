@@ -670,6 +670,13 @@ struct PreviewAdminAuthRoot: View {
                     SharingSettingsView()
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSenders") {
+                // `-previewSenders` (Allowed); add `-previewSendersBlocked` for the
+                // Blocked tab. Fixture rules, no API (Android: `senders` / `sendersBlocked`).
+                NavigationStack {
+                    SendersSettingsView(initialTab: args.contains("-previewSendersBlocked") ? .blocked : .allowed)
+                }
+                .environment(PreviewSupport.appModel())
             } else if args.contains("-previewSessions") {
                 NavigationStack {
                     SessionsSettingsView()

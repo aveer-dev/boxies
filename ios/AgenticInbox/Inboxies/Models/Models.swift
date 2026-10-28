@@ -320,6 +320,28 @@ struct UpsertSenderPreferenceResponse: Codable {
     var refiledCount: Int
 }
 
+/// Explicit allow / block rule (Settings → Senders, AVE-97). `kind` is
+/// `address` or `domain`; `verdict` is `allow` or `block`.
+struct SenderRule: Codable, Hashable, Identifiable {
+    var id: String
+    var kind: String
+    var value: String
+    var verdict: String
+    var source: String
+    var createdAt: String
+    var updatedAt: String
+    var lastMatchedAt: String?
+    var matchCount: Int?
+}
+
+struct SenderRulesResponse: Codable {
+    var rules: [SenderRule]
+}
+
+struct SenderRuleResponse: Codable {
+    var rule: SenderRule
+}
+
 struct ForwardingSettings: Codable, Hashable {
     var enabled: Bool?
     var email: String?

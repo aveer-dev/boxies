@@ -24,6 +24,8 @@
 #   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
 #   ./scripts/run-debug-preview.sh members
 #   ./scripts/run-debug-preview.sh sessions
+#   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
+#   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh serviceEnded        # read-only inbox, admin "Renew"
 #   ./scripts/run-debug-preview.sh serviceEndedMember  # read-only inbox, "Ask an admin"
 #   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
@@ -51,6 +53,8 @@ case "$mode" in
   inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
   members|Members|previewMembers) extra=previewMembers; label=members ;;
   sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
+  senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
+  sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   loadMore|LoadMore|previewLoadMore) extra=previewLoadMore; label=loadMore ;;
   manyNew|ManyNew|previewManyNew) extra=previewManyNew; label=manyNew ;;
@@ -73,7 +77,7 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,27p' "$0"
+    sed -n '2,29p' "$0"
     exit 0
     ;;
   *)

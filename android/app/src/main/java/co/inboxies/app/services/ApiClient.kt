@@ -69,6 +69,9 @@ import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
 import co.inboxies.app.models.SenderPreference
 import co.inboxies.app.models.SenderPreferencesResponse
+import co.inboxies.app.models.SenderRule
+import co.inboxies.app.models.SenderRuleResponse
+import co.inboxies.app.models.SenderRulesResponse
 import co.inboxies.app.models.UpsertSenderPreferenceResponse
 import co.inboxies.app.util.ParsedSearch
 import co.inboxies.app.util.SearchQueryParser
@@ -1119,6 +1122,45 @@ class ApiClient private constructor() {
     suspend fun deleteSenderPreference(mailboxId: String, address: String) {
         request<EmptyResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-preferences/${pathEncode(address)}",
+            method = "DELETE",
+        )
+    }
+
+    suspend fun listSenderRules(mailboxId: String, verdict: String): List<SenderRule> {
+        val response: SenderRulesResponse = request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules",
+            query = mapOf("verdict" to verdict, "limit" to "500"),
+        )
+        return response.rules
+    }
+
+    /**
+     * Creates or updates an allow / block rule from Settings. A refused value (free-mail
+     * provider, public suffix, bad address) throws [ApiException.Http] 400 whose message is
+     * the server's sentence, shown inline under the Add field.
+     */
+    suspend fun upsertSenderRule(
+        mailboxId: String,
+        kind: String,
+        value: String,
+        verdict: String,
+    ): SenderRule {
+        val response: SenderRuleResponse = request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules",
+            method = "PUT",
+            body = buildJsonObject {
+                put("kind", kind)
+                put("value", value)
+                put("verdict", verdict)
+                put("source", "settings")
+            },
+        )
+        return response.rule
+    }
+
+    suspend fun deleteSenderRule(mailboxId: String, ruleId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules/${pathEncode(ruleId)}",
             method = "DELETE",
         )
     }

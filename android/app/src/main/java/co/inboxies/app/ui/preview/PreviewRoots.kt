@@ -39,6 +39,8 @@ import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
 import co.inboxies.app.ui.settings.DomainAdminDNSView
 import co.inboxies.app.ui.settings.DomainAdminSettingsView
+import co.inboxies.app.ui.settings.SendersSettingsView
+import co.inboxies.app.ui.settings.SendersTab
 import co.inboxies.app.ui.settings.SessionsSettingsView
 import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
@@ -90,7 +92,10 @@ object PreviewHarness {
                 PreviewSupport.applyAdminPreview(appModel)
                 appModel.setIdentities(PreviewSupport.identities())
             }
-            PreviewMode.Members -> {
+            PreviewMode.Members,
+            PreviewMode.Senders,
+            PreviewMode.SendersBlocked,
+            -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyMailboxPreview(appModel, mode)
             }
@@ -159,6 +164,10 @@ fun PreviewRoot(
         PreviewMode.SignInMethods -> SettingsPreviewSurface { SignInMethodsSettingsView(onBack = {}) }
         PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
+        PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }
+        PreviewMode.SendersBlocked -> SettingsPreviewSurface {
+            SendersSettingsView(onBack = {}, initialTab = SendersTab.Blocked)
+        }
         PreviewMode.DomainAdmin -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
                 Column(

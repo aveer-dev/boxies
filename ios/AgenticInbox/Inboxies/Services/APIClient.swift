@@ -1032,6 +1032,38 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    func listSenderRules(mailboxId: String, verdict: String) async throws -> [SenderRule] {
+        let response: SenderRulesResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules",
+            query: ["verdict": verdict, "limit": "500"]
+        )
+        return response.rules
+    }
+
+    /// Creates or updates an allow / block rule from Settings. A refused value
+    /// (free-mail provider, public suffix, bad address) throws `.http(400, message)`
+    /// with the server's sentence, which the screen shows inline.
+    func upsertSenderRule(
+        mailboxId: String,
+        kind: String,
+        value: String,
+        verdict: String
+    ) async throws -> SenderRule {
+        let response: SenderRuleResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules",
+            method: "PUT",
+            body: ["kind": kind, "value": value, "verdict": verdict, "source": "settings"]
+        )
+        return response.rule
+    }
+
+    func deleteSenderRule(mailboxId: String, ruleId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules/\(ruleId.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
     func approveSender(
         mailboxId: String,
         sender: String,
