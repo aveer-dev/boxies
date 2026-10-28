@@ -6,6 +6,8 @@ import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
+import co.inboxies.app.services.ReplyLaterReminderPresets
+import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
@@ -128,7 +130,8 @@ object PreviewSupport {
             Folder(id = FolderIds.SCREENED_OUT, name = "Screened out", unreadCount = 0),
             Folder(id = FolderIds.TRASH, name = "Trash", unreadCount = 0),
         )
-        val allEmails = emails(you)
+        val reminderModes = setOf(PreviewMode.ReminderPicker, PreviewMode.ReminderToast, PreviewMode.ReminderDue)
+        val allEmails = if (mode in reminderModes) withReminderFixtures(emails(you)) else emails(you)
         DatabaseService.shared.upsertMailboxes(listOf(mailbox))
         DatabaseService.shared.upsertFolders(mailbox.id, folders)
         DatabaseService.shared.upsertEmails(mailbox.id, allEmails)
@@ -218,6 +221,21 @@ object PreviewSupport {
                     selectedTab = HomeTab.Folder(FolderIds.INBOX),
                     selectedEmail = opened,
                     threadEmails = if (opened != null) thread else emptyList(),
+                    replyLaterCount = allEmails.count { it.replyLater },
+                    isAdmin = false,
+                )
+            }
+            PreviewMode.ReminderPicker, PreviewMode.ReminderToast, PreviewMode.ReminderDue -> {
+                // AVE-86: one due reminder (top of New, attention bottom bar) + one pending.
+                val inbox = allEmails.filter { it.folderId == FolderIds.INBOX }
+                app.applyDebugPreview(
+                    mailboxes = listOf(mailbox),
+                    selectedMailboxId = mailbox.id,
+                    folders = folders,
+                    emails = AppModel.orderNewThenSeen(inbox),
+                    selectedTab = HomeTab.Folder(FolderIds.INBOX),
+                    selectedEmail = null,
+                    threadEmails = emptyList(),
                     replyLaterCount = allEmails.count { it.replyLater },
                     isAdmin = false,
                 )
@@ -321,6 +339,40 @@ object PreviewSupport {
         if (mode == PreviewMode.Toast) {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo = true, durationMs = 0)
+        }
+        if (mode == PreviewMode.ReminderToast) {
+            // Pinned "Added to Reply Later · Add reminder" (AVE-86); the action opens the picker.
+            val target = allEmails.first { it.id == "preview-1" }
+            app.showToast(
+                "Added to Reply Later",
+                action = ToastAction("Add reminder") { app.openReminderPicker(target) },
+                durationMs = 0,
+            )
+        }
+        if (mode == PreviewMode.ReminderPicker) {
+            app.openReminderPicker(allEmails.first { it.id == "preview-2" })
+        }
+    }
+
+    /**
+     * AVE-86 fixtures: "Re: Invoice for March" has a pending reminder (tomorrow 9:00),
+     * "Can you review the contract?" fired a minute ago and is unread (due).
+     */
+    private fun withReminderFixtures(emails: List<Email>): List<Email> {
+        val now = java.time.ZonedDateTime.now()
+        val tomorrow = ReplyLaterReminderPresets.tomorrow(now)
+        val firedAt = ReplyLaterReminderPresets.toIso(now.minusMinutes(1))
+        return emails.map { email ->
+            when (email.id) {
+                "preview-2" -> email.copy(replyLaterRemindAt = ReplyLaterReminderPresets.toIso(tomorrow))
+                "preview-rl-2" -> email.copy(
+                    read = false,
+                    replyLaterRemindedAt = firedAt,
+                    listSection = "new",
+                    threadUnreadCount = 1,
+                )
+                else -> email
+            }
         }
     }
 

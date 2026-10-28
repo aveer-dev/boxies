@@ -58,6 +58,15 @@ import {
 } from "../lib/pending-blob-deletes";
 import { runMailboxPurge } from "../lib/mailbox-purge";
 import {
+	REPLY_LATER_MAILBOX_ID_KEY,
+	countDueReplyLater,
+	fireDueReplyLaterReminders,
+	nextReplyLaterReminderAt,
+	reminderPushCopy,
+	type FiredReminder,
+} from "../lib/reply-later-reminders";
+import { dispatchPushToDevices } from "../lib/push-dispatch";
+import {
 	RETENTION_CONTINUE_DELAY_MS,
 	nextRetentionSweepDelayMs,
 	purgeExpiredRetentionEmails,
@@ -452,6 +461,7 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#resumePendingBlobDeletes();
 		this.#resumeStuckSendSweep();
 		this.#armRetentionSweep();
+		void this.#scheduleReplyLaterReminders();
 	}
 
 	/**
@@ -468,6 +478,7 @@ export class MailboxDO extends DurableObject<Env> {
 		const retention = await this.#runRetentionPurge();
 		await this.#sweepPendingBlobDeletes();
 		await this.#sweepStuckSends();
+		await this.#fireReplyLaterReminders();
 		if (retention === "more") {
 			await this.#scheduleAlarmWithin(RETENTION_CONTINUE_DELAY_MS);
 		}
@@ -502,6 +513,82 @@ export class MailboxDO extends DurableObject<Env> {
 		} catch (e) {
 			console.error("Retention purge failed:", (e as Error).message);
 			return "done";
+		}
+	}
+
+	/**
+	 * Fire due Reply Later reminders (AVE-86, lib/reply-later-reminders): mark
+	 * unread, resurface in Inbox, broadcast, and push once to every device.
+	 * Never throws; re-arms for the next pending reminder.
+	 */
+	async #fireReplyLaterReminders(): Promise<void> {
+		try {
+			if (await this.#isMailboxDeleted()) return;
+			const result = this.ctx.storage.transactionSync(() =>
+				fireDueReplyLaterReminders(this.ctx.storage.sql, Date.now()),
+			);
+			for (const r of result.fired) {
+				if (r.folder_id !== r.from_folder_id) {
+					this.broadcastEvent("email_moved", { id: r.id, folder_id: r.folder_id });
+				}
+				this.broadcastEvent("email_updated", {
+					id: r.id,
+					read: false,
+					reply_later: true,
+					reply_later_reminded: true,
+				});
+			}
+			if (result.fired.length > 0) {
+				console.log(
+					JSON.stringify({ event: "reply_later_reminders_fired", count: result.fired.length }),
+				);
+				await this.#pushReplyLaterReminders(result.fired);
+			}
+			if (result.more) await this.#scheduleAlarmWithin(1_000);
+		} catch (e) {
+			console.error("Reply Later reminders failed:", (e as Error).message);
+		}
+		await this.#scheduleReplyLaterReminders();
+	}
+
+	async #pushReplyLaterReminders(fired: FiredReminder[]): Promise<void> {
+		const mailboxId =
+			(await this.ctx.storage.get<string>(REPLY_LATER_MAILBOX_ID_KEY)) ??
+			(await this.ctx.storage.get<string>(OUTBOUND_SEND_MAILBOX_ID_KEY)) ??
+			this.ctx.id.name ??
+			null;
+		if (!mailboxId) {
+			console.warn("[Push] Reply Later reminder: mailbox id unknown, skipping push");
+			return;
+		}
+		if ((await this.getDeviceTokens()).length === 0) return;
+		for (const r of fired) {
+			try {
+				const copy = reminderPushCopy(r);
+				await dispatchPushToDevices(this.env, this, {
+					title: copy.title,
+					subtitle: copy.subtitle,
+					body: copy.body,
+					fcmBody: copy.fcmBody,
+					mailboxId,
+					emailId: r.id,
+					folderId: r.folder_id,
+				});
+			} catch (e) {
+				console.error("[Push] Reply Later reminder push failed:", (e as Error).message);
+			}
+		}
+	}
+
+	/** Arm the alarm for the earliest pending Reply Later reminder, if any. */
+	async #scheduleReplyLaterReminders(): Promise<void> {
+		try {
+			if (await this.#isMailboxDeleted()) return;
+			const next = nextReplyLaterReminderAt(this.ctx.storage.sql);
+			if (next == null) return;
+			await this.#scheduleAlarmWithin(Math.max(next - Date.now(), 0));
+		} catch (e) {
+			console.error("Reply Later reminder schedule failed:", (e as Error).message);
 		}
 	}
 
@@ -927,6 +1014,8 @@ export class MailboxDO extends DurableObject<Env> {
 				starred: schema.emails.starred,
 				reply_later: schema.emails.reply_later,
 				reply_later_at: schema.emails.reply_later_at,
+				reply_later_remind_at: schema.emails.reply_later_remind_at,
+				reply_later_reminded_at: schema.emails.reply_later_reminded_at,
 				in_reply_to: schema.emails.in_reply_to,
 				email_references: schema.emails.email_references,
 				thread_id: schema.emails.thread_id,
@@ -1117,9 +1206,11 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/** Workflow pile counts for home chrome (Reply Later now; Set Aside later). */
-	async getWorkflowPiles(): Promise<{ id: string; count: number }[]> {
+	async getWorkflowPiles(): Promise<{ id: string; count: number; due_count: number }[]> {
 		const count = await this.countEmails({ reply_later: true });
-		return [{ id: "reply_later", count }];
+		// Fired, unread reminders: clients light up the Reply Later button (AVE-86).
+		const due_count = countDueReplyLater(this.ctx.storage.sql);
+		return [{ id: "reply_later", count, due_count }];
 	}
 
 	// ── Threaded queries (raw SQL — too complex for Drizzle's builder) ──
@@ -1181,7 +1272,7 @@ export class MailboxDO extends DurableObject<Env> {
 				)
 				SELECT
 					lp.id, lp.subject, lp.sender, lp.sender_name, lp.recipient, lp.date,
-					lp.read, lp.starred, lp.reply_later, lp.reply_later_at, lp.thread_id, lp.folder_id,
+					lp.read, lp.starred, lp.reply_later, lp.reply_later_at, lp.reply_later_remind_at, lp.reply_later_reminded_at, lp.thread_id, lp.folder_id,
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
@@ -1253,7 +1344,8 @@ export class MailboxDO extends DurableObject<Env> {
 					SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count,
 					SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) as thread_read_count,
 					GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants,
-					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft
+					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft,
+					MAX(CASE WHEN reply_later = 1 THEN reply_later_reminded_at END) as resurfaced_at
 				FROM all_emails_with_conversation
 				WHERE conversation_id IN (
 					SELECT DISTINCT conversation_id FROM all_emails_with_conversation
@@ -1283,7 +1375,7 @@ export class MailboxDO extends DurableObject<Env> {
 			listed AS (
 			SELECT
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
-				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.thread_id, lif.folder_id,
+				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.reply_later_remind_at, lif.reply_later_reminded_at, lif.thread_id, lif.folder_id,
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
@@ -1295,9 +1387,11 @@ export class MailboxDO extends DurableObject<Env> {
 					THEN 1 ELSE 0 END as needs_reply,
 				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft,
 				CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END as is_new,
+				-- A fired Reply Later reminder lifts the conversation as if mail arrived then (AVE-86).
+				MAX(lif.date, COALESCE(cs.resurfaced_at, lif.date)) as sort_date,
 				ROW_NUMBER() OVER (
 					PARTITION BY CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END
-					ORDER BY lif.date DESC
+					ORDER BY MAX(lif.date, COALESCE(cs.resurfaced_at, lif.date)) DESC
 				) as section_rank
 			FROM latest_in_folder lif
 			JOIN conversation_stats cs ON lif.conversation_id = cs.conversation_id
@@ -1307,13 +1401,13 @@ export class MailboxDO extends DurableObject<Env> {
 			)
 			SELECT * FROM listed
 			WHERE ${sectionFilter}
-			ORDER BY ${useNewSeen ? `is_new DESC, date DESC` : `date DESC`}
+			ORDER BY ${useNewSeen ? `is_new DESC, sort_date DESC` : `sort_date DESC`}
 			LIMIT ?2 OFFSET ?3`,
 			folder, limit, offset
 		);
 
 		const rows = [...result];
-		const mapped = rows.map(({ is_new: _isNew, section_rank: _rank, ...row }: any) => this.#withDecodedAuth({
+		const mapped = rows.map(({ is_new: _isNew, section_rank: _rank, sort_date: _sort, ...row }: any) => this.#withDecodedAuth({
 			...row,
 			read: !!row.read,
 			starred: !!row.starred,
@@ -1721,7 +1815,16 @@ export class MailboxDO extends DurableObject<Env> {
 			read,
 			starred,
 			reply_later,
-		}: { read?: boolean; starred?: boolean; reply_later?: boolean },
+			reply_later_remind_at,
+		}: {
+			read?: boolean;
+			starred?: boolean;
+			reply_later?: boolean;
+			/** UTC ISO (validated by the route) sets a reminder; null clears it (AVE-86). */
+			reply_later_remind_at?: string | null;
+		},
+		/** Mailbox address, remembered for reminder pushes fired by the alarm. */
+		mailboxId?: string,
 	) {
 		const existing = this.db
 			.select({
@@ -1737,7 +1840,13 @@ export class MailboxDO extends DurableObject<Env> {
 			starred?: number;
 			reply_later?: number;
 			reply_later_at?: string | null;
+			reply_later_remind_at?: string | null;
+			reply_later_reminded_at?: string | null;
 		} = {};
+		// Setting a reminder puts the mail in Reply Later unless the same call removes it.
+		if (typeof reply_later_remind_at === "string" && reply_later === undefined) {
+			reply_later = true;
+		}
 		if (read !== undefined) {
 			data.read = read ? 1 : 0;
 		}
@@ -1753,7 +1862,14 @@ export class MailboxDO extends DurableObject<Env> {
 				}
 			} else {
 				data.reply_later_at = null;
+				data.reply_later_remind_at = null;
+				data.reply_later_reminded_at = null;
 			}
+		}
+		if (reply_later_remind_at !== undefined && reply_later !== false) {
+			data.reply_later_remind_at = reply_later_remind_at;
+			// A new reminder replaces a fired one: the mail is no longer due.
+			if (reply_later_remind_at !== null) data.reply_later_reminded_at = null;
 		}
 
 		if (Object.keys(data).length === 0) {
@@ -1766,7 +1882,19 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.emails.id, id))
 			.run();
 
-		this.broadcastEvent("email_updated", { id, read, starred, reply_later });
+		this.broadcastEvent("email_updated", {
+			id,
+			read,
+			starred,
+			reply_later,
+			...(reply_later_remind_at !== undefined ? { reply_later_remind_at } : {}),
+		});
+		if (typeof data.reply_later_remind_at === "string") {
+			if (mailboxId && (await this.ctx.storage.get<string>(REPLY_LATER_MAILBOX_ID_KEY)) !== mailboxId) {
+				await this.ctx.storage.put(REPLY_LATER_MAILBOX_ID_KEY, mailboxId);
+			}
+			await this.#scheduleReplyLaterReminders();
+		}
 		return this.getEmail(id);
 	}
 
@@ -1784,7 +1912,8 @@ export class MailboxDO extends DurableObject<Env> {
 		if (rows.length === 0) return;
 
 		this.ctx.storage.sql.exec(
-			`UPDATE emails SET reply_later = 0, reply_later_at = NULL
+			`UPDATE emails SET reply_later = 0, reply_later_at = NULL,
+			        reply_later_remind_at = NULL, reply_later_reminded_at = NULL
 			 WHERE thread_id = ?1 AND reply_later = 1`,
 			threadId,
 		);
@@ -2541,6 +2670,8 @@ export class MailboxDO extends DurableObject<Env> {
 					folder_id: folderId,
 					reply_later: 0,
 					reply_later_at: null,
+					reply_later_remind_at: null,
+					reply_later_reminded_at: null,
 				})
 				.where(eq(schema.emails.id, id))
 				.run();
@@ -3054,7 +3185,7 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const query = `
 			SELECT e.id, e.subject, e.sender, e.sender_name, e.recipient, e.cc, e.bcc, e.date,
-				e.read, e.starred, e.reply_later, e.reply_later_at, e.in_reply_to, e.email_references,
+				e.read, e.starred, e.reply_later, e.reply_later_at, e.reply_later_remind_at, e.reply_later_reminded_at, e.in_reply_to, e.email_references,
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,

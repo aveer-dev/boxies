@@ -432,6 +432,12 @@ struct EmailListView: View {
             )
         }
 
+        Button {
+            app.reminderPickerEmail = email
+        } label: {
+            Label(email.replyLaterRemindDate == nil ? "Remind me…" : "Change reminder", systemImage: "alarm")
+        }
+
         Divider()
 
         Button {
@@ -723,7 +729,14 @@ struct EmailRowView: View {
                         .accessibilityLabel("Has attachment")
                 }
 
-                if email.replyLater {
+                if email.isReplyLaterDue {
+                    ReplyLaterReminderChip(text: "Due", tint: AppTheme.attention)
+                        .accessibilityLabel("Reply later reminder due")
+                } else if let remindAt = email.replyLaterRemindDate {
+                    let label = ReplyLaterReminder.shortLabel(remindAt)
+                    ReplyLaterReminderChip(text: label, tint: AppTheme.muted)
+                        .accessibilityLabel("Reply later, reminder \(label)")
+                } else if email.replyLater {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.inter(size: AppTheme.List.badge, weight: .medium))
                         .foregroundStyle(AppTheme.accent)
@@ -999,4 +1012,24 @@ private struct ScreenerActionButtonStyle: ButtonStyle {
     EmailRowView(email: PreviewSupport.emails[0])
         .padding(.horizontal, 8)
         .background(AppTheme.background)
+}
+
+/// Row meta for a Reply Later reminder (AVE-86): alarm glyph + short time when pending,
+/// "Due" in the attention color once it fired and the mail is still unread.
+struct ReplyLaterReminderChip: View {
+    let text: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "alarm")
+                .font(.inter(size: AppTheme.List.badge, weight: .semibold))
+            Text(text)
+                .font(.inter(size: AppTheme.List.badge, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(tint)
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+    }
 }

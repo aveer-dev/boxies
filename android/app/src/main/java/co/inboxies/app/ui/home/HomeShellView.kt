@@ -152,6 +152,20 @@ import co.inboxies.app.ui.compose.ComposeActionListOverlay
 import co.inboxies.app.ui.compose.ComposeDockBar
 import co.inboxies.app.ui.compose.ComposeSheetView
 import co.inboxies.app.ui.compose.ComposeStackButton
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import co.inboxies.app.theme.attention
+import co.inboxies.app.ui.compose.rememberReduceMotion
+import co.inboxies.app.ui.email.ReplyLaterReminderSheetModal
 import co.inboxies.app.ui.email.EmailDetailView
 import co.inboxies.app.ui.email.EmailListView
 import co.inboxies.app.ui.email.InboxNewListView
@@ -180,6 +194,8 @@ fun HomeShellView(
     val folders by appModel.folders.collectAsState()
     val emails by appModel.emails.collectAsState()
     val replyLaterCount by appModel.replyLaterCount.collectAsState()
+    val replyLaterDueCount by appModel.replyLaterDueCount.collectAsState()
+    val reminderPickerEmail by appModel.reminderPickerEmail.collectAsState()
     val isLoading by appModel.isLoading.collectAsState()
     val paging by appModel.paging.collectAsState()
     val inboxNewTotal by appModel.inboxNewTotal.collectAsState()
@@ -918,6 +934,9 @@ fun HomeShellView(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // Size animation first so its clip includes the bottom inset: the
+                        // Reply Later attention halo (AVE-86) draws just past the bar.
+                        .animateContentSize(animationSpec = selectModeSpring())
                         .then(
                             if (hasMinimizedCompose && !isSelectMode) {
                                 Modifier.padding(bottom = HomeChromeMetrics.minimizedComposeGap)
@@ -926,8 +945,7 @@ fun HomeShellView(
                                     .navigationBarsPadding()
                                     .padding(bottom = HomeChromeMetrics.chromeBottomPadding - 12.dp)
                             }
-                        )
-                        .animateContentSize(animationSpec = selectModeSpring()),
+                        ),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                 AnimatedToast(toast) { current ->
@@ -1043,6 +1061,7 @@ fun HomeShellView(
                         BottomBar(
                             showComposeActions = showComposeActions && !composeActionsClosing,
                             replyLaterCount = replyLaterCount,
+                            replyLaterDueCount = replyLaterDueCount,
                             isReplyLaterTab = selectedTab is HomeTab.ReplyLater,
                             onReplyLater = {
                                 if (selectedTab is HomeTab.ReplyLater) {
@@ -1258,6 +1277,13 @@ fun HomeShellView(
                 initialDomainAdmin = settingsInitialDomainAdmin,
             )
         }
+    }
+
+    reminderPickerEmail?.let { email ->
+        ReplyLaterReminderSheetModal(
+            email = email,
+            onDismiss = { appModel.dismissReminderPicker() },
+        )
     }
 
     if (showAddMailbox) {
@@ -1520,6 +1546,8 @@ private fun BottomBar(
     isReplyLaterTab: Boolean,
     onReplyLater: () -> Unit,
     onAskAi: () -> Unit,
+    /** Reply Later mails whose reminder fired (AVE-86): > 0 switches the button to attention. */
+    replyLaterDueCount: Int = 0,
     onOpenComposeMenu: () -> Unit,
     onOpenCompose: () -> Unit,
     onCloseComposeMenu: () -> Unit,
@@ -1557,10 +1585,29 @@ private fun BottomBar(
                 scaleOut(animationSpec = selectModeSpring(), targetScale = 0.72f),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                val isDue = replyLaterDueCount > 0
+                val contentTint = when {
+                    isDue -> colors.attention
+                    isReplyLaterTab -> colors.accent
+                    else -> colors.ink
+                }
+                val description = buildString {
+                    append("Reply Later")
+                    if (replyLaterCount > 0) append(", $replyLaterCount to reply")
+                    if (isDue) append(", $replyLaterDueCount due")
+                }
                 Row(
                     modifier = Modifier
                         .height(HomeChromeMetrics.actionBarHeight)
+                        .replyLaterAttentionGlow(isDue, colors.attention)
                         .homeChromeToolbarSurface(RoundedCornerShape(50))
+                        .then(
+                            if (isDue) {
+                                Modifier.background(colors.attention.copy(alpha = 0.12f), RoundedCornerShape(50))
+                            } else {
+                                Modifier
+                            },
+                        )
                         .clickable {
                             if (showComposeActions) {
                                 onCloseComposeMenu()
@@ -1568,14 +1615,15 @@ private fun BottomBar(
                                 onReplyLater()
                             }
                         }
+                        .semantics(mergeDescendants = true) { contentDescription = description }
                         .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Icon(
-                        Icons.Outlined.Schedule,
-                        contentDescription = "Reply Later",
-                        tint = if (isReplyLaterTab) colors.accent else colors.ink,
+                        if (isDue) Icons.Outlined.NotificationsActive else Icons.Outlined.Schedule,
+                        contentDescription = null,
+                        tint = contentTint,
                         modifier = Modifier.size(18.dp),
                     )
                     if (replyLaterCount > 0) {
@@ -1584,7 +1632,7 @@ private fun BottomBar(
                             fontFamily = InterFontFamily,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 13.sp,
-                            color = if (isReplyLaterTab) colors.accent else colors.ink,
+                            color = contentTint,
                         )
                     }
                 }
@@ -1966,3 +2014,46 @@ private fun <T> selectModeSpring() = spring<T>(
     dampingRatio = 0.86f,
     stiffness = Spring.StiffnessMediumLow,
 )
+
+/**
+ * Soft attention halo behind the Reply Later pill while a reminder is due (AVE-86): a warm
+ * glow that breathes (opacity + spread, ~1.8s). With animations off it stays static.
+ */
+@Composable
+private fun Modifier.replyLaterAttentionGlow(active: Boolean, color: Color): Modifier {
+    if (!active) return this
+    val reduceMotion = rememberReduceMotion()
+    val pulse = if (reduceMotion) {
+        0.5f
+    } else {
+        val transition = rememberInfiniteTransition(label = "replyLaterDue")
+        val value by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "replyLaterDuePulse",
+        )
+        value
+    }
+    return this.drawBehind {
+        val radius = size.height / 2f
+        // Two stacked rings read as a soft glow without a blur effect.
+        val outer = (3.dp.toPx() + 3.dp.toPx() * pulse)
+        val inner = (1.dp.toPx() + 1.5.dp.toPx() * pulse)
+        drawRoundRect(
+            color = color.copy(alpha = 0.06f + 0.08f * pulse),
+            topLeft = Offset(-outer, -outer),
+            size = Size(size.width + outer * 2, size.height + outer * 2),
+            cornerRadius = CornerRadius(radius + outer),
+        )
+        drawRoundRect(
+            color = color.copy(alpha = 0.14f + 0.12f * pulse),
+            topLeft = Offset(-inner, -inner),
+            size = Size(size.width + inner * 2, size.height + inner * 2),
+            cornerRadius = CornerRadius(radius + inner),
+        )
+    }
+}

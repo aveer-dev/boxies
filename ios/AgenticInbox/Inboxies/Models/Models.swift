@@ -600,6 +600,10 @@ struct Email: Identifiable, Codable, Hashable {
     var starred: Bool
     var replyLater: Bool = false
     var replyLaterAt: String? = nil
+    /// Pending Reply Later reminder, UTC ISO 8601 (AVE-86). Nil when none is set.
+    var replyLaterRemindAt: String? = nil
+    /// When the reminder fired, UTC ISO 8601. Unread + in Reply Later + this set = due.
+    var replyLaterRemindedAt: String? = nil
     var body: String?
     var snippet: String?
     var inReplyTo: String?
@@ -659,6 +663,8 @@ struct Email: Identifiable, Codable, Hashable {
         case listSection = "list_section"
         case replyLater = "reply_later"
         case replyLaterAt = "reply_later_at"
+        case replyLaterRemindAt = "reply_later_remind_at"
+        case replyLaterRemindedAt = "reply_later_reminded_at"
         case aliasId = "alias_id"
         case aliasEmail = "alias_email"
         case aliasActive = "alias_active"
@@ -976,6 +982,24 @@ struct Email: Identifiable, Codable, Hashable {
         return result
     }
 
+    /// Pending reminder time, when this mail sits in Reply Later with one set (AVE-86).
+    var replyLaterRemindDate: Date? {
+        guard replyLater else { return nil }
+        return ReplyLaterReminder.parseISO(replyLaterRemindAt)
+    }
+
+    /// The reminder fired and the mail is still unread in Reply Later: it needs attention.
+    var isReplyLaterDue: Bool {
+        replyLater && replyLaterRemindedAt != nil && !read
+    }
+
+    /// Inbox order key: a fired reminder lifts the conversation to the top of New, so
+    /// sort by the later of the mail's date and `reply_later_reminded_at` (AVE-86).
+    var inboxSortKey: String {
+        guard let reminded = replyLaterRemindedAt, reminded > date else { return date }
+        return reminded
+    }
+
     var parsedDate: Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1005,6 +1029,9 @@ extension Email {
         starred = c.decodeLenientBool(forKey: .starred) ?? false
         replyLater = c.decodeLenientBool(forKey: .replyLater) ?? false
         replyLaterAt = try c.decodeIfPresent(String.self, forKey: .replyLaterAt)
+        // Older Workers omit both reminder fields (AVE-86): missing = none.
+        replyLaterRemindAt = try? c.decodeIfPresent(String.self, forKey: .replyLaterRemindAt)
+        replyLaterRemindedAt = try? c.decodeIfPresent(String.self, forKey: .replyLaterRemindedAt)
         body = try c.decodeIfPresent(String.self, forKey: .body)
         snippet = try c.decodeIfPresent(String.self, forKey: .snippet)
         inReplyTo = try c.decodeIfPresent(String.self, forKey: .inReplyTo)

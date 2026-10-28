@@ -5,6 +5,7 @@
 import {
 	type Icon,
 	type IconWeight,
+	AlarmIcon,
 	ArrowBendUpLeftIcon,
 	DotsThreeIcon,
 	LockSimpleIcon,
@@ -18,6 +19,7 @@ import { useContextMenu } from "~/components/ContextMenu";
 import { IconButton, Tip } from "~/components/IconButton";
 import { isAuthSpoofed } from "~/lib/email-auth";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
+import { formatReminderShort, isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
 import { notePreviewText } from "~/lib/thread-notes";
 import { getNonInlineAttachments, hasFileAttachment } from "~/lib/utils";
 import type { Email } from "~/types";
@@ -147,6 +149,7 @@ export default function ThreadRow({
 							</span>
 						</Tip>
 					)}
+					<ReminderChip email={email} />
 					{/* Date (and star) crossfade to the row's actions on hover / focus. */}
 					<span className="relative ml-auto shrink-0 flex items-center pl-2">
 						<span className="flex items-center transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0">
@@ -215,6 +218,30 @@ export default function ThreadRow({
 				)}
 			</div>
 		</div>
+	);
+}
+
+/** Reply Later reminder (AVE-86): pending time in muted ink, or "Due" in the attention colour. */
+function ReminderChip({ email }: { email: Email }) {
+	if (isReplyLaterDue(email)) {
+		return (
+			<span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-[var(--attention-soft)] px-1.5 text-xs font-medium leading-[18px] text-[var(--attention)]">
+				<AlarmIcon size={12} weight="fill" aria-hidden />
+				Due
+			</span>
+		);
+	}
+	const at = pendingReminder(email);
+	if (!at) return null;
+	const label = formatReminderShort(at);
+	return (
+		<span
+			className="shrink-0 inline-flex items-center gap-1 text-xs text-kumo-subtle tabular-nums"
+			aria-label={`Reminder ${label}`}
+		>
+			<AlarmIcon size={12} aria-hidden />
+			{label}
+		</span>
 	);
 }
 

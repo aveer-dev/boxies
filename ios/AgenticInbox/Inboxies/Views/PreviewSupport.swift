@@ -320,6 +320,11 @@ enum PreviewSupport {
             applyNotesFixtures(to: app, args: args)
         }
         applyLoadStateFixtures(to: app, args: args)
+        if args.contains("-previewReminders")
+            || args.contains("-previewReminderPicker")
+            || args.contains("-previewReminderToast") {
+            applyReminderFixtures(to: app, args: args)
+        }
         if args.contains("-previewToast") {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo: true, duration: 0)
@@ -331,6 +336,56 @@ enum PreviewSupport {
             applyPreviewService(service, to: app)
         }
         return app
+    }
+
+    // MARK: Reply Later reminders (AVE-86)
+
+    /// `-previewReminders`: "Invoice for March" fired (unread, due → amber bottom bar,
+    /// "Due" chip, top of New) and "Can you review the contract?" waits for tomorrow 9:00
+    /// (alarm chip). `-previewReminderPicker` opens the picker on the pending one
+    /// (`-previewReminderCustom` expands the custom date + time). `-previewReminderToast`
+    /// pins "Added to Reply Later · Add reminder".
+    @MainActor
+    private static func applyReminderFixtures(to app: AppModel, args: [String]) {
+        let now = Date()
+        var updated: [Email] = []
+        func patch(_ id: String, _ change: (inout Email) -> Void) {
+            guard let base = app.emails.first(where: { $0.id == id }) ?? emails.first(where: { $0.id == id }) else { return }
+            var email = base
+            change(&email)
+            updated.append(email)
+            if let idx = app.emails.firstIndex(where: { $0.id == id }) {
+                app.emails[idx] = email
+            }
+        }
+        patch("preview-2") { email in
+            email.read = false
+            email.listSection = "new"
+            email.replyLater = true
+            email.replyLaterRemindAt = nil
+            email.replyLaterRemindedAt = ReplyLaterReminder.isoString(now.addingTimeInterval(-10 * 60))
+        }
+        patch("preview-rl-2") { email in
+            email.replyLater = true
+            email.replyLaterRemindAt = ReplyLaterReminder.isoString(ReplyLaterReminder.tomorrowMorning(now: now))
+            email.replyLaterRemindedAt = nil
+        }
+        DatabaseService.shared.upsertEmails(mailboxId: "mb-preview", emails: updated)
+        if app.selectedTab == .folder("inbox"), !app.emails.contains(where: { $0.id == "preview-rl-2" }),
+           let pending = updated.first(where: { $0.id == "preview-rl-2" }) {
+            app.emails.append(pending)
+        }
+        if app.selectedTab.syncFolderId == "inbox" {
+            app.emails = AppModel.orderNewThenSeen(app.emails)
+        }
+        app.replyLaterCount = DatabaseService.shared.getReplyLaterCount(mailboxId: "mb-preview")
+        app.replyLaterDueCount = DatabaseService.shared.getReplyLaterDueCount(mailboxId: "mb-preview")
+        if args.contains("-previewReminderPicker") {
+            app.reminderPickerEmail = updated.first(where: { $0.id == "preview-rl-2" })
+        }
+        if args.contains("-previewReminderToast"), let added = app.emails.first(where: { $0.id == "preview-3" }) {
+            app.showAddedToReplyLaterToast(for: added, duration: 0)
+        }
     }
 
     // MARK: Notes to self (AVE-61)

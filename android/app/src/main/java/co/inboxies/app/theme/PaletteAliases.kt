@@ -15,3 +15,6 @@ val InboxiesPalette.warning: Color get() = if (isDark) InboxiesColors.DarkWarnin
 
 /** Destructive red for fills and tints (meters at a limit); text keeps [InboxiesPalette.deepDarkRed]. */
 val InboxiesPalette.danger: Color get() = if (isDark) InboxiesColors.DarkDanger else InboxiesColors.LightDanger
+
+/** Attention tint (warm amber-orange): a fired Reply Later reminder (AVE-86). */
+val InboxiesPalette.attention: Color get() = if (isDark) InboxiesColors.DarkAttention else InboxiesColors.LightAttention

@@ -748,5 +748,19 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		// Reply Later reminders (AVE-86, workers/lib/reply-later-reminders.ts):
+		// a pending reminder time and the time it fired. The mailbox alarm fires
+		// due reminders; the partial index keeps "next reminder" lookups cheap.
+		// Additive only. Numbered 43: dev's highest is 41_ai_usage and open
+		// PR #178 claims 42_conversation_index.
+		name: "43_reply_later_reminders",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN reply_later_remind_at TEXT;
+            ALTER TABLE emails ADD COLUMN reply_later_reminded_at TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_reply_later_remind_at
+                ON emails(reply_later_remind_at)
+                WHERE reply_later_remind_at IS NOT NULL;
+        `),
+	},
 ];
-

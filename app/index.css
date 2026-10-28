@@ -80,6 +80,9 @@
   --border-control: #d9d9d9;
   --accent: #171717;
   --accent-soft: rgba(0, 0, 0, 0.06);
+  /* Reply Later reminder due (AVE-86): the one warm hue. iOS AppTheme.attention, Android InboxiesColors.attention. */
+  --attention: #b45309;
+  --attention-soft: color-mix(in srgb, var(--attention) 12%, transparent);
   /* Focus: a mid gray, ≥3:1 on every surface. */
   --focus-ring: #8a8a8a;
   --glass-bg: color-mix(in srgb, var(--bg) 72%, transparent);
@@ -165,6 +168,8 @@
   --border-control: #363636;
   --accent: #ececec;
   --accent-soft: rgba(255, 255, 255, 0.08);
+  --attention: #f59e0b;
+  --attention-soft: color-mix(in srgb, var(--attention) 16%, transparent);
   --focus-ring: #7d7d7d;
   --glass-bg: color-mix(in srgb, #1b1b1b 74%, transparent);
   --glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 16px rgba(0, 0, 0, 0.5);
@@ -492,6 +497,31 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   }
   .row-enter {
     animation: row-in 320ms var(--ease-out) calc(min(var(--i, 0), 12) * 16ms) backwards;
+  }
+}
+
+/*
+ * Reply Later with a due reminder (AVE-86): a soft attention halo that
+ * breathes (~1.8s). Reduced motion keeps the halo, still.
+ */
+.reply-later-due {
+  background: var(--attention-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--attention) 28%, transparent),
+    0 0 12px color-mix(in srgb, var(--attention) 22%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reply-later-due {
+    animation: attention-breathe 1.8s ease-in-out infinite;
+  }
+}
+@keyframes attention-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--attention) 22%, transparent),
+      0 0 6px color-mix(in srgb, var(--attention) 12%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--attention) 40%, transparent),
+      0 0 16px color-mix(in srgb, var(--attention) 32%, transparent);
   }
 }
 

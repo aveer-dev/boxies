@@ -106,6 +106,18 @@ class AppModel {
     private val _replyLaterCount = MutableStateFlow(0)
     val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
 
+    /**
+     * Reply Later mails whose reminder fired and are still unread (AVE-86): piles
+     * `due_count`, falling back to locally known due mails. Drives the bottom-bar
+     * attention state.
+     */
+    private val _replyLaterDueCount = MutableStateFlow(0)
+    val replyLaterDueCount: StateFlow<Int> = _replyLaterDueCount.asStateFlow()
+
+    /** Mail the "Remind me" picker is open for (AVE-86); `null` when closed. */
+    private val _reminderPickerEmail = MutableStateFlow<Email?>(null)
+    val reminderPickerEmail: StateFlow<Email?> = _reminderPickerEmail.asStateFlow()
+
     private val _identities = MutableStateFlow<List<LinkedIdentity>?>(null)
     val identities: StateFlow<List<LinkedIdentity>?> = _identities.asStateFlow()
 
@@ -362,6 +374,7 @@ class AppModel {
                 val folders = db.getFolders(id)
                 if (folders.isNotEmpty()) _folders.value = folders
                 _replyLaterCount.value = db.getReplyLaterCount(id)
+                _replyLaterDueCount.value = db.getReplyLaterDueCount(id)
                 if (_selectedTab.value is HomeTab.ReplyLater) {
                     val emails = db.getReplyLaterEmails(id)
                     if (emails.isNotEmpty()) {
@@ -594,6 +607,8 @@ class AppModel {
             _isMailboxLoading.value = false
         }
         _replyLaterCount.value = db.getReplyLaterCount(id)
+        _replyLaterDueCount.value = db.getReplyLaterDueCount(id)
+        _reminderPickerEmail.value = null
         if (_selectedTab.value is HomeTab.ReplyLater) {
             val cachedEmails = db.getReplyLaterEmails(id)
             if (cachedEmails.isNotEmpty()) {
@@ -1045,11 +1060,13 @@ class AppModel {
     suspend fun refreshReplyLaterCount() {
         val mailboxId = _selectedMailboxId.value ?: run {
             _replyLaterCount.value = 0
+            _replyLaterDueCount.value = 0
             return
         }
         val localCount = db.getReplyLaterCount(mailboxId)
         if (isDebugPreview) {
             _replyLaterCount.value = localCount
+            _replyLaterDueCount.value = db.getReplyLaterDueCount(mailboxId)
             return
         }
         if (localCount > 0 || _replyLaterCount.value == 0) {
@@ -1074,6 +1091,63 @@ class AppModel {
                     _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
                 }
             }
+        }
+        refreshReplyLaterDueCount(mailboxId)
+    }
+
+    /** Piles `due_count` (0 on older Workers), never below what the local cache knows is due. */
+    private suspend fun refreshReplyLaterDueCount(mailboxId: String) {
+        val localDue = db.getReplyLaterDueCount(mailboxId)
+        val serverDue = runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull()
+            ?.piles?.firstOrNull { it.id == "reply_later" }?.dueCount
+        ifStillSelected(mailboxId) {
+            _replyLaterDueCount.value = maxOf(serverDue ?: 0, localDue)
+        }
+    }
+
+    fun openReminderPicker(email: Email) {
+        hideToast()
+        _reminderPickerEmail.value = email
+    }
+
+    fun dismissReminderPicker() {
+        _reminderPickerEmail.value = null
+    }
+
+    /**
+     * Set (`time`) or clear (`null`) a Reply Later reminder (AVE-86). Setting one also adds
+     * the mail to Reply Later. Optimistic like the other flag mutations; rolls back on failure.
+     */
+    suspend fun setReplyLaterReminder(email: Email, time: java.time.ZonedDateTime?) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val target = _emails.value.firstOrNull { it.id == email.id }
+            ?: _threadEmails.value.firstOrNull { it.id == email.id }
+            ?: email
+        val iso = time?.let { ReplyLaterReminderPresets.toIso(it) }
+        db.updateReplyLaterReminder(target.id, iso)
+        applyEmailUpdate(target.withReplyLaterReminder(iso))
+        val successMessage = if (time != null) {
+            "Reminder set for ${ReplyLaterReminderPresets.fullLabel(time, java.time.ZonedDateTime.now(time.zone))}"
+        } else {
+            "Reminder removed"
+        }
+        if (isDebugPreview) {
+            showToast(successMessage)
+            refreshReplyLaterCount()
+            return
+        }
+        runCatching {
+            ApiClient.shared.setReplyLaterReminder(mailboxId, target.id, iso)
+        }.onSuccess {
+            showToast(successMessage)
+        }.onFailure {
+            db.upsertEmails(mailboxId, listOf(target))
+            applyEmailUpdate(target)
+            showToast(if (time != null) "Couldn't set reminder" else "Couldn't remove reminder", isError = true)
+        }
+        refreshReplyLaterCount()
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            loadEmailsForCurrentTab(showLoading = false)
         }
     }
 
@@ -1840,6 +1914,8 @@ class AppModel {
         // invite screen clears it when it is accepted or closed.
         _errorMessage.value = null
         _toast.value = null
+        _replyLaterDueCount.value = 0
+        _reminderPickerEmail.value = null
         // Sign-out forgets the last mailbox; the next account starts on its own first one.
         if (!isDebugPreview) LastMailboxPreference.clear()
         selectionIsProvisional = false
@@ -1887,6 +1963,8 @@ class AppModel {
         _selectedEmail.value = selectedEmail
         _threadEmails.value = threadEmails
         _replyLaterCount.value = replyLaterCount
+        _replyLaterDueCount.value = selectedMailboxId?.let { db.getReplyLaterDueCount(it) } ?: 0
+        _reminderPickerEmail.value = null
         _isAdmin.value = isAdmin
         _inboxDigest.value = null
         _composeSession.value = null
@@ -2115,16 +2193,17 @@ class AppModel {
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
         val next = !target.replyLater
         db.updateEmailFlags(target.id, replyLater = next)
-        applyEmailUpdate(
-            target.copy(
-                replyLater = next,
-                replyLaterAt = if (next) java.time.Instant.now().toString() else null,
-            ),
+        val updated = target.copy(
+            replyLater = next,
+            replyLaterAt = if (next) java.time.Instant.now().toString() else null,
+            replyLaterRemindAt = if (next) target.replyLaterRemindAt else null,
+            replyLaterRemindedAt = if (next) target.replyLaterRemindedAt else null,
         )
+        applyEmailUpdate(updated)
         runCatching {
             ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
         }.onSuccess {
-            showToast(if (next) "Added to Reply Later" else "Removed from Reply Later")
+            if (next) showAddedToReplyLaterToast(updated) else showToast("Removed from Reply Later")
         }.onFailure {
             // Roll back optimistic update on failure
             db.updateEmailFlags(target.id, replyLater = !next)
@@ -2137,6 +2216,19 @@ class AppModel {
         }
     }
 
+    /** "Added to Reply Later" + "Add reminder" (opens the picker), held a little longer (AVE-86). */
+    fun showAddedToReplyLaterToast(email: Email) {
+        if (email.hasPendingReplyLaterReminder) {
+            showToast("Added to Reply Later")
+            return
+        }
+        showToast(
+            "Added to Reply Later",
+            action = ToastAction("Add reminder") { openReminderPicker(email) },
+            durationMs = REMINDER_TOAST_DURATION_MS,
+        )
+    }
+
     suspend fun setReplyLater(ids: Set<String>, replyLater: Boolean) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (ids.isEmpty()) return
@@ -2147,6 +2239,8 @@ class AppModel {
                     email.copy(
                         replyLater = replyLater,
                         replyLaterAt = if (replyLater) java.time.Instant.now().toString() else null,
+                        replyLaterRemindAt = if (replyLater) email.replyLaterRemindAt else null,
+                        replyLaterRemindedAt = if (replyLater) email.replyLaterRemindedAt else null,
                     ),
                 )
             }
@@ -2199,6 +2293,8 @@ class AppModel {
                         starred = updated.starred,
                         replyLater = updated.replyLater,
                         replyLaterAt = updated.replyLaterAt,
+                        replyLaterRemindAt = updated.replyLaterRemindAt,
+                        replyLaterRemindedAt = updated.replyLaterRemindedAt,
                         threadUnreadCount = if (updated.read) 0 else it.threadUnreadCount,
                         listSection = if (updated.read) "seen" else "new",
                     )
@@ -2208,6 +2304,10 @@ class AppModel {
         }
         if (previous != null) {
             adjustFolderUnread(previous, wasUnread = !previous.read, isUnread = !updated.read)
+            // Reading (or un-queueing) a due mail clears the attention state right away.
+            if (previous.isReplyLaterDue != updated.isReplyLaterDue) {
+                _replyLaterDueCount.update { (it + if (updated.isReplyLaterDue) 1 else -1).coerceAtLeast(0) }
+            }
         }
     }
 
@@ -2796,6 +2896,9 @@ class AppModel {
     companion object {
         private const val AUTO_CONVERSATION_ID = "auto"
         private const val PUSH_UNREGISTER_TIMEOUT_MS = 4_000L
+
+        /** "Added to Reply Later · Add reminder" stays up longer than a plain toast (AVE-86). */
+        const val REMINDER_TOAST_DURATION_MS = 5_000L
 
         private fun visibleConversations(conversations: List<AgentConversation>) =
             conversations.filter { it.id != AUTO_CONVERSATION_ID }

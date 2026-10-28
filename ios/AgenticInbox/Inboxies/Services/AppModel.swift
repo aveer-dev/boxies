@@ -64,6 +64,11 @@ final class AppModel {
     var toast: AppToast?
     /// Count for bottom Reply Later chrome (workflow pile).
     var replyLaterCount: Int = 0
+    /// Reply Later mails whose reminder fired and are still unread (piles `due_count`,
+    /// else the cache). Drives the bottom-bar attention state (AVE-86).
+    var replyLaterDueCount: Int = 0
+    /// Mail the Reply Later reminder picker is open for (toast "Add reminder", list menu).
+    var reminderPickerEmail: Email?
     /// Cached sign-in identities for settings navigation.
     var identities: [LinkedIdentity]?
     /// Cached domain admin mailboxes for settings navigation.
@@ -293,6 +298,7 @@ final class AppModel {
                     folders = cachedFolders
                 }
                 replyLaterCount = db.getReplyLaterCount(mailboxId: id)
+                replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: id)
                 if selectedTab == .replyLater {
                     let cached = db.getReplyLaterEmails(mailboxId: id, limit: 50)
                     if !cached.isEmpty {
@@ -497,6 +503,7 @@ final class AppModel {
             isMailboxLoading = false
         }
         replyLaterCount = db.getReplyLaterCount(mailboxId: id)
+        replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: id)
         if selectedTab == .replyLater {
             let cached = db.getReplyLaterEmails(mailboxId: id, limit: 50)
             if !cached.isEmpty {
@@ -846,11 +853,13 @@ final class AppModel {
     func refreshReplyLaterCount() async {
         guard let mailboxId = selectedMailboxId else {
             replyLaterCount = 0
+            replyLaterDueCount = 0
             return
         }
         let localCount = db.getReplyLaterCount(mailboxId: mailboxId)
         if isDebugPreview {
             replyLaterCount = localCount
+            replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: mailboxId)
             return
         }
         if localCount > 0 || replyLaterCount == 0 {
@@ -863,11 +872,25 @@ final class AppModel {
             if selectedTab == .replyLater, listPaging?.key == currentListKey {
                 applyReplyLaterFirstPage(response, resetPaging: false)
             }
+            await refreshReplyLaterDueCount(mailboxId: mailboxId)
         } catch {
             if let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId) {
-                replyLaterCount = piles.piles.first(where: { $0.id == "reply_later" })?.count ?? 0
+                let pile = piles.piles.first(where: { $0.id == "reply_later" })
+                replyLaterCount = pile?.count ?? 0
+                replyLaterDueCount = pile?.dueCount ?? db.getReplyLaterDueCount(mailboxId: mailboxId)
+            } else {
+                replyLaterDueCount = db.getReplyLaterDueCount(mailboxId: mailboxId)
             }
         }
+    }
+
+    /// Due count from the piles `due_count`; older Workers (or a failed fetch) fall back
+    /// to the locally known due mails.
+    private func refreshReplyLaterDueCount(mailboxId: String) async {
+        let piles = try? await APIClient.shared.listWorkflowPiles(mailboxId: mailboxId)
+        guard selectedMailboxId == mailboxId else { return }
+        let serverDue = piles?.piles.first(where: { $0.id == "reply_later" })?.dueCount
+        replyLaterDueCount = serverDue ?? db.getReplyLaterDueCount(mailboxId: mailboxId)
     }
 
     /// Reloads the visible tab without swapping in the list skeleton.
@@ -1676,6 +1699,8 @@ final class AppModel {
         toastDismissTask = nil
         toast = nil
         replyLaterCount = 0
+        replyLaterDueCount = 0
+        reminderPickerEmail = nil
         identities = nil
         adminMailboxes = nil
         domainServices = [:]
@@ -1836,13 +1861,78 @@ final class AppModel {
             updated.replyLaterAt = ISO8601DateFormatter().string(from: Date())
         } else {
             updated.replyLaterAt = nil
+            updated.replyLaterRemindAt = nil
+            updated.replyLaterRemindedAt = nil
         }
         applyEmailUpdate(updated)
         // Count optimistically. Refetching the pile here races the outbox: the server
         // still has the old flag, so the count would bounce back and a removed row (and
         // its local flag, via upsert) would reappear in the Reply Later pile.
         replyLaterCount = max(0, replyLaterCount + (next ? 1 : -1))
-        showToast(next ? "Added to Reply Later" : "Removed from Reply Later")
+        if next {
+            showAddedToReplyLaterToast(for: updated)
+        } else {
+            showToast("Removed from Reply Later")
+        }
+    }
+
+    /// "Added to Reply Later" with a trailing "Add reminder" that opens the picker (AVE-86).
+    /// Held longer than the usual toast so there's time to reach the button.
+    func showAddedToReplyLaterToast(for email: Email, duration: TimeInterval = 5) {
+        showToast(
+            "Added to Reply Later",
+            action: ToastAction(title: "Add reminder", accessibilityHint: "Choose when to be reminded") { [weak self] in
+                guard let self else { return }
+                self.hideToast()
+                self.reminderPickerEmail = self.currentCopy(of: email)
+            },
+            duration: duration
+        )
+    }
+
+    /// The freshest copy of a mail on screen, so the picker sees flags set since.
+    private func currentCopy(of email: Email) -> Email {
+        if selectedEmail?.id == email.id, let selectedEmail { return selectedEmail }
+        if let row = emails.first(where: { $0.id == email.id }) { return row }
+        if let message = threadEmails.first(where: { $0.id == email.id }) { return message }
+        return email
+    }
+
+    /// Sets (`date`) or clears (`nil`) the Reply Later reminder. Setting one also adds the
+    /// mail to Reply Later. Optimistic + queued in the outbox like the other flags (AVE-86).
+    func setReplyLaterReminder(on email: Email, at date: Date?) async {
+        guard let mailboxId = selectedMailboxId else { return }
+        let target = currentCopy(of: email)
+        let iso = date.map(ReplyLaterReminder.isoString)
+        let wasInPile = target.replyLater
+
+        db.updateReplyLaterReminder(id: target.id, remindAt: iso)
+        db.enqueueMutation(
+            mailboxId: mailboxId,
+            emailId: target.id,
+            actionType: "reply_later_reminder",
+            payload: ["reply_later_remind_at": iso.map { $0 as Any } ?? NSNull()]
+        )
+        outbox.trigger()
+
+        var updated = target
+        updated.replyLaterRemindAt = iso
+        if iso != nil {
+            updated.replyLater = true
+            updated.replyLaterRemindedAt = nil
+            if !wasInPile || updated.replyLaterAt == nil {
+                updated.replyLaterAt = ReplyLaterReminder.isoString(Date())
+            }
+        }
+        applyEmailUpdate(updated)
+        if iso != nil, !wasInPile {
+            replyLaterCount += 1
+        }
+        if let date {
+            showToast("Reminder set for \(ReplyLaterReminder.longLabel(date))", icon: "alarm")
+        } else {
+            showToast("Reminder removed")
+        }
     }
 
     func setReplyLater(_ emailIDs: Set<String>, replyLater: Bool) async {
@@ -1852,6 +1942,10 @@ final class AppModel {
             if var current = emails.first(where: { $0.id == id }) {
                 current.replyLater = replyLater
                 current.replyLaterAt = replyLater ? ISO8601DateFormatter().string(from: Date()) : nil
+                if !replyLater {
+                    current.replyLaterRemindAt = nil
+                    current.replyLaterRemindedAt = nil
+                }
                 applyEmailUpdate(current)
             }
         }
@@ -1891,6 +1985,9 @@ final class AppModel {
 
     func applyEmailUpdate(_ updated: Email) {
         let previous = emails.first(where: { $0.id == updated.id })
+        let previousAnywhere = previous
+            ?? (selectedEmail?.id == updated.id ? selectedEmail : nil)
+            ?? threadEmails.first(where: { $0.id == updated.id })
         if selectedEmail?.id == updated.id {
             selectedEmail = updated
         }
@@ -1902,6 +1999,8 @@ final class AppModel {
             emails[idx].starred = updated.starred
             emails[idx].replyLater = updated.replyLater
             emails[idx].replyLaterAt = updated.replyLaterAt
+            emails[idx].replyLaterRemindAt = updated.replyLaterRemindAt
+            emails[idx].replyLaterRemindedAt = updated.replyLaterRemindedAt
             if updated.read {
                 emails[idx].threadUnreadCount = 0
                 emails[idx].listSection = "seen"
@@ -1920,6 +2019,11 @@ final class AppModel {
         }
         if let previous {
             adjustFolderUnread(for: previous, wasUnread: !previous.read, isUnread: !updated.read)
+        }
+        // Reading, removing or re-arming a due mail settles it (AVE-86).
+        let wasDue = previousAnywhere?.isReplyLaterDue ?? false
+        if wasDue != updated.isReplyLaterDue {
+            replyLaterDueCount = max(0, replyLaterDueCount + (updated.isReplyLaterDue ? 1 : -1))
         }
     }
 
@@ -2167,10 +2271,11 @@ final class AppModel {
         conversations.filter { $0.id != autoConversationId }
     }
 
-    /// Inbox New (unread) then Seen, each by date DESC.
+    /// Inbox New (unread) then Seen, each newest first by `max(date, reply_later_reminded_at)`
+    /// so a fired Reply Later reminder jumps to the top of New (AVE-86).
     static func orderNewThenSeen(_ emails: [Email]) -> [Email] {
-        let newEmails = emails.filter(\.isUnread).sorted { $0.date > $1.date }
-        let seenEmails = emails.filter { !$0.isUnread }.sorted { $0.date > $1.date }
+        let newEmails = emails.filter(\.isUnread).sorted { $0.inboxSortKey > $1.inboxSortKey }
+        let seenEmails = emails.filter { !$0.isUnread }.sorted { $0.inboxSortKey > $1.inboxSortKey }
         return newEmails + seenEmails
     }
 

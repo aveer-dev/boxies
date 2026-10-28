@@ -8,6 +8,9 @@
 #   ./scripts/run-debug-preview.sh loadMore
 #   ./scripts/run-debug-preview.sh manyNew
 #   ./scripts/run-debug-preview.sh toast
+#   ./scripts/run-debug-preview.sh reminderPicker   # Reply Later "Remind me" picker open (AVE-86)
+#   ./scripts/run-debug-preview.sh reminderToast    # "Added to Reply Later" + "Add reminder" toast
+#   ./scripts/run-debug-preview.sh reminderDue      # inbox with a due reminder: attention Reply Later button
 #   ./scripts/run-debug-preview.sh loadFailed
 #   ./scripts/run-debug-preview.sh listError
 #   ./scripts/run-debug-preview.sh screener
@@ -68,6 +71,9 @@ case "$mode" in
   loadMore|LoadMore|previewLoadMore) extra=previewLoadMore; label=loadMore ;;
   manyNew|ManyNew|previewManyNew) extra=previewManyNew; label=manyNew ;;
   toast|Toast|previewToast) extra=previewToast; label=toast ;;
+  reminderPicker|ReminderPicker|previewReminderPicker) extra=previewReminderPicker; label=reminderPicker ;;
+  reminderToast|ReminderToast|previewReminderToast) extra=previewReminderToast; label=reminderToast ;;
+  reminderDue|ReminderDue|previewReminderDue) extra=previewReminderDue; label=reminderDue ;;
   loadFailed|LoadFailed|previewLoadFailed) extra=previewLoadFailed; label=loadFailed ;;
   listError|ListError|previewListError) extra=previewListError; label=listError ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
@@ -96,7 +102,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | toast | loadFailed | listError | screener | replyLater | spam | newsletter | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | replyLater | spam | newsletter | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
     exit 1
     ;;
 esac
