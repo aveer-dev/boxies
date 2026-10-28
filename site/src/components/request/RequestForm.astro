@@ -1,0 +1,425 @@
+---
+// The request form on /request (AVE-81): a feature request, bug report or
+// feedback, filed as a Linear issue by POST /api/requests. It needs JS (the
+// Turnstile check runs in the browser), so without it the page points at email.
+// request-form.ts asks GET /api/requests whether the form can send; until the
+// owner sets the secrets it says so and offers email instead.
+import { IOS_STATUS, SUPPORT_EMAIL, flags } from "../../config";
+import { KINDS, PLATFORMS, REQUEST_LIMITS } from "./request-rules";
+
+const first = KINDS[0];
+// Only the apps people can have: the endpoint still accepts every platform, but the
+// menu doesn't offer one that isn't out (check-claims holds the site to that).
+const platforms = PLATFORMS.filter(
+	(p) => (p.value !== "android" || flags.androidPublic) && (p.value !== "ios" || IOS_STATUS !== "hidden") && (p.value !== "web" || flags.webAppPublic),
+);
+---
+
+<section class="section request-section">
+	<p class="noscript no-js-only">This form needs JavaScript for its spam check. You can email <a class="inline-link" href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> instead.</p>
+
+	<form class="request-form js-only" data-request novalidate>
+		<fieldset class="kinds">
+			<legend>What is it?</legend>
+			<div class="kind-row">
+				{
+					KINDS.map((k, i) => (
+						<label class="kind">
+							<input type="radio" name="kind" value={k.value} checked={i === 0} />
+							<span>{k.label}</span>
+						</label>
+					))
+				}
+			</div>
+		</fieldset>
+
+		<div class="field">
+			<label for="r-title">Title</label>
+			<input
+				id="r-title"
+				name="title"
+				type="text"
+				required
+				maxlength={REQUEST_LIMITS.titleMax}
+				placeholder={first.titlePlaceholder}
+				autocomplete="off"
+				aria-describedby="r-title-err"
+			/>
+			<p class="err" id="r-title-err" hidden></p>
+		</div>
+
+		<div class="field" data-platform-field hidden>
+			<label for="r-platform">Where did it happen?</label>
+			<span class="select-wrap">
+				<select id="r-platform" name="platform" aria-describedby="r-platform-err">
+					<option value="" disabled selected>Choose one</option>
+					{platforms.map((p) => <option value={p.value}>{p.label}</option>)}
+				</select>
+			</span>
+			<p class="err" id="r-platform-err" hidden></p>
+		</div>
+
+		<div class="field">
+			<label for="r-details">Details</label>
+			<textarea
+				id="r-details"
+				name="details"
+				rows="6"
+				required
+				minlength={REQUEST_LIMITS.detailsMin}
+				maxlength={REQUEST_LIMITS.detailsMax}
+				placeholder={first.detailsPlaceholder}
+				aria-describedby="r-details-count r-details-err"></textarea>
+			<p class="counter" id="r-details-count"><span data-count>0</span> / {REQUEST_LIMITS.detailsMax.toLocaleString("en-US")}</p>
+			<p class="err" id="r-details-err" hidden></p>
+		</div>
+
+		<div class="field">
+			<label for="r-email">Your email</label>
+			<input
+				id="r-email"
+				name="email"
+				type="email"
+				required
+				maxlength={REQUEST_LIMITS.email}
+				autocomplete="email"
+				spellcheck="false"
+				aria-describedby="r-email-help r-email-err"
+			/>
+			<p class="help" id="r-email-help">So we can tell you how it goes. It stays with us and is never shown with your request.</p>
+			<p class="err" id="r-email-err" hidden></p>
+		</div>
+
+		{/* Bots fill every field; people never see this one. */}
+		<div class="hp" aria-hidden="true">
+			<label for="r-website">Leave this empty</label>
+			<input id="r-website" name="website" type="text" tabindex="-1" autocomplete="off" />
+		</div>
+
+		<div class="turnstile" data-turnstile></div>
+
+		<p class="form-status" role="status" aria-live="polite"></p>
+
+		<div class="submit-row">
+			<button class="btn btn-primary" type="submit" disabled>Send request</button>
+			<p class="submit-note">
+				Requests go to our tracker, where we read every one. The title may end up on the <a class="inline-link" href="/roadmap">roadmap</a> if we build it; your email never does.
+			</p>
+		</div>
+	</form>
+
+	{/* Takes the form's place once the request is filed. */}
+	<div class="sent" tabindex="-1" data-request-sent hidden>
+		<p class="sent-title">Got it.</p>
+		<p class="sent-line">Thanks. Your <span data-sent-noun>request</span> is in our tracker, and a confirmation is on its way to <span data-sent-email></span>.</p>
+		<button type="button" class="btn btn-text" data-send-another>Send another</button>
+	</div>
+</section>
+
+<script>
+	import "./request-form";
+</script>
+
+<style>
+	.noscript {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.request-form {
+		position: relative;
+	}
+
+	/* Margins, not gap: the empty status line and the hidden platform field take no room. */
+	.request-form > :global(* + *) {
+		margin-top: 16px;
+	}
+
+	.request-form > .form-status:empty,
+	.request-form > .turnstile:empty {
+		margin-top: 0;
+	}
+
+	.request-form > [hidden] {
+		display: none;
+	}
+
+	.kinds {
+		margin: 0;
+		padding: 0;
+		border: 0;
+		min-width: 0;
+	}
+
+	.kinds legend,
+	.field > label {
+		display: block;
+		margin-bottom: 6px;
+		padding: 0;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	/* Three choices as one segmented row; wraps to a column on a phone. */
+	.kind-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+	}
+
+	.kind {
+		position: relative;
+		cursor: pointer;
+	}
+
+	.kind input {
+		position: absolute;
+		inset: 0;
+		opacity: 0;
+		margin: 0;
+		cursor: pointer;
+	}
+
+	.kind span {
+		display: inline-flex;
+		align-items: center;
+		height: 2rem;
+		padding: 0 12px;
+		border-radius: var(--radius-pill);
+		background: var(--bg-badge);
+		box-shadow: inset 0 0 0 1px var(--border-card);
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		line-height: 1;
+		white-space: nowrap;
+		transition:
+			color 150ms var(--ease-out),
+			background-color 150ms var(--ease-out),
+			box-shadow 150ms var(--ease-out);
+	}
+
+	.kind:hover span {
+		background: var(--bg-card-hover);
+		color: var(--text-primary);
+	}
+
+	.kind input:checked + span {
+		background: var(--btn-bg);
+		box-shadow: none;
+		color: var(--btn-ink);
+	}
+
+	.kind input:focus-visible + span {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 2px;
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.field > label {
+		margin-bottom: 6px;
+	}
+
+	.field > :global(* + .help),
+	.field > :global(* + .err),
+	.field > .counter {
+		margin-top: 6px;
+	}
+
+	/* The edge is darker than the card hairline: a field has to be findable (3:1 on the page). */
+	.request-form :is(input[type="text"], input[type="email"], select, textarea) {
+		width: 100%;
+		padding: 8px 10px;
+		border: 1px solid var(--border-input);
+		border-radius: var(--radius-sm);
+		background: var(--bg-card);
+		color: var(--text-primary);
+		font: 400 0.75rem/1.25rem var(--font-sans);
+		transition: border-color 150ms var(--ease-out);
+	}
+
+	.request-form :is(input, textarea)::placeholder {
+		color: var(--text-muted);
+		opacity: 1;
+	}
+
+	.request-form :is(input[type="text"], input[type="email"], select, textarea):focus-visible {
+		outline: 2px solid var(--focus-ring);
+		outline-offset: 0;
+	}
+
+	.request-form [aria-invalid="true"] {
+		border-color: var(--danger) !important;
+	}
+
+	textarea {
+		display: block;
+		min-height: calc(6 * 1.25rem + 18px);
+		resize: vertical;
+	}
+
+	.select-wrap {
+		position: relative;
+		display: block;
+	}
+
+	.select-wrap::after {
+		content: "▾";
+		position: absolute;
+		top: 50%;
+		right: 10px;
+		transform: translateY(-50%);
+		font-size: 0.6875rem;
+		line-height: 1;
+		color: var(--text-muted);
+		pointer-events: none;
+	}
+
+	.select-wrap select {
+		appearance: none;
+		padding-right: 28px;
+		cursor: pointer;
+	}
+
+	.select-wrap select:has(option[value=""]:checked) {
+		color: var(--text-muted);
+	}
+
+	.help,
+	.counter {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	.counter {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.counter.is-over,
+	.err {
+		color: var(--danger);
+	}
+
+	.err {
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+	}
+
+	.err[hidden] {
+		display: none;
+	}
+
+	.hp {
+		position: absolute;
+		left: -9999px;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+	}
+
+	/* Turnstile draws its own box; "flexible" makes it as wide as the form. */
+	.turnstile {
+		min-height: 0;
+	}
+
+	.form-status {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.submit-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px 16px;
+	}
+
+	.submit-row .btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.submit-note {
+		flex: 1 1 14rem;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-muted);
+	}
+
+	@media (max-width: 640px) {
+		.submit-row {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.submit-row .btn {
+			width: 100%;
+		}
+
+		.submit-note {
+			flex: none;
+		}
+	}
+
+	.sent {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 8px;
+	}
+
+	.sent[hidden] {
+		display: none;
+	}
+
+	.sent:focus {
+		outline: none;
+	}
+
+	.sent-title {
+		font-size: var(--fs-title);
+		font-weight: 500;
+		line-height: 1.25rem;
+		color: var(--text-primary);
+	}
+
+	.sent-line {
+		font-size: var(--fs-body);
+		line-height: 1.25rem;
+		color: var(--text-muted);
+	}
+
+	.sent .btn-text {
+		margin-top: 4px;
+		font-size: var(--fs-body);
+	}
+
+	@media (pointer: coarse) {
+		.request-form :is(input[type="text"], input[type="email"], select, textarea) {
+			font-size: max(16px, 0.75rem);
+		}
+
+		.request-form :is(input[type="text"], input[type="email"], select),
+		.kind span {
+			min-height: 2.75rem;
+		}
+
+		.sent .btn-text {
+			position: relative;
+		}
+
+		.sent .btn-text::after {
+			content: "";
+			position: absolute;
+			inset: -12px -6px;
+		}
+	}
+</style>
