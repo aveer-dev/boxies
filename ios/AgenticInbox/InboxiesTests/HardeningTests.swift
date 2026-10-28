@@ -227,17 +227,17 @@ final class HardeningTests: XCTestCase {
 
     func testInboxNewPreviewCapsNewAndCountsTheRest() throws {
         let newRows = try (0..<7).map { try inboxEmail("n\($0)", date: "2026-10-\(String(format: "%02d", 20 - $0))", unread: true) }
-        // Server sent 5 New (new_limit) but reports 12 in total.
-        let capped = EmailListPaging.inboxNewPreview(Array(newRows.prefix(5)), serverNewCount: 12)
-        XCTAssertEqual(capped.shown.map(\.id), ["n0", "n1", "n2", "n3", "n4"])
-        XCTAssertEqual(capped.hiddenCount, 7)
+        // Server sent 3 New (new_limit) but reports 12 in total.
+        let capped = EmailListPaging.inboxNewPreview(Array(newRows.prefix(3)), serverNewCount: 12)
+        XCTAssertEqual(capped.shown.map(\.id), ["n0", "n1", "n2"])
+        XCTAssertEqual(capped.hiddenCount, 9)
         // Extra cached New rows are hidden, newest first kept.
         let local = EmailListPaging.inboxNewPreview(newRows.reversed(), serverNewCount: nil)
         XCTAssertEqual(local.shown.first?.id, "n0")
         XCTAssertEqual(local.shown.count, EmailListPaging.inboxNewPreviewLimit)
-        XCTAssertEqual(local.hiddenCount, 2)
+        XCTAssertEqual(local.hiddenCount, 4)
         // At or under the cap: nothing hidden.
-        XCTAssertEqual(EmailListPaging.inboxNewPreview(Array(newRows.prefix(3)), serverNewCount: 3).hiddenCount, 0)
+        XCTAssertEqual(EmailListPaging.inboxNewPreview(Array(newRows.prefix(2)), serverNewCount: 2).hiddenCount, 0)
     }
 
     // MARK: - Pruning later pages

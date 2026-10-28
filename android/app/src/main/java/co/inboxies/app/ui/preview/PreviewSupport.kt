@@ -284,7 +284,7 @@ object PreviewSupport {
                 )
             }
             PreviewMode.ManyNew -> {
-                // A dozen New conversations: Inbox shows five, then "Show N more new", then Seen.
+                // A dozen New conversations: Inbox shows three, then "Show N more new", then Seen.
                 val inbox = allEmails.filter { it.folderId == FolderIds.INBOX } +
                     manyNewEmails(you) + fillerSeenEmails(you)
                 DatabaseService.shared.upsertEmails(mailbox.id, inbox)

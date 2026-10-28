@@ -37,17 +37,17 @@ class PagingReconcileTest {
     @Test
     fun inboxNewPreviewCapsNewAndCountsTheRest() {
         val newRows = (0 until 7).map { row("n$it", day(20 - it), section = "new") }
-        // Server sent five New (new_limit) and reports twelve in total.
-        val capped = EmailPaging.inboxNewPreview(newRows.take(5), serverNewCount = 12)
-        assertEquals(listOf("n0", "n1", "n2", "n3", "n4"), capped.shown.map { it.id })
-        assertEquals(7, capped.hiddenCount)
+        // Server sent three New (new_limit) and reports twelve in total.
+        val capped = EmailPaging.inboxNewPreview(newRows.take(3), serverNewCount = 12)
+        assertEquals(listOf("n0", "n1", "n2"), capped.shown.map { it.id })
+        assertEquals(9, capped.hiddenCount)
         // Extra cached New rows are hidden, newest kept.
         val local = EmailPaging.inboxNewPreview(newRows.reversed(), serverNewCount = null)
         assertEquals("n0", local.shown.first().id)
         assertEquals(EmailPaging.INBOX_NEW_PREVIEW_LIMIT, local.shown.size)
-        assertEquals(2, local.hiddenCount)
+        assertEquals(4, local.hiddenCount)
         // At or under the cap: nothing hidden.
-        assertEquals(0, EmailPaging.inboxNewPreview(newRows.take(3), serverNewCount = 3).hiddenCount)
+        assertEquals(0, EmailPaging.inboxNewPreview(newRows.take(2), serverNewCount = 2).hiddenCount)
     }
 
     // ── Generation ────────────────────────────────────────────────────
