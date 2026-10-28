@@ -61,7 +61,14 @@ data class MailboxSettings(
     val signature: SignatureSettings? = null,
     val autoReply: AutoReplySettings? = null,
     val filters: List<InboxFilterRule>? = null,
+    /** Screener for first-time senders. Absent means on (AVE-104). */
+    val screener: ScreenerSettings? = null,
     val acl: MailboxAcl? = null,
+)
+
+@Serializable
+data class ScreenerSettings(
+    val enabled: Boolean? = null,
 )
 
 /**

@@ -67,6 +67,8 @@ export interface MailboxSettings {
 	autoReply?: { enabled: boolean; subject: string; message: string };
 	agentSystemPrompt?: string;
 	filters?: InboxFilterRule[];
+	/** Screener for first-time senders. Absent means on (AVE-104). */
+	screener?: { enabled?: boolean };
 	/** Server-synthesized, read-only; stripped before every save. */
 	acl?: MailboxAcl;
 	canManage?: boolean;

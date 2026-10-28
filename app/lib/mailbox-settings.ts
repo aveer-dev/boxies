@@ -16,3 +16,8 @@ export function writableMailboxSettings(settings: unknown): Record<string, unkno
 	for (const key of READ_ONLY_SETTINGS_KEYS) delete next[key];
 	return next;
 }
+
+/** Screener is on unless the mailbox turned it off (matches the Worker's default). */
+export function isScreenerEnabled(settings: { screener?: { enabled?: boolean } } | undefined): boolean {
+	return settings?.screener?.enabled !== false;
+}

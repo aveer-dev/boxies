@@ -215,6 +215,16 @@ final class AppModel {
         folders.first(where: { $0.id == folderId })?.unreadCount ?? 0
     }
 
+    /// Screener is on unless the selected mailbox turned it off (AVE-104).
+    var isScreenerEnabled: Bool {
+        selectedMailbox?.settings?.screener?.enabled != false
+    }
+
+    /// Screener off: hide its folder unless something unread is still waiting there.
+    var showsScreenerFolder: Bool {
+        isScreenerEnabled || unreadCount(forFolderId: "screener") > 0
+    }
+
     var screenerSenderCount: Int {
         if let mailboxId = selectedMailboxId {
             let cached = db.getEmails(mailboxId: mailboxId, folderId: "screener")

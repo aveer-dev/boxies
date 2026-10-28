@@ -209,10 +209,13 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Devices & sessions | `previewSessions` | `sessions` | Session list |
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
+| Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
+| Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
 | Screener | `previewScreener` | `screener` | Screener folder + detail open |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
+| Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
 | Notes to self (list) | `previewNotes` | `notes` | Inbox rows with a sticky-note strip and "N private notes" chip |
 | Notes to self (detail) | `previewNotesDetail` | `notesDetail` | Q3 thread open: draggable sticky + inline private notes (in-memory edits) |
 | Load more | `previewLoadMore` | `loadMore` | Inbox with more pages; scroll down for the pulsing skeleton footer row |

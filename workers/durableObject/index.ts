@@ -3936,6 +3936,31 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
+	 * Screener turned off (AVE-104): everything still waiting in Screener goes
+	 * to Inbox. Sender decisions are left alone, so turning Screener back on
+	 * only screens new mail; nothing already in Inbox is pulled back.
+	 */
+	async releaseScreenerToInbox(): Promise<{ moved: number; ids: string[] }> {
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id FROM emails WHERE folder_id = ?1`,
+				Folders.SCREENER,
+			),
+		] as { id: string }[];
+		if (rows.length === 0) return { moved: 0, ids: [] };
+		this.ctx.storage.sql.exec(
+			`UPDATE emails SET folder_id = ?1 WHERE folder_id = ?2`,
+			Folders.INBOX,
+			Folders.SCREENER,
+		);
+		const ids = rows.map((r) => r.id);
+		for (const id of ids) {
+			this.broadcastEvent("email_moved", { id, folder_id: Folders.INBOX });
+		}
+		return { moved: ids.length, ids };
+	}
+
+	/**
 	 * One-shot allow-list from Sent + existing inbox/promotions/updates senders.
 	 * Idempotent via storage flag after first successful run.
 	 */

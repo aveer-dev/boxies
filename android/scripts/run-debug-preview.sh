@@ -16,6 +16,7 @@
 #   ./scripts/run-debug-preview.sh twoFactorChallenge  # email sign-in, 2FA code step
 #   ./scripts/run-debug-preview.sh replyLater
 #   ./scripts/run-debug-preview.sh spam
+#   ./scripts/run-debug-preview.sh newsletter   # long, wide newsletter open in the reader (AVE-89)
 #   ./scripts/run-debug-preview.sh notes        # inbox rows with sticky strip + private notes chip
 #   ./scripts/run-debug-preview.sh notesDetail  # thread with a draggable sticky + inline notes
 #   ./scripts/run-debug-preview.sh passwordSignIn
@@ -26,6 +27,8 @@
 #   ./scripts/run-debug-preview.sh sessions
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
+#   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
+#   ./scripts/run-debug-preview.sh settingsScreenerOff # Settings sheet, Screener off
 #   ./scripts/run-debug-preview.sh serviceEnded        # read-only inbox, admin "Renew"
 #   ./scripts/run-debug-preview.sh serviceEndedMember  # read-only inbox, "Ask an admin"
 #   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
@@ -55,6 +58,8 @@ case "$mode" in
   sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
+  settings|Settings|previewSettings) extra=previewSettings; label=settings ;;
+  settingsScreenerOff|SettingsScreenerOff|previewSettingsScreenerOff) extra=previewSettingsScreenerOff; label=settingsScreenerOff ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   loadMore|LoadMore|previewLoadMore) extra=previewLoadMore; label=loadMore ;;
   manyNew|ManyNew|previewManyNew) extra=previewManyNew; label=manyNew ;;
@@ -67,6 +72,7 @@ case "$mode" in
   twoFactorChallenge|TwoFactorChallenge|twoFactor|2fa|previewTwoFactorChallenge) extra=previewTwoFactorChallenge; label=twoFactorChallenge ;;
   replyLater|ReplyLater|reply-later|previewReplyLater) extra=previewReplyLater; label=replyLater ;;
   spam|Spam|previewSpam) extra=previewSpam; label=spam ;;
+  newsletter|Newsletter|previewNewsletter) extra=previewNewsletter; label=newsletter ;;
   notes|Notes|previewNotes) extra=previewNotes; label=notes ;;
   notesDetail|NotesDetail|previewNotesDetail) extra=previewNotesDetail; label=notesDetail ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
@@ -77,12 +83,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,29p' "$0"
+    sed -n '2,30p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | loadFailed | listError | screener | replyLater | spam | notes | notesDetail | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | loadFailed | listError | screener | replyLater | spam | newsletter | notes | notesDetail | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded" >&2
     exit 1
     ;;
 esac

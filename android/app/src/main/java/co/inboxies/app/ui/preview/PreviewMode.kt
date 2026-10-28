@@ -33,6 +33,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Senders("senders", "previewSenders"),
     /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */
     SendersBlocked("sendersBlocked", "previewSendersBlocked"),
+    /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
+    Settings("settings", "previewSettings"),
+    /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */
+    SettingsScreenerOff("settingsScreenerOff", "previewSettingsScreenerOff"),
     Mailbox("mailbox", "previewMailbox"),
     /** Inbox with more pages to load: the bottom skeleton row (iOS `-previewLoadMore`). */
     LoadMore("loadMore", "previewLoadMore"),
@@ -46,6 +50,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
+    /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
+    Newsletter("newsletter", "previewNewsletter"),
     /** Inbox rows with notes to self: sticky strip + private note chip (iOS `-previewMailbox -previewNotes`). */
     Notes("notes", "previewNotes"),
     /** Q3 thread open with a sticky note and inline notes (iOS `-previewDetail -previewNotes`). */

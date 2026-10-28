@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Badge, Button, Input, Loader, Switch, useKumoToastManager } from "@cloudflare/kumo";
 import {
 	RobotIcon,
 	ArrowCounterClockwiseIcon,
@@ -11,9 +11,12 @@ import {
 } from "@phosphor-icons/react";
 import { Suspense, useEffect, useState } from "react";
 import { useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useMe, useRecoveryEmail } from "~/queries/account";
+import { isScreenerEnabled } from "~/lib/mailbox-settings";
+import { queryKeys } from "~/queries/keys";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import { signOut } from "~/lib/sign-out";
 import AppearanceCard from "./AppearanceCard";
@@ -114,6 +117,7 @@ function SettingsContent() {
 					<div className="text-sm font-medium text-kumo-default mb-4">
 						Incoming mail
 					</div>
+					<ScreenerToggle />
 					<div className="divide-y divide-kumo-line -mx-2">
 						{INCOMING_MAIL_PAGES.map((id) => (
 							<SettingsLink
@@ -211,6 +215,65 @@ function SettingsContent() {
 					</a>
 				</div>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * Per-mailbox Screener switch (AVE-104). Saves on change. Turning it off moves
+ * mail waiting in Screener to Inbox (server side); back on screens new mail only.
+ */
+function ScreenerToggle() {
+	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const toastManager = useKumoToastManager();
+	const queryClient = useQueryClient();
+	const { data: mailbox } = useMailbox(mailboxId);
+	const updateMailboxMutation = useUpdateMailbox();
+	const saved = isScreenerEnabled(mailbox?.settings);
+	const [enabled, setEnabled] = useState(saved);
+
+	useEffect(() => setEnabled(saved), [saved]);
+
+	const handleChange = async (next: boolean) => {
+		if (!mailbox || !mailboxId) return;
+		setEnabled(next);
+		try {
+			await updateMailboxMutation.mutateAsync({
+				mailboxId,
+				settings: { ...mailbox.settings, screener: { enabled: next } },
+			});
+			if (!next) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.folders.list(mailboxId) });
+				queryClient.invalidateQueries({ queryKey: ["emails", mailboxId] });
+			}
+			toastManager.add({
+				title: next ? "Screener on" : "Screener off: new senders go straight to your Inbox",
+			});
+		} catch (e) {
+			setEnabled(saved);
+			toastManager.add({
+				title: e instanceof Error && e.message ? e.message : "Failed to update Screener",
+				variant: "error",
+			});
+		}
+	};
+
+	return (
+		<div className="flex items-start gap-3 mb-3" data-settings-toggle="screener">
+			<div className="min-w-0 flex-1">
+				<div className="text-sm text-kumo-default">Screener</div>
+				<div className="text-xs text-kumo-subtle">
+					{enabled
+						? "First-time senders wait in Screener until you accept them"
+						: "First-time senders go to your Inbox. Spam and blocked senders are still filtered."}
+				</div>
+			</div>
+			<Switch
+				aria-label="Screener"
+				checked={enabled}
+				onCheckedChange={(next) => void handleChange(next)}
+				disabled={!mailbox || updateMailboxMutation.isPending}
+			/>
 		</div>
 	);
 }

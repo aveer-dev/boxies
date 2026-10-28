@@ -263,15 +263,19 @@ fun HomeShellView(
         }
     }
 
-    val folderTabs = remember {
+    val showsScreenerFolder = remember(mailboxes, folders, selectedMailboxId) { appModel.showsScreenerFolder }
+    val folderTabs = remember(showsScreenerFolder) {
         // listOf(HomeTab.AiInbox) + FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
-        FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
+        FolderIds.swipeFolderIds
+            .filter { it != FolderIds.SCREENER || showsScreenerFolder }
+            .map { HomeTab.Folder(it) }
     }
 
     val hasMinimizedCompose = composeSession?.isMinimized == true
     val isInboxTab = (selectedTab as? HomeTab.Folder)?.id == FolderIds.INBOX || selectedTab == HomeTab.AiInbox
     val screenerSenderCount = remember(folders, emails) { appModel.screenerSenderCount }
-    val showScreenerBanner = isInboxTab && screenerSenderCount > 0 && !isSelectMode && !showComposeActions
+    val screenerEnabled = remember(mailboxes, selectedMailboxId) { appModel.isScreenerEnabled }
+    val showScreenerBanner = isInboxTab && screenerEnabled && screenerSenderCount > 0 && !isSelectMode && !showComposeActions
     val listBottomInset by animateDpAsState(
         targetValue = HomeChromeMetrics.listBottomInset(hasMinimizedCompose && !isSelectMode) +
             (if (showScreenerBanner) 48.dp else 0.dp),
@@ -1119,6 +1123,7 @@ fun HomeShellView(
                         highlightedComposeAction = null
                     },
                     showCompose = !isReadOnly,
+                    showScreener = showsScreenerFolder,
                 )
                 if (composeDoubleTapArmed && !isReadOnly) {
                     Box(

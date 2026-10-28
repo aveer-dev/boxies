@@ -47,7 +47,11 @@ struct HomeShellView: View {
     @AppStorage("home_folder_column_visible") private var showsFolderColumn = true
     @GestureState private var isComposePressed = false
 
-    private let folderTabs: [HomeTab] = [
+    private var folderTabs: [HomeTab] {
+        app.showsScreenerFolder ? allFolderTabs : allFolderTabs.filter { $0 != .folder("screener") }
+    }
+
+    private let allFolderTabs: [HomeTab] = [
 //        .aiInbox,
 //        .chats,
         .folder("inbox"),
@@ -92,7 +96,7 @@ struct HomeShellView: View {
 
     private var hasScreenerBanner: Bool {
         // Screening moves mail, which a read-only mailbox can't do; the service banner wins.
-        isInboxTab && app.screenerSenderCount > 0 && !isSelectMode && !showComposeActions && !hasServiceBanner
+        isInboxTab && app.isScreenerEnabled && app.screenerSenderCount > 0 && !isSelectMode && !showComposeActions && !hasServiceBanner
     }
 
     private var listBottomInset: CGFloat {
@@ -229,6 +233,7 @@ struct HomeShellView: View {
                     highlightedID: highlightedComposeAction,
                     isClosing: isClosingComposeActions,
                     hidesCompose: app.isReadOnly,
+                    hidesScreener: !app.showsScreenerFolder,
                     onSelect: { item in
                         performComposeAction(item)
                     },
