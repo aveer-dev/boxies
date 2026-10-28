@@ -2668,7 +2668,9 @@ export class MailboxDO extends DurableObject<Env> {
 				? options.folder
 				: null;
 
-		const clauses: string[] = [];
+		// A plain Screener Accept used to store Inbox; it doesn't pin (AVE-139,
+		// pinnedPreferenceFolderId), so Settings → Senders doesn't list it.
+		const clauses: string[] = [`NOT (source = 'screener' AND folder_id = 'inbox')`];
 		const params: (string | number)[] = [];
 		let i = 1;
 		if (folder) {
