@@ -203,7 +203,9 @@ private struct SenderRulesListView: View {
     private var addField: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField("name@example.com or @example.com", text: $draft)
+                TextField(text: $draft, prompt: Text(verbatim: "Address or @domain").foregroundStyle(AppTheme.muted)) {
+                    Text(verbatim: "Address or @domain")
+                }
                     .font(.inter(size: 15))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()

@@ -401,7 +401,7 @@ private fun SenderRulesTab(verdict: String) {
                         ) {
                             if (draft.isEmpty()) {
                                 Text(
-                                    "name@example.com or @example.com",
+                                    "Address or @domain",
                                     fontFamily = InterFontFamily,
                                     fontSize = 15.sp,
                                     color = colors.muted,

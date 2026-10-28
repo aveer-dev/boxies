@@ -171,7 +171,7 @@ function RulesTab({ mailboxId, verdict }: { mailboxId: string; verdict: SenderRu
 							setDraft(e.target.value);
 							if (error) setError(null);
 						}}
-						placeholder="name@example.com or @example.com"
+						placeholder="Address or @domain"
 						aria-label={verdict === "allow" ? "Allow an address or domain" : "Block an address or domain"}
 						aria-invalid={error ? true : undefined}
 						aria-describedby={error ? "sender-rule-error" : undefined}
