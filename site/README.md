@@ -104,7 +104,7 @@ Local test: `pnpm preview`, then submit the form. Wrangler simulates `send_email
 
 ## Roadmap from Linear
 
-`GET /api/roadmap` reads the issues labelled `public-roadmap` from Linear's GraphQL API and answers JSON. Linear is the only source; GitHub issues aren't mirrored. The roadmap page doesn't read it yet (AVE-87 will, falling back to its static list).
+`GET /api/roadmap` reads the issues labelled `public-roadmap` from Linear's GraphQL API and answers JSON. Linear is the only source; GitHub issues aren't mirrored. The roadmap page's "Coming next, in detail" list reads it in the browser (AVE-87, `src/lib/roadmap-live.ts`): it ships prerendered with the hand-written list, and swaps in the Linear items only when the endpoint answers OK with `source: "linear"` and at least one item within 3 seconds. Anything else (no key, an error, a timeout, an empty list) leaves the static list in place.
 
 To turn it on (owner):
 
