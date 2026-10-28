@@ -11,6 +11,9 @@ import type {
 	Mailbox,
 	RecentRecipient,
 	SenderPreference,
+	SenderRule,
+	SenderRuleKind,
+	SenderRuleVerdict,
 	AdminDomainInfo,
 	CloudflareDnsRecord,
 	DomainHealthResponse,
@@ -532,6 +535,34 @@ const api = {
 	deleteSenderPreference: (mailboxId: string, address: string) =>
 		del<void>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-preferences/${encodeURIComponent(address)}`,
+		),
+	listSenderRules: (
+		mailboxId: string,
+		params?: { verdict?: SenderRuleVerdict; kind?: SenderRuleKind; q?: string; limit?: number },
+		opts?: { signal?: AbortSignal },
+	) => {
+		const query: Record<string, string> = {};
+		if (params?.verdict) query.verdict = params.verdict;
+		if (params?.kind) query.kind = params.kind;
+		if (params?.q) query.q = params.q;
+		if (params?.limit != null) query.limit = String(params.limit);
+		return get<{ rules: SenderRule[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules`,
+			{ params: query, signal: opts?.signal },
+		);
+	},
+	/** 400 with `code` (e.g. `free_mail_provider`) when the value is refused. */
+	upsertSenderRule: (
+		mailboxId: string,
+		data: { kind: SenderRuleKind; value: string; verdict: SenderRuleVerdict },
+	) =>
+		put<{ rule: SenderRule }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules`,
+			{ ...data, source: "settings" },
+		),
+	deleteSenderRule: (mailboxId: string, ruleId: string) =>
+		del<void>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules/${encodeURIComponent(ruleId)}`,
 		),
 	getThread: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
 		get<Email[]>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}`, { signal: opts?.signal }),

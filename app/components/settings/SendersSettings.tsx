@@ -4,22 +4,236 @@
 
 import { Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { TrashIcon } from "@phosphor-icons/react";
-import { useMemo, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import {
 	FOLDER_DISPLAY_NAMES,
 	PURPOSE_FOLDER_IDS,
 	type PurposeFolderId,
 } from "shared/folders";
+import {
+	parseSenderRuleInput,
+	senderRuleDisplayValue,
+	senderRuleSourceLabel,
+} from "shared/sender-rules";
 import SettingsSubpage from "./SettingsSubpage";
 import {
 	useDeleteSenderPreference,
 	useSenderPreferences,
 	useUpsertSenderPreference,
 } from "~/queries/sender-preferences";
+import {
+	useDeleteSenderRule,
+	useSenderRules,
+	useUpsertSenderRule,
+} from "~/queries/sender-rules";
+import { ApiError } from "~/services/api";
+import type { SenderRule, SenderRuleVerdict } from "~/types";
+
+type SendersTab = "allowed" | "blocked" | "sorting";
+
+const TABS: { id: SendersTab; label: string }[] = [
+	{ id: "allowed", label: "Allowed" },
+	{ id: "blocked", label: "Blocked" },
+	{ id: "sorting", label: "Sorting" },
+];
 
 export default function SendersSettings() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const [tab, setTab] = useState<SendersTab>("allowed");
+
+	if (!mailboxId) return null;
+
+	return (
+		<SettingsSubpage mailboxId={mailboxId} title="Senders">
+			<div
+				role="tablist"
+				aria-label="Sender lists"
+				className="mb-4 flex rounded-lg bg-kumo-tint p-0.5 text-sm"
+			>
+				{TABS.map(({ id, label }) => {
+					const active = id === tab;
+					return (
+						<button
+							key={id}
+							type="button"
+							role="tab"
+							id={`senders-tab-${id}`}
+							aria-selected={active}
+							aria-controls={`senders-panel-${id}`}
+							onClick={() => setTab(id)}
+							className={`flex-1 rounded-md px-3 py-1.5 font-medium transition-colors ${
+								active
+									? "bg-kumo-base text-kumo-default shadow-[0_0_0_1px_var(--border-card)]"
+									: "text-kumo-subtle hover:text-kumo-default"
+							}`}
+						>
+							{label}
+						</button>
+					);
+				})}
+			</div>
+			<div role="tabpanel" id={`senders-panel-${tab}`} aria-labelledby={`senders-tab-${tab}`}>
+				{tab === "sorting" ? (
+					<SortingTab mailboxId={mailboxId} />
+				) : (
+					<RulesTab
+						key={tab}
+						mailboxId={mailboxId}
+						verdict={tab === "allowed" ? "allow" : "block"}
+					/>
+				)}
+			</div>
+		</SettingsSubpage>
+	);
+}
+
+const RULE_COPY: Record<SenderRuleVerdict, { intro: string; empty: string; emptyHint: string }> = {
+	allow: {
+		intro:
+			"Mail from these senders skips Spam. A domain rule only applies to mail that passes sender verification.",
+		empty: "No allowed senders yet",
+		emptyHint: "Marking mail as Not spam adds the sender here, or add an address or @domain above.",
+	},
+	block: {
+		intro:
+			"Mail from these senders goes to Spam (or Screened out when the Screener is on).",
+		empty: "No blocked senders yet",
+		emptyHint: "Reporting spam adds the sender here, or add an address or @domain above.",
+	},
+};
+
+function formatRuleDate(iso: string): string {
+	const d = new Date(iso);
+	if (Number.isNaN(d.getTime())) return "";
+	return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function RulesTab({ mailboxId, verdict }: { mailboxId: string; verdict: SenderRuleVerdict }) {
+	const toastManager = useKumoToastManager();
+	const [draft, setDraft] = useState("");
+	const [error, setError] = useState<string | null>(null);
+	const { data: rules, isLoading } = useSenderRules(mailboxId, { verdict });
+	const upsertMut = useUpsertSenderRule();
+	const deleteMut = useDeleteSenderRule();
+	const copy = RULE_COPY[verdict];
+
+	const handleAdd = async (e: FormEvent) => {
+		e.preventDefault();
+		const parsed = parseSenderRuleInput(draft);
+		if (!parsed) {
+			setError("Enter an address or @domain");
+			return;
+		}
+		setError(null);
+		try {
+			const { rule } = await upsertMut.mutateAsync({ mailboxId, ...parsed, verdict });
+			setDraft("");
+			toastManager.add({
+				title: `${senderRuleDisplayValue(rule)} ${verdict === "allow" ? "allowed" : "blocked"}`,
+			});
+		} catch (err) {
+			// Refusals (free-mail provider, public suffix, bad input) come back
+			// as 400 with a message meant for the user; show it inline.
+			if (err instanceof ApiError && err.status === 400) {
+				setError(err.message);
+			} else {
+				setError("Couldn't save the rule. Try again.");
+			}
+		}
+	};
+
+	const handleRemove = async (rule: SenderRule) => {
+		try {
+			await deleteMut.mutateAsync({ mailboxId, ruleId: rule.id });
+			toastManager.add({ title: `Removed ${senderRuleDisplayValue(rule)}` });
+		} catch {
+			toastManager.add({ title: "Failed to remove rule", variant: "error" });
+		}
+	};
+
+	const rows = rules ?? [];
+
+	return (
+		<>
+			<p className="text-sm text-kumo-subtle mb-4">{copy.intro}</p>
+
+			<form onSubmit={handleAdd} className="mb-4" noValidate>
+				<div className="flex gap-2">
+					<input
+						type="text"
+						inputMode="email"
+						autoCapitalize="none"
+						autoCorrect="off"
+						spellCheck={false}
+						value={draft}
+						onChange={(e) => {
+							setDraft(e.target.value);
+							if (error) setError(null);
+						}}
+						placeholder="name@example.com or @example.com"
+						aria-label={verdict === "allow" ? "Allow an address or domain" : "Block an address or domain"}
+						aria-invalid={error ? true : undefined}
+						aria-describedby={error ? "sender-rule-error" : undefined}
+						className={`min-w-0 flex-1 rounded-md border bg-kumo-base px-3 py-2 text-sm text-kumo-default placeholder:text-kumo-subtle ${
+							error ? "border-kumo-danger" : "border-kumo-line"
+						}`}
+					/>
+					<Button type="submit" variant="primary" loading={upsertMut.isPending} disabled={!draft.trim()}>
+						Add
+					</Button>
+				</div>
+				{error ? (
+					<p id="sender-rule-error" role="alert" className="mt-1.5 text-xs text-kumo-danger">
+						{error}
+					</p>
+				) : null}
+			</form>
+
+			{isLoading ? (
+				<div className="flex justify-center py-12">
+					<Loader size="lg" />
+				</div>
+			) : rows.length === 0 ? (
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base px-4 py-8 text-center">
+					<p className="text-sm text-kumo-default mb-1">{copy.empty}</p>
+					<p className="text-xs text-kumo-subtle">{copy.emptyHint}</p>
+				</div>
+			) : (
+				<ul className="divide-y divide-kumo-line rounded-2xl border border-kumo-line bg-kumo-base">
+					{rows.map((rule) => (
+						<li key={rule.id} className="flex items-center gap-3 px-4 py-3">
+							<div className="min-w-0 flex-1">
+								<div className="text-sm font-medium text-kumo-default truncate">
+									{senderRuleDisplayValue(rule)}
+								</div>
+								<div className="text-xs text-kumo-subtle truncate">
+									{[
+										rule.kind === "domain" ? "Domain" : null,
+										senderRuleSourceLabel(rule.source),
+										formatRuleDate(rule.createdAt),
+									]
+										.filter(Boolean)
+										.join(" · ")}
+								</div>
+							</div>
+							<Button
+								variant="ghost"
+								size="sm"
+								aria-label={`Remove ${senderRuleDisplayValue(rule)}`}
+								onClick={() => handleRemove(rule)}
+							>
+								<TrashIcon size={16} />
+							</Button>
+						</li>
+					))}
+				</ul>
+			)}
+		</>
+	);
+}
+
+function SortingTab({ mailboxId }: { mailboxId: string }) {
 	const toastManager = useKumoToastManager();
 	const [query, setQuery] = useState("");
 	const { data: preferences, isLoading } = useSenderPreferences(mailboxId, {
@@ -34,7 +248,6 @@ export default function SendersSettings() {
 		address: string,
 		folderId: PurposeFolderId,
 	) => {
-		if (!mailboxId) return;
 		try {
 			const result = await upsertMut.mutateAsync({
 				mailboxId,
@@ -58,7 +271,6 @@ export default function SendersSettings() {
 	};
 
 	const handleDelete = async (address: string) => {
-		if (!mailboxId) return;
 		if (
 			!window.confirm(
 				`Remove the destination for ${address}? Existing mail stays where it is; future mail uses the default sorter again.`,
@@ -77,10 +289,8 @@ export default function SendersSettings() {
 		}
 	};
 
-	if (!mailboxId) return null;
-
 	return (
-		<SettingsSubpage mailboxId={mailboxId} title="Senders">
+		<>
 			<p className="text-sm text-kumo-subtle mb-4">
 				Choose which purpose box each sender goes to — Inbox, Promotions, or
 				Updates. Changing a destination also moves their existing mail in those
@@ -158,6 +368,6 @@ export default function SendersSettings() {
 				Filters still override these defaults when a rule matches. Spam is never
 				routed by sender preference.
 			</p>
-		</SettingsSubpage>
+		</>
 	);
 }
