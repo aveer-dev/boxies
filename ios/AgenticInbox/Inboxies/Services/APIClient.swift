@@ -970,13 +970,15 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/workflow-piles")
     }
 
+    @discardableResult
     func moveEmail(
         mailboxId: String,
         id: String,
         folderId: String,
         setSenderPreference: Bool = false,
-        unsubscribe: Bool = false
-    ) async throws {
+        unsubscribe: Bool = false,
+        refileSender: Bool = true
+    ) async throws -> MoveEmailResponse {
         var body: [String: Any] = ["folderId": folderId]
         if setSenderPreference {
             body["setSenderPreference"] = true
@@ -984,10 +986,23 @@ final class APIClient: @unchecked Sendable {
         if unsubscribe {
             body["unsubscribe"] = true
         }
-        let _: EmptyResponse = try await request(
+        if !refileSender {
+            // Report spam with "Move their other mail to Spam" off (AVE-98).
+            body["refileSender"] = false
+        }
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)/move",
             method: "POST",
             body: body
+        )
+    }
+
+    /// Undo a Not spam / Report spam: the sender's rule and every message it moved (AVE-98).
+    func undoSenderVerdict(mailboxId: String, undoToken: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules/undo",
+            method: "POST",
+            body: ["undoToken": undoToken]
         )
     }
 

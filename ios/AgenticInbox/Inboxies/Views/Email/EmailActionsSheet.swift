@@ -107,34 +107,37 @@ struct EmailActionsSheet: View {
                         }
                     }
 
-                    if showsSpamAction, offersUnsubscribe {
-                        // RFC 8058 bulk mail: confirm first, with an
-                        // "Unsubscribe" toggle that starts off (AVE-99).
+                    if showsSpamAction, availability.showsNotSpam {
+                        actionRow("Not Spam", systemImage: "checkmark.shield") {
+                            Task {
+                                dismiss()
+                                await app.markNotSpam(source, fromList: fromList)
+                                if fromList { onRemoveFromList?(source.id) }
+                            }
+                        }
+                    } else if showsSpamAction {
+                        // Confirm first: "Move their other mail to Spam" starts
+                        // on (AVE-98); RFC 8058 bulk mail adds "Unsubscribe",
+                        // which starts off (AVE-99).
                         NavigationLink {
-                            ReportSpamConfirmView(sender: source, onClose: dismissSheet) { unsubscribe in
+                            ReportSpamConfirmView(
+                                sender: source,
+                                offersUnsubscribe: offersUnsubscribe,
+                                onClose: dismissSheet
+                            ) { unsubscribe, refileSender in
                                 Task {
                                     dismiss()
-                                    await app.reportSpam(source, fromList: fromList, unsubscribe: unsubscribe)
+                                    await app.reportSpam(
+                                        source,
+                                        fromList: fromList,
+                                        unsubscribe: unsubscribe,
+                                        refileSender: refileSender
+                                    )
                                     if fromList { onRemoveFromList?(source.id) }
                                 }
                             }
                         } label: {
                             Label("Report Spam", systemImage: "exclamationmark.triangle")
-                        }
-                    } else if showsSpamAction {
-                        actionRow(
-                            availability.showsNotSpam ? "Not Spam" : "Report Spam",
-                            systemImage: availability.showsNotSpam ? "checkmark.shield" : "exclamationmark.triangle"
-                        ) {
-                            Task {
-                                dismiss()
-                                if availability.showsNotSpam {
-                                    await app.markNotSpam(source, fromList: fromList)
-                                } else {
-                                    await app.reportSpam(source, fromList: fromList)
-                                }
-                                if fromList { onRemoveFromList?(source.id) }
-                            }
                         }
                     }
 
@@ -366,30 +369,49 @@ private struct MoveToFolderView: View {
     }
 }
 
-/// Report spam confirmation for RFC 8058 bulk mail: an "Unsubscribe" toggle,
-/// off by default, then one Report Spam button (web/Android twins: AVE-99).
+/// Report spam confirmation: "Move their other mail to Spam", on by default
+/// (AVE-98), plus an "Unsubscribe" toggle, off by default, for RFC 8058 bulk
+/// mail (AVE-99); then one Report Spam button. Web/Android twins.
 struct ReportSpamConfirmView: View {
     let sender: Email
+    var offersUnsubscribe: Bool = true
     var onClose: () -> Void
-    var onReport: (Bool) -> Void
+    /// (unsubscribe, refileSender)
+    var onReport: (Bool, Bool) -> Void
 
     @State private var unsubscribe = false
+    @State private var refileSender = true
 
     var body: some View {
         List {
             Section {
-                Toggle(isOn: $unsubscribe) {
+                Toggle(isOn: $refileSender) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Unsubscribe")
+                        Text("Move their other mail to Spam")
                             .font(.inter(size: 15, weight: .medium))
                             .foregroundStyle(AppTheme.ink)
-                        Text("Also ask the sender to stop sending to this list.")
+                        Text("Also moves what they sent to Inbox, Promotions and Updates.")
                             .font(.inter(size: AppTheme.FontSize.meta))
                             .foregroundStyle(AppTheme.muted)
                     }
                 }
                 .tint(AppTheme.accent)
-                .accessibilityIdentifier("reportSpamUnsubscribeToggle")
+                .accessibilityIdentifier("reportSpamRefileToggle")
+
+                if offersUnsubscribe {
+                    Toggle(isOn: $unsubscribe) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Unsubscribe")
+                                .font(.inter(size: 15, weight: .medium))
+                                .foregroundStyle(AppTheme.ink)
+                            Text("Also ask the sender to stop sending to this list.")
+                                .font(.inter(size: AppTheme.FontSize.meta))
+                                .foregroundStyle(AppTheme.muted)
+                        }
+                    }
+                    .tint(AppTheme.accent)
+                    .accessibilityIdentifier("reportSpamUnsubscribeToggle")
+                }
             } footer: {
                 Text("Future mail from \(sender.displaySender) will go to Spam.")
                     .font(.inter(size: AppTheme.FontSize.meta))
@@ -399,7 +421,7 @@ struct ReportSpamConfirmView: View {
             Section {
                 Button {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    onReport(unsubscribe)
+                    onReport(offersUnsubscribe && unsubscribe, refileSender)
                 } label: {
                     Label("Report Spam", systemImage: "exclamationmark.triangle")
                         .font(.inter(size: 15, weight: .medium))
@@ -479,7 +501,7 @@ private extension View {
 #Preview("Report spam + unsubscribe") {
     PreviewHost {
         NavigationStack {
-            ReportSpamConfirmView(sender: PreviewSupport.emails[3], onClose: {}, onReport: { _ in })
+            ReportSpamConfirmView(sender: PreviewSupport.emails[3], onClose: {}, onReport: { _, _ in })
         }
     }
 }

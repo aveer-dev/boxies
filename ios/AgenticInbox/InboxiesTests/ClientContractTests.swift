@@ -265,4 +265,45 @@ final class ClientContractTests: XCTestCase {
         XCTAssertFalse(layout.trailingAllowsFullSwipe)
         XCTAssertEqual(layout.leadingActions, [.toggleRead])
     }
+
+    // MARK: - Spam verdicts (AVE-98)
+
+    func testMoveResponseDecodesRescueAndUndo() throws {
+        let response = try decode(MoveEmailResponse.self, """
+        {"status":"moved","senderStatus":"allowed","triage":{"sender":"a@x.com"},
+         "rescuedCount":3,"undoToken":"tok-1"}
+        """)
+        XCTAssertEqual(response.rescuedCount, 3)
+        XCTAssertEqual(response.undoToken, "tok-1")
+        let plain = try decode(MoveEmailResponse.self, #"{"status":"moved"}"#)
+        XCTAssertNil(plain.senderStatus)
+        XCTAssertNil(SpamVerdictToast.title(for: plain, folderId: "archive", sender: "a@x.com"))
+    }
+
+    func testSpamVerdictToastCopyMatchesWeb() {
+        XCTAssertEqual(
+            SpamVerdictToast.title(
+                for: MoveEmailResponse(senderStatus: "allowed", rescuedCount: 3),
+                folderId: "inbox",
+                sender: "ada@x.example"
+            ),
+            "Moved to Inbox · future mail from ada@x.example will skip Spam · 3 more moved"
+        )
+        XCTAssertEqual(
+            SpamVerdictToast.title(for: MoveEmailResponse(senderStatus: "rejected", rescuedCount: 2), folderId: "spam", sender: nil),
+            "Reported as spam · 2 more moved"
+        )
+        XCTAssertEqual(
+            SpamVerdictToast.title(
+                for: MoveEmailResponse(senderStatus: "rejected", unsubscribe: "sent", rescuedCount: 0),
+                folderId: "spam",
+                sender: nil
+            ),
+            "Reported as spam and unsubscribed"
+        )
+        XCTAssertEqual(
+            SpamVerdictToast.title(for: MoveEmailResponse(senderStatus: "allowed"), folderId: "custom", sender: nil),
+            "Moved out of Spam"
+        )
+    }
 }
