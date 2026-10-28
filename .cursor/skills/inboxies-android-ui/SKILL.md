@@ -225,6 +225,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Many New | `previewManyNew` | `manyNew` | Inbox New capped at 5 + "Show N more new" (opens the All new screen) above Seen |
 | Load failed | `previewLoadFailed` | `loadFailed` | Signed in, first mailbox load failed, nothing cached: Retry + Sign out (never onboarding) |
 | List error | `previewListError` | `listError` | Inbox fetch failed with an empty cache: "Couldn’t load emails" + Retry |
+| Widget mocks | `previewWidgets` | `widgets` | "Today's inbox" widget design mocks, 2×2/4×2 × new mail/inbox zero; Light/Dark pill flips the screen (AVE-138, `ui/widget/`) |
 | Service ended (admin) | `previewServiceEnded` | `serviceEnded` | Read-only inbox + "Renew" banner |
 | Service ended (member) | `previewServiceEndedMember` | `serviceEndedMember` | Read-only inbox + "Ask an admin" |
 | Service ending | `previewServiceEnding` | `serviceEnding` | Admin "Keep subscription" notice |

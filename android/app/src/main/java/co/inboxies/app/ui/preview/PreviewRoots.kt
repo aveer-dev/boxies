@@ -47,6 +47,7 @@ import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
 import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.ui.splash.SplashScreenView
+import co.inboxies.app.ui.widget.InboxWidgetGallery
 
 /**
  * DEBUG emulator roots — mirror iOS `PreviewMailboxRoot` / `PreviewAdminAuthRoot`.
@@ -116,8 +117,10 @@ object PreviewHarness {
                 val service = PreviewSupport.domainServiceFixture(mode, PREVIEW_DNS_DOMAIN)!!
                 PreviewSupport.applyAdminPreview(appModel, mapOf(PREVIEW_DNS_DOMAIN to service))
             }
-            PreviewMode.Splash -> {
-                // Splash preview needs no extra session seeding.
+            PreviewMode.Splash,
+            PreviewMode.Widgets,
+            -> {
+                // Splash and widget mocks need no extra session seeding.
             }
             PreviewMode.Mailbox,
             PreviewMode.LoadMore,
@@ -154,6 +157,7 @@ fun PreviewRoot(
 ) {
     when (mode) {
         PreviewMode.Splash -> SplashScreenView()
+        PreviewMode.Widgets -> InboxWidgetGallery()
         PreviewMode.Welcome -> SignInView(isShowingSplash = false, expandPasswordForm = false)
         PreviewMode.AuthOptions -> SignInView(isShowingSplash = false, expandPasswordForm = false, showAuthOptionsInitial = true)
         PreviewMode.PasswordSignIn -> SignInView(expandPasswordForm = true)
