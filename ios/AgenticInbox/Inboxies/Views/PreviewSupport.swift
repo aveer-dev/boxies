@@ -670,6 +670,16 @@ struct PreviewAdminAuthRoot: View {
                     SharingSettingsView()
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSenders") {
+                // `-previewSenders` (Allowed), add `-previewSendersBlocked` or
+                // `-previewSendersSorting` for the other tabs. Fixture rules, no API.
+                NavigationStack {
+                    SendersSettingsView(
+                        initialTab: args.contains("-previewSendersBlocked") ? .blocked
+                            : args.contains("-previewSendersSorting") ? .sorting : .allowed
+                    )
+                }
+                .environment(PreviewSupport.appModel())
             } else if args.contains("-previewSessions") {
                 NavigationStack {
                     SessionsSettingsView()
