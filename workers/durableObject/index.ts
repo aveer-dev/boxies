@@ -107,6 +107,7 @@ import {
 	type FtsEmailFields,
 } from "../lib/email-fts";
 import { aggregateRecentRecipients } from "../../shared/recent-recipients";
+import { withAttachmentRisk } from "../../shared/attachment-risk";
 import {
 	parseStoredEmailAuth,
 	serializeEmailAuth,
@@ -1477,7 +1478,7 @@ export class MailboxDO extends DurableObject<Env> {
 			read: !!email.read,
 			starred: !!email.starred,
 			reply_later: !!email.reply_later,
-			attachments: emailAttachments,
+			attachments: emailAttachments.map(withAttachmentRisk),
 			delivery_recipients:
 				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
 		});
@@ -1555,7 +1556,7 @@ export class MailboxDO extends DurableObject<Env> {
 				read: !!email.read,
 				starred: !!email.starred,
 				reply_later: !!email.reply_later,
-				attachments: attachmentsByEmail.get(email.id) || [],
+				attachments: (attachmentsByEmail.get(email.id) || []).map(withAttachmentRisk),
 				delivery_recipients: recipientsByEmail.get(email.id) || [],
 			})),
 		);
