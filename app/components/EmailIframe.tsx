@@ -5,6 +5,7 @@
 import DOMPurify from "dompurify";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emailHasOwnColors } from "../../shared/email-colors";
+import { EMAIL_FRAME_SCRIPT } from "../../shared/email-frame-script";
 import { emailImgSrc } from "../../shared/remote-images";
 import { scrollerFor } from "~/lib/scroll-axis";
 import { useTextSize } from "~/lib/text-size";
@@ -77,7 +78,9 @@ interface EmailIframeProps {
  *   with no access to the parent page's cookies, DOM, or API.
  * - Because the iframe is cross-origin we cannot read `contentDocument`
  *   for auto-sizing. Instead, the injected HTML includes a tiny inline
- *   script that posts its body height to the parent via `postMessage`.
+ *   script (shared/email-frame-script.ts) that posts its body height to the
+ *   parent via `postMessage`. The `srcdoc` frame inherits the app's CSP, which
+ *   allows that script by hash (workers/lib/content-security-policy.ts).
  *   The `allow-scripts` flag is required for this, but scripts inside
  *   the opaque-origin sandbox cannot access anything useful.
  * - A strict CSP meta tag blocks external resource loads inside the
@@ -172,46 +175,12 @@ export default function EmailIframe({ body, autoSize, blockRemoteImages = false 
 
 		const padding = autoSize ? (paper ? "16px" : "0") : "24px";
 
-		// Height-reporting script: sends body.scrollHeight to the parent.
-		// Runs inside the opaque-origin sandbox so it has zero access to
-		// the parent page — it can only postMessage.
-		const heightScript = autoSize
-			? `<script>
-				function reportHeight() {
-					var h = Math.ceil(document.documentElement.getBoundingClientRect().height);
-					if (h > 0) parent.postMessage({ __emailIframeHeight: true, height: h }, "*");
-				}
-				reportHeight();
-				setTimeout(reportHeight, 50);
-				setTimeout(reportHeight, 150);
-				setTimeout(reportHeight, 400);
-			<\/script>`
-			: "";
-
-		const zoomScript = `<script>
-			window.addEventListener("message", function (e) {
-				if (e.source !== parent || !e.data || typeof e.data.__emailZoom !== "number") return;
-				document.documentElement.style.zoom = e.data.__emailZoom;
-				${autoSize ? "reportHeight();" : ""}
-			});
-		<\/script>`;
-
-		// Mostly-vertical wheels that drift sideways must not pan the app's
-		// columns. An auto-sized body doesn't scroll, so it hands the vertical
-		// part to the app; a filling one scrolls itself by it.
-		const wheelScript = `<script>
-			document.addEventListener("wheel", function (e) {
-				if (e.ctrlKey || !e.deltaX || Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
-				e.preventDefault();
-				var dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-				${autoSize ? 'parent.postMessage({ __emailIframeWheel: true, dy: dy }, "*");' : "window.scrollBy(0, dy);"}
-			}, { passive: false });
-		<\/script>`;
-
 		// Use srcdoc so the iframe is truly sandboxed (no same-origin access).
 		// We can't use doc.write() because that requires allow-same-origin.
+		// The frame's one script (height, zoom, wheel) is a fixed string so the
+		// app's CSP can allow it by hash; options ride on <html> (AVE-148).
 		const html = `<!DOCTYPE html>
-<html>
+<html data-autosize="${autoSize ? "1" : "0"}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -264,7 +233,7 @@ h1, h2, h3 { margin: 8px 0 4px; }
 ul, ol { padding-left: 20px; margin: 4px 0; }
 </style>
 </head>
-<body>${cleanBody}${heightScript}${wheelScript}${zoomScript}</body>
+<body>${cleanBody}<script>${EMAIL_FRAME_SCRIPT}<\/script></body>
 </html>`;
 		setDoc((prev) => ({ html, version: (prev?.version ?? 0) + 1 }));
 	}, [body, cleanBody, autoSize, blockRemoteImages, loadedRemoteImages, palette, paper]);
