@@ -445,11 +445,9 @@ private fun HtmlBodyWebView(
     onLoadingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val heightMeasurer = remember {
-        """
-        (typeof inboxiesFitBody === 'function' && inboxiesFitBody(), Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight)))
-        """.trimIndent()
-    }
+    // Installs the fit script (idempotent), refits, then returns the body height. Run by the
+    // app with evaluateJavascript, which the page's `script-src 'none'` CSP does not govern.
+    val heightMeasurer = remember { EmailBodyFit.MEASURE_SCRIPT }
     AndroidView(
         factory = { context ->
             WebView(context).apply {
@@ -457,9 +455,15 @@ private fun HtmlBodyWebView(
                 applyEmailHtmlWebViewSettings(javaScriptEnabled = true)
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
-                // No page-world JavascriptInterface (see email-html-hardening.test.mjs): the
-                // height is pulled with evaluateJavascript on load, on each resource load, and
-                // on a short re-measure schedule so late image loads still grow the body.
+                // JS is on only for app-injected code. The page CSP is `script-src 'none'`, so
+                // scripts and `on*` handlers in the mail never run even if sanitizing misses one
+                // (AVE-120). evaluateJavascript is the embedder running code in the page, not a
+                // page script, so CSP doesn't apply to it. No page-world JavascriptInterface (see
+                // email-html-hardening.test.mjs): the fit script is installed and the height
+                // pulled with evaluateJavascript on load, on each resource load, and on a short
+                // re-measure schedule so late image loads still grow the body. The body stays
+                // hidden (alpha 0) until the first fitted measure in onPageFinished, so wide
+                // mail never shows unscaled.
                 webViewClient = object : EmailLinkWebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         view?.evaluateJavascript(heightMeasurer) { result ->
@@ -529,6 +533,12 @@ internal object EmailBodyFit {
      * Lays the mail out at its natural width, scales it with `transform`, and sizes a
      * clipping box to the scaled size so the reported body height stays exact. Idempotent:
      * reruns on load, image load, resize and content growth.
+     *
+     * Not part of the page: the app injects it with `evaluateJavascript` (the page CSP is
+     * `script-src 'none'`, AVE-120). Safe to run any number of times and at any point of the
+     * parse: listeners are added once per document, and the ResizeObserver is attached once
+     * the content node exists. Image `load` / `error` don't bubble, so they are caught in the
+     * capture phase on `document`, which also covers images parsed after the first install.
      */
     const val SCRIPT = """
     function inboxiesFitBody() {
@@ -554,19 +564,27 @@ internal object EmailBodyFit {
       box.style.height = Math.ceil(content.offsetHeight * scale) + 'px';
     }
     (function () {
-      // Refits only; the native side pulls the height with evaluateJavascript.
-      window.addEventListener('load', inboxiesFitBody);
-      window.addEventListener('resize', inboxiesFitBody);
-      document.querySelectorAll('img').forEach(function (img) {
-        img.addEventListener('load', inboxiesFitBody);
-        img.addEventListener('error', inboxiesFitBody);
-      });
-      if (typeof ResizeObserver !== 'undefined') {
-        var content = document.getElementById('$CONTENT_ID');
-        if (content) { new ResizeObserver(inboxiesFitBody).observe(content); }
+      if (!window.__inboxiesFitListening) {
+        window.__inboxiesFitListening = true;
+        window.addEventListener('load', inboxiesFitBody);
+        window.addEventListener('resize', inboxiesFitBody);
+        document.addEventListener('load', inboxiesFitBody, true);
+        document.addEventListener('error', inboxiesFitBody, true);
       }
-      inboxiesFitBody();
+      if (!window.__inboxiesFitObserved && typeof ResizeObserver !== 'undefined') {
+        var content = document.getElementById('$CONTENT_ID');
+        if (content) {
+          window.__inboxiesFitObserved = true;
+          new ResizeObserver(inboxiesFitBody).observe(content);
+        }
+      }
     })();
+    """
+
+    /** [SCRIPT], a refit, then the body height in CSS px as the completion value. */
+    const val MEASURE_SCRIPT = SCRIPT + """
+    inboxiesFitBody();
+    Math.ceil(Math.max(document.body ? document.body.offsetHeight : 0, document.body ? document.body.getBoundingClientRect().height : 0, document.body ? document.body.scrollHeight : 0));
     """
 }
 
@@ -739,7 +757,6 @@ private fun wrapEmailHtml(
         </style>
         </head>
         <body><div id="${EmailBodyFit.SCROLLER_ID}"><div id="${EmailBodyFit.BOX_ID}"><div id="${EmailBodyFit.CONTENT_ID}">$bodyHtml</div></div></div>
-        <script>${EmailBodyFit.SCRIPT}</script>
         </body>
         </html>
     """.trimIndent()
