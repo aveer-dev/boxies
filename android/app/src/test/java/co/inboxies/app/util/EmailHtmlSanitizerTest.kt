@@ -37,6 +37,18 @@ class EmailHtmlSanitizerTest {
         assertTrue(EmailHtmlSanitizer.hasRemoteImages("""<img src="https://t.example.com/p.gif">"""))
     }
 
+    /** AVE-120: neither policy lets a script in the mail run; the app injects its own. */
+    @Test
+    fun policiesForbidPageScript() {
+        for (policy in listOf(EmailHtmlSanitizer.CONTENT_SECURITY_POLICY, EmailHtmlSanitizer.BLOCKED_REMOTE_IMAGES_POLICY)) {
+            assertTrue(policy, policy.endsWith("script-src 'none'"))
+            val scriptSrc = policy.split(';').map { it.trim() }.filter { it.startsWith("script-src") }
+            assertEquals(policy, listOf("script-src 'none'"), scriptSrc)
+            assertTrue(policy, policy.contains("style-src 'unsafe-inline'"))
+            assertTrue(policy, policy.startsWith("default-src 'none'"))
+        }
+    }
+
     @Test
     fun stripsScriptTags() {
         val clean = EmailHtmlSanitizer.sanitize(

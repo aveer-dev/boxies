@@ -42,12 +42,13 @@ const iosDetail = readFileSync(
 	"utf8",
 );
 
-const csp =
-	"default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'unsafe-inline'";
-// iOS runs no page script at all (its height probe is an app-world WKUserScript),
-// so it keeps web's opted-in img-src but forbids every script.
-const iosCsp =
+// Native clients run no page script at all: iOS's height probe is an app-world
+// WKUserScript, Android's fit/height script is injected with evaluateJavascript
+// (AVE-120). Both keep web's opted-in img-src but forbid every script in the mail.
+const nativeCsp =
 	"default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'";
+const csp = nativeCsp;
+const iosCsp = nativeCsp;
 
 assert.match(webIframe, /DOMPurify\.sanitize/);
 // Web fills img-src per message from shared/remote-images.ts: remote images
@@ -89,9 +90,15 @@ assert.ok(
 	"ios has a Spam policy that blocks remote images",
 );
 assert.ok(
-	androidSanitizer.includes("img-src data: cid:; script-src 'unsafe-inline'"),
+	androidSanitizer.includes("img-src data: cid:; script-src 'none'"),
 	"android has a Spam policy that blocks remote images",
 );
+// AVE-120: Android mail pages never allow script; the app injects the fit script.
+assert.doesNotMatch(androidSanitizer, /script-src 'unsafe-inline'/, "android never allows page script");
+assert.doesNotMatch(androidSanitizer, /script-src[^;"]*'unsafe-(inline|eval)'/, "android script-src has no unsafe sources");
+assert.doesNotMatch(androidView, /<script/i, "android wraps mail without any page <script>");
+assert.match(androidView, /evaluateJavascript\(heightMeasurer\)/, "android injects the fit/height script from the app");
+assert.match(androidView, /EmailBodyFit\.MEASURE_SCRIPT/);
 // Spam only (Gmail parity): same rule as web shared/remote-images.ts.
 assert.match(iosSanitizer, /static func blocksRemoteImages\(folderId: String\?\) -> Bool \{\s*folderId == "spam"\s*\}/);
 assert.match(androidSanitizer, /fun blocksRemoteImages\(folderId: String\?\): Boolean = folderId == "spam"/);
