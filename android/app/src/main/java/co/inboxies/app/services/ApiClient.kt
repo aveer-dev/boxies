@@ -1045,6 +1045,23 @@ class ApiClient private constructor() {
         },
     )
 
+    /**
+     * Set (`remindAt` = UTC ISO) or clear (`null`) a Reply Later reminder (AVE-86).
+     * Setting one also adds the mail to Reply Later on the server.
+     */
+    suspend fun setReplyLaterReminder(
+        mailboxId: String,
+        id: String,
+        remindAt: String?,
+    ): Email = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
+        method = "PUT",
+        body = buildJsonObject {
+            if (remindAt != null) put("reply_later_remind_at", remindAt)
+            else put("reply_later_remind_at", kotlinx.serialization.json.JsonNull)
+        },
+    )
+
     suspend fun listReplyLaterEmails(
         mailboxId: String,
         page: Int = 1,

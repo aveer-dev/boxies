@@ -23,7 +23,10 @@
  * - `conversation_members (folder_id, raw_key, conversation_id)`: the raw key
  *   → conversation map for each folder holding mail with that raw key.
  * - `conversations`: one row per (folder_id, conversation_id) with the list
- *   fields and the id of the email to show.
+ *   fields and the id of the email to show. `latest_date` is the sort key:
+ *   the newest email in the folder, or, when later, the time a Reply Later
+ *   reminder fired on the conversation (AVE-86, migration 43 adds the
+ *   trigger that marks those changes dirty).
  * - `conversation_dirty`: (raw_key, folder_id, normalized_subject) marks that
  *   SQLite triggers on `emails` append on every insert / delete / relevant
  *   update, in the same transaction as the write. Every write path (Drizzle,
@@ -298,10 +301,10 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 			SELECT raw_key FROM conversation_members WHERE folder_id = ?1 AND conversation_id = ?2
 		),
 		ce AS MATERIALIZED (
-			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name
+			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name, reply_later, reply_later_reminded_at
 			FROM emails WHERE thread_id IN (SELECT raw_key FROM members)
 			UNION ALL
-			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name
+			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name, reply_later, reply_later_reminded_at
 			FROM emails WHERE id IN (SELECT raw_key FROM members) AND +thread_id IS NULL
 		),
 		stats AS (
@@ -309,7 +312,8 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 				COUNT(*) AS thread_count,
 				SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) AS thread_unread_count,
 				SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) AS thread_read_count,
-				SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) AS has_draft
+				SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) AS has_draft,
+				MAX(CASE WHEN reply_later = 1 THEN reply_later_reminded_at END) AS resurfaced_at
 			FROM ce
 		)
 		SELECT
@@ -317,6 +321,7 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 			(SELECT date FROM ce WHERE folder_id = ?1 ORDER BY date DESC LIMIT 1) AS latest_date,
 			(SELECT folder_id FROM ce ORDER BY date DESC LIMIT 1) AS latest_folder_id,
 			stats.thread_count, stats.thread_unread_count, stats.thread_read_count, stats.has_draft,
+			stats.resurfaced_at,
 			(SELECT GROUP_CONCAT(DISTINCT p) FROM (
 				SELECT COALESCE(NULLIF(TRIM(sender_name), ''), sender) AS p FROM ce ORDER BY rid
 			)) AS participants
@@ -333,6 +338,13 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 		);
 		return;
 	}
+
+	// A fired Reply Later reminder lifts the conversation as if mail arrived
+	// then (AVE-86); same rule as the scan's `sort_date`.
+	const latestDate = str(row.latest_date);
+	const resurfacedAt = str(row.resurfaced_at);
+	const sortDate =
+		resurfacedAt !== null && latestDate !== null && resurfacedAt > latestDate ? resurfacedAt : latestDate;
 
 	sql.exec(
 		`INSERT INTO conversations (
@@ -357,7 +369,7 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 		folderId,
 		conversationId,
 		row.latest_email_id,
-		row.latest_date ?? null,
+		sortDate,
 		Number(row.thread_count ?? 0),
 		Number(row.thread_unread_count ?? 0),
 		row.participants ?? null,
@@ -372,7 +384,8 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 /** Email columns of a threaded list row, in the order the scan returns them. */
 const LIST_EMAIL_COLUMNS = [
 	"id", "subject", "sender", "sender_name", "recipient", "date",
-	"read", "starred", "reply_later", "reply_later_at", "thread_id", "folder_id",
+	"read", "starred", "reply_later", "reply_later_at", "reply_later_remind_at", "reply_later_reminded_at",
+	"thread_id", "folder_id",
 	"in_reply_to", "email_references",
 	"provider_message_id", "delivery_status", "delivery_error",
 	"snippet",
@@ -396,7 +409,7 @@ export function resolveFolderId(sql: Sql, folder: string): string | null {
 
 /**
  * One threaded list page from the conversation index. Same columns as the
- * scan (minus its internal `is_new` / `section_rank`). Call only when
+ * scan (minus its internal `is_new` / `section_rank` / `sort_date`). Call only when
  * `conversationIndexIsClean`.
  */
 export function readThreadedListFromIndex(
@@ -453,7 +466,7 @@ export function countConversationsFromIndex(
 	return { totalCount, newCount, seenCount: totalCount - newCount };
 }
 
-// ── Scan fallback (pre-AVE-105 SQL, unchanged) ─────────────────────
+// ── Scan fallback (pre-AVE-105 SQL, plus AVE-86 resurfacing) ────────
 
 /**
  * The original threaded list query: groups every email in the mailbox on
@@ -501,7 +514,8 @@ export function readThreadedListByScan(
 					SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count,
 					SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) as thread_read_count,
 					GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants,
-					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft
+					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft,
+					MAX(CASE WHEN reply_later = 1 THEN reply_later_reminded_at END) as resurfaced_at
 				FROM all_emails_with_conversation
 				WHERE conversation_id IN (
 					SELECT DISTINCT conversation_id FROM all_emails_with_conversation
@@ -531,7 +545,7 @@ export function readThreadedListByScan(
 			listed AS (
 			SELECT
 				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
-				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.thread_id, lif.folder_id,
+				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.reply_later_remind_at, lif.reply_later_reminded_at, lif.thread_id, lif.folder_id,
 				lif.in_reply_to, lif.email_references,
 				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
 				lif.snippet as snippet,
@@ -543,9 +557,11 @@ export function readThreadedListByScan(
 					THEN 1 ELSE 0 END as needs_reply,
 				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft,
 				CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END as is_new,
+				-- A fired Reply Later reminder lifts the conversation as if mail arrived then (AVE-86).
+				MAX(lif.date, COALESCE(cs.resurfaced_at, lif.date)) as sort_date,
 				ROW_NUMBER() OVER (
 					PARTITION BY CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END
-					ORDER BY lif.date DESC
+					ORDER BY MAX(lif.date, COALESCE(cs.resurfaced_at, lif.date)) DESC
 				) as section_rank
 			FROM latest_in_folder lif
 			JOIN conversation_stats cs ON lif.conversation_id = cs.conversation_id
@@ -555,7 +571,7 @@ export function readThreadedListByScan(
 			)
 			SELECT * FROM listed
 			WHERE ${window.sectionFilter}
-			ORDER BY ${window.useNewSeen ? `is_new DESC, date DESC` : `date DESC`}
+			ORDER BY ${window.useNewSeen ? `is_new DESC, sort_date DESC` : `sort_date DESC`}
 			LIMIT ?2 OFFSET ?3`,
 		folder,
 		window.limit,

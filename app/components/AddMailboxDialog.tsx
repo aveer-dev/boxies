@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, Input } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { type FormEvent, useRef, useState } from "react";
 import { Link as RouterLink } from "react-router";
 import { newMailboxRequest } from "~/lib/new-mailbox";
@@ -81,16 +82,13 @@ export function AddMailboxDialog({
 				if (!open) close();
 			}}
 		>
-			<Dialog size="sm" className="p-6">
-				<form onSubmit={handleSubmit} className="space-y-4">
-					<div>
-						<Dialog.Title className="text-lg font-bold text-kumo-default mb-1">
-							Add a mailbox
-						</Dialog.Title>
-						<Dialog.Description className="text-xs text-kumo-subtle">
-							Create a new address on @{mailDomain} for this account.
-						</Dialog.Description>
-					</div>
+			<Modal size="sm">
+				<ModalHeader
+					className="mb-0"
+					title="Add a mailbox"
+					description={<>Create a new address on @{mailDomain} for this account.</>}
+				/>
+				<form onSubmit={handleSubmit} className="mt-4 space-y-4">
 
 					{error && (
 						<div
@@ -169,7 +167,7 @@ export function AddMailboxDialog({
 						</Button>
 					</div>
 				</form>
-			</Dialog>
+			</Modal>
 		</Dialog.Root>
 	);
 }

@@ -7,8 +7,10 @@ import { useCallback, useRef, useState } from "react";
 import FloatingPanel from "~/components/FloatingPanel";
 import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
+import { isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
 import { keysFor } from "~/lib/shortcuts";
 import {
+	AlarmIcon,
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
@@ -46,6 +48,8 @@ interface EmailPanelToolbarProps {
 	onForward: () => void;
 	onToggleStar: () => void;
 	onToggleReplyLater: () => void;
+	/** Opens the Reply Later reminder picker (AVE-86). */
+	onRemindMe?: () => void;
 	onToggleRead: () => void;
 	/** Absent when the message is already archived. */
 	onArchive?: () => void;
@@ -75,6 +79,7 @@ export default function EmailPanelToolbar({
 	onForward,
 	onToggleStar,
 	onToggleReplyLater,
+	onRemindMe,
 	onToggleRead,
 	onArchive,
 	onPopOut,
@@ -155,6 +160,16 @@ export default function EmailPanelToolbar({
 					onToggleReplyLater();
 				}}
 			/>
+			{onRemindMe && !isReadOnly && (
+				<IconButton
+					label={pendingReminder(email) ? "Change reminder" : "Remind me…"}
+					icon={AlarmIcon}
+					size="md"
+					weight={pendingReminder(email) ? "fill" : "regular"}
+					iconClassName={isReplyLaterDue(email) ? "text-[var(--attention)]" : pendingReminder(email) ? "text-kumo-default" : ""}
+					onClick={onRemindMe}
+				/>
+			)}
 			<IconButton
 				label={email.read ? "Mark as unread" : "Mark as read"}
 				shortcut={keysFor("toggleRead")}

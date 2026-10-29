@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Delete
@@ -122,6 +123,7 @@ import co.inboxies.app.services.EmailSwipeLayout
 import co.inboxies.app.services.SwipeActionPreferences
 import co.inboxies.app.services.SwipeQuickAction
 import co.inboxies.app.theme.AppThemeDims
+import co.inboxies.app.theme.attention
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
@@ -830,6 +832,14 @@ private fun MailRow(
                         scope.launch { app.toggleReplyLater(email) }
                     },
                 )
+                InboxiesMenuItem(
+                    text = if (email.hasPendingReplyLaterReminder) "Change reminder" else "Remind me…",
+                    icon = Icons.Outlined.NotificationsActive,
+                    onClick = {
+                        showMenu = false
+                        app.openReminderPicker(email)
+                    },
+                )
                 InboxiesMenuDivider()
                 InboxiesMenuItem(
                     text = "More Options…",
@@ -1319,12 +1329,7 @@ fun EmailRowView(
                         )
                     }
                     if (email.replyLater) {
-                        Icon(
-                            Icons.Outlined.Schedule,
-                            contentDescription = "Reply later",
-                            tint = colors.accent,
-                            modifier = Modifier.size(list.badge.value.dp),
-                        )
+                        ReplyLaterReminderChip(email)
                     }
                     if (email.starred) {
                         Icon(
@@ -1635,6 +1640,56 @@ fun ScreenerActionButtons(
                     color = colors.ink,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Row meta for Reply Later (AVE-86): the clock alone, a clock + short time for a pending
+ * reminder, or the attention-tinted clock + "Due" (no fill) once the reminder fired.
+ */
+@Composable
+private fun ReplyLaterReminderChip(email: Email) {
+    val colors = inboxiesColors()
+    val size = AppThemeDims.List.badge
+    val due = email.isReplyLaterDue
+    val pending = if (!due && email.hasPendingReplyLaterReminder) {
+        co.inboxies.app.services.ReplyLaterReminderPresets.shortLabel(email.replyLaterRemindAt)
+    } else {
+        null
+    }
+    val tint = when {
+        due -> colors.attention
+        pending != null -> colors.muted
+        else -> colors.accent
+    }
+    val description = when {
+        due -> "Reply later, reminder due"
+        pending != null -> "Reply later, reminder $pending"
+        else -> "Reply later"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = description },
+    ) {
+        Icon(
+            if (due || pending != null) Icons.Outlined.NotificationsActive else Icons.Outlined.Schedule,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(size.value.dp),
+        )
+        val text = if (due) "Due" else pending
+        if (text != null) {
+            Text(
+                text,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = size,
+                color = tint,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
 }

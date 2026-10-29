@@ -5,6 +5,7 @@
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { useCallback, useMemo } from "react";
 import { Folders } from "shared/folders";
+import { useReplyLater } from "~/hooks/useReplyLater";
 import { useSpamVerdictToast } from "~/hooks/useSpamVerdictToast";
 import { useUIStore } from "~/hooks/useUIStore";
 import {
@@ -35,6 +36,7 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 	const deleteEmail = useDeleteEmail();
 	const moveEmail = useMoveEmail();
 	const showSpamVerdictToast = useSpamVerdictToast(mailboxId);
+	const replyLater = useReplyLater(mailboxId);
 	const startCompose = useUIStore((s) => s.startCompose);
 	const openReader = useUIStore((s) => s.openReader);
 	const openPopOut = useUIStore((s) => s.openPopOut);
@@ -59,8 +61,9 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 			toggleRead: (email: Email) => setRead(email, hasUnread(email)),
 			toggleStar: (email: Email) =>
 				updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }),
-			toggleReplyLater: (email: Email) =>
-				updateEmail.mutate({ mailboxId, id: email.id, data: { reply_later: !email.reply_later } }),
+			toggleReplyLater: replyLater.toggleReplyLater,
+			/** Opens the Reply Later reminder picker (AVE-86). */
+			remindMe: replyLater.openReminderPicker,
 			archive: (email: Email) => {
 				if (email.folder_id === Folders.ARCHIVE) return;
 				const fromSpam = email.folder_id === Folders.SPAM;
@@ -107,7 +110,7 @@ export function useEmailActions(mailboxId: string, onGone?: (email: Email) => vo
 				if (hasUnread(email)) setRead(email, true);
 			},
 		}),
-		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, openPopOut, onGone, toastManager, showSpamVerdictToast],
+		[mailboxId, setRead, updateEmail, moveEmail, deleteEmail, startCompose, openReader, openPopOut, onGone, toastManager, showSpamVerdictToast, replyLater],
 	);
 }
 

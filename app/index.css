@@ -80,6 +80,9 @@
   --border-control: #d9d9d9;
   --accent: #171717;
   --accent-soft: rgba(0, 0, 0, 0.06);
+  /* Reply Later reminder due (AVE-86): the one warm hue (never blue). iOS AppTheme.attention, Android InboxiesColors.attention. */
+  --attention: #b45309;
+  --attention-soft: color-mix(in srgb, var(--attention) 12%, transparent);
   /* Focus: a mid gray, ≥3:1 on every surface. */
   --focus-ring: #8a8a8a;
   --glass-bg: color-mix(in srgb, var(--bg) 72%, transparent);
@@ -165,6 +168,8 @@
   --border-control: #363636;
   --accent: #ececec;
   --accent-soft: rgba(255, 255, 255, 0.08);
+  --attention: #f59e0b;
+  --attention-soft: color-mix(in srgb, var(--attention) 16%, transparent);
   --focus-ring: #7d7d7d;
   --glass-bg: color-mix(in srgb, #1b1b1b 74%, transparent);
   --glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 16px rgba(0, 0, 0, 0.5);
@@ -454,8 +459,10 @@ button[class*="ring-kumo-hairline"]:focus-visible {
  * Popped-out message: a borderless sheet whose edges fade to transparent, so
  * it dissolves into the blurred canvas behind instead of ending on a line.
  * The padding keeps the content itself clear of the fade.
+ * Modals (`Modal.tsx`) are the same sheet, smaller, over the same blur.
  */
-.popout-sheet {
+.popout-sheet,
+.modal-sheet {
   --fade: 36px;
   padding: var(--fade);
   border-radius: 36px;
@@ -464,7 +471,37 @@ button[class*="ring-kumo-hairline"]:focus-visible {
     linear-gradient(to bottom, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
   mask-composite: intersect;
   -webkit-mask-composite: source-in;
+}
+.popout-sheet {
   transform-origin: top left;
+}
+.modal-sheet {
+  --fade: 28px;
+  border-radius: 32px;
+  transition:
+    opacity 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    scale 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.modal-sheet[data-starting-style],
+.modal-sheet[data-ending-style] {
+  opacity: 0;
+  scale: 0.97;
+}
+.modal-backdrop {
+  transition: opacity 260ms ease-out;
+}
+.modal-backdrop[data-starting-style],
+.modal-backdrop[data-ending-style] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-sheet {
+    transition: opacity 150ms ease-out;
+  }
+  .modal-sheet[data-starting-style],
+  .modal-sheet[data-ending-style] {
+    scale: none;
+  }
 }
 
 /* Context menu: grows out of the corner by the pointer; a chosen item blinks once. */
@@ -492,6 +529,32 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   }
   .row-enter {
     animation: row-in 320ms var(--ease-out) calc(min(var(--i, 0), 12) * 16ms) backwards;
+  }
+}
+
+/*
+ * Reply Later with a due reminder (AVE-86): a soft attention halo that
+ * breathes (~1.8s) behind a hairline ring kept faint, so the edge reads as
+ * glass rather than an outline. Reduced motion keeps the halo, still.
+ */
+.reply-later-due {
+  background: var(--attention-soft);
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--attention) 18%, transparent),
+    0 0 12px color-mix(in srgb, var(--attention) 22%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reply-later-due {
+    animation: attention-breathe 1.8s ease-in-out infinite;
+  }
+}
+@keyframes attention-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--attention) 12%, transparent),
+      0 0 6px color-mix(in srgb, var(--attention) 12%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--attention) 22%, transparent),
+      0 0 16px color-mix(in srgb, var(--attention) 32%, transparent);
   }
 }
 

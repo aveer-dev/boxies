@@ -3,8 +3,10 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, Input, useKumoToastManager } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import {
 	ArchiveIcon,
+	AlarmIcon,
 	ClockCounterClockwiseIcon,
 	FileIcon,
 	MegaphoneIcon,
@@ -56,28 +58,49 @@ function FolderRow({
 	label,
 	count,
 	muted = false,
+	attention,
 }: {
 	to: string;
 	icon: ReactNode;
 	label: string;
 	count?: number;
 	muted?: boolean;
+	/** Reply Later reminders due (AVE-86): attention colour, a soft breathing glow and a "N due" pill. */
+	attention?: number;
 }) {
+	const due = attention != null && attention > 0;
 	return (
 		<NavLink
 			to={to}
+			aria-description={due ? `${attention} due` : undefined}
 			className={({ isActive }) =>
 				`group/folder relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-sm transition-colors duration-150 ${
-					isActive
-						? "text-kumo-default"
-						: `${muted ? "text-kumo-subtle" : "text-kumo-strong"} hover:bg-kumo-tint hover:text-kumo-default`
+					due
+						? "reply-later-due text-[var(--attention)] hover:text-[var(--attention)]"
+						: isActive
+							? "text-kumo-default"
+							: `${muted ? "text-kumo-subtle" : "text-kumo-strong"} hover:bg-kumo-tint hover:text-kumo-default`
 				}`
 			}
 		>
-			<span className="shrink-0 w-4 flex justify-center text-kumo-subtle transition-colors group-hover/folder:text-kumo-default group-aria-[current=page]/folder:text-kumo-default">
+			<span
+				className={`shrink-0 w-4 flex justify-center transition-colors ${
+					due
+						? "text-[var(--attention)]"
+						: "text-kumo-subtle group-hover/folder:text-kumo-default group-aria-[current=page]/folder:text-kumo-default"
+				}`}
+			>
 				{icon}
 			</span>
 			<span className="truncate flex-1">{label}</span>
+			{due && (
+				<span
+					key={`due-${attention}`}
+					className="shrink-0 rounded-full bg-[var(--attention-soft)] px-1.5 text-2xs font-semibold leading-[16px] text-[var(--attention)] tabular-nums animate-reveal"
+				>
+					{formatCount(attention)} due
+				</span>
+			)}
 			{count != null && count > 0 && (
 				<span key={count} className="shrink-0 text-xs text-kumo-subtle tabular-nums animate-reveal">
 					{formatCount(count)}
@@ -129,7 +152,9 @@ export default function FoldersColumn() {
 			),
 		[screenerOn, unreadById],
 	);
-	const replyLaterCount = workflowPiles.find((p) => p.id === "reply_later")?.count ?? 0;
+	const replyLaterPile = workflowPiles.find((p) => p.id === "reply_later");
+	const replyLaterCount = replyLaterPile?.count ?? 0;
+	const replyLaterDue = replyLaterPile?.due_count ?? 0;
 
 	const displayName = mailboxDisplayName(mailbox, mailboxId);
 
@@ -173,9 +198,12 @@ export default function FoldersColumn() {
 				<SectionLabel>Workflow</SectionLabel>
 				<FolderRow
 					to={`${mailboxPath(mailboxId)}/reply-later`}
-					icon={<ClockCounterClockwiseIcon size={16} />}
+					icon={
+						replyLaterDue > 0 ? <AlarmIcon size={16} weight="fill" /> : <ClockCounterClockwiseIcon size={16} />
+					}
 					label="Reply Later"
 					count={replyLaterCount}
+					attention={replyLaterDue}
 				/>
 
 				<SectionLabel
@@ -213,8 +241,10 @@ export default function FoldersColumn() {
 			</div>
 
 			<Dialog.Root open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-4">Create tag</Dialog.Title>
+				<Modal size="sm">
+					<ModalHeader
+						title="Create tag"
+					/>
 					<form onSubmit={handleCreateTag} className="space-y-4">
 						<Input
 							label="Tag name"
@@ -236,7 +266,7 @@ export default function FoldersColumn() {
 							</Button>
 						</div>
 					</form>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</ColumnPane>
 	);

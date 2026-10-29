@@ -885,12 +885,18 @@ final class APIClient: @unchecked Sendable {
         id: String,
         read: Bool? = nil,
         starred: Bool? = nil,
-        replyLater: Bool? = nil
+        replyLater: Bool? = nil,
+        replyLaterRemindAt: ReplyLaterRemindAtPatch? = nil
     ) async throws -> Email {
         var body: [String: Any] = [:]
         if let read { body["read"] = read }
         if let starred { body["starred"] = starred }
         if let replyLater { body["reply_later"] = replyLater }
+        switch replyLaterRemindAt {
+        case .set(let iso): body["reply_later_remind_at"] = iso
+        case .clear: body["reply_later_remind_at"] = NSNull()
+        case nil: break
+        }
         return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)",
             method: "PUT",
@@ -1544,6 +1550,21 @@ extension Notification.Name {
 struct WorkflowPile: Decodable {
     let id: String
     let count: Int
+    /// Reply Later mails whose reminder fired and are still unread (AVE-86).
+    /// Nil on older Workers that don't send it.
+    var dueCount: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, count
+        case dueCount = "due_count"
+    }
+}
+
+/// `reply_later_remind_at` in the email PUT (AVE-86): set a UTC ISO time (also adds the
+/// mail to Reply Later) or clear the pending reminder (the mail stays in the pile).
+enum ReplyLaterRemindAtPatch: Equatable {
+    case set(String)
+    case clear
 }
 
 struct WorkflowPilesResponse: Decodable {

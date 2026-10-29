@@ -44,6 +44,12 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ManyNew("manyNew", "previewManyNew"),
     /** Inbox with a pinned "Archived · Undo" toast above the bottom bar (iOS `-previewToast`, AVE-134). */
     Toast("toast", "previewToast"),
+    /** Reply Later reminder picker open on a mail with a pending reminder (iOS `-previewReminderPicker`, AVE-86). */
+    ReminderPicker("reminderPicker", "previewReminderPicker"),
+    /** "Added to Reply Later" toast with "Add reminder" pinned above the bottom bar (iOS `-previewReminderToast`). */
+    ReminderToast("reminderToast", "previewReminderToast"),
+    /** Inbox with a due reminder + a pending one: attention Reply Later button + row chips (iOS `-previewReminderDue`). */
+    ReminderDue("reminderDue", "previewReminderDue"),
     /** Signed in, first mailbox load failed, nothing cached (iOS `-previewLoadFailed`). */
     LoadFailed("loadFailed", "previewLoadFailed"),
     /** Inbox fetch failed with an empty cache: error + Retry (iOS `-previewListError`). */

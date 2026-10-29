@@ -581,6 +581,10 @@ data class Email(
     val starred: Boolean = false,
     @SerialName("reply_later") val replyLater: Boolean = false,
     @SerialName("reply_later_at") val replyLaterAt: String? = null,
+    /** Pending Reply Later reminder, UTC ISO 8601 (AVE-86). Absent on older Workers. */
+    @SerialName("reply_later_remind_at") val replyLaterRemindAt: String? = null,
+    /** When the reminder fired, UTC ISO 8601. Set + unread = "due". */
+    @SerialName("reply_later_reminded_at") val replyLaterRemindedAt: String? = null,
     val body: String? = null,
     val snippet: String? = null,
     @SerialName("in_reply_to") val inReplyTo: String? = null,
@@ -621,6 +625,24 @@ data class Email(
     /** RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99). */
     @SerialName("one_click_unsubscribe") val oneClickUnsubscribe: Boolean? = null,
 ) {
+    /** A pending reminder on a mail still in Reply Later (AVE-86). */
+    val hasPendingReplyLaterReminder: Boolean
+        get() = replyLater && !replyLaterRemindAt.isNullOrBlank()
+
+    /** The reminder fired and the mail is still unread: needs attention. */
+    val isReplyLaterDue: Boolean
+        get() = replyLater && !replyLaterRemindedAt.isNullOrBlank() && !read
+
+    /**
+     * Inbox ordering key: `max(date, reply_later_reminded_at)`, so a fired reminder lifts
+     * the conversation to the top of New. ISO 8601 UTC strings compare lexically.
+     */
+    val inboxSortDate: String
+        get() {
+            val reminded = replyLaterRemindedAt
+            return if (!reminded.isNullOrBlank() && reminded > date) reminded else date
+        }
+
     /**
      * Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
      * server's flag wins; cached rows fall back to the stored headers (the
@@ -1000,6 +1022,8 @@ data class EmailListResponse(
 data class WorkflowPile(
     val id: String,
     val count: Int = 0,
+    /** Reply Later mails whose reminder fired and are still unread (AVE-86). 0 on older Workers. */
+    @SerialName("due_count") val dueCount: Int = 0,
 )
 
 @Serializable
@@ -1167,6 +1191,8 @@ enum class ComposePresentation {
 /** Trailing button on a toast: Undo, Add reminder, … */
 data class ToastAction(
     val title: String,
+    /** Ink (grey-scale) instead of the accent capsule; Add reminder (AVE-86). Twin of iOS `ToastAction.Tone`. */
+    val ink: Boolean = false,
     val onClick: () -> Unit,
 )
 

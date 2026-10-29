@@ -153,7 +153,7 @@ struct HomeFolderColumn: View {
                     .padding(.bottom, 6)
                     .accessibilityAddTraits(.isHeader)
 
-                row(.replyLater, count: app.replyLaterCount, countLabel: "queued")
+                row(.replyLater, count: app.replyLaterCount, countLabel: "queued", dueCount: app.replyLaterDueCount)
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 24)
@@ -163,7 +163,8 @@ struct HomeFolderColumn: View {
         .tint(AppTheme.ink)
     }
 
-    private func row(_ tab: HomeTab, count: Int, countLabel: String) -> some View {
+    /// `dueCount`: Reply Later reminders that fired on unread mail, in the attention color (AVE-86).
+    private func row(_ tab: HomeTab, count: Int, countLabel: String, dueCount: Int = 0) -> some View {
         let isSelected = tab == selected
         return Button {
             onSelect(tab)
@@ -178,6 +179,16 @@ struct HomeFolderColumn: View {
                     .foregroundStyle(AppTheme.ink)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if dueCount > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "alarm.fill")
+                            .font(.inter(size: 10, weight: .semibold))
+                        Text("\(dueCount) due")
+                            .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(AppTheme.attention)
+                }
                 if count > 0 {
                     Text(count > 999 ? "999+" : "\(count)")
                         .font(.inter(size: AppTheme.FontSize.meta))
@@ -197,7 +208,11 @@ struct HomeFolderColumn: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tab.title)
-        .accessibilityValue(count > 0 ? "\(count) \(countLabel)" : "")
+        .accessibilityValue(
+            [count > 0 ? "\(count) \(countLabel)" : nil, dueCount > 0 ? "\(dueCount) due" : nil]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
