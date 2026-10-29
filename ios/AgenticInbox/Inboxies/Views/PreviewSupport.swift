@@ -222,6 +222,42 @@ enum PreviewSupport {
         snippet: "Good morning. This issue is built like most marketing mail."
     )
 
+    /// `-previewMailbox -previewReplyQuote` (AVE-133): reply to a promo mail whose HTML carries a
+    /// `<style>` block, a hidden `&shy;`/`&zwnj;` preheader and layout tables, so the quoted
+    /// original shows rendered as the real message. Add `-previewQuoteOpen` to open the quote sheet.
+    /// Android twin: `PreviewSupport.promoEmail` (`run-debug-preview.sh replyQuote`).
+    static let promoEmail = Email(
+        id: "preview-promo",
+        folderId: "inbox",
+        subject: "Don’t let the details haunt you",
+        sender: "uber@uber.example",
+        senderName: "Uber",
+        recipient: "you@inboxies.email",
+        date: "2026-10-27T16:46:00.000Z",
+        read: true,
+        starred: false,
+        body: promoHTML,
+        snippet: "Grab everything for spooky season in one easy order."
+    )
+
+    static let promoHTML = """
+        <html><head><style type="text/css">body{margin:0;padding:0} .mso td{padding:0}</style></head><body>
+        <div style="display:none;max-height:0;overflow:hidden;mso-hide:all">Grab everything for spooky season in one easy order.&#847; &zwnj; &nbsp; &shy; &#847; &zwnj; &nbsp; &shy; &#847; &zwnj; &nbsp; &shy;</div>
+        <table width="100%" cellpadding="0" cellspacing="0" bgcolor="#000000">
+          <tr><td align="center" style="padding:24px;color:#ffffff;font-size:28px;">Uber</td></tr>
+          <tr><td style="padding:24px;color:#ffffff;">
+            <h1 style="font-size:36px;">Don&rsquo;t let the details haunt you. Save 30%.</h1>
+            <p>Whatever&#39;s on your Halloween list, you&#39;ll find it on Uber&nbsp;Eats. Spend $40+ and save up to $20. Terms&nbsp;apply.</p>
+            <a href="https://example.com/shop" style="background:#ffffff;color:#000000;padding:12px 20px;">Shop now</a>
+          </td></tr>
+          <tr><td style="padding:24px;color:#ffffff;"><h2>All treats, no tricks</h2><p>$0 Delivery Fee</p></td></tr>
+          <tr><td style="color:#ffffff;">$17.09</td><td style="color:#999999;"><s>$24.39</s></td><td style="color:#00c853;">30% off</td></tr>
+          <tr><td colspan="3" style="color:#ffffff;">REESE&#39;S Assorted Peanut Butter Halloween&hellip;</td></tr>
+        </table>
+        <img src="https://example.com/open.gif" width="1" height="1" style="display:none">
+        </body></html>
+        """
+
     static let newsletterHTML = """
         <table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f1ea">
         <tr><td align="center" style="padding:16px 0;">
@@ -772,7 +808,10 @@ struct PreviewMailboxRoot: View {
             .environment(auth)
             .environment(app)
             .task {
-                if ProcessInfo.processInfo.arguments.contains("-previewCompose") {
+                if ProcessInfo.processInfo.arguments.contains("-previewReplyQuote") {
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    await app.startCompose(mode: .reply, original: PreviewSupport.promoEmail)
+                } else if ProcessInfo.processInfo.arguments.contains("-previewCompose") {
                     try? await Task.sleep(nanoseconds: 400_000_000)
                     await app.startCompose(mode: .new)
                 } else if ProcessInfo.processInfo.arguments.contains("-previewComposeMinimized") {

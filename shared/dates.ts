@@ -89,12 +89,13 @@ export function formatShortDate(dateStr: string): string {
  * Uses explicit "en-US" locale for deterministic output on both browser
  * and Cloudflare Workers (which support `toLocaleString`).
  */
-export function formatQuotedDate(dateStr: string | undefined): string {
+export function formatQuotedDate(dateStr: string | undefined, timeZone?: string): string {
 	if (!dateStr) return "";
 	const date = safeParse(dateStr);
 	if (!date) return dateStr;
 
 	return date.toLocaleString("en-US", {
+		...(timeZone ? { timeZone } : {}),
 		weekday: "short",
 		month: "short",
 		day: "numeric",
