@@ -72,6 +72,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     AiUsageLimit("aiUsageLimit", "previewAiUsageLimit"),
     /** Settings sheet with the AI usage section filled (42 / 50 chats, 37 / 200 checks). */
     AiUsageSettings("aiUsageSettings", "previewAiUsageSettings"),
+    /** "Today's inbox" widget design mocks at real size, light/dark toggle (iOS `-previewWidgets`, AVE-138). */
+    Widgets("widgets", "previewWidgets"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),

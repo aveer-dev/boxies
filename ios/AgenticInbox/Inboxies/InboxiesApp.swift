@@ -62,6 +62,10 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewSettings") {
                 PreviewAdminAuthRoot()
                     .applyThemeController()
+            } else if ProcessInfo.processInfo.arguments.contains("-previewWidgets") {
+                // AVE-138: "Today's inbox" widget mocks at real size.
+                InboxWidgetGallery()
+                    .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewSplash") {
                 SplashScreenView()
                     .applyThemeController()
