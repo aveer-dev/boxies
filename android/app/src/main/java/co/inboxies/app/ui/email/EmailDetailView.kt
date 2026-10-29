@@ -1075,52 +1075,70 @@ private fun MessagePeopleHeader(
     val senderOrToAction = {
         if (isBodyExpanded) onToggleRecipients() else onToggleBody()
     }
+    // At large font scales the date + options + chevron cluster fills the whole row and squeezes
+    // the sender to nothing (AVE-162), so the sender stacks above it instead (iOS twin:
+    // `dynamicTypeSize.isAccessibilitySize`).
+    val stacksSenderAboveDate = LocalDensity.current.fontScale >= StackedHeaderFontScale
 
     Column(
         verticalArrangement = Arrangement.spacedBy(if (isRecipientsExpanded) 8.dp else 2.dp),
     ) {
         if (isRecipientsExpanded) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    "From",
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = AppThemeDims.FontSize.recipient,
-                    color = colors.muted,
-                    modifier = Modifier.width(32.dp),
-                )
-                PersonAddressPill(
-                    address = message.fromAddress,
-                    selfAddress = selfAddress,
-                    onSearch = onSearch,
-                )
-                message.deliveryStatusLabel?.let { label ->
-                    DeliveryStatusChip(label = label, colors = colors)
+            val fromLabelAndSender: @Composable () -> Unit = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "From",
+                        fontFamily = InterFontFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = AppThemeDims.FontSize.recipient,
+                        color = colors.muted,
+                        modifier = Modifier.width(32.dp),
+                    )
+                    PersonAddressPill(
+                        address = message.fromAddress,
+                        selfAddress = selfAddress,
+                        onSearch = onSearch,
+                    )
+                    message.deliveryStatusLabel?.let { label ->
+                        DeliveryStatusChip(label = label, colors = colors)
+                    }
                 }
-                Spacer(modifier = Modifier.weight(1f))
+            }
+            val dateAndToggle: @Composable () -> Unit = {
                 DateAndToggle(
                     message = message,
                     formattedDate = formattedDate,
                     isRecipientsExpanded = true,
+                    stacked = stacksSenderAboveDate,
                     onToggleRecipients = onToggleRecipients,
                     onShowActions = onShowActions,
                 )
+            }
+            if (stacksSenderAboveDate) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    fromLabelAndSender()
+                    dateAndToggle()
+                }
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    fromLabelAndSender()
+                    Spacer(modifier = Modifier.weight(1f))
+                    dateAndToggle()
+                }
             }
             AddressDetailRow("To", message.toAddresses, selfAddress, onSearch)
             AddressDetailRow("Cc", message.ccAddresses, selfAddress, onSearch)
             AddressDetailRow("Bcc", message.bccAddresses, selfAddress, onSearch)
         } else {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+            val sender: @Composable (Modifier) -> Unit = { modifier ->
                 Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(onClick = senderOrToAction),
+                    modifier = modifier.clickable(onClick = senderOrToAction),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -1130,7 +1148,7 @@ private fun MessagePeopleHeader(
                         fontWeight = FontWeight.Medium,
                         fontSize = AppThemeDims.FontSize.sender,
                         color = colors.ink,
-                        maxLines = 1,
+                        maxLines = if (stacksSenderAboveDate) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
@@ -1138,13 +1156,30 @@ private fun MessagePeopleHeader(
                         DeliveryStatusChip(label = label, colors = colors)
                     }
                 }
+            }
+            val dateAndToggle: @Composable () -> Unit = {
                 DateAndToggle(
                     message = message,
                     formattedDate = formattedDate,
                     isRecipientsExpanded = false,
+                    stacked = stacksSenderAboveDate,
                     onToggleRecipients = onToggleRecipients,
                     onShowActions = onShowActions,
                 )
+            }
+            if (stacksSenderAboveDate) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    sender(Modifier.fillMaxWidth())
+                    dateAndToggle()
+                }
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    sender(Modifier.weight(1f))
+                    dateAndToggle()
+                }
             }
             val summary = message.recipientSummary(selfAddress)
             if (summary.isNotEmpty()) {
@@ -1163,6 +1198,9 @@ private fun MessagePeopleHeader(
         }
     }
 }
+
+/** Font scale at which the reader header stacks the sender above the date (AVE-162). */
+private const val StackedHeaderFontScale = 1.5f
 
 @Composable
 private fun DeliveryStatusChip(
@@ -1188,6 +1226,7 @@ private fun DateAndToggle(
     message: Email,
     formattedDate: String,
     isRecipientsExpanded: Boolean,
+    stacked: Boolean = false,
     onToggleRecipients: () -> Unit,
     onShowActions: () -> Unit,
 ) {
@@ -1225,7 +1264,8 @@ private fun DateAndToggle(
                 fontFamily = InterFontFamily,
                 fontSize = AppThemeDims.FontSize.meta,
                 color = colors.muted,
-                maxLines = 1,
+                maxLines = if (stacked) 2 else 1,
+                modifier = if (stacked) Modifier.weight(1f, fill = false) else Modifier,
             )
             Icon(
                 if (isRecipientsExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
