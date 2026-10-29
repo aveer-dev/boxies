@@ -31,6 +31,7 @@ import { runScheduledMaintenance } from "./lib/maintenance";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
 import { AUTH_BASE_PATH } from "./auth";
 import { webHostRedirect } from "./lib/web-host-redirect";
+import { httpsRedirect } from "./lib/https-redirect";
 import {
 	CSP_REPORT_PATH,
 	createCspNonce,
@@ -96,6 +97,10 @@ app.use("*", async (c, next) => {
 	const res = withSecurityHeaders(c.res, c.req.raw);
 	if (res !== c.res) c.res = res;
 });
+
+// Cleartext requests go to HTTPS (AVE-109, workers/lib/https-redirect.ts):
+// a fallback for the zones' "Always Use HTTPS". Never in local dev.
+app.use("*", async (c, next) => httpsRedirect(c.req.raw) ?? next());
 
 // The web app lives on APP_BASE_URL; old hosts (inboxies.email) send browsers there.
 app.use("*", async (c, next) => webHostRedirect(c.env, c.req.raw) ?? next());
