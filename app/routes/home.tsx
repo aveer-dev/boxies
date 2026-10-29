@@ -12,6 +12,7 @@ import {
 	Text,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { EnvelopeIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -373,17 +374,15 @@ export default function HomeRoute() {
 					if (!open) setMailboxToDelete(null);
 				}}
 			>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-2">
-						Delete Mailbox
-					</Dialog.Title>
-					<Dialog.Description className="text-kumo-subtle text-sm mb-5">
-						Are you sure you want to delete{" "}
+				<Modal size="sm">
+					<ModalHeader
+						title="Delete Mailbox"
+						description={<>Are you sure you want to delete{" "}
 						<strong className="text-kumo-default">
 							{mailboxToDelete?.email}
 						</strong>
-						? This action cannot be undone.
-					</Dialog.Description>
+						? This action cannot be undone.</>}
+					/>
 					<div className="flex justify-end gap-2">
 						<Dialog.Close
 							render={(props) => (
@@ -401,7 +400,7 @@ export default function HomeRoute() {
 							Delete
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</div>
 	);

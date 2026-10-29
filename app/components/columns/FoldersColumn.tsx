@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, Input, useKumoToastManager } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import {
 	ArchiveIcon,
 	AlarmIcon,
@@ -64,7 +65,7 @@ function FolderRow({
 	label: string;
 	count?: number;
 	muted?: boolean;
-	/** Reply Later reminders due (AVE-86): attention colour, glow and a "N due" pill. */
+	/** Reply Later reminders due (AVE-86): ink text, a breathing ink ring and an ink "N due" pill. */
 	attention?: number;
 }) {
 	const due = attention != null && attention > 0;
@@ -95,7 +96,7 @@ function FolderRow({
 			{due && (
 				<span
 					key={`due-${attention}`}
-					className="shrink-0 rounded-full bg-[var(--attention-soft)] px-1.5 text-2xs font-semibold leading-[16px] text-[var(--attention)] tabular-nums animate-reveal"
+					className="shrink-0 rounded-full bg-[var(--attention)] px-1.5 text-2xs font-semibold leading-[16px] text-[var(--bg)] tabular-nums animate-reveal"
 				>
 					{formatCount(attention)} due
 				</span>
@@ -240,8 +241,10 @@ export default function FoldersColumn() {
 			</div>
 
 			<Dialog.Root open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-4">Create tag</Dialog.Title>
+				<Modal size="sm">
+					<ModalHeader
+						title="Create tag"
+					/>
 					<form onSubmit={handleCreateTag} className="space-y-4">
 						<Input
 							label="Tag name"
@@ -263,7 +266,7 @@ export default function FoldersColumn() {
 							</Button>
 						</div>
 					</form>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</ColumnPane>
 	);

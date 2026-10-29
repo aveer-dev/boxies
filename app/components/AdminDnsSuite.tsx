@@ -11,6 +11,7 @@ import {
 	Text,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import {
 	ArrowClockwiseIcon,
 	CheckCircleIcon,
@@ -915,10 +916,10 @@ export function AdminDnsSuite({
 
 			{/* Add / Edit Record Dialog */}
 			<Dialog.Root open={isRecordModalOpen} onOpenChange={setIsRecordModalOpen}>
-				<Dialog size="lg" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-4">
-						{editingRecord ? "Edit DNS Record" : "Add DNS Record"}
-					</Dialog.Title>
+				<Modal size="lg">
+					<ModalHeader
+						title={<>{editingRecord ? "Edit DNS Record" : "Add DNS Record"}</>}
+					/>
 					<form onSubmit={handleSaveRecord} className="space-y-4">
 						{modalError && (
 							<div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400">
@@ -1050,7 +1051,7 @@ export function AdminDnsSuite({
 							</Button>
 						</div>
 					</form>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 
 			{/* Delete Confirmation Dialog */}
@@ -1058,17 +1059,15 @@ export function AdminDnsSuite({
 				open={Boolean(deleteTarget)}
 				onOpenChange={(open) => !open && setDeleteTarget(null)}
 			>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-2">
-						Delete DNS Record
-					</Dialog.Title>
-					<p className="text-sm text-kumo-subtle mb-5">
-						Are you sure you want to delete the {deleteTarget?.type} record for{" "}
+				<Modal size="sm">
+					<ModalHeader
+						title="Delete DNS Record"
+						description={<>Are you sure you want to delete the {deleteTarget?.type} record for{" "}
 						<span className="font-semibold text-kumo-default font-mono">
 							{deleteTarget?.name}
 						</span>
-						? This action cannot be undone.
-					</p>
+						? This action cannot be undone.</>}
+					/>
 					<div className="flex justify-end gap-2">
 						<Button
 							variant="secondary"
@@ -1085,20 +1084,18 @@ export function AdminDnsSuite({
 							{deleting ? "Deleting..." : "Delete"}
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 
 			{/* Domain Export Modal */}
 			<Dialog.Root open={isExportModalOpen} onOpenChange={setIsExportModalOpen}>
-				<Dialog size="lg" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-1 flex items-center gap-2">
-						<DownloadSimpleIcon size={18} className="text-kumo-subtle" />
-						Export Domain Email Data (.mbox)
-					</Dialog.Title>
-					<p className="text-xs text-kumo-subtle mb-4">
-						Generate a standardized RFC 4155 .mbox archive of all mailboxes
-						under <span className="font-semibold text-kumo-default">{selectedDomain}</span>.
-					</p>
+				<Modal size="lg">
+					<ModalHeader
+						title={<><DownloadSimpleIcon size={18} className="text-kumo-subtle" />
+						Export Domain Email Data (.mbox)</>}
+						description={<>Generate a standardized RFC 4155 .mbox archive of all mailboxes
+						under <span className="font-semibold text-kumo-default">{selectedDomain}</span>.</>}
+					/>
 
 					{exportError && (
 						<div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400 mb-4">
@@ -1213,7 +1210,7 @@ export function AdminDnsSuite({
 							Close
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 
 			{/* Move DNS / Offboard Domain Modal */}
@@ -1221,15 +1218,13 @@ export function AdminDnsSuite({
 				open={isDecommissionModalOpen}
 				onOpenChange={setIsDecommissionModalOpen}
 			>
-				<Dialog size="lg" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-1 flex items-center gap-2 text-red-600 dark:text-red-400">
-						<WarningCircleIcon size={20} weight="fill" />
-						Move DNS / Offboard Domain
-					</Dialog.Title>
-					<p className="text-xs text-kumo-subtle mb-4">
-						Prepare <span className="font-semibold text-kumo-default">{selectedDomain}</span> for
-						DNS migration or registrar transfer.
-					</p>
+				<Modal size="lg">
+					<ModalHeader
+						title={<><span className="flex items-center gap-2 text-red-600 dark:text-red-400"><WarningCircleIcon size={20} weight="fill" />
+						Move DNS / Offboard Domain</span></>}
+						description={<>Prepare <span className="font-semibold text-kumo-default">{selectedDomain}</span> for
+						DNS migration or registrar transfer.</>}
+					/>
 
 					{preflightLoading ? (
 						<div className="flex justify-center py-10">
@@ -1474,7 +1469,7 @@ export function AdminDnsSuite({
 							</div>
 						</div>
 					)}
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 
 			{/* Add / Register Custom Domain Dialog */}
@@ -1489,13 +1484,11 @@ export function AdminDnsSuite({
 					}
 				}}
 			>
-				<Dialog size="lg" className="p-6">
-					<Dialog.Title className="text-base font-semibold text-kumo-default mb-1">
-						Add or Register Custom Domain
-					</Dialog.Title>
-					<Dialog.Description className="text-xs text-kumo-subtle mb-4">
-						Connect an existing domain with automated Cloudflare DNS & Email Routing, or register an available domain wholesale.
-					</Dialog.Description>
+				<Modal size="lg">
+					<ModalHeader
+						title="Add or Register Custom Domain"
+						description={<>Connect an existing domain with automated Cloudflare DNS & Email Routing, or register an available domain wholesale.</>}
+					/>
 
 					{addDomainError && (
 						<div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400 mb-4">
@@ -1600,7 +1593,7 @@ export function AdminDnsSuite({
 							</Button>
 						</div>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</div>
 	);

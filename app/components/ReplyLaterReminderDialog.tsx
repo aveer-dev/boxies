@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { AlarmIcon, CalendarBlankIcon, TrashIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
@@ -23,7 +24,8 @@ const MAX_AHEAD_MS = 366 * 24 * 60 * 60 * 1000;
  * "Remind me" picker for Reply Later (AVE-86): Later today / Tomorrow / Next
  * week, or a custom date and time. Twins: iOS `ReplyLaterReminderSheet`,
  * Android `ReplyLaterReminderSheet`. Mounted once per mailbox; opened through
- * `useUIStore.openReminderPicker`.
+ * `useUIStore.openReminderPicker`. Grey-scale only, on the shared `Modal`
+ * sheet (the pop-out look).
  */
 export default function ReplyLaterReminderDialog() {
 	const { mailboxId } = useParams<{ mailboxId: string }>();
@@ -59,19 +61,18 @@ export default function ReplyLaterReminderDialog() {
 
 	return (
 		<Dialog.Root open={email != null} onOpenChange={(open) => !open && close()}>
-			<Dialog size="sm" className="p-2">
-				<div className="px-3 pt-3 pb-2">
-					<Dialog.Title className="text-base font-semibold">
-						{pending ? "Change reminder" : "Remind me"}
-					</Dialog.Title>
-					<p className="mt-0.5 text-xs text-kumo-subtle">
-						{pending
+			<Modal size="sm">
+				<ModalHeader
+					className="mb-3"
+					title={pending ? "Change reminder" : "Remind me"}
+					description={
+						pending
 							? `Reminder set for ${formatReminderLong(pending, now)}`
-							: "It comes back to the top of your Inbox, unread, and we'll notify you."}
-					</p>
-				</div>
+							: "It comes back to the top of your Inbox, unread, and we'll notify you."
+					}
+				/>
 
-				<ul className="flex flex-col" aria-label="Reminder times">
+				<ul className="-mx-3 flex flex-col" aria-label="Reminder times">
 					{presets.map((p) => (
 						<li key={p.id}>
 							<button
@@ -100,7 +101,7 @@ export default function ReplyLaterReminderDialog() {
 
 				{custom && (
 					<form
-						className="flex items-center gap-2 px-3 pb-2 pt-1 animate-reveal"
+						className="flex items-center gap-2 pb-1 pt-2 animate-reveal"
 						onSubmit={(e) => {
 							e.preventDefault();
 							if (customValid && customAt) choose(customAt);
@@ -122,18 +123,20 @@ export default function ReplyLaterReminderDialog() {
 
 				{pending && (
 					<>
-						<div className="mx-3 my-1 h-px bg-kumo-line" />
+						<div className="my-1 h-px bg-kumo-line" />
+						<div className="-mx-3">
 						<button
 							type="button"
 							onClick={() => choose(null)}
-							className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-kumo-danger transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
+							className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-kumo-default transition-colors hover:bg-kumo-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)]"
 						>
-							<TrashIcon size={16} className="shrink-0" />
+							<TrashIcon size={16} className="shrink-0 text-kumo-subtle" />
 							Remove reminder
 						</button>
+						</div>
 					</>
 				)}
-			</Dialog>
+			</Modal>
 		</Dialog.Root>
 	);
 }

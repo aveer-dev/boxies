@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { downloadFile } from "~/lib/utils";
 import type { Email } from "~/types";
 
@@ -71,17 +72,10 @@ export default function EmailPanelDialogs({
 					if (!open) onCloseSource();
 				}}
 			>
-				<Dialog size="lg">
-					<Dialog.Title>
-						Email Source Headers
-						{sourceViewEmail && (
-							<span className="text-sm font-normal text-kumo-subtle ml-2">
-								{sourceViewEmail.subject}
-							</span>
-						)}
-					</Dialog.Title>
+				<Modal size="lg">
+					<ModalHeader title="Email source headers" description={sourceViewEmail?.subject || undefined} />
 					{sourceViewEmail && (
-						<div className="mt-4 max-h-[60vh] overflow-y-auto">
+						<div className="max-h-[60vh] overflow-y-auto">
 							<table className="w-full text-sm border-collapse">
 								<tbody>
 									{sourceHeaders.map((header, idx) => (
@@ -106,14 +100,7 @@ export default function EmailPanelDialogs({
 							)}
 						</div>
 					)}
-					<div className="flex justify-end mt-4">
-						<Dialog.Close>
-							<Button variant="secondary" size="sm">
-								Close
-							</Button>
-						</Dialog.Close>
-					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 
 			<Dialog.Root
@@ -122,10 +109,10 @@ export default function EmailPanelDialogs({
 					if (!open) onClosePreview();
 				}}
 			>
-				<Dialog size="lg">
-					<Dialog.Title>{previewImage?.filename}</Dialog.Title>
+				<Modal size="lg">
+					<ModalHeader title={previewImage?.filename} />
 					{previewImage && (
-						<div className="mt-4 flex flex-col items-center justify-center bg-kumo-tint/30 rounded-lg p-4 min-h-[200px]">
+						<div className="flex flex-col items-center justify-center bg-kumo-tint/30 rounded-lg p-4 min-h-[200px]">
 							<img
 								src={previewImage.url}
 								alt={previewImage.filename}
@@ -133,7 +120,7 @@ export default function EmailPanelDialogs({
 							/>
 						</div>
 					)}
-					<div className="flex justify-between items-center mt-4">
+					<div className="flex justify-end items-center mt-4">
 						<Button
 							variant="secondary"
 							size="sm"
@@ -145,13 +132,8 @@ export default function EmailPanelDialogs({
 						>
 							Download Original
 						</Button>
-						<Dialog.Close>
-							<Button variant="primary" size="sm">
-								Close
-							</Button>
-						</Dialog.Close>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</>
 	);
