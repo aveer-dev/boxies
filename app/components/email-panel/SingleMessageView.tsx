@@ -3,13 +3,16 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { PaperclipIcon, ShieldCheckIcon } from "@phosphor-icons/react";
+import type { ReactNode } from "react";
 import EmailAttachmentList from "~/components/EmailAttachmentList";
 import EmailIframe from "~/components/EmailIframe";
 import { formatDetailDate, hasFileAttachment, rewriteInlineImages } from "~/lib/utils";
+import { blocksRemoteImages } from "shared/remote-images";
 import { displaySenderName } from "shared/sender";
 import type { Email } from "~/types";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
 import { isAuthSpoofed } from "~/lib/email-auth";
+import { SpamReasonLine, UnverifiedSenderBanner } from "./SenderTrustNotices";
 
 function senderInitials(name: string): string {
 	const words = name.replace(/[<>"]/g, "").trim().split(/[\s@._-]+/).filter(Boolean);
@@ -21,12 +24,15 @@ interface SingleMessageViewProps {
 	email: Email;
 	mailboxId?: string;
 	onPreviewImage: (url: string, filename: string) => void;
+	/** Notes to self on this message (AVE-60), above its body. */
+	notes?: ReactNode;
 }
 
 export default function SingleMessageView({
 	email,
 	mailboxId,
 	onPreviewImage,
+	notes,
 }: SingleMessageViewProps) {
 	const senderName = displaySenderName(email);
 	const deliveryFailed = isDeliveryFailure(email.delivery_status);
@@ -49,6 +55,7 @@ export default function SingleMessageView({
 								<div className="text-xs text-kumo-destructive font-medium">Spoofed</div>
 							)}
 							<div className="text-xs text-kumo-subtle">To: {email.recipient}</div>
+							<SpamReasonLine email={email} className="mt-1" />
 						</div>
 					</div>
 					<span className="text-xs text-kumo-subtle shrink-0 flex items-center gap-1.5">
@@ -76,6 +83,8 @@ export default function SingleMessageView({
 				</div>
 			)}
 
+			<UnverifiedSenderBanner email={email} className="mx-4 mt-3 md:mx-6" />
+
 			{spoofed && (
 				<div className="mx-4 mt-3 md:mx-6 rounded-md border border-kumo-destructive/40 bg-kumo-destructive/10 px-3 py-2 text-xs text-kumo-default" role="status">
 					<div className="font-medium text-kumo-destructive">This sender isn’t authenticated.</div>
@@ -92,6 +101,8 @@ export default function SingleMessageView({
 				</div>
 			)}
 
+			{notes && <div className="mx-4 mt-3 md:mx-6 max-h-[40%] overflow-y-auto shrink-0">{notes}</div>}
+
 			<div className="flex-1 min-h-0">
 				<EmailIframe
 					body={rewriteInlineImages(
@@ -100,6 +111,7 @@ export default function SingleMessageView({
 						email.id,
 						email.attachments,
 					)}
+					blockRemoteImages={blocksRemoteImages(email.folder_id)}
 				/>
 			</div>
 

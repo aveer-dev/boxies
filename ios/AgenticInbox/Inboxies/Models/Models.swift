@@ -153,7 +153,13 @@ struct MailboxSettings: Codable, Hashable {
     var signature: SignatureSettings?
     var autoReply: AutoReplySettings?
     var filters: [InboxFilterRule]?
+    /// Screener for first-time senders. Absent means on (AVE-104).
+    var screener: ScreenerSettings?
     var acl: MailboxAcl?
+}
+
+struct ScreenerSettings: Codable, Hashable {
+    var enabled: Bool?
 }
 
 /// Read-only: the server derives it from mailbox members. Sharing changes go
@@ -320,6 +326,53 @@ struct UpsertSenderPreferenceResponse: Codable {
     var refiledCount: Int
 }
 
+/// Explicit allow / block rule (Settings → Senders, AVE-97). `kind` is
+/// `address` or `domain`; `verdict` is `allow` or `block`.
+struct SenderRule: Codable, Hashable, Identifiable {
+    var id: String
+    var kind: String
+    var value: String
+    var verdict: String
+    var source: String
+    var createdAt: String
+    var updatedAt: String
+    var lastMatchedAt: String?
+    var matchCount: Int?
+}
+
+struct SenderRulesResponse: Codable {
+    var rules: [SenderRule]
+}
+
+struct SenderRuleResponse: Codable {
+    var rule: SenderRule
+}
+
+/// Today's AI usage for one mailbox (`GET /mailboxes/:id/ai-usage`, AVE-45).
+/// Counters reset at `resetsAt` (next UTC midnight).
+struct AIUsage: Codable, Equatable {
+    struct Counter: Codable, Equatable {
+        var used: Int
+        var limit: Int
+    }
+
+    var tier: String
+    var day: String
+    var resetsAt: String
+    var chat: Counter
+    var inbound: Counter
+
+    var isPaid: Bool { tier != "free" }
+
+    var resetsAtDate: Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: resetsAt) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: resetsAt)
+    }
+}
+
 struct ForwardingSettings: Codable, Hashable {
     var enabled: Bool?
     var email: String?
@@ -482,9 +535,54 @@ struct EmailAuth: Codable, Hashable {
     var envelopeFrom: String?
     var aligned: Bool?
     var spoofed: Bool?
+    /// `verified` | `unverified` | `failed` (AVE-92). Absent on older snapshots.
+    var authTier: String? = nil
     var source: String?
 
-    var isSpoofed: Bool { spoofed == true }
+    var isSpoofed: Bool { spoofed == true || authTier == "failed" }
+}
+
+/// `POST /emails/:id/move` response. Spam verdicts carry the sender lesson
+/// (AVE-95), the one-click unsubscribe outcome (AVE-99), and the retroactive
+/// rescue / refile count plus an undo token (AVE-98).
+struct MoveEmailResponse: Decodable, Equatable {
+    var status: String?
+    var senderStatus: String?
+    var unsubscribe: String?
+    var rescuedCount: Int?
+    var undoToken: String?
+}
+
+/// Toast copy for a move that crossed Spam (docs/spam-management-plan.md §6).
+/// Twins: web `app/lib/spam-verdict.ts`, Android `SpamVerdictToast`.
+enum SpamVerdictToast {
+    private static let folderNames: [String: String] = [
+        "inbox": "Inbox",
+        "promotions": "Promotions",
+        "updates": "Updates",
+        "archive": "Archive",
+    ]
+
+    /// "Moved to Inbox · future mail from ada@x will skip Spam · 3 more moved",
+    /// "Reported as spam · 3 more moved". Nil when the move taught nothing.
+    static func title(for response: MoveEmailResponse, folderId: String, sender: String?) -> String? {
+        guard let status = response.senderStatus else { return nil }
+        let count = response.rescuedCount ?? 0
+        let more = count > 0 ? " · \(count) more moved" : ""
+        if status == "rejected" {
+            let base: String
+            switch response.unsubscribe {
+            case "sent": base = "Reported as spam and unsubscribed"
+            case "failed": base = "Reported as spam · couldn't unsubscribe"
+            default: base = "Reported as spam"
+            }
+            return base + more
+        }
+        let moved = folderNames[folderId].map { "Moved to \($0)" } ?? "Moved out of Spam"
+        let trimmed = sender?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let skip = trimmed.isEmpty ? "" : " · future mail from \(trimmed) will skip Spam"
+        return moved + skip + more
+    }
 }
 
 struct Email: Identifiable, Codable, Hashable {
@@ -502,6 +600,10 @@ struct Email: Identifiable, Codable, Hashable {
     var starred: Bool
     var replyLater: Bool = false
     var replyLaterAt: String? = nil
+    /// Pending Reply Later reminder, UTC ISO 8601 (AVE-86). Nil when none is set.
+    var replyLaterRemindAt: String? = nil
+    /// When the reminder fired, UTC ISO 8601. Unread + in Reply Later + this set = due.
+    var replyLaterRemindedAt: String? = nil
     var body: String?
     var snippet: String?
     var inReplyTo: String?
@@ -526,6 +628,20 @@ struct Email: Identifiable, Codable, Hashable {
     var aliasEmail: String? = nil
     /// False when that private email is paused, expired or deleted (detail payloads only).
     var aliasActive: Bool? = nil
+    /// Notes to self (threaded list rows only; the signed-in user's own notes).
+    var hasStickyNote: Bool? = nil
+    /// Latest sticky note's markdown, trimmed to 200 characters by the server.
+    var stickyNoteText: String? = nil
+    /// How many private notes sit on single messages of this conversation.
+    var inlineNoteCount: Int? = nil
+    /// Auth tier stored at receive time (`verified` | `unverified` | `failed`).
+    var authTier: String? = nil
+    /// Why inbound mail was filed where it was (machine code, see `SpamReason`).
+    var classificationReason: String? = nil
+    /// Sender rule that decided the folder (null until sender rules exist).
+    var matchedRuleId: String? = nil
+    /// RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99).
+    var oneClickUnsubscribe: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -547,9 +663,36 @@ struct Email: Identifiable, Codable, Hashable {
         case listSection = "list_section"
         case replyLater = "reply_later"
         case replyLaterAt = "reply_later_at"
+        case replyLaterRemindAt = "reply_later_remind_at"
+        case replyLaterRemindedAt = "reply_later_reminded_at"
         case aliasId = "alias_id"
         case aliasEmail = "alias_email"
         case aliasActive = "alias_active"
+        case hasStickyNote = "has_sticky_note"
+        case stickyNoteText = "sticky_note_text"
+        case inlineNoteCount = "inline_note_count"
+        case authTier = "auth_tier"
+        case classificationReason = "classification_reason"
+        case matchedRuleId = "matched_rule_id"
+        case oneClickUnsubscribe = "one_click_unsubscribe"
+    }
+
+    /// Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
+    /// server's flag wins; cached rows fall back to the stored headers (the
+    /// Worker re-checks before it sends anything).
+    var offersOneClickUnsubscribe: Bool {
+        if let oneClickUnsubscribe { return oneClickUnsubscribe }
+        guard let post = Self.headerValue(fromRawHeaders: rawHeaders, keys: ["list-unsubscribe-post"]),
+              post.replacingOccurrences(of: " ", with: "").lowercased().contains("list-unsubscribe=one-click"),
+              let list = Self.headerValue(fromRawHeaders: rawHeaders, keys: ["list-unsubscribe"])
+        else { return false }
+        return list.lowercased().contains("<https://")
+    }
+
+    /// The conversation key notes are filed under: the thread id, or the email's own id.
+    var noteThreadKey: String {
+        if let threadId, !threadId.isEmpty { return threadId }
+        return id
     }
 
     /// Header rows for View Source, matching web `getSourceHeaders`.
@@ -748,7 +891,18 @@ struct Email: Identifiable, Codable, Hashable {
         folderId == "draft" || folderName?.lowercased() == "drafts" || folderName?.lowercased() == "draft"
     }
 
-    var isSpoofed: Bool { auth?.isSpoofed == true }
+    var isSpoofed: Bool { auth?.isSpoofed == true || authTier == "failed" }
+
+    /// Stored tier, else the tier inside the auth snapshot (cached rows).
+    var effectiveAuthTier: String? { authTier ?? auth?.authTier }
+
+    /// "Unverified sender" banner — any folder, allowed senders included.
+    var showsUnverifiedBanner: Bool { effectiveAuthTier == "unverified" }
+
+    /// One line explaining why this is in Spam / Screened out, if we know.
+    var spamReasonLine: String? {
+        SpamReason.line(for: classificationReason, folderId: folderId)
+    }
 
     var isDeliveryFailure: Bool { DeliveryStatusHelpers.isFailure(deliveryStatus) }
 
@@ -828,6 +982,24 @@ struct Email: Identifiable, Codable, Hashable {
         return result
     }
 
+    /// Pending reminder time, when this mail sits in Reply Later with one set (AVE-86).
+    var replyLaterRemindDate: Date? {
+        guard replyLater else { return nil }
+        return ReplyLaterReminder.parseISO(replyLaterRemindAt)
+    }
+
+    /// The reminder fired and the mail is still unread in Reply Later: it needs attention.
+    var isReplyLaterDue: Bool {
+        replyLater && replyLaterRemindedAt != nil && !read
+    }
+
+    /// Inbox order key: a fired reminder lifts the conversation to the top of New, so
+    /// sort by the later of the mail's date and `reply_later_reminded_at` (AVE-86).
+    var inboxSortKey: String {
+        guard let reminded = replyLaterRemindedAt, reminded > date else { return date }
+        return reminded
+    }
+
     var parsedDate: Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -857,6 +1029,9 @@ extension Email {
         starred = c.decodeLenientBool(forKey: .starred) ?? false
         replyLater = c.decodeLenientBool(forKey: .replyLater) ?? false
         replyLaterAt = try c.decodeIfPresent(String.self, forKey: .replyLaterAt)
+        // Older Workers omit both reminder fields (AVE-86): missing = none.
+        replyLaterRemindAt = try? c.decodeIfPresent(String.self, forKey: .replyLaterRemindAt)
+        replyLaterRemindedAt = try? c.decodeIfPresent(String.self, forKey: .replyLaterRemindedAt)
         body = try c.decodeIfPresent(String.self, forKey: .body)
         snippet = try c.decodeIfPresent(String.self, forKey: .snippet)
         inReplyTo = try c.decodeIfPresent(String.self, forKey: .inReplyTo)
@@ -876,7 +1051,54 @@ extension Email {
         deliveryError = try c.decodeIfPresent(String.self, forKey: .deliveryError)
         listSection = try c.decodeIfPresent(String.self, forKey: .listSection)
         aliasId = try c.decodeIfPresent(String.self, forKey: .aliasId)
+        aliasEmail = try? c.decodeIfPresent(String.self, forKey: .aliasEmail)
+        aliasActive = c.decodeLenientBool(forKey: .aliasActive)
+        authTier = try? c.decodeIfPresent(String.self, forKey: .authTier)
+        classificationReason = try? c.decodeIfPresent(String.self, forKey: .classificationReason)
+        matchedRuleId = try? c.decodeIfPresent(String.self, forKey: .matchedRuleId)
+        oneClickUnsubscribe = c.decodeLenientBool(forKey: .oneClickUnsubscribe)
+        hasStickyNote = c.decodeLenientBool(forKey: .hasStickyNote)
+        stickyNoteText = try? c.decodeIfPresent(String.self, forKey: .stickyNoteText)
+        inlineNoteCount = try? c.decodeIfPresent(Int.self, forKey: .inlineNoteCount)
     }
+}
+
+// MARK: - Notes to self
+
+/// A private note to self on a conversation (`/threads/:threadId/notes`).
+/// Only its author ever sees it.
+/// - `sticky`: pinned to the whole conversation; floats over the reader and can be dragged.
+/// - `inline`: attached to one message (`emailId`); shown in line under it.
+struct ThreadNote: Identifiable, Codable, Hashable {
+    let id: String
+    /// Conversation key: the emails' `thread_id`, or the email id for mail without one.
+    let threadId: String
+    var emailId: String?
+    /// `sticky` | `inline`.
+    var noteType: String
+    /// Markdown.
+    var body: String
+    /// Points from the top-left of the reader's message area (sticky notes only).
+    var posX: Double?
+    var posY: Double?
+    var createdAt: String
+    var updatedAt: String
+
+    static let stickyType = "sticky"
+    static let inlineType = "inline"
+    /// Server limit on a note's markdown, in characters.
+    static let bodyMax = 10_000
+
+    var isSticky: Bool { noteType == Self.stickyType }
+
+    var savedPosition: CGPoint? {
+        guard let posX, let posY, posX.isFinite, posY.isFinite else { return nil }
+        return CGPoint(x: posX, y: posY)
+    }
+}
+
+struct ThreadNotesResponse: Decodable {
+    let notes: [ThreadNote]
 }
 
 extension KeyedDecodingContainer {
@@ -1891,4 +2113,30 @@ struct CreateAliasResponse: Codable {
     var alias: MaskedAlias
 }
 
+/// Copy for `emails.classification_reason` codes. Mirrors web
+/// `shared/spam-reason.ts` and Android `SpamReason.kt` (parity test:
+/// `android/test/spam-reason-parity.test.mjs`).
+enum SpamReason {
+    static let unverifiedTitle = "Unverified sender"
 
+    static func line(for reason: String?, folderId: String?) -> String? {
+        guard folderId == "spam" || folderId == "screened_out", let reason else { return nil }
+        switch reason {
+        case "auth-failed": return "Failed sender authentication"
+        case "spam-headers": return "Flagged by spam filter"
+        case "ai-spam": return "Marked as spam by AI check"
+        case "sender-rejected": return "You blocked this sender"
+        default: return nil
+        }
+    }
+
+    static func unverifiedDetail(sender: String) -> String {
+        let domain = sender.split(separator: "@").last.map {
+            $0.trimmingCharacters(in: CharacterSet(charactersIn: "> "))
+        } ?? ""
+        guard sender.contains("@"), !domain.isEmpty else {
+            return "We couldn’t confirm who sent this message."
+        }
+        return "We couldn’t confirm this message really came from \(domain)."
+    }
+}

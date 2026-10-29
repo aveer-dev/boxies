@@ -45,11 +45,14 @@ import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.automirrored.outlined.StickyNote2
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -94,6 +97,7 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
 import co.inboxies.app.models.MailAddress
+import co.inboxies.app.models.SpamReason
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.EmailActionAvailability
 import co.inboxies.app.theme.AppThemeDims
@@ -110,7 +114,13 @@ import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuHeader
 import co.inboxies.app.ui.components.InboxiesMenuItem
+import co.inboxies.app.ui.notes.InlineNotesView
+import co.inboxies.app.ui.notes.NoteEditorSheet
+import co.inboxies.app.ui.notes.NoteEditorTarget
+import co.inboxies.app.ui.notes.StickyNotesLayer
 import co.inboxies.app.ui.search.SearchView
+import co.inboxies.app.models.ThreadNote
+import co.inboxies.app.services.ThreadNoteGroups
 import co.inboxies.app.util.DeliveryStatus
 import co.inboxies.app.utils.DateUtils
 import kotlinx.coroutines.launch
@@ -153,6 +163,8 @@ fun EmailDetailView(
     }
     val readOnly by app.selectedMailboxReadOnly.collectAsState()
     val availability = EmailActionAvailability(source, readOnly)
+    /** Notes are written for a received conversation; read-only mailboxes can't write. */
+    val canWriteNotes = !readOnly && !current.isDraft && current.folderId != "draft"
     val selfAddress = app.selectedMailbox?.email
 
     var expandedMessageIds by remember { mutableStateOf(setOf<String>()) }
@@ -162,6 +174,22 @@ fun EmailDetailView(
     var personSearchQuery by remember { mutableStateOf<String?>(null) }
     var showDeleteMenu by remember { mutableStateOf(false) }
     var contextMenuMessage by remember { mutableStateOf<Email?>(null) }
+    // Notes to self: the editor sheet and the note waiting on a delete confirmation.
+    var noteEditor by remember { mutableStateOf<NoteEditorTarget?>(null) }
+    var noteToDelete by remember { mutableStateOf<ThreadNote?>(null) }
+    val threadNotes by app.threadNotes.collectAsState()
+    val threadNotesKey by app.threadNotesKey.collectAsState()
+    val selectedMailboxId by app.selectedMailboxId.collectAsState()
+    /** Conversation key notes are filed under. */
+    val noteThreadKey = current.noteThreadKey
+    val noteGroups = remember(threadNotes, threadNotesKey, selectedMailboxId, noteThreadKey) {
+        val mailboxId = selectedMailboxId
+        if (mailboxId != null && threadNotesKey == app.threadNotesStoreKey(mailboxId, noteThreadKey)) {
+            ThreadNoteGroups.of(threadNotes)
+        } else {
+            ThreadNoteGroups.Empty
+        }
+    }
 
     val subjectText = current.subject.ifBlank { "(no subject)" }
     val messages = thread.ifEmpty { listOf(current) }
@@ -179,6 +207,10 @@ fun EmailDetailView(
 
     LaunchedEffect(loading, messages.map { it.id }.joinToString()) {
         if (!loading) seedExpandedMessages()
+    }
+
+    LaunchedEffect(noteThreadKey, selectedMailboxId) {
+        app.loadThreadNotes(noteThreadKey)
     }
 
     val detailTags = remember(current, messages.size) {
@@ -287,6 +319,13 @@ fun EmailDetailView(
                         },
                     )
                     Spacer(modifier = Modifier.weight(1f))
+                    if (canWriteNotes) {
+                        HomeChromeToolbarButton(
+                            icon = Icons.AutoMirrored.Outlined.StickyNote2,
+                            contentDescription = "Add sticky note",
+                            onClick = { noteEditor = NoteEditorTarget.NewSticky(noteThreadKey) },
+                        )
+                    }
                     HomeChromeToolbarCluster {
                         HomeChromeToolbarClusterItem(
                             icon = Icons.Outlined.KeyboardArrowUp,
@@ -383,118 +422,162 @@ fun EmailDetailView(
             }
         },
     ) { padding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState()),
+                .padding(padding),
         ) {
-            if (isScreenerEmail && !readOnly) {
-                ScreenerTriageBar(
-                    email = current,
-                    onDone = onClose,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                if (isScreenerEmail && !readOnly) {
+                    ScreenerTriageBar(
+                        email = current,
+                        onDone = onClose,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+
+                TagsRow(
+                    tags = detailTags,
+                    starred = current.starred,
+                    loading = loading && detailTags.isEmpty(),
+                    onToggleStar = { scope.launch { app.toggleStar(current) } },
                 )
-            }
 
-            TagsRow(
-                tags = detailTags,
-                starred = current.starred,
-                loading = loading && detailTags.isEmpty(),
-                onToggleStar = { scope.launch { app.toggleStar(current) } },
-            )
-
-            if (loading && messages.isEmpty()) {
-                DetailSkeleton()
-            } else {
-                messages.forEachIndexed { index, message ->
-                    if (index > 0) {
-                        HorizontalDivider(thickness = 1.dp, color = colors.line)
-                    }
-                    if (message.isDraft) {
-                        DraftMessageRow(
-                            message = message,
-                            onOpen = { scope.launch { app.openDraft(message) } },
-                            onDelete = { scope.launch { app.deleteThreadDraft(message) } },
-                            readOnly = readOnly,
-                        )
-                    } else {
-                        val isExpanded = expandedMessageIds.contains(message.id)
-                        val recipientsExpanded = expandedRecipientIds.contains(message.id)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(colors.background)
-                                .then(
-                                    if (!isExpanded) {
-                                        Modifier.combinedClickable(
-                                            onClick = {},
-                                            onLongClick = { contextMenuMessage = message },
-                                        )
-                                    } else {
-                                        Modifier
-                                    },
-                                )
-                                .padding(horizontal = 16.dp, vertical = 16.dp),
-                        ) {
-                            MessagePeopleHeader(
+                if (loading && messages.isEmpty()) {
+                    DetailSkeleton()
+                } else {
+                    messages.forEachIndexed { index, message ->
+                        if (index > 0) {
+                            HorizontalDivider(thickness = 1.dp, color = colors.line)
+                        }
+                        if (message.isDraft) {
+                            DraftMessageRow(
                                 message = message,
-                                selfAddress = selfAddress,
-                                formattedDate = DateUtils.formatDetailDate(message.date),
-                                isRecipientsExpanded = recipientsExpanded,
-                                isBodyExpanded = isExpanded,
-                                onToggleRecipients = {
-                                    expandedRecipientIds = if (recipientsExpanded) {
-                                        expandedRecipientIds - message.id
-                                    } else {
-                                        expandedRecipientIds + message.id
-                                    }
-                                },
-                                onToggleBody = {
-                                    expandedMessageIds = if (isExpanded) {
-                                        expandedMessageIds - message.id
-                                    } else {
-                                        expandedMessageIds + message.id
-                                    }
-                                },
-                                onShowActions = { messageSheetEmail = message },
-                                onSearch = { personSearchQuery = it },
+                                onOpen = { scope.launch { app.openDraft(message) } },
+                                onDelete = { scope.launch { app.deleteThreadDraft(message) } },
+                                readOnly = readOnly,
                             )
-
-                            if (message.isSpoofed) {
-                                SpoofWarningBanner(
-                                    modifier = Modifier.padding(top = 10.dp),
-                                )
-                            }
-
-                            if (message.isDeliveryFailure) {
-                                DeliveryFailureBanner(
-                                    title = message.deliveryStatusLabel
-                                        ?: DeliveryStatus.label(message.deliveryStatus),
-                                    detail = message.deliveryError,
-                                    modifier = Modifier.padding(top = 10.dp),
-                                )
-                            }
-
-                            AnimatedVisibility(
-                                visible = isExpanded,
-                                enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 6 },
-                                exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { 6 },
-                            ) {
-                                Column {
-                                    EmailBodyView(
-                                        email = message,
-                                        modifier = Modifier.padding(top = 20.dp),
+                        } else {
+                            val isExpanded = expandedMessageIds.contains(message.id)
+                            val recipientsExpanded = expandedRecipientIds.contains(message.id)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(colors.background)
+                                    .then(
+                                        if (!isExpanded) {
+                                            Modifier.combinedClickable(
+                                                onClick = {},
+                                                onLongClick = { contextMenuMessage = message },
+                                            )
+                                        } else {
+                                            Modifier
+                                        },
                                     )
-                                    AttachmentListView(
-                                        email = message,
-                                        modifier = Modifier.padding(top = 20.dp),
+                                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                            ) {
+                                MessagePeopleHeader(
+                                    message = message,
+                                    selfAddress = selfAddress,
+                                    formattedDate = DateUtils.formatDetailDate(message.date),
+                                    isRecipientsExpanded = recipientsExpanded,
+                                    isBodyExpanded = isExpanded,
+                                    onToggleRecipients = {
+                                        expandedRecipientIds = if (recipientsExpanded) {
+                                            expandedRecipientIds - message.id
+                                        } else {
+                                            expandedRecipientIds + message.id
+                                        }
+                                    },
+                                    onToggleBody = {
+                                        expandedMessageIds = if (isExpanded) {
+                                            expandedMessageIds - message.id
+                                        } else {
+                                            expandedMessageIds + message.id
+                                        }
+                                    },
+                                    onShowActions = { messageSheetEmail = message },
+                                    onSearch = { personSearchQuery = it },
+                                )
+
+                                message.spamReasonLine?.let { reason ->
+                                    SpamReasonLine(
+                                        text = reason,
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+
+                                if (message.showsUnverifiedBanner) {
+                                    UnverifiedSenderBanner(
+                                        sender = message.sender,
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+
+                                if (message.isSpoofed) {
+                                    SpoofWarningBanner(
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+
+                                if (message.isDeliveryFailure) {
+                                    DeliveryFailureBanner(
+                                        title = message.deliveryStatusLabel
+                                            ?: DeliveryStatus.label(message.deliveryStatus),
+                                        detail = message.deliveryError,
+                                        modifier = Modifier.padding(top = 10.dp),
+                                    )
+                                }
+
+                                AnimatedVisibility(
+                                    visible = isExpanded,
+                                    enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 6 },
+                                    exit = fadeOut(tween(200)) + slideOutVertically(tween(200)) { 6 },
+                                ) {
+                                    Column {
+                                        EmailBodyView(
+                                            email = message,
+                                            modifier = Modifier.padding(top = 20.dp),
+                                        )
+                                        AttachmentListView(
+                                            email = message,
+                                            modifier = Modifier.padding(top = 20.dp),
+                                        )
+                                    }
+                                }
+
+                                // Notes to self on this message, in line under it.
+                                val inlineNotes = noteGroups.inlineByEmail[message.id].orEmpty()
+                                AnimatedVisibility(
+                                    visible = inlineNotes.isNotEmpty(),
+                                    enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { 4 },
+                                    exit = fadeOut(tween(200)),
+                                ) {
+                                    InlineNotesView(
+                                        notes = inlineNotes,
+                                        onEdit = { noteEditor = NoteEditorTarget.Edit(noteThreadKey, it) },
+                                        onDelete = { noteToDelete = it },
+                                        modifier = Modifier.padding(top = 14.dp),
                                     )
                                 }
                             }
                         }
                     }
                 }
+            }
+
+            // Sticky notes float over the message area (not the chrome) and can be dragged anywhere in it.
+            if (noteGroups.sticky.isNotEmpty()) {
+                StickyNotesLayer(
+                    notes = noteGroups.sticky,
+                    onEdit = { noteEditor = NoteEditorTarget.Edit(noteThreadKey, it) },
+                    onDelete = { noteToDelete = it },
+                    onMove = { note, point -> scope.launch { app.moveThreadNote(note, point.x, point.y) } },
+                )
             }
         }
     }
@@ -517,6 +600,35 @@ fun EmailDetailView(
             onDone = {
                 messageSheetEmail = null
                 if (app.selectedEmail.value == null) onClose()
+            },
+            onAddNote = if (canWriteNotes && !sheetEmail.isDraft) {
+                {
+                    messageSheetEmail = null
+                    noteEditor = NoteEditorTarget.NewInline(noteThreadKey, sheetEmail.id)
+                }
+            } else {
+                null
+            },
+        )
+    }
+
+    noteEditor?.let { target ->
+        NoteEditorSheet(target = target, onDismiss = { noteEditor = null })
+    }
+
+    noteToDelete?.let { note ->
+        AlertDialog(
+            onDismissRequest = { noteToDelete = null },
+            title = { Text("Delete this note?") },
+            text = { Text("It’s only visible to you and can’t be recovered.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    noteToDelete = null
+                    scope.launch { app.deleteThreadNote(note) }
+                }) { Text("Delete", color = colors.deepDarkRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { noteToDelete = null }) { Text("Cancel") }
             },
         )
     }
@@ -568,6 +680,14 @@ fun EmailDetailView(
             onMore = {
                 contextMenuMessage = null
                 messageSheetEmail = message
+            },
+            onAddNote = if (canWriteNotes) {
+                {
+                    contextMenuMessage = null
+                    noteEditor = NoteEditorTarget.NewInline(noteThreadKey, message.id)
+                }
+            } else {
+                null
             },
             onDelete = {
                 contextMenuMessage = null
@@ -703,6 +823,72 @@ private fun SpoofWarningBanner(modifier: Modifier = Modifier) {
     }
 }
 
+/** Warning tint shared by the delivery-failure and unverified-sender banners. */
+private val BannerWarningTint = Color(0xFFFFC107)
+
+/** One muted line saying why a message is in Spam / Screened out. */
+@Composable
+private fun SpamReasonLine(text: String, modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Outlined.Info,
+            contentDescription = null,
+            tint = colors.muted,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            text,
+            fontFamily = InterFontFamily,
+            fontSize = AppThemeDims.FontSize.meta,
+            color = colors.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** `unverified` mail: the From domain isn't proven, but it isn't spam either. */
+@Composable
+private fun UnverifiedSenderBanner(sender: String, modifier: Modifier = Modifier) {
+    val colors = inboxiesColors()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, BannerWarningTint.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+            .background(colors.pillFill)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            Icons.Outlined.ErrorOutline,
+            contentDescription = null,
+            tint = BannerWarningTint,
+            modifier = Modifier.size(15.dp),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                SpamReason.UNVERIFIED_TITLE,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.ink,
+            )
+            Text(
+                SpamReason.unverifiedDetail(sender),
+                fontFamily = InterFontFamily,
+                fontSize = AppThemeDims.FontSize.meta,
+                color = colors.muted,
+            )
+        }
+    }
+}
+
 @Composable
 private fun DeliveryFailureBanner(
     title: String,
@@ -710,7 +896,7 @@ private fun DeliveryFailureBanner(
     modifier: Modifier = Modifier,
 ) {
     val colors = inboxiesColors()
-    val warning = Color(0xFFFFC107)
+    val warning = BannerWarningTint
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -1164,6 +1350,7 @@ private fun MessageContextMenu(
     onToggleRead: () -> Unit,
     onMore: () -> Unit,
     onDelete: () -> Unit,
+    onAddNote: (() -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     val readOnly by LocalAppModel.current.selectedMailboxReadOnly.collectAsState()
@@ -1195,6 +1382,11 @@ private fun MessageContextMenu(
                     )
                 }
                 HorizontalDivider(color = colors.line)
+                if (onAddNote != null) {
+                    TextButton(onClick = onAddNote, modifier = Modifier.fillMaxWidth()) {
+                        Text("Add Private Note", modifier = Modifier.fillMaxWidth())
+                    }
+                }
                 TextButton(onClick = onMore, modifier = Modifier.fillMaxWidth()) {
                     Text("More Options…", modifier = Modifier.fillMaxWidth())
                 }

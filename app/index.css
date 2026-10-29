@@ -80,6 +80,9 @@
   --border-control: #d9d9d9;
   --accent: #171717;
   --accent-soft: rgba(0, 0, 0, 0.06);
+  /* Reply Later reminder due (AVE-86): the one warm hue (never blue). iOS AppTheme.attention, Android InboxiesColors.attention. */
+  --attention: #b45309;
+  --attention-soft: color-mix(in srgb, var(--attention) 12%, transparent);
   /* Focus: a mid gray, ≥3:1 on every surface. */
   --focus-ring: #8a8a8a;
   --glass-bg: color-mix(in srgb, var(--bg) 72%, transparent);
@@ -124,6 +127,20 @@
   color-scheme: light;
   /* Text size (Settings → Appearance, T): 1 = 100%. */
   --font-scale: 1;
+
+  /*
+   * Notes to self (AVE-60): a cool mint-sage paper, the one tinted surface in
+   * the monochrome UI, so notes read as the user's own and never as mail.
+   * Shared with iOS (AppTheme) and Android (InboxiesColors).
+   */
+  --note-paper: #edf7f4;
+  --note-paper-edge: #d3eae3;
+  --note-ink: #1f3a34;
+  --note-muted: #5e7d75;
+  --note-pin: #4f9a8a;
+  --note-shadow: 0 1px 1px rgba(20, 60, 50, 0.06), 0 4px 10px rgba(20, 60, 50, 0.08), 0 14px 28px -8px rgba(20, 60, 50, 0.18);
+  /* Picked up while dragging: a deeper, softer drop. */
+  --note-shadow-lifted: 0 2px 3px rgba(20, 60, 50, 0.08), 0 10px 20px rgba(20, 60, 50, 0.12), 0 28px 48px -12px rgba(20, 60, 50, 0.28);
 }
 
 /*
@@ -151,6 +168,8 @@
   --border-control: #363636;
   --accent: #ececec;
   --accent-soft: rgba(255, 255, 255, 0.08);
+  --attention: #f59e0b;
+  --attention-soft: color-mix(in srgb, var(--attention) 16%, transparent);
   --focus-ring: #7d7d7d;
   --glass-bg: color-mix(in srgb, #1b1b1b 74%, transparent);
   --glass-ring: inset 0 0 0 0.5px rgba(255, 255, 255, 0.06), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 16px rgba(0, 0, 0, 0.5);
@@ -160,6 +179,14 @@
   --color-kumo-elevated: #1a1a1a;
   --color-kumo-brand-hover: #d0d0d0;
   color-scheme: dark;
+
+  --note-paper: #1c2a27;
+  --note-paper-edge: #27403a;
+  --note-ink: #ddefea;
+  --note-muted: #8fb2a9;
+  --note-pin: #6cc2ae;
+  --note-shadow: 0 0 0 1px rgba(200, 240, 230, 0.06), 0 4px 12px rgba(0, 0, 0, 0.45), 0 16px 32px -8px rgba(0, 0, 0, 0.6);
+  --note-shadow-lifted: 0 0 0 1px rgba(200, 240, 230, 0.06), 0 10px 22px rgba(0, 0, 0, 0.5), 0 30px 52px -12px rgba(0, 0, 0, 0.7);
 }
 
 /*
@@ -321,6 +348,16 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   opacity: 1;
   transform: scale(1);
 }
+/* On a sticky note's paper the controls take the note's ink. */
+.note-paper .icon-btn {
+  color: var(--note-muted);
+}
+.note-paper .icon-btn:hover {
+  color: var(--note-ink);
+}
+.note-paper .icon-btn::before {
+  background: color-mix(in srgb, var(--note-ink) 9%, transparent);
+}
 .icon-btn > svg,
 .icon-motion svg {
   transition: transform 280ms var(--spring), rotate 280ms var(--spring);
@@ -422,8 +459,10 @@ button[class*="ring-kumo-hairline"]:focus-visible {
  * Popped-out message: a borderless sheet whose edges fade to transparent, so
  * it dissolves into the blurred canvas behind instead of ending on a line.
  * The padding keeps the content itself clear of the fade.
+ * Modals (`Modal.tsx`) are the same sheet, smaller, over the same blur.
  */
-.popout-sheet {
+.popout-sheet,
+.modal-sheet {
   --fade: 36px;
   padding: var(--fade);
   border-radius: 36px;
@@ -432,7 +471,37 @@ button[class*="ring-kumo-hairline"]:focus-visible {
     linear-gradient(to bottom, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
   mask-composite: intersect;
   -webkit-mask-composite: source-in;
+}
+.popout-sheet {
   transform-origin: top left;
+}
+.modal-sheet {
+  --fade: 28px;
+  border-radius: 32px;
+  transition:
+    opacity 220ms cubic-bezier(0.23, 1, 0.32, 1),
+    scale 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.modal-sheet[data-starting-style],
+.modal-sheet[data-ending-style] {
+  opacity: 0;
+  scale: 0.97;
+}
+.modal-backdrop {
+  transition: opacity 260ms ease-out;
+}
+.modal-backdrop[data-starting-style],
+.modal-backdrop[data-ending-style] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal-sheet {
+    transition: opacity 150ms ease-out;
+  }
+  .modal-sheet[data-starting-style],
+  .modal-sheet[data-ending-style] {
+    scale: none;
+  }
 }
 
 /* Context menu: grows out of the corner by the pointer; a chosen item blinks once. */
@@ -463,6 +532,32 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   }
 }
 
+/*
+ * Reply Later with a due reminder (AVE-86): a soft attention halo that
+ * breathes (~1.8s) behind a hairline ring kept faint, so the edge reads as
+ * glass rather than an outline. Reduced motion keeps the halo, still.
+ */
+.reply-later-due {
+  background: var(--attention-soft);
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--attention) 18%, transparent),
+    0 0 12px color-mix(in srgb, var(--attention) 22%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .reply-later-due {
+    animation: attention-breathe 1.8s ease-in-out infinite;
+  }
+}
+@keyframes attention-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--attention) 12%, transparent),
+      0 0 6px color-mix(in srgb, var(--attention) 12%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--attention) 22%, transparent),
+      0 0 16px color-mix(in srgb, var(--attention) 32%, transparent);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -478,10 +573,102 @@ button[class*="ring-kumo-hairline"]:focus-visible {
   display: none;
 }
 
-/* Toasts ride above the dock and its blur, not underneath them. */
+/*
+ * Toasts (AVE-134): a frosted-glass pill centred above the dock, the same
+ * glass as the dock itself. Kumo's <Toasty> renders them (Base UI toast);
+ * these rules restyle its markup so every `toastManager.add` call site picks
+ * the look up. Twins: iOS `InboxiesToast`, Android `InboxiesToast`.
+ * Layout: [icon] title / description … [action] [×]; swipe or × dismisses.
+ */
+:root {
+  --toast-max-w: 440px;
+  --toast-min-h: 52px;
+  --toast-radius: 26px;
+  /* Clear gap between the toast and the dock pill's top edge. */
+  --toast-bottom: calc(var(--dock-h) + 4px);
+}
+/* A service banner sits just above the dock; lift toasts over it. */
+:root:has([data-service-banner]) {
+  --toast-bottom: calc(var(--dock-h) + 52px);
+}
 [role="region"][aria-label="Notifications"] {
+  /* Toasts ride above the dock and its blur, not underneath them. */
   z-index: 60;
-  bottom: calc(var(--dock-h) + 4px);
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  bottom: var(--toast-bottom);
+  width: min(var(--toast-max-w), calc(100% - 2rem));
+}
+[role="region"][aria-label="Notifications"] > * {
+  min-height: var(--toast-min-h);
+  padding: 14px 48px 14px 18px;
+  border-radius: var(--toast-radius);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: var(--glass-ring), 0 12px 32px rgba(0, 0, 0, 0.1);
+  color: var(--text-primary);
+  transition:
+    transform 420ms var(--spring),
+    opacity 250ms var(--ease-out),
+    height 150ms var(--ease-out);
+}
+/* Kumo's opaque card backdrop would hide the glass. */
+[role="region"][aria-label="Notifications"] > * > div:empty {
+  display: none;
+}
+[role="region"][aria-label="Notifications"] > * > div > div:has([data-toast-title]) {
+  align-items: center;
+  gap: 10px;
+}
+[role="region"][aria-label="Notifications"] [data-toast-icon] {
+  width: 18px;
+  height: 18px;
+  margin-top: 0;
+}
+/* Title + description on the left, actions inline on the right. */
+[role="region"][aria-label="Notifications"] div:has(> [data-toast-title]) {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
+}
+[role="region"][aria-label="Notifications"] [data-toast-title],
+[role="region"][aria-label="Notifications"] div:has(> [data-toast-title]) > p {
+  grid-column: 1;
+}
+[role="region"][aria-label="Notifications"] [data-toast-title] {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+[role="region"][aria-label="Notifications"] div:has(> [data-toast-title]) > p {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+[role="region"][aria-label="Notifications"] div:has(> [data-toast-title]) > div {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  margin-top: 0;
+  padding: 0;
+  overflow: visible;
+}
+[role="region"][aria-label="Notifications"] div:has(> [data-toast-title]) > div button {
+  border-radius: 9999px;
+  font-weight: 600;
+}
+[role="region"][aria-label="Notifications"] [aria-label="Close"] {
+  top: 50%;
+  right: 14px;
+  width: 24px;
+  height: 24px;
+  border-radius: 9999px;
+  transform: translateY(-50%);
 }
 
 /* While a column edge is dragged: one cursor everywhere, no text selection,

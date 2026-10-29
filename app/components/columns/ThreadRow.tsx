@@ -5,9 +5,12 @@
 import {
 	type Icon,
 	type IconWeight,
+	AlarmIcon,
 	ArrowBendUpLeftIcon,
 	DotsThreeIcon,
+	LockSimpleIcon,
 	PaperclipIcon,
+	PushPinIcon,
 	StarIcon,
 } from "@phosphor-icons/react";
 import { type CSSProperties, type MouseEvent, type ReactNode, useState } from "react";
@@ -16,6 +19,8 @@ import { useContextMenu } from "~/components/ContextMenu";
 import { IconButton, Tip } from "~/components/IconButton";
 import { isAuthSpoofed } from "~/lib/email-auth";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
+import { formatReminderShort, isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
+import { notePreviewText } from "~/lib/thread-notes";
 import { getNonInlineAttachments, hasFileAttachment } from "~/lib/utils";
 import type { Email } from "~/types";
 
@@ -72,7 +77,10 @@ export default function ThreadRow({
 	);
 	const fileCount = getNonInlineAttachments(email.attachments).length;
 	const hasFiles = hasFileAttachment(email);
-	const showChips = Boolean(chips) || hasFiles;
+	// Notes to self (AVE-60): the sticky's text on the bottom row; inline notes as a count.
+	const stickyPreview = email.has_sticky_note ? notePreviewText(email.sticky_note_text) : "";
+	const inlineNotes = email.inline_note_count ?? 0;
+	const showChips = Boolean(chips) || hasFiles || inlineNotes > 0;
 
 	return (
 		<div
@@ -141,6 +149,7 @@ export default function ThreadRow({
 							</span>
 						</Tip>
 					)}
+					<ReminderChip email={email} />
 					{/* Date (and star) crossfade to the row's actions on hover / focus. */}
 					<span className="relative ml-auto shrink-0 flex items-center pl-2">
 						<span className="flex items-center transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0">
@@ -192,10 +201,47 @@ export default function ThreadRow({
 								{fileCount > 0 ? `${fileCount} file${fileCount === 1 ? "" : "s"}` : "Files"}
 							</span>
 						)}
+						{inlineNotes > 0 && (
+							<span className="inline-flex items-center gap-1 rounded-full bg-[var(--note-paper)] px-1.5 py-px text-xs text-[var(--note-muted)] shadow-[inset_0_0_0_1px_var(--note-paper-edge)]">
+								<LockSimpleIcon size={12} weight="bold" aria-hidden className="text-[var(--note-pin)]" />
+								{inlineNotes} private note{inlineNotes === 1 ? "" : "s"}
+							</span>
+						)}
+					</div>
+				)}
+				{stickyPreview && (
+					<div className="mt-2.5 flex items-start gap-1.5 rounded-lg rounded-br-[10px] bg-[var(--note-paper)] px-2.5 py-1.5 text-xs leading-[1.125rem] text-[var(--note-ink)] shadow-[inset_0_0_0_1px_var(--note-paper-edge)]">
+						<PushPinIcon size={12} weight="fill" aria-hidden className="mt-[3px] shrink-0 text-[var(--note-pin)]" />
+						<span className="sr-only">Note to self: </span>
+						<span className="min-w-0 line-clamp-2 break-words font-medium">{stickyPreview}</span>
 					</div>
 				)}
 			</div>
 		</div>
+	);
+}
+
+/** Reply Later reminder (AVE-86): pending time in muted ink, or "Due" in the attention colour (no fill). */
+function ReminderChip({ email }: { email: Email }) {
+	if (isReplyLaterDue(email)) {
+		return (
+			<span className="shrink-0 inline-flex items-center gap-1 text-xs font-medium leading-[18px] text-[var(--attention)]">
+				<AlarmIcon size={12} weight="fill" aria-hidden />
+				Due
+			</span>
+		);
+	}
+	const at = pendingReminder(email);
+	if (!at) return null;
+	const label = formatReminderShort(at);
+	return (
+		<span
+			className="shrink-0 inline-flex items-center gap-1 text-xs text-kumo-subtle tabular-nums"
+			aria-label={`Reminder ${label}`}
+		>
+			<AlarmIcon size={12} aria-hidden />
+			{label}
+		</span>
 	);
 }
 

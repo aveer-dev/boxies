@@ -2,6 +2,8 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { normalizedSubjectSql } from "../lib/conversation-index.ts";
+
 export interface Migration {
 	name: string;
 	sql: string;
@@ -629,5 +631,245 @@ export const mailboxMigrations: Migration[] = [
             );
         `),
 	},
+	{
+		// Spam explainability (AVE-94, docs/spam-management-plan.md §5).
+		// classification_reason: stable machine code for why inbound mail was
+		// filed where it was (see shared/spam-reason.ts). auth_tier: verified /
+		// unverified / failed at receive time. matched_rule_id: the sender rule
+		// that decided it — stays NULL until the sender_rules table lands.
+		// Additive only: three nullable columns, no backfill. Older rows read
+		// their tier from the `auth` JSON (MailboxDO #withDecodedAuth) and have
+		// no reason. Numbered 37: dev's highest is 36_delivery_recipients; the
+		// runner tracks by full name, so landing order doesn't matter.
+		name: "37_email_classification",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN classification_reason TEXT;
+            ALTER TABLE emails ADD COLUMN auth_tier TEXT;
+            ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;
+        `),
+	},
+	{
+		// Sender rules (AVE-96, docs/spam-management-plan.md §5, §7): the
+		// explicit per-mailbox allow / block list, by address or registrable
+		// domain (see workers/lib/sender-rules.ts). The §7 emails columns
+		// (classification_reason, matched_rule_id) already came with
+		// 37_email_classification.
+		// Backfill: every rejected Screener sender becomes an address block
+		// rule, so Settings → Blocked shows them. Allowed senders stay
+		// implicit trust in sender_triage (§7). Nothing is deleted or
+		// changed in sender_triage. INSERT OR IGNORE on UNIQUE (kind, value)
+		// makes the SQL safe to replay; the runner applies it once per DO.
+		// Numbered 38: 37_email_classification precedes it and
+		// 39_email_summaries (AVE-20) landed on dev first. The runner tracks
+		// by full name, so a DO that already ran 39 still applies 38.
+		name: "38_sender_rules",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS sender_rules (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK (kind IN ('address', 'domain')),
+                value TEXT NOT NULL,
+                verdict TEXT NOT NULL CHECK (verdict IN ('allow', 'block')),
+                source TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_matched_at TEXT,
+                match_count INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (kind, value)
+            );
+            CREATE INDEX IF NOT EXISTS idx_sender_rules_verdict_updated
+                ON sender_rules(verdict, updated_at);
+            INSERT OR IGNORE INTO sender_rules
+                (id, kind, value, verdict, source, created_at, updated_at)
+            SELECT lower(hex(randomblob(16))), 'address', lower(trim(sender)), 'block', 'screener',
+                   COALESCE(decided_at, updated_at), COALESCE(updated_at, decided_at)
+              FROM sender_triage
+             WHERE status = 'rejected'
+               AND instr(trim(sender), '@') > 1;
+        `),
+	},
+	{
+		// AI summaries (AVE-20): one row per thread (target_id = thread_id || id)
+		// or per message (quick summary). Generated lazily on open and reused
+		// until the thread gains a message. Additive only. Renumbered to 39: dev
+		// already has 37_email_classification and open PR #159 claims
+		// 38_sender_rules. The runner tracks migrations by name and the table
+		// is CREATE IF NOT EXISTS, so a DO that already ran an earlier name
+		// re-runs it harmlessly.
+		name: "39_email_summaries",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS email_summaries (
+                target_type TEXT NOT NULL CHECK (target_type IN ('thread', 'email')),
+                target_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                key_points TEXT NOT NULL DEFAULT '[]',
+                model TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                message_count INTEGER NOT NULL,
+                last_email_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (target_type, target_id)
+            );
+        `),
+	},
+	{
+		// Undo for Not spam / Report spam (AVE-98, docs/spam-management-plan.md
+		// §5, §7): one short-lived row per sender verdict, holding the sender's
+		// triage / preference / address-rule snapshot and the messages the
+		// verdict moved (see workers/lib/sender-verdict-undo.ts). Rows expire
+		// after minutes and are swept on every write. Additive only: a new
+		// table. Numbered 40: dev's highest is 39_email_summaries.
+		name: "40_sender_verdict_undo",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS sender_verdict_undo (
+                token TEXT PRIMARY KEY,
+                sender TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('allow', 'block')),
+                payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sender_verdict_undo_sender
+                ON sender_verdict_undo(sender);
+            CREATE INDEX IF NOT EXISTS idx_sender_verdict_undo_expires
+                ON sender_verdict_undo(expires_at);
+        `),
+	},
+	{
+		// LLM quotas (AVE-45, workers/lib/ai-quota.ts): one counter per UTC day
+		// and bucket ('chat' agent turns, 'inbound' classification + auto-draft
+		// runs). Rows older than a week are pruned on write. Additive only: a
+		// new table. Numbered 41: dev's highest is 40_sender_verdict_undo.
+		name: "41_ai_usage",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS ai_usage (
+                day TEXT NOT NULL,
+                bucket TEXT NOT NULL CHECK (bucket IN ('chat', 'inbound')),
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (day, bucket)
+            );
+        `),
+	},
+	{
+		// Conversation index for the threaded list (AVE-105, see
+		// workers/lib/conversation-index.ts). The list used to group every
+		// email in the mailbox on each page load; it now reads one
+		// `conversations` row per (folder, conversation).
+		// - conversations / conversation_members: the index and the per-folder
+		//   raw key → conversation map it is built from.
+		// - conversation_dirty: marks appended by the triggers below on every
+		//   insert, delete and list-relevant update of `emails`, in the same
+		//   transaction as the write; the DO recomputes affected rows from
+		//   `emails` and clears them.
+		// - two expression indexes on emails for legacy subject threading
+		//   (normalized subject buckets per folder).
+		// Backfill: one dirty mark per (thread, folder), which the DO alarm and
+		// list reads work through in batches; until none is left the list uses
+		// the old scan. Idempotent: re-seeding only re-marks rows that are then
+		// recomputed from `emails`.
+		// Additive only: new tables, indexes and triggers; no email data changes.
+		// Numbered 42: dev's highest is 41_ai_usage.
+		name: "42_conversation_index",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS conversations (
+                folder_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                latest_email_id TEXT NOT NULL,
+                latest_date TEXT,
+                thread_count INTEGER NOT NULL,
+                thread_unread_count INTEGER NOT NULL,
+                participants TEXT,
+                needs_reply INTEGER NOT NULL DEFAULT 0,
+                has_draft INTEGER NOT NULL DEFAULT 0,
+                is_new INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (folder_id, conversation_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversations_folder_date
+                ON conversations(folder_id, latest_date, conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_conversations_folder_new_date
+                ON conversations(folder_id, is_new, latest_date, conversation_id);
+            CREATE TABLE IF NOT EXISTS conversation_members (
+                folder_id TEXT NOT NULL,
+                raw_key TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                PRIMARY KEY (folder_id, raw_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_members_conversation
+                ON conversation_members(folder_id, conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_conversation_members_raw_key
+                ON conversation_members(raw_key);
+            CREATE TABLE IF NOT EXISTS conversation_dirty (
+                raw_key TEXT NOT NULL,
+                folder_id TEXT NOT NULL,
+                normalized_subject TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_dirty_raw_key
+                ON conversation_dirty(raw_key);
+            CREATE INDEX IF NOT EXISTS idx_emails_folder_subject_key
+                ON emails(folder_id, ${normalizedSubjectSql("subject")}, COALESCE(thread_id, id));
+            CREATE INDEX IF NOT EXISTS idx_emails_folder_subject_unthreaded
+                ON emails(folder_id, ${normalizedSubjectSql("subject")}) WHERE thread_id IS NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_insert
+            AFTER INSERT ON emails
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(NEW.thread_id, NEW.id), NEW.folder_id, ${normalizedSubjectSql("NEW.subject")});
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_delete
+            AFTER DELETE ON emails
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(OLD.thread_id, OLD.id), OLD.folder_id, ${normalizedSubjectSql("OLD.subject")});
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_update
+            AFTER UPDATE OF id, folder_id, thread_id, subject, date, read, sender, sender_name ON emails
+            WHEN NEW.id IS NOT OLD.id
+              OR NEW.folder_id IS NOT OLD.folder_id
+              OR NEW.thread_id IS NOT OLD.thread_id
+              OR NEW.subject IS NOT OLD.subject
+              OR NEW.date IS NOT OLD.date
+              OR NEW.read IS NOT OLD.read
+              OR NEW.sender IS NOT OLD.sender
+              OR NEW.sender_name IS NOT OLD.sender_name
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(OLD.thread_id, OLD.id), OLD.folder_id, ${normalizedSubjectSql("OLD.subject")});
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                SELECT COALESCE(NEW.thread_id, NEW.id), NEW.folder_id, ${normalizedSubjectSql("NEW.subject")}
+                 WHERE NEW.id IS NOT OLD.id
+                    OR NEW.thread_id IS NOT OLD.thread_id
+                    OR NEW.folder_id IS NOT OLD.folder_id
+                    OR NEW.subject IS NOT OLD.subject;
+            END;
+            INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+            SELECT DISTINCT COALESCE(thread_id, id), folder_id, ${normalizedSubjectSql("subject")}
+              FROM emails;
+        `),
+	},
+	{
+		// Reply Later reminders (AVE-86, workers/lib/reply-later-reminders.ts):
+		// a pending reminder time and the time it fired. The mailbox alarm fires
+		// due reminders; the partial index keeps "next reminder" lookups cheap.
+		// The extra trigger marks the conversation index (42) dirty when a
+		// reminder fires or Reply Later is cleared: a fired reminder lifts the
+		// conversation's sort date (see workers/lib/conversation-index.ts), and
+		// neither column is in 42's update trigger list.
+		// Additive only. Numbered 43, after 42_conversation_index.
+		name: "43_reply_later_reminders",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN reply_later_remind_at TEXT;
+            ALTER TABLE emails ADD COLUMN reply_later_reminded_at TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_reply_later_remind_at
+                ON emails(reply_later_remind_at)
+                WHERE reply_later_remind_at IS NOT NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_reply_later
+            AFTER UPDATE OF reply_later, reply_later_reminded_at ON emails
+            WHEN NEW.reply_later IS NOT OLD.reply_later
+              OR NEW.reply_later_reminded_at IS NOT OLD.reply_later_reminded_at
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(NEW.thread_id, NEW.id), NEW.folder_id, ${normalizedSubjectSql("NEW.subject")});
+            END;
+        `),
+	},
 ];
-

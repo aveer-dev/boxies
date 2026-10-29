@@ -11,10 +11,12 @@ import {
 	Text,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { EnvelopeIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link as RouterLink, Navigate, useSearchParams } from "react-router";
+import { SHOW_ALL_MAILBOXES_STATE } from "~/lib/last-mailbox";
 import api from "~/services/api";
 import { queryKeys } from "~/queries/keys";
 import { AdminDnsSuite } from "~/components/AdminDnsSuite";
@@ -203,6 +205,7 @@ export default function AdminRoute() {
 					<div className="flex items-center gap-2">
 						<RouterLink
 							to="/"
+							state={SHOW_ALL_MAILBOXES_STATE}
 							className="text-sm text-kumo-subtle hover:text-kumo-default no-underline"
 						>
 							My mailboxes
@@ -324,10 +327,10 @@ export default function AdminRoute() {
 			</div>
 
 			<Dialog.Root open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-5">
-						Create email
-					</Dialog.Title>
+				<Modal size="sm">
+					<ModalHeader
+						title="Create email"
+					/>
 					<form onSubmit={handleCreate} className="space-y-4">
 						{createError && (
 							<Text variant="error" size="sm">
@@ -459,7 +462,7 @@ export default function AdminRoute() {
 							)}
 						</div>
 					</form>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 
 			<Dialog.Root
@@ -468,13 +471,11 @@ export default function AdminRoute() {
 					if (!open) setDeleteTarget(null);
 				}}
 			>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-2">
-						Delete mailbox
-					</Dialog.Title>
-					<Dialog.Description className="text-kumo-subtle text-sm mb-5">
-						Delete {deleteTarget?.email}? This cannot be undone.
-					</Dialog.Description>
+				<Modal size="sm">
+					<ModalHeader
+						title="Delete mailbox"
+						description={<>Delete {deleteTarget?.email}? This cannot be undone.</>}
+					/>
 					<div className="flex justify-end gap-2">
 						<Dialog.Close
 							render={(props) => (
@@ -492,7 +493,7 @@ export default function AdminRoute() {
 							Delete
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</div>
 	);

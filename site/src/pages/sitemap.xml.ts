@@ -1,4 +1,4 @@
-// The five public pages. Result pages (/support/sent, /support/unavailable)
+// The six public pages. Result pages (/support/sent, /support/unavailable)
 // and the 404 are noindex, so they're left out.
 import type { APIRoute } from "astro";
 import { SITE_URL, asOf } from "../config";
@@ -7,7 +7,7 @@ import { legalUpdated } from "../data/legal";
 export const prerender = true;
 
 // /legal changes on its own date; the rest follow asOf.
-const PATHS: [string, string][] = [["/", asOf], ["/pricing", asOf], ["/roadmap", asOf], ["/support", asOf], ["/legal", legalUpdated]];
+const PATHS: [string, string][] = [["/", asOf], ["/pricing", asOf], ["/roadmap", asOf], ["/support", asOf], ["/request", asOf], ["/legal", legalUpdated]];
 
 export const GET: APIRoute = () => {
 	const urls = PATHS.map(

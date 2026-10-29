@@ -227,17 +227,17 @@ final class HardeningTests: XCTestCase {
 
     func testInboxNewPreviewCapsNewAndCountsTheRest() throws {
         let newRows = try (0..<7).map { try inboxEmail("n\($0)", date: "2026-10-\(String(format: "%02d", 20 - $0))", unread: true) }
-        // Server sent 5 New (new_limit) but reports 12 in total.
-        let capped = EmailListPaging.inboxNewPreview(Array(newRows.prefix(5)), serverNewCount: 12)
-        XCTAssertEqual(capped.shown.map(\.id), ["n0", "n1", "n2", "n3", "n4"])
-        XCTAssertEqual(capped.hiddenCount, 7)
+        // Server sent 3 New (new_limit) but reports 12 in total.
+        let capped = EmailListPaging.inboxNewPreview(Array(newRows.prefix(3)), serverNewCount: 12)
+        XCTAssertEqual(capped.shown.map(\.id), ["n0", "n1", "n2"])
+        XCTAssertEqual(capped.hiddenCount, 9)
         // Extra cached New rows are hidden, newest first kept.
         let local = EmailListPaging.inboxNewPreview(newRows.reversed(), serverNewCount: nil)
         XCTAssertEqual(local.shown.first?.id, "n0")
         XCTAssertEqual(local.shown.count, EmailListPaging.inboxNewPreviewLimit)
-        XCTAssertEqual(local.hiddenCount, 2)
+        XCTAssertEqual(local.hiddenCount, 4)
         // At or under the cap: nothing hidden.
-        XCTAssertEqual(EmailListPaging.inboxNewPreview(Array(newRows.prefix(3)), serverNewCount: 3).hiddenCount, 0)
+        XCTAssertEqual(EmailListPaging.inboxNewPreview(Array(newRows.prefix(2)), serverNewCount: 2).hiddenCount, 0)
     }
 
     // MARK: - Pruning later pages
@@ -407,6 +407,53 @@ final class HardeningTests: XCTestCase {
         XCTAssertEqual(cached, prepared, "Same key is served from the cache")
     }
 
+    // MARK: - Quoted original (AVE-133)
+
+    /// The quote is not inlined: the reply shows the original's HTML as-is and
+    /// the Worker appends it on send (`quote_original`).
+    func testQuotedOriginalKeepsTheOriginalHTML() {
+        let original = Email(
+            id: "o1",
+            folderId: "spam",
+            subject: "Deals",
+            sender: "news@example.com",
+            senderName: "News",
+            recipient: "me@example.com",
+            date: "2026-10-27T16:46:00.000Z",
+            read: true,
+            starred: false,
+            body: "<table><tr><td><b>Big</b> <a href=\"https://example.com\">sale</a></td></tr></table>",
+            snippet: "Big sale"
+        )
+        let reply = ComposeHTML.quotedOriginal(from: original)
+        XCTAssertEqual(reply?.bodyHTML, original.body)
+        XCTAssertEqual(reply?.folderId, "spam")
+        XCTAssertEqual(reply?.isForward, false)
+        XCTAssertTrue(reply?.header.hasSuffix("News <news@example.com> wrote:") == true, reply?.header ?? "")
+
+        let forward = ComposeHTML.quotedOriginal(from: original, isForward: true)
+        XCTAssertEqual(forward?.detailLines.first, "---------- Forwarded message ---------")
+        XCTAssertEqual(forward?.detailLines.last, "To: me@example.com")
+
+        var empty = original
+        empty.body = "  "
+        empty.snippet = nil
+        XCTAssertNil(ComposeHTML.quotedOriginal(from: empty))
+    }
+
+    func testLegacyDraftQuoteIsStrippedFromTheEditor() {
+        let reply = ComposeHTML.editableReply(
+            fromDraftHTML: "<p>Thanks!</p><br><blockquote>On Tue, Oct 27, 2026, News wrote:<br><br>old</blockquote>",
+            quotedHeader: nil
+        )
+        XCTAssertEqual(reply, "Thanks!")
+        let forward = ComposeHTML.editableReply(
+            fromDraftHTML: "FYI\n\n---------- Forwarded message ----------\nFrom: News\n\nold",
+            quotedHeader: "Forwarded message from News"
+        )
+        XCTAssertEqual(forward, "FYI")
+    }
+
     // MARK: - Dark mode: own colours
 
     /// Same fixtures as web (`workers/test/email-colors.test.mjs`) and Android.
@@ -439,5 +486,28 @@ final class HardeningTests: XCTestCase {
         XCTAssertEqual(EmailBodyAppearance(colorScheme: .dark, hasOwnColors: true), .paper)
         XCTAssertEqual(EmailBodyAppearance(colorScheme: .dark, hasOwnColors: false), .dark)
         XCTAssertEqual(EmailBodyAppearance(colorScheme: .light, hasOwnColors: true), .light)
+    }
+
+    // MARK: - Last active mailbox (AVE-90)
+
+    func testInitialMailboxPrefersRememberedWhileListed() {
+        XCTAssertEqual(LastMailboxStore.initialMailboxId(remembered: "b", available: ["a", "b"]), "b")
+        XCTAssertEqual(LastMailboxStore.initialMailboxId(remembered: "gone", available: ["a", "b"]), "a")
+        XCTAssertEqual(LastMailboxStore.initialMailboxId(remembered: nil, available: ["a", "b"]), "a")
+        XCTAssertNil(LastMailboxStore.initialMailboxId(remembered: "b", available: []))
+    }
+
+    func testLastMailboxStoreRoundTripsAndClears() throws {
+        let suite = "LastMailboxStoreTests-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = LastMailboxStore(defaults: defaults)
+        XCTAssertNil(store.mailboxId)
+        store.save("b@x.test")
+        XCTAssertEqual(store.mailboxId, "b@x.test")
+        store.clear()
+        XCTAssertNil(store.mailboxId)
+        defaults.set("", forKey: LastMailboxStore.key)
+        XCTAssertNil(store.mailboxId, "An empty value is no mailbox")
     }
 }

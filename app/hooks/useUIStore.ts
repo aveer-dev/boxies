@@ -61,6 +61,11 @@ interface UIState {
 	openPopOut: (emailId: string, from?: string) => void;
 	closePopOut: () => void;
 
+	/** Mail whose Reply Later reminder picker is open (AVE-86). */
+	reminderEmail: Email | null;
+	openReminderPicker: (email: Email) => void;
+	closeReminderPicker: () => void;
+
 	isAgentPanelOpen: boolean;
 	openAgentPanel: () => void;
 	closeAgentPanel: () => void;
@@ -162,6 +167,10 @@ export const useUIStore = create<UIState>((set, get) => ({
 	openPopOut: (emailId, from) => set({ popOut: { emailId, from } }),
 	closePopOut: () => set({ popOut: null }),
 
+	reminderEmail: null,
+	openReminderPicker: (email) => set({ reminderEmail: email }),
+	closeReminderPicker: () => set({ reminderEmail: null }),
+
 	openAgentPanel: () =>
 		set((s) => (s.isReadOnly ? s : { isAgentPanelOpen: true, ...opened(s, { kind: "agent", key: "agent" }) })),
 	closeAgentPanel: () =>
@@ -204,6 +213,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 		set((s) => ({
 			pendingAgentPrompt: null,
 			popOut: null,
+			reminderEmail: null,
 			composeDirty: {},
 			panels: s.panels.filter((p) => p.kind !== "compose" && p.kind !== "reader"),
 		})),

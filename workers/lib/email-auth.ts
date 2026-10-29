@@ -31,6 +31,18 @@ export type AuthSource =
 	| "arc-authentication-results"
 	| "none";
 
+/**
+ * How far the visible From can be trusted (docs/spam-management-plan.md §5).
+ * - verified: DMARC pass, or SPF/DKIM pass aligned with the From domain.
+ * - unverified: no trusted verdict, or passes only for another domain
+ *   without an enforcing DMARC policy. Not spam on its own.
+ * - failed: dmarc=fail under p=quarantine/reject, or SPF hard-fail with no
+ *   DKIM pass for any domain. The only tier treated as spoofed.
+ */
+export type AuthTier = "verified" | "unverified" | "failed";
+
+export type DmarcPolicy = "none" | "quarantine" | "reject";
+
 export interface EmailAuth {
 	spf?: AuthVerdict;
 	dkim?: AuthVerdict;
@@ -41,7 +53,19 @@ export interface EmailAuth {
 	envelopeFrom: string;
 	/** null when no trusted Cloudflare verdict is present. */
 	aligned: boolean | null;
-	/** false when source is none (fail-open). */
+	/** Published DMARC policy of the From domain, when the verdict states it. */
+	dmarcPolicy?: DmarcPolicy;
+	authTier: AuthTier;
+	/**
+	 * Set when the tier was raised to `verified` on the strength of a
+	 * trusted upstream ARC sealer (see `TRUSTED_ARC_SEALERS`): the sealer's
+	 * `d=` domain.
+	 */
+	arcSealer?: string;
+	/**
+	 * Compat for stored rows and clients: always `authTier === "failed"`.
+	 * New code should read `authTier`.
+	 */
 	spoofed: boolean;
 	source: AuthSource;
 }
@@ -78,6 +102,8 @@ interface MethodHit {
 }
 
 interface ParsedAuthHeader {
+	/** ARC instance (`i=N`), only on ARC-Authentication-Results. */
+	instance?: number;
 	authserv: string;
 	methods: MethodHit[];
 }
@@ -92,8 +118,34 @@ export function isTrustedAuthserv(id: string | null | undefined): boolean {
 	return host === "cloudflare.net" || host.endsWith(".cloudflare.net");
 }
 
-export function isAuthSpoofed(auth?: EmailAuth | null): boolean {
-	return auth?.spoofed === true;
+const AUTH_TIERS = new Set<AuthTier>(["verified", "unverified", "failed"]);
+
+function isAuthTier(value: unknown): value is AuthTier {
+	return typeof value === "string" && AUTH_TIERS.has(value as AuthTier);
+}
+
+/** Tier of an auth record; records from before tiers fall back to `spoofed`. */
+export function authTierOf(
+	auth?: Pick<EmailAuth, "authTier" | "spoofed" | "aligned"> | null,
+): AuthTier {
+	if (!auth) return "unverified";
+	if (isAuthTier(auth.authTier)) return auth.authTier;
+	if (auth.spoofed === true) return "failed";
+	return auth.aligned === true ? "verified" : "unverified";
+}
+
+/** Proven forgery: the only tier that is spam on auth alone. */
+export function isAuthFailed(auth?: EmailAuth | null): boolean {
+	return authTierOf(auth) === "failed";
+}
+
+/**
+ * The visible From isn't proven: auth failed, or a trusted verdict passed
+ * only for some other domain. Sender filters and auto-drafts stay off for
+ * this mail, as they did before tiers; it is not spam by itself.
+ */
+export function isFromUntrusted(auth?: EmailAuth | null): boolean {
+	return isAuthFailed(auth) || auth?.aligned === false;
 }
 
 export function domainFromAddress(value: string | null | undefined): string | null {
@@ -225,7 +277,12 @@ export function parseAuthenticationResultsValue(
 	if (parts.length === 0) return null;
 
 	let index = 0;
-	if (/^i=\d+$/i.test(parts[0])) index = 1;
+	let instance: number | undefined;
+	const instanceMatch = /^i=(\d+)$/i.exec(parts[0]);
+	if (instanceMatch) {
+		index = 1;
+		instance = Number(instanceMatch[1]);
+	}
 	if (index >= parts.length) return null;
 
 	const authserv = (parts[index] ?? "").trim().split(/\s+/)[0] ?? "";
@@ -237,7 +294,7 @@ export function parseAuthenticationResultsValue(
 		const hit = parseMethodPart(part);
 		if (hit) methods.push(hit);
 	}
-	return { authserv, methods };
+	return instance === undefined ? { authserv, methods } : { instance, authserv, methods };
 }
 
 function parseReceivedSpf(value: string): MethodHit | null {
@@ -328,6 +385,17 @@ function pickVerdict(hits: MethodHit[], method: string): MethodHit | null {
 	return matched.find((hit) => hit.result === "pass") ?? matched[matched.length - 1];
 }
 
+function dmarcPolicyOf(hit: MethodHit | null): DmarcPolicy | undefined {
+	if (!hit) return undefined;
+	const raw = (
+		hit.properties["policy.dmarc"] ??
+		hit.properties["policy.published-domain-policy"] ??
+		hit.properties["policy.p"] ??
+		""
+	).toLowerCase();
+	return raw === "none" || raw === "quarantine" || raw === "reject" ? raw : undefined;
+}
+
 const EVALUABLE_VERDICTS = new Set<AuthVerdict>([
 	"pass",
 	"fail",
@@ -365,6 +433,274 @@ function collectHeaderValues(source: HeaderSource, name: string): string[] {
 	return headerMapFromSource(source).get(name.toLowerCase()) ?? [];
 }
 
+/**
+ * Failure wins over a pass: a forged pass must never outvote a real fail.
+ * Without a trusted (Cloudflare) verdict nothing is failed or verified.
+ */
+function tierFor(signals: {
+	trusted: boolean;
+	aligned: boolean | null;
+	dmarcFailEnforced: boolean;
+	dmarcFromMismatch: boolean;
+	spfHardFailNoDkim: boolean;
+}): AuthTier {
+	if (!signals.trusted) return "unverified";
+	if (
+		signals.dmarcFailEnforced ||
+		signals.spfHardFailNoDkim ||
+		(signals.dmarcFromMismatch && signals.aligned === false)
+	) {
+		return "failed";
+	}
+	return signals.aligned === true ? "verified" : "unverified";
+}
+
+/**
+ * Upstream ARC sealers whose results we accept for forwarded mail (a user
+ * forwarding another mailbox into Inboxies). A seal's `d=` must be one of
+ * these or a subdomain of one; no suffix matching beyond a `.` boundary.
+ * Only list domains owned by the mailbox provider itself (never a domain
+ * where customers can get their own subdomain or DKIM keys). Cloudflare
+ * validates the seal signature (`arc=pass`), so a listed domain that a
+ * provider never seals with is inert, not a hole. Add new sealers here.
+ *
+ * Zoho Mail (`zohomail.com`, `zohomail.eu`) is left off on purpose. It seals
+ * mail it sends, not only mail it forwards, and its results say `dmarc=pass`
+ * for a verified "Send Mail As" address even when that domain's DMARC fails
+ * (AVE-102: Cloudflare said `dmarc=fail … policy.dmarc=quarantine` on the
+ * same message). The envelope check in `trustedArcSealerEvidence` stops that
+ * case, but a sealer that records a DMARC pass it never evaluated isn't one
+ * to rest `verified` on.
+ */
+export const TRUSTED_ARC_SEALERS: readonly string[] = [
+	// Gmail / Google Workspace.
+	"google.com",
+	// Outlook.com / Microsoft 365.
+	"outlook.com",
+	"microsoft.com",
+	// Apple iCloud Mail.
+	"icloud.com",
+	// Proton Mail (MX hosts are *.protonmail.ch).
+	"protonmail.ch",
+	"proton.me",
+	// Fastmail (seals as its platform domain, not fastmail.com).
+	"messagingengine.com",
+	// Yahoo Mail and AOL (same platform).
+	"yahoo.com",
+	"aol.com",
+];
+
+/** Exact or proper-subdomain match against `TRUSTED_ARC_SEALERS`. */
+export function isTrustedArcSealer(domain: string | null | undefined): boolean {
+	if (!domain) return false;
+	const d = domain.trim().toLowerCase().replace(/\.$/, "");
+	if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) return false;
+	return TRUSTED_ARC_SEALERS.some((sealer) => d === sealer || d.endsWith(`.${sealer}`));
+}
+
+interface ArcSeal {
+	instance: number;
+	cv: string;
+	d: string;
+}
+
+/** ARC-Seal tag-list (RFC 8617 §4.1.3). Any duplicate tag makes it invalid. */
+function parseArcSeal(value: string): ArcSeal | null {
+	const tags = new Map<string, string>();
+	for (const part of value.split(";")) {
+		if (!part.trim()) continue;
+		const eq = part.indexOf("=");
+		if (eq <= 0) return null;
+		const key = part.slice(0, eq).trim();
+		if (tags.has(key)) return null;
+		tags.set(key, part.slice(eq + 1).replace(/\s+/g, ""));
+	}
+	const i = tags.get("i") ?? "";
+	if (!/^\d{1,2}$/.test(i)) return null;
+	const instance = Number(i);
+	const cv = (tags.get("cv") ?? "").toLowerCase();
+	const d = (tags.get("d") ?? "").toLowerCase();
+	if (instance < 1 || !cv || !d) return null;
+	return { instance, cv, d };
+}
+
+function arcResults(header: ParsedAuthHeader | null): AuthVerdict[] {
+	return header ? header.methods.filter((m) => m.method === "arc").map((m) => m.result) : [];
+}
+
+/** Every `arc=` verdict in the header says `pass`, and there is at least one. */
+function arcPassed(header: ParsedAuthHeader): boolean {
+	const verdicts = arcResults(header);
+	return verdicts.length > 0 && verdicts.every((result) => result === "pass");
+}
+
+/**
+ * Cloudflare's own ARC sealer. Email Routing adds a set to every message it
+ * hands the Worker, one instance above whatever chain arrived:
+ * `ARC-Seal: i=N; d=cloudflare-email.net; s=cf2024-1`, plus results at N
+ * from `mx.cloudflare.net` repeating its Authentication-Results (AVE-102).
+ */
+const CLOUDFLARE_ARC_SEALER = "cloudflare-email.net";
+
+function isCloudflareArcSealer(domain: string): boolean {
+	const d = domain.replace(/\.$/, "");
+	return d === CLOUDFLARE_ARC_SEALER || d.endsWith(`.${CLOUDFLARE_ARC_SEALER}`);
+}
+
+/** Envelope domains (`spf … smtp.mailfrom`) a results header names. */
+function envelopeDomains(header: ParsedAuthHeader): string[] {
+	return header.methods
+		.filter((hit) => hit.method === "spf")
+		.map((hit) => domainFromAddress(hit.properties["smtp.mailfrom"]))
+		.filter((domain): domain is string => Boolean(domain));
+}
+
+/**
+ * Whether the visible From is proven by the results a trusted upstream
+ * sealer recorded: a DMARC pass for that exact From domain, or a DKIM/SPF
+ * pass aligned with it. Any DMARC fail there vetoes.
+ */
+function upstreamProvesFrom(header: ParsedAuthHeader, fromDomain: string): boolean {
+	const hits = header.methods;
+	// `domainsAligned` is relaxed both ways; never let a bare TLD align.
+	const aligned = (domain: string | null) =>
+		Boolean(domain?.includes(".")) && domainsAligned(fromDomain, domain);
+	if (hits.some((hit) => hit.method === "dmarc" && hit.result === "fail")) return false;
+	return hits.some((hit) => {
+		if (hit.result !== "pass") return false;
+		if (hit.method === "dmarc") {
+			return domainFromAddress(hit.properties["header.from"]) === fromDomain;
+		}
+		if (hit.method === "dkim") {
+			const d = domainFromAddress(
+				hit.properties["header.d"] ?? hit.properties["d"] ?? hit.properties["header.i"],
+			);
+			return aligned(d);
+		}
+		if (hit.method === "spf") {
+			return aligned(domainFromAddress(hit.properties["smtp.mailfrom"]));
+		}
+		return false;
+	});
+}
+
+/**
+ * Trusted-sealer ARC evidence for forwarded mail. Returns the sealer domain
+ * when the visible From is proven by it, else null. Every check fails closed.
+ *
+ * We can't verify ARC signatures in the Worker, so the trust anchor is
+ * Cloudflare's own ARC validation: every Cloudflare-stamped results header
+ * we trust (the topmost Authentication-Results and ARC-Authentication-Results
+ * from `*.cloudflare.net`) must carry an `arc=` verdict, and all of them
+ * must say `pass`. That means Cloudflare validated every set it received,
+ * so the highest of those is the last hop before Cloudflare.
+ *
+ * Cloudflare seals what it delivers (see `CLOUDFLARE_ARC_SEALER`), so on
+ * real mail the top instance N is Cloudflare's set and the upstream sealer
+ * is at N-1. We accept Cloudflare's set only as exactly one seal and one
+ * results header at N, with results from a trusted authserv that say
+ * `arc=pass`. A Cloudflare seal below the top, or more than one, fails
+ * closed. Without any Cloudflare seal (mail stored before it sealed, tests)
+ * the top set is the upstream one.
+ *
+ * The upstream set needs exactly one seal and one results header, a seal
+ * `d=` on `TRUSTED_ARC_SEALERS`, the `cv=` a valid chain needs there (`none`
+ * at i=1, else `pass`), results that aren't ours, and a verdict that proves
+ * the visible From. An older set is never used: a later, untrusted hop
+ * could have altered the message after it.
+ *
+ * Last, the sealer must have forwarded the message, not sent it. Its results
+ * can't tell us which: Zoho seals mail its users send and writes `dmarc=pass`
+ * for their "Send Mail As" address, even where Cloudflare finds DMARC failing
+ * under `p=quarantine` (AVE-102). What forwarding does change is the
+ * envelope: a forwarder resends under its own return path (SRS, Gmail's
+ * `+caf_`), so Cloudflare's SPF names a different domain from the one the
+ * sealer received. When Cloudflare's `smtp.mailfrom` domain matches or
+ * aligns with the sealer's, no forward happened between them: the sealer
+ * sent or relayed the message as it was, and Cloudflare's verdict on that
+ * same envelope stands. When either side names no envelope we can't tell,
+ * so we don't upgrade. The cost is a forwarder that keeps the original
+ * envelope. It breaks SPF for everything it forwards and doesn't upgrade.
+ */
+function trustedArcSealerEvidence(params: {
+	trustedAr: ParsedAuthHeader | null;
+	trustedArc: ParsedAuthHeader | null;
+	arcResultsValues: string[];
+	arcSealValues: string[];
+	fromDomain: string | null;
+}): string | null {
+	const { fromDomain } = params;
+	if (!fromDomain) return null;
+
+	const anchors = [params.trustedAr, params.trustedArc].filter(
+		(header): header is ParsedAuthHeader => header !== null,
+	);
+	if (anchors.length === 0 || !anchors.every(arcPassed)) return null;
+
+	const seals: ArcSeal[] = [];
+	for (const value of params.arcSealValues) {
+		const parsed = parseArcSeal(value);
+		if (!parsed) return null;
+		seals.push(parsed);
+	}
+	const results: ParsedAuthHeader[] = [];
+	for (const value of params.arcResultsValues) {
+		const parsed = parseAuthenticationResultsValue(value);
+		if (!parsed || parsed.instance === undefined) return null;
+		results.push(parsed);
+	}
+	if (seals.length === 0) return null;
+
+	const top = Math.max(...seals.map((seal) => seal.instance));
+	if (results.some((r) => (r.instance ?? 0) > top)) return null;
+	// The one seal and one results header at `instance`, if its `cv=` is what
+	// a valid chain needs there.
+	const setAt = (instance: number) => {
+		const atSeals = seals.filter((seal) => seal.instance === instance);
+		const atResults = results.filter((r) => r.instance === instance);
+		if (atSeals.length !== 1 || atResults.length !== 1) return null;
+		if (atSeals[0].cv !== (instance === 1 ? "none" : "pass")) return null;
+		return { seal: atSeals[0], results: atResults[0] };
+	};
+
+	// Cloudflare's envelope, from each of its results headers.
+	const cloudflareEnvelope = anchors.flatMap(envelopeDomains);
+	let upstreamInstance = top;
+	const cloudflareSeals = seals.filter((seal) => isCloudflareArcSealer(seal.d));
+	if (cloudflareSeals.length > 0) {
+		if (cloudflareSeals.length !== 1 || cloudflareSeals[0].instance !== top) return null;
+		const cloudflare = setAt(top);
+		if (!cloudflare) return null;
+		if (!isTrustedAuthserv(cloudflare.results.authserv) || !arcPassed(cloudflare.results)) {
+			return null;
+		}
+		cloudflareEnvelope.push(...envelopeDomains(cloudflare.results));
+		upstreamInstance = top - 1;
+	}
+
+	const upstream = setAt(upstreamInstance);
+	if (!upstream || !isTrustedArcSealer(upstream.seal.d)) return null;
+	// Our own results header must not be the upstream one: that would make
+	// the "trusted sealer's" results ours, or a forgery of ours.
+	if (isTrustedAuthserv(upstream.results.authserv)) return null;
+	if (!upstreamProvesFrom(upstream.results, fromDomain)) return null;
+
+	// Forwarded, not sent by the sealer: Cloudflare saw another envelope.
+	const sealerEnvelope = envelopeDomains(upstream.results);
+	if (sealerEnvelope.length === 0 || cloudflareEnvelope.length === 0) return null;
+	const sameEnvelope = cloudflareEnvelope.some((ours) =>
+		sealerEnvelope.some((theirs) => domainsAligned(ours, theirs)),
+	);
+	return sameEnvelope ? null : upstream.seal.d;
+}
+
+/**
+ * Our verdict comes from Cloudflare's Authentication-Results and
+ * ARC-Authentication-Results (our own hop), via `firstTrusted`. Upstream
+ * sealers' results only count through `trustedArcSealerEvidence`: an
+ * allowlisted sealer whose chain Cloudflare validated can raise the tier
+ * to `verified` for forwarded mail.
+ */
 export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	const headerFrom = (input.headerFrom ?? "").trim();
 	const envelopeFrom = (input.envelopeFrom ?? "").trim();
@@ -420,27 +756,61 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 		dmarcHit?.result === "pass" && (!dmarcFromDomain || dmarcFromDomain === headerFromDomain);
 	const hasEvaluableVerdict =
 		isEvaluableHit(dkimHit) || isEvaluableHit(spfHit) || isEvaluableHit(dmarcHit);
+	const dmarcPolicy = dmarcPolicyOf(dmarcHit);
+
+	const aligned =
+		source === "none" || !hasEvaluableVerdict
+			? null
+			: Boolean(dkimAligned || spfAligned || dmarcPass);
+	// DMARC evaluated a different From than the one we show: the message
+	// carries an ambiguous From, so the verdict can't vouch for it.
+	const dmarcFromMismatch = Boolean(
+		dmarcFromDomain && headerFromDomain && dmarcFromDomain !== headerFromDomain,
+	);
+	let authTier = tierFor({
+		trusted: source !== "none",
+		aligned,
+		dmarcFailEnforced:
+			dmarcHit?.result === "fail" &&
+			(dmarcPolicy === "quarantine" || dmarcPolicy === "reject"),
+		dmarcFromMismatch,
+		spfHardFailNoDkim: spfHit?.result === "fail" && dkimHit?.result !== "pass",
+	});
+
+	// Forwarded mail: Cloudflare's own checks fail or don't align once a
+	// forwarder rewrites the envelope, but a trusted sealer saw it pass.
+	let arcSealer: string | null = null;
+	if (authTier !== "verified" && !dmarcFromMismatch) {
+		arcSealer = trustedArcSealerEvidence({
+			trustedAr,
+			trustedArc,
+			arcResultsValues: ordered("arc-authentication-results"),
+			arcSealValues: ordered("arc-seal"),
+			fromDomain: domainFromAddress(headerFrom),
+		});
+	}
 
 	const auth: EmailAuth = {
 		headerFrom,
 		envelopeFrom,
 		source,
-		aligned:
-			source === "none" || !hasEvaluableVerdict
-				? null
-				: Boolean(dkimAligned || spfAligned || dmarcPass),
-		spoofed: false,
+		aligned,
+		authTier,
+		spoofed: authTier === "failed",
 	};
+	if (arcSealer) {
+		authTier = "verified";
+		auth.authTier = authTier;
+		auth.aligned = true;
+		auth.spoofed = false;
+		auth.arcSealer = arcSealer;
+	}
 	if (dkimHit) auth.dkim = dkimHit.result;
 	if (spfHit) auth.spf = spfHit.result;
 	if (dmarcHit) auth.dmarc = dmarcHit.result;
+	if (dmarcPolicy) auth.dmarcPolicy = dmarcPolicy;
 	if (dkimDomain) auth.dkimDomain = dkimDomain;
 	if (spfMailfrom) auth.spfMailfrom = spfMailfrom;
-
-	// Fail-open when CF only stamped arc=none, or every method is none/neutral.
-	if (source !== "none" && hasEvaluableVerdict) {
-		auth.spoofed = auth.aligned !== true;
-	}
 
 	return auth;
 }
@@ -477,7 +847,24 @@ export function parseStoredEmailAuth(raw: unknown): EmailAuth | null {
 		typeof value.envelopeFrom === "string" ? value.envelopeFrom : "";
 	const source = asSource(value.source);
 	const aligned =
-		value.aligned === true ? true : value.aligned === false ? false : null;
+		source === "none"
+			? null
+			: value.aligned === true
+				? true
+				: value.aligned === false
+					? false
+					: null;
+	const authTier = authTierOf({
+		authTier: value.authTier as AuthTier,
+		spoofed: value.spoofed === true,
+		aligned,
+	});
+	const dmarcPolicy =
+		value.dmarcPolicy === "none" ||
+		value.dmarcPolicy === "quarantine" ||
+		value.dmarcPolicy === "reject"
+			? value.dmarcPolicy
+			: undefined;
 	return {
 		spf: asVerdict(value.spf),
 		dkim: asVerdict(value.dkim),
@@ -488,8 +875,11 @@ export function parseStoredEmailAuth(raw: unknown): EmailAuth | null {
 			typeof value.spfMailfrom === "string" ? value.spfMailfrom : undefined,
 		headerFrom,
 		envelopeFrom,
-		aligned: source === "none" ? null : aligned,
-		spoofed: value.spoofed === true,
+		aligned,
+		dmarcPolicy,
+		authTier,
+		...(typeof value.arcSealer === "string" ? { arcSealer: value.arcSealer } : {}),
+		spoofed: authTier === "failed",
 		source,
 	};
 }

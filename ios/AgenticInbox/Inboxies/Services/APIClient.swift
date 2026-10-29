@@ -885,16 +885,79 @@ final class APIClient: @unchecked Sendable {
         id: String,
         read: Bool? = nil,
         starred: Bool? = nil,
-        replyLater: Bool? = nil
+        replyLater: Bool? = nil,
+        replyLaterRemindAt: ReplyLaterRemindAtPatch? = nil
     ) async throws -> Email {
         var body: [String: Any] = [:]
         if let read { body["read"] = read }
         if let starred { body["starred"] = starred }
         if let replyLater { body["reply_later"] = replyLater }
+        switch replyLaterRemindAt {
+        case .set(let iso): body["reply_later_remind_at"] = iso
+        case .clear: body["reply_later_remind_at"] = NSNull()
+        case nil: break
+        }
         return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)",
             method: "PUT",
             body: body
+        )
+    }
+
+    // MARK: Notes to self (private to the signed-in user)
+
+    func listThreadNotes(mailboxId: String, threadId: String) async throws -> [ThreadNote] {
+        let response: ThreadNotesResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/notes"
+        )
+        return response.notes
+    }
+
+    func createThreadNote(
+        mailboxId: String,
+        threadId: String,
+        body: String,
+        noteType: String,
+        emailId: String? = nil,
+        position: CGPoint? = nil
+    ) async throws -> ThreadNote {
+        var payload: [String: Any] = ["body": body, "noteType": noteType]
+        if let emailId { payload["emailId"] = emailId }
+        if let position {
+            payload["posX"] = Double(position.x)
+            payload["posY"] = Double(position.y)
+        }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/threads/\(threadId.urlPathEncoded)/notes",
+            method: "POST",
+            body: payload
+        )
+    }
+
+    /// PATCH a note's body and/or position (at least one).
+    func updateThreadNote(
+        mailboxId: String,
+        noteId: String,
+        body: String? = nil,
+        position: CGPoint? = nil
+    ) async throws -> ThreadNote {
+        var payload: [String: Any] = [:]
+        if let body { payload["body"] = body }
+        if let position {
+            payload["posX"] = Double(position.x)
+            payload["posY"] = Double(position.y)
+        }
+        return try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/notes/\(noteId.urlPathEncoded)",
+            method: "PATCH",
+            body: payload
+        )
+    }
+
+    func deleteThreadNote(mailboxId: String, noteId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/notes/\(noteId.urlPathEncoded)",
+            method: "DELETE"
         )
     }
 
@@ -913,20 +976,39 @@ final class APIClient: @unchecked Sendable {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/workflow-piles")
     }
 
+    @discardableResult
     func moveEmail(
         mailboxId: String,
         id: String,
         folderId: String,
-        setSenderPreference: Bool = false
-    ) async throws {
+        setSenderPreference: Bool = false,
+        unsubscribe: Bool = false,
+        refileSender: Bool = true
+    ) async throws -> MoveEmailResponse {
         var body: [String: Any] = ["folderId": folderId]
         if setSenderPreference {
             body["setSenderPreference"] = true
         }
-        let _: EmptyResponse = try await request(
+        if unsubscribe {
+            body["unsubscribe"] = true
+        }
+        if !refileSender {
+            // Report spam with "Move their other mail to Spam" off (AVE-98).
+            body["refileSender"] = false
+        }
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(id.urlPathEncoded)/move",
             method: "POST",
             body: body
+        )
+    }
+
+    /// Undo a Not spam / Report spam: the sender's rule and every message it moved (AVE-98).
+    func undoSenderVerdict(mailboxId: String, undoToken: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules/undo",
+            method: "POST",
+            body: ["undoToken": undoToken]
         )
     }
 
@@ -967,6 +1049,43 @@ final class APIClient: @unchecked Sendable {
     func deleteSenderPreference(mailboxId: String, address: String) async throws {
         let _: EmptyResponse = try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-preferences/\(address.urlPathEncoded)",
+            method: "DELETE"
+        )
+    }
+
+    /// Today's AI chat / inbound AI usage against the mailbox's daily limits (AVE-45).
+    func fetchAIUsage(mailboxId: String) async throws -> AIUsage {
+        try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/ai-usage")
+    }
+
+    func listSenderRules(mailboxId: String, verdict: String) async throws -> [SenderRule] {
+        let response: SenderRulesResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules",
+            query: ["verdict": verdict, "limit": "500"]
+        )
+        return response.rules
+    }
+
+    /// Creates or updates an allow / block rule from Settings. A refused value
+    /// (free-mail provider, public suffix, bad address) throws `.http(400, message)`
+    /// with the server's sentence, which the screen shows inline.
+    func upsertSenderRule(
+        mailboxId: String,
+        kind: String,
+        value: String,
+        verdict: String
+    ) async throws -> SenderRule {
+        let response: SenderRuleResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules",
+            method: "PUT",
+            body: ["kind": kind, "value": value, "verdict": verdict, "source": "settings"]
+        )
+        return response.rule
+    }
+
+    func deleteSenderRule(mailboxId: String, ruleId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-rules/\(ruleId.urlPathEncoded)",
             method: "DELETE"
         )
     }
@@ -1431,6 +1550,21 @@ extension Notification.Name {
 struct WorkflowPile: Decodable {
     let id: String
     let count: Int
+    /// Reply Later mails whose reminder fired and are still unread (AVE-86).
+    /// Nil on older Workers that don't send it.
+    var dueCount: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case id, count
+        case dueCount = "due_count"
+    }
+}
+
+/// `reply_later_remind_at` in the email PUT (AVE-86): set a UTC ISO time (also adds the
+/// mail to Reply Later) or clear the pending reminder (the mail stays in the pile).
+enum ReplyLaterRemindAtPatch: Equatable {
+    case set(String)
+    case clear
 }
 
 struct WorkflowPilesResponse: Decodable {

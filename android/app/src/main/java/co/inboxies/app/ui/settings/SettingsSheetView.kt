@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.settings
 
+import co.inboxies.app.ui.components.AiUsageMeter
 import android.Manifest
 import android.os.Build
 import android.view.HapticFeedbackConstants
@@ -55,6 +56,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -352,6 +354,10 @@ private fun SettingsRootPage(
         )
     }
 
+    // Per-mailbox Screener switch (AVE-104). Absent means on.
+    val savedScreenerEnabled = mailbox?.settings?.screener?.enabled != false
+    var screenerEnabled by remember(mailbox?.id, savedScreenerEnabled) { mutableStateOf(savedScreenerEnabled) }
+
     Column(modifier = Modifier.fillMaxWidth()) {
         val view = LocalView.current
         Row(
@@ -577,6 +583,32 @@ private fun SettingsRootPage(
                     }
                 },
             )
+            if (!readOnly) {
+                SettingsToggleRow(
+                    title = "Screener",
+                    subtitle = if (screenerEnabled) {
+                        "First-time senders wait for you to accept them."
+                    } else {
+                        "First-time senders go to your Inbox. Spam is still filtered."
+                    },
+                    icon = Icons.Outlined.Shield,
+                    checked = screenerEnabled,
+                    onCheckedChange = { enabled ->
+                        screenerEnabled = enabled
+                        scope.launch {
+                            if (app.setScreenerEnabled(enabled)) {
+                                app.showToast(
+                                    if (enabled) "Screener on" else "Screener off: new senders go to your Inbox",
+                                )
+                            } else {
+                                screenerEnabled = app.isScreenerEnabled
+                            }
+                        }
+                    },
+                )
+            }
+
+            AiUsageSettingsSection(mailboxId = mailbox?.id)
 
             SettingsSectionHeader("Display")
             SettingsNavRow(
@@ -778,4 +810,72 @@ private fun mailboxDisplayName(mailbox: Mailbox?): String {
     val local = mailbox.email.substringBefore("@")
     if (local.isNotEmpty()) return local
     return mailbox.name.ifBlank { "Mailbox" }
+}
+
+/**
+ * "AI usage" (AVE-45): today's agent-chat and inbound-AI counters for this mailbox,
+ * with the plan and the UTC-midnight reset. Twin of the web/iOS settings section.
+ */
+@Composable
+private fun AiUsageSettingsSection(mailboxId: String?) {
+    val app = LocalAppModel.current
+    val colors = inboxiesColors()
+    val usage by app.aiUsage.collectAsState()
+    LaunchedEffect(mailboxId) { app.refreshAiUsage() }
+    val snapshot = usage ?: return
+
+    SettingsSectionHeader("AI usage")
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            snapshot.planLabel,
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 16.sp,
+            color = colors.ink,
+        )
+        Text(
+            "Daily limits for this mailbox. Counters reset at midnight UTC.",
+            fontFamily = InterFontFamily,
+            fontSize = 13.sp,
+            color = colors.muted,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Agent chat",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 14.sp,
+            color = colors.ink,
+        )
+        AiUsageMeter(
+            counter = snapshot.chat,
+            noun = "AI chats",
+            resetsAt = snapshot.resetsAtInstant,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Inbound AI",
+            fontFamily = InterFontFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 14.sp,
+            color = colors.ink,
+        )
+        AiUsageMeter(
+            counter = snapshot.inbound,
+            noun = "AI checks",
+            resetsAt = snapshot.resetsAtInstant,
+        )
+        Text(
+            "Spam checks and auto-drafts for new mail. Past the limit, mail is sorted by your rules only.",
+            fontFamily = InterFontFamily,
+            fontSize = 12.sp,
+            color = colors.muted,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
 }

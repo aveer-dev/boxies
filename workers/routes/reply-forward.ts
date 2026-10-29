@@ -26,6 +26,7 @@ import {
 } from "../lib/email-helpers";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { SendEmailRequestSchema } from "../lib/schemas";
+import { appendQuote, buildForwardQuote, buildReplyQuote } from "../../shared/quoted-html";
 import { displayNameFromAddressField } from "../../shared/sender";
 import { Folders } from "../../shared/folders";
 import type { MailboxContext } from "../lib/mailbox";
@@ -51,7 +52,7 @@ export async function handleReplyEmail(c: AppContext) {
 	const idem = await checkIdempotencyKey(c, c.var.mailboxStub);
 	if ("response" in idem) return idem.response;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { cc, bcc, subject, html, text, attachments } = body;
+	const { cc, bcc, subject, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -61,6 +62,10 @@ export async function handleReplyEmail(c: AppContext) {
 	}
 
 	const originalEmail = await resolveOriginalEmail(stub, rawOriginal);
+	// The original as the real message, formatting kept (AVE-133).
+	const { html, text } = body.quote_original
+		? appendQuote(body, buildReplyQuote(originalEmail, { timeZone: body.quote_time_zone }))
+		: body;
 	const { originalMsgId, references, threadId: thread_id } = buildReferencesChain(originalEmail);
 
 	const aliasStub = stub as unknown as AliasSenderStub;
@@ -199,7 +204,7 @@ export async function handleForwardEmail(c: AppContext) {
 	const idem = await checkIdempotencyKey(c, c.var.mailboxStub);
 	if ("response" in idem) return idem.response;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
-	const { to, cc, bcc, subject, html, text, attachments } = body;
+	const { to, cc, bcc, subject, attachments } = body;
 
 	const stub = c.var.mailboxStub;
 	const rawOriginal = (await stub.getEmail(id)) as EmailFull | null;
@@ -208,7 +213,11 @@ export async function handleForwardEmail(c: AppContext) {
 		return c.json({ error: "Original email not found" }, 404);
 	}
 
-	await resolveOriginalEmail(stub, rawOriginal);
+	const originalEmail = await resolveOriginalEmail(stub, rawOriginal);
+	// The forwarded message as the real message, formatting kept (AVE-133).
+	const { html, text } = body.quote_original
+		? appendQuote(body, buildForwardQuote(originalEmail, { timeZone: body.quote_time_zone }))
+		: body;
 
 	// A forward starts a new conversation with someone you chose, so it is
 	// not bound to the original's private email — but may still use one.

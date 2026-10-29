@@ -8,6 +8,12 @@
  * Spam files to spam first. Rejected → screened_out. Allowed → explicit
  * destination, else classify (filters may override). Unknown → screener
  * (filters cannot bypass).
+ *
+ * Accepting a sender is consent, not a filing rule (AVE-139): a plain Accept
+ * (to Inbox) leaves their mail to the classifier, so newsletters still land
+ * in Promotions and receipts in Updates. Only a deliberate pick pins a box:
+ * Accept into Promotions / Updates, "Put future mail here", Settings →
+ * Senders, Not spam, or a filter.
  */
 
 import {
@@ -17,6 +23,7 @@ import {
 } from "../../shared/folders.ts";
 import { normalizeEmailAddress } from "./mail-automations.ts";
 import { canonicalMailboxId } from "./mailbox-routing.ts";
+import type { SenderTrust } from "./classify-email.ts";
 import type { InboxFilterHit } from "./inbox-filters.ts";
 
 export type SenderTriageStatus = "allowed" | "rejected";
@@ -52,6 +59,12 @@ export interface ResolveInboundFolderInput {
 	 * Used after filters for allowed senders, or when screener is disabled.
 	 */
 	preferenceFolderId?: string | null;
+	/**
+	 * Who set the preference. A Screener-sourced Inbox preference is what a
+	 * plain Accept wrote before AVE-139, so it doesn't pin (see
+	 * `pinnedPreferenceFolderId`). Omitted means a deliberate choice.
+	 */
+	preferenceSource?: string | null;
 }
 
 export interface ResolveInboundFolderResult {
@@ -69,6 +82,46 @@ export interface ResolveInboundFolderResult {
 
 export function isScreenerDestination(folderId: string): folderId is ScreenerDestinationId {
 	return (SCREENER_DESTINATION_IDS as readonly string[]).includes(folderId);
+}
+
+/**
+ * The purpose box a sender preference pins their mail to, or null when it
+ * leaves filing to the classifier. A plain Screener Accept used to record
+ * Inbox (source "screener"); that is the default, not a choice, so it
+ * doesn't pin. Inbox picked in Settings, a move, or Not spam (source
+ * "user") still does.
+ */
+export function pinnedPreferenceFolderId(
+	folderId: string | null | undefined,
+	source?: string | null,
+): string | null {
+	const folder = folderId?.trim() || null;
+	if (!folder) return null;
+	if (source === "screener" && folder === Folders.INBOX) return null;
+	return folder;
+}
+
+/**
+ * The Screener destination an allowed triage row pins, or null. Inbox is
+ * never a pin here: a plain Accept stored it, and every deliberate Inbox
+ * choice also writes a user preference, which is read first.
+ */
+export function pinnedTriageDestination(
+	destination: string | null | undefined,
+): ScreenerDestinationId | null {
+	if (!destination || !isScreenerDestination(destination)) return null;
+	return destination === Folders.INBOX ? null : destination;
+}
+
+/**
+ * What Accept in the Screener stores for `destinationFolderId`. Inbox (the
+ * Accept button's default) stores nothing, so the classifier keeps sorting
+ * the sender's mail; Promotions / Updates is a deliberate pick and sticks.
+ */
+export function screenerAcceptDestination(
+	destinationFolderId: ScreenerDestinationId,
+): ScreenerDestinationId | null {
+	return destinationFolderId === Folders.INBOX ? null : destinationFolderId;
 }
 
 export function parseScreenerEnabled(raw: unknown): boolean {
@@ -101,6 +154,8 @@ export function screenerSettingsError(raw: unknown): string | null {
  *
  * Order: spam → rejected → unknown(screener) → allowed:
  *   filter folder → purpose preference → explicit triage destination → classify.
+ * A plain Accept's Inbox (screener preference / triage destination) is not a
+ * pin; see `pinnedPreferenceFolderId` / `pinnedTriageDestination`.
  * When screener is disabled: spam → rejected (to Spam) → filter → preference → classify.
  */
 export function resolveInboundFolder(
@@ -108,7 +163,10 @@ export function resolveInboundFolder(
 ): ResolveInboundFolderResult {
 	const { classification, triage, filterHit } = input;
 	const screenerEnabled = input.screenerEnabled !== false;
-	const preferenceFolder = input.preferenceFolderId?.trim() || null;
+	const preferenceFolder = pinnedPreferenceFolderId(
+		input.preferenceFolderId,
+		input.preferenceSource,
+	);
 	// A filter that files mail away (archive, trash, a custom folder…) means the
 	// user doesn't want to be pinged or have the agent draft a reply for it.
 	const filedAway = Boolean(filterHit?.folderId && !isScreenerDestination(filterHit.folderId));
@@ -161,10 +219,7 @@ export function resolveInboundFolder(
 	}
 
 	if (triage?.status === "allowed") {
-		const explicitDest =
-			triage.destination_folder_id && isScreenerDestination(triage.destination_folder_id)
-				? triage.destination_folder_id
-				: null;
+		const explicitDest = pinnedTriageDestination(triage.destination_folder_id);
 		return {
 			folderId:
 				filterHit?.folderId ||
@@ -204,6 +259,21 @@ export function isVouchedSender(
 ): boolean {
 	if (triage?.status === "rejected") return false;
 	return triage?.status === "allowed" || Boolean(preferenceFolderId?.trim());
+}
+
+/**
+ * How much the user vouches for this sender (docs/spam-management-plan.md §5).
+ * An allowed sender with a user-picked purpose box (Not spam into a box,
+ * Settings → Senders) is an explicit allow; other allowed or sorted senders
+ * (emailed, accepted in Screener, bootstrap) are implicit trust.
+ */
+export function senderTrustOf(
+	triage: SenderTriageRow | null,
+	preference?: { folderId: string; source: string } | null,
+): SenderTrust {
+	if (triage?.status === "rejected") return "none";
+	if (triage?.status === "allowed" && preference?.source === "user") return "allowed";
+	return isVouchedSender(triage, preference?.folderId) ? "implicit" : "none";
 }
 
 /** Normalize a From address for triage PK lookup. */
@@ -339,25 +409,53 @@ export type SenderLesson =
 	| { kind: "none" };
 
 /**
+ * Whether moving a message from `fromFolderId` to `toFolderId` is a spam
+ * verdict on its sender (docs/spam-management-plan.md §5–6, AVE-95): into
+ * Spam is "Report spam", out of Spam is "Not spam". Leaving Spam for Trash
+ * or Screened out is clean-up, not a vote, so it isn't one.
+ */
+export function isSpamVerdictMove(
+	fromFolderId: string | null | undefined,
+	toFolderId: string,
+): boolean {
+	if (fromFolderId === toFolderId) return false;
+	if (toFolderId === Folders.SPAM) return true;
+	return (
+		fromFolderId === Folders.SPAM &&
+		toFolderId !== Folders.TRASH &&
+		toFolderId !== Folders.SCREENED_OUT
+	);
+}
+
+/**
  * The sender lesson for a user moving one message from `fromFolderId` to
- * `toFolderId` with "remember this sender" on. Your own address is never
+ * `toFolderId`. A move into or out of Spam always teaches (leaving Spam is
+ * the signal; no "remember?" prompt). Other moves teach a purpose-box
+ * default only when the user said `remember`. Your own address is never
  * judged (a sent copy or a note to self can land in Spam).
+ *
+ * Agent/MCP `move_email` never calls this: agents use the explicit
+ * `allow_sender` / `block_sender` tools instead.
  */
 export function senderLessonForMove(input: {
 	sender: string | null | undefined;
 	mailboxId: string;
 	fromFolderId: string | null | undefined;
 	toFolderId: string;
+	/** "Put future mail here" for a move between ordinary boxes. Defaults to true. */
+	remember?: boolean;
 }): SenderLesson {
 	const sender = normalizeTriageSender(input.sender);
 	if (!sender || canonicalMailboxId(sender) === canonicalMailboxId(input.mailboxId)) return { kind: "none" };
-	if (input.toFolderId === Folders.SPAM) return { kind: "reject", sender };
-	if (input.fromFolderId === Folders.SPAM) {
+	if (isSpamVerdictMove(input.fromFolderId, input.toFolderId)) {
+		if (input.toFolderId === Folders.SPAM) return { kind: "reject", sender };
 		return {
 			kind: "allow",
 			sender,
 			destination: isScreenerDestination(input.toFolderId) ? input.toFolderId : null,
 		};
 	}
+	if (input.fromFolderId === Folders.SPAM) return { kind: "none" };
+	if (input.remember === false) return { kind: "none" };
 	return { kind: "preference", sender, destination: input.toFolderId };
 }

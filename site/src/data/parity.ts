@@ -60,7 +60,7 @@ export const hey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "Workflows", ours: "Reply Later pile", status: "partly", note: "One pile so far.", src: HEY },
 	{ competitor: "hey", theirs: "Bundles", ours: "“For you” topics", status: "progress", note: "Grouped by topic, not by sender; built, not switched on yet.", src: HEY, ownerConfirm: "tease the “For you” brief publicly" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", note: "Next to Reply Later.", src: HEY },
-	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Every remote image waits until you load it; trackers aren’t picked out.", src: `${HEY}; dev 061e0ea EmailIframe.tsx; eda481f EmailHTMLSanitizer.swift, EmailBodyView.kt` },
+	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Only Spam holds remote images back until you load them; trackers aren’t picked out.", src: `${HEY}; dev AVE-132 (#168, shared/remote-images.ts)` },
 	// Collapsed under "Show 6 we haven’t planned"
 	{ competitor: "hey", theirs: "Clips", ours: "—", status: "notyet", src: HEY },
 	{ competitor: "hey", theirs: "Notes", ours: "—", status: "notyet", src: HEY },
@@ -91,5 +91,5 @@ export const landingHey: ParityRow[] = shown([
 	{ competitor: "hey", theirs: "The Feed", ours: "Promotions", status: "partly", note: "A plain list, not a reading feed.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Paper Trail", ours: "Updates", status: "partly", note: "A plain list.", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
 	{ competitor: "hey", theirs: "Set Aside", ours: "Set Aside", status: "planned", landing: true, src: "RM#3; WEB#2.1 (HEY names)" },
-	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Remote images wait until you load them.", landing: true, src: "RM#3; WEB#2.1 (HEY names); dev 061e0ea, eda481f" },
+	{ competitor: "hey", theirs: "Spy Pixel Blocker", ours: "Load images", status: "partly", note: "Only in Spam, until you load them.", landing: true, src: "RM#3; WEB#2.1 (HEY names); dev AVE-132 (#168)" },
 ]);

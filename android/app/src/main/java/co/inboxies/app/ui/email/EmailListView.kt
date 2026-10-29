@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Delete
@@ -113,12 +114,16 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.Email
+import co.inboxies.app.services.NoteText
+import co.inboxies.app.ui.notes.PrivateNotesChip
+import co.inboxies.app.ui.notes.StickyNoteRowStrip
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.services.EmailActionAvailability
 import co.inboxies.app.services.EmailSwipeLayout
 import co.inboxies.app.services.SwipeActionPreferences
 import co.inboxies.app.services.SwipeQuickAction
 import co.inboxies.app.theme.AppThemeDims
+import co.inboxies.app.theme.attention
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.inboxiesColors
@@ -164,9 +169,29 @@ fun EmailListView(
     inboxNewCount: Int? = null,
     /** Inbox: opens the "All new" screen from the row under the capped New section. */
     onShowAllNew: (() -> Unit)? = null,
+    /**
+     * Inbox: first-time senders waiting to be screened (AVE-136). Above zero (with
+     * [onOpenScreeningRoom]) pins the "N waiting to be screened" row to the list top.
+     */
+    screeningRoomCount: Int = 0,
+    /** One email per waiting sender, newest first; the row stacks their avatars. */
+    screeningRoomSenders: List<Email> = emptyList(),
+    onOpenScreeningRoom: (() -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val screeningRoomRow: (@Composable () -> Unit)? =
+        if (screeningRoomCount > 0 && onOpenScreeningRoom != null && !isSelectMode) {
+            {
+                ScreeningRoomRow(
+                    count = screeningRoomCount,
+                    senders = screeningRoomSenders,
+                    onClick = onOpenScreeningRoom,
+                )
+            }
+        } else {
+            null
+        }
     var refreshing by remember { mutableStateOf(false) }
     var retrying by remember { mutableStateOf(false) }
     var actionsEmail by remember { mutableStateOf<Email?>(null) }
@@ -196,6 +221,7 @@ fun EmailListView(
                 onClearFilters = onClearFilters,
                 filterChipsBar = filterChipsBar,
                 bottomInset = bottomInset,
+                topRow = screeningRoomRow,
             )
             else -> EmailRows(
                 emails = emails,
@@ -214,6 +240,7 @@ fun EmailListView(
                 onMore = { actionsEmail = it },
                 inboxNewCount = if (isFiltered) null else inboxNewCount,
                 onShowAllNew = onShowAllNew,
+                topRow = screeningRoomRow,
             )
         }
     }
@@ -272,6 +299,8 @@ private fun EmailRows(
     onMore: (Email) -> Unit,
     inboxNewCount: Int? = null,
     onShowAllNew: (() -> Unit)? = null,
+    /** Pinned first row (Inbox: the Screening room entry, AVE-136). */
+    topRow: (@Composable () -> Unit)? = null,
 ) {
     val app = LocalAppModel.current
     val swipePreferences by app.swipePreferences.collectAsState()
@@ -304,6 +333,9 @@ private fun EmailRows(
         modifier = Modifier.fillMaxSize(),
         userScrollEnabled = true,
     ) {
+        if (topRow != null) {
+            item(key = "screening-room") { topRow() }
+        }
         if (filterChipsBar != null) {
             item {
                 Box(modifier = Modifier.padding(bottom = 4.dp)) {
@@ -800,6 +832,14 @@ private fun MailRow(
                         scope.launch { app.toggleReplyLater(email) }
                     },
                 )
+                InboxiesMenuItem(
+                    text = if (email.hasPendingReplyLaterReminder) "Change reminder" else "Remind me…",
+                    icon = Icons.Outlined.NotificationsActive,
+                    onClick = {
+                        showMenu = false
+                        app.openReminderPicker(email)
+                    },
+                )
                 InboxiesMenuDivider()
                 InboxiesMenuItem(
                     text = "More Options…",
@@ -995,6 +1035,7 @@ private fun EmptyList(
     onClearFilters: (() -> Unit)?,
     filterChipsBar: (@Composable () -> Unit)?,
     bottomInset: Dp,
+    topRow: (@Composable () -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     LazyColumn(
@@ -1002,6 +1043,11 @@ private fun EmptyList(
         contentPadding = PaddingValues(bottom = bottomInset),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (topRow != null) {
+            item(key = "screening-room") {
+                Box(modifier = Modifier.padding(top = 12.dp)) { topRow() }
+            }
+        }
         if (filterChipsBar != null) {
             item { filterChipsBar() }
         }
@@ -1167,6 +1213,10 @@ fun EmailRowView(
     val list = AppThemeDims.List
     val previewText = email.previewText
     val tags = rowTags(email, highlightQuery, folderLabel)
+    val stickyNotePreview = remember(email.hasStickyNote, email.stickyNoteText) {
+        if (email.hasStickyNote == true) NoteText.preview(email.stickyNoteText) else ""
+    }
+    val inlineNoteCount = (email.inlineNoteCount ?: 0).coerceAtLeast(0)
     val senderWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
     val subjectWeight = if (email.isUnread) FontWeight.Medium else FontWeight.Normal
 
@@ -1279,12 +1329,7 @@ fun EmailRowView(
                         )
                     }
                     if (email.replyLater) {
-                        Icon(
-                            Icons.Outlined.Schedule,
-                            contentDescription = "Reply later",
-                            tint = colors.accent,
-                            modifier = Modifier.size(list.badge.value.dp),
-                        )
+                        ReplyLaterReminderChip(email)
                     }
                     if (email.starred) {
                         Icon(
@@ -1321,12 +1366,14 @@ fun EmailRowView(
                 )
             }
 
-            if (showsTags && tags.isNotEmpty()) {
+            val shownTags = if (showsTags) tags else emptyList()
+            if (shownTags.isNotEmpty() || inlineNoteCount > 0) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(top = 3.dp),
                 ) {
-                    tags.forEach { tag ->
+                    shownTags.forEach { tag ->
                         Text(
                             tag,
                             fontFamily = InterFontFamily,
@@ -1341,7 +1388,15 @@ fun EmailRowView(
                                 .padding(horizontal = 8.dp, vertical = 3.dp),
                         )
                     }
+                    if (inlineNoteCount > 0) {
+                        PrivateNotesChip(count = inlineNoteCount)
+                    }
                 }
+            }
+
+            // Notes to self: the latest sticky's text on the bottom row.
+            if (stickyNotePreview.isNotEmpty()) {
+                StickyNoteRowStrip(text = stickyNotePreview, modifier = Modifier.padding(top = 4.dp))
             }
         }
         }
@@ -1585,6 +1640,56 @@ fun ScreenerActionButtons(
                     color = colors.ink,
                 )
             }
+        }
+    }
+}
+
+/**
+ * Row meta for Reply Later (AVE-86): the clock alone, a clock + short time for a pending
+ * reminder, or the attention-tinted clock + "Due" (no fill) once the reminder fired.
+ */
+@Composable
+private fun ReplyLaterReminderChip(email: Email) {
+    val colors = inboxiesColors()
+    val size = AppThemeDims.List.badge
+    val due = email.isReplyLaterDue
+    val pending = if (!due && email.hasPendingReplyLaterReminder) {
+        co.inboxies.app.services.ReplyLaterReminderPresets.shortLabel(email.replyLaterRemindAt)
+    } else {
+        null
+    }
+    val tint = when {
+        due -> colors.attention
+        pending != null -> colors.muted
+        else -> colors.accent
+    }
+    val description = when {
+        due -> "Reply later, reminder due"
+        pending != null -> "Reply later, reminder $pending"
+        else -> "Reply later"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = description },
+    ) {
+        Icon(
+            if (due || pending != null) Icons.Outlined.NotificationsActive else Icons.Outlined.Schedule,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(size.value.dp),
+        )
+        val text = if (due) "Due" else pending
+        if (text != null) {
+            Text(
+                text,
+                fontFamily = InterFontFamily,
+                fontWeight = FontWeight.Medium,
+                fontSize = size,
+                color = tint,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
 }

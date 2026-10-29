@@ -130,7 +130,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	},
 	{ id: "spoofing", group: "privacy", name: "Spoofing warnings", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "SPF, DKIM and DMARC alignment.", src: "FSW#spoofing-protection" },
 	{ id: "safe-html", group: "privacy", name: "Safe HTML", status: "available", platforms: ["ios", "android", "web"], note: "Cleaned and sandboxed.", src: "FSW#supporting-features" },
-	{ id: "tracking-pixels", group: "privacy", name: "Remote images on request", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Hidden in every message until you choose Load images.", src: "dev 061e0ea (#54, web EmailIframe.tsx CSP until Load images); eda481f (#59, EmailHTMLSanitizer.swift remoteImagesBlockedPolicy, EmailBodyView.kt allowRemoteImages=false)" },
+	{ id: "tracking-pixels", group: "privacy", name: "Remote images held back in Spam", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Hidden in Spam until you choose Load images; elsewhere they load.", src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
 	{
 		id: "delete-account",
 		group: "privacy",

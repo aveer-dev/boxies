@@ -24,6 +24,20 @@ import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 import {
+	CONVERSATION_FLUSH_ALARM_BUDGET,
+	CONVERSATION_FLUSH_CONTINUE_DELAY_MS,
+	CONVERSATION_FLUSH_READ_BUDGET,
+	SENT_FOLDER_ID_SQL,
+	conversationIndexIsClean,
+	countConversationsFromIndex,
+	countThreadedByScan,
+	countThreadedSectionsByScan,
+	flushConversationIndex,
+	readThreadedListByScan,
+	readThreadedListFromIndex,
+	resolveFolderId,
+} from "../lib/conversation-index";
+import {
 	abandonInboundDelivery,
 	claimInboundMessage,
 	completeInboundMessageClaim,
@@ -31,6 +45,7 @@ import {
 import {
 	senderNameFromRawHeaders,
 } from "../../shared/sender";
+import { supportsOneClickUnsubscribe } from "../lib/list-unsubscribe";
 import {
 	buildInboxDigest,
 	type DigestEmailRow,
@@ -56,6 +71,15 @@ import {
 	forgetPendingBlobDeletes,
 } from "../lib/pending-blob-deletes";
 import { runMailboxPurge } from "../lib/mailbox-purge";
+import {
+	REPLY_LATER_MAILBOX_ID_KEY,
+	countDueReplyLater,
+	fireDueReplyLaterReminders,
+	nextReplyLaterReminderAt,
+	reminderPushCopy,
+	type FiredReminder,
+} from "../lib/reply-later-reminders";
+import { dispatchPushToDevices } from "../lib/push-dispatch";
 import {
 	RETENTION_CONTINUE_DELAY_MS,
 	nextRetentionSweepDelayMs,
@@ -85,9 +109,46 @@ import { aggregateRecentRecipients } from "../../shared/recent-recipients";
 import {
 	parseStoredEmailAuth,
 	serializeEmailAuth,
+	type AuthTier,
 	type EmailAuth,
 } from "../lib/email-auth";
-import { buildBootstrapAllowSeeds } from "../lib/sender-triage";
+import { storedAuthTier } from "../lib/classification-reason";
+import { buildBootstrapAllowSeeds, normalizeTriageSender } from "../lib/sender-triage";
+import {
+	applyFeedbackEvent,
+	feedbackDayKey,
+	feedbackPruneBeforeKey,
+	feedbackWindowKeys,
+	inboundSpamCounts,
+	mergeFeedbackCounts,
+	senderRuleCounts,
+	spamFeedbackForMove,
+	SPAM_METRICS_KEY_PREFIX,
+	SPAM_METRICS_WINDOW_DAYS,
+	windowSinceIso,
+	type MailboxSpamCounts,
+	type SpamFeedbackCounts,
+} from "../lib/spam-metrics";
+import {
+	clearAddressBlockRule,
+	deleteSenderRule,
+	listSenderRules,
+	matchSenderRule,
+	setAddressSenderRule,
+	upsertSenderRule,
+	type SenderRule,
+	type SenderRuleKind,
+	type SenderRuleSource,
+	type SenderRuleVerdict,
+} from "../lib/sender-rules";
+import {
+	captureSenderVerdictState,
+	finishSenderVerdict,
+	undoSenderVerdict,
+	type SenderVerdictKind,
+	type SenderVerdictState,
+	type VerdictMove,
+} from "../lib/sender-verdict-undo";
 import {
 	normalizeSenderPreferenceAddress,
 	parseSenderPreferenceSource,
@@ -123,26 +184,30 @@ import {
 	stuckSendAlarmDelayMs,
 	sweepStuckSends,
 } from "../lib/outbound-send-sweeper";
+import {
+	deleteSummariesForEmail,
+	resolveSummary,
+	SummaryGenerationError,
+	type SummaryMessageMeta,
+} from "../lib/ai-summary";
+import { normalizeEmailAddress } from "../lib/mail-automations";
+import type { AiSummaryResponse, AiSummaryTargetType } from "../../shared/ai-summaries";
+import type { AiUsageSnapshot } from "../../shared/ai-quota";
+import {
+	AI_DAILY_LIMITS,
+	aiUsageSnapshot,
+	consumeAiQuota,
+	dailyLimit,
+	type AiQuotaBucket,
+	type AiQuotaResult,
+	type PlanTier,
+} from "../lib/ai-quota";
 
 /**
- * SQL expression to normalize email subjects by stripping common
- * reply/forward prefixes (Re:, Fwd:, FW:, AW:, WG:, Réf:, SV:).
- * Used for conversation grouping. Hardcoded to the `subject` column.
+ * DO-side summary result. Model failures come back as a value rather than a
+ * thrown error because custom error classes don't survive the RPC boundary.
  */
-const NORMALIZED_SUBJECT_SQL = `LOWER(TRIM(
-	REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-		LOWER(subject),
-		'aw: ', ''), 'wg: ', ''), 'réf: ', ''), 'sv: ', ''),
-		're: ', ''), 'fwd: ', ''), 'fw: ', '')
-))`;
-
-/** Resolve a system folder by id or name. `name = 'draft'` does not match the
- *  stored display name `'Drafts'`; looking up `id` as well is the same pattern
- *  used for the folder filter (`name = ?1 OR id = ?1`). */
-const folderIdSql = (id: string) =>
-	`(SELECT id FROM folders WHERE name = '${id}' OR id = '${id}' LIMIT 1)`;
-const DRAFT_FOLDER_ID_SQL = folderIdSql(Folders.DRAFT);
-const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
+export type MailboxSummaryResult = AiSummaryResponse | { status: "generation_failed"; error: string };
 
 /** KV flag set when a purge starts (before any wipe) so writers cannot resurrect mail. */
 const MAILBOX_DELETED_KEY = "mailbox_deleted";
@@ -237,6 +302,12 @@ interface EmailData {
 	delivery_status?: DeliveryStatus | null;
 	delivery_error?: string | null;
 	auth?: EmailAuth | string | null;
+	/** Why inbound mail was filed where it was (shared/spam-reason.ts code). */
+	classification_reason?: string | null;
+	/** Defaults to the tier of `auth`; null when there's no auth snapshot. */
+	auth_tier?: string | null;
+	/** Sender rule that decided the folder (null until sender_rules exists). */
+	matched_rule_id?: string | null;
 	alias_id?: string | null;
 	/** "agent" for AI-written drafts; omitted for the user's own mail. */
 	source?: "agent" | null;
@@ -258,6 +329,8 @@ export class MailboxDO extends DurableObject<Env> {
 	declare __DURABLE_OBJECT_BRAND: never;
 	db: ReturnType<typeof drizzle>;
 	#subscribers: Set<ReadableStreamDefaultController> = new Set();
+	/** In-flight AI summary generations, so two opens of one thread run the model once. */
+	#summaryInflight = new Map<string, Promise<MailboxSummaryResult | null>>();
 	#pingInterval: ReturnType<typeof setInterval> | null = null;
 
 	#ensurePingInterval() {
@@ -357,6 +430,22 @@ export class MailboxDO extends DurableObject<Env> {
 		return !(await this.#isMailboxDeleted());
 	}
 
+	/**
+	 * Count one LLM request against today's (UTC) mailbox quota (AVE-45).
+	 * Refused when the bucket is at its plan-tier limit; see lib/ai-quota.ts.
+	 */
+	async consumeAiQuota(bucket: AiQuotaBucket, tier: PlanTier = "free"): Promise<AiQuotaResult> {
+		if (bucket !== "chat" && bucket !== "inbound") throw new Error(`Unknown AI quota bucket: ${bucket}`);
+		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+		return consumeAiQuota(this.ctx.storage.sql, bucket, dailyLimit(planTier, bucket));
+	}
+
+	/** Today's AI usage against the plan-tier limits, for usage meters (AVE-45). */
+	async getAiUsage(tier: PlanTier = "free"): Promise<AiUsageSnapshot> {
+		const planTier: PlanTier = tier in AI_DAILY_LIMITS ? tier : "free";
+		return aiUsageSnapshot(this.ctx.storage.sql, planTier);
+	}
+
 	constructor(state: DurableObjectState, env: Env) {
 		super(state, env);
 		this.db = drizzle(this.ctx.storage, { schema });
@@ -366,12 +455,26 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#resumePendingBlobDeletes();
 		this.#resumeStuckSendSweep();
 		this.#armRetentionSweep();
+		void this.#scheduleReplyLaterReminders();
+		this.#resumeConversationIndexFlush();
+	}
+
+	/** Pending conversation index changes (e.g. the migration 42 backfill): let the alarm work through them. */
+	#resumeConversationIndexFlush(): void {
+		try {
+			if (!conversationIndexIsClean(this.ctx.storage.sql)) {
+				this.#scheduleConversationIndexFlush(1_000);
+			}
+		} catch (e) {
+			console.error("Conversation index check failed:", (e as Error).message);
+		}
 	}
 
 	/**
 	 * One alarm serves every scheduled job: incremental R2 → FTS indexing for
 	 * mail created before FTS existed, the Spam / Trash retention purge, the
-	 * sweep of queued blob deletes, and the stuck-send sweeper. Every job runs
+	 * sweep of queued blob deletes, the stuck-send sweeper, and batches of
+	 * conversation index changes (AVE-105). Every job runs
 	 * on every firing (each is a cheap no-op when it has nothing to do). FTS
 	 * may set the alarm directly; the others only ever move it earlier, and
 	 * the retention job re-arms last, so a nearer FTS / blob / send alarm
@@ -382,6 +485,10 @@ export class MailboxDO extends DurableObject<Env> {
 		const retention = await this.#runRetentionPurge();
 		await this.#sweepPendingBlobDeletes();
 		await this.#sweepStuckSends();
+		// Reminders first: the mail they move / mark unread leaves dirty
+		// conversation marks that the index batch below folds in.
+		await this.#fireReplyLaterReminders();
+		await this.#runConversationIndexBatch();
 		if (retention === "more") {
 			await this.#scheduleAlarmWithin(RETENTION_CONTINUE_DELAY_MS);
 		}
@@ -416,6 +523,82 @@ export class MailboxDO extends DurableObject<Env> {
 		} catch (e) {
 			console.error("Retention purge failed:", (e as Error).message);
 			return "done";
+		}
+	}
+
+	/**
+	 * Fire due Reply Later reminders (AVE-86, lib/reply-later-reminders): mark
+	 * unread, resurface in Inbox, broadcast, and push once to every device.
+	 * Never throws; re-arms for the next pending reminder.
+	 */
+	async #fireReplyLaterReminders(): Promise<void> {
+		try {
+			if (await this.#isMailboxDeleted()) return;
+			const result = this.ctx.storage.transactionSync(() =>
+				fireDueReplyLaterReminders(this.ctx.storage.sql, Date.now()),
+			);
+			for (const r of result.fired) {
+				if (r.folder_id !== r.from_folder_id) {
+					this.broadcastEvent("email_moved", { id: r.id, folder_id: r.folder_id });
+				}
+				this.broadcastEvent("email_updated", {
+					id: r.id,
+					read: false,
+					reply_later: true,
+					reply_later_reminded: true,
+				});
+			}
+			if (result.fired.length > 0) {
+				console.log(
+					JSON.stringify({ event: "reply_later_reminders_fired", count: result.fired.length }),
+				);
+				await this.#pushReplyLaterReminders(result.fired);
+			}
+			if (result.more) await this.#scheduleAlarmWithin(1_000);
+		} catch (e) {
+			console.error("Reply Later reminders failed:", (e as Error).message);
+		}
+		await this.#scheduleReplyLaterReminders();
+	}
+
+	async #pushReplyLaterReminders(fired: FiredReminder[]): Promise<void> {
+		const mailboxId =
+			(await this.ctx.storage.get<string>(REPLY_LATER_MAILBOX_ID_KEY)) ??
+			(await this.ctx.storage.get<string>(OUTBOUND_SEND_MAILBOX_ID_KEY)) ??
+			this.ctx.id.name ??
+			null;
+		if (!mailboxId) {
+			console.warn("[Push] Reply Later reminder: mailbox id unknown, skipping push");
+			return;
+		}
+		if ((await this.getDeviceTokens()).length === 0) return;
+		for (const r of fired) {
+			try {
+				const copy = reminderPushCopy(r);
+				await dispatchPushToDevices(this.env, this, {
+					title: copy.title,
+					subtitle: copy.subtitle,
+					body: copy.body,
+					fcmBody: copy.fcmBody,
+					mailboxId,
+					emailId: r.id,
+					folderId: r.folder_id,
+				});
+			} catch (e) {
+				console.error("[Push] Reply Later reminder push failed:", (e as Error).message);
+			}
+		}
+	}
+
+	/** Arm the alarm for the earliest pending Reply Later reminder, if any. */
+	async #scheduleReplyLaterReminders(): Promise<void> {
+		try {
+			if (await this.#isMailboxDeleted()) return;
+			const next = nextReplyLaterReminderAt(this.ctx.storage.sql);
+			if (next == null) return;
+			await this.#scheduleAlarmWithin(Math.max(next - Date.now(), 0));
+		} catch (e) {
+			console.error("Reply Later reminder schedule failed:", (e as Error).message);
 		}
 	}
 
@@ -759,12 +942,22 @@ export class MailboxDO extends DurableObject<Env> {
 		}
 	}
 
-	#withDecodedAuth<T extends { auth?: unknown }>(
+	/**
+	 * Decode the stored auth JSON and fill `auth_tier` for rows from before
+	 * migration 37, which only have the tier inside `auth`.
+	 */
+	#withDecodedAuth<T extends { auth?: unknown; auth_tier?: unknown }>(
 		email: T,
-	): T & { auth: EmailAuth | null } {
+	): T & { auth: EmailAuth | null; auth_tier: string | null } {
+		const auth = parseStoredEmailAuth(email.auth);
+		const stored =
+			typeof email.auth_tier === "string" && email.auth_tier
+				? email.auth_tier
+				: null;
 		return {
 			...email,
-			auth: parseStoredEmailAuth(email.auth),
+			auth,
+			auth_tier: stored ?? storedAuthTier(auth),
 		};
 	}
 
@@ -831,6 +1024,8 @@ export class MailboxDO extends DurableObject<Env> {
 				starred: schema.emails.starred,
 				reply_later: schema.emails.reply_later,
 				reply_later_at: schema.emails.reply_later_at,
+				reply_later_remind_at: schema.emails.reply_later_remind_at,
+				reply_later_reminded_at: schema.emails.reply_later_reminded_at,
 				in_reply_to: schema.emails.in_reply_to,
 				email_references: schema.emails.email_references,
 				thread_id: schema.emails.thread_id,
@@ -840,6 +1035,9 @@ export class MailboxDO extends DurableObject<Env> {
 				delivery_error: schema.emails.delivery_error,
 				snippet: schema.emails.snippet,
 				auth: schema.emails.auth,
+				auth_tier: schema.emails.auth_tier,
+				classification_reason: schema.emails.classification_reason,
+				matched_rule_id: schema.emails.matched_rule_id,
 				alias_id: schema.emails.alias_id,
 			})
 			.from(schema.emails)
@@ -1018,9 +1216,11 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/** Workflow pile counts for home chrome (Reply Later now; Set Aside later). */
-	async getWorkflowPiles(): Promise<{ id: string; count: number }[]> {
+	async getWorkflowPiles(): Promise<{ id: string; count: number; due_count: number }[]> {
 		const count = await this.countEmails({ reply_later: true });
-		return [{ id: "reply_later", count }];
+		// Fired, unread reminders: clients light up the Reply Later button (AVE-86).
+		const due_count = countDueReplyLater(this.ctx.storage.sql);
+		return [{ id: "reply_later", count, due_count }];
 	}
 
 	// ── Threaded queries (raw SQL — too complex for Drizzle's builder) ──
@@ -1082,11 +1282,11 @@ export class MailboxDO extends DurableObject<Env> {
 				)
 				SELECT
 					lp.id, lp.subject, lp.sender, lp.sender_name, lp.recipient, lp.date,
-					lp.read, lp.starred, lp.reply_later, lp.reply_later_at, lp.thread_id, lp.folder_id,
+					lp.read, lp.starred, lp.reply_later, lp.reply_later_at, lp.reply_later_remind_at, lp.reply_later_reminded_at, lp.thread_id, lp.folder_id,
 					lp.in_reply_to, lp.email_references,
 					lp.provider_message_id, lp.delivery_status, lp.delivery_error,
 					lp.snippet as snippet,
-					lp.auth,
+					lp.auth, lp.auth_tier, lp.classification_reason, lp.matched_rule_id,
 					ds.thread_count, ds.thread_unread_count, ds.participants
 				FROM latest_per_group lp
 				JOIN draft_stats ds ON lp.draft_group_key = ds.draft_group_key
@@ -1114,107 +1314,29 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 		}
 
-		// Non-draft folders: full threading logic. Inbox can window New/Seen
-		// (only one section, or the newest N New + all Seen) over `listed`.
-		const sectionFilter = useNewSeen
-			? inboxSectionFilterSql(options.inboxSections ?? {})
-			: "1 = 1";
-		const result = this.ctx.storage.sql.exec(
-			`WITH
-			folder_emails AS (
-				SELECT *,
-					COALESCE(thread_id, id) as raw_thread_id,
-					${NORMALIZED_SUBJECT_SQL} as normalized_subject
-				FROM emails
-				WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-			),
-			thread_to_conversation AS (
-				SELECT
-					raw_thread_id,
-					normalized_subject,
-					CASE
-						WHEN thread_id IS NOT NULL THEN raw_thread_id
-						ELSE MIN(raw_thread_id) OVER (PARTITION BY normalized_subject)
-					END as conversation_id
-				FROM folder_emails
-				GROUP BY raw_thread_id, normalized_subject, thread_id
-			),
-			all_emails_with_conversation AS (
-				SELECT
-					e.*,
-					COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
-				FROM emails e
-				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
-					ON COALESCE(e.thread_id, e.id) = tc.raw_thread_id
-			),
-			conversation_stats AS (
-				SELECT
-					conversation_id,
-					COUNT(*) as thread_count,
-					SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count,
-					SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) as thread_read_count,
-					GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants,
-					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft
-				FROM all_emails_with_conversation
-				WHERE conversation_id IN (
-					SELECT DISTINCT conversation_id FROM all_emails_with_conversation
-					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-				)
-				GROUP BY conversation_id
-			),
-			latest_message_per_conversation AS (
-				SELECT
-					conversation_id,
-					folder_id,
-					ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY date DESC) as rn
-				FROM all_emails_with_conversation
-			),
-			latest_in_folder AS (
-				SELECT
-					fe.*,
-					COALESCE(tc.conversation_id, fe.raw_thread_id) as conversation_id,
-					ROW_NUMBER() OVER (
-						PARTITION BY COALESCE(tc.conversation_id, fe.raw_thread_id)
-						ORDER BY fe.date DESC
-					) as rn
-				FROM folder_emails fe
-				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
-					ON fe.raw_thread_id = tc.raw_thread_id
-			),
-			listed AS (
-			SELECT
-				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
-				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.thread_id, lif.folder_id,
-				lif.in_reply_to, lif.email_references,
-				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
-				lif.snippet as snippet,
-				lif.auth,
-				cs.thread_count, cs.thread_unread_count, cs.participants,
-				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
-					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
-					AND cs.thread_read_count > 0
-					THEN 1 ELSE 0 END as needs_reply,
-				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft,
-				CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END as is_new,
-				ROW_NUMBER() OVER (
-					PARTITION BY CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END
-					ORDER BY lif.date DESC
-				) as section_rank
-			FROM latest_in_folder lif
-			JOIN conversation_stats cs ON lif.conversation_id = cs.conversation_id
-			LEFT JOIN latest_message_per_conversation lmc
-				ON lmc.conversation_id = lif.conversation_id AND lmc.rn = 1
-			WHERE lif.rn = 1
-			)
-			SELECT * FROM listed
-			WHERE ${sectionFilter}
-			ORDER BY ${useNewSeen ? `is_new DESC, date DESC` : `date DESC`}
-			LIMIT ?2 OFFSET ?3`,
-			folder, limit, offset
-		);
-
-		const rows = [...result];
-		const mapped = rows.map(({ is_new: _isNew, section_rank: _rank, ...row }: any) => this.#withDecodedAuth({
+		// Non-draft folders: read the conversation index (AVE-105). While it
+		// still has pending changes after a bounded flush (backfill, a large
+		// bulk change), fall back to the original full-mailbox scan.
+		const folderId = this.#conversationIndexReady() ? resolveFolderId(this.ctx.storage.sql, folder) : undefined;
+		const sections = options.inboxSections ?? {};
+		const rows =
+			folderId === null
+				? []
+				: folderId !== undefined
+					? readThreadedListFromIndex(this.ctx.storage.sql, folderId, {
+							limit,
+							offset,
+							useNewSeen,
+							section: sections.section,
+							newLimit: sections.newLimit,
+						})
+					: readThreadedListByScan(this.ctx.storage.sql, folder, {
+							limit,
+							offset,
+							useNewSeen,
+							sectionFilter: useNewSeen ? inboxSectionFilterSql(sections) : "1 = 1",
+						});
+		const mapped = rows.map(({ is_new: _isNew, section_rank: _rank, sort_date: _sort, ...row }: any) => this.#withDecodedAuth({
 			...row,
 			read: !!row.read,
 			starred: !!row.starred,
@@ -1230,6 +1352,51 @@ export class MailboxDO extends DurableObject<Env> {
 			this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
 			options.userId,
 		);
+	}
+
+	/**
+	 * Bring the conversation index up to date with a bounded flush. False when
+	 * changes are still pending (the alarm keeps working through them) or the
+	 * flush failed; callers then use the scan.
+	 */
+	#conversationIndexReady(): boolean {
+		try {
+			if (conversationIndexIsClean(this.ctx.storage.sql)) return true;
+			const clean = this.ctx.storage.transactionSync(() =>
+				flushConversationIndex(this.ctx.storage.sql, CONVERSATION_FLUSH_READ_BUDGET),
+			);
+			if (!clean) this.#scheduleConversationIndexFlush();
+			return clean;
+		} catch (e) {
+			console.error("Conversation index flush failed:", (e as Error).message);
+			this.#scheduleConversationIndexFlush();
+			return false;
+		}
+	}
+
+	/** Arm the alarm to keep flushing the conversation index. */
+	#scheduleConversationIndexFlush(delayMs = CONVERSATION_FLUSH_CONTINUE_DELAY_MS): void {
+		void this.#scheduleAlarmWithin(delayMs).catch((e) =>
+			console.error("Conversation index schedule failed:", (e as Error).message),
+		);
+	}
+
+	/** Alarm job: flush pending conversation index changes in batches. Never throws. */
+	async #runConversationIndexBatch(): Promise<void> {
+		try {
+			if (conversationIndexIsClean(this.ctx.storage.sql)) return;
+			const clean = this.ctx.storage.transactionSync(() =>
+				flushConversationIndex(this.ctx.storage.sql, CONVERSATION_FLUSH_ALARM_BUDGET),
+			);
+			if (!clean) await this.#scheduleAlarmWithin(CONVERSATION_FLUSH_CONTINUE_DELAY_MS);
+		} catch (e) {
+			console.error("Conversation index batch failed:", (e as Error).message);
+			try {
+				await this.#scheduleAlarmWithin(5_000);
+			} catch {
+				/* ignore reschedule failure */
+			}
+		}
 	}
 
 	/**
@@ -1251,34 +1418,11 @@ export class MailboxDO extends DurableObject<Env> {
 			return row?.total ?? 0;
 		}
 
-		const row = [
-			...this.ctx.storage.sql.exec(
-				`WITH
-				folder_emails AS (
-					SELECT
-						COALESCE(thread_id, id) as raw_thread_id,
-						thread_id,
-					${NORMALIZED_SUBJECT_SQL} as normalized_subject
-					FROM emails
-					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-				),
-				thread_to_conversation AS (
-					SELECT
-						raw_thread_id,
-						CASE
-							WHEN thread_id IS NOT NULL THEN raw_thread_id
-							WHEN normalized_subject != '' THEN MIN(raw_thread_id) OVER (PARTITION BY normalized_subject)
-							ELSE raw_thread_id
-						END as conversation_id
-					FROM folder_emails
-					GROUP BY raw_thread_id, normalized_subject, thread_id
-				)
-				SELECT COUNT(DISTINCT conversation_id) as total
-				FROM thread_to_conversation`,
-				folder,
-			),
-		][0] as { total: number } | undefined;
-		return row?.total ?? 0;
+		if (this.#conversationIndexReady()) {
+			const folderId = resolveFolderId(this.ctx.storage.sql, folder);
+			return folderId === null ? 0 : countConversationsFromIndex(this.ctx.storage.sql, folderId).totalCount;
+		}
+		return countThreadedByScan(this.ctx.storage.sql, folder);
 	}
 
 	/**
@@ -1294,62 +1438,13 @@ export class MailboxDO extends DurableObject<Env> {
 			return { newCount: 0, seenCount: totalCount, totalCount };
 		}
 
-		const row = [
-			...this.ctx.storage.sql.exec(
-				`WITH
-				folder_emails AS (
-					SELECT *,
-						COALESCE(thread_id, id) as raw_thread_id,
-						${NORMALIZED_SUBJECT_SQL} as normalized_subject
-					FROM emails
-					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-				),
-				thread_to_conversation AS (
-					SELECT
-						raw_thread_id,
-						normalized_subject,
-						CASE
-							WHEN thread_id IS NOT NULL THEN raw_thread_id
-							ELSE MIN(raw_thread_id) OVER (PARTITION BY normalized_subject)
-						END as conversation_id
-					FROM folder_emails
-					GROUP BY raw_thread_id, normalized_subject, thread_id
-				),
-				all_emails_with_conversation AS (
-					SELECT
-						e.*,
-						COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
-					FROM emails e
-					LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
-						ON COALESCE(e.thread_id, e.id) = tc.raw_thread_id
-				),
-				conversation_stats AS (
-					SELECT
-						conversation_id,
-						SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count
-					FROM all_emails_with_conversation
-					WHERE conversation_id IN (
-						SELECT DISTINCT conversation_id FROM all_emails_with_conversation
-						WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-					)
-					GROUP BY conversation_id
-				)
-				SELECT
-					COALESCE(SUM(CASE WHEN thread_unread_count > 0 THEN 1 ELSE 0 END), 0) as new_count,
-					COALESCE(SUM(CASE WHEN thread_unread_count = 0 THEN 1 ELSE 0 END), 0) as seen_count,
-					COUNT(*) as total_count
-				FROM conversation_stats`,
-				folder,
-			),
-		][0] as
-			| { new_count: number; seen_count: number; total_count: number }
-			| undefined;
-
-		return {
-			newCount: Number(row?.new_count ?? 0),
-			seenCount: Number(row?.seen_count ?? 0),
-			totalCount: Number(row?.total_count ?? 0),
-		};
+		if (this.#conversationIndexReady()) {
+			const folderId = resolveFolderId(this.ctx.storage.sql, folder);
+			return folderId === null
+				? { newCount: 0, seenCount: 0, totalCount: 0 }
+				: countConversationsFromIndex(this.ctx.storage.sql, folderId);
+		}
+		return countThreadedSectionsByScan(this.ctx.storage.sql, folder);
 	}
 
 	// ── Single email operations (Drizzle) ──────────────────────────
@@ -1371,9 +1466,10 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const body = await this.#hydrateBody(id, email.body, email.snippet);
 
-		return {
+		return this.#withDecodedAuth({
 			...email,
 			...this.#aliasFields(email.alias_id),
+			one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
 			body,
 			read: !!email.read,
 			starred: !!email.starred,
@@ -1381,8 +1477,7 @@ export class MailboxDO extends DurableObject<Env> {
 			attachments: emailAttachments,
 			delivery_recipients:
 				listDeliveryRecipients(this.ctx.storage.sql, [id]).get(id) ?? [],
-			auth: parseStoredEmailAuth(email.auth),
-		};
+		});
 	}
 
 	/**
@@ -1452,6 +1547,7 @@ export class MailboxDO extends DurableObject<Env> {
 			emailRows.map(async (email) => this.#withDecodedAuth({
 				...email,
 				...this.#aliasFields(email.alias_id),
+				one_click_unsubscribe: supportsOneClickUnsubscribe(email.raw_headers),
 				body: await this.#hydrateBody(email.id, email.body, email.snippet),
 				read: !!email.read,
 				starred: !!email.starred,
@@ -1460,6 +1556,129 @@ export class MailboxDO extends DurableObject<Env> {
 				delivery_recipients: recipientsByEmail.get(email.id) || [],
 			})),
 		);
+	}
+
+	// ── AI summaries (AVE-20) ──────────────────────────────────────
+
+	/** Metadata of every message in a thread (key = thread_id, or the id of a thread's first message). */
+	#summaryThreadMetas(threadKey: string): SummaryMessageMeta[] {
+		return [
+			...this.ctx.storage.sql.exec(
+				`SELECT id, folder_id, sender, sender_name, subject, date
+				   FROM emails
+				  WHERE thread_id = ?1 OR (id = ?1 AND thread_id IS NULL)`,
+				threadKey,
+			),
+		] as unknown as SummaryMessageMeta[];
+	}
+
+	/** Thread senders the user rejected in the Screener. */
+	#rejectedSendersAmong(messages: SummaryMessageMeta[]): Set<string> {
+		const senders = [
+			...new Set(
+				messages
+					.map((message) => normalizeEmailAddress(message.sender))
+					.filter((address): address is string => !!address),
+			),
+		];
+		if (senders.length === 0) return new Set();
+		const placeholders = senders.map((_, i) => `?${i + 1}`).join(",");
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT sender FROM sender_triage WHERE status = 'rejected' AND sender IN (${placeholders})`,
+				...senders,
+			),
+		];
+		return new Set(rows.map((row) => String(row.sender)));
+	}
+
+	async #summaryBody(emailId: string): Promise<string | null> {
+		const row = this.db
+			.select({ body: schema.emails.body, snippet: schema.emails.snippet })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, emailId))
+			.get();
+		if (!row) return null;
+		return this.#hydrateBody(emailId, row.body, row.snippet);
+	}
+
+	async #resolveSummary(
+		type: AiSummaryTargetType,
+		targetId: string,
+		threadKey: string,
+		mode: "cached" | "lazy" | "force",
+	): Promise<MailboxSummaryResult | null> {
+		const threadMessages = this.#summaryThreadMetas(threadKey);
+		if (threadMessages.length === 0) return null;
+		if (type === "email" && !threadMessages.some((message) => message.id === targetId)) return null;
+		let result: AiSummaryResponse;
+		try {
+			result = await resolveSummary({
+				sql: this.ctx.storage.sql,
+				ai: this.env.AI,
+				target: { type, id: targetId },
+				threadMessages,
+				rejectedSenders: this.#rejectedSendersAmong(threadMessages),
+				loadBody: (id) => this.#summaryBody(id),
+				mode,
+				assertWritable: () => this.#assertMailboxWritable(),
+			});
+		} catch (e) {
+			if (e instanceof SummaryGenerationError) {
+				return { status: "generation_failed", error: e.message };
+			}
+			throw e;
+		}
+		if (result.status === "ready" && !result.cached) {
+			this.broadcastEvent("summary_updated", { target_type: type, target_id: targetId });
+		}
+		return result;
+	}
+
+	/** Shares one in-flight generation per target; "cached" reads never wait on it. */
+	#dedupedSummary(
+		type: AiSummaryTargetType,
+		targetId: string,
+		threadKey: string,
+		mode: "cached" | "lazy" | "force",
+	): Promise<MailboxSummaryResult | null> {
+		if (mode === "cached") return this.#resolveSummary(type, targetId, threadKey, mode);
+		const key = `${type}:${targetId}`;
+		const pending = this.#summaryInflight.get(key);
+		if (pending) return pending;
+		const run = this.#resolveSummary(type, targetId, threadKey, mode).finally(() => {
+			this.#summaryInflight.delete(key);
+		});
+		this.#summaryInflight.set(key, run);
+		return run;
+	}
+
+	/**
+	 * Thread summary for the detail screen: cached, or generated on first open
+	 * ("lazy") / always ("force", Regenerate). Null when the thread has no mail.
+	 */
+	async getThreadSummary(
+		threadKey: string,
+		mode: "lazy" | "force" = "lazy",
+	): Promise<MailboxSummaryResult | null> {
+		return this.#dedupedSummary("thread", threadKey, threadKey, mode);
+	}
+
+	/**
+	 * Quick summary of one message in a multi-message thread. "cached" never
+	 * runs the model. Null when the email doesn't exist.
+	 */
+	async getEmailSummary(
+		emailId: string,
+		mode: "cached" | "lazy" | "force" = "cached",
+	): Promise<MailboxSummaryResult | null> {
+		const row = this.db
+			.select({ id: schema.emails.id, thread_id: schema.emails.thread_id })
+			.from(schema.emails)
+			.where(eq(schema.emails.id, emailId))
+			.get();
+		if (!row) return null;
+		return this.#dedupedSummary("email", emailId, row.thread_id || row.id, mode);
 	}
 
 	// ── Notes to self (private to their author; see lib/thread-notes) ──
@@ -1498,7 +1717,16 @@ export class MailboxDO extends DurableObject<Env> {
 			read,
 			starred,
 			reply_later,
-		}: { read?: boolean; starred?: boolean; reply_later?: boolean },
+			reply_later_remind_at,
+		}: {
+			read?: boolean;
+			starred?: boolean;
+			reply_later?: boolean;
+			/** UTC ISO (validated by the route) sets a reminder; null clears it (AVE-86). */
+			reply_later_remind_at?: string | null;
+		},
+		/** Mailbox address, remembered for reminder pushes fired by the alarm. */
+		mailboxId?: string,
 	) {
 		const existing = this.db
 			.select({
@@ -1514,7 +1742,13 @@ export class MailboxDO extends DurableObject<Env> {
 			starred?: number;
 			reply_later?: number;
 			reply_later_at?: string | null;
+			reply_later_remind_at?: string | null;
+			reply_later_reminded_at?: string | null;
 		} = {};
+		// Setting a reminder puts the mail in Reply Later unless the same call removes it.
+		if (typeof reply_later_remind_at === "string" && reply_later === undefined) {
+			reply_later = true;
+		}
 		if (read !== undefined) {
 			data.read = read ? 1 : 0;
 		}
@@ -1530,7 +1764,14 @@ export class MailboxDO extends DurableObject<Env> {
 				}
 			} else {
 				data.reply_later_at = null;
+				data.reply_later_remind_at = null;
+				data.reply_later_reminded_at = null;
 			}
+		}
+		if (reply_later_remind_at !== undefined && reply_later !== false) {
+			data.reply_later_remind_at = reply_later_remind_at;
+			// A new reminder replaces a fired one: the mail is no longer due.
+			if (reply_later_remind_at !== null) data.reply_later_reminded_at = null;
 		}
 
 		if (Object.keys(data).length === 0) {
@@ -1543,7 +1784,19 @@ export class MailboxDO extends DurableObject<Env> {
 			.where(eq(schema.emails.id, id))
 			.run();
 
-		this.broadcastEvent("email_updated", { id, read, starred, reply_later });
+		this.broadcastEvent("email_updated", {
+			id,
+			read,
+			starred,
+			reply_later,
+			...(reply_later_remind_at !== undefined ? { reply_later_remind_at } : {}),
+		});
+		if (typeof data.reply_later_remind_at === "string") {
+			if (mailboxId && (await this.ctx.storage.get<string>(REPLY_LATER_MAILBOX_ID_KEY)) !== mailboxId) {
+				await this.ctx.storage.put(REPLY_LATER_MAILBOX_ID_KEY, mailboxId);
+			}
+			await this.#scheduleReplyLaterReminders();
+		}
 		return this.getEmail(id);
 	}
 
@@ -1561,7 +1814,8 @@ export class MailboxDO extends DurableObject<Env> {
 		if (rows.length === 0) return;
 
 		this.ctx.storage.sql.exec(
-			`UPDATE emails SET reply_later = 0, reply_later_at = NULL
+			`UPDATE emails SET reply_later = 0, reply_later_at = NULL,
+			        reply_later_remind_at = NULL, reply_later_reminded_at = NULL
 			 WHERE thread_id = ?1 AND reply_later = 1`,
 			threadId,
 		);
@@ -1774,6 +2028,18 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
+	 * AVE-99: take the one right to send an RFC 8058 one-click unsubscribe
+	 * for a message. Check and mark happen in one DO turn, so a retried or
+	 * double-tapped Report spam never POSTs twice.
+	 */
+	async claimOneClickUnsubscribe(emailId: string): Promise<boolean> {
+		const key = `one_click_unsubscribe:${emailId}`;
+		if ((await this.ctx.storage.get(key)) !== undefined) return false;
+		await this.ctx.storage.put(key, Date.now());
+		return true;
+	}
+
+	/**
 	 * Outbound-send queue consumer: take the right to call the Email binding
 	 * for a queued Sent row. Status check and claim happen in one DO turn, so
 	 * a duplicate queue delivery sees `in_flight` instead of sending twice.
@@ -1924,6 +2190,7 @@ export class MailboxDO extends DurableObject<Env> {
 		});
 
 		this.#deleteEmailFts(id);
+		deleteSummariesForEmail(this.ctx.storage.sql, id, email.thread_id || id);
 		deleteThreadNotesForDeletedEmail(
 			this.ctx.storage.sql,
 			id,
@@ -2277,7 +2544,12 @@ export class MailboxDO extends DurableObject<Env> {
 
 		if (!folder) return false;
 		const current = this.db
-			.select({ folder_id: schema.emails.folder_id })
+			.select({
+				folder_id: schema.emails.folder_id,
+				sender: schema.emails.sender,
+				date: schema.emails.date,
+				classification_reason: schema.emails.classification_reason,
+			})
 			.from(schema.emails)
 			.where(eq(schema.emails.id, id))
 			.get();
@@ -2300,6 +2572,8 @@ export class MailboxDO extends DurableObject<Env> {
 					folder_id: folderId,
 					reply_later: 0,
 					reply_later_at: null,
+					reply_later_remind_at: null,
+					reply_later_reminded_at: null,
 				})
 				.where(eq(schema.emails.id, id))
 				.run();
@@ -2315,7 +2589,74 @@ export class MailboxDO extends DurableObject<Env> {
 				.run();
 			this.broadcastEvent("email_moved", { id, folder_id: folderId });
 		}
+		await this.#recordSpamFeedback(current, folderId);
 		return true;
+	}
+
+	// ── Spam metrics (AVE-100, lib/spam-metrics) ───────────────────
+
+	/** Count a move into / out of Spam; never fails the move. */
+	async #recordSpamFeedback(
+		email: {
+			folder_id: string;
+			sender: string | null;
+			date: string | null;
+			classification_reason: string | null;
+		},
+		toFolderId: string,
+	) {
+		try {
+			const sender = normalizeTriageSender(email.sender);
+			const triage =
+				email.folder_id === Folders.SPAM && sender
+					? await this.getSenderTriage(sender)
+					: null;
+			const event = spamFeedbackForMove({
+				fromFolderId: email.folder_id,
+				toFolderId,
+				reason: email.classification_reason,
+				receivedAt: email.date,
+				senderTriage: triage,
+			});
+			if (!event) return;
+			const now = Date.now();
+			const key = feedbackDayKey(now);
+			const day = await this.ctx.storage.get<SpamFeedbackCounts>(key);
+			await this.ctx.storage.put(key, applyFeedbackEvent(day, event));
+			if (!day) {
+				const stale = await this.ctx.storage.list({
+					prefix: SPAM_METRICS_KEY_PREFIX,
+					end: feedbackPruneBeforeKey(now),
+				});
+				if (stale.size > 0) await this.ctx.storage.delete([...stale.keys()]);
+			}
+		} catch (e) {
+			console.error("spam metrics: failed to record feedback", e);
+		}
+	}
+
+	/** Content-free spam counts for the last 7 and 30 days (ops dashboard). */
+	async getSpamMetricsCounts(): Promise<MailboxSpamCounts> {
+		const now = Date.now();
+		const sql = this.ctx.storage.sql;
+		const allKeys = feedbackWindowKeys(now, Math.max(...SPAM_METRICS_WINDOW_DAYS));
+		const stored = await this.ctx.storage.get<SpamFeedbackCounts>(allKeys);
+		const windows = SPAM_METRICS_WINDOW_DAYS.map((days) => {
+			const since = windowSinceIso(now, days);
+			return {
+				days,
+				since,
+				inbound: inboundSpamCounts(sql, since),
+				feedback: mergeFeedbackCounts(
+					feedbackWindowKeys(now, days).map((k) => stored.get(k)),
+				),
+			};
+		});
+		return {
+			generatedAt: new Date(now).toISOString(),
+			rules: senderRuleCounts(sql),
+			windows,
+		};
 	}
 
 	// ── Sender purpose-box preferences ─────────────────────────────
@@ -2360,7 +2701,9 @@ export class MailboxDO extends DurableObject<Env> {
 				? options.folder
 				: null;
 
-		const clauses: string[] = [];
+		// A plain Screener Accept used to store Inbox; it doesn't pin (AVE-139,
+		// pinnedPreferenceFolderId), so Settings → Senders doesn't list it.
+		const clauses: string[] = [`NOT (source = 'screener' AND folder_id = 'inbox')`];
 		const params: (string | number)[] = [];
 		let i = 1;
 		if (folder) {
@@ -2744,11 +3087,11 @@ export class MailboxDO extends DurableObject<Env> {
 
 		const query = `
 			SELECT e.id, e.subject, e.sender, e.sender_name, e.recipient, e.cc, e.bcc, e.date,
-				e.read, e.starred, e.reply_later, e.reply_later_at, e.in_reply_to, e.email_references,
+				e.read, e.starred, e.reply_later, e.reply_later_at, e.reply_later_remind_at, e.reply_later_reminded_at, e.in_reply_to, e.email_references,
 				e.thread_id, e.folder_id,
 				e.provider_message_id, e.delivery_status, e.delivery_error,
 				e.snippet as snippet,
-				e.auth,
+				e.auth, e.auth_tier, e.classification_reason, e.matched_rule_id,
 				f.name as folder_name
 			FROM emails e
 			${ftsJoin}
@@ -3033,6 +3376,11 @@ export class MailboxDO extends DurableObject<Env> {
 		// insert can't interleave with it.
 		// Sent and draft emails are always read — the author already knows the content.
 		// This prevents them from looking unread in lists or inflating thread_unread_count.
+		const decodedAuth =
+			typeof email.auth === "string"
+				? parseStoredEmailAuth(email.auth)
+				: email.auth ?? null;
+		const authTier = email.auth_tier ?? storedAuthTier(decodedAuth);
 		const created = insertOrReplay(this.ctx.storage.sql, idempotencyKey, email.id, () => {
 			this.db
 				.insert(schema.emails)
@@ -3058,11 +3406,10 @@ export class MailboxDO extends DurableObject<Env> {
 					provider_message_id: email.provider_message_id ?? null,
 					delivery_status: email.delivery_status ?? null,
 					delivery_error: email.delivery_error ?? null,
-					auth: serializeEmailAuth(
-						typeof email.auth === "string"
-							? parseStoredEmailAuth(email.auth)
-							: email.auth,
-					),
+					auth: serializeEmailAuth(decodedAuth),
+					classification_reason: email.classification_reason ?? null,
+					auth_tier: authTier,
+					matched_rule_id: email.matched_rule_id ?? null,
 					alias_id: email.alias_id ?? null,
 					source: email.source ?? null,
 					idempotency_key: idempotencyKey,
@@ -3113,9 +3460,10 @@ export class MailboxDO extends DurableObject<Env> {
 			provider_message_id: email.provider_message_id ?? null,
 			delivery_status: email.delivery_status ?? null,
 			delivery_error: email.delivery_error ?? null,
-			auth: typeof email.auth === "string"
-				? parseStoredEmailAuth(email.auth)
-				: email.auth ?? null,
+			auth: decodedAuth,
+			auth_tier: authTier,
+			classification_reason: email.classification_reason ?? null,
+			matched_rule_id: email.matched_rule_id ?? null,
 			// iOS decodes the full Email model from this event; it requires these.
 			reply_later: false,
 			alias_id: email.alias_id ?? null,
@@ -3448,6 +3796,136 @@ export class MailboxDO extends DurableObject<Env> {
 		return true;
 	}
 
+	// ── Sender rules (explicit allow / block list) ─────────────────
+
+	async listSenderRules(options: {
+		verdict?: string | null;
+		kind?: string | null;
+		q?: string | null;
+		limit?: number | null;
+	} = {}): Promise<SenderRule[]> {
+		return listSenderRules(this.ctx.storage.sql, options);
+	}
+
+	/** Input must come from normalizeSenderRuleInput (the route validates it). */
+	async upsertSenderRule(input: {
+		kind: SenderRuleKind;
+		value: string;
+		verdict: SenderRuleVerdict;
+		source: string;
+	}): Promise<{ rule: SenderRule; created: boolean }> {
+		await this.#assertMailboxWritable();
+		const result = upsertSenderRule(this.ctx.storage.sql, input);
+		this.broadcastEvent("sender_rule_updated", { rule: result.rule });
+		return result;
+	}
+
+	async deleteSenderRule(id: string): Promise<boolean> {
+		await this.#assertMailboxWritable();
+		const deleted = this.ctx.storage.transactionSync(() =>
+			deleteSenderRule(this.ctx.storage.sql, id),
+		);
+		if (!deleted) return false;
+		this.broadcastEvent("sender_rule_deleted", { id, kind: deleted.kind, value: deleted.value });
+		return true;
+	}
+
+	/** The address rule a sender verdict writes (sender-verdicts.ts); replaces the sender's old one. */
+	async setAddressSenderRule(
+		sender: string,
+		verdict: SenderRuleVerdict,
+		source: SenderRuleSource,
+	): Promise<SenderRule | null> {
+		await this.#assertMailboxWritable();
+		const result = setAddressSenderRule(this.ctx.storage.sql, sender, verdict, source);
+		if (!result) return null;
+		this.broadcastEvent("sender_rule_updated", { rule: result.rule });
+		return result.rule;
+	}
+
+	/** Drops the sender's address block rule (sender_triage is left to the caller). */
+	async clearAddressBlockRule(sender: string): Promise<boolean> {
+		await this.#assertMailboxWritable();
+		const deleted = clearAddressBlockRule(this.ctx.storage.sql, sender);
+		if (!deleted) return false;
+		this.broadcastEvent("sender_rule_deleted", {
+			id: deleted.id,
+			kind: deleted.kind,
+			value: deleted.value,
+		});
+		return true;
+	}
+
+	/**
+	 * The rule that decides inbound mail from `sender` (address beats domain;
+	 * a domain allow needs `verified`; `failed` matches nothing), with its
+	 * match count bumped. Null when none applies.
+	 */
+	async matchSenderRule(sender: string, authTier: AuthTier | null): Promise<SenderRule | null> {
+		return matchSenderRule(this.ctx.storage.sql, sender, authTier);
+	}
+
+	// ── Retroactive rescue / refile, with Undo (AVE-98, lib/sender-verdict-undo) ──
+
+	/** Snapshot of what a Not spam / Report spam verdict is about to overwrite for `sender`. */
+	async captureSenderVerdictState(sender: string): Promise<SenderVerdictState | null> {
+		return captureSenderVerdictState(this.ctx.storage.sql, sender);
+	}
+
+	/**
+	 * After the verdict is written: Not spam rescues the sender's recent Spam,
+	 * Report spam (with `refile`) moves their purpose-box mail to Spam. Stores
+	 * an undo record covering `primary` (the message the user moved) too.
+	 */
+	async finishSenderVerdict(input: {
+		kind: SenderVerdictKind;
+		state: SenderVerdictState;
+		primary: VerdictMove;
+		refile: boolean;
+	}): Promise<{ rescuedCount: number; undoToken: string }> {
+		await this.#assertMailboxWritable();
+		const { rescued, undoToken } = this.ctx.storage.transactionSync(() =>
+			finishSenderVerdict(this.ctx.storage.sql, input),
+		);
+		for (const move of rescued) {
+			this.broadcastEvent("email_moved", { id: move.id, folder_id: move.to });
+		}
+		if (rescued.some((move) => move.to === Folders.SPAM)) this.#armRetentionSweep();
+		return { rescuedCount: rescued.length, undoToken };
+	}
+
+	/**
+	 * Undo a Not spam / Report spam: restore the sender's triage, preference
+	 * and address rule, and move the messages back. Null when the token is
+	 * unknown, used or expired.
+	 */
+	async undoSenderVerdict(
+		token: string,
+	): Promise<{ sender: string; kind: SenderVerdictKind; restoredCount: number } | null> {
+		await this.#assertMailboxWritable();
+		const result = this.ctx.storage.transactionSync(() =>
+			undoSenderVerdict(this.ctx.storage.sql, token),
+		);
+		if (!result) return null;
+		for (const move of result.reverted) {
+			this.broadcastEvent("email_moved", { id: move.id, folder_id: move.from });
+		}
+		if (result.reverted.some((move) => move.from === Folders.SPAM)) this.#armRetentionSweep();
+		const triage = await this.getSenderTriage(result.sender);
+		if (triage) {
+			this.broadcastEvent("sender_triage_updated", {
+				sender: result.sender,
+				status: triage.status,
+				destination_folder_id: triage.destination_folder_id,
+			});
+		} else {
+			this.broadcastEvent("sender_triage_deleted", { sender: result.sender });
+		}
+		this.broadcastEvent("sender_rules_changed", { value: result.sender });
+		this.broadcastEvent("sender_preference_updated", { address: result.sender });
+		return { sender: result.sender, kind: result.kind, restoredCount: result.reverted.length };
+	}
+
 	/** Move all messages from a sender in fromFolder into toFolder. */
 	async refileSenderInFolder(
 		sender: string,
@@ -3497,6 +3975,31 @@ export class MailboxDO extends DurableObject<Env> {
 			this.broadcastEvent("email_moved", { id, folder_id: toFolder });
 		}
 		if (isRetentionFolderId(toFolder)) this.#armRetentionSweep();
+		return { moved: ids.length, ids };
+	}
+
+	/**
+	 * Screener turned off (AVE-104): everything still waiting in Screener goes
+	 * to Inbox. Sender decisions are left alone, so turning Screener back on
+	 * only screens new mail; nothing already in Inbox is pulled back.
+	 */
+	async releaseScreenerToInbox(): Promise<{ moved: number; ids: string[] }> {
+		const rows = [
+			...this.ctx.storage.sql.exec(
+				`SELECT id FROM emails WHERE folder_id = ?1`,
+				Folders.SCREENER,
+			),
+		] as { id: string }[];
+		if (rows.length === 0) return { moved: 0, ids: [] };
+		this.ctx.storage.sql.exec(
+			`UPDATE emails SET folder_id = ?1 WHERE folder_id = ?2`,
+			Folders.INBOX,
+			Folders.SCREENER,
+		);
+		const ids = rows.map((r) => r.id);
+		for (const id of ids) {
+			this.broadcastEvent("email_moved", { id, folder_id: Folders.INBOX });
+		}
 		return { moved: ids.length, ids };
 	}
 

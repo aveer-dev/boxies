@@ -4,16 +4,29 @@ import SwiftSoup
 /// Native analogue of web `EmailIframe` DOMPurify options:
 /// HTML profile, forbid `<style>` tags, keep `target` on links.
 enum EmailHTMLSanitizer {
-    /// Policy once the reader taps "Load images" (same as web's opted-in policy).
+    /// Default policy: remote `https:` images load (same image policy as web and Android).
     /// No page script ever runs: height measuring is an app-world `WKUserScript`,
     /// which CSP and `allowsContentJavaScript = false` do not block.
     static let contentSecurityPolicy =
         "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid: https:; script-src 'none'"
 
-    /// Default policy: remote images stay blocked (tracking pixels, read receipts)
-    /// until the reader opts in; inline `data:` / `cid:` images still render.
+    /// Spam only (Gmail parity): remote images stay blocked (tracking pixels, read
+    /// receipts) until the reader taps "Load images"; inline `data:` / `cid:` images render.
     static let remoteImagesBlockedPolicy =
         "default-src 'none'; style-src 'unsafe-inline'; img-src data: cid:; script-src 'none'"
+
+    /// Spam keeps remote images blocked until "Load images" (Gmail parity, AVE-132).
+    /// Decided by the message's own folder, so a Spam message opened from search or
+    /// inside a thread is still blocked. Mirrors web `shared/remote-images.ts`.
+    static func blocksRemoteImages(folderId: String?) -> Bool {
+        folderId == "spam"
+    }
+
+    /// The body / quoted-replies policy: remote images load unless the message is
+    /// in Spam and the reader hasn't tapped "Load images" for it.
+    static func contentSecurityPolicy(blocksRemoteImages: Bool, loadedRemoteImages: Bool) -> String {
+        !blocksRemoteImages || loadedRemoteImages ? contentSecurityPolicy : remoteImagesBlockedPolicy
+    }
 
     static let opaqueOrigin = URL(string: "https://inboxies.invalid/")!
 
@@ -22,7 +35,7 @@ enum EmailHTMLSanitizer {
         options: [.caseInsensitive]
     )
 
-    /// True when sanitized HTML references images the default policy would block
+    /// True when sanitized HTML references images the Spam policy would block
     /// (`https:` or protocol-relative, which resolves to https on the opaque origin).
     static func containsRemoteImages(_ html: String) -> Bool {
         guard let remoteImageReference, !html.isEmpty else { return false }

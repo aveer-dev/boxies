@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, useKumoToastManager } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
@@ -14,9 +15,17 @@ import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
 import ScreenerTriageBar from "~/components/email-panel/ScreenerTriageBar";
 import SingleMessageView from "~/components/email-panel/SingleMessageView";
 import ThreadMessage from "~/components/email-panel/ThreadMessage";
-import { splitEmailList, toEmailListValue } from "~/lib/utils";
+import InlineNotes from "~/components/notes/InlineNotes";
+import StickyNotes from "~/components/notes/StickyNotes";
+import { groupThreadNotes, threadKeyFor } from "~/lib/thread-notes";
+import { useThreadNotes } from "~/queries/thread-notes";
+import AISummaryCard from "~/components/email-panel/AISummaryCard";
+import { isSummaryFolderEligible, MIN_SUMMARY_CHARS } from "shared/ai-summaries";
+import { splitEmailList, stripHtml, toEmailListValue } from "~/lib/utils";
 import { createSendKeyStore } from "~/lib/send-idempotency";
 import api from "~/services/api";
+import { useReplyLater } from "~/hooks/useReplyLater";
+import { useSpamVerdictToast } from "~/hooks/useSpamVerdictToast";
 import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
@@ -24,6 +33,7 @@ import { useUIStore } from "~/hooks/useUIStore";
 import { type ShortcutId, useShortcut } from "~/lib/shortcuts";
 import type { Email, Folder, Mailbox } from "~/types";
 import { displaySenderName } from "shared/sender";
+import { bodyHasInlineQuote } from "shared/quoted-html";
 
 function EmailPanelSkeleton() {
 	return (
@@ -82,7 +92,19 @@ export default function EmailPanel({
 	const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
 	const [previewImage, setPreviewImage] = useState<{ url: string; filename: string } | null>(null);
 	const [pendingPurposeMove, setPendingPurposeMove] = useState<string | null>(null);
+	/** Report spam confirmation: "move their other mail" (AVE-98) and, for RFC 8058 bulk mail, "Unsubscribe" (AVE-99). */
+	const [reportSpamOpen, setReportSpamOpen] = useState(false);
+	const [alsoUnsubscribe, setAlsoUnsubscribe] = useState(false);
+	const [alsoRefile, setAlsoRefile] = useState(true);
+	const showSpamVerdictToast = useSpamVerdictToast(mailboxId);
+	const replyLaterActions = useReplyLater(mailboxId);
 	const isDraftFolder = folder === Folders.DRAFT;
+	// Notes to self (AVE-60): stickies float over the messages, inline notes sit under theirs.
+	const threadKey = email ? threadKeyFor(email) : undefined;
+	const { data: threadNotes } = useThreadNotes(mailboxId, threadKey);
+	const { sticky: stickyNotes, inlineByEmail } = useMemo(() => groupThreadNotes(threadNotes), [threadNotes]);
+	const [composingNoteFor, setComposingNoteFor] = useState<string | null>(null);
+	const [creatingSticky, setCreatingSticky] = useState(false);
 
 	const threadReplies = useMemo(() => {
 		if (!threadRepliesRaw || !email) return [];
@@ -114,6 +136,35 @@ export default function EmailPanel({
 		const nonDrafts = allMessages.filter((msg) => !draftMessageIds.has(msg.id));
 		return nonDrafts.length > 0 ? nonDrafts[0] : email;
 	}, [allMessages, draftMessageIds, currentMailbox?.email, email]);
+
+	// AI summary (AVE-20): only for mail that reached the mailbox and has
+	// enough text. The server re-checks both; this just skips pointless calls.
+	const summaryMessages = useMemo(
+		() => allMessages.filter((msg) => !draftMessageIds.has(msg.id) && isSummaryFolderEligible(msg.folder_id)),
+		[allMessages, draftMessageIds],
+	);
+	const summaryEnabled = useMemo(() => {
+		if (!email || !isSummaryFolderEligible(email.folder_id) || isDraftFolder) return false;
+		let chars = 0;
+		for (const msg of summaryMessages) {
+			chars += stripHtml(msg.body || "").length;
+			if (chars >= MIN_SUMMARY_CHARS) return true;
+		}
+		return false;
+	}, [email, isDraftFolder, summaryMessages]);
+	// Quick summaries: per message, only in a thread with more than one
+	// message, and not on messages too short to be worth it.
+	const quickSummaryIds = useMemo(
+		() =>
+			new Set(
+				summaryMessages.length > 1
+					? summaryMessages
+							.filter((msg) => stripHtml(msg.body || "").length >= MIN_SUMMARY_CHARS)
+							.map((msg) => msg.id)
+					: [],
+			),
+		[summaryMessages],
+	);
 
 	const moveToFolders = useMemo(() => { const cur = folder || email?.folder_id; return folders.filter((f) => f.id !== cur); }, [folders, folder, email?.folder_id]);
 
@@ -155,21 +206,19 @@ export default function EmailPanel({
 	}
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
-	const toggleReplyLater = () => {
-		if (mailboxId) {
-			updateEmail.mutate({
-				mailboxId,
-				id: email.id,
-				data: { reply_later: !email.reply_later },
-			});
-		}
-	};
+	const toggleReplyLater = () => replyLaterActions.toggleReplyLater(email);
+	const remindMe = () => replyLaterActions.openReminderPicker(email);
 	const runMove = (folderId: string, setSenderPreference: boolean) => {
 		if (!mailboxId) return;
 		moveEmailMut.mutate(
 			{ mailboxId, id: email.id, folderId, setSenderPreference },
 			{
 				onSuccess: (result) => {
+					// Into / out of Spam: Not spam / Report spam toast with Undo (AVE-98).
+					if (showSpamVerdictToast(result, { folderId, sender: email.sender })) {
+						closePanel();
+						return;
+					}
 					if (setSenderPreference && result?.refiledCount && result.refiledCount > 0) {
 						toastManager.add({
 							title: `Moved — updated ${result.refiledCount} from this sender`,
@@ -185,6 +234,12 @@ export default function EmailPanel({
 		const isSelf =
 			Boolean(currentMailbox?.email) &&
 			email.sender?.toLowerCase() === currentMailbox?.email?.toLowerCase();
+		// Into or out of Spam is Not spam / Report spam: leaving Spam is the
+		// signal, so there's no "remember?" prompt (the server teaches the sender).
+		if (email.folder_id === Folders.SPAM || folderId === Folders.SPAM) {
+			runMove(folderId, true);
+			return;
+		}
 		if (isPurposeFolderId(folderId) && email.sender && !isSelf) {
 			setPendingPurposeMove(folderId);
 			return;
@@ -203,24 +258,47 @@ export default function EmailPanel({
 			: isDraftFolder || email.folder_id === Folders.DRAFT || email.folder_id === Folders.SENT
 				? null
 				: "report";
-	const handleSpamAction = () => {
+	const runSpamAction = (options: { unsubscribe?: boolean; refileSender?: boolean } = {}) => {
 		if (!mailboxId || !spamAction) return;
 		const folderId = spamAction === "report" ? Folders.SPAM : Folders.INBOX;
 		moveEmailMut.mutate(
-			{ mailboxId, id: email.id, folderId, setSenderPreference: true },
 			{
-				onSuccess: () => {
-					toastManager.add({ title: spamAction === "report" ? "Reported as spam" : "Moved to Inbox" });
+				mailboxId,
+				id: email.id,
+				folderId,
+				setSenderPreference: true,
+				unsubscribe: options.unsubscribe,
+				refileSender: options.refileSender,
+			},
+			{
+				onSuccess: (result) => {
+					if (!showSpamVerdictToast(result, { folderId, sender: email.sender })) {
+						toastManager.add({ title: spamAction === "report" ? "Reported as spam" : "Moved to Inbox" });
+					}
 					closePanel();
 				},
 			},
 		);
 	};
+	const handleSpamAction = () => {
+		// Report spam confirms first: "Also move their other mail to Spam"
+		// (checked by default, AVE-98) and, for RFC 8058 bulk mail,
+		// "Unsubscribe" (unchecked by default, AVE-99). Not spam runs
+		// straight away; its toast has Undo.
+		if (spamAction === "report") {
+			setAlsoUnsubscribe(false);
+			setAlsoRefile(true);
+			setReportSpamOpen(true);
+			return;
+		}
+		runSpamAction();
+	};
 	const handleDelete = () => { if (mailboxId) { if (!window.confirm("Are you sure you want to delete this email?")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
 
 	const handleEditDraft = (draftMsg?: Email) => {
 		const target = draftMsg || email;
-		if (target.in_reply_to) { startCompose({ mode: "reply", originalEmail: allMessages.find((msg) => msg.id === target.in_reply_to), draftEmail: target }); }
+		// A "Fwd:" draft reopens as a forward, so it keeps the forwarded-message quote.
+		if (target.in_reply_to) { startCompose({ mode: /^fwd:/i.test(target.subject || "") ? "forward" : "reply", originalEmail: allMessages.find((msg) => msg.id === target.in_reply_to), draftEmail: target }); }
 		else { startCompose({ mode: "new", originalEmail: undefined, draftEmail: target }); }
 	};
 
@@ -257,6 +335,10 @@ export default function EmailPanel({
 				subject: target.subject || "(no subject)",
 				html: target.body || "",
 				text: target.body ? target.body.replace(/<[^>]*>/g, "").trim() : "",
+				// The Worker quotes the original, unless this older draft already has it inline (AVE-133).
+				...(originalEmail && !bodyHasInlineQuote(target.body)
+					? { quote_original: true, quote_time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined }
+					: {}),
 			};
 			const idempotencyKey = draftSendKeys.keyFor(target.id);
 			if (originalEmail) await replyMut.mutateAsync({ mailboxId, emailId: originalEmail.id, email: emailData, idempotencyKey }); else await sendEmailMut.mutateAsync({ mailboxId, email: emailData, idempotencyKey });
@@ -299,6 +381,20 @@ export default function EmailPanel({
 	};
 
 	const hasThread = allMessages.length > 1;
+	const notesFor = (msgId: string) => {
+		const notes = inlineByEmail.get(msgId) ?? [];
+		if (!mailboxId || !threadKey || (notes.length === 0 && composingNoteFor !== msgId)) return undefined;
+		return (
+			<InlineNotes
+				mailboxId={mailboxId}
+				threadId={threadKey}
+				emailId={msgId}
+				notes={notes}
+				composing={composingNoteFor === msgId}
+				onComposeDone={() => setComposingNoteFor(null)}
+			/>
+		);
+	};
 	// Gate on the message folder only (match iOS/Android) so a Screener
 	// sidebar selection cannot triage a non-screener thread message.
 	const isScreenerFolder = email.folder_id === Folders.SCREENER;
@@ -319,6 +415,7 @@ export default function EmailPanel({
 				onForward={forward}
 				onToggleStar={toggleStar}
 				onToggleReplyLater={toggleReplyLater}
+				onRemindMe={remindMe}
 				onToggleRead={toggleRead}
 				onArchive={archive}
 				onPopOut={popOut}
@@ -328,6 +425,7 @@ export default function EmailPanel({
 				onSpamAction={handleSpamAction}
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
+				onAddStickyNote={mailboxId && !isDraftFolder ? () => setCreatingSticky(true) : undefined}
 			/>
 
 			{isScreenerFolder && mailboxId && email.sender && (
@@ -347,8 +445,15 @@ export default function EmailPanel({
 				chips={chips}
 			/>
 
+			<AISummaryCard
+				mailboxId={mailboxId}
+				threadId={email.thread_id || email.id}
+				enabled={summaryEnabled}
+			/>
+
 			{/* A single message fills the reader and its body scrolls itself. */}
-			<ScrollArea className="flex-1" contentClassName={`animate-reveal ${hasThread ? "" : "h-full"}`}>
+			<div className="relative flex-1 min-h-0">
+			<ScrollArea className="h-full" contentClassName={`animate-reveal ${hasThread ? "" : "h-full"}`}>
 				{hasThread ? (
 					allMessages.map((msg, idx) => {
 						const isDraft = draftMessageIds.has(msg.id);
@@ -367,9 +472,12 @@ export default function EmailPanel({
 								onEditDraft={isDraft ? () => handleEditDraft(msg) : undefined}
 								onDeleteDraft={isDraft ? () => handleDeleteDraft(msg) : undefined}
 								onViewSource={() => setSourceViewEmail(msg)}
+								quickSummary={quickSummaryIds.has(msg.id)}
 								onPreviewImage={(url, filename) =>
 									setPreviewImage({ url, filename })
 								}
+								notes={notesFor(msg.id)}
+								onAddNote={isDraft || !mailboxId ? undefined : () => setComposingNoteFor(msg.id)}
 							/>
 						);
 					})
@@ -380,9 +488,20 @@ export default function EmailPanel({
 						onPreviewImage={(url, filename) =>
 							setPreviewImage({ url, filename })
 						}
+						notes={notesFor(email.id)}
 					/>
 				)}
 			</ScrollArea>
+			{mailboxId && threadKey && (stickyNotes.length > 0 || creatingSticky) && (
+				<StickyNotes
+					mailboxId={mailboxId}
+					threadId={threadKey}
+					notes={stickyNotes}
+					creating={creatingSticky}
+					onCreatingDone={() => setCreatingSticky(false)}
+				/>
+			)}
+			</div>
 
 			{renderFooter && lastReceivedMessage && !isDraftFolder && email.folder_id !== Folders.DRAFT &&
 				renderFooter(lastReceivedMessage)}
@@ -394,18 +513,78 @@ export default function EmailPanel({
 				onClosePreview={() => setPreviewImage(null)}
 			/>
 
+			<Dialog.Root open={reportSpamOpen} onOpenChange={setReportSpamOpen}>
+				<Modal size="sm">
+					<ModalHeader
+						title="Report spam?"
+						description={<>Future mail from{" "}
+						<span className="font-medium text-kumo-default">
+							{displaySenderName(email)}
+						</span>{" "}
+						will go to Spam.</>}
+					/>
+					<div className="flex flex-col gap-3 mb-5">
+						<label className="flex items-start gap-2.5 cursor-pointer select-none">
+							<input
+								type="checkbox"
+								checked={alsoRefile}
+								onChange={(e) => setAlsoRefile(e.target.checked)}
+								className="mt-0.5 h-4 w-4 rounded border-kumo-line accent-[var(--accent)] cursor-pointer"
+							/>
+							<span className="text-sm">
+								<span className="font-medium text-kumo-default">Move their other mail to Spam</span>
+								<span className="block text-kumo-subtle">
+									Also moves what they sent to Inbox, Promotions and Updates.
+								</span>
+							</span>
+						</label>
+						{email.one_click_unsubscribe ? (
+							<label className="flex items-start gap-2.5 cursor-pointer select-none">
+								<input
+									type="checkbox"
+									checked={alsoUnsubscribe}
+									onChange={(e) => setAlsoUnsubscribe(e.target.checked)}
+									className="mt-0.5 h-4 w-4 rounded border-kumo-line accent-[var(--accent)] cursor-pointer"
+								/>
+								<span className="text-sm">
+									<span className="font-medium text-kumo-default">Unsubscribe</span>
+									<span className="block text-kumo-subtle">
+										Also ask the sender to stop sending to this list.
+									</span>
+								</span>
+							</label>
+						) : null}
+					</div>
+					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+						<Dialog.Close>
+							<Button variant="ghost">Cancel</Button>
+						</Dialog.Close>
+						<Button
+							variant="primary"
+							onClick={() => {
+								setReportSpamOpen(false);
+								runSpamAction({
+									unsubscribe: email.one_click_unsubscribe ? alsoUnsubscribe : false,
+									refileSender: alsoRefile,
+								});
+							}}
+						>
+							Report spam
+						</Button>
+					</div>
+				</Modal>
+			</Dialog.Root>
+
 			<Dialog.Root
 				open={pendingPurposeMove !== null}
 				onOpenChange={(open) => {
 					if (!open) setPendingPurposeMove(null);
 				}}
 			>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-2">
-						Put future mail here?
-					</Dialog.Title>
-					<p className="text-sm text-kumo-subtle mb-4">
-						Also file future messages from{" "}
+				<Modal size="sm">
+					<ModalHeader
+						title="Put future mail here?"
+						description={<>Also file future messages from{" "}
 						<span className="font-medium text-kumo-default">
 							{displaySenderName(email)}
 						</span>{" "}
@@ -413,8 +592,8 @@ export default function EmailPanel({
 						{pendingPurposeMove
 							? FOLDER_DISPLAY_NAMES[pendingPurposeMove] ?? pendingPurposeMove
 							: "this folder"}
-						, and move their existing Inbox / Promotions / Updates mail.
-					</p>
+						, and move their existing Inbox / Promotions / Updates mail.</>}
+					/>
 					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
 						<Button
 							variant="ghost"
@@ -437,7 +616,7 @@ export default function EmailPanel({
 							Yes, for this sender
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</div>
 	);

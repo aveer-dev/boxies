@@ -3,9 +3,8 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Dialog } from "@cloudflare/kumo";
-import { XIcon } from "@phosphor-icons/react";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { type CSSProperties, useState } from "react";
-import { IconButton } from "~/components/IconButton";
 import { SHORTCUTS, type ShortcutId, useShortcut } from "~/lib/shortcuts";
 
 const GROUPS = ["Mail", "Navigation", "App"] as const;
@@ -28,15 +27,12 @@ export default function ShortcutSheet() {
 
 	return (
 		<Dialog.Root open={open} onOpenChange={setOpen}>
-			<Dialog size="lg" className="p-6">
-				<div className="flex items-center justify-between gap-4">
-					<Dialog.Title className="text-base font-semibold">Keyboard shortcuts</Dialog.Title>
-					<Dialog.Close render={<IconButton label="Close" shortcut="Esc" icon={XIcon} close className="-mr-2" />} />
-				</div>
-				<p className="mt-1 text-sm text-kumo-subtle">
-					Mail keys act on the focused row, or on the open message.
-				</p>
-				<div className="mt-5 grid gap-x-8 gap-y-6 sm:grid-cols-2">
+			<Modal size="lg">
+				<ModalHeader
+					title="Keyboard shortcuts"
+					description="Mail keys act on the focused row, or on the open message."
+				/>
+				<div className="mt-1 grid gap-x-8 gap-y-6 sm:grid-cols-2">
 					{GROUPS.map((group) => (
 						<section key={group} className={group === "Mail" ? "sm:row-span-2" : undefined}>
 							<h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-kumo-subtle">{group}</h3>
@@ -59,7 +55,7 @@ export default function ShortcutSheet() {
 						</section>
 					))}
 				</div>
-			</Dialog>
+			</Modal>
 		</Dialog.Root>
 	);
 }

@@ -7,8 +7,10 @@ import { useCallback, useRef, useState } from "react";
 import FloatingPanel from "~/components/FloatingPanel";
 import { IconButton } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
+import { isReplyLaterDue, pendingReminder } from "~/lib/reply-later-reminders";
 import { keysFor } from "~/lib/shortcuts";
 import {
+	AlarmIcon,
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
@@ -20,6 +22,7 @@ import {
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FolderSimpleIcon,
+	NotePencilIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
 	ShieldCheckIcon,
@@ -45,6 +48,8 @@ interface EmailPanelToolbarProps {
 	onForward: () => void;
 	onToggleStar: () => void;
 	onToggleReplyLater: () => void;
+	/** Opens the Reply Later reminder picker (AVE-86). */
+	onRemindMe?: () => void;
 	onToggleRead: () => void;
 	/** Absent when the message is already archived. */
 	onArchive?: () => void;
@@ -57,6 +62,8 @@ interface EmailPanelToolbarProps {
 	onSpamAction?: () => void;
 	onViewSource: () => void;
 	onDelete: () => void;
+	/** Pins a new sticky note to the conversation (AVE-60). */
+	onAddStickyNote?: () => void;
 }
 
 export default function EmailPanelToolbar({
@@ -72,6 +79,7 @@ export default function EmailPanelToolbar({
 	onForward,
 	onToggleStar,
 	onToggleReplyLater,
+	onRemindMe,
 	onToggleRead,
 	onArchive,
 	onPopOut,
@@ -81,6 +89,7 @@ export default function EmailPanelToolbar({
 	onSpamAction,
 	onViewSource,
 	onDelete,
+	onAddStickyNote,
 }: EmailPanelToolbarProps) {
 	// Icons pop when switched on (not when a starred message first renders).
 	const [starPops, setStarPops] = useState(0);
@@ -151,6 +160,16 @@ export default function EmailPanelToolbar({
 					onToggleReplyLater();
 				}}
 			/>
+			{onRemindMe && !isReadOnly && (
+				<IconButton
+					label={pendingReminder(email) ? "Change reminder" : "Remind me…"}
+					icon={AlarmIcon}
+					size="md"
+					weight={pendingReminder(email) ? "fill" : "regular"}
+					iconClassName={isReplyLaterDue(email) ? "text-[var(--attention)]" : pendingReminder(email) ? "text-kumo-default" : ""}
+					onClick={onRemindMe}
+				/>
+			)}
 			<IconButton
 				label={email.read ? "Mark as unread" : "Mark as read"}
 				shortcut={keysFor("toggleRead")}
@@ -158,6 +177,9 @@ export default function EmailPanelToolbar({
 				size="md"
 				onClick={onToggleRead}
 			/>
+			{onAddStickyNote && (
+				<IconButton label="Add sticky note" icon={NotePencilIcon} size="md" onClick={onAddStickyNote} />
+			)}
 			{onArchive && !isReadOnly && (
 				<IconButton label="Archive" shortcut={keysFor("archive")} icon={ArchiveIcon} size="md" onClick={onArchive} />
 			)}

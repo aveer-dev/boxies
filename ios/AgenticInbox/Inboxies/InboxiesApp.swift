@@ -57,7 +57,9 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewInviteAcceptSignedIn")
                 || ProcessInfo.processInfo.arguments.contains("-previewSignInMethods")
                 || ProcessInfo.processInfo.arguments.contains("-previewMembers")
-                || ProcessInfo.processInfo.arguments.contains("-previewSessions") {
+                || ProcessInfo.processInfo.arguments.contains("-previewSessions")
+                || ProcessInfo.processInfo.arguments.contains("-previewSenders")
+                || ProcessInfo.processInfo.arguments.contains("-previewSettings") {
                 PreviewAdminAuthRoot()
                     .applyThemeController()
             } else if ProcessInfo.processInfo.arguments.contains("-previewSplash") {

@@ -2,7 +2,7 @@
 
 The marketing site for Inboxies: a landing page with a scroll-pinned phone tour, Pricing, Roadmap, Support (with a contact form) and Legal. It's Astro 7 with `@astrojs/cloudflare`, plain CSS and a few small TypeScript modules, deployed as one Cloudflare Worker at https://inboxies.co. The web app is at https://inboxies.app; mail addresses stay @inboxies.email.
 
-Every page is prerendered except `POST /api/contact`, so the Worker mostly serves static assets. Its entry, `src/worker.ts`, wraps Astro's handler: it answers byte-range requests for `/media/*` (the static asset server ignores `Range`, and Safari and iOS won't play video without `206`s) and adds the security headers that `public/_headers` can't reach (Worker responses: the 404 page, `/api/contact`, `/media`).
+Every page is prerendered except `POST /api/contact` and `GET /api/roadmap`, so the Worker mostly serves static assets. Its entry, `src/worker.ts`, wraps Astro's handler: it answers byte-range requests for `/media/*` (the static asset server ignores `Range`, and Safari and iOS won't play video without `206`s) and adds the security headers that `public/_headers` can't reach (Worker responses: the 404 page, `/api/contact`, `/media`).
 
 ## Commands
 
@@ -77,7 +77,7 @@ Also before launch: reserve the role usernames on inboxies.email (question 17) a
 3. The build writes `dist/server/wrangler.json` and a redirect in `.wrangler/deploy/config.json`. Plain `wrangler dev` / `wrangler deploy` from `site/` pick it up.
 4. After the first deploy, smoke test:
    - `/` returns 200 and `/does-not-exist` returns 404 with the Screener line.
-   - `/sitemap.xml` lists `/`, `/pricing`, `/roadmap`, `/support` and `/legal`.
+   - `/sitemap.xml` lists `/`, `/pricing`, `/roadmap`, `/support`, `/request` and `/legal`.
    - `/terms` and `/privacy` answer `301` to `/legal#terms` and `/legal#privacy` (`_redirects`, from `redirects` in `astro.config.mjs`).
    - `curl -sI -H "Range: bytes=0-1" https://inboxies.co/media/inbox-open.mp4` answers `206` with `Content-Range: bytes 0-1/330088`. Without it, Safari and every iOS browser keep the clips on their posters. `pnpm preview` answers the same locally.
    - A signed-out visit to the sign-up link reaches “Get started”, not an Access login (open question 1).
@@ -101,6 +101,57 @@ How it behaves:
 - **Logs:** one JSON line per request (outcome and topic), never the message, name or address.
 
 Local test: `pnpm preview`, then submit the form. Wrangler simulates `send_email` locally (nothing is sent) and logs where it saved the message.
+
+## Roadmap from Linear
+
+`GET /api/roadmap` reads the issues labelled `public-roadmap` from Linear's GraphQL API and answers JSON. Linear is the only source; GitHub issues aren't mirrored. The roadmap page's "Coming next, in detail" list reads it in the browser (AVE-87, `src/lib/roadmap-live.ts`): it ships prerendered with the hand-written list, and swaps in the Linear items only when the endpoint answers OK with `source: "linear"` and at least one item within 3 seconds. Anything else (no key, an error, a timeout, an empty list) leaves the static list in place.
+
+To turn it on (owner):
+
+1. In Linear's settings, create a personal API key with **read** permission only, limited to the teams that hold roadmap issues if you can.
+2. `cd site && npx wrangler secret put LINEAR_ROADMAP_API_KEY` and paste the key. For `pnpm preview`, put `LINEAR_ROADMAP_API_KEY=...` in `site/.dev.vars` (gitignored).
+3. Label the issues you want public with `public-roadmap`. To give one a blurb, add a `## Public summary` section to its description (a bold `**Public summary:**` line or a `Public summary:` line also works); the text up to the next heading or rule is used. Without one, the page shows the title alone.
+
+What it answers:
+
+```json
+{ "items": [{ "id": "3f9a…", "title": "Snooze", "summary": "Hide a thread until later.", "status": "Planned" }],
+  "source": "linear", "fetchedAt": "2026-10-20T09:00:00.000Z" }
+```
+
+- **Status:** Linear's state type decides it: triage, backlog and unstarted → Planned; started → In progress; completed → Shipped. Canceled (and duplicates) are left out. Sorted In progress, Planned, Shipped, latest first.
+- **Public fields only:** the title (plain text, 120 characters at most), the Public summary (plain text with links, URLs, HTML, code and images stripped, 280 characters at most) and the status. `id` is a hash of the Linear id, stable but not a link into Linear. No identifiers, assignees, estimates, comments or the rest of the description.
+- **No key:** 503 with `source: "unconfigured"` and no items. **Linear failing** (HTTP error, GraphQL error, 5s timeout): the last good answer this isolate holds (up to a day old) if there is one, otherwise 503 with `source: "error"`. The page should treat anything but `source: "linear"` as "use the static list".
+- **Caching:** 10 minutes in the Cache API (a failure for 1 minute), plus a copy in the isolate's memory, because the Cache API does nothing on `workers.dev`. Browsers may cache the answer for 10 minutes too.
+- **Logs:** one JSON line per request (outcome, item count), never the key or Linear's response.
+
+The parsing and mapping live in `src/lib/roadmap-linear.ts`, tested by `site/test/roadmap-linear.test.mjs` (`pnpm test:unit roadmap` from the repo root).
+
+## Request forms
+
+`/request` lets anyone, signed in or not, send a **feature request**, **bug report** or **feedback** (AVE-81). Each one becomes a Linear issue in the AVE team's **Triage**, labelled `user-request` plus `feature`, `bug` or `feedback`. The roadmap page and the footer link to it, and `/request?type=bug` (or `feature`, `feedback`) preselects the kind.
+
+- `GET /api/requests` answers `{ available, siteKey }`. The page reads it to decide whether to show the Turnstile widget or say the form is offline.
+- `POST /api/requests` takes JSON `{ kind, title, details, email, platform, token, t, website }`. The checks run in this order: secrets set, then body size (32 KB) and origin, then the honeypot and the 2 s time trap (both get a fake OK), then the field rules (title 4 to 120 characters, details 10 to 4,000, email up to 254, platform required for bugs), then the per-IP rate limit, then Turnstile `siteverify`, then Linear. The code is in `src/lib/requests.ts`, the rules shared with the browser are in `src/components/request/request-rules.ts`, and the tests are in `site/test/requests.test.mjs` (`pnpm test:unit requests`).
+- **The submitter's email is kept out of the issue.** It goes on a Linear attachment called "Requester": `url` is `https://inboxies.co/request?ref=<uuid>`, `subtitle` is the address, and `metadata.requesterEmail` holds it too. Attachments are only visible inside the workspace, and `/api/roadmap` never reads them. A later status-email job can find a request's address with `issue.attachments(filter: { url: { startsWith: "https://inboxies.co/request" } }) { nodes { metadata } }`. The details are quoted line by line in the description, so a submitter can't plant a "Public summary" section.
+- **Off the public roadmap by default.** `/api/roadmap` only reads issues labelled `public-roadmap`, so a request shows up there only if you add that label yourself. If you do, the issue title is published as it stands, so edit off the "Bug: " or "Feature request: " prefix first. Any Public summary you write is published too. The submitter's details never are.
+- **Confirmation email:** once the issue exists, `REQUEST_MAIL` sends "We got your feature request" from `support@inboxies.email` to the submitter. Replies land in support. If the binding is missing or the send fails, the request still succeeds and the log says `confirmation_failed`. Status emails, sent when an issue moves to Done or Canceled, are a later sub-issue.
+- **When something isn't set up:** without the three secrets, GET says unavailable, POST answers 503 `{ error: "unavailable" }`, and the page says to email support. If Linear fails, the answer is also a 503. If Turnstile rejects the token, the answer is a 400 `{ error: "turnstile" }`. If the rate limit trips, the answer is a 429.
+- **Logs:** one JSON line per request with the outcome, the kind and, once filed, the issue identifier. They never include the address, the text or a key.
+
+To turn it on (owner):
+
+1. **Linear key.** Create a personal API key in Linear (Settings → Account → Security & Access) limited to the AVE team. It needs permission to create issues and attachments, plus labels if they don't exist yet ("Write" covers all three). Don't reuse the read-only `LINEAR_ROADMAP_API_KEY`. Then run `cd site && npx wrangler secret put LINEAR_REQUESTS_API_KEY`.
+2. **Labels.** The endpoint looks up `user-request`, `feature`, `bug` and `feedback` by name, ignoring case. The team's own label wins over a workspace one. Any that are missing get created on the AVE team. If the key isn't allowed to create them, the issue goes in without them and the log says `label_missing`, so create them by hand in that case.
+3. **Triage.** Keep Triage on for AVE. With it off, requests land in the team's default state and the log says `no_triage_state`.
+4. **Turnstile.** In the dashboard, go to Turnstile → Add widget for `inboxies.co` (plus the `workers.dev` host while staging), in Managed mode. Then run `npx wrangler secret put TURNSTILE_SITE_KEY` and `npx wrangler secret put TURNSTILE_SECRET_KEY`. The site key is public: GET hands it to the page, so it could also be a plain `vars` entry.
+5. **Optional:** set `LINEAR_REQUESTS_TEAM_KEY` (a var) to file into a team other than `AVE`.
+6. **Bindings** are already in `wrangler.jsonc`, and nothing needs creating:
+   - `REQUESTS_RATE`: Workers Rate Limiting, namespace `4102`, 3 requests per 60 s per IP (an IPv6 /64 counts as one). It's optional, and the check is skipped if the binding is missing.
+   - `REQUEST_MAIL`: `send_email` with `allowed_sender_addresses: ["support@inboxies.email"]`, which allows any recipient. `inboxies.email` has to be onboarded to Email Sending in this account; check with `npx wrangler email sending list`. If it isn't, run `npx wrangler email sending enable inboxies.email`, or drop the binding and no confirmation is sent.
+7. Deploy, then send one request of each kind and check they show up in Triage with the right labels, a Requester link and a confirmation email.
+
+Local test: `pnpm build`, then `npx wrangler dev --var TURNSTILE_SITE_KEY:1x00000000000000000000AA --var TURNSTILE_SECRET_KEY:1x0000000000000000000000000000000AA --var LINEAR_REQUESTS_API_KEY:<key>`. Those are Cloudflare's always-pass Turnstile test keys. Leave out the Linear key and the form shows its offline state. Locally, `send_email` is simulated.
 
 ## Re-shooting the iOS media
 

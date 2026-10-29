@@ -28,6 +28,10 @@ export const emails = sqliteTable("emails", {
 	reply_later: integer("reply_later").default(0),
 	/** ISO timestamp when added to Reply Later; used for FIFO pile order. */
 	reply_later_at: text("reply_later_at"),
+	/** Pending Reply Later reminder (UTC ISO); null when none or already fired (AVE-86). */
+	reply_later_remind_at: text("reply_later_remind_at"),
+	/** When the reminder fired (UTC ISO). Unread + set = due; also lifts Inbox order. */
+	reply_later_reminded_at: text("reply_later_reminded_at"),
 	/** @deprecated Full HTML/text lives in R2; kept nullable for legacy rows during lazy offload. */
 	body: text("body"),
 	/** List/search preview; full body is in R2 (`emails/{id}/body.html`). */
@@ -53,6 +57,12 @@ export const emails = sqliteTable("emails", {
 	 * Maintained by SQLite triggers (migration 34); retention purges by it.
 	 */
 	retention_since: text("retention_since"),
+	/** Why inbound mail was filed where it was (shared/spam-reason.ts codes; migration 37). */
+	classification_reason: text("classification_reason"),
+	/** verified | unverified | failed at receive time. Null on outbound and pre-37 rows. */
+	auth_tier: text("auth_tier"),
+	/** Sender rule that decided the folder. Null until sender_rules exists. */
+	matched_rule_id: text("matched_rule_id"),
 });
 
 export const attachments = sqliteTable("attachments", {
@@ -103,6 +113,23 @@ export const senderTriage = sqliteTable("sender_triage", {
 	display_name: text("display_name"),
 	decided_at: text("decided_at").notNull(),
 	updated_at: text("updated_at").notNull(),
+});
+
+/**
+ * Explicit allow / block rules by address or registrable domain (migration
+ * 38_sender_rules). Queried with raw SQL in workers/lib/sender-rules.ts;
+ * mirrored here for types.
+ */
+export const senderRules = sqliteTable("sender_rules", {
+	id: text("id").primaryKey(),
+	kind: text("kind").notNull(),
+	value: text("value").notNull(),
+	verdict: text("verdict").notNull(),
+	source: text("source").notNull(),
+	created_at: text("created_at").notNull(),
+	updated_at: text("updated_at").notNull(),
+	last_matched_at: text("last_matched_at"),
+	match_count: integer("match_count").notNull().default(0),
 });
 
 /** Masked email aliases configured for this mailbox. */

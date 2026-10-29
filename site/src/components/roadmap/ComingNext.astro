@@ -8,6 +8,11 @@
 // page wraps it too; this keeps the list honest wherever it's used). The
 // head sits inside the wrapper so the list follows it directly and its
 // hairline stands in for the list's top rule.
+//
+// Live data (AVE-87): the hand-written list is prerendered and stays unless
+// /api/roadmap (Linear, AVE-85) answers with items within 3s; then the script
+// below swaps the rows for those, built from the <template> row so they share
+// Row and StatusPill's styles. Text goes in with textContent only.
 import { comingNext } from "../../data/roadmap";
 import Row from "../Row.astro";
 import RowList from "../RowList.astro";
@@ -15,7 +20,7 @@ import SectionHead from "../SectionHead.astro";
 import StatusPill from "../StatusPill.astro";
 ---
 
-<div data-claim="roadmap">
+<div data-claim="roadmap" data-roadmap-live>
 	<SectionHead id="next" title="Coming next, in detail" />
 	<RowList as="ul">
 		{
@@ -27,3 +32,46 @@ import StatusPill from "../StatusPill.astro";
 		}
 	</RowList>
 </div>
+
+<template data-roadmap-row>
+	<Row as="li" title="-" description="-">
+		<StatusPill slot="meta" status="planned" />
+	</Row>
+</template>
+
+<script>
+	import { PILL, loadLiveItems } from "../../lib/roadmap-live";
+
+	const root = document.querySelector<HTMLElement>("[data-roadmap-live]");
+	const list = root?.querySelector("ul");
+	const template = document.querySelector<HTMLTemplateElement>("template[data-roadmap-row]");
+
+	if (root && list && template) {
+		loadLiveItems().then((items) => {
+			if (!items) return; // keep the static list
+			const rows = items.map((item) => {
+				const row = (template.content.firstElementChild as HTMLElement).cloneNode(true) as HTMLElement;
+				// Added after the scroll-reveal pass, so they'd stay hidden waiting for it.
+				row.removeAttribute("data-reveal-on-scroll");
+				row.id = `next-${item.id}`;
+				const title = row.querySelector(".row-title");
+				if (title) title.textContent = item.title;
+				const description = row.querySelector(".row-description");
+				if (description) {
+					if (item.summary) description.textContent = item.summary;
+					else description.remove();
+				}
+				const pill = row.querySelector<HTMLElement>(".pill");
+				if (pill) {
+					pill.dataset.status = PILL[item.status].status;
+					// Keep the screen-reader "Status: " span; the label is the last text node.
+					const label = pill.lastChild;
+					if (label?.nodeType === Node.TEXT_NODE) label.textContent = PILL[item.status].label;
+				}
+				return row;
+			});
+			list.replaceChildren(...rows);
+			root.dataset.roadmapLive = "linear";
+		});
+	}
+</script>

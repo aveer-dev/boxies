@@ -42,6 +42,7 @@ import {
 import { Folders } from "../../shared/folders";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { allowOutboundRecipients } from "./sender-triage";
+import { allowSenderForAgent, blockSenderForAgent } from "./sender-verdicts";
 import {
 	findThreadAliasId,
 	isInboundEmail,
@@ -210,15 +211,9 @@ export async function toolDraftReply(
 		: params.to;
 	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 
-	// Append quoted original message
-	const quotedBlock = original
-		? buildQuotedReplyBlock({
-				date: original.date,
-				sender: original.sender_name || original.sender || to,
-				body: original.body ?? undefined,
-			})
-		: "";
-	const bodyHtml = processedBody + quotedBlock;
+	// The quote is not stored in the draft: the apps show the original under
+	// the editor and the reply endpoint appends it on send (AVE-133).
+	const bodyHtml = processedBody;
 
 	await stub.createEmail(
 		Folders.DRAFT,
@@ -405,6 +400,11 @@ export async function toolMarkEmailRead(
 
 // ── move_email ─────────────────────────────────────────────────────
 
+/**
+ * Moves a message and nothing else. Unlike a user's move into or out of
+ * Spam, an agent's move writes no sender rule (docs/spam-management-plan.md
+ * §5): agents teach senders only through `allow_sender` / `block_sender`.
+ */
 export async function toolMoveEmail(
 	env: Env,
 	mailboxId: string,
@@ -417,6 +417,28 @@ export async function toolMoveEmail(
 		return { status: "moved", emailId, folder: folderId };
 	}
 	return { error: "Failed to move email" };
+}
+
+// ── allow_sender / block_sender ────────────────────────────────────
+
+/** Not spam for a sender, without moving any message. */
+export async function toolAllowSender(
+	env: Env,
+	mailboxId: string,
+	params: { sender: string; folderId?: string | null },
+) {
+	const stub = getMailboxStub(env, mailboxId);
+	return allowSenderForAgent(stub, mailboxId, params);
+}
+
+/** Report spam for a sender, without moving any message. */
+export async function toolBlockSender(
+	env: Env,
+	mailboxId: string,
+	params: { sender: string },
+) {
+	const stub = getMailboxStub(env, mailboxId);
+	return blockSenderForAgent(stub, mailboxId, params);
 }
 
 // ── discard_draft ──────────────────────────────────────────────────
@@ -510,7 +532,8 @@ export async function toolSendReply(
 	}
 	const quotedBlock = buildQuotedReplyBlock({
 		date: originalEmail.date,
-		sender: originalEmail.sender_name || originalEmail.sender || to,
+		sender: originalEmail.sender || to,
+		sender_name: originalEmail.sender_name,
 		body: originalEmail.body ?? undefined,
 	});
 	const fullBodyHtml = sanitizedBody + quotedBlock;

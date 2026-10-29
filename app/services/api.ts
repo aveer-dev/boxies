@@ -4,12 +4,16 @@
 
 import type {
 	AgentConversation,
+	AiSummaryResponse,
 	Email,
 	Folder,
 	InboxDigest,
 	Mailbox,
 	RecentRecipient,
 	SenderPreference,
+	SenderRule,
+	SenderRuleKind,
+	SenderRuleVerdict,
 	AdminDomainInfo,
 	CloudflareDnsRecord,
 	DomainHealthResponse,
@@ -32,8 +36,12 @@ import type {
 	MailboxMember,
 	MailboxInviteRow,
 	MailboxRole,
+	ThreadNote,
+	CreateThreadNoteRequest,
+	UpdateThreadNoteRequest,
 } from "~/types";
 import { idempotencyHeaders } from "~/lib/send-idempotency";
+import type { AiUsageSnapshot } from "../../shared/ai-quota";
 import { suppressionAddressPath, type SuppressedRecipient } from "~/lib/suppression";
 
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -482,17 +490,33 @@ const api = {
 		mailboxId: string,
 		id: string,
 		folderId: string,
-		opts?: { setSenderPreference?: boolean },
+		opts?: { setSenderPreference?: boolean; unsubscribe?: boolean; refileSender?: boolean },
 	) =>
 		post<{
 			status: string;
 			preference?: SenderPreference | null;
 			refiledCount?: number;
 			preferenceError?: string;
+			/** Set when the move crossed Spam and taught the sender (AVE-95). */
+			senderStatus?: "allowed" | "rejected";
+			/** Report spam with `unsubscribe`: outcome of the one-click POST (AVE-99). */
+			unsubscribe?: "sent" | "failed";
+			/** Other messages from the sender moved along with this one (AVE-98). */
+			rescuedCount?: number;
+			/** For `undoSenderVerdict`: reverts the sender verdict and every move (AVE-98). */
+			undoToken?: string | null;
 		}>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, {
 			folderId,
 			setSenderPreference: opts?.setSenderPreference,
+			...(opts?.unsubscribe ? { unsubscribe: true } : {}),
+			...(opts?.refileSender === false ? { refileSender: false } : {}),
 		}),
+	/** Undo a Not spam / Report spam: the sender's rule and the moved messages (AVE-98). */
+	undoSenderVerdict: (mailboxId: string, undoToken: string) =>
+		post<{ status: "undone"; restoredCount: number }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules/undo`,
+			{ undoToken },
+		),
 	listSenderPreferences: (
 		mailboxId: string,
 		params?: { q?: string; folder?: string; limit?: number },
@@ -524,6 +548,39 @@ const api = {
 		del<void>(
 			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-preferences/${encodeURIComponent(address)}`,
 		),
+	/** Today's AI usage meters for the mailbox (AVE-45). */
+	getAiUsage: (mailboxId: string, opts?: { signal?: AbortSignal }) =>
+		get<AiUsageSnapshot>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/ai-usage`, {
+			signal: opts?.signal,
+		}),
+	listSenderRules: (
+		mailboxId: string,
+		params?: { verdict?: SenderRuleVerdict; kind?: SenderRuleKind; q?: string; limit?: number },
+		opts?: { signal?: AbortSignal },
+	) => {
+		const query: Record<string, string> = {};
+		if (params?.verdict) query.verdict = params.verdict;
+		if (params?.kind) query.kind = params.kind;
+		if (params?.q) query.q = params.q;
+		if (params?.limit != null) query.limit = String(params.limit);
+		return get<{ rules: SenderRule[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules`,
+			{ params: query, signal: opts?.signal },
+		);
+	},
+	/** 400 with `code` (e.g. `free_mail_provider`) when the value is refused. */
+	upsertSenderRule: (
+		mailboxId: string,
+		data: { kind: SenderRuleKind; value: string; verdict: SenderRuleVerdict },
+	) =>
+		put<{ rule: SenderRule }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules`,
+			{ ...data, source: "settings" },
+		),
+	deleteSenderRule: (mailboxId: string, ruleId: string) =>
+		del<void>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/sender-rules/${encodeURIComponent(ruleId)}`,
+		),
 	getThread: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
 		get<Email[]>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}`, { signal: opts?.signal }),
 	listRecentRecipients: (
@@ -539,8 +596,47 @@ const api = {
 			{ params: query, signal: opts?.signal },
 		);
 	},
+	/** Cached thread summary, generated on first open (AVE-20). */
+	getThreadSummary: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
+		get<AiSummaryResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/summary`,
+			{ signal: opts?.signal },
+		),
+	regenerateThreadSummary: (mailboxId: string, threadId: string) =>
+		post<AiSummaryResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/summary/regenerate`,
+		),
+	/** Quick summary of one message in a multi-message thread. */
+	generateEmailSummary: (
+		mailboxId: string,
+		emailId: string,
+		opts?: { regenerate?: boolean; signal?: AbortSignal },
+	) =>
+		post<AiSummaryResponse>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/emails/${encodeURIComponent(emailId)}/summary/generate`,
+			{ regenerate: opts?.regenerate ?? false },
+			{ signal: opts?.signal },
+		),
 	markThreadRead: (mailboxId: string, threadId: string) =>
 		post<void>(`/api/v1/mailboxes/${mailboxId}/threads/${threadId}/read`),
+	// Notes to self (AVE-59): private to the signed-in user.
+	listThreadNotes: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>
+		get<{ notes: ThreadNote[] }>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/notes`,
+			{ signal: opts?.signal },
+		),
+	createThreadNote: (mailboxId: string, threadId: string, data: CreateThreadNoteRequest) =>
+		post<ThreadNote>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/threads/${encodeURIComponent(threadId)}/notes`,
+			data,
+		),
+	updateThreadNote: (mailboxId: string, noteId: string, data: UpdateThreadNoteRequest) =>
+		patch<ThreadNote>(
+			`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/notes/${encodeURIComponent(noteId)}`,
+			data,
+		),
+	deleteThreadNote: (mailboxId: string, noteId: string) =>
+		del<void>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/notes/${encodeURIComponent(noteId)}`),
 	getAttachment: (mailboxId: string, emailId: string, attachmentId: string) =>
 		get<Blob>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/attachments/${attachmentId}`, { responseType: "blob" }),
 	saveDraft: (
@@ -569,7 +665,7 @@ const api = {
 	listFolders: (mailboxId: string) =>
 		get<Folder[]>(`/api/v1/mailboxes/${mailboxId}/folders`),
 	listWorkflowPiles: (mailboxId: string) =>
-		get<{ piles: { id: string; count: number }[] }>(
+		get<{ piles: { id: string; count: number; due_count?: number }[] }>(
 			`/api/v1/mailboxes/${mailboxId}/workflow-piles`,
 		),
 	createFolder: (mailboxId: string, name: string) =>

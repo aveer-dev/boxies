@@ -8,6 +8,7 @@ import co.inboxies.app.config.AppConfig
 import co.inboxies.app.services.AppModel
 import co.inboxies.app.services.AuthStore
 import co.inboxies.app.services.AutofillMailboxPreference
+import co.inboxies.app.services.LastMailboxPreference
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.services.SwipeActionPreferences
 
@@ -30,6 +31,7 @@ class InboxiesApplication : Application() {
         PushNotificationManager.init(this)
         SwipeActionPreferences.init(this)
         AutofillMailboxPreference.init(this)
+        LastMailboxPreference.init(this)
 
         // Live sync (SSE + 20 s poll) only while some activity is visible. ON_STOP is
         // debounced by ProcessLifecycleOwner, so rotations don't drop the stream.

@@ -17,6 +17,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,11 +40,16 @@ import co.inboxies.app.ui.auth.SignInView
 import co.inboxies.app.ui.home.HomeShellView
 import co.inboxies.app.ui.settings.DomainAdminDNSView
 import co.inboxies.app.ui.settings.DomainAdminSettingsView
+import co.inboxies.app.ui.settings.SendersSettingsView
+import co.inboxies.app.ui.settings.SendersTab
 import co.inboxies.app.ui.settings.SessionsSettingsView
+import co.inboxies.app.ui.settings.SettingsSheetView
 import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
 import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.ui.splash.SplashScreenView
+import co.inboxies.app.models.ComposeMode
+import kotlinx.coroutines.delay
 
 /**
  * DEBUG emulator roots — mirror iOS `PreviewMailboxRoot` / `PreviewAdminAuthRoot`.
@@ -90,7 +96,21 @@ object PreviewHarness {
                 PreviewSupport.applyAdminPreview(appModel)
                 appModel.setIdentities(PreviewSupport.identities())
             }
-            PreviewMode.Members -> {
+            PreviewMode.AiUsage,
+            PreviewMode.AiUsageLimit,
+            PreviewMode.AiUsageSettings,
+            -> {
+                PreviewSupport.applyAuth(auth)
+                PreviewSupport.applyMailboxPreview(appModel, mode)
+                appModel.applyPreviewAiUsage(PreviewSupport.aiUsage(atLimit = mode == PreviewMode.AiUsageLimit))
+                if (mode != PreviewMode.AiUsageSettings) appModel.startNewChat()
+            }
+            PreviewMode.Members,
+            PreviewMode.Senders,
+            PreviewMode.SendersBlocked,
+            PreviewMode.Settings,
+            PreviewMode.SettingsScreenerOff,
+            -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyMailboxPreview(appModel, mode)
             }
@@ -105,12 +125,20 @@ object PreviewHarness {
             PreviewMode.Mailbox,
             PreviewMode.LoadMore,
             PreviewMode.ManyNew,
+            PreviewMode.Toast,
+            PreviewMode.ReminderPicker,
+            PreviewMode.ReminderToast,
+            PreviewMode.ReminderDue,
             PreviewMode.LoadFailed,
             PreviewMode.ListError,
             PreviewMode.Screener,
             PreviewMode.ScreenerList,
             PreviewMode.ReplyLater,
             PreviewMode.Spam,
+            PreviewMode.Newsletter,
+            PreviewMode.ReplyQuote,
+            PreviewMode.Notes,
+            PreviewMode.NotesDetail,
             PreviewMode.ServiceEnded,
             PreviewMode.ServiceEndedMember,
             PreviewMode.ServiceEnding,
@@ -157,6 +185,13 @@ fun PreviewRoot(
         PreviewMode.SignInMethods -> SettingsPreviewSurface { SignInMethodsSettingsView(onBack = {}) }
         PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
+        PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }
+        PreviewMode.Settings, PreviewMode.SettingsScreenerOff, PreviewMode.AiUsageSettings -> SettingsPreviewSurface {
+            SettingsSheetView(onClose = {}, onThemeModeChange = onThemeModeChange, themeMode = themeMode)
+        }
+        PreviewMode.SendersBlocked -> SettingsPreviewSurface {
+            SendersSettingsView(onBack = {}, initialTab = SendersTab.Blocked)
+        }
         PreviewMode.DomainAdmin -> {
             Surface(modifier = Modifier.fillMaxSize(), color = inboxiesColors().background) {
                 Column(
@@ -192,22 +227,40 @@ fun PreviewRoot(
         }
         PreviewMode.LoadFailed -> MailboxLoadFailedView(appModel = appModel, auth = auth)
         PreviewMode.Mailbox,
+        PreviewMode.AiUsage,
+        PreviewMode.AiUsageLimit,
         PreviewMode.LoadMore,
         PreviewMode.ManyNew,
+        PreviewMode.Toast,
+        PreviewMode.ReminderPicker,
+        PreviewMode.ReminderToast,
+        PreviewMode.ReminderDue,
         PreviewMode.ListError,
         PreviewMode.Screener,
         PreviewMode.ScreenerList,
         PreviewMode.ReplyLater,
         PreviewMode.Spam,
+        PreviewMode.Newsletter,
+        PreviewMode.ReplyQuote,
+        PreviewMode.Notes,
+        PreviewMode.NotesDetail,
         PreviewMode.ServiceEnded,
         PreviewMode.ServiceEndedMember,
         PreviewMode.ServiceEnding,
-        -> HomeShellView(
-            auth = auth,
-            appModel = appModel,
-            themeMode = themeMode,
-            onThemeModeChange = onThemeModeChange,
-        )
+        -> {
+            if (mode == PreviewMode.ReplyQuote) {
+                LaunchedEffect(Unit) {
+                    delay(400)
+                    appModel.startCompose(ComposeMode.Reply, original = PreviewSupport.promoEmail())
+                }
+            }
+            HomeShellView(
+                auth = auth,
+                appModel = appModel,
+                themeMode = themeMode,
+                onThemeModeChange = onThemeModeChange,
+            )
+        }
     }
 }
 

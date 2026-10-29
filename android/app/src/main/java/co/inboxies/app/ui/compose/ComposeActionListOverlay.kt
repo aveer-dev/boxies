@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Drafts
 import androidx.compose.material3.Icon
@@ -88,7 +87,7 @@ enum class ComposeActionItem {
     Sent,
     Updates,
     Promotions,
-    Screener,
+    // No Screener here: it's the Screening room, reached from the Inbox row (AVE-136).
     Inbox,
 //    ForYou,
     Compose,
@@ -104,7 +103,6 @@ enum class ComposeActionItem {
             Sent -> "Sent"
             Updates -> "Updates"
             Promotions -> "Promotions"
-            Screener -> "Screener"
             Inbox -> "Inbox"
 //            ForYou -> "For you"
             Compose -> "Compose"
@@ -120,7 +118,6 @@ enum class ComposeActionItem {
             Sent -> Icons.AutoMirrored.Filled.Send
             Updates -> Icons.Filled.Newspaper
             Promotions -> Icons.Filled.Campaign
-            Screener -> Icons.Filled.Shield
             Inbox -> Icons.Filled.Inbox
 //            ForYou -> Icons.Filled.AutoAwesome
             Compose -> Icons.Filled.Edit
@@ -130,7 +127,6 @@ enum class ComposeActionItem {
         get() = when (this) {
 //            ForYou -> HomeTab.AiInbox
             Inbox -> HomeTab.Folder(FolderIds.INBOX)
-            Screener -> HomeTab.Folder(FolderIds.SCREENER)
             Promotions -> HomeTab.Folder(FolderIds.PROMOTIONS)
             Updates -> HomeTab.Folder(FolderIds.UPDATES)
             Sent -> HomeTab.Folder(FolderIds.SENT)
@@ -199,7 +195,7 @@ fun ComposeActionListOverlay(
     val scope = rememberCoroutineScope()
     val reduceMotion = rememberReduceMotion()
     val actions = remember(showCompose) {
-        if (showCompose) ComposeActionItem.entries else ComposeActionItem.entries - ComposeActionItem.Compose
+        ComposeActionItem.entries.filter { showCompose || it != ComposeActionItem.Compose }
     }
     val rowFrames = remember { mutableMapOf<ComposeActionItem, Rect>() }
     var publishedFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }

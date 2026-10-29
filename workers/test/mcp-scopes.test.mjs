@@ -69,7 +69,7 @@ const replyArgs = (mailboxId) => ({ ...sendArgs(mailboxId), originalEmailId: "e1
 	}
 	assert.deepEqual(SEND_TOOLS, ["send_email", "send_reply"]);
 	assert.deepEqual(toolsFor("draft"), ["create_draft", "draft_reply", "update_draft"]);
-	assert.deepEqual(toolsFor("manage"), ["delete_email", "mark_email_read", "move_email"]);
+	assert.deepEqual(toolsFor("manage"), ["allow_sender", "block_sender", "delete_email", "mark_email_read", "move_email"]);
 
 	// Unmapped tools fail closed for everyone, including legacy sessions and full grants.
 	assert.equal(requiredScopeForTool("purge_everything"), null);
@@ -106,7 +106,7 @@ const replyArgs = (mailboxId) => ({ ...sendArgs(mailboxId), originalEmailId: "e1
 	assert.match(send.text, /send_email/);
 	const reply = await callTool(client, "send_reply", replyArgs("ada@inboxies.email"));
 	assert.equal(reply.isError, true);
-	for (const name of ["create_draft", "delete_email", "move_email", "mark_email_read"]) {
+	for (const name of ["create_draft", "delete_email", "move_email", "mark_email_read", "allow_sender", "block_sender"]) {
 		const res = await callTool(client, name, {});
 		assert.equal(res.isError, true, `${name} refused for a read-only grant`);
 	}

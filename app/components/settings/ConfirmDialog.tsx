@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import type { ReactNode } from "react";
 
 /** A small yes/no confirmation for destructive settings actions. */
@@ -33,11 +34,11 @@ export default function ConfirmDialog({
 				if (!next && !busy) onCancel();
 			}}
 		>
-			<Dialog size="sm" className="p-6">
-				<Dialog.Title className="text-base font-semibold mb-2">{title}</Dialog.Title>
-				<Dialog.Description className="text-sm text-kumo-subtle mb-5">
-					{description}
-				</Dialog.Description>
+			<Modal size="sm">
+				<ModalHeader
+					title={<>{title}</>}
+					description={<>{description}</>}
+				/>
 				<div className="flex justify-end gap-2">
 					<Button variant="secondary" onClick={onCancel} disabled={busy}>
 						Cancel
@@ -50,7 +51,7 @@ export default function ConfirmDialog({
 						{confirmLabel}
 					</Button>
 				</div>
-			</Dialog>
+			</Modal>
 		</Dialog.Root>
 	);
 }

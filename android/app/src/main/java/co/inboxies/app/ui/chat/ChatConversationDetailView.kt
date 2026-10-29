@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.ChatMessage
 import co.inboxies.app.models.ComposeMode
+import co.inboxies.app.models.AiUsageLevel
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.services.AgentChatClient
 import co.inboxies.app.services.ApiClient
@@ -75,6 +76,8 @@ import co.inboxies.app.theme.HomeChromeToolbarButton
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.homeChromeToolbarSurface
 import co.inboxies.app.theme.inboxiesColors
+import co.inboxies.app.ui.components.AiChatLimitNotice
+import co.inboxies.app.ui.components.AiUsageMeter
 import co.inboxies.app.ui.components.InboxiesDropdownMenu
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.ui.components.MarkdownContentView
@@ -112,6 +115,8 @@ fun ChatConversationDetailView(
     val statusText by chatClient.statusText.collectAsState()
     val historyError by chatClient.historyError.collectAsState()
     val conversations by app.conversations.collectAsState()
+    val aiUsage by app.aiUsage.collectAsState()
+    val quotaExceeded by chatClient.quotaExceeded.collectAsState()
 
     var draft by remember { mutableStateOf("") }
     var showOptions by remember { mutableStateOf(false) }
@@ -127,11 +132,13 @@ fun ChatConversationDetailView(
         isKnownConversation &&
         (isLoadingHistory || historyError != null)
     val isChatReady = isConnected && !isWaitingForHistory
-    val canSend = draft.trim().isNotEmpty() && !isStreaming && isChatReady
+    // Daily AI chat limit (AVE-45): from the usage snapshot or a typed quota error.
+    val chatLimitReached = quotaExceeded || aiUsage?.chat?.level == AiUsageLevel.Exhausted
+    val canSend = draft.trim().isNotEmpty() && !isStreaming && isChatReady && !chatLimitReached
 
     fun sendMessage(text: String) {
         val trimmed = text.trim()
-        if (trimmed.isEmpty() || !isChatReady || isStreaming) return
+        if (trimmed.isEmpty() || !isChatReady || isStreaming || chatLimitReached) return
         chatClient.sendUserMessage(trimmed)
         val isSaved = conversations.any { it.id == conversationId }
         if (!isSaved) {
@@ -212,6 +219,11 @@ fun ChatConversationDetailView(
 
     DisposableEffect(Unit) {
         onDispose { chatClient.disconnect() }
+    }
+
+    // Usage meter: fetch when shown, after each turn finishes, and after a quota error.
+    LaunchedEffect(isStreaming, quotaExceeded) {
+        if (!isStreaming) app.refreshAiUsage()
     }
 
     LaunchedEffect(messages.size, statusText, isStreaming) {
@@ -383,6 +395,26 @@ fun ChatConversationDetailView(
             }
         }
 
+        // Daily AI chat usage (AVE-45): the meter, or the limit notice once it's used up.
+        val usage = aiUsage
+        if (chatLimitReached) {
+            AiChatLimitNotice(
+                resetsAt = usage?.resetsAtInstant,
+                modifier = Modifier
+                    .padding(horizontal = 12.dp)
+                    .padding(top = 6.dp),
+            )
+        } else if (usage != null) {
+            AiUsageMeter(
+                counter = usage.chat,
+                noun = "AI chats",
+                resetsAt = usage.resetsAtInstant,
+                modifier = Modifier
+                    .padding(horizontal = 24.dp)
+                    .padding(top = 6.dp),
+            )
+        }
+
         // Composer
         Row(
             modifier = Modifier
@@ -409,6 +441,7 @@ fun ChatConversationDetailView(
                 BasicTextField(
                     value = draft,
                     onValueChange = { draft = it },
+                    enabled = !chatLimitReached,
                     modifier = Modifier.weight(1f),
                     textStyle = TextStyle(
                         fontFamily = InterFontFamily,
@@ -432,7 +465,7 @@ fun ChatConversationDetailView(
                         Box {
                             if (draft.isEmpty()) {
                                 Text(
-                                    "Ask about your inbox…",
+                                    if (chatLimitReached) "Daily AI chat limit reached" else "Ask about your inbox…",
                                     fontFamily = InterFontFamily,
                                     fontSize = AppThemeDims.Chat.input,
                                     color = colors.muted,
@@ -442,7 +475,7 @@ fun ChatConversationDetailView(
                         }
                     },
                 )
-                if (draft.isNotEmpty()) {
+                if (draft.isNotEmpty() && !chatLimitReached) {
                     IconButton(
                         onClick = { draft = "" },
                         modifier = Modifier.size(28.dp),

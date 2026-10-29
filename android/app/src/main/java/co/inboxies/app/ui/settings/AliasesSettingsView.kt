@@ -1,5 +1,9 @@
 package co.inboxies.app.ui.settings
 
+import co.inboxies.app.theme.ToastMetrics
+import co.inboxies.app.ui.components.toastIcon
+import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.components.AnimatedToast
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -101,7 +105,6 @@ import co.inboxies.app.ui.components.InboxiesMenuDivider
 import co.inboxies.app.ui.components.InboxiesMenuHeader
 import co.inboxies.app.ui.components.InboxiesMenuItem
 import co.inboxies.app.ui.components.PrivateEmailLogoView
-import co.inboxies.app.ui.components.UndoToastBanner
 import co.inboxies.app.utils.DateUtils
 import java.time.Duration
 import java.time.Instant
@@ -451,17 +454,19 @@ fun AliasesSettingsView(
             }
         }
 
-        AnimatedVisibility(
-            visible = toastVisible,
-            enter = slideInVertically(settingsNavSpring()) { it } + fadeIn(settingsNavSpring()),
-            exit = slideOutVertically(settingsNavSpring()) { it } + fadeOut(settingsNavSpring()),
+        AnimatedToast(
+            value = toast?.takeIf { toastVisible },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
-                .padding(horizontal = HomeChromeMetrics.chromeHorizontalPadding)
-                .padding(bottom = HomeChromeMetrics.chromeBottomPadding),
-        ) {
-            toast?.let { UndoToastBanner(message = it.message, isError = it.isError) }
+                .padding(horizontal = ToastMetrics.screenInset)
+                .padding(bottom = ToastMetrics.standaloneBottomInset),
+        ) { current ->
+            InboxiesToast(
+                message = current.message,
+                icon = current.toastIcon,
+                onDismiss = { toastVisible = false },
+            )
         }
 
         editingAlias?.let { alias ->

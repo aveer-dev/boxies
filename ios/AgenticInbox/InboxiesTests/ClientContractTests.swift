@@ -32,6 +32,101 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(email.aliasId, "al_1")
     }
 
+    // AVE-111: these fields were declared and keyed but never read by `init(from:)`.
+
+    /// Threaded list row: `LIST_EMAIL_COLUMNS` (workers/lib/conversation-index.ts)
+    /// through `#withDecodedAuth`, with SQLite 0/1 flags already coerced.
+    func testEmailDecodesExplainabilityFieldsOnListRow() throws {
+        let email = try decode(Email.self, """
+        {"id":"e3","subject":"Win","sender":"promo@x.com","sender_name":"Promo","recipient":"me@x.com",
+         "date":"2026-10-10T10:00:00Z","read":false,"starred":false,"reply_later":false,"reply_later_at":null,
+         "thread_id":"t3","folder_id":"spam","in_reply_to":null,"email_references":null,
+         "provider_message_id":null,"delivery_status":null,"delivery_error":null,"snippet":"Act now",
+         "auth":{"spf":"fail","dkim":"none","dmarc":"fail","aligned":false,"spoofed":true,"authTier":"failed"},
+         "auth_tier":"failed","classification_reason":"auth-failed","matched_rule_id":null,
+         "thread_count":1,"thread_unread_count":1,"participants":"promo@x.com",
+         "needs_reply":0,"has_draft":0,"has_attachment":false,"list_section":"new",
+         "has_sticky_note":false,"sticky_note_text":null,"inline_note_count":0}
+        """)
+        XCTAssertEqual(email.authTier, "failed")
+        XCTAssertEqual(email.classificationReason, "auth-failed")
+        XCTAssertNil(email.matchedRuleId)
+        XCTAssertNil(email.aliasEmail)
+        XCTAssertEqual(email.spamReasonLine, SpamReason.line(for: "auth-failed", folderId: "spam"))
+        XCTAssertNotNil(email.spamReasonLine)
+    }
+
+    /// Detail row: every `emails` column plus `#aliasFields` and
+    /// `one_click_unsubscribe` (workers/durableObject/index.ts getEmail).
+    func testEmailDecodesAliasAndRuleFieldsOnDetailRow() throws {
+        let email = try decode(Email.self, """
+        {"id":"e4","thread_id":"t4","folder_id":"inbox","subject":"Order","sender":"shop@x.com",
+         "sender_name":"Shop","recipient":"shop.k3@relay.example","cc":null,"bcc":null,
+         "date":"2026-10-10T10:00:00Z","read":true,"starred":false,"reply_later":false,
+         "body":"<p>Thanks</p>","snippet":"Thanks","in_reply_to":null,"message_id":"<m4@x.com>",
+         "raw_headers":"[]","alias_id":"al_4","auth":null,"auth_tier":"verified",
+         "classification_reason":"personal-ham","matched_rule_id":"sr_9",
+         "alias_email":"shop.k3@relay.example","alias_active":false,
+         "one_click_unsubscribe":true,"attachments":[],"delivery_recipients":[]}
+        """)
+        XCTAssertEqual(email.aliasId, "al_4")
+        XCTAssertEqual(email.aliasEmail, "shop.k3@relay.example")
+        XCTAssertEqual(email.aliasActive, false)
+        XCTAssertEqual(email.authTier, "verified")
+        XCTAssertEqual(email.classificationReason, "personal-ham")
+        XCTAssertEqual(email.matchedRuleId, "sr_9")
+        XCTAssertEqual(email.oneClickUnsubscribe, true)
+    }
+
+    func testEmailDecodesAliasActiveAsSQLiteInteger() throws {
+        let email = try decode(Email.self, """
+        {"id":"e5","alias_id":"al_5","alias_email":"a@relay.example","alias_active":1}
+        """)
+        XCTAssertEqual(email.aliasActive, true)
+    }
+
+    /// SSE `new_email` broadcast (workers/durableObject/index.ts).
+    func testEmailDecodesExplainabilityFieldsOnNewEmailEvent() throws {
+        let email = try decode(Email.self, """
+        {"id":"e6","folder_id":"spam","subject":"Hi","sender":"a@x.com","sender_name":null,
+         "recipient":"b@x.com","date":"2026-10-10T10:00:00Z","read":false,"starred":false,
+         "snippet":"Hello","thread_id":null,"provider_message_id":null,"delivery_status":null,
+         "delivery_error":null,"auth":null,"auth_tier":"unverified",
+         "classification_reason":"sender-rejected","matched_rule_id":"sr_2",
+         "reply_later":false,"alias_id":null}
+        """)
+        XCTAssertEqual(email.authTier, "unverified")
+        XCTAssertEqual(email.classificationReason, "sender-rejected")
+        XCTAssertEqual(email.matchedRuleId, "sr_2")
+        XCTAssertNil(email.aliasActive)
+    }
+
+    func testCacheRoundTripsExplainabilityAndAliasFields() throws {
+        let db = DatabaseService(inMemory: true)
+        let decoded = try decode(Email.self, """
+        {"id":"e7","thread_id":"t7","folder_id":"spam","subject":"S","sender":"a@x.com",
+         "recipient":"b@relay.example","date":"2026-10-10T10:00:00Z","read":false,"starred":false,
+         "alias_id":"al_7","alias_email":"b@relay.example","alias_active":true,
+         "auth_tier":"failed","classification_reason":"auth-failed","matched_rule_id":"sr_7"}
+        """)
+        db.upsertEmails(mailboxId: "mb@x.com", emails: [decoded])
+
+        // A later payload without the fields (e.g. a list row) keeps the cached ones.
+        var listRow = decoded
+        listRow.aliasEmail = nil
+        listRow.aliasActive = nil
+        listRow.matchedRuleId = nil
+        db.upsertEmails(mailboxId: "mb@x.com", emails: [listRow])
+
+        let cached = try XCTUnwrap(db.getEmail(id: "e7"))
+        XCTAssertEqual(cached.aliasEmail, "b@relay.example")
+        XCTAssertEqual(cached.aliasActive, true)
+        XCTAssertEqual(cached.authTier, "failed")
+        XCTAssertEqual(cached.classificationReason, "auth-failed")
+        XCTAssertEqual(cached.matchedRuleId, "sr_7")
+        XCTAssertEqual(db.getEmails(mailboxId: "mb@x.com", folderId: "spam").first?.classificationReason, "auth-failed")
+    }
+
     // MARK: - Export / registrar
 
     func testExportJobDecodesServerShape() throws {
@@ -159,6 +254,26 @@ final class ClientContractTests: XCTestCase {
         XCTAssertFalse(EmailHTMLSanitizer.remoteImagesBlockedPolicy.contains("https:"))
     }
 
+    /// AVE-132: remote images load by default; only Spam blocks them until "Load images".
+    func testRemoteImagesBlockedOnlyInSpam() {
+        XCTAssertTrue(EmailHTMLSanitizer.blocksRemoteImages(folderId: "spam"))
+        for folder in ["inbox", "screener", "promotions", "updates", "sent", "draft", "archive", "screened_out", "trash"] {
+            XCTAssertFalse(EmailHTMLSanitizer.blocksRemoteImages(folderId: folder), folder)
+        }
+        XCTAssertFalse(EmailHTMLSanitizer.blocksRemoteImages(folderId: nil))
+
+        let inbox = EmailHTMLSanitizer.contentSecurityPolicy(blocksRemoteImages: false, loadedRemoteImages: false)
+        XCTAssertEqual(inbox, EmailHTMLSanitizer.contentSecurityPolicy)
+        XCTAssertTrue(inbox.contains("img-src data: cid: https:"))
+
+        let spam = EmailHTMLSanitizer.contentSecurityPolicy(blocksRemoteImages: true, loadedRemoteImages: false)
+        XCTAssertEqual(spam, EmailHTMLSanitizer.remoteImagesBlockedPolicy)
+        XCTAssertFalse(spam.contains("https:"))
+
+        let spamLoaded = EmailHTMLSanitizer.contentSecurityPolicy(blocksRemoteImages: true, loadedRemoteImages: true)
+        XCTAssertEqual(spamLoaded, EmailHTMLSanitizer.contentSecurityPolicy)
+    }
+
     // MARK: - Service end (read-only domains)
 
     func testMailboxDecodesWithoutServiceFields() throws {
@@ -264,5 +379,46 @@ final class ClientContractTests: XCTestCase {
         XCTAssertEqual(layout.trailingActions, [])
         XCTAssertFalse(layout.trailingAllowsFullSwipe)
         XCTAssertEqual(layout.leadingActions, [.toggleRead])
+    }
+
+    // MARK: - Spam verdicts (AVE-98)
+
+    func testMoveResponseDecodesRescueAndUndo() throws {
+        let response = try decode(MoveEmailResponse.self, """
+        {"status":"moved","senderStatus":"allowed","triage":{"sender":"a@x.com"},
+         "rescuedCount":3,"undoToken":"tok-1"}
+        """)
+        XCTAssertEqual(response.rescuedCount, 3)
+        XCTAssertEqual(response.undoToken, "tok-1")
+        let plain = try decode(MoveEmailResponse.self, #"{"status":"moved"}"#)
+        XCTAssertNil(plain.senderStatus)
+        XCTAssertNil(SpamVerdictToast.title(for: plain, folderId: "archive", sender: "a@x.com"))
+    }
+
+    func testSpamVerdictToastCopyMatchesWeb() {
+        XCTAssertEqual(
+            SpamVerdictToast.title(
+                for: MoveEmailResponse(senderStatus: "allowed", rescuedCount: 3),
+                folderId: "inbox",
+                sender: "ada@x.example"
+            ),
+            "Moved to Inbox · future mail from ada@x.example will skip Spam · 3 more moved"
+        )
+        XCTAssertEqual(
+            SpamVerdictToast.title(for: MoveEmailResponse(senderStatus: "rejected", rescuedCount: 2), folderId: "spam", sender: nil),
+            "Reported as spam · 2 more moved"
+        )
+        XCTAssertEqual(
+            SpamVerdictToast.title(
+                for: MoveEmailResponse(senderStatus: "rejected", unsubscribe: "sent", rescuedCount: 0),
+                folderId: "spam",
+                sender: nil
+            ),
+            "Reported as spam and unsubscribed"
+        )
+        XCTAssertEqual(
+            SpamVerdictToast.title(for: MoveEmailResponse(senderStatus: "allowed"), folderId: "custom", sender: nil),
+            "Moved out of Spam"
+        )
     }
 }

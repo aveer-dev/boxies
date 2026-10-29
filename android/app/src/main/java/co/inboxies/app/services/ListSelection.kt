@@ -115,7 +115,7 @@ object EmailPaging {
      * Inbox shows at most this many New rows; the rest open on the "All new" screen so Seen
      * always stays in view right below (AVE-23). Sent to the server as `new_limit`.
      */
-    const val INBOX_NEW_PREVIEW_LIMIT = 5
+    const val INBOX_NEW_PREVIEW_LIMIT = 3
 
     /** The capped New rows plus how many New conversations sit behind "Show all". */
     data class InboxNewPreview(val shown: List<Email>, val hiddenCount: Int)
@@ -129,7 +129,7 @@ object EmailPaging {
         serverNewCount: Int?,
         limit: Int = INBOX_NEW_PREVIEW_LIMIT,
     ): InboxNewPreview {
-        val sorted = newRows.sortedByDescending { it.date }
+        val sorted = newRows.sortedByDescending { it.inboxSortDate }
         val shown = sorted.take(limit)
         val total = maxOf(serverNewCount ?: 0, sorted.size)
         return InboxNewPreview(shown, maxOf(0, total - shown.size))
@@ -235,10 +235,13 @@ object EmailPaging {
         }.map { it.id }.toSet()
     }
 
-    /** Inbox order: New then Seen (by [Email.resolvedListSection]), each newest first. */
+    /**
+     * Inbox order: New then Seen (by [Email.resolvedListSection]), each newest first by
+     * [Email.inboxSortDate] (a fired Reply Later reminder counts as new activity, AVE-86).
+     */
     fun orderNewThenSeen(emails: List<Email>): List<Email> {
         val (newEmails, seenEmails) = emails.partition { it.resolvedListSection == "new" }
-        return newEmails.sortedByDescending { it.date } + seenEmails.sortedByDescending { it.date }
+        return newEmails.sortedByDescending { it.inboxSortDate } + seenEmails.sortedByDescending { it.inboxSortDate }
     }
 
     /**

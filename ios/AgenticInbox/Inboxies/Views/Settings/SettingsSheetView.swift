@@ -26,11 +26,13 @@ struct SettingsSheetView: View {
     @State private var editNameDraft = ""
     @State private var showEditName = false
     @State private var signatureEnabled = false
+    @State private var screenerEnabled = true
     @State private var navigationPath: [SettingsDestination] = []
     @State private var loadingDestination: SettingsDestination?
     @State private var showDeleteAccountConfirm = false
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
+    @State private var aiUsage: AIUsage?
     @AppStorage("push_notifications_enabled") private var notificationsEnabled = true
     @AppStorage("app_theme") private var appTheme: ThemeMode = .system
 
@@ -61,6 +63,7 @@ struct SettingsSheetView: View {
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
+            ScrollViewReader { proxy in
             List {
                 Section {
                     profileHeader
@@ -94,6 +97,9 @@ struct SettingsSheetView: View {
                     notificationsToggle
                     signatureToggle
                         .lockedWhenReadOnly(app.isReadOnly)
+                    screenerToggle
+                        .lockedWhenReadOnly(app.isReadOnly)
+                        .id("screenerToggle")
                 } header: {
                     Text("Preferences")
                 } footer: {
@@ -102,6 +108,10 @@ struct SettingsSheetView: View {
                     }
                 }
                 .listRowSeparator(.hidden)
+
+                if let aiUsage {
+                    aiUsageSection(aiUsage)
+                }
 
                 Section {
                     settingsNavRow("Theme", systemImage: "circle.lefthalf.filled", destination: .theme)
@@ -171,6 +181,17 @@ struct SettingsSheetView: View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
+            #if DEBUG
+            .task {
+                // `-previewSettings`: bring the Screener switch into view for screenshots.
+                guard ProcessInfo.processInfo.arguments.contains("-previewSettings") else { return }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                // `-previewAIUsage <level>`: the AI usage section instead (AVE-45).
+                let target = PreviewSupport.aiUsageFixture == nil ? "screenerToggle" : "aiUsage"
+                proxy.scrollTo(target, anchor: .center)
+            }
+            #endif
+            }
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: SettingsDestination.self) { destination in
                 switch destination {
@@ -239,12 +260,60 @@ struct SettingsSheetView: View {
             }
             .onAppear {
                 signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+                screenerEnabled = app.isScreenerEnabled
+            }
+            .task(id: app.selectedMailboxId) {
+                aiUsage = await app.loadAIUsage()
             }
             .onChange(of: app.selectedMailboxId) { _, _ in
                 signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+                screenerEnabled = app.isScreenerEnabled
             }
         }
         .applyThemeController()
+    }
+
+    /// Today's AI quota for this mailbox (AVE-45): chat + inbound meters.
+    private func aiUsageSection(_ usage: AIUsage) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(usage.isPaid ? "Paid plan" : "Free plan")
+                        .font(.inter(size: 11, weight: .semibold))
+                        .foregroundStyle(usage.isPaid ? AppTheme.accent : AppTheme.ink)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            usage.isPaid ? AppTheme.accent.opacity(0.12) : AppTheme.pillFill,
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        )
+                    Text("Daily limits for this mailbox. Counters reset at midnight UTC.")
+                        .font(.inter(size: 12))
+                        .foregroundStyle(AppTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Agent chat")
+                        .font(.inter(size: 14, weight: .medium))
+                        .foregroundStyle(AppTheme.ink)
+                    AIUsageMeter(counter: usage.chat, noun: "AI chats", resetsAt: usage.resetsAtDate)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Inbound AI")
+                        .font(.inter(size: 14, weight: .medium))
+                        .foregroundStyle(AppTheme.ink)
+                    AIUsageMeter(counter: usage.inbound, noun: "AI checks", resetsAt: usage.resetsAtDate)
+                    Text("Spam checks and auto-drafts for new mail. Past the limit, mail is sorted by your rules only.")
+                        .font(.inter(size: 11))
+                        .foregroundStyle(AppTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 6)
+            .id("aiUsage")
+        } header: {
+            Text("AI usage")
+        }
     }
 
     private var profileHeader: some View {
@@ -314,14 +383,11 @@ struct SettingsSheetView: View {
         }
         .tint(AppTheme.accent)
         .onChange(of: notificationsEnabled) { _, newValue in
+            let mailboxIds = app.mailboxes.map(\.id) + [app.selectedMailboxId].compactMap { $0 }
             if newValue {
-                if let mailboxId = app.selectedMailboxId {
-                    PushNotificationManager.shared.requestPermissionAndRegister(mailboxId: mailboxId)
-                }
+                PushNotificationManager.shared.requestPermissionAndRegister(mailboxIds: mailboxIds)
             } else {
-                if let mailboxId = app.selectedMailboxId {
-                    PushNotificationManager.shared.unregisterToken(mailboxId: mailboxId)
-                }
+                PushNotificationManager.shared.unregisterToken(mailboxIds: mailboxIds)
             }
         }
     }
@@ -338,6 +404,37 @@ struct SettingsSheetView: View {
                 }
             } icon: {
                 Image(systemName: "pencil")
+                    .foregroundStyle(AppTheme.ink)
+            }
+        }
+        .tint(AppTheme.accent)
+    }
+
+    private var screenerBinding: Binding<Bool> {
+        Binding(
+            get: { screenerEnabled },
+            set: { newValue in
+                screenerEnabled = newValue
+                Task { await saveScreenerEnabled(newValue) }
+            }
+        )
+    }
+
+    /// Per-mailbox Screener switch (AVE-104). Off: first-time senders go to Inbox.
+    private var screenerToggle: some View {
+        Toggle(isOn: screenerBinding) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Screener")
+                        .foregroundStyle(AppTheme.ink)
+                    Text(screenerEnabled
+                         ? "First-time senders wait for you to accept them."
+                         : "First-time senders go to your Inbox. Spam is still filtered.")
+                        .font(.inter(size: 12))
+                        .foregroundStyle(AppTheme.muted)
+                }
+            } icon: {
+                Image(systemName: HomeTab.folder("screener").systemImage)
                     .foregroundStyle(AppTheme.ink)
             }
         }
@@ -464,6 +561,14 @@ struct SettingsSheetView: View {
         }
         if !success {
             signatureEnabled = mailbox?.settings?.signature?.enabled ?? true
+        }
+    }
+
+    private func saveScreenerEnabled(_ enabled: Bool) async {
+        if await app.setScreenerEnabled(enabled) {
+            app.showToast(enabled ? "Screener on" : "Screener off: new senders go to your Inbox")
+        } else {
+            screenerEnabled = app.isScreenerEnabled
         }
     }
 

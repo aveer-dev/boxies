@@ -95,6 +95,12 @@ class DatabaseService private constructor() {
             it.replyLater && it.folderId !in setOf("trash", "spam", "draft", "drafts")
         }
 
+    /** Reply Later mails whose reminder fired and are still unread (AVE-86). */
+    fun getReplyLaterDueCount(mailboxId: String): Int =
+        emailsIn(mailboxId).count {
+            it.isReplyLaterDue && it.folderId !in setOf("trash", "spam", "draft", "drafts")
+        }
+
     fun getEmail(id: String): Email? = emails[id]
 
     fun getThreadEmails(mailboxId: String, threadId: String): List<Email> =
@@ -107,8 +113,33 @@ class DatabaseService private constructor() {
             } else {
                 email
             }
-            emails[merged.id] = merged
+            // Only list rows carry note fields; detail/thread payloads keep the cached ones.
+            val existing = emails[merged.id]
+            val withNotes = if (merged.hasStickyNote == null && existing?.hasStickyNote != null) {
+                merged.copy(
+                    hasStickyNote = existing.hasStickyNote,
+                    stickyNoteText = existing.stickyNoteText,
+                    inlineNoteCount = merged.inlineNoteCount ?: existing.inlineNoteCount,
+                )
+            } else {
+                merged
+            }
+            emails[merged.id] = withNotes
             emailMailboxIds[merged.id] = mailboxId
+        }
+    }
+
+    /**
+     * Writes a conversation's note summary onto every cached row of it, so the list
+     * shows a note change before the next sync.
+     */
+    fun updateThreadNoteSummary(mailboxId: String, threadKey: String, summary: ThreadNoteSummary) {
+        emailsIn(mailboxId).filter { it.noteThreadKey == threadKey }.toList().forEach { email ->
+            emails[email.id] = email.copy(
+                hasStickyNote = summary.hasStickyNote,
+                stickyNoteText = summary.stickyNoteText,
+                inlineNoteCount = summary.inlineNoteCount,
+            )
         }
     }
 
@@ -129,7 +160,19 @@ class DatabaseService private constructor() {
                 replyLater == false -> null
                 else -> existing.replyLaterAt
             },
+            // Leaving Reply Later clears both reminder fields (server does the same).
+            replyLaterRemindAt = if (replyLater == false) null else existing.replyLaterRemindAt,
+            replyLaterRemindedAt = if (replyLater == false) null else existing.replyLaterRemindedAt,
         )
+    }
+
+    /**
+     * Set (`remindAt` = UTC ISO) or clear (`null`) the pending reminder. Setting one adds
+     * the mail to Reply Later and clears a previous fire; clearing keeps it in the pile.
+     */
+    fun updateReplyLaterReminder(id: String, remindAt: String?) {
+        val existing = emails[id] ?: return
+        emails[id] = existing.withReplyLaterReminder(remindAt)
     }
 
     fun deleteEmail(id: String) {
@@ -144,6 +187,8 @@ class DatabaseService private constructor() {
             folderId = folderId,
             replyLater = if (clearReplyLater) false else existing.replyLater,
             replyLaterAt = if (clearReplyLater) null else existing.replyLaterAt,
+            replyLaterRemindAt = if (clearReplyLater) null else existing.replyLaterRemindAt,
+            replyLaterRemindedAt = if (clearReplyLater) null else existing.replyLaterRemindedAt,
         )
     }
 
@@ -201,3 +246,16 @@ class DatabaseService private constructor() {
         val shared: DatabaseService by lazy { DatabaseService() }
     }
 }
+
+/** The mail with its Reply Later reminder set (`remindAt` = UTC ISO) or cleared (`null`). */
+fun Email.withReplyLaterReminder(remindAt: String?): Email =
+    if (remindAt != null) {
+        copy(
+            replyLater = true,
+            replyLaterAt = replyLaterAt ?: java.time.Instant.now().toString(),
+            replyLaterRemindAt = remindAt,
+            replyLaterRemindedAt = null,
+        )
+    } else {
+        copy(replyLaterRemindAt = null)
+    }

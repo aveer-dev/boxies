@@ -61,7 +61,14 @@ data class MailboxSettings(
     val signature: SignatureSettings? = null,
     val autoReply: AutoReplySettings? = null,
     val filters: List<InboxFilterRule>? = null,
+    /** Screener for first-time senders. Absent means on (AVE-104). */
+    val screener: ScreenerSettings? = null,
     val acl: MailboxAcl? = null,
+)
+
+@Serializable
+data class ScreenerSettings(
+    val enabled: Boolean? = null,
 )
 
 /**
@@ -364,6 +371,32 @@ data class SenderPreference(
     val updatedAt: String? = null,
 )
 
+/** Explicit allow / block rule (Settings → Senders, AVE-97). */
+@Serializable
+data class SenderRule(
+    val id: String,
+    /** `address` or `domain` */
+    val kind: String,
+    val value: String,
+    /** `allow` or `block` */
+    val verdict: String,
+    val source: String = "",
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val lastMatchedAt: String? = null,
+    val matchCount: Int = 0,
+)
+
+@Serializable
+data class SenderRulesResponse(
+    val rules: List<SenderRule> = emptyList(),
+)
+
+@Serializable
+data class SenderRuleResponse(
+    val rule: SenderRule,
+)
+
 @Serializable
 data class SenderPreferencesResponse(
     val preferences: List<SenderPreference> = emptyList(),
@@ -525,9 +558,11 @@ data class EmailAuth(
     val envelopeFrom: String? = null,
     val aligned: Boolean? = null,
     val spoofed: Boolean = false,
+    /** `verified` | `unverified` | `failed` (AVE-92). Absent on older snapshots. */
+    val authTier: String? = null,
     val source: String? = null,
 ) {
-    val isSpoofed: Boolean get() = spoofed
+    val isSpoofed: Boolean get() = spoofed || authTier == "failed"
 }
 
 @Serializable
@@ -546,6 +581,10 @@ data class Email(
     val starred: Boolean = false,
     @SerialName("reply_later") val replyLater: Boolean = false,
     @SerialName("reply_later_at") val replyLaterAt: String? = null,
+    /** Pending Reply Later reminder, UTC ISO 8601 (AVE-86). Absent on older Workers. */
+    @SerialName("reply_later_remind_at") val replyLaterRemindAt: String? = null,
+    /** When the reminder fired, UTC ISO 8601. Set + unread = "due". */
+    @SerialName("reply_later_reminded_at") val replyLaterRemindedAt: String? = null,
     val body: String? = null,
     val snippet: String? = null,
     @SerialName("in_reply_to") val inReplyTo: String? = null,
@@ -571,7 +610,60 @@ data class Email(
     @SerialName("alias_email") val aliasEmail: String? = null,
     /** Alias still active and unexpired; `null` when not a private-email thread. */
     @SerialName("alias_active") val aliasActive: Boolean? = null,
+    /** Auth tier stored at receive time (`verified` | `unverified` | `failed`). */
+    @SerialName("auth_tier") val authTier: String? = null,
+    /** Why inbound mail was filed where it was (machine code, see [SpamReason]). */
+    @SerialName("classification_reason") val classificationReason: String? = null,
+    /** Sender rule that decided the folder (null until sender rules exist). */
+    @SerialName("matched_rule_id") val matchedRuleId: String? = null,
+    /** Notes to self (threaded list rows only; the signed-in user's own notes). */
+    @SerialName("has_sticky_note") val hasStickyNote: Boolean? = null,
+    /** Latest sticky note's markdown, trimmed to 200 characters by the server. */
+    @SerialName("sticky_note_text") val stickyNoteText: String? = null,
+    /** How many private notes sit on single messages of this conversation. */
+    @SerialName("inline_note_count") val inlineNoteCount: Int? = null,
+    /** RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99). */
+    @SerialName("one_click_unsubscribe") val oneClickUnsubscribe: Boolean? = null,
 ) {
+    /** A pending reminder on a mail still in Reply Later (AVE-86). */
+    val hasPendingReplyLaterReminder: Boolean
+        get() = replyLater && !replyLaterRemindAt.isNullOrBlank()
+
+    /** The reminder fired and the mail is still unread: needs attention. */
+    val isReplyLaterDue: Boolean
+        get() = replyLater && !replyLaterRemindedAt.isNullOrBlank() && !read
+
+    /**
+     * Inbox ordering key: `max(date, reply_later_reminded_at)`, so a fired reminder lifts
+     * the conversation to the top of New. ISO 8601 UTC strings compare lexically.
+     */
+    val inboxSortDate: String
+        get() {
+            val reminded = replyLaterRemindedAt
+            return if (!reminded.isNullOrBlank() && reminded > date) reminded else date
+        }
+
+    /**
+     * Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
+     * server's flag wins; cached rows fall back to the stored headers (the
+     * Worker re-checks before it sends anything).
+     */
+    val offersOneClickUnsubscribe: Boolean
+        get() {
+            oneClickUnsubscribe?.let { return it }
+            if (rawHeaders.isNullOrEmpty()) return false
+            val headers = sourceHeaders
+            fun values(name: String) = headers.filter { it.first.equals(name, ignoreCase = true) }.map { it.second }
+            val oneClick = values("List-Unsubscribe-Post").any {
+                it.replace(" ", "").equals("List-Unsubscribe=One-Click", ignoreCase = true)
+            }
+            return oneClick && values("List-Unsubscribe").any { it.contains("<https://", ignoreCase = true) }
+        }
+
+    /** The conversation key notes are filed under: the thread id, or the email's own id. */
+    val noteThreadKey: String
+        get() = threadId?.takeIf { it.isNotEmpty() } ?: id
+
     val isDraft: Boolean
         get() {
             val name = folderName?.lowercase()
@@ -579,7 +671,19 @@ data class Email(
         }
 
     val isSpoofed: Boolean
-        get() = auth?.isSpoofed == true
+        get() = auth?.isSpoofed == true || authTier == "failed"
+
+    /** Stored tier, else the tier inside the auth snapshot (cached rows). */
+    val effectiveAuthTier: String?
+        get() = authTier ?: auth?.authTier
+
+    /** "Unverified sender" banner — any folder, allowed senders included. */
+    val showsUnverifiedBanner: Boolean
+        get() = effectiveAuthTier == "unverified"
+
+    /** One line explaining why this is in Spam / Screened out, if we know. */
+    val spamReasonLine: String?
+        get() = SpamReason.line(classificationReason, folderId)
 
     val isDeliveryFailure: Boolean
         get() = DeliveryStatus.isFailure(deliveryStatus)
@@ -860,6 +964,52 @@ data class EmailFilterState(
     }
 }
 
+/**
+ * A private note to self on a conversation (`/threads/:threadId/notes`). Only its
+ * author ever sees it.
+ * - `sticky`: pinned to the whole conversation; floats over the reader and can be dragged.
+ * - `inline`: attached to one message ([emailId]); shown in line under it.
+ */
+@Serializable
+data class ThreadNote(
+    val id: String,
+    /** Conversation key: the emails' `thread_id`, or the email id for mail without one. */
+    val threadId: String,
+    val emailId: String? = null,
+    /** `sticky` | `inline`. */
+    val noteType: String,
+    /** Markdown. */
+    val body: String,
+    /** dp from the top-left of the reader's message area (sticky notes only). */
+    val posX: Double? = null,
+    val posY: Double? = null,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+) {
+    val isSticky: Boolean get() = noteType == STICKY
+
+    /** Saved spot in dp, or null when never dragged (default top-right cascade). */
+    val savedPosition: Pair<Float, Float>?
+        get() {
+            val x = posX ?: return null
+            val y = posY ?: return null
+            if (!x.isFinite() || !y.isFinite()) return null
+            return x.toFloat() to y.toFloat()
+        }
+
+    companion object {
+        const val STICKY = "sticky"
+        const val INLINE = "inline"
+        /** Server limit on a note's markdown, in characters. */
+        const val BODY_MAX = 10_000
+    }
+}
+
+@Serializable
+data class ThreadNotesResponse(
+    val notes: List<ThreadNote> = emptyList(),
+)
+
 @Serializable
 data class EmailListResponse(
     val emails: List<Email> = emptyList(),
@@ -872,6 +1022,8 @@ data class EmailListResponse(
 data class WorkflowPile(
     val id: String,
     val count: Int = 0,
+    /** Reply Later mails whose reminder fired and are still unread (AVE-86). 0 on older Workers. */
+    @SerialName("due_count") val dueCount: Int = 0,
 )
 
 @Serializable
@@ -1036,12 +1188,24 @@ enum class ComposePresentation {
     Minimized,
 }
 
+/** Trailing button on a toast: Undo, Add reminder, … */
+data class ToastAction(
+    val title: String,
+    /** Ink (grey-scale) instead of the accent capsule; Add reminder (AVE-86). Twin of iOS `ToastAction.Tone`. */
+    val ink: Boolean = false,
+    val onClick: () -> Unit,
+)
+
 data class AppToast(
     val id: String = UUID.randomUUID().toString(),
     val message: String,
     val isError: Boolean = false,
     val isLoading: Boolean = false,
     val isUndo: Boolean = false,
+    /** Leading glyph override (defaults to a check, or the error mark). */
+    val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    /** Trailing button; `isUndo` supplies Undo instead. */
+    val action: ToastAction? = null,
 )
 
 sealed class HomeTab {
@@ -1061,7 +1225,7 @@ sealed class HomeTab {
         get() = when (this) {
             is Folder -> when (id) {
                 FolderIds.INBOX -> "Inbox"
-                FolderIds.SCREENER -> "Screener"
+                FolderIds.SCREENER -> "Screening room"
                 FolderIds.PROMOTIONS -> "Promotions"
                 FolderIds.UPDATES -> "Updates"
                 FolderIds.SENT -> "Sent"
@@ -1116,10 +1280,12 @@ object FolderIds {
         else -> id.replaceFirstChar { it.uppercase() }
     }
 
-    /** Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). */
+    /**
+     * Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). No
+     * Screener: it's the Screening room, pushed from the Inbox row (AVE-136).
+     */
     val swipeFolderIds: List<String> = listOf(
         INBOX,
-        SCREENER,
         PROMOTIONS,
         UPDATES,
         SENT,

@@ -6,17 +6,24 @@
  * Inbound mail classification: spam vs ham vs bulk, before Inbox/auto-draft.
  *
  * Order:
- *   1. Explicit spam headers (wins over list headers)
- *   2. Bulk via List-Unsubscribe / List-Id / List-Unsubscribe-Post
+ *   1. Auth tier `failed` (enforced DMARC fail, or SPF hard-fail with no
+ *      DKIM pass) → spam, even for list mail. `unverified` mail falls
+ *      through to the later steps.
+ *   2. Explicit spam headers (wins over list headers)
+ *   3. Bulk via List-Unsubscribe / List-Id / List-Unsubscribe-Post
  *      (and Precedence: list|bulk), then Promotions vs Updates
- *   3. Spoofed personal mail (trusted CF auth, From not aligned) → spam
  *   4. Remaining mail: Workers AI spam vs ham, fail-open to ham
  *
- * An AI-only spam verdict can be overridden later for a vouched, authenticated
- * sender (see overrideAiSpamForVouchedSender).
+ * Senders the user vouches for can then override the spam-header and AI
+ * verdicts (see applySenderTrust).
  */
 
-import { isAuthSpoofed, type EmailAuth } from "./email-auth.ts";
+import {
+	authTierOf,
+	isAuthFailed,
+	isFromUntrusted,
+	type EmailAuth,
+} from "./email-auth.ts";
 
 export type InboundClass = "spam" | "ham" | "bulk";
 
@@ -220,9 +227,17 @@ function bulkClassification(
  */
 export function classifyFromHeaders(
 	input: ClassifyEmailInput,
+	options: { ignoreSpamHeaders?: boolean } = {},
 ): EmailClassification | null {
+	if (isAuthFailed(input.auth)) {
+		return {
+			class: "spam",
+			folderId: "spam",
+			reason: "auth-failed",
+		};
+	}
 	const map = parseHeaderList(input.headers);
-	if (isExplicitSpam(map)) return SPAM_CLASSIFICATION;
+	if (!options.ignoreSpamHeaders && isExplicitSpam(map)) return SPAM_CLASSIFICATION;
 	// RFC 3834 auto-replies often have Auto-Submitted and no List-*. Treat
 	// them as bulk so vacation systems cannot ping-pong as ham.
 	if (isAutoSubmitted(map)) {
@@ -234,13 +249,6 @@ export function classifyFromHeaders(
 	}
 	if (isBulk(map)) {
 		return bulkClassification(map, input.subject ?? "", input.sender ?? "");
-	}
-	if (isAuthSpoofed(input.auth)) {
-		return {
-			class: "spam",
-			folderId: "spam",
-			reason: "auth-spoofed",
-		};
 	}
 	return null;
 }
@@ -301,13 +309,24 @@ async function classifySpamVsHam(
 	}
 }
 
+export interface ClassifyOptions {
+	/**
+	 * Called once, only when the AI step would run. Resolve false (e.g. the
+	 * mailbox is over its daily inbound AI quota, AVE-45) to skip the AI and
+	 * keep the rules-only verdict.
+	 */
+	allowAi?: () => Promise<boolean>;
+}
+
 export async function classifyInboundEmail(
 	input: ClassifyEmailInput,
 	ai?: ClassifyAi | null,
+	options: ClassifyOptions = {},
 ): Promise<EmailClassification> {
 	const decided = classifyFromHeaders(input);
 	if (decided) return decided;
 	if (!ai) return HAM_CLASSIFICATION;
+	if (options.allowAi && !(await options.allowAi())) return HAM_CLASSIFICATION;
 	return classifySpamVsHam(ai, input);
 }
 
@@ -317,17 +336,69 @@ export function isAiSpam(classification: EmailClassification): boolean {
 }
 
 /**
- * A sender the user vouches for (allowed in Screener or given a purpose box)
- * overrides an AI spam guess when the mail authenticates as their domain.
- * Spam headers and forged From stay final.
+ * How much the user vouches for a sender (docs/spam-management-plan.md §5).
+ * - allowed: explicit allow. The sender is allowed and the user picked their
+ *   box (Not spam into a box, Settings → Senders).
+ * - implicit: we emailed them, they were accepted in Screener, or they have a
+ *   purpose box.
+ * - none: a stranger, or a rejected sender (routed by resolveInboundFolder).
  */
-export function overrideAiSpamForVouchedSender(
+export type SenderTrust = "allowed" | "implicit" | "none";
+
+/**
+ * Applies the §5 precedence for a vouched sender to a classifier verdict:
+ *   1. Auth `failed` stays Spam; no allow overrides it.
+ *   3. Explicit allow + `verified`: upstream spam headers and the AI verdict
+ *      are skipped, and the mail is re-sorted as bulk or ham.
+ *   3–4. Explicit allow or implicit trust, `verified` or `unverified`: an
+ *      AI-only spam verdict is dropped.
+ *   5. Otherwise spam headers stand.
+ * No trusted auth verdict (`aligned === null`) counts as `unverified`.
+ */
+export function applySenderTrust(
 	classification: EmailClassification,
-	options: { vouched: boolean; auth?: EmailAuth | null },
+	input: ClassifyEmailInput,
+	trust: SenderTrust,
+): EmailClassification {
+	if (trust === "none" || classification.class !== "spam") return classification;
+	const tier = authTierOf(input.auth);
+	if (tier === "failed") return classification;
+	if (isAiSpam(classification)) {
+		return {
+			...HAM_CLASSIFICATION,
+			reason: trust === "allowed" ? "allowed-sender" : "ai-spam-overridden",
+		};
+	}
+	if (
+		classification.reason === SPAM_CLASSIFICATION.reason &&
+		trust === "allowed" &&
+		tier === "verified"
+	) {
+		return (
+			classifyFromHeaders(input, { ignoreSpamHeaders: true }) ?? {
+				...HAM_CLASSIFICATION,
+				reason: "allowed-sender",
+			}
+		);
+	}
+	return classification;
+}
+
+/**
+ * With Screener on, an AI-only spam guess on mail that authenticates as its
+ * From domain doesn't go to Spam: the model junked receipts and alerts from
+ * senders like Uber and Checkr. The mail is treated as ham, so an unknown
+ * sender lands in Screener (no push, no draft) and the user decides there.
+ * Rejected senders still go to Screened Out. Spam headers and forged From
+ * stay final, and with Screener off the AI verdict stands.
+ */
+export function deferAuthenticatedAiSpamToScreener(
+	classification: EmailClassification,
+	options: { screenerEnabled: boolean; auth?: EmailAuth | null },
 ): EmailClassification {
 	if (!isAiSpam(classification)) return classification;
-	if (!options.vouched || options.auth?.aligned !== true) return classification;
-	return { ...HAM_CLASSIFICATION, reason: "ai-spam-overridden" };
+	if (!options.screenerEnabled || options.auth?.aligned !== true) return classification;
+	return { ...HAM_CLASSIFICATION, reason: "ai-spam-authenticated" };
 }
 
 /** Rejected envelopes and duplicate Message-IDs must never reach classification. */
@@ -338,12 +409,12 @@ export function shouldClassifyInbound(options: {
 	return options.routeAction === "deliver" && !options.isDuplicate;
 }
 
-/** Only personal ham is auto-drafted. Spoofed From never auto-drafts. */
+/** Only personal ham is auto-drafted. A failed or unaligned From never auto-drafts. */
 export function shouldAutoDraft(
 	classification: EmailClassification,
 	auth?: EmailAuth | null,
 ): boolean {
-	if (isAuthSpoofed(auth)) return false;
+	if (isFromUntrusted(auth)) return false;
 	return classification.class === "ham";
 }
 

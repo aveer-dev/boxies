@@ -40,7 +40,7 @@ export function useInboxUnreadCounts(mailboxIds: string[]) {
 }
 
 export function useWorkflowPiles(mailboxId: string | undefined) {
-	return useQuery<{ id: string; count: number }[]>({
+	return useQuery<{ id: string; count: number; due_count?: number }[]>({
 		queryKey: mailboxId
 			? queryKeys.workflowPiles.list(mailboxId)
 			: ["workflow-piles", "_disabled"],

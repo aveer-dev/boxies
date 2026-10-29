@@ -11,9 +11,9 @@ const rows: Feature[] = [
 		title: "Promotions and Updates",
 		href: "/support#sorting",
 		platforms: ["ios", "android", "web"],
-		description: "Accept a sender into Inbox, Promotions or Updates, and their mail goes there from then on. Mail from people you’ve emailed is sorted by its headers: list mail to Promotions, or to Updates for receipts and alerts, and the rest to Inbox. Spam goes to Spam, caught by its headers, sender checks or a Workers AI model.",
+		description: "Mail from senders you’ve accepted or emailed is sorted by its headers: list mail to Promotions, or to Updates for receipts and alerts, and the rest to Inbox. Accept a sender into Promotions or Updates to keep their mail there. Spam goes to Spam, caught by its headers, sender checks or a Workers AI model.",
 		status: "available",
-		src: "FSW#the-screener (accept into Inbox, Promotions or Updates); dev 31c58c6 (PR #56): sender-triage.ts resolveInboundFolder uses the classifier's folder for allowed senders with no chosen destination (emailed, bootstrap, welcome); approve stores one (index.ts sender-triage/approve); classify-email.ts classifyFromHeaders (List-*/Precedence → Promotions, Auto-Submitted or receipt words → Updates; Workers AI is spam vs ham only)",
+		src: "FSW#the-screener (accept into Inbox, Promotions or Updates); dev 31c58c6 (PR #56): sender-triage.ts resolveInboundFolder uses the classifier's folder for allowed senders with no chosen destination (emailed, bootstrap, welcome); approve stores one only for Promotions / Updates, Inbox is the unpinned default (AVE-139, screenerAcceptDestination); classify-email.ts classifyFromHeaders (List-*/Precedence → Promotions, Auto-Submitted or receipt words → Updates; Workers AI is spam vs ham only)",
 	},
 	{
 		id: "senders",
@@ -118,9 +118,9 @@ const rows: Feature[] = [
 		title: "Safe HTML",
 		href: "/support#html",
 		platforms: ["ios", "android", "web"],
-		description: "Email HTML is cleaned, scripts never run, and messages render in a sandbox. Remote images wait until you choose Load images, and you can view any message’s headers.",
+		description: "Email HTML is cleaned, scripts never run, and messages render in a sandbox. In Spam, remote images wait until you choose Load images, and you can view any message’s headers.",
 		status: "available",
-		src: "FSW#supporting-features (safe HTML); FC#4.5; EmailPanelDialogs.tsx and EmailActionsSheet.swift (headers only, no raw MIME); dev 061e0ea EmailIframe.tsx, eda481f EmailHTMLSanitizer.swift / EmailBodyView.kt (remote images blocked until Load images)",
+		src: "FSW#supporting-features (safe HTML); FC#4.5; EmailPanelDialogs.tsx and EmailActionsSheet.swift (headers only, no raw MIME); dev AVE-132 (Spam blocks remote images until Load images) (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)",
 	},
 	{
 		id: "sign-in",

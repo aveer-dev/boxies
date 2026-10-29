@@ -183,8 +183,8 @@ final class ComposeFormModel {
         var nextThreadId: String?
         var nextDraftId: String?
 
-        if mode == .reply || mode == .replyAll, let original {
-            nextQuoted = ComposeHTML.quotedOriginal(from: original)
+        if mode == .reply || mode == .replyAll || mode == .forward, let original {
+            nextQuoted = ComposeHTML.quotedOriginal(from: original, isForward: mode == .forward)
         }
 
         if let draft {
@@ -224,7 +224,8 @@ final class ComposeFormModel {
                 nextBody = ComposeHTML.replyBody(signature: signature)
             case .forward:
                 nextSubject = ComposeHTML.prefixedSubject(original.subject, prefix: "Fwd")
-                nextBody = ComposeHTML.forwardBody(original: original, signature: signature)
+                // The forwarded message is shown under the editor and appended on send.
+                nextBody = ComposeHTML.bodyWithSignature(signature)
             case .new, .editDraft:
                 if mode == .new && !initialTo.isEmpty {
                     nextTo = initialTo
@@ -322,16 +323,21 @@ final class ComposeFormModel {
 
     func showToast(_ message: String, isError: Bool = false) {
         toastDismissTask?.cancel()
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+        withAnimation(ToastMetrics.animation) {
             toast = ComposeToast(message: message, isError: isError)
         }
         toastDismissTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(2.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(ToastMetrics.animation) {
                 toast = nil
             }
         }
+    }
+
+    func hideToast() {
+        toastDismissTask?.cancel()
+        withAnimation(ToastMetrics.animation) { toast = nil }
     }
 
     func commitPendingTokens() {
@@ -519,6 +525,12 @@ final class ComposeFormModel {
             "html": html,
             "text": text,
         ]
+        if mode == .reply || mode == .replyAll || mode == .forward {
+            // The Worker appends the original as a sanitised, formatted quote (AVE-133),
+            // also for a reopened draft whose original didn't load here.
+            payload["quote_original"] = true
+            payload["quote_time_zone"] = TimeZone.current.identifier
+        }
         let toEmails = sendRecipients.map(\.email)
         payload["to"] = toEmails.count == 1 ? toEmails[0] as Any : toEmails as Any
         if !ccTokens.isEmpty {
@@ -539,7 +551,7 @@ final class ComposeFormModel {
         }
 
         let estimated = OutboundLimits.estimateMessageBytes(
-            html: html,
+            html: html + quotedBodySize,
             text: text,
             attachmentBytes: attachments.map(\.size)
         )
@@ -703,26 +715,24 @@ final class ComposeFormModel {
         )
     }
 
+    /// What the user wrote. The quoted original is not part of it (nor of the
+    /// saved draft): the Worker appends it on send (`quote_original`, AVE-133).
     private func outgoingHTML() -> String {
-        var html = body.contains("<") ? body : ComposeHTML.textToHTML(body)
-        if let quotedOriginal {
-            html += ComposeHTML.quotedHTML(from: quotedOriginal)
-        }
-        return html
+        body.contains("<") ? body : ComposeHTML.textToHTML(body)
     }
 
     private func outgoingPlainText() -> String {
-        let plain = ComposeHTML.stripHTML(body)
-        guard let quotedOriginal else { return plain }
-        let quotedLines = quotedOriginal.text
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { "> \($0)" }
-        return ([plain, "", quotedOriginal.header] + quotedLines).joined(separator: "\n")
+        ComposeHTML.stripHTML(body)
+    }
+
+    /// The quoted original still counts toward the 5 MiB limit.
+    private var quotedBodySize: String {
+        quotedOriginal?.bodyHTML ?? ""
     }
 
     var remainingAttachmentBudget: Int {
         OutboundLimits.remainingBudget(
-            html: outgoingHTML(),
+            html: outgoingHTML() + quotedBodySize,
             text: outgoingPlainText(),
             attachmentBytes: attachments.map(\.size)
         )
@@ -730,7 +740,7 @@ final class ComposeFormModel {
 
     var exceedsOutboundLimit: Bool {
         OutboundLimits.estimateMessageBytes(
-            html: outgoingHTML(),
+            html: outgoingHTML() + quotedBodySize,
             text: outgoingPlainText(),
             attachmentBytes: attachments.map(\.size)
         ) > OutboundLimits.maxMessageBytes
@@ -768,9 +778,18 @@ final class ComposeFormModel {
     }
 }
 
+/// The message a reply / forward quotes (AVE-133). Shown rendered, read-only,
+/// under the editor; the Worker appends it to the sent mail.
 struct QuotedOriginal: Equatable {
+    /// Dock label: "On <date>, <sender> wrote:" or "Forwarded message from <sender>".
     var header: String
-    var text: String
+    /// Header lines shown above the message in the sheet.
+    var detailLines: [String]
+    var bodyHTML: String
+    var emailId: String
+    var folderId: String?
+    var attachments: [Attachment]
+    var isForward: Bool
 }
 
 enum ComposeHTML {
@@ -857,24 +876,40 @@ enum ComposeHTML {
         bodyWithSignature(signature)
     }
 
-    static func quotedOriginal(from original: Email) -> QuotedOriginal? {
-        let text = stripHTML(original.body ?? original.snippet ?? "")
-        guard !text.isEmpty else { return nil }
+    static func quotedOriginal(from original: Email, isForward: Bool = false) -> QuotedOriginal? {
+        let body = original.body ?? original.snippet ?? ""
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let date = formatDate(original.date)
+        let header = isForward
+            ? "Forwarded message from \(original.formattedFrom)"
+            : "On \(date), \(original.formattedFrom) wrote:"
+        let detailLines = isForward
+            ? [
+                "---------- Forwarded message ---------",
+                "From: \(original.formattedFrom)",
+                "Date: \(date)",
+                "Subject: \(original.subject)",
+                "To: \(original.recipient)",
+            ]
+            : [header]
         return QuotedOriginal(
-            header: "On \(formatDate(original.date)), \(original.formattedFrom) wrote:",
-            text: text
+            header: header,
+            detailLines: detailLines,
+            bodyHTML: body,
+            emailId: original.id,
+            folderId: original.folderId,
+            attachments: original.attachments ?? [],
+            isForward: isForward
         )
-    }
-
-    static func quotedHTML(from quoted: QuotedOriginal) -> String {
-        let header = escapeHTML(quoted.header)
-        let bodyToQuote = escapeHTML(quoted.text).replacingOccurrences(of: "\n", with: "<br>")
-        return "<br><blockquote style=\"border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;\">\(header)<br><br>\(bodyToQuote)</blockquote>"
     }
 
     /// Pull the user's reply out of a saved draft, dropping the inlined original.
     static func editableReply(fromDraftHTML html: String, quotedHeader: String?) -> String {
         var text = htmlToEditableText(html)
+        // Drafts saved before AVE-133 carry the forwarded message inline.
+        if let range = text.range(of: "---------- Forwarded message") {
+            text = String(text[..<range.lowerBound])
+        }
         if let quotedHeader, let range = text.range(of: quotedHeader, options: .backwards) {
             text = String(text[..<range.lowerBound])
         } else if let regex = try? NSRegularExpression(
@@ -888,19 +923,6 @@ enum ComposeHTML {
             }
         }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    static func forwardBody(original: Email, signature: String) -> String {
-        var parts: [String] = signature.isEmpty ? [""] : ["", "", signature]
-        parts.append("")
-        parts.append("---------- Forwarded message ----------")
-        parts.append("From: \(original.formattedFrom)")
-        parts.append("Date: \(formatDate(original.date))")
-        parts.append("Subject: \(original.subject)")
-        parts.append("To: \(original.recipient)")
-        parts.append("")
-        parts.append(stripHTML(original.body ?? ""))
-        return parts.joined(separator: "\n")
     }
 
     static func selfAddresses(mailbox: Mailbox) -> Set<String> {

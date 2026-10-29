@@ -206,6 +206,30 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN alias_email TEXT;")
             setVersion(6)
         }
+
+        // Notes to self: the list row's sticky snippet + private note count.
+        if (getVersion() < 7) {
+            exec("ALTER TABLE emails ADD COLUMN has_sticky_note INTEGER;")
+            exec("ALTER TABLE emails ADD COLUMN sticky_note_text TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN inline_note_count INTEGER;")
+            setVersion(7)
+        }
+
+        // Why mail was filed where it was (spam-reason line) + alias state (AVE-111).
+        if (getVersion() < 8) {
+            exec("ALTER TABLE emails ADD COLUMN alias_active INTEGER;")
+            exec("ALTER TABLE emails ADD COLUMN auth_tier TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN classification_reason TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;")
+            setVersion(8)
+        }
+
+        // Reply Later reminders (AVE-86): pending time + when it fired.
+        if (getVersion() < 9) {
+            exec("ALTER TABLE emails ADD COLUMN reply_later_remind_at TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN reply_later_reminded_at TEXT;")
+            setVersion(9)
+        }
     }
 
     private func getVersion() -> Int {
@@ -409,14 +433,19 @@ final class DatabaseService: @unchecked Sendable {
                 message_id, raw_headers, thread_count, thread_unread_count, participants,
                 folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id, reply_later, reply_later_at,
-                updated_at, alias_id, alias_email
+                updated_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id,
+                reply_later_remind_at, reply_later_reminded_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
-                ?, ?, ?
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -450,9 +479,21 @@ final class DatabaseService: @unchecked Sendable {
                 provider_message_id = excluded.provider_message_id,
                 reply_later = excluded.reply_later,
                 reply_later_at = excluded.reply_later_at,
+                reply_later_remind_at = excluded.reply_later_remind_at,
+                reply_later_reminded_at = excluded.reply_later_reminded_at,
                 updated_at = excluded.updated_at,
                 alias_id = COALESCE(excluded.alias_id, emails.alias_id),
-                alias_email = COALESCE(excluded.alias_email, emails.alias_email);
+                alias_email = COALESCE(excluded.alias_email, emails.alias_email),
+                -- Only list rows carry note fields; detail/thread payloads keep the cached ones.
+                has_sticky_note = COALESCE(excluded.has_sticky_note, emails.has_sticky_note),
+                sticky_note_text = CASE WHEN excluded.has_sticky_note IS NULL
+                    THEN emails.sticky_note_text ELSE excluded.sticky_note_text END,
+                inline_note_count = COALESCE(excluded.inline_note_count, emails.inline_note_count),
+                -- Set once at receive time; payloads that omit them keep the cached values.
+                alias_active = COALESCE(excluded.alias_active, emails.alias_active),
+                auth_tier = COALESCE(excluded.auth_tier, emails.auth_tier),
+                classification_reason = COALESCE(excluded.classification_reason, emails.classification_reason),
+                matched_rule_id = COALESCE(excluded.matched_rule_id, emails.matched_rule_id);
             """
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -502,6 +543,15 @@ final class DatabaseService: @unchecked Sendable {
                     bindString(stmt, 33, now)
                     bindOptionalString(stmt, 34, e.aliasId)
                     bindOptionalString(stmt, 35, e.aliasEmail)
+                    bindOptionalBool(stmt, 36, e.hasStickyNote)
+                    bindOptionalString(stmt, 37, e.stickyNoteText)
+                    bindOptionalInt(stmt, 38, e.inlineNoteCount)
+                    bindOptionalBool(stmt, 39, e.aliasActive)
+                    bindOptionalString(stmt, 40, e.authTier)
+                    bindOptionalString(stmt, 41, e.classificationReason)
+                    bindOptionalString(stmt, 42, e.matchedRuleId)
+                    bindOptionalString(stmt, 43, e.replyLaterRemindAt)
+                    bindOptionalString(stmt, 44, e.replyLaterRemindedAt)
 
                     sqlite3_step(stmt)
                 }
@@ -531,10 +581,13 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id,
+                reply_later_remind_at, reply_later_reminded_at
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ? AND (? IS NULL OR date >= ?)
-            ORDER BY date DESC
+            ORDER BY MAX(date, COALESCE(reply_later_reminded_at, date)) DESC
             LIMIT ? OFFSET ?;
             """
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -574,7 +627,10 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id,
+                reply_later_remind_at, reply_later_reminded_at
             FROM emails
             WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
             ORDER BY CASE WHEN reply_later_at IS NOT NULL THEN reply_later_at ELSE date END ASC, date DESC
@@ -612,6 +668,54 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    /// Reply Later mails whose reminder fired and are still unread (AVE-86): the local
+    /// fallback for the piles `due_count`.
+    func getReplyLaterDueCount(mailboxId: String) -> Int {
+        return queue.sync {
+            var count = 0
+            var stmt: OpaquePointer?
+            let sql = "SELECT COUNT(*) FROM emails WHERE mailbox_id = ? AND reply_later = 1 AND reply_later_reminded_at IS NOT NULL AND read = 0 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'));"
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                if sqlite3_step(stmt) == SQLITE_ROW {
+                    count = Int(sqlite3_column_int(stmt, 0))
+                }
+            }
+            sqlite3_finalize(stmt)
+            return count
+        }
+    }
+
+    /// Sets (ISO) or clears (nil) the pending reminder. Setting one also puts the mail in
+    /// Reply Later and clears a previous fire, as the server does (AVE-86).
+    func updateReplyLaterReminder(id: String, remindAt: String?) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql = remindAt == nil
+                ? "UPDATE emails SET reply_later_remind_at = NULL WHERE id = ?;"
+                : """
+                UPDATE emails SET
+                    reply_later_at = CASE WHEN reply_later = 1 AND reply_later_at IS NOT NULL THEN reply_later_at ELSE ? END,
+                    reply_later = 1,
+                    reply_later_remind_at = ?,
+                    reply_later_reminded_at = NULL
+                WHERE id = ?;
+                """
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                if let remindAt {
+                    let now = ISO8601DateFormatter().string(from: Date())
+                    sqlite3_bind_text(stmt, 1, (now as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 2, (remindAt as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 3, (id as NSString).utf8String, -1, nil)
+                } else {
+                    sqlite3_bind_text(stmt, 1, (id as NSString).utf8String, -1, nil)
+                }
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
     func getEmail(id: String) -> Email? {
         return queue.sync {
             var stmt: OpaquePointer?
@@ -623,7 +727,10 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id,
+                reply_later_remind_at, reply_later_reminded_at
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -652,7 +759,10 @@ final class DatabaseService: @unchecked Sendable {
                 thread_unread_count, participants, folder_name, has_draft,
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
-                reply_later, reply_later_at, alias_id, alias_email
+                reply_later, reply_later_at, alias_id, alias_email,
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id,
+                reply_later_remind_at, reply_later_reminded_at
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -678,9 +788,14 @@ final class DatabaseService: @unchecked Sendable {
             var clauses: [String] = []
             if read != nil { clauses.append("read = ?") }
             if starred != nil { clauses.append("starred = ?") }
-            if replyLater != nil {
+            if let replyLater {
                 clauses.append("reply_later = ?")
                 clauses.append("reply_later_at = ?")
+                // Leaving Reply Later clears its reminder too (AVE-86).
+                if !replyLater {
+                    clauses.append("reply_later_remind_at = NULL")
+                    clauses.append("reply_later_reminded_at = NULL")
+                }
             }
             guard !clauses.isEmpty else { return }
 
@@ -719,7 +834,7 @@ final class DatabaseService: @unchecked Sendable {
             var stmt: OpaquePointer?
             let clearReplyLater = toFolderId == "trash" || toFolderId == "spam"
             let sql = clearReplyLater
-                ? "UPDATE emails SET folder_id = ?, reply_later = 0, reply_later_at = NULL WHERE id = ?;"
+                ? "UPDATE emails SET folder_id = ?, reply_later = 0, reply_later_at = NULL, reply_later_remind_at = NULL, reply_later_reminded_at = NULL WHERE id = ?;"
                 : "UPDATE emails SET folder_id = ? WHERE id = ?;"
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
                 sqlite3_bind_text(stmt, 1, (toFolderId as NSString).utf8String, -1, nil)
@@ -937,6 +1052,27 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    /// Writes a conversation's note summary onto every cached row of it, so the
+    /// list shows a note change before the next sync.
+    func updateThreadNoteSummary(mailboxId: String, threadKey: String, summary: ThreadNoteSummary) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            let sql = """
+            UPDATE emails SET has_sticky_note = ?, sticky_note_text = ?, inline_note_count = ?
+            WHERE mailbox_id = ? AND COALESCE(thread_id, id) = ?;
+            """
+            if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                sqlite3_bind_int(stmt, 1, summary.hasStickyNote ? 1 : 0)
+                bindOptionalString(stmt, 2, summary.stickyNoteText)
+                sqlite3_bind_int(stmt, 3, Int32(summary.inlineNoteCount))
+                bindString(stmt, 4, mailboxId)
+                bindString(stmt, 5, threadKey)
+                sqlite3_step(stmt)
+            }
+            sqlite3_finalize(stmt)
+        }
+    }
+
     // MARK: - Full-Text Search (FTS5)
 
     func searchEmails(mailboxId: String, query: String, limit: Int = 30) -> [Email] {
@@ -958,7 +1094,10 @@ final class DatabaseService: @unchecked Sendable {
                 e.thread_unread_count, e.participants, e.folder_name, e.has_draft,
                 e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json,
                 e.delivery_status, e.delivery_error, e.provider_message_id,
-                e.reply_later, e.reply_later_at, e.alias_id, e.alias_email
+                e.reply_later, e.reply_later_at, e.alias_id, e.alias_email,
+                e.has_sticky_note, e.sticky_note_text, e.inline_note_count,
+                e.alias_active, e.auth_tier, e.classification_reason, e.matched_rule_id,
+                e.reply_later_remind_at, e.reply_later_reminded_at
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -1101,6 +1240,8 @@ final class DatabaseService: @unchecked Sendable {
             starred: starred,
             replyLater: sqlite3_column_int(stmt, 29) != 0,
             replyLaterAt: columnOptionalString(stmt, 30),
+            replyLaterRemindAt: columnOptionalString(stmt, 40),
+            replyLaterRemindedAt: columnOptionalString(stmt, 41),
             body: body,
             snippet: snippet,
             inReplyTo: inReplyTo,
@@ -1119,7 +1260,14 @@ final class DatabaseService: @unchecked Sendable {
             deliveryStatus: columnOptionalString(stmt, 26),
             deliveryError: columnOptionalString(stmt, 27),
             aliasId: columnOptionalString(stmt, 31),
-            aliasEmail: columnOptionalString(stmt, 32)
+            aliasEmail: columnOptionalString(stmt, 32),
+            aliasActive: columnOptionalBool(stmt, 36),
+            hasStickyNote: columnOptionalBool(stmt, 33),
+            stickyNoteText: columnOptionalString(stmt, 34),
+            inlineNoteCount: columnOptionalInt(stmt, 35),
+            authTier: columnOptionalString(stmt, 37),
+            classificationReason: columnOptionalString(stmt, 38),
+            matchedRuleId: columnOptionalString(stmt, 39)
         )
     }
 

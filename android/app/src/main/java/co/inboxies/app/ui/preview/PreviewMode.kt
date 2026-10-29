@@ -29,11 +29,27 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     SignInMethods("signInMethods", "previewSignInMethods"),
     Members("members", "previewMembers"),
     Sessions("sessions", "previewSessions"),
+    /** Settings → Senders, Allowed tab with fixture rules (iOS `-previewSenders`). */
+    Senders("senders", "previewSenders"),
+    /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */
+    SendersBlocked("sendersBlocked", "previewSendersBlocked"),
+    /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
+    Settings("settings", "previewSettings"),
+    /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */
+    SettingsScreenerOff("settingsScreenerOff", "previewSettingsScreenerOff"),
     Mailbox("mailbox", "previewMailbox"),
     /** Inbox with more pages to load: the bottom skeleton row (iOS `-previewLoadMore`). */
     LoadMore("loadMore", "previewLoadMore"),
     /** Inbox with a dozen New: capped New + "Show N more new" above Seen (iOS `-previewManyNew`). */
     ManyNew("manyNew", "previewManyNew"),
+    /** Inbox with a pinned "Archived · Undo" toast above the bottom bar (iOS `-previewToast`, AVE-134). */
+    Toast("toast", "previewToast"),
+    /** Reply Later reminder picker open on a mail with a pending reminder (iOS `-previewReminderPicker`, AVE-86). */
+    ReminderPicker("reminderPicker", "previewReminderPicker"),
+    /** "Added to Reply Later" toast with "Add reminder" pinned above the bottom bar (iOS `-previewReminderToast`). */
+    ReminderToast("reminderToast", "previewReminderToast"),
+    /** Inbox with a due reminder + a pending one: attention Reply Later button + row chips (iOS `-previewReminderDue`). */
+    ReminderDue("reminderDue", "previewReminderDue"),
     /** Signed in, first mailbox load failed, nothing cached (iOS `-previewLoadFailed`). */
     LoadFailed("loadFailed", "previewLoadFailed"),
     /** Inbox fetch failed with an empty cache: error + Retry (iOS `-previewListError`). */
@@ -42,6 +58,20 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ScreenerList("screenerList", "previewScreenerList"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
+    /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
+    Newsletter("newsletter", "previewNewsletter"),
+    /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
+    ReplyQuote("replyQuote", "previewReplyQuote"),
+    /** Inbox rows with notes to self: sticky strip + private note chip (iOS `-previewMailbox -previewNotes`). */
+    Notes("notes", "previewNotes"),
+    /** Q3 thread open with a sticky note and inline notes (iOS `-previewDetail -previewNotes`). */
+    NotesDetail("notesDetail", "previewNotesDetail"),
+    /** Agent chat open with the usage meter at the warning level, 42 / 50 (iOS `-previewAiUsage`). */
+    AiUsage("aiUsage", "previewAiUsage"),
+    /** Agent chat at the daily limit, 50 / 50: notice + disabled composer (iOS `-previewAiUsageLimit`). */
+    AiUsageLimit("aiUsageLimit", "previewAiUsageLimit"),
+    /** Settings sheet with the AI usage section filled (42 / 50 chats, 37 / 200 checks). */
+    AiUsageSettings("aiUsageSettings", "previewAiUsageSettings"),
     Splash("splash", "previewSplash"),
     Welcome("welcome", "previewWelcome"),
     AuthOptions("authOptions", "previewAuthOptions"),

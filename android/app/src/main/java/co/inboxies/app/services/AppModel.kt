@@ -1,14 +1,19 @@
 package co.inboxies.app.services
 
+import androidx.compose.ui.graphics.vector.ImageVector
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
+import co.inboxies.app.models.AiUsageSnapshot
 import co.inboxies.app.models.AppToast
+import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.ChatSession
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.ComposeMode
 import co.inboxies.app.models.ComposePresentation
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
+import co.inboxies.app.models.SpamVerdictToast
+import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
 import co.inboxies.app.models.HomeTab
@@ -16,6 +21,7 @@ import co.inboxies.app.models.InboxDigest
 import co.inboxies.app.models.MailAddress
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
+import co.inboxies.app.models.ScreenerSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -74,6 +80,12 @@ class AppModel {
 
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails.asStateFlow()
+    /**
+     * Page 1 of the Screener folder, kept while Inbox shows so its "N waiting to be
+     * screened" row can count senders and show their avatars (AVE-136).
+     */
+    private val _screenerQueue = MutableStateFlow<List<Email>>(emptyList())
+    val screenerQueue: StateFlow<List<Email>> = _screenerQueue.asStateFlow()
 
     /** Inbox page 1's server New total, for the list it came from (AVE-23). */
     data class InboxNewTotal(val scope: EmailListScope, val count: Int)
@@ -99,6 +111,18 @@ class AppModel {
 
     private val _replyLaterCount = MutableStateFlow(0)
     val replyLaterCount: StateFlow<Int> = _replyLaterCount.asStateFlow()
+
+    /**
+     * Reply Later mails whose reminder fired and are still unread (AVE-86): piles
+     * `due_count`, falling back to locally known due mails. Drives the bottom-bar
+     * attention state.
+     */
+    private val _replyLaterDueCount = MutableStateFlow(0)
+    val replyLaterDueCount: StateFlow<Int> = _replyLaterDueCount.asStateFlow()
+
+    /** Mail the "Remind me" picker is open for (AVE-86); `null` when closed. */
+    private val _reminderPickerEmail = MutableStateFlow<Email?>(null)
+    val reminderPickerEmail: StateFlow<Email?> = _reminderPickerEmail.asStateFlow()
 
     private val _identities = MutableStateFlow<List<LinkedIdentity>?>(null)
     val identities: StateFlow<List<LinkedIdentity>?> = _identities.asStateFlow()
@@ -178,6 +202,17 @@ class AppModel {
 
     private val _threadEmails = MutableStateFlow<List<Email>>(emptyList())
     val threadEmails: StateFlow<List<Email>> = _threadEmails.asStateFlow()
+
+    /** Notes to self on the open conversation (the signed-in user's own only). */
+    private val _threadNotes = MutableStateFlow<List<ThreadNote>>(emptyList())
+    val threadNotes: StateFlow<List<ThreadNote>> = _threadNotes.asStateFlow()
+
+    /** `mailboxId|threadKey` that [threadNotes] belongs to; null before the first load. */
+    private val _threadNotesKey = MutableStateFlow<String?>(null)
+    val threadNotesKey: StateFlow<String?> = _threadNotesKey.asStateFlow()
+
+    /** DEBUG previews keep notes in memory per conversation key (no server). */
+    val previewThreadNotes: MutableMap<String, List<ThreadNote>> = mutableMapOf()
 
     private val _composeSession = MutableStateFlow<ComposeSession?>(null)
     val composeSession: StateFlow<ComposeSession?> = _composeSession.asStateFlow()
@@ -265,19 +300,50 @@ class AppModel {
     fun unreadCount(forFolderId: String): Int =
         _folders.value.firstOrNull { it.id == forFolderId }?.unreadCount ?: 0
 
+    /** Screener is on unless the selected mailbox turned it off (AVE-104). */
+    val isScreenerEnabled: Boolean
+        get() = selectedMailbox?.settings?.screener?.enabled != false
+
+    /**
+     * First-time senders waiting in the Screening room: one email per sender, newest
+     * first. Feeds the Inbox "N waiting to be screened" row and its avatars (AVE-136).
+     */
+    fun screenerSenders(queue: List<Email> = _screenerQueue.value): List<Email> =
+        queue.filter { it.sender.trim().isNotEmpty() }.distinctBy { it.sender.trim().lowercase() }
+
     val screenerSenderCount: Int
-        get() {
-            val mailboxId = _selectedMailboxId.value
-            if (mailboxId != null) {
-                val cached = db.getEmails(mailboxId, FolderIds.SCREENER)
-                val distinct = cached.map { it.sender.trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
-                if (distinct > 0) return distinct
-            }
-            val inMemory = _emails.value.filter { it.folderId == FolderIds.SCREENER }
-                .map { it.sender.trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
-            if (inMemory > 0) return inMemory
-            return unreadCount(forFolderId = FolderIds.SCREENER)
+        get() = screenerSenderCount(_screenerQueue.value)
+
+    fun screenerSenderCount(queue: List<Email>): Int {
+        val distinct = screenerSenders(queue).size
+        if (distinct > 0) return distinct
+        return unreadCount(forFolderId = FolderIds.SCREENER)
+    }
+
+    /**
+     * Re-reads the Screener queue behind the Inbox row: cache first, then page 1 from the
+     * server. Off (AVE-104) clears it so no row shows. DEBUG fixtures set it themselves.
+     */
+    suspend fun refreshScreenerQueue() {
+        val mailboxId = _selectedMailboxId.value
+        if (mailboxId == null || !isScreenerEnabled) {
+            _screenerQueue.value = emptyList()
+            return
         }
+        if (isDebugPreview) return
+        val cached = db.getEmails(mailboxId, FolderIds.SCREENER, limit = EmailPaging.PAGE_SIZE)
+        if (cached.isNotEmpty() || _screenerQueue.value.isEmpty()) _screenerQueue.value = cached
+        // Window prune: keep deeper pages the Screening room may have loaded.
+        val synced = runCatching {
+            MailboxSyncService.syncFolder(mailboxId, FolderIds.SCREENER, page = 1) { FolderPrune.Window }
+        }.getOrNull() ?: return
+        ifStillSelected(mailboxId) { _screenerQueue.value = synced.emails.take(EmailPaging.PAGE_SIZE) }
+    }
+
+    /** DEBUG previews: seed the Screening room queue from fixtures. */
+    fun setScreenerQueueForPreview(queue: List<Email>) {
+        _screenerQueue.value = queue
+    }
 
     fun adjustFolderUnread(folderId: String, delta: Int) {
         if (delta == 0) return
@@ -297,6 +363,12 @@ class AppModel {
         adjustFolderUnread(folderId, if (isUnread) 1 else -1)
         if (folderId == FolderIds.INBOX) adjustInboxNewCount(wasUnread, isUnread)
     }
+
+    /**
+     * The launch pick came from a cache that lacked the remembered mailbox (AVE-90);
+     * the server list gets a second chance to restore it.
+     */
+    private var selectionIsProvisional = false
 
     /** Token the last [bootstrap] ran for — lets a recreated Activity skip a redundant reload. */
     @Volatile
@@ -319,12 +391,19 @@ class AppModel {
         val cached = db.getMailboxes()
         if (cached.isNotEmpty()) {
             _mailboxes.value = cached
-            if (_selectedMailboxId.value == null) _selectedMailboxId.value = cached.first().id
+            if (_selectedMailboxId.value == null) {
+                // Reopen the mailbox the user last had open (AVE-90).
+                val remembered = if (isDebugPreview) null else LastMailboxPreference.mailboxId()
+                val pick = initialMailboxId(remembered, cached.map { it.id })
+                _selectedMailboxId.value = pick
+                selectionIsProvisional = remembered != null && pick != remembered
+            }
             _isMailboxLoading.value = false
             _selectedMailboxId.value?.let { id ->
                 val folders = db.getFolders(id)
                 if (folders.isNotEmpty()) _folders.value = folders
                 _replyLaterCount.value = db.getReplyLaterCount(id)
+                _replyLaterDueCount.value = db.getReplyLaterDueCount(id)
                 if (_selectedTab.value is HomeTab.ReplyLater) {
                     val emails = db.getReplyLaterEmails(id)
                     if (emails.isNotEmpty()) {
@@ -437,9 +516,15 @@ class AppModel {
             _mailboxesLoadFailed.value = false
             db.upsertMailboxes(merged)
             val selected = _selectedMailboxId.value
-            // Keep the selection if it's still listed; otherwise fall back to the first one.
-            // loadMailbox does the switch itself, so the old mailbox's rows are cleared.
-            val target = selected?.takeIf { id -> list.any { it.id == id } } ?: list.firstOrNull()?.id
+            // Keep the selection if it's still listed; otherwise reopen the remembered
+            // mailbox, else the first one. loadMailbox does the switch itself, so the old
+            // mailbox's rows are cleared, and remembers the result.
+            val ids = list.map { it.id }
+            val remembered = if (isDebugPreview) null else LastMailboxPreference.mailboxId()
+            val target = selected?.takeIf { it in ids && !selectionIsProvisional }
+                ?: initialMailboxId(remembered, ids)
+            selectionIsProvisional = false
+            if (ids.isEmpty() && !isDebugPreview) LastMailboxPreference.clear()
             _isMailboxLoading.value = false
             if (target != null) {
                 loadMailbox(target)
@@ -531,14 +616,19 @@ class AppModel {
             }
             // Never show the previous mailbox's rows, folders or open thread under the new one.
             _emails.value = emptyList()
+            _screenerQueue.value = emptyList()
             _folders.value = emptyList()
             _selectedEmail.value = null
             _threadEmails.value = emptyList()
             _paging.value = _paging.value.cleared()
             _emailListError.value = null
             _isLoading.value = true
+            _aiUsage.value = null
         }
         _selectedMailboxId.value = id
+        selectionIsProvisional = false
+        // Every real switch (picker, notification tap, refresh) is the next launch's mailbox.
+        if (!isDebugPreview) LastMailboxPreference.save(id)
         setupRealTimeStream()
 
         val cachedFolders = db.getFolders(id)
@@ -547,6 +637,8 @@ class AppModel {
             _isMailboxLoading.value = false
         }
         _replyLaterCount.value = db.getReplyLaterCount(id)
+        _replyLaterDueCount.value = db.getReplyLaterDueCount(id)
+        _reminderPickerEmail.value = null
         if (_selectedTab.value is HomeTab.ReplyLater) {
             val cachedEmails = db.getReplyLaterEmails(id)
             if (cachedEmails.isNotEmpty()) {
@@ -926,8 +1018,10 @@ class AppModel {
                         loadedCount = synced.emails.size,
                     )
                 }
+                if (folderId == FolderIds.SCREENER) _screenerQueue.value = _emails.value
             }
             refreshReplyLaterCount()
+            if (folderId == FolderIds.INBOX) refreshScreenerQueue()
         } catch (e: Exception) {
             ifStillShowing(listScope) {
                 if (_emails.value.isEmpty()) {
@@ -998,11 +1092,13 @@ class AppModel {
     suspend fun refreshReplyLaterCount() {
         val mailboxId = _selectedMailboxId.value ?: run {
             _replyLaterCount.value = 0
+            _replyLaterDueCount.value = 0
             return
         }
         val localCount = db.getReplyLaterCount(mailboxId)
         if (isDebugPreview) {
             _replyLaterCount.value = localCount
+            _replyLaterDueCount.value = db.getReplyLaterDueCount(mailboxId)
             return
         }
         if (localCount > 0 || _replyLaterCount.value == 0) {
@@ -1027,6 +1123,63 @@ class AppModel {
                     _replyLaterCount.value = piles.piles.firstOrNull { it.id == "reply_later" }?.count ?: 0
                 }
             }
+        }
+        refreshReplyLaterDueCount(mailboxId)
+    }
+
+    /** Piles `due_count` (0 on older Workers), never below what the local cache knows is due. */
+    private suspend fun refreshReplyLaterDueCount(mailboxId: String) {
+        val localDue = db.getReplyLaterDueCount(mailboxId)
+        val serverDue = runCatching { ApiClient.shared.listWorkflowPiles(mailboxId) }.getOrNull()
+            ?.piles?.firstOrNull { it.id == "reply_later" }?.dueCount
+        ifStillSelected(mailboxId) {
+            _replyLaterDueCount.value = maxOf(serverDue ?: 0, localDue)
+        }
+    }
+
+    fun openReminderPicker(email: Email) {
+        hideToast()
+        _reminderPickerEmail.value = email
+    }
+
+    fun dismissReminderPicker() {
+        _reminderPickerEmail.value = null
+    }
+
+    /**
+     * Set (`time`) or clear (`null`) a Reply Later reminder (AVE-86). Setting one also adds
+     * the mail to Reply Later. Optimistic like the other flag mutations; rolls back on failure.
+     */
+    suspend fun setReplyLaterReminder(email: Email, time: java.time.ZonedDateTime?) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val target = _emails.value.firstOrNull { it.id == email.id }
+            ?: _threadEmails.value.firstOrNull { it.id == email.id }
+            ?: email
+        val iso = time?.let { ReplyLaterReminderPresets.toIso(it) }
+        db.updateReplyLaterReminder(target.id, iso)
+        applyEmailUpdate(target.withReplyLaterReminder(iso))
+        val successMessage = if (time != null) {
+            "Reminder set for ${ReplyLaterReminderPresets.fullLabel(time, java.time.ZonedDateTime.now(time.zone))}"
+        } else {
+            "Reminder removed"
+        }
+        if (isDebugPreview) {
+            showToast(successMessage)
+            refreshReplyLaterCount()
+            return
+        }
+        runCatching {
+            ApiClient.shared.setReplyLaterReminder(mailboxId, target.id, iso)
+        }.onSuccess {
+            showToast(successMessage)
+        }.onFailure {
+            db.upsertEmails(mailboxId, listOf(target))
+            applyEmailUpdate(target)
+            showToast(if (time != null) "Couldn't set reminder" else "Couldn't remove reminder", isError = true)
+        }
+        refreshReplyLaterCount()
+        if (_selectedTab.value is HomeTab.ReplyLater) {
+            loadEmailsForCurrentTab(showLoading = false)
         }
     }
 
@@ -1075,6 +1228,7 @@ class AppModel {
             if (isSelected(mailboxId) && _selectedTab.value is HomeTab.AiInbox) {
                 loadInboxDigest(showLoading = false)
             }
+            if (isSelected(mailboxId) && folderId == FolderIds.INBOX) refreshScreenerQueue()
         }
         if (isSelected(mailboxId)) refreshOpenEmailDetailSilently()
     }
@@ -1283,10 +1437,12 @@ class AppModel {
 
     suspend fun openDraft(draft: Email) {
         val original = resolveReplyOriginal(draft)
-        val mode = if (original != null || !draft.inReplyTo.isNullOrEmpty()) {
-            ComposeMode.Reply
-        } else {
-            ComposeMode.EditDraft
+        val isReplyDraft = original != null || !draft.inReplyTo.isNullOrEmpty()
+        // A "Fwd:" draft reopens as a forward, so it keeps the forwarded-message quote (AVE-133).
+        val mode = when {
+            isReplyDraft && draft.subject.lowercase().startsWith("fwd:") -> ComposeMode.Forward
+            isReplyDraft -> ComposeMode.Reply
+            else -> ComposeMode.EditDraft
         }
         startCompose(mode = mode, original = original, draft = draft)
     }
@@ -1371,6 +1527,154 @@ class AppModel {
         _selectedEmail.value = null
         _threadEmails.value = emptyList()
         _isEmailDetailLoading.value = false
+    }
+
+    // Notes to self (AVE-62). Private to the signed-in user; the Worker scopes every
+    // call to them. DEBUG previews keep notes in memory.
+
+    fun threadNotesStoreKey(mailboxId: String, threadKey: String): String = "$mailboxId|$threadKey"
+
+    suspend fun loadThreadNotes(threadKey: String) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val key = threadNotesStoreKey(mailboxId, threadKey)
+        if (_threadNotesKey.value != key) {
+            _threadNotes.value = emptyList()
+            _threadNotesKey.value = key
+        }
+        if (isDebugPreview) {
+            _threadNotes.value = previewThreadNotes[threadKey].orEmpty()
+            return
+        }
+        try {
+            val notes = ApiClient.shared.listThreadNotes(mailboxId, threadKey)
+            // Another conversation opened while the request was out: drop the result.
+            if (_threadNotesKey.value != key) return
+            _threadNotes.value = notes
+            applyThreadNoteSummary(threadKey)
+        } catch (_: Exception) {
+            // Notes are extra context; the conversation still reads fine without them.
+        }
+    }
+
+    /** Adds a note. A sticky with no position opens top-right (cascading), like web/iOS. */
+    suspend fun createThreadNote(
+        threadKey: String,
+        body: String,
+        noteType: String,
+        emailId: String? = null,
+    ): Boolean {
+        val mailboxId = _selectedMailboxId.value ?: return false
+        val key = threadNotesStoreKey(mailboxId, threadKey)
+        val created = if (isDebugPreview) {
+            val now = Instant.now().toString()
+            ThreadNote(
+                id = UUID.randomUUID().toString(),
+                threadId = threadKey,
+                emailId = emailId,
+                noteType = noteType,
+                body = body,
+                createdAt = now,
+                updatedAt = now,
+            )
+        } else {
+            try {
+                ApiClient.shared.createThreadNote(mailboxId, threadKey, body, noteType, emailId)
+            } catch (_: Exception) {
+                showToast("Couldn’t save the note", isError = true)
+                return false
+            }
+        }
+        if (_threadNotesKey.value != key) return true
+        _threadNotes.update { it + created }
+        didChangeThreadNotes(threadKey)
+        return true
+    }
+
+    suspend fun updateThreadNoteBody(note: ThreadNote, body: String): Boolean {
+        val mailboxId = _selectedMailboxId.value ?: return false
+        val updated = if (isDebugPreview) {
+            note.copy(body = body, updatedAt = Instant.now().toString())
+        } else {
+            try {
+                ApiClient.shared.updateThreadNote(mailboxId, note.id, body = body)
+            } catch (_: Exception) {
+                showToast("Couldn’t save the note", isError = true)
+                return false
+            }
+        }
+        replaceThreadNote(updated)
+        didChangeThreadNotes(note.threadId)
+        return true
+    }
+
+    /** Saves where a sticky was dropped (dp). Moves at once; puts it back if the save fails. */
+    suspend fun moveThreadNote(note: ThreadNote, x: Float, y: Float) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        replaceThreadNote(note.copy(posX = x.toDouble(), posY = y.toDouble()))
+        if (isDebugPreview) {
+            previewThreadNotes[note.threadId] = _threadNotes.value
+            return
+        }
+        try {
+            val saved = ApiClient.shared.updateThreadNote(
+                mailboxId,
+                note.id,
+                posX = x.toDouble(),
+                posY = y.toDouble(),
+            )
+            replaceThreadNote(saved)
+        } catch (_: Exception) {
+            replaceThreadNote(note)
+            showToast("Couldn’t move the note", isError = true)
+        }
+    }
+
+    /** Deletes a note at once; restores it if the server refuses. */
+    suspend fun deleteThreadNote(note: ThreadNote) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        val index = _threadNotes.value.indexOfFirst { it.id == note.id }
+        if (index < 0) return
+        _threadNotes.update { list -> list.filter { it.id != note.id } }
+        didChangeThreadNotes(note.threadId)
+        if (isDebugPreview) return
+        try {
+            ApiClient.shared.deleteThreadNote(mailboxId, note.id)
+        } catch (_: Exception) {
+            if (_threadNotes.value.none { it.id == note.id }) {
+                _threadNotes.update { list ->
+                    list.toMutableList().apply { add(index.coerceAtMost(size), note) }
+                }
+                didChangeThreadNotes(note.threadId)
+            }
+            showToast("Couldn’t delete the note", isError = true)
+        }
+    }
+
+    private fun replaceThreadNote(note: ThreadNote) {
+        _threadNotes.update { list -> list.map { if (it.id == note.id) note else it } }
+    }
+
+    private fun didChangeThreadNotes(threadKey: String) {
+        if (isDebugPreview) previewThreadNotes[threadKey] = _threadNotes.value
+        applyThreadNoteSummary(threadKey)
+    }
+
+    /**
+     * Mirrors the open conversation's notes onto its list row (memory and cache),
+     * so the sticky strip and private-note count update before the next sync.
+     */
+    private fun applyThreadNoteSummary(threadKey: String) {
+        val mailboxId = _selectedMailboxId.value ?: return
+        if (_threadNotesKey.value != threadNotesStoreKey(mailboxId, threadKey)) return
+        val summary = ThreadNoteSummary.of(_threadNotes.value)
+        fun Email.withSummary() = copy(
+            hasStickyNote = summary.hasStickyNote,
+            stickyNoteText = summary.stickyNoteText,
+            inlineNoteCount = summary.inlineNoteCount,
+        )
+        _emails.update { list -> list.map { if (it.noteThreadKey == threadKey) it.withSummary() else it } }
+        _selectedEmail.update { if (it?.noteThreadKey == threadKey) it.withSummary() else it }
+        db.updateThreadNoteSummary(mailboxId, threadKey, summary)
     }
 
     /** Preview / Simulator fixture — open a thread without hitting the network. */
@@ -1540,10 +1844,19 @@ class AppModel {
         isError: Boolean = false,
         isLoading: Boolean = false,
         isUndo: Boolean = false,
+        icon: ImageVector? = null,
+        action: ToastAction? = null,
         durationMs: Long = 2500,
     ) {
         toastDismissJob?.cancel()
-        _toast.value = AppToast(message = message, isError = isError, isLoading = isLoading, isUndo = isUndo)
+        _toast.value = AppToast(
+            message = message,
+            isError = isError,
+            isLoading = isLoading,
+            isUndo = isUndo,
+            icon = icon,
+            action = action,
+        )
         if (durationMs > 0) {
             toastDismissJob = scope.launch {
                 delay(durationMs)
@@ -1621,6 +1934,9 @@ class AppModel {
         _inboxDigest.value = null
         _selectedEmail.value = null
         _threadEmails.value = emptyList()
+        _threadNotes.value = emptyList()
+        _threadNotesKey.value = null
+        previewThreadNotes.clear()
         _composeSession.value = null
         _chatSession.value = ChatSession.Dismissed
         _conversations.value = emptyList()
@@ -1633,6 +1949,11 @@ class AppModel {
         // invite screen clears it when it is accepted or closed.
         _errorMessage.value = null
         _toast.value = null
+        _replyLaterDueCount.value = 0
+        _reminderPickerEmail.value = null
+        // Sign-out forgets the last mailbox; the next account starts on its own first one.
+        if (!isDebugPreview) LastMailboxPreference.clear()
+        selectionIsProvisional = false
         isDebugPreview = false
         AutofillMailboxPreference.clear()
         DatabaseService.shared.clearAll()
@@ -1677,6 +1998,8 @@ class AppModel {
         _selectedEmail.value = selectedEmail
         _threadEmails.value = threadEmails
         _replyLaterCount.value = replyLaterCount
+        _replyLaterDueCount.value = selectedMailboxId?.let { db.getReplyLaterDueCount(it) } ?: 0
+        _reminderPickerEmail.value = null
         _isAdmin.value = isAdmin
         _inboxDigest.value = null
         _composeSession.value = null
@@ -1721,7 +2044,7 @@ class AppModel {
                 val mailboxId = form.fromMailboxId.ifBlank {
                     _selectedMailboxId.value ?: error("No mailbox")
                 }
-                val html = form.bodyHtml
+                val html = form.sizedHtml()
                 val text = form.outgoingPlainText()
                 val estimated = co.inboxies.app.util.OutboundLimits.estimateMessageBytes(
                     html,
@@ -1905,16 +2228,17 @@ class AppModel {
         val target = on ?: _selectedEmail.value ?: _threadEmails.value.lastOrNull() ?: return
         val next = !target.replyLater
         db.updateEmailFlags(target.id, replyLater = next)
-        applyEmailUpdate(
-            target.copy(
-                replyLater = next,
-                replyLaterAt = if (next) java.time.Instant.now().toString() else null,
-            ),
+        val updated = target.copy(
+            replyLater = next,
+            replyLaterAt = if (next) java.time.Instant.now().toString() else null,
+            replyLaterRemindAt = if (next) target.replyLaterRemindAt else null,
+            replyLaterRemindedAt = if (next) target.replyLaterRemindedAt else null,
         )
+        applyEmailUpdate(updated)
         runCatching {
             ApiClient.shared.updateEmail(mailboxId, target.id, replyLater = next)
         }.onSuccess {
-            showToast(if (next) "Added to Reply Later" else "Removed from Reply Later")
+            if (next) showAddedToReplyLaterToast(updated) else showToast("Removed from Reply Later")
         }.onFailure {
             // Roll back optimistic update on failure
             db.updateEmailFlags(target.id, replyLater = !next)
@@ -1927,6 +2251,19 @@ class AppModel {
         }
     }
 
+    /** "Added to Reply Later" + "Add reminder" (opens the picker), held a little longer (AVE-86). */
+    fun showAddedToReplyLaterToast(email: Email) {
+        if (email.hasPendingReplyLaterReminder) {
+            showToast("Added to Reply Later")
+            return
+        }
+        showToast(
+            "Added to Reply Later",
+            action = ToastAction("Add reminder", ink = true) { openReminderPicker(email) },
+            durationMs = REMINDER_TOAST_DURATION_MS,
+        )
+    }
+
     suspend fun setReplyLater(ids: Set<String>, replyLater: Boolean) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (ids.isEmpty()) return
@@ -1937,6 +2274,8 @@ class AppModel {
                     email.copy(
                         replyLater = replyLater,
                         replyLaterAt = if (replyLater) java.time.Instant.now().toString() else null,
+                        replyLaterRemindAt = if (replyLater) email.replyLaterRemindAt else null,
+                        replyLaterRemindedAt = if (replyLater) email.replyLaterRemindedAt else null,
                     ),
                 )
             }
@@ -1989,6 +2328,8 @@ class AppModel {
                         starred = updated.starred,
                         replyLater = updated.replyLater,
                         replyLaterAt = updated.replyLaterAt,
+                        replyLaterRemindAt = updated.replyLaterRemindAt,
+                        replyLaterRemindedAt = updated.replyLaterRemindedAt,
                         threadUnreadCount = if (updated.read) 0 else it.threadUnreadCount,
                         listSection = if (updated.read) "seen" else "new",
                     )
@@ -1998,6 +2339,10 @@ class AppModel {
         }
         if (previous != null) {
             adjustFolderUnread(previous, wasUnread = !previous.read, isUnread = !updated.read)
+            // Reading (or un-queueing) a due mail clears the attention state right away.
+            if (previous.isReplyLaterDue != updated.isReplyLaterDue) {
+                _replyLaterDueCount.update { (it + if (updated.isReplyLaterDue) 1 else -1).coerceAtLeast(0) }
+            }
         }
     }
 
@@ -2066,6 +2411,8 @@ class AppModel {
         email: Email,
         folderId: String,
         setSenderPreference: Boolean = false,
+        unsubscribe: Boolean = false,
+        refileSender: Boolean = true,
     ) {
         val mailboxId = _selectedMailboxId.value ?: return
         if (blockIfReadOnly()) return
@@ -2077,7 +2424,20 @@ class AppModel {
                 email.id,
                 folderId,
                 setSenderPreference = setSenderPreference,
+                unsubscribe = unsubscribe,
+                refileSender = refileSender,
             )
+        }.onSuccess { response ->
+            // Into / out of Spam is Not spam / Report spam: "· N more moved"
+            // toast with Undo (AVE-98).
+            if ((response.rescuedCount ?: 0) > 0) loadEmailsForCurrentTab(showLoading = false)
+            val title = SpamVerdictToast.title(response, folderId, email.sender)
+            val token = response.undoToken
+            if (title != null && !token.isNullOrEmpty()) {
+                showSpamVerdictUndoToast(title, mailboxId, token)
+            } else if (title != null) {
+                showToast(title)
+            }
         }.onFailure {
             if (noteServiceEnded(it)) {
                 loadEmailsForCurrentTab(showLoading = false)
@@ -2094,16 +2454,55 @@ class AppModel {
         }
     }
 
-    /** Move to Spam and reject the sender: their future mail is screened out. */
-    suspend fun reportSpam(email: Email) {
-        moveEmailToFolder(email, "spam", setSenderPreference = true)
-        showToast("Reported as spam")
+    /**
+     * Move to Spam and reject the sender: their future mail is screened out.
+     * With [unsubscribe], the Worker also sends the RFC 8058 one-click POST;
+     * with [refileSender] (the default), their Inbox / Promotions / Updates
+     * mail moves to Spam too (AVE-98). The toast comes from [moveEmailToFolder].
+     */
+    suspend fun reportSpam(email: Email, unsubscribe: Boolean = false, refileSender: Boolean = true) {
+        moveEmailToFolder(
+            email,
+            "spam",
+            setSenderPreference = true,
+            unsubscribe = unsubscribe,
+            refileSender = refileSender,
+        )
     }
 
-    /** Move back to Inbox and allow the sender. */
+    /** Move back to Inbox and allow the sender; their other recent Spam is rescued (AVE-98). */
     suspend fun markNotSpam(email: Email) {
         moveEmailToFolder(email, "inbox", setSenderPreference = true)
-        showToast("Moved to Inbox")
+    }
+
+    /**
+     * Verdict toast with Undo. The verdict is already on the server, so Undo
+     * calls `sender-rules/undo` instead of cancelling a delayed commit.
+     */
+    private fun showSpamVerdictUndoToast(message: String, mailboxId: String, undoToken: String) {
+        commitPendingActionImmediately()
+        val action = UndoableAction(
+            message = message,
+            execute = {},
+            rollback = {
+                scope.launch {
+                    runCatching { ApiClient.shared.undoSenderVerdict(mailboxId, undoToken) }
+                        .onSuccess {
+                            loadEmailsForCurrentTab(showLoading = false)
+                            refreshReplyLaterCount()
+                            showToast("Undone")
+                        }
+                        .onFailure { showToast("Couldn't undo", isError = true) }
+                }
+            },
+        )
+        val actionId = action.id
+        _pendingUndoAction.value = action
+        showToast(message, isUndo = true, durationMs = 6000)
+        pendingUndoJob = scope.launch {
+            delay(6000)
+            if (_pendingUndoAction.value?.id == actionId) _pendingUndoAction.value = null
+        }
     }
 
     suspend fun approveScreenerSender(email: Email, destinationFolderId: String) {
@@ -2119,13 +2518,14 @@ class AppModel {
                 emailId = email.id,
                 displayName = email.senderName,
             )
-            val queued = _emails.value.filter {
+            val queued = (_emails.value + _screenerQueue.value).filter {
                 it.sender.trim().lowercase() == sender &&
                     (it.folderId == FolderIds.SCREENER || it.id == email.id)
-            }
+            }.distinctBy { it.id }
             queued.forEach { db.moveEmail(it.id, destinationFolderId) }
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
+            _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
             if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
@@ -2153,13 +2553,14 @@ class AppModel {
                 emailId = email.id,
                 displayName = email.senderName,
             )
-            val queued = _emails.value.filter {
+            val queued = (_emails.value + _screenerQueue.value).filter {
                 it.sender.trim().lowercase() == sender &&
                     (it.folderId == FolderIds.SCREENER || it.id == email.id)
-            }
+            }.distinctBy { it.id }
             queued.forEach { db.moveEmail(it.id, FolderIds.SCREENED_OUT) }
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
+            _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
             if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
@@ -2243,6 +2644,27 @@ class AppModel {
         _composeSession.value = ComposeSession(session.form, ComposePresentation.Expanded)
     }
 
+    /**
+     * Screener on/off for the selected mailbox (AVE-104). Turning it off moves the
+     * server's Screener mail to Inbox; mirror that in the local cache.
+     */
+    suspend fun setScreenerEnabled(enabled: Boolean): Boolean {
+        val wasEnabled = isScreenerEnabled
+        val ok = updateMailboxSettings { it.copy(screener = ScreenerSettings(enabled = enabled)) }
+        if (!ok || !wasEnabled || enabled) return ok
+        val mailboxId = _selectedMailboxId.value ?: return ok
+        db.getEmails(mailboxId, FolderIds.SCREENER).forEach { db.moveEmail(it.id, FolderIds.INBOX) }
+        _screenerQueue.value = emptyList()
+        if ((_selectedTab.value as? HomeTab.Folder)?.id == FolderIds.SCREENER) {
+            _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
+        }
+        runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
+            ifStillSelected(mailboxId) { _folders.value = folders }
+        }
+        loadEmailsForCurrentTab(showLoading = false)
+        return ok
+    }
+
     suspend fun updateMailboxSettings(transform: (MailboxSettings) -> MailboxSettings): Boolean {
         val mailboxId = _selectedMailboxId.value ?: return false
         if (blockIfReadOnly()) return false
@@ -2287,6 +2709,32 @@ class AppModel {
             }
         }
         _chatSession.value = ChatSession.Conversation(ChatSession.newConversationId())
+    }
+
+    // ---- AI usage (AVE-45) ----
+
+    private val _aiUsage = MutableStateFlow<AiUsageSnapshot?>(null)
+    /** Today's AI usage for the selected mailbox; null until fetched (or on failure). */
+    val aiUsage: StateFlow<AiUsageSnapshot?> = _aiUsage.asStateFlow()
+
+    /** DEBUG preview fixture: when set, [refreshAiUsage] serves it instead of the network. */
+    private var previewAiUsage: AiUsageSnapshot? = null
+
+    fun applyPreviewAiUsage(snapshot: AiUsageSnapshot) {
+        previewAiUsage = snapshot
+        _aiUsage.value = snapshot
+    }
+
+    /** Fetch today's usage for the selected mailbox. Failures keep the last value. */
+    suspend fun refreshAiUsage() {
+        if (isDebugPreview) {
+            previewAiUsage?.let { _aiUsage.value = it }
+            return
+        }
+        val mailboxId = _selectedMailboxId.value ?: return
+        val usage = runCatching { ApiClient.shared.getAiUsage(mailboxId) }.getOrNull() ?: return
+        // Drop a late reply for a mailbox the user already left.
+        if (_selectedMailboxId.value == mailboxId) _aiUsage.value = usage
     }
 
     fun showChatList() {
@@ -2486,6 +2934,9 @@ class AppModel {
     companion object {
         private const val AUTO_CONVERSATION_ID = "auto"
         private const val PUSH_UNREGISTER_TIMEOUT_MS = 4_000L
+
+        /** "Added to Reply Later · Add reminder" stays up longer than a plain toast (AVE-86). */
+        const val REMINDER_TOAST_DURATION_MS = 5_000L
 
         private fun visibleConversations(conversations: List<AgentConversation>) =
             conversations.filter { it.id != AUTO_CONVERSATION_ID }

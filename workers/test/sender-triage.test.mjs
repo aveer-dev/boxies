@@ -10,8 +10,13 @@ import {
 	isScreenerDestination,
 	isVouchedSender,
 	parseScreenerEnabled,
+	pinnedPreferenceFolderId,
+	pinnedTriageDestination,
+	screenerAcceptDestination,
 	resolveInboundFolder,
+	isSpamVerdictMove,
 	senderLessonForMove,
+	senderTrustOf,
 	screenerSettingsError,
 } from "../lib/sender-triage.ts";
 import { shouldFallbackToInbox } from "../lib/classify-email.ts";
@@ -117,12 +122,28 @@ const allowed = (sender, destination_folder_id = null) => ({
 
 // ── Allowed with explicit destination beats classify ──────────────
 {
-	const pinnedInbox = resolveInboundFolder({
+	// AVE-139: an Inbox destination is what a plain Accept stored, not a pin.
+	// The classifier still sorts the sender's newsletters into Promotions.
+	const acceptedInbox = resolveInboundFolder({
 		classification: bulk,
 		triage: allowed("news@x.com", "inbox"),
 		filterHit: null,
 	});
-	assert.equal(pinnedInbox.folderId, "inbox");
+	assert.equal(acceptedInbox.folderId, "promotions");
+	assert.equal(acceptedInbox.triageAction, "allowed");
+	const acceptedInboxReceipt = resolveInboundFolder({
+		classification: receipt,
+		triage: allowed("shop@x.com", "inbox"),
+		filterHit: null,
+	});
+	assert.equal(acceptedInboxReceipt.folderId, "updates");
+
+	const pinnedPromotions = resolveInboundFolder({
+		classification: ham,
+		triage: allowed("news@x.com", "promotions"),
+		filterHit: null,
+	});
+	assert.equal(pinnedPromotions.folderId, "promotions");
 
 	const pinnedUpdates = resolveInboundFolder({
 		classification: bulk,
@@ -258,6 +279,33 @@ const allowed = (sender, destination_folder_id = null) => ({
 		"your own address is never rejected",
 	);
 	assert.deepEqual(senderLessonForMove({ ...base, sender: null, fromFolderId: "inbox", toFolderId: "spam" }), { kind: "none" });
+
+	// AVE-95: crossing Spam always teaches, "remember" or not (move menu, swipe, multi-select).
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "spam", toFolderId: "inbox", remember: false }),
+		{ kind: "allow", sender: "a@x.com", destination: "inbox" },
+	);
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "archive", toFolderId: "spam", remember: false }),
+		{ kind: "reject", sender: "a@x.com" },
+	);
+	// Other moves only teach when the user said "remember".
+	assert.deepEqual(
+		senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "inbox", toFolderId: "updates", remember: false }),
+		{ kind: "none" },
+	);
+	// Deleting or screening out spam isn't a vote, even with "remember".
+	for (const toFolderId of ["trash", "screened_out"]) {
+		assert.deepEqual(
+			senderLessonForMove({ ...base, sender: "a@x.com", fromFolderId: "spam", toFolderId, remember: true }),
+			{ kind: "none" },
+			`spam → ${toFolderId} teaches nothing`,
+		);
+	}
+	assert.equal(isSpamVerdictMove("spam", "spam"), false);
+	assert.equal(isSpamVerdictMove(null, "spam"), true);
+	assert.equal(isSpamVerdictMove("spam", "archive"), true);
+	assert.equal(isSpamVerdictMove("inbox", "archive"), false);
 }
 
 // ── Destination helper ────────────────────────────────────────────
@@ -359,4 +407,110 @@ assert.equal(
 	false,
 );
 
+// Sender trust (spam-management-plan §5): explicit allow = allowed + a
+// user-picked box; emailed / Screener-accepted / sorted = implicit.
+const userPref = (folderId) => ({ folderId, source: "user" });
+assert.equal(senderTrustOf(allowed("ada@example.com"), userPref("inbox")), "allowed");
+assert.equal(senderTrustOf(allowed("ada@example.com")), "implicit");
+assert.equal(
+	senderTrustOf(allowed("ada@example.com"), { folderId: "inbox", source: "screener" }),
+	"implicit",
+);
+assert.equal(senderTrustOf(null, userPref("updates")), "implicit");
+assert.equal(senderTrustOf(null, null), "none");
+assert.equal(
+	senderTrustOf({ ...allowed("nope@example.com"), status: "rejected" }, userPref("inbox")),
+	"none",
+);
+
 console.log("sender-triage.test.mjs: ok");
+
+// ── AVE-139: plain Accept doesn't pin; deliberate picks do ────────
+{
+	// Accept (Inbox) stores no destination; Promotions / Updates stick.
+	assert.equal(screenerAcceptDestination("inbox"), null);
+	assert.equal(screenerAcceptDestination("promotions"), "promotions");
+	assert.equal(screenerAcceptDestination("updates"), "updates");
+
+	assert.equal(pinnedTriageDestination("inbox"), null);
+	assert.equal(pinnedTriageDestination("updates"), "updates");
+	assert.equal(pinnedTriageDestination("archive"), null);
+	assert.equal(pinnedTriageDestination(null), null);
+
+	// A Screener-sourced Inbox preference is a legacy plain Accept.
+	assert.equal(pinnedPreferenceFolderId("inbox", "screener"), null);
+	assert.equal(pinnedPreferenceFolderId("promotions", "screener"), "promotions");
+	assert.equal(pinnedPreferenceFolderId("inbox", "user"), "inbox");
+	assert.equal(pinnedPreferenceFolderId("inbox"), "inbox");
+	assert.equal(pinnedPreferenceFolderId("  ", "user"), null);
+
+	// Legacy accepted-to-Inbox row: triage destination + screener preference.
+	const legacy = resolveInboundFolder({
+		classification: bulk,
+		triage: allowed("news@x.com", "inbox"),
+		filterHit: null,
+		preferenceFolderId: "inbox",
+		preferenceSource: "screener",
+	});
+	assert.equal(legacy.folderId, "promotions");
+
+	// Personal mail from them still lands in Inbox.
+	const personal = resolveInboundFolder({
+		classification: ham,
+		triage: allowed("friend@x.com", null),
+		filterHit: null,
+	});
+	assert.equal(personal.folderId, "inbox");
+
+	// Inbox chosen in Settings / "Put future mail here" (user source) pins.
+	const userInbox = resolveInboundFolder({
+		classification: bulk,
+		triage: allowed("news@x.com", "inbox"),
+		filterHit: null,
+		preferenceFolderId: "inbox",
+		preferenceSource: "user",
+	});
+	assert.equal(userInbox.folderId, "inbox");
+
+	// Accepted into Promotions (screener source) sticks over a ham guess.
+	const acceptedPromo = resolveInboundFolder({
+		classification: ham,
+		triage: allowed("news@x.com", "promotions"),
+		filterHit: null,
+		preferenceFolderId: "promotions",
+		preferenceSource: "screener",
+	});
+	assert.equal(acceptedPromo.folderId, "promotions");
+
+	// A filter still wins over everything for an allowed sender.
+	const filtered = resolveInboundFolder({
+		classification: bulk,
+		triage: allowed("news@x.com", "promotions"),
+		filterHit: { ruleId: "f", folderId: "archive", skipAutoDraft: false },
+		preferenceFolderId: "promotions",
+		preferenceSource: "screener",
+	});
+	assert.equal(filtered.folderId, "archive");
+
+	// Spam is unchanged: an accepted sender's spam still goes to Spam.
+	const spammy = resolveInboundFolder({
+		classification: spam,
+		triage: allowed("news@x.com", "inbox"),
+		filterHit: null,
+		preferenceFolderId: "inbox",
+		preferenceSource: "screener",
+	});
+	assert.equal(spammy.folderId, "spam");
+	assert.equal(spammy.triageAction, "spam");
+
+	// Screener off: a legacy screener-Inbox preference doesn't pin either.
+	const off = resolveInboundFolder({
+		classification: bulk,
+		triage: allowed("news@x.com", "inbox"),
+		filterHit: null,
+		screenerEnabled: false,
+		preferenceFolderId: "inbox",
+		preferenceSource: "screener",
+	});
+	assert.equal(off.folderId, "promotions");
+}

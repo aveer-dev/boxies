@@ -9,6 +9,11 @@ struct EmailDetailView: View {
     @State private var expandedMessageIDs: Set<String> = []
     @State private var expandedRecipientIDs: Set<String> = []
     @State private var personSearch: PersonSearch?
+    /// Notes to self: the editor sheet, one queued behind the message actions sheet,
+    /// and the note waiting on a delete confirmation.
+    @State private var noteEditor: NoteEditorTarget?
+    @State private var queuedNoteEditor: NoteEditorTarget?
+    @State private var noteToDelete: ThreadNote?
     @Namespace private var actionsNamespace
 
     private var email: Email? {
@@ -21,6 +26,22 @@ struct EmailDetailView: View {
 
     private var source: Email? {
         app.actionSourceEmail ?? email
+    }
+
+    /// Conversation key notes are filed under.
+    private var noteThreadKey: String? {
+        email?.noteThreadKey
+    }
+
+    private var noteGroups: ThreadNoteGroups {
+        guard let noteThreadKey else { return ThreadNoteGroups([]) }
+        return ThreadNoteGroups(app.notes(forThread: noteThreadKey))
+    }
+
+    /// Notes are written for a received conversation; read-only mailboxes can't write.
+    private var canWriteNotes: Bool {
+        guard let email, !app.isReadOnly else { return false }
+        return !email.isDraft && email.folderId != "draft"
     }
 
     private var actionAvailability: EmailActionAvailability? {
@@ -84,11 +105,67 @@ struct EmailDetailView: View {
                     }
                 }
             }
+            .overlay {
+                let stickies = noteGroups.sticky
+                if !stickies.isEmpty {
+                    StickyNotesLayer(
+                        notes: stickies,
+                        onEdit: { note in
+                            guard let noteThreadKey else { return }
+                            noteEditor = NoteEditorTarget(kind: .edit(note), threadKey: noteThreadKey)
+                        },
+                        onDelete: { noteToDelete = $0 },
+                        onMove: { note, point in
+                            Task { await app.moveThreadNote(note, to: point) }
+                        }
+                    )
+                }
+            }
+            .task(id: noteThreadKey) {
+                guard let noteThreadKey else { return }
+                await app.loadThreadNotes(threadKey: noteThreadKey)
+                #if DEBUG
+                openPreviewNoteEditorIfAsked()
+                #endif
+            }
             .background {
                 Color.clear
-                    .sheet(item: $messageSheetEmail) { sheetEmail in
-                        EmailActionsSheet(email: sheetEmail)
+                    .sheet(item: $messageSheetEmail, onDismiss: presentQueuedNoteEditor) { sheetEmail in
+                        EmailActionsSheet(
+                            email: sheetEmail,
+                            onAddNote: canWriteNotes && !sheetEmail.isDraft ? {
+                                guard let noteThreadKey else { return }
+                                queuedNoteEditor = NoteEditorTarget(
+                                    kind: .newInline(emailId: sheetEmail.id),
+                                    threadKey: noteThreadKey
+                                )
+                            } : nil
+                        )
                     }
+            }
+            .background {
+                Color.clear
+                    .sheet(item: $noteEditor) { target in
+                        NoteEditorSheet(
+                            target: target,
+                            startInPreview: Self.previewNoteEditorStartsInPreview
+                        )
+                    }
+            }
+            .alert(
+                "Delete this note?",
+                isPresented: Binding(
+                    get: { noteToDelete != nil },
+                    set: { if !$0 { noteToDelete = nil } }
+                ),
+                presenting: noteToDelete
+            ) { note in
+                Button("Delete", role: .destructive) {
+                    Task { await app.deleteThreadNote(note) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("It’s only visible to you and can’t be recovered.")
             }
             .id(email?.id)
             .background(AppTheme.background)
@@ -146,6 +223,16 @@ struct EmailDetailView: View {
                         }
                         .accessibilityLabel("Archive")
                         .disabled(email == nil)
+                    }
+
+                    if canWriteNotes {
+                        Button {
+                            guard let noteThreadKey else { return }
+                            noteEditor = NoteEditorTarget(kind: .newSticky, threadKey: noteThreadKey)
+                        } label: {
+                            Image(systemName: "note.text.badge.plus")
+                        }
+                        .accessibilityLabel("Add sticky note")
                     }
 
                     if actionAvailability?.showsReplyActions == true {
@@ -324,6 +411,16 @@ struct EmailDetailView: View {
                     }
                 )
 
+                if let reason = message.spamReasonLine {
+                    SpamReasonLine(text: reason)
+                        .padding(.top, 10)
+                }
+
+                if message.showsUnverifiedBanner {
+                    UnverifiedSenderBanner(sender: message.sender)
+                        .padding(.top, 10)
+                }
+
                 if message.isSpoofed {
                     SpoofWarningBanner()
                         .padding(.top, 10)
@@ -343,7 +440,9 @@ struct EmailDetailView: View {
                             htmlOrText: message.body ?? message.snippet ?? "",
                             mailboxId: app.selectedMailboxId,
                             emailId: message.id,
-                            attachments: message.attachments ?? []
+                            attachments: message.attachments ?? [],
+                            // Spam keeps remote images blocked until "Load images" (Gmail parity).
+                            blocksRemoteImages: EmailHTMLSanitizer.blocksRemoteImages(folderId: message.folderId)
                         )
                             .padding(.top, 20)
 
@@ -351,6 +450,20 @@ struct EmailDetailView: View {
                             .padding(.top, 20)
                     }
                     .transition(.opacity.combined(with: .offset(y: 6)))
+                }
+
+                // Notes to self on this message, in line under it.
+                if let notes = noteGroups.inlineByEmail[message.id], !notes.isEmpty {
+                    InlineNotesView(
+                        notes: notes,
+                        onEdit: { note in
+                            guard let noteThreadKey else { return }
+                            noteEditor = NoteEditorTarget(kind: .edit(note), threadKey: noteThreadKey)
+                        },
+                        onDelete: { noteToDelete = $0 }
+                    )
+                    .padding(.top, 14)
+                    .transition(.opacity.combined(with: .offset(y: 4)))
                 }
             }
             .padding(.horizontal, 16)
@@ -362,6 +475,32 @@ struct EmailDetailView: View {
             }
         }
     }
+
+    private func presentQueuedNoteEditor() {
+        guard let queued = queuedNoteEditor else { return }
+        queuedNoteEditor = nil
+        noteEditor = queued
+    }
+
+    private static var previewNoteEditorStartsInPreview: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-previewNoteEditorPreview")
+        #else
+        false
+        #endif
+    }
+
+    #if DEBUG
+    /// `-previewNoteEditor`: opens the sticky's editor once the notes fixture loads.
+    private func openPreviewNoteEditorIfAsked() {
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-previewNoteEditor") || args.contains("-previewNoteEditorPreview"),
+              noteEditor == nil,
+              let noteThreadKey,
+              let sticky = noteGroups.sticky.first else { return }
+        noteEditor = NoteEditorTarget(kind: .edit(sticky), threadKey: noteThreadKey)
+    }
+    #endif
 
     /// Matches web `formatDetailDate`: "Tue, Apr 15, 3:42 PM".
     /// Includes the year when the message is from a different calendar year.
@@ -485,6 +624,14 @@ struct EmailDetailView: View {
         }
 
         Divider()
+
+        if canWriteNotes, let noteThreadKey {
+            Button {
+                noteEditor = NoteEditorTarget(kind: .newInline(emailId: message.id), threadKey: noteThreadKey)
+            } label: {
+                Label("Add Private Note", systemImage: "note.text.badge.plus")
+            }
+        }
 
         Button {
             messageSheetEmail = message
@@ -824,6 +971,57 @@ private struct SpoofWarningBanner: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(AppTheme.deepDarkRed.opacity(0.35), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One muted line saying why a message is in Spam / Screened out.
+private struct SpamReasonLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12))
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.inter(size: AppTheme.FontSize.meta))
+                .lineLimit(1)
+        }
+        .foregroundStyle(AppTheme.muted)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// `unverified` mail: the From domain isn't proven, but it isn't spam either.
+private struct UnverifiedSenderBanner: View {
+    let sender: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.orange)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(SpamReason.unverifiedTitle)
+                    .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
+                    .foregroundStyle(AppTheme.ink)
+                Text(SpamReason.unverifiedDetail(sender: sender))
+                    .font(.inter(size: AppTheme.FontSize.meta))
+                    .foregroundStyle(AppTheme.muted)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppTheme.pillFill)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.orange.opacity(0.4), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .accessibilityElement(children: .combine)

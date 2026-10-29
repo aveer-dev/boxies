@@ -138,6 +138,30 @@ object HomeChromeMetrics {
 }
 
 /**
+ * Toast metrics (AVE-134) — mirrors iOS `ToastMetrics`: body-size type, a 52.dp pill
+ * like the bottom bar, capped width on tablets, lifted clear of the bar.
+ */
+object ToastMetrics {
+    val minHeight: Dp = HomeChromeMetrics.actionBarHeight
+    val cornerRadius: Dp = HomeChromeMetrics.actionBarHeight / 2
+    val maxWidth: Dp = 440.dp
+    val iconSize: Dp = 18.dp
+    val contentSpacing: Dp = 10.dp
+    val horizontalPadding: Dp = 18.dp
+    val verticalPadding: Dp = 12.dp
+    val actionHeight: Dp = 36.dp
+    val actionHorizontalPadding: Dp = 14.dp
+    val actionTrailingPadding: Dp = 8.dp
+    /** Side inset from the screen edge. */
+    val screenInset: Dp = 16.dp
+    /** Gap between the toast and the floating bottom bar / composer below it. */
+    val barGap: Dp = 12.dp
+    /** Bottom inset when nothing sits under the toast (sheets, sign-in). */
+    val standaloneBottomInset: Dp = 24.dp
+    val dismissDistance: Dp = 36.dp
+}
+
+/**
  * iOS pre-26 liquid-glass fallback: frosted fill, white hairline, soft shadow.
  * Does not attempt iOS 26 `glassEffect`.
  */

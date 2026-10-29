@@ -192,7 +192,7 @@ struct AliasesSettingsView: View {
                 toastView(toast)
             }
         }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: toast?.id)
+        .animation(ToastMetrics.animation, value: toast?.id)
         .task {
             await loadAliases()
         }
@@ -331,26 +331,16 @@ struct AliasesSettingsView: View {
     }
 
     private func toastView(_ toast: ComposeToast) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: toast.isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-                .font(.inter(size: 13, weight: .semibold))
-                .foregroundStyle(toast.isError ? .red : AppTheme.ink)
-
-            Text(toast.message)
-                .font(.inter(size: 13, weight: .medium))
-                .foregroundStyle(AppTheme.ink)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-        .overlay {
-            Capsule()
-                .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
-        }
-        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 24)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
+        InboxiesToast(
+            message: toast.message,
+            icon: toast.toastIcon,
+            onDismiss: {
+                toastDismissTask?.cancel()
+                self.toast = nil
+            }
+        )
+        .padding(.horizontal, ToastMetrics.screenInset)
+        .padding(.bottom, ToastMetrics.standaloneBottomInset)
     }
 
     private func displayLabel(for alias: MaskedAlias) -> String {

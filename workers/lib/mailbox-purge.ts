@@ -38,6 +38,10 @@ export const MAILBOX_PURGE_TABLES = [
 	"send_log",
 	"attachments",
 	"emails",
+	// After emails: deleting them appends conversation_dirty marks (AVE-105).
+	"conversation_dirty",
+	"conversation_members",
+	"conversations",
 	"folders",
 	"agent_conversations",
 	"device_tokens",
@@ -45,8 +49,11 @@ export const MAILBOX_PURGE_TABLES = [
 	"auto_reply_receipts",
 	"sender_triage",
 	"sender_preferences",
+	"sender_rules",
+	"sender_verdict_undo",
 	"inbound_message_claims",
 	"thread_notes",
+	"email_summaries",
 ] as const;
 
 /**

@@ -42,8 +42,76 @@ object InboxiesColors {
     val DarkUnread = Color(0xFFE6E6EB)
     val DarkDeepDarkRed = Color(0xFFE65959)
 
+    /** Meters nearing a limit (AI usage >= 80%, AVE-45). Same hue as web `kumo-warning`. */
+    val LightWarning = Color(0xFFD97706)
+    val DarkWarning = Color(0xFFF59E0B)
+    /** Meters at a limit; brighter than [LightDeepDarkRed] so a 4dp bar still reads red. */
+    val LightDanger = Color(0xFFDC2626)
+    val DarkDanger = Color(0xFFEF5350)
+
+    /**
+     * Needs attention: a Reply Later reminder fired (AVE-86). Warm amber-orange, readable
+     * on the frosted chrome in both themes. Twin of iOS `AppTheme.attention`, web `--attention`.
+     */
+    val LightAttention = Color(0xFFB45309)
+    val DarkAttention = Color(0xFFF59E0B)
+
     /** Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). */
     val MailPaper = Color(0xFFFFFFFF)
+}
+
+/**
+ * Notes to self: a cool mint-sage paper, the one tinted surface in the monochrome
+ * shell, so a note reads as paper stuck on the page and stays apart from the mail
+ * itself. Calm and low-chroma; same values as iOS `AppTheme.Note` and web `--note-*`.
+ */
+@Immutable
+data class NotePalette(
+    val paper: Color,
+    val paperEdge: Color,
+    val ink: Color,
+    val muted: Color,
+    val pin: Color,
+    val shadow: Color,
+    /** 1dp outer ring on the floating sticky: none in light, a faint sage line in dark. */
+    val ring: Color,
+) {
+    companion object {
+        val Light = NotePalette(
+            paper = Color(0xFFEDF7F4),
+            paperEdge = Color(0xFFD3EAE3),
+            ink = Color(0xFF1F3A34),
+            muted = Color(0xFF5E7D75),
+            pin = Color(0xFF4F9A8A),
+            // rgb(20,60,50) at the old 20% opacity.
+            shadow = Color(0x33143C32),
+            ring = Color.Transparent,
+        )
+        val Dark = NotePalette(
+            paper = Color(0xFF1C2A27),
+            paperEdge = Color(0xFF27403A),
+            ink = Color(0xFFDDEFEA),
+            muted = Color(0xFF8FB2A9),
+            pin = Color(0xFF6CC2AE),
+            shadow = Color(0x8C000000),
+            // rgba(200,240,230,0.06)
+            ring = Color(0x0FC8F0E6),
+        )
+    }
+}
+
+/** Note geometry and motion — mirrors iOS `AppTheme.Note`. */
+object NoteDims {
+    /** Resting tilt of a sticky note, in degrees. */
+    const val tilt = -1.2f
+    /** Resting / lifted sticky shadow (lifted is deeper and softer). */
+    val restingElevation = 6.dp
+    val liftedElevation = 18.dp
+    /** Paper corners: tight, with one softer curled corner (bottom-right). */
+    val cornerRadius = 3.dp
+    val curlRadius = 14.dp
+    /** Inline notes: note paper with a solid paper-edge hairline. */
+    val inlineCornerRadius = 12.dp
 }
 
 @Immutable
@@ -58,6 +126,7 @@ data class InboxiesPalette(
     val accent: Color,
     val unread: Color,
     val deepDarkRed: Color,
+    val note: NotePalette = NotePalette.Light,
     /** Resolved app theme (System / Light / Dark), for surfaces that can't read the palette, like WebView. */
     val isDark: Boolean = false,
 )
@@ -155,6 +224,7 @@ fun InboxiesTheme(
             accent = InboxiesColors.DarkAccent,
             unread = InboxiesColors.DarkUnread,
             deepDarkRed = InboxiesColors.DarkDeepDarkRed,
+            note = NotePalette.Dark,
             isDark = true,
         )
     } else {

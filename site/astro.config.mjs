@@ -3,7 +3,7 @@ import { defineConfig } from "astro/config";
 
 export default defineConfig({
 	site: "https://inboxies.co",
-	output: "static", // every page prerendered; only src/pages/api/contact.ts opts out
+	output: "static", // every page prerendered; only src/pages/api/contact.ts and roadmap.ts opt out
 	// "compile": stills are optimised with sharp at build (AVIF/WebP); no IMAGES binding.
 	adapter: cloudflare({ imageService: "compile" }),
 	session: false, // stops the adapter auto-adding a SESSION KV binding

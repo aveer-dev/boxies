@@ -10,14 +10,17 @@ struct EmailBodyView: View {
     var mailboxId: String?
     var emailId: String?
     var attachments: [Attachment] = []
+    /// Spam only (as Gmail does): remote images stay blocked until "Load images".
+    /// Everywhere else they load by default.
+    var blocksRemoteImages = false
 
     @State private var htmlWithImages: String?
     @State private var webHeight: CGFloat = 1
     @State private var isWebLoading = true
     @State private var isResolvingImages = false
     @State private var activeQuotedContent: QuotedMailContent? = nil
-    /// Remote images stay blocked until the reader taps "Load images" (per message).
-    @State private var allowsRemoteImages = false
+    /// Spam only: the reader tapped "Load images" for this message.
+    @State private var loadedRemoteImages = false
     /// Sanitized body, computed once per source off the main actor (never during `body`).
     @State private var prepared: PreparedState?
     @Environment(\.colorScheme) private var colorScheme
@@ -53,16 +56,21 @@ struct EmailBodyView: View {
         isHTML && (prepared == nil || isWebLoading || webHeight <= 1)
     }
 
+    private var allowsRemoteImages: Bool {
+        !blocksRemoteImages || loadedRemoteImages
+    }
+
     private var hasBlockedRemoteImages: Bool {
         guard isHTML, !allowsRemoteImages else { return false }
         return prepared?.body.hasRemoteImages ?? false
     }
 
-    /// Opted-in policy only after "Load images"; otherwise remote `https:` images are blocked.
+    /// Remote `https:` images load by default; Spam blocks them until "Load images".
     private var contentSecurityPolicy: String {
-        allowsRemoteImages
-            ? EmailHTMLSanitizer.contentSecurityPolicy
-            : EmailHTMLSanitizer.remoteImagesBlockedPolicy
+        EmailHTMLSanitizer.contentSecurityPolicy(
+            blocksRemoteImages: blocksRemoteImages,
+            loadedRemoteImages: loadedRemoteImages
+        )
     }
 
     private var hasQuotedReplies: Bool {
@@ -151,7 +159,7 @@ struct EmailBodyView: View {
         }
         .onChange(of: emailId) { _, _ in
             activeQuotedContent = nil
-            allowsRemoteImages = false
+            loadedRemoteImages = false
             prepared = nil
             webHeight = 1
             isWebLoading = true
@@ -167,7 +175,7 @@ struct EmailBodyView: View {
         }
     }
 
-    /// Web parity: remote images are opt-in per message.
+    /// Spam only (web and Android parity): remote images are opt-in per message.
     private var remoteImagesBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "photo")
@@ -182,7 +190,7 @@ struct EmailBodyView: View {
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-                    allowsRemoteImages = true
+                    loadedRemoteImages = true
                 }
             } label: {
                 Text("Load images")
@@ -296,6 +304,7 @@ struct EmailBodyView: View {
             height: auto !important;
             min-height: 0 !important;
             overflow: visible;
+            -webkit-text-size-adjust: 100%;
           }
           body {
             display: flow-root;
@@ -318,9 +327,10 @@ struct EmailBodyView: View {
           .gmail_quote, .yahoo_quoted, .protonmail_quote, #divRplyFwdMsg, blockquote[type="cite"], #appendonsend {
             display: none !important;
           }
+          \(EmailBodyFit.css)
         </style>
         </head>
-        <body>\(bodyHTML)
+        <body><div id="\(EmailBodyFit.scrollerID)"><div id="\(EmailBodyFit.boxID)"><div id="\(EmailBodyFit.contentID)">\(bodyHTML)</div></div></div>
         </body>
         </html>
         """
@@ -410,7 +420,8 @@ struct EmailBodyView: View {
 private enum EmailWebViewIsolation {
     static let heightWorld = WKContentWorld.defaultClient
 
-    static let heightScriptSource = """
+    /// Fits wide mail to the width (`EmailBodyFit`), then reports the body height.
+    static let heightScriptSource = EmailBodyFit.script + """
     function postHeight() {
       const h = Math.ceil(Math.max(
         document.body.offsetHeight,
@@ -421,16 +432,26 @@ private enum EmailWebViewIsolation {
         window.webkit.messageHandlers.bodyHeight.postMessage(h);
       }
     }
-    window.addEventListener('load', postHeight);
-    window.addEventListener('resize', postHeight);
+    function refitAndPost() {
+      inboxiesFitBody();
+      postHeight();
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      // The scaled box has a fixed size; refit when the mail itself grows (fonts, images).
+      var inboxiesContent = document.getElementById('\(EmailBodyFit.contentID)');
+      if (inboxiesContent) { new ResizeObserver(refitAndPost).observe(inboxiesContent); }
+    }
+    window.addEventListener('load', refitAndPost);
+    window.addEventListener('resize', refitAndPost);
     document.querySelectorAll('img').forEach(function (img) {
-      img.addEventListener('load', postHeight);
-      img.addEventListener('error', postHeight);
+      img.addEventListener('load', refitAndPost);
+      img.addEventListener('error', refitAndPost);
     });
     if (typeof ResizeObserver !== 'undefined') {
+      // Height only: the body follows the box, which the fit sizes.
       new ResizeObserver(postHeight).observe(document.body);
     }
-    postHeight();
+    refitAndPost();
     """
 
     static func configuration(allowsJavaScript: Bool, heightHandler: WKScriptMessageHandler?) -> WKWebViewConfiguration {
@@ -474,6 +495,53 @@ private enum EmailWebViewIsolation {
             UIApplication.shared.open(url)
         }
     }
+}
+
+/// Wide mail (fixed 600px+ newsletter cards, rigid tables) on a phone-width body (AVE-89).
+/// The inline mail WebView never scrolls itself (the thread `ScrollView` does), so overflow
+/// used to be clipped with no way to reach it. Now the body is scaled down to fit the width (Apple Mail / Gmail behaviour), never below `minScale` so text stays
+/// legible; whatever still overflows scrolls sideways inside `scrollerID`, while vertical
+/// drags keep going to the thread. Android twin: `EmailBodyFit` in `EmailBodyView.kt`.
+enum EmailBodyFit {
+    static let scrollerID = "inboxies-scroll"
+    static let boxID = "inboxies-fit-box"
+    static let contentID = "inboxies-fit"
+    static let minScale = 0.5
+
+    static let css = """
+    #\(scrollerID) { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+    #\(scrollerID), #\(scrollerID) * { -webkit-text-size-adjust: none !important; text-size-adjust: none !important; }
+    """
+
+    /// Defines `inboxiesFitBody()`; idempotent, so it can rerun on load, image load and resize.
+    /// Lays the mail out at its natural width, scales it with `transform` (CSS `zoom` leaves
+    /// glyphs unscaled in iOS WebKit), and sizes a clipping box to the scaled size so the
+    /// reported body height stays exact.
+    static let script = """
+    function inboxiesFitBody() {
+      var scroller = document.getElementById('\(scrollerID)');
+      var box = document.getElementById('\(boxID)');
+      var content = document.getElementById('\(contentID)');
+      if (!scroller || !box || !content) { return; }
+      box.style.overflow = '';
+      box.style.width = '';
+      box.style.height = '';
+      content.style.width = '';
+      content.style.transform = '';
+      var avail = scroller.clientWidth;
+      var natural = scroller.scrollWidth;
+      if (avail <= 0 || natural <= avail + 1) { return; }
+      var scale = Math.max(\(minScale), avail / natural);
+      content.style.width = natural + 'px';
+      content.style.transformOrigin = '0 0';
+      content.style.transform = 'scale(' + scale + ')';
+      // The box clips the unscaled layout, so the scroll range is the scaled width only.
+      box.style.overflow = 'hidden';
+      box.style.width = Math.ceil(natural * scale) + 'px';
+      box.style.height = Math.ceil(content.offsetHeight * scale) + 'px';
+    }
+
+    """
 }
 
 /// Pure navigation policy for sanitized mail WebViews. Isolated from WKWebView so Simulator
@@ -599,7 +667,7 @@ private struct HTMLWebView: UIViewRepresentable {
             // ObjC entry point on purpose: with an iOS 17 target the Swift `Result` overload links
             // /usr/lib/swift/libswiftWebKit.dylib, which the iOS 18.5 runtime lacks (dyld abort at launch).
             webView.__evaluateJavaScript(
-                "Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))",
+                "inboxiesFitBody(); Math.ceil(Math.max(document.body.offsetHeight, document.body.getBoundingClientRect().height, document.body.scrollHeight))",
                 inFrame: nil,
                 in: EmailWebViewIsolation.heightWorld
             ) { [weak self] value, error in
@@ -945,8 +1013,8 @@ enum HTMLHardenFixture {
       <a href="https://inboxies.invalid/stay">opaque origin</a>
       <img src="x" onerror="alert(1)">
     </p>
-    <p>Remote image (hidden until "Load images"):
-      <img src="https://example.com/pixel.gif" width="1" height="1" alt="">
+    <p>Remote image (loads by default outside Spam):
+      <img src="https://www.cloudflare.com/favicon.ico" width="48" height="48" alt="Cloudflare logo">
     </p>
     <script>document.title = "xss"</script>
     <blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em;">

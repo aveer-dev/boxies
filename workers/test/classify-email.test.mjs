@@ -6,17 +6,19 @@
 import assert from "node:assert/strict";
 import { Folders } from "../../shared/folders.ts";
 import {
+	applySenderTrust,
 	classifyFromHeaders,
 	classifyInboundEmail,
+	deferAuthenticatedAiSpamToScreener,
 	firstClassifierToken,
 	isAiSpam,
-	overrideAiSpamForVouchedSender,
 	shouldAutoDraft,
 	shouldClassifyInbound,
 	shouldFallbackToInbox,
 	shouldSendPush,
 } from "../lib/classify-email.ts";
 import PostalMime from "postal-mime";
+import { resolveInboundFolder } from "../lib/sender-triage.ts";
 
 function headers(...pairs) {
 	return pairs.map(([key, value]) => ({ key, value }));
@@ -566,6 +568,7 @@ async function classifyMime(raw, ai) {
 		subject: "Urgent wire",
 		sender: "ceo@paypal.com",
 		auth: {
+			authTier: "failed",
 			spoofed: true,
 			source: "authentication-results",
 			aligned: false,
@@ -576,77 +579,245 @@ async function classifyMime(raw, ai) {
 	assert.deepEqual(result, {
 		class: "spam",
 		folderId: Folders.SPAM,
-		reason: "auth-spoofed",
+		reason: "auth-failed",
 	});
-	assert.equal(shouldAutoDraft(result, { spoofed: true }), false);
+	assert.equal(shouldAutoDraft(result, { authTier: "failed", spoofed: true }), false);
 }
 
-// ── AI spam yields to vouched, authenticated senders ──────────────
+// ── Auth tiers: only `failed` is spam on auth alone ───────────────
+
+{
+	const base = {
+		source: "authentication-results",
+		headerFrom: "ada@smallbiz.example",
+		envelopeFrom: "bounces@sendgrid.net",
+	};
+	const input = (auth) => ({
+		headers: headers(["From", "Ada <ada@smallbiz.example>"]),
+		subject: "Your quote",
+		sender: "ada@smallbiz.example",
+		auth,
+	});
+
+	const verified = { ...base, aligned: true, authTier: "verified", spoofed: false };
+	assert.equal(classifyFromHeaders(input(verified)), null);
+	assert.equal(
+		shouldAutoDraft({ class: "ham", folderId: Folders.INBOX, reason: "ai-ham" }, verified),
+		true,
+	);
+
+	// Passes only for the ESP, no enforcing DMARC: falls through to AI.
+	const unverified = { ...base, aligned: false, authTier: "unverified", spoofed: false };
+	assert.equal(classifyFromHeaders(input(unverified)), null);
+	const viaAi = await classifyInboundEmail(input(unverified), {
+		run: async () => ({ response: "HAM" }),
+	});
+	assert.equal(viaAi.class, "ham");
+	assert.equal(viaAi.reason, "ai-ham");
+	// Unaligned From still never auto-drafts.
+	assert.equal(shouldAutoDraft(viaAi, unverified), false);
+	// No trusted verdict at all: unverified, auto-draft allowed as before.
+	const noVerdict = { ...base, source: "none", aligned: null, authTier: "unverified", spoofed: false };
+	assert.equal(classifyFromHeaders(input(noVerdict)), null);
+	assert.equal(shouldAutoDraft(viaAi, noVerdict), true);
+
+	const failed = { ...base, aligned: false, authTier: "failed", spoofed: true, dmarc: "fail", dmarcPolicy: "reject" };
+	assert.deepEqual(classifyFromHeaders(input(failed)), {
+		class: "spam",
+		folderId: Folders.SPAM,
+		reason: "auth-failed",
+	});
+	// The AI is never consulted for failed mail.
+	const noAi = await classifyInboundEmail(input(failed), {
+		run: async () => {
+			throw new Error("AI must not run for auth-failed mail");
+		},
+	});
+	assert.equal(noAi.reason, "auth-failed");
+
+	// Failed auth decides before spam headers and bulk (§5 step 1), so list
+	// mail with a forged From can't be sorted into Promotions.
+	assert.equal(
+		classifyFromHeaders({ ...input(failed), headers: headers(["X-Spam-Flag", "YES"]) })?.reason,
+		"auth-failed",
+	);
+	assert.equal(
+		classifyFromHeaders({
+			...input(failed),
+			headers: headers(["List-Unsubscribe", "<mailto:u@smallbiz.example>"]),
+		})?.reason,
+		"auth-failed",
+	);
+	// Unverified list mail still sorts as bulk.
+	assert.equal(
+		classifyFromHeaders({
+			...input(unverified),
+			headers: headers(["List-Unsubscribe", "<mailto:u@smallbiz.example>"]),
+		})?.class,
+		"bulk",
+	);
+}
+
+// ── Sender trust: §5 precedence for allowed and vouched senders ──
 
 {
 	const aiSpam = { class: "spam", folderId: Folders.SPAM, reason: "ai-spam" };
+	const headerSpam = { class: "spam", folderId: Folders.SPAM, reason: "spam-headers" };
 	const authed = {
+		authTier: "verified",
 		spoofed: false,
 		source: "authentication-results",
 		aligned: true,
 		headerFrom: "osato@inboxies.email",
 		envelopeFrom: "bounces@cf-bounce.inboxies.email",
 	};
-	const unverified = { ...authed, aligned: null, source: "none" };
-	const forged = { ...authed, aligned: false, spoofed: true };
+	// Passes only for the ESP's domain, no enforcing DMARC.
+	const viaEsp = { ...authed, aligned: false, authTier: "unverified" };
+	// No trusted verdict: `aligned === null` is unverified, not "no override".
+	const noVerdict = { ...authed, aligned: null, source: "none", authTier: "unverified" };
+	const forged = { ...authed, aligned: false, authTier: "failed", spoofed: true };
+	const mail = (auth, extraHeaders = []) => ({
+		headers: headers(["X-Spam-Flag", "YES"], ...extraHeaders),
+		subject: "Lunch?",
+		sender: "osato@inboxies.email",
+		auth,
+	});
 
 	assert.equal(isAiSpam(aiSpam), true);
-	assert.equal(
-		isAiSpam({ class: "spam", folderId: Folders.SPAM, reason: "spam-headers" }),
-		false,
-	);
+	assert.equal(isAiSpam(headerSpam), false);
 
-	const overridden = overrideAiSpamForVouchedSender(aiSpam, {
-		vouched: true,
-		auth: authed,
-	});
-	assert.deepEqual(overridden, {
+	// Step 1: auth failed stays Spam, whatever the trust.
+	const failedSpam = { class: "spam", folderId: Folders.SPAM, reason: "auth-failed" };
+	for (const trust of ["allowed", "implicit"]) {
+		assert.equal(applySenderTrust(failedSpam, mail(forged), trust), failedSpam);
+		// A forged From can't ride an allow past an AI or header verdict either.
+		assert.equal(applySenderTrust(aiSpam, mail(forged), trust), aiSpam);
+		assert.equal(applySenderTrust(headerSpam, mail(forged), trust), headerSpam);
+	}
+
+	// Strangers and blocked senders (trust none): every verdict stands.
+	for (const verdict of [aiSpam, headerSpam]) {
+		assert.equal(applySenderTrust(verdict, mail(authed), "none"), verdict);
+	}
+
+	// Step 3: explicit allow + verified skips spam headers, then files
+	// normally: ham with no list headers, bulk with them.
+	assert.deepEqual(applySenderTrust(headerSpam, mail(authed), "allowed"), {
 		class: "ham",
 		folderId: Folders.INBOX,
-		reason: "ai-spam-overridden",
+		reason: "allowed-sender",
 	});
-	assert.equal(shouldSendPush(overridden), true);
-	assert.equal(shouldAutoDraft(overridden, authed), true);
+	assert.deepEqual(
+		applySenderTrust(
+			headerSpam,
+			mail(authed, [["List-Unsubscribe", "<mailto:u@inboxies.email>"]]),
+			"allowed",
+		),
+		{ class: "bulk", folderId: Folders.PROMOTIONS, reason: "bulk-list-headers" },
+	);
+	// Explicit allow + verified skips the AI verdict.
+	const allowedHam = applySenderTrust(aiSpam, mail(authed), "allowed");
+	assert.deepEqual(allowedHam, {
+		class: "ham",
+		folderId: Folders.INBOX,
+		reason: "allowed-sender",
+	});
+	assert.equal(shouldSendPush(allowedHam), true);
+	assert.equal(shouldAutoDraft(allowedHam, authed), true);
 
-	// Stranger: the AI verdict stands.
-	assert.equal(
-		overrideAiSpamForVouchedSender(aiSpam, { vouched: false, auth: authed }),
-		aiSpam,
-	);
-	// No trusted auth verdict, or a forged From: can't prove it's them.
-	assert.equal(
-		overrideAiSpamForVouchedSender(aiSpam, { vouched: true, auth: unverified }),
-		aiSpam,
-	);
-	assert.equal(
-		overrideAiSpamForVouchedSender(aiSpam, { vouched: true, auth: forged }),
-		aiSpam,
-	);
-	assert.equal(
-		overrideAiSpamForVouchedSender(aiSpam, { vouched: true, auth: null }),
-		aiSpam,
-	);
-
-	// Hard spam signals stay final even for vouched, authenticated senders.
-	for (const reason of ["spam-headers", "auth-spoofed"]) {
-		const hard = { class: "spam", folderId: Folders.SPAM, reason };
-		assert.equal(
-			overrideAiSpamForVouchedSender(hard, { vouched: true, auth: authed }),
-			hard,
-		);
+	// Step 3: explicit allow + unverified skips the AI verdict only.
+	for (const auth of [viaEsp, noVerdict, null]) {
+		assert.equal(applySenderTrust(aiSpam, mail(auth), "allowed").folderId, Folders.INBOX);
+		assert.equal(applySenderTrust(headerSpam, mail(auth), "allowed"), headerSpam);
 	}
+	// Unaligned From still never auto-drafts.
+	assert.equal(shouldAutoDraft(applySenderTrust(aiSpam, mail(viaEsp), "allowed"), viaEsp), false);
+
+	// Step 4: implicit trust overrides an AI-only verdict, verified or not.
+	for (const auth of [authed, viaEsp, noVerdict, null]) {
+		assert.deepEqual(applySenderTrust(aiSpam, mail(auth), "implicit"), {
+			class: "ham",
+			folderId: Folders.INBOX,
+			reason: "ai-spam-overridden",
+		});
+	}
+	// Step 5: upstream spam headers beat implicit trust, even when verified.
+	assert.equal(applySenderTrust(headerSpam, mail(authed), "implicit"), headerSpam);
 
 	// Non-spam passes through untouched.
 	const ham = { class: "ham", folderId: Folders.INBOX, reason: "ai-ham" };
+	assert.equal(applySenderTrust(ham, mail(authed), "allowed"), ham);
+}
+
+// ── AI spam on authenticated mail from strangers goes to Screener (AVE-103) ──
+
+{
+	const aiSpam = { class: "spam", folderId: Folders.SPAM, reason: "ai-spam" };
+	const authed = {
+		spoofed: false,
+		source: "arc-authentication-results",
+		aligned: true,
+		headerFrom: "noreply@uber.com",
+		envelopeFrom: "bounces@uber.com",
+	};
+	const unverified = { ...authed, aligned: null, source: "none" };
+	const forged = { ...authed, aligned: false, spoofed: true };
+
+	const deferred = deferAuthenticatedAiSpamToScreener(aiSpam, {
+		screenerEnabled: true,
+		auth: authed,
+	});
+	assert.deepEqual(deferred, {
+		class: "ham",
+		folderId: Folders.INBOX,
+		reason: "ai-spam-authenticated",
+	});
+
+	// Unknown sender: Screener, still no push or draft.
+	const unknown = resolveInboundFolder({
+		classification: deferred,
+		triage: null,
+		filterHit: null,
+		screenerEnabled: true,
+	});
+	assert.equal(unknown.folderId, Folders.SCREENER);
+	assert.equal(unknown.skipPush, true);
+	assert.equal(unknown.skipAutoDraft, true);
+
+	// Rejected sender: Screened Out.
+	const rejected = resolveInboundFolder({
+		classification: deferred,
+		triage: { sender: "noreply@uber.com", status: "rejected", destination_folder_id: null, decided_at: "", updated_at: "" },
+		filterHit: null,
+		screenerEnabled: true,
+	});
+	assert.equal(rejected.folderId, Folders.SCREENED_OUT);
+	assert.equal(rejected.skipPush, true);
+
+	// Screener off, unverified or forged auth, or a hard spam signal: verdict stands.
 	assert.equal(
-		overrideAiSpamForVouchedSender(ham, { vouched: true, auth: authed }),
-		ham,
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: false, auth: authed }),
+		aiSpam,
 	);
+	assert.equal(
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: true, auth: unverified }),
+		aiSpam,
+	);
+	assert.equal(
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: true, auth: forged }),
+		aiSpam,
+	);
+	assert.equal(
+		deferAuthenticatedAiSpamToScreener(aiSpam, { screenerEnabled: true, auth: null }),
+		aiSpam,
+	);
+	for (const reason of ["spam-headers", "auth-spoofed"]) {
+		const hard = { class: "spam", folderId: Folders.SPAM, reason };
+		assert.equal(
+			deferAuthenticatedAiSpamToScreener(hard, { screenerEnabled: true, auth: authed }),
+			hard,
+		);
+	}
 }
 
 console.log("classify-email tests passed");

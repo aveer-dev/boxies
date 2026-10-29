@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Badge, Button, Input, Loader, Switch, useKumoToastManager } from "@cloudflare/kumo";
 import {
 	RobotIcon,
 	ArrowCounterClockwiseIcon,
@@ -11,12 +11,17 @@ import {
 } from "@phosphor-icons/react";
 import { Suspense, useEffect, useState } from "react";
 import { useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useMe, useRecoveryEmail } from "~/queries/account";
+import { isScreenerEnabled } from "~/lib/mailbox-settings";
+import { queryKeys } from "~/queries/keys";
 import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 import { signOut } from "~/lib/sign-out";
 import AppearanceCard from "./AppearanceCard";
+import { AiUsageMeter } from "~/components/AiUsageMeter";
+import { useAiUsage } from "~/queries/ai-usage";
 import {
 	ACCOUNT_PAGES,
 	INCOMING_MAIL_PAGES,
@@ -114,6 +119,7 @@ function SettingsContent() {
 					<div className="text-sm font-medium text-kumo-default mb-4">
 						Incoming mail
 					</div>
+					<ScreenerToggle />
 					<div className="divide-y divide-kumo-line -mx-2">
 						{INCOMING_MAIL_PAGES.map((id) => (
 							<SettingsLink
@@ -141,6 +147,8 @@ function SettingsContent() {
 						))}
 					</div>
 				</div>
+
+				<AiUsageCard mailboxId={mailboxId} />
 
 				{/* Agent System Prompt */}
 				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
@@ -211,6 +219,65 @@ function SettingsContent() {
 					</a>
 				</div>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * Per-mailbox Screener switch (AVE-104). Saves on change. Turning it off moves
+ * mail waiting in Screener to Inbox (server side); back on screens new mail only.
+ */
+function ScreenerToggle() {
+	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const toastManager = useKumoToastManager();
+	const queryClient = useQueryClient();
+	const { data: mailbox } = useMailbox(mailboxId);
+	const updateMailboxMutation = useUpdateMailbox();
+	const saved = isScreenerEnabled(mailbox?.settings);
+	const [enabled, setEnabled] = useState(saved);
+
+	useEffect(() => setEnabled(saved), [saved]);
+
+	const handleChange = async (next: boolean) => {
+		if (!mailbox || !mailboxId) return;
+		setEnabled(next);
+		try {
+			await updateMailboxMutation.mutateAsync({
+				mailboxId,
+				settings: { ...mailbox.settings, screener: { enabled: next } },
+			});
+			if (!next) {
+				queryClient.invalidateQueries({ queryKey: queryKeys.folders.list(mailboxId) });
+				queryClient.invalidateQueries({ queryKey: ["emails", mailboxId] });
+			}
+			toastManager.add({
+				title: next ? "Screener on" : "Screener off: new senders go straight to your Inbox",
+			});
+		} catch (e) {
+			setEnabled(saved);
+			toastManager.add({
+				title: e instanceof Error && e.message ? e.message : "Failed to update Screener",
+				variant: "error",
+			});
+		}
+	};
+
+	return (
+		<div className="flex items-start gap-3 mb-3" data-settings-toggle="screener">
+			<div className="min-w-0 flex-1">
+				<div className="text-sm text-kumo-default">Screener</div>
+				<div className="text-xs text-kumo-subtle">
+					{enabled
+						? "First-time senders wait in Screener until you accept them"
+						: "First-time senders go to your Inbox. Spam and blocked senders are still filtered."}
+				</div>
+			</div>
+			<Switch
+				aria-label="Screener"
+				checked={enabled}
+				onCheckedChange={(next) => void handleChange(next)}
+				disabled={!mailbox || updateMailboxMutation.isPending}
+			/>
 		</div>
 	);
 }
@@ -346,5 +413,44 @@ export default function SettingsColumns() {
 				</ColumnPane>
 			)}
 		</>
+	);
+}
+
+/** Today's AI usage for this mailbox against the plan's daily limits (AVE-45). */
+function AiUsageCard({ mailboxId }: { mailboxId: string | undefined }) {
+	const { data: usage, isLoading } = useAiUsage(mailboxId);
+	return (
+		<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
+			<div className="mb-1 flex items-center justify-between gap-2">
+				<span className="text-sm font-medium text-kumo-default">AI usage</span>
+				{usage && (
+					<Badge variant="secondary">{usage.tier === "paid" ? "Paid plan" : "Free plan"}</Badge>
+				)}
+			</div>
+			<p className="mb-4 text-xs text-kumo-subtle">
+				Daily limits for this mailbox. Counters reset at midnight UTC.
+			</p>
+			{isLoading && !usage ? (
+				<div className="flex justify-center py-2">
+					<Loader size="sm" />
+				</div>
+			) : usage ? (
+				<div className="space-y-4">
+					<div>
+						<div className="mb-1.5 text-xs font-medium text-kumo-default">Agent chat</div>
+						<AiUsageMeter meter={usage.chat} noun="AI chats" resetsAt={usage.resetsAt} />
+					</div>
+					<div>
+						<div className="mb-1.5 text-xs font-medium text-kumo-default">Inbound AI</div>
+						<AiUsageMeter meter={usage.inbound} noun="AI checks" resetsAt={usage.resetsAt} />
+						<p className="mt-1.5 text-[11px] leading-4 text-kumo-subtle">
+							Spam checks and auto-drafts for new mail. Past the limit, mail is sorted by your rules only.
+						</p>
+					</div>
+				</div>
+			) : (
+				<p className="text-xs text-kumo-subtle">Usage isn't available right now.</p>
+			)}
+		</div>
 	);
 }

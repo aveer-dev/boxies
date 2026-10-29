@@ -14,6 +14,9 @@ enum AppTheme {
     static let uiAccent = dynamicColor(light: UIColor(red: 0.15, green: 0.35, blue: 0.85, alpha: 1), dark: UIColor(red: 0.35, green: 0.55, blue: 1.0, alpha: 1))
     static let uiUnread = dynamicColor(light: UIColor(red: 0.22, green: 0.22, blue: 0.24, alpha: 1), dark: UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1))
     static let uiDeepDarkRed = dynamicColor(light: UIColor(red: 0.42, green: 0.08, blue: 0.10, alpha: 1), dark: UIColor(red: 0.90, green: 0.35, blue: 0.35, alpha: 1))
+    /// Warm amber for "needs attention now" (a fired Reply Later reminder, AVE-86).
+    /// #B45309 light / #F59E0B dark; twins: Android `InboxiesColors.attention`, web CSS var.
+    static let uiAttention = dynamicColor(light: UIColor(red: 180 / 255, green: 83 / 255, blue: 9 / 255, alpha: 1), dark: UIColor(red: 245 / 255, green: 158 / 255, blue: 11 / 255, alpha: 1))
     /// Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). Not dynamic.
     static let uiMailPaper = UIColor.white
 
@@ -28,7 +31,83 @@ enum AppTheme {
     static let accent = Color(uiColor: uiAccent)
     static let unread = Color(uiColor: uiUnread)
     static let deepDarkRed = Color(uiColor: uiDeepDarkRed)
+    static let attention = Color(uiColor: uiAttention)
     static let mailPaper = Color(uiColor: uiMailPaper)
+
+    /// Daily AI quota meter tints (AVE-45): system orange from 80%, system red at the
+    /// limit — the same tints swipe actions use for star / delete. Track is `pillFill`.
+    enum Usage {
+        static let warning = Color.orange
+        static let danger = Color.red
+    }
+
+    /// Notes to self: a cool mint-sage paper, the one tinted surface in the monochrome
+    /// shell, so a note reads as yours and apart from the mail. Calm, low-chroma; same
+    /// values as web `--note-*` and Android `InboxiesColors.note*`.
+    enum Note {
+        /// Paper fill: sticky, inline note card, list strip, notes chip. #EDF7F4 / #1C2A27
+        static let paper = Color(uiColor: dynamicColor(
+            light: UIColor(red: 237 / 255, green: 247 / 255, blue: 244 / 255, alpha: 1),
+            dark: UIColor(red: 28 / 255, green: 42 / 255, blue: 39 / 255, alpha: 1)
+        ))
+        /// Solid 1pt paper border. #D3EAE3 / #27403A
+        static let paperEdge = Color(uiColor: dynamicColor(
+            light: UIColor(red: 211 / 255, green: 234 / 255, blue: 227 / 255, alpha: 1),
+            dark: UIColor(red: 39 / 255, green: 64 / 255, blue: 58 / 255, alpha: 1)
+        ))
+        /// Note text. #1F3A34 / #DDEFEA
+        static let ink = Color(uiColor: dynamicColor(
+            light: UIColor(red: 31 / 255, green: 58 / 255, blue: 52 / 255, alpha: 1),
+            dark: UIColor(red: 221 / 255, green: 239 / 255, blue: 234 / 255, alpha: 1)
+        ))
+        /// Meta lines and header icons. #5E7D75 / #8FB2A9
+        static let muted = Color(uiColor: dynamicColor(
+            light: UIColor(red: 94 / 255, green: 125 / 255, blue: 117 / 255, alpha: 1),
+            dark: UIColor(red: 143 / 255, green: 178 / 255, blue: 169 / 255, alpha: 1)
+        ))
+        /// Pin and lock glyphs. #4F9A8A / #6CC2AE
+        static let pin = Color(uiColor: dynamicColor(
+            light: UIColor(red: 79 / 255, green: 154 / 255, blue: 138 / 255, alpha: 1),
+            dark: UIColor(red: 108 / 255, green: 194 / 255, blue: 174 / 255, alpha: 1)
+        ))
+        /// Resting sticky shadow: sage-tinted rgb(20,60,50) in light, black in dark.
+        static let shadow = Color(uiColor: dynamicColor(
+            light: UIColor(red: 20 / 255, green: 60 / 255, blue: 50 / 255, alpha: 0.16),
+            dark: UIColor(white: 0, alpha: 0.5)
+        ))
+        /// Lifted (dragging) sticky shadow: same tint, deeper; drawn with a wider,
+        /// softer blur and a longer drop (`liftedShadow*`).
+        static let shadowLifted = Color(uiColor: dynamicColor(
+            light: UIColor(red: 20 / 255, green: 60 / 255, blue: 50 / 255, alpha: 0.24),
+            dark: UIColor(white: 0, alpha: 0.6)
+        ))
+        static let restingShadowRadius: CGFloat = 8
+        static let restingShadowY: CGFloat = 3
+        static let liftedShadowRadius: CGFloat = 22
+        static let liftedShadowY: CGFloat = 14
+        /// 1pt outer ring on the sticky: none in light, rgba(200,240,230,0.06) in dark.
+        static let ring = Color(uiColor: dynamicColor(
+            light: UIColor.clear,
+            dark: UIColor(red: 200 / 255, green: 240 / 255, blue: 230 / 255, alpha: 0.06)
+        ))
+        /// Resting tilt of a sticky note, in degrees.
+        static let tilt: Double = -1.2
+        /// Scale while a sticky is lifted.
+        static let liftScale: CGFloat = 1.03
+        /// Pick-up: a quick, critically damped lift.
+        static let liftSpring = Animation.spring(response: 0.18, dampingFraction: 1)
+        /// Drag tilt chasing the finger's horizontal speed, and easing back as it slows.
+        static let tiltSpring = Animation.spring(response: 0.22, dampingFraction: 0.7)
+        /// Release: slightly underdamped, so the drop shows a small overshoot.
+        static let settle = Spring(response: 0.4, dampingRatio: 0.7)
+        /// Reduce Motion: a plain short ease to the spot, no tilt or overshoot.
+        static let reducedSettle = Animation.easeOut(duration: 0.2)
+        /// Paper corners: tight, with one softer curled corner (bottom-right).
+        static let cornerRadius: CGFloat = 3
+        static let curlRadius: CGFloat = 14
+        /// Inline notes: paper card with a solid paper-edge border.
+        static let inlineCornerRadius: CGFloat = 12
+    }
 
     private static func dynamicColor(light: UIColor, dark: UIColor) -> UIColor {
         return UIColor { traitCollection in

@@ -32,6 +32,23 @@ export interface SenderPreference {
 	updatedAt?: string;
 }
 
+export type SenderRuleKind = "address" | "domain";
+export type SenderRuleVerdict = "allow" | "block";
+
+/** An explicit allow / block rule (Settings → Senders, AVE-96 / AVE-97). */
+export interface SenderRule {
+	id: string;
+	kind: SenderRuleKind;
+	value: string;
+	verdict: SenderRuleVerdict;
+	/** not_spam, report_spam, settings, screener, sent, bootstrap */
+	source: string;
+	createdAt: string;
+	updatedAt: string;
+	lastMatchedAt: string | null;
+	matchCount: number;
+}
+
 /**
  * Read-only membership the server synthesizes for older app builds. Never
  * sent back: membership changes go through invites and the members routes.
@@ -50,6 +67,8 @@ export interface MailboxSettings {
 	autoReply?: { enabled: boolean; subject: string; message: string };
 	agentSystemPrompt?: string;
 	filters?: InboxFilterRule[];
+	/** Screener for first-time senders. Absent means on (AVE-104). */
+	screener?: { enabled?: boolean };
 	/** Server-synthesized, read-only; stripped before every save. */
 	acl?: MailboxAcl;
 	canManage?: boolean;
@@ -377,6 +396,9 @@ export interface EmailAuthSnapshot {
 	headerFrom?: string;
 	envelopeFrom?: string;
 	aligned?: boolean | null;
+	dmarcPolicy?: "none" | "quarantine" | "reject";
+	authTier?: "verified" | "unverified" | "failed";
+	/** Same as `authTier === "failed"`. */
 	spoofed?: boolean;
 	source?: "authentication-results" | "arc-authentication-results" | "none";
 }
@@ -396,6 +418,10 @@ export interface Email {
 	starred: boolean;
 	reply_later?: boolean;
 	reply_later_at?: string | null;
+	/** Pending Reply Later reminder, UTC ISO (AVE-86). */
+	reply_later_remind_at?: string | null;
+	/** When the reminder fired; with `read === false` the mail is due. */
+	reply_later_reminded_at?: string | null;
 	body?: string | null;
 	in_reply_to?: string | null;
 	email_references?: string | null;
@@ -405,6 +431,14 @@ export interface Email {
 	delivery_status?: "queued" | "accepted" | "failed" | "bounced" | "complained" | null;
 	delivery_error?: string | null;
 	auth?: EmailAuthSnapshot | null;
+	/** Auth tier at receive time; null on outbound mail. */
+	auth_tier?: "verified" | "unverified" | "failed" | null;
+	/** RFC 8058 one-click unsubscribe is available (AVE-99); set on reader fetches. */
+	one_click_unsubscribe?: boolean;
+	/** Why inbound mail was filed where it was (code; see shared/spam-reason). */
+	classification_reason?: string | null;
+	/** Sender rule that decided the folder (null until sender rules exist). */
+	matched_rule_id?: string | null;
 	/** Private email the message arrived on or was sent from. */
 	alias_id?: string | null;
 	/** Detail/thread payloads only. Replies go out from this address. */
@@ -465,6 +499,13 @@ export type {
 	InboxDigestTopic,
 	InboxDigestTopicItem,
 } from "shared/inbox-digest";
+
+export type {
+	AiSummary,
+	AiSummaryIneligibleReason,
+	AiSummaryResponse,
+	AiSummaryTargetType,
+} from "shared/ai-summaries";
 
 export type {
 	ThreadNote,

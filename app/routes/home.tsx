@@ -12,10 +12,11 @@ import {
 	Text,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { EnvelopeIcon, GlobeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useRef, useState } from "react";
-import { Link as RouterLink, useNavigate } from "react-router";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Link as RouterLink, useLocation, useNavigate } from "react-router";
 import api from "~/services/api";
 import {
 	useCreateMailbox,
@@ -24,6 +25,12 @@ import {
 } from "~/queries/mailboxes";
 import { queryKeys } from "~/queries/keys";
 import { signOut } from "~/lib/sign-out";
+import {
+	forgetLastMailbox,
+	pickRememberedMailbox,
+	readLastMailbox,
+	wantsAllMailboxes,
+} from "~/lib/last-mailbox";
 
 export function meta() {
 	return [{ title: "Agentic Inbox" }];
@@ -31,7 +38,12 @@ export function meta() {
 
 export default function HomeRoute() {
 	const toastManager = useKumoToastManager();
-	const { data: mailboxes = [], refetch: refetchMailboxes, isFetched: mailboxesFetched } = useMailboxes();
+	const {
+		data: mailboxes = [],
+		refetch: refetchMailboxes,
+		isFetched: mailboxesFetched,
+		isSuccess: mailboxesLoaded,
+	} = useMailboxes();
 	const createMailbox = useCreateMailbox();
 	const deleteMailbox = useDeleteMailbox();
 
@@ -41,13 +53,35 @@ export default function HomeRoute() {
 		staleTime: Infinity, // config rarely changes
 	});
 
-	const { data: me } = useQuery({
+	const { data: me, isFetched: meFetched } = useQuery({
 		queryKey: ["me"],
 		queryFn: () => api.getMe(),
 		staleTime: 60_000,
 	});
 	const isAdmin = Boolean(me?.isAdmin);
 	const navigate = useNavigate();
+	const location = useLocation();
+
+	// Opening the app reopens the last mailbox used here (AVE-90). "All mailboxes"
+	// links pass router state to show this list instead.
+	const showAllMailboxes = wantsAllMailboxes(location.state);
+	const awaitingRestore = !showAllMailboxes && (!meFetched || !mailboxesFetched);
+	const rememberedMailboxId = useMemo(
+		() => (showAllMailboxes || !mailboxesLoaded ? null : readLastMailbox(me?.userId)),
+		[showAllMailboxes, mailboxesLoaded, me?.userId],
+	);
+	const restoreTarget = pickRememberedMailbox(
+		rememberedMailboxId,
+		mailboxes.map((m) => m.id),
+	);
+	useEffect(() => {
+		if (restoreTarget) {
+			navigate(`/mailbox/${encodeURIComponent(restoreTarget)}`, { replace: true });
+		} else if (rememberedMailboxId) {
+			// No longer one of the user's mailboxes: fall back to the list.
+			forgetLastMailbox(me?.userId);
+		}
+	}, [restoreTarget, rememberedMailboxId, me?.userId, navigate]);
 
 	const { data: adminDomainsData } = useQuery({
 		queryKey: ["admin-domains"],
@@ -161,7 +195,7 @@ export default function HomeRoute() {
 	const isConfigured = emailAddresses.length > 0;
 	const accounts = mailboxes;
 
-	const isLoading = !configData;
+	const isLoading = !configData || awaitingRestore || Boolean(restoreTarget);
 
 	return (
 		<div className="min-h-screen bg-kumo-recessed">
@@ -340,17 +374,15 @@ export default function HomeRoute() {
 					if (!open) setMailboxToDelete(null);
 				}}
 			>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-2">
-						Delete Mailbox
-					</Dialog.Title>
-					<Dialog.Description className="text-kumo-subtle text-sm mb-5">
-						Are you sure you want to delete{" "}
+				<Modal size="sm">
+					<ModalHeader
+						title="Delete Mailbox"
+						description={<>Are you sure you want to delete{" "}
 						<strong className="text-kumo-default">
 							{mailboxToDelete?.email}
 						</strong>
-						? This action cannot be undone.
-					</Dialog.Description>
+						? This action cannot be undone.</>}
+					/>
 					<div className="flex justify-end gap-2">
 						<Dialog.Close
 							render={(props) => (
@@ -368,7 +400,7 @@ export default function HomeRoute() {
 							Delete
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</div>
 	);

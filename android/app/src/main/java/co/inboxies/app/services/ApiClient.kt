@@ -2,6 +2,9 @@ package co.inboxies.app.services
 
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AccountSession
+import co.inboxies.app.models.MoveEmailResponse
+import co.inboxies.app.models.ThreadNote
+import co.inboxies.app.models.ThreadNotesResponse
 import co.inboxies.app.models.AdminCreateMailboxResponse
 import co.inboxies.app.models.AdminDomainConnectResponse
 import co.inboxies.app.models.AdminDomainInfo
@@ -67,6 +70,10 @@ import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
 import co.inboxies.app.models.SenderPreference
 import co.inboxies.app.models.SenderPreferencesResponse
+import co.inboxies.app.models.SenderRule
+import co.inboxies.app.models.AiUsageSnapshot
+import co.inboxies.app.models.SenderRuleResponse
+import co.inboxies.app.models.SenderRulesResponse
 import co.inboxies.app.models.UpsertSenderPreferenceResponse
 import co.inboxies.app.util.ParsedSearch
 import co.inboxies.app.util.SearchQueryParser
@@ -967,6 +974,61 @@ class ApiClient private constructor() {
     suspend fun getThread(mailboxId: String, threadId: String): List<Email> =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}")
 
+    // Notes to self (private to the signed-in user)
+
+    suspend fun listThreadNotes(mailboxId: String, threadId: String): List<ThreadNote> =
+        request<ThreadNotesResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/notes",
+        ).notes
+
+    suspend fun createThreadNote(
+        mailboxId: String,
+        threadId: String,
+        body: String,
+        noteType: String,
+        emailId: String? = null,
+        posX: Double? = null,
+        posY: Double? = null,
+    ): ThreadNote = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/threads/${pathEncode(threadId)}/notes",
+        method = "POST",
+        body = buildJsonObject {
+            put("body", body)
+            put("noteType", noteType)
+            emailId?.let { put("emailId", it) }
+            if (posX != null && posY != null) {
+                put("posX", posX)
+                put("posY", posY)
+            }
+        },
+    )
+
+    /** PATCH a note's body and/or position (at least one). */
+    suspend fun updateThreadNote(
+        mailboxId: String,
+        noteId: String,
+        body: String? = null,
+        posX: Double? = null,
+        posY: Double? = null,
+    ): ThreadNote = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/notes/${pathEncode(noteId)}",
+        method = "PATCH",
+        body = buildJsonObject {
+            body?.let { put("body", it) }
+            if (posX != null && posY != null) {
+                put("posX", posX)
+                put("posY", posY)
+            }
+        },
+    )
+
+    suspend fun deleteThreadNote(mailboxId: String, noteId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/notes/${pathEncode(noteId)}",
+            method = "DELETE",
+        )
+    }
+
     suspend fun updateEmail(
         mailboxId: String,
         id: String,
@@ -980,6 +1042,23 @@ class ApiClient private constructor() {
             if (read != null) put("read", read)
             if (starred != null) put("starred", starred)
             if (replyLater != null) put("reply_later", replyLater)
+        },
+    )
+
+    /**
+     * Set (`remindAt` = UTC ISO) or clear (`null`) a Reply Later reminder (AVE-86).
+     * Setting one also adds the mail to Reply Later on the server.
+     */
+    suspend fun setReplyLaterReminder(
+        mailboxId: String,
+        id: String,
+        remindAt: String?,
+    ): Email = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
+        method = "PUT",
+        body = buildJsonObject {
+            if (remindAt != null) put("reply_later_remind_at", remindAt)
+            else put("reply_later_remind_at", kotlinx.serialization.json.JsonNull)
         },
     )
 
@@ -1013,14 +1092,28 @@ class ApiClient private constructor() {
         id: String,
         folderId: String,
         setSenderPreference: Boolean = false,
-    ) {
-        request<EmptyResponse>(
+        unsubscribe: Boolean = false,
+        refileSender: Boolean = true,
+    ): MoveEmailResponse =
+        request<MoveEmailResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}/move",
             method = "POST",
             body = buildJsonObject {
                 put("folderId", folderId)
                 if (setSenderPreference) put("setSenderPreference", true)
+                // Report spam: the Worker sends the RFC 8058 POST at most once per message.
+                if (unsubscribe) put("unsubscribe", true)
+                // Report spam with "Move their other mail to Spam" off (AVE-98).
+                if (!refileSender) put("refileSender", false)
             },
+        )
+
+    /** Undo a Not spam / Report spam: the sender's rule and every message it moved (AVE-98). */
+    suspend fun undoSenderVerdict(mailboxId: String, undoToken: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules/undo",
+            method = "POST",
+            body = buildJsonObject { put("undoToken", undoToken) },
         )
     }
 
@@ -1059,6 +1152,49 @@ class ApiClient private constructor() {
     suspend fun deleteSenderPreference(mailboxId: String, address: String) {
         request<EmptyResponse>(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-preferences/${pathEncode(address)}",
+            method = "DELETE",
+        )
+    }
+
+    /** Today's per-mailbox AI usage and limits (AVE-45). */
+    suspend fun getAiUsage(mailboxId: String): AiUsageSnapshot =
+        request("/api/v1/mailboxes/${pathEncode(mailboxId)}/ai-usage")
+
+    suspend fun listSenderRules(mailboxId: String, verdict: String): List<SenderRule> {
+        val response: SenderRulesResponse = request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules",
+            query = mapOf("verdict" to verdict, "limit" to "500"),
+        )
+        return response.rules
+    }
+
+    /**
+     * Creates or updates an allow / block rule from Settings. A refused value (free-mail
+     * provider, public suffix, bad address) throws [ApiException.Http] 400 whose message is
+     * the server's sentence, shown inline under the Add field.
+     */
+    suspend fun upsertSenderRule(
+        mailboxId: String,
+        kind: String,
+        value: String,
+        verdict: String,
+    ): SenderRule {
+        val response: SenderRuleResponse = request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules",
+            method = "PUT",
+            body = buildJsonObject {
+                put("kind", kind)
+                put("value", value)
+                put("verdict", verdict)
+                put("source", "settings")
+            },
+        )
+        return response.rule
+    }
+
+    suspend fun deleteSenderRule(mailboxId: String, ruleId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-rules/${pathEncode(ruleId)}",
             method = "DELETE",
         )
     }

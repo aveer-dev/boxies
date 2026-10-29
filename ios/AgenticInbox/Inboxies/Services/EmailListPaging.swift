@@ -9,7 +9,7 @@ struct EmailListPaging: Equatable {
     static let initialCacheLimit = 50
     /// Inbox shows at most this many New rows; the rest open on the "All new" screen so Seen
     /// always stays in view right below (AVE-23). Sent to the server as `new_limit`.
-    static let inboxNewPreviewLimit = 5
+    static let inboxNewPreviewLimit = 3
 
     /// `mailboxId|folderId` (or `mailboxId|reply_later`). Results for any other key are stale.
     let key: String
@@ -101,9 +101,10 @@ struct EmailListPaging: Equatable {
     }
 
     static func inboxSections(_ rows: [Email], sectionFloor: String?) -> (new: [Email], seen: [Email]) {
-        let head = rows.filter { email in sectionFloor.map { email.date >= $0 } ?? true }
-        let tail = rows.filter { email in sectionFloor.map { email.date < $0 } ?? false }
-        let byDate: (Email, Email) -> Bool = { $0.date > $1.date }
+        // A fired Reply Later reminder lifts the mail to its fire time (AVE-86).
+        let head = rows.filter { email in sectionFloor.map { email.inboxSortKey >= $0 } ?? true }
+        let tail = rows.filter { email in sectionFloor.map { email.inboxSortKey < $0 } ?? false }
+        let byDate: (Email, Email) -> Bool = { $0.inboxSortKey > $1.inboxSortKey }
         let new = head.filter { $0.resolvedListSection == "new" }.sorted(by: byDate)
         let seen = head.filter { $0.resolvedListSection != "new" }.sorted(by: byDate)
         return (new, seen + tail.sorted(by: byDate))
@@ -116,7 +117,7 @@ struct EmailListPaging: Equatable {
         serverNewCount: Int?,
         limit: Int = inboxNewPreviewLimit
     ) -> (shown: [Email], hiddenCount: Int) {
-        let sorted = newRows.sorted { $0.date > $1.date }
+        let sorted = newRows.sorted { $0.inboxSortKey > $1.inboxSortKey }
         let shown = Array(sorted.prefix(limit))
         let total = max(serverNewCount ?? 0, sorted.count)
         return (shown, max(0, total - shown.count))

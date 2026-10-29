@@ -489,15 +489,14 @@ struct SignInView: View {
         .ignoresSafeArea(.keyboard, edges: .bottom)
 
         if let error = auth.errorMessage {
-            AuthToastBanner(message: error) {
+            InboxiesToast(message: error, icon: .error) {
                 toastDismissTask?.cancel()
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+                withAnimation(ToastMetrics.animation) {
                     auth.errorMessage = nil
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .padding(.horizontal, ToastMetrics.screenInset)
+            .padding(.bottom, ToastMetrics.standaloneBottomInset)
         }
     }
     .animation(.spring(response: 0.32, dampingFraction: 0.86), value: auth.errorMessage)
@@ -1656,36 +1655,6 @@ final class AppleAuthCoordinator: NSObject, ASAuthorizationControllerDelegate, A
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
         continuation?.resume(returning: .failure(error))
         continuation = nil
-    }
-}
-
-private struct AuthToastBanner: View {
-    let message: String
-    var onDismiss: () -> Void
-
-    var body: some View {
-        Button(action: onDismiss) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.inter(size: 13, weight: .semibold))
-                    .foregroundStyle(.red)
-
-                Text(message)
-                    .font(.inter(size: 13, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.regularMaterial, in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
-            }
-            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-        }
-        .buttonStyle(.plain)
     }
 }
 
