@@ -29,6 +29,7 @@ import type { UIMessage } from "ai";
 import { aiUsageLevel, formatAiUsageReset, parseAiQuotaError } from "../../shared/ai-quota";
 import { AiUsageMeter } from "~/components/AiUsageMeter";
 import { useAiUsage } from "~/queries/ai-usage";
+import { markdownImageLabel, markdownImageLinkHref } from "~/lib/markdown-image";
 
 const TOOL_LABELS: Record<string, { label: string; icon: React.ReactNode }> = {
 	list_emails: {
@@ -201,6 +202,27 @@ function MessageBubble({
 													{children}
 												</a>
 											),
+											// Never load images from model output
+											// (AVE-108): link http(s), else just alt text.
+											img: ({ src, alt }) => {
+												const href = markdownImageLinkHref(src);
+												const label = markdownImageLabel(alt);
+												return href ? (
+													<a
+														href={href}
+														target="_blank"
+														rel="noopener noreferrer nofollow"
+														style={{
+															color: "var(--color-link)",
+															textDecoration: "underline",
+														}}
+													>
+														{label}
+													</a>
+												) : (
+													<span>{label}</span>
+												);
+											},
 											p: ({ children }) => (
 												<p className="mb-2 last:mb-0">
 													{children}
