@@ -2,6 +2,8 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { normalizedSubjectSql } from "../lib/conversation-index.ts";
+
 export interface Migration {
 	name: string;
 	sql: string;
@@ -746,6 +748,102 @@ export const mailboxMigrations: Migration[] = [
                 count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (day, bucket)
             );
+        `),
+	},
+	{
+		// Conversation index for the threaded list (AVE-105, see
+		// workers/lib/conversation-index.ts). The list used to group every
+		// email in the mailbox on each page load; it now reads one
+		// `conversations` row per (folder, conversation).
+		// - conversations / conversation_members: the index and the per-folder
+		//   raw key → conversation map it is built from.
+		// - conversation_dirty: marks appended by the triggers below on every
+		//   insert, delete and list-relevant update of `emails`, in the same
+		//   transaction as the write; the DO recomputes affected rows from
+		//   `emails` and clears them.
+		// - two expression indexes on emails for legacy subject threading
+		//   (normalized subject buckets per folder).
+		// Backfill: one dirty mark per (thread, folder), which the DO alarm and
+		// list reads work through in batches; until none is left the list uses
+		// the old scan. Idempotent: re-seeding only re-marks rows that are then
+		// recomputed from `emails`.
+		// Additive only: new tables, indexes and triggers; no email data changes.
+		// Numbered 42: dev's highest is 41_ai_usage.
+		name: "42_conversation_index",
+		sql: txn(`
+            CREATE TABLE IF NOT EXISTS conversations (
+                folder_id TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                latest_email_id TEXT NOT NULL,
+                latest_date TEXT,
+                thread_count INTEGER NOT NULL,
+                thread_unread_count INTEGER NOT NULL,
+                participants TEXT,
+                needs_reply INTEGER NOT NULL DEFAULT 0,
+                has_draft INTEGER NOT NULL DEFAULT 0,
+                is_new INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (folder_id, conversation_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversations_folder_date
+                ON conversations(folder_id, latest_date, conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_conversations_folder_new_date
+                ON conversations(folder_id, is_new, latest_date, conversation_id);
+            CREATE TABLE IF NOT EXISTS conversation_members (
+                folder_id TEXT NOT NULL,
+                raw_key TEXT NOT NULL,
+                conversation_id TEXT NOT NULL,
+                PRIMARY KEY (folder_id, raw_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_members_conversation
+                ON conversation_members(folder_id, conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_conversation_members_raw_key
+                ON conversation_members(raw_key);
+            CREATE TABLE IF NOT EXISTS conversation_dirty (
+                raw_key TEXT NOT NULL,
+                folder_id TEXT NOT NULL,
+                normalized_subject TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_dirty_raw_key
+                ON conversation_dirty(raw_key);
+            CREATE INDEX IF NOT EXISTS idx_emails_folder_subject_key
+                ON emails(folder_id, ${normalizedSubjectSql("subject")}, COALESCE(thread_id, id));
+            CREATE INDEX IF NOT EXISTS idx_emails_folder_subject_unthreaded
+                ON emails(folder_id, ${normalizedSubjectSql("subject")}) WHERE thread_id IS NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_insert
+            AFTER INSERT ON emails
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(NEW.thread_id, NEW.id), NEW.folder_id, ${normalizedSubjectSql("NEW.subject")});
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_delete
+            AFTER DELETE ON emails
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(OLD.thread_id, OLD.id), OLD.folder_id, ${normalizedSubjectSql("OLD.subject")});
+            END;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_update
+            AFTER UPDATE OF id, folder_id, thread_id, subject, date, read, sender, sender_name ON emails
+            WHEN NEW.id IS NOT OLD.id
+              OR NEW.folder_id IS NOT OLD.folder_id
+              OR NEW.thread_id IS NOT OLD.thread_id
+              OR NEW.subject IS NOT OLD.subject
+              OR NEW.date IS NOT OLD.date
+              OR NEW.read IS NOT OLD.read
+              OR NEW.sender IS NOT OLD.sender
+              OR NEW.sender_name IS NOT OLD.sender_name
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(OLD.thread_id, OLD.id), OLD.folder_id, ${normalizedSubjectSql("OLD.subject")});
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                SELECT COALESCE(NEW.thread_id, NEW.id), NEW.folder_id, ${normalizedSubjectSql("NEW.subject")}
+                 WHERE NEW.id IS NOT OLD.id
+                    OR NEW.thread_id IS NOT OLD.thread_id
+                    OR NEW.folder_id IS NOT OLD.folder_id
+                    OR NEW.subject IS NOT OLD.subject;
+            END;
+            INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+            SELECT DISTINCT COALESCE(thread_id, id), folder_id, ${normalizedSubjectSql("subject")}
+              FROM emails;
         `),
 	},
 ];
