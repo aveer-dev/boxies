@@ -10,7 +10,7 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
     case sent
     case updates
     case promotions
-    case screener
+    // No Screener here: it's the Screening room, reached from the Inbox row (AVE-136).
     case inbox
 //    case forYou
     case compose
@@ -27,7 +27,6 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .sent: return "Sent"
         case .updates: return "Updates"
         case .promotions: return "Promotions"
-        case .screener: return "Screener"
         case .inbox: return "Inbox"
 //        case .forYou: return "For you"
         case .compose: return "Compose"
@@ -44,7 +43,6 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         case .sent: return HomeTab.folder("sent").systemImage
         case .updates: return HomeTab.folder("updates").systemImage
         case .promotions: return HomeTab.folder("promotions").systemImage
-        case .screener: return HomeTab.folder("screener").systemImage
         case .inbox: return HomeTab.folder("inbox").systemImage
 //        case .forYou: return HomeTab.aiInbox.systemImage
         case .compose: return "square.and.pencil"
@@ -55,7 +53,6 @@ enum ComposeActionItem: String, Identifiable, CaseIterable {
         switch self {
 //        case .forYou: return .aiInbox
         case .inbox: return .folder("inbox")
-        case .screener: return .folder("screener")
         case .promotions: return .folder("promotions")
         case .updates: return .folder("updates")
         case .sent: return .folder("sent")
@@ -151,8 +148,6 @@ struct ComposeActionListOverlay: View {
     var isClosing: Bool = false
     /// Read-only mailbox (service ended): folders and settings only.
     var hidesCompose: Bool = false
-    /// Screener turned off for this mailbox (AVE-104).
-    var hidesScreener: Bool = false
     var onSelect: (ComposeActionItem) -> Void
     var onDismiss: () -> Void
     var onRowFramesChange: ([ComposeActionItem.ID: CGRect]) -> Void
@@ -165,7 +160,7 @@ struct ComposeActionListOverlay: View {
 
     private var actions: [ComposeActionItem] {
         ComposeActionItem.allCases.filter { item in
-            !(hidesCompose && item == .compose) && !(hidesScreener && item == .screener)
+            !(hidesCompose && item == .compose)
         }
     }
     private let iconSize: CGFloat = 44

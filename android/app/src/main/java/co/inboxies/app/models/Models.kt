@@ -1223,7 +1223,7 @@ sealed class HomeTab {
         get() = when (this) {
             is Folder -> when (id) {
                 FolderIds.INBOX -> "Inbox"
-                FolderIds.SCREENER -> "Screener"
+                FolderIds.SCREENER -> "Screening room"
                 FolderIds.PROMOTIONS -> "Promotions"
                 FolderIds.UPDATES -> "Updates"
                 FolderIds.SENT -> "Sent"
@@ -1278,10 +1278,12 @@ object FolderIds {
         else -> id.replaceFirstChar { it.uppercase() }
     }
 
-    /** Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). */
+    /**
+     * Swipe-tab order, matching iOS `HomeShellView.folderTabs` (excluding For you). No
+     * Screener: it's the Screening room, pushed from the Inbox row (AVE-136).
+     */
     val swipeFolderIds: List<String> = listOf(
         INBOX,
-        SCREENER,
         PROMOTIONS,
         UPDATES,
         SENT,

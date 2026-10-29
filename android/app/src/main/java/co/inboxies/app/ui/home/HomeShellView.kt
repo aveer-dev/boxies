@@ -62,6 +62,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.ViewSidebar
@@ -73,7 +74,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.MarkEmailRead
 import androidx.compose.material.icons.outlined.MarkEmailUnread
@@ -134,6 +134,7 @@ import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.theme.AvatarInitials
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
+import co.inboxies.app.ui.email.ScreeningRoom
 import co.inboxies.app.theme.InterFontFamily
 import co.inboxies.app.theme.ProgressiveBlurBackground
 import co.inboxies.app.theme.ThemeMode
@@ -228,8 +229,8 @@ fun HomeShellView(
     var highlightedComposeAction by remember { mutableStateOf<ComposeActionItem?>(null) }
     var composeActionFrames by remember { mutableStateOf<Map<ComposeActionItem, Rect>>(emptyMap()) }
     var tabNavigatingForward by remember { mutableStateOf(true) }
-    // Entering or leaving Reply Later is a push, not a folder-tab slide.
-    var isReplyLaterPush by remember { mutableStateOf(false) }
+    // Entering or leaving Reply Later or the Screening room is a push, not a folder-tab slide.
+    var isPushTransition by remember { mutableStateOf(false) }
     var previousTabBeforeReplyLater by remember { mutableStateOf<HomeTab>(HomeTab.Folder(FolderIds.INBOX)) }
     var newMailboxName by remember { mutableStateOf("") }
     var newMailboxEmail by remember { mutableStateOf("") }
@@ -287,22 +288,24 @@ fun HomeShellView(
         }
     }
 
-    val showsScreenerFolder = remember(mailboxes, folders, selectedMailboxId) { appModel.showsScreenerFolder }
-    val folderTabs = remember(showsScreenerFolder) {
+    // No Screener: it's the Screening room, pushed from the Inbox row (AVE-136).
+    val folderTabs = remember {
         // listOf(HomeTab.AiInbox) + FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
-        FolderIds.swipeFolderIds
-            .filter { it != FolderIds.SCREENER || showsScreenerFolder }
-            .map { HomeTab.Folder(it) }
+        FolderIds.swipeFolderIds.map { HomeTab.Folder(it) }
     }
+    val screeningRoomTab = remember { HomeTab.Folder(FolderIds.SCREENER) }
+    val isScreeningRoom = selectedTab == screeningRoomTab
+    fun isPushedTab(tab: HomeTab) = tab is HomeTab.ReplyLater || tab == screeningRoomTab
 
     val hasMinimizedCompose = composeSession?.isMinimized == true
-    val isInboxTab = (selectedTab as? HomeTab.Folder)?.id == FolderIds.INBOX || selectedTab == HomeTab.AiInbox
-    val screenerSenderCount = remember(folders, emails) { appModel.screenerSenderCount }
+    // Inbox "N waiting to be screened" row (AVE-136); 0 hides it (Screener off or nobody waiting).
+    val screenerQueue by appModel.screenerQueue.collectAsState()
     val screenerEnabled = remember(mailboxes, selectedMailboxId) { appModel.isScreenerEnabled }
-    val showScreenerBanner = isInboxTab && screenerEnabled && screenerSenderCount > 0 && !isSelectMode && !showComposeActions
+    val screenerSenders = remember(screenerQueue) { appModel.screenerSenders(screenerQueue) }
+    val screenerSenderCount = remember(folders, screenerQueue) { appModel.screenerSenderCount(screenerQueue) }
+    val screeningRoomCount = if (screenerEnabled) screenerSenderCount else 0
     val listBottomInset by animateDpAsState(
-        targetValue = HomeChromeMetrics.listBottomInset(hasMinimizedCompose && !isSelectMode) +
-            (if (showScreenerBanner) 48.dp else 0.dp),
+        targetValue = HomeChromeMetrics.listBottomInset(hasMinimizedCompose && !isSelectMode),
         animationSpec = selectModeSpring(),
         label = "listBottomInset",
     )
@@ -316,6 +319,7 @@ fun HomeShellView(
     }
 
     val navigationTitle = when (val tab = selectedTab) {
+        screeningRoomTab -> ScreeningRoom.TITLE
         HomeTab.AiInbox -> {
             val name = digest?.greetingName.orEmpty()
             if (name.isNotBlank()) "Hi $name \uD83D\uDC4B" else "Hi \uD83D\uDC4B"
@@ -337,6 +341,8 @@ fun HomeShellView(
             }
         }
         is HomeTab.Folder -> when {
+            tab == screeningRoomTab && !isSelectMode && !filterState.isActive ->
+                if (screenerSenderCount == 0) "Nobody waiting" else ScreeningRoom.waitingLabel(screenerSenderCount)
             isSelectMode -> {
                 if (selectedEmailIds.isEmpty()) "Select emails" else "${selectedEmailIds.size} selected"
             }
@@ -366,13 +372,17 @@ fun HomeShellView(
             isSelectMode = false
             selectedEmailIds = emptySet()
         }
-        isReplyLaterPush = tab is HomeTab.ReplyLater || selectedTab is HomeTab.ReplyLater
+        isPushTransition = isPushedTab(tab) || isPushedTab(selectedTab)
         if (tab is HomeTab.ReplyLater) {
             if (selectedTab !is HomeTab.ReplyLater) {
                 previousTabBeforeReplyLater = selectedTab
             }
             tabNavigatingForward = true
         } else if (selectedTab is HomeTab.ReplyLater) {
+            tabNavigatingForward = false
+        } else if (tab == screeningRoomTab) {
+            tabNavigatingForward = true
+        } else if (selectedTab == screeningRoomTab) {
             tabNavigatingForward = false
         } else {
             val current = folderTabs.indexOf(selectedTab).coerceAtLeast(0)
@@ -391,6 +401,30 @@ fun HomeShellView(
             previousTabBeforeReplyLater
         }
         selectTab(target)
+    }
+
+    /** Back out of the Screening room to Inbox, its only parent (AVE-136). */
+    fun popScreeningRoom() {
+        if (selectedTab != screeningRoomTab) return
+        selectTab(HomeTab.Folder(FolderIds.INBOX))
+    }
+
+    /** Inbox row → Screening room, pushed over the list. */
+    fun openScreeningRoom() {
+        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        selectTab(screeningRoomTab)
+    }
+
+    // The room belongs to the mailbox it was opened from; Screener off has no room.
+    LaunchedEffect(selectedMailboxId, screenerEnabled) {
+        if (selectedTab == screeningRoomTab && (!screenerEnabled || selectedMailboxId == null)) popScreeningRoom()
+    }
+    // Screened the last sender: nothing left in the room, back to Inbox.
+    var hadScreenerQueue by remember { mutableStateOf(screenerQueue.isNotEmpty()) }
+    LaunchedEffect(screenerQueue.isEmpty()) {
+        val emptied = hadScreenerQueue && screenerQueue.isEmpty()
+        hadScreenerQueue = screenerQueue.isNotEmpty()
+        if (emptied && selectedTab == screeningRoomTab && !isLoading) popScreeningRoom()
     }
 
     fun selectAdjacentTab(forward: Boolean) {
@@ -439,7 +473,10 @@ fun HomeShellView(
     // select mode / overlays still take precedence.
     BackHandler(enabled = isTwoPane && selectedEmail != null) { appModel.closeEmail() }
 
-    BackHandler(enabled = showSearch || showComposeActions || isSelectMode || selectedTab is HomeTab.ReplyLater) {
+    BackHandler(
+        enabled = showSearch || showComposeActions || isSelectMode ||
+            selectedTab is HomeTab.ReplyLater || isScreeningRoom,
+    ) {
         when {
             showComposeActions -> {
                 dismissComposeMenu()
@@ -450,6 +487,7 @@ fun HomeShellView(
                 selectedEmailIds = emptySet()
             }
             selectedTab is HomeTab.ReplyLater -> popReplyLater()
+            isScreeningRoom -> popScreeningRoom()
         }
     }
 
@@ -501,7 +539,14 @@ fun HomeShellView(
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box {
+                    if (isScreeningRoom) {
+                        HomeChromeToolbarButton(
+                            icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                            contentDescription = "Back to Inbox",
+                            onClick = { popScreeningRoom() },
+                            modifier = Modifier.padding(8.dp),
+                        )
+                    } else Box {
                         MailboxAvatar(
                             initials = initials,
                             isLoading = isMailboxLoading,
@@ -789,6 +834,9 @@ fun HomeShellView(
                                     if (selectedTab is HomeTab.ReplyLater) {
                                         // Reply Later is pushed over a folder: swipe right pops back.
                                         if (dragAccum >= 40f) popReplyLater()
+                                    } else if (selectedTab == screeningRoomTab) {
+                                        // The Screening room is pushed over Inbox: swipe right pops back.
+                                        if (dragAccum >= 40f) popScreeningRoom()
                                     } else if (abs(dragAccum) >= 40f) {
                                         selectAdjacentTab(forward = dragAccum < 0)
                                     }
@@ -807,7 +855,7 @@ fun HomeShellView(
                         targetState = selectedTab,
                         transitionSpec = {
                             val forward = tabNavigatingForward
-                            if (isReplyLaterPush) {
+                            if (isPushTransition) {
                                 // Same push as Settings (iOS twin: spring 0.32 / 0.86): the
                                 // incoming page slides a quarter width, the one under it a sixth.
                                 (
@@ -885,6 +933,13 @@ fun HomeShellView(
                                 onLoadMore = { appModel.loadMoreEmails() },
                                 inboxNewCount = if (tab.id == FolderIds.INBOX) appModel.inboxNewCountFor(inboxNewTotal) else null,
                                 onShowAllNew = if (tab.id == FolderIds.INBOX) ({ showAllNew = true }) else null,
+                                screeningRoomCount = if (tab.id == FolderIds.INBOX && !filterState.isActive) {
+                                    screeningRoomCount
+                                } else {
+                                    0
+                                },
+                                screeningRoomSenders = screenerSenders,
+                                onOpenScreeningRoom = if (tab.id == FolderIds.INBOX) ({ openScreeningRoom() }) else null,
                                 onOpen = { email ->
                                     scope.launch {
                                         if (email.isDraft) appModel.openDraft(email) else appModel.openEmail(email)
@@ -962,23 +1017,6 @@ fun HomeShellView(
                         modifier = Modifier
                             .padding(horizontal = ToastMetrics.screenInset)
                             .padding(bottom = ToastMetrics.barGap),
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = showScreenerBanner,
-                    enter = slideInVertically(selectModeSpring()) { it } + fadeIn(selectModeSpring()),
-                    exit = slideOutVertically(selectModeSpring()) { it } + fadeOut(selectModeSpring()),
-                ) {
-                    ScreenerBanner(
-                        count = screenerSenderCount,
-                        onClick = {
-                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                            selectTab(HomeTab.Folder(FolderIds.SCREENER))
-                        },
-                        modifier = Modifier
-                            .padding(horizontal = 24.dp)
-                            .padding(bottom = 8.dp),
                     )
                 }
 
@@ -1154,7 +1192,6 @@ fun HomeShellView(
                         highlightedComposeAction = null
                     },
                     showCompose = !isReadOnly,
-                    showScreener = showsScreenerFolder,
                 )
                 if (composeDoubleTapArmed && !isReadOnly) {
                     Box(
@@ -1735,65 +1772,6 @@ private fun BottomBar(
             contentAlignment = Alignment.BottomCenter,
         ) {
             ComposeStackButton(isExpanded = showComposeActions, isPressed = composePressed)
-        }
-    }
-}
-
-@Composable
-private fun ScreenerBanner(
-    count: Int,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val colors = inboxiesColors()
-    val text = if (count == 1) {
-        "1 first-time sender to screen"
-    } else {
-        "$count first-time senders to screen"
-    }
-
-    Surface(
-        onClick = onClick,
-        modifier = modifier
-            .fillMaxWidth()
-            .semantics {
-                contentDescription = text
-            },
-        shape = RoundedCornerShape(50),
-        color = colors.surface.copy(alpha = 0.94f),
-        border = BorderStroke(0.5.dp, colors.line.copy(alpha = 0.6f)),
-        shadowElevation = 3.dp,
-        tonalElevation = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Shield,
-                contentDescription = null,
-                tint = colors.accent,
-                modifier = Modifier.size(15.dp),
-            )
-            Text(
-                text = text,
-                fontFamily = InterFontFamily,
-                fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
-                color = colors.ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Icon(
-                imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                contentDescription = null,
-                tint = colors.muted,
-                modifier = Modifier.size(15.dp),
-            )
         }
     }
 }

@@ -463,6 +463,14 @@ function tierFor(signals: {
  * where customers can get their own subdomain or DKIM keys). Cloudflare
  * validates the seal signature (`arc=pass`), so a listed domain that a
  * provider never seals with is inert, not a hole. Add new sealers here.
+ *
+ * Zoho Mail (`zohomail.com`, `zohomail.eu`) is left off on purpose. It seals
+ * mail it sends, not only mail it forwards, and its results say `dmarc=pass`
+ * for a verified "Send Mail As" address even when that domain's DMARC fails
+ * (AVE-102: Cloudflare said `dmarc=fail … policy.dmarc=quarantine` on the
+ * same message). The envelope check in `trustedArcSealerEvidence` stops that
+ * case, but a sealer that records a DMARC pass it never evaluated isn't one
+ * to rest `verified` on.
  */
 export const TRUSTED_ARC_SEALERS: readonly string[] = [
 	// Gmail / Google Workspace.
@@ -477,9 +485,6 @@ export const TRUSTED_ARC_SEALERS: readonly string[] = [
 	"proton.me",
 	// Fastmail (seals as its platform domain, not fastmail.com).
 	"messagingengine.com",
-	// Zoho Mail (US and EU data centres).
-	"zohomail.com",
-	"zohomail.eu",
 	// Yahoo Mail and AOL (same platform).
 	"yahoo.com",
 	"aol.com",
@@ -523,6 +528,33 @@ function arcResults(header: ParsedAuthHeader | null): AuthVerdict[] {
 	return header ? header.methods.filter((m) => m.method === "arc").map((m) => m.result) : [];
 }
 
+/** Every `arc=` verdict in the header says `pass`, and there is at least one. */
+function arcPassed(header: ParsedAuthHeader): boolean {
+	const verdicts = arcResults(header);
+	return verdicts.length > 0 && verdicts.every((result) => result === "pass");
+}
+
+/**
+ * Cloudflare's own ARC sealer. Email Routing adds a set to every message it
+ * hands the Worker, one instance above whatever chain arrived:
+ * `ARC-Seal: i=N; d=cloudflare-email.net; s=cf2024-1`, plus results at N
+ * from `mx.cloudflare.net` repeating its Authentication-Results (AVE-102).
+ */
+const CLOUDFLARE_ARC_SEALER = "cloudflare-email.net";
+
+function isCloudflareArcSealer(domain: string): boolean {
+	const d = domain.replace(/\.$/, "");
+	return d === CLOUDFLARE_ARC_SEALER || d.endsWith(`.${CLOUDFLARE_ARC_SEALER}`);
+}
+
+/** Envelope domains (`spf … smtp.mailfrom`) a results header names. */
+function envelopeDomains(header: ParsedAuthHeader): string[] {
+	return header.methods
+		.filter((hit) => hit.method === "spf")
+		.map((hit) => domainFromAddress(hit.properties["smtp.mailfrom"]))
+		.filter((domain): domain is string => Boolean(domain));
+}
+
 /**
  * Whether the visible From is proven by the results a trusted upstream
  * sealer recorded: a DMARC pass for that exact From domain, or a DKIM/SPF
@@ -554,23 +586,41 @@ function upstreamProvesFrom(header: ParsedAuthHeader, fromDomain: string): boole
 
 /**
  * Trusted-sealer ARC evidence for forwarded mail. Returns the sealer domain
- * when the visible From is proven by it, else null.
+ * when the visible From is proven by it, else null. Every check fails closed.
  *
  * We can't verify ARC signatures in the Worker, so the trust anchor is
  * Cloudflare's own ARC validation: every Cloudflare-stamped results header
  * we trust (the topmost Authentication-Results and ARC-Authentication-Results
  * from `*.cloudflare.net`) must carry an `arc=` verdict, and all of them
- * must say `pass`. A missing or non-pass verdict fails closed.
+ * must say `pass`. That means Cloudflare validated every set it received,
+ * so the highest of those is the last hop before Cloudflare.
  *
- * `arc=pass` means Cloudflare validated every ARC set it received, so the
- * set with the highest instance N is the last hop before Cloudflare, signed
- * by its seal's `d=`. We read only that set, and only when there is exactly
- * one seal and one results header at N, nothing claims a higher instance,
- * the seal's `d=` is an allowlisted sealer, and its `cv=` is what a valid
- * chain needs there (`none` at i=1, else `pass`). An older set from a
- * trusted sealer is never used: a later, untrusted hop could have altered
- * the message after it. If Cloudflare ever adds its own seal on top, N is
- * that seal and nothing upgrades (fails closed).
+ * Cloudflare seals what it delivers (see `CLOUDFLARE_ARC_SEALER`), so on
+ * real mail the top instance N is Cloudflare's set and the upstream sealer
+ * is at N-1. We accept Cloudflare's set only as exactly one seal and one
+ * results header at N, with results from a trusted authserv that say
+ * `arc=pass`. A Cloudflare seal below the top, or more than one, fails
+ * closed. Without any Cloudflare seal (mail stored before it sealed, tests)
+ * the top set is the upstream one.
+ *
+ * The upstream set needs exactly one seal and one results header, a seal
+ * `d=` on `TRUSTED_ARC_SEALERS`, the `cv=` a valid chain needs there (`none`
+ * at i=1, else `pass`), results that aren't ours, and a verdict that proves
+ * the visible From. An older set is never used: a later, untrusted hop
+ * could have altered the message after it.
+ *
+ * Last, the sealer must have forwarded the message, not sent it. Its results
+ * can't tell us which: Zoho seals mail its users send and writes `dmarc=pass`
+ * for their "Send Mail As" address, even where Cloudflare finds DMARC failing
+ * under `p=quarantine` (AVE-102). What forwarding does change is the
+ * envelope: a forwarder resends under its own return path (SRS, Gmail's
+ * `+caf_`), so Cloudflare's SPF names a different domain from the one the
+ * sealer received. When Cloudflare's `smtp.mailfrom` domain matches or
+ * aligns with the sealer's, no forward happened between them: the sealer
+ * sent or relayed the message as it was, and Cloudflare's verdict on that
+ * same envelope stands. When either side names no envelope we can't tell,
+ * so we don't upgrade. The cost is a forwarder that keeps the original
+ * envelope. It breaks SPF for everything it forwards and doesn't upgrade.
  */
 function trustedArcSealerEvidence(params: {
 	trustedAr: ParsedAuthHeader | null;
@@ -585,11 +635,7 @@ function trustedArcSealerEvidence(params: {
 	const anchors = [params.trustedAr, params.trustedArc].filter(
 		(header): header is ParsedAuthHeader => header !== null,
 	);
-	if (anchors.length === 0) return null;
-	for (const header of anchors) {
-		const verdicts = arcResults(header);
-		if (verdicts.length === 0 || verdicts.some((result) => result !== "pass")) return null;
-	}
+	if (anchors.length === 0 || !anchors.every(arcPassed)) return null;
 
 	const seals: ArcSeal[] = [];
 	for (const value of params.arcSealValues) {
@@ -607,18 +653,45 @@ function trustedArcSealerEvidence(params: {
 
 	const top = Math.max(...seals.map((seal) => seal.instance));
 	if (results.some((r) => (r.instance ?? 0) > top)) return null;
-	const topSeals = seals.filter((seal) => seal.instance === top);
-	const topResults = results.filter((r) => r.instance === top);
-	if (topSeals.length !== 1 || topResults.length !== 1) return null;
+	// The one seal and one results header at `instance`, if its `cv=` is what
+	// a valid chain needs there.
+	const setAt = (instance: number) => {
+		const atSeals = seals.filter((seal) => seal.instance === instance);
+		const atResults = results.filter((r) => r.instance === instance);
+		if (atSeals.length !== 1 || atResults.length !== 1) return null;
+		if (atSeals[0].cv !== (instance === 1 ? "none" : "pass")) return null;
+		return { seal: atSeals[0], results: atResults[0] };
+	};
 
-	const seal = topSeals[0];
-	if (!isTrustedArcSealer(seal.d)) return null;
-	if (seal.cv !== (top === 1 ? "none" : "pass")) return null;
-	// Our own results header must not be the one at the top instance: that
-	// would make the "trusted sealer's" results ours, or a forgery of ours.
-	if (isTrustedAuthserv(topResults[0].authserv)) return null;
+	// Cloudflare's envelope, from each of its results headers.
+	const cloudflareEnvelope = anchors.flatMap(envelopeDomains);
+	let upstreamInstance = top;
+	const cloudflareSeals = seals.filter((seal) => isCloudflareArcSealer(seal.d));
+	if (cloudflareSeals.length > 0) {
+		if (cloudflareSeals.length !== 1 || cloudflareSeals[0].instance !== top) return null;
+		const cloudflare = setAt(top);
+		if (!cloudflare) return null;
+		if (!isTrustedAuthserv(cloudflare.results.authserv) || !arcPassed(cloudflare.results)) {
+			return null;
+		}
+		cloudflareEnvelope.push(...envelopeDomains(cloudflare.results));
+		upstreamInstance = top - 1;
+	}
 
-	return upstreamProvesFrom(topResults[0], fromDomain) ? seal.d : null;
+	const upstream = setAt(upstreamInstance);
+	if (!upstream || !isTrustedArcSealer(upstream.seal.d)) return null;
+	// Our own results header must not be the upstream one: that would make
+	// the "trusted sealer's" results ours, or a forgery of ours.
+	if (isTrustedAuthserv(upstream.results.authserv)) return null;
+	if (!upstreamProvesFrom(upstream.results, fromDomain)) return null;
+
+	// Forwarded, not sent by the sealer: Cloudflare saw another envelope.
+	const sealerEnvelope = envelopeDomains(upstream.results);
+	if (sealerEnvelope.length === 0 || cloudflareEnvelope.length === 0) return null;
+	const sameEnvelope = cloudflareEnvelope.some((ours) =>
+		sealerEnvelope.some((theirs) => domainsAligned(ours, theirs)),
+	);
+	return sameEnvelope ? null : upstream.seal.d;
 }
 
 /**

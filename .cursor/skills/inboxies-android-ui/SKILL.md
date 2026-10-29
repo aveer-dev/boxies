@@ -214,8 +214,8 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |
 | AI limit reached | `previewAiUsageLimit` | `aiUsageLimit` | Agent chat at 50 / 50: limit notice, composer disabled |
 | AI usage (Settings) | `previewAiUsageSettings` | `aiUsageSettings` | Settings sheet scrolled to the AI usage section |
-| Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
-| Screener | `previewScreener` | `screener` | Screener folder + detail open |
+| Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures + the pinned "3 waiting to be screened" row (AVE-136) |
+| Screener | `previewScreener` | `screener` | Screening room + detail open (`screenerList` for the room alone). Pushed from the Inbox row; not a folder tab or menu item (AVE-136) |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |

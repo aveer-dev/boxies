@@ -33,6 +33,12 @@ struct EmailListView: View {
     var inboxNewCount: Int? = nil
     /// Inbox: opens the "All new" screen from the row under the capped New section.
     var onShowAllNew: (() -> Void)? = nil
+    /// Inbox: first-time senders waiting to be screened (AVE-136). Above zero (with
+    /// `onOpenScreeningRoom`) pins the "N waiting to be screened" row to the list top.
+    var screeningRoomCount: Int = 0
+    /// One email per waiting sender, newest first; the row stacks their avatars.
+    var screeningRoomSenders: [Email] = []
+    var onOpenScreeningRoom: (() -> Void)? = nil
     let onSelect: (Email) -> Void
 
     @State private var hiddenEmailIDs: Set<String> = []
@@ -70,6 +76,10 @@ struct EmailListView: View {
     private var emptyList: some View {
         ScrollView {
             VStack(spacing: 24) {
+                if showsScreeningRoomRow {
+                    screeningRoomRow
+                }
+
                 if let filterChipsBar {
                     filterChipsBar
                 }
@@ -116,6 +126,11 @@ struct EmailListView: View {
 
     private var emailList: some View {
         mailList {
+            if showsScreeningRoomRow {
+                screeningRoomRow
+                    .mailRowChrome()
+            }
+
             if let filterChipsBar {
                 Section {
                     filterChipsBar
@@ -256,6 +271,48 @@ struct EmailListView: View {
                 }
             }
         }
+    }
+
+    private var showsScreeningRoomRow: Bool {
+        screeningRoomCount > 0 && onOpenScreeningRoom != nil && !isSelectMode
+    }
+
+    /// Flat pinned row at the top of Inbox: stacked sender avatars, "N waiting to be
+    /// screened", chevron. Opens the Screening room (AVE-136). Scrolls with the list.
+    private var screeningRoomRow: some View {
+        let label = ScreeningRoom.waitingLabel(count: screeningRoomCount)
+        return VStack(spacing: 0) {
+            Button {
+                onOpenScreeningRoom?()
+            } label: {
+                HStack(spacing: 12) {
+                    ScreeningRoomAvatarStack(senders: screeningRoomSenders)
+                    Text(label)
+                        .font(.inter(size: AppTheme.List.title, weight: .medium))
+                        .tracking(AppTheme.List.tracking)
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AppTheme.muted)
+                }
+                .padding(.horizontal, AppTheme.List.rowHorizontalPadding)
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(MailRowButtonStyle())
+
+            Rectangle()
+                .fill(AppTheme.List.separatorColor)
+                .frame(height: AppTheme.List.separatorHeight)
+                .padding(.horizontal, AppTheme.List.rowHorizontalPadding)
+                .accessibilityHidden(true)
+        }
+        .background(AppTheme.background)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+        .accessibilityHint("Opens the Screening room")
+        .accessibilityAddTraits(.isButton)
     }
 
     /// Quiet accent link under the capped New rows; opens every New conversation.
@@ -585,6 +642,52 @@ private struct EmailRowSkeleton: View {
         RoundedRectangle(cornerRadius: 4, style: .continuous)
             .fill(AppTheme.pillActive)
             .frame(width: width, height: height)
+    }
+}
+
+/// Screening room copy shared by the Inbox row and the room's subtitle (AVE-136).
+enum ScreeningRoom {
+    static let title = "Screening room"
+
+    static func waitingLabel(count: Int) -> String {
+        "\(count) waiting to be screened"
+    }
+}
+
+/// Up to three overlapping sender initials, newest first (mailbox-avatar look:
+/// `pillFill` circle, Inter semibold ink). No senders yet: the Screener shield.
+struct ScreeningRoomAvatarStack: View {
+    let senders: [Email]
+
+    static let size: CGFloat = 30
+    static let overlap: CGFloat = 8
+
+    var body: some View {
+        let shown = Array(senders.prefix(3))
+        HStack(spacing: -Self.overlap) {
+            if shown.isEmpty {
+                Image(systemName: HomeTab.folder("screener").systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AppTheme.ink)
+                    .frame(width: Self.size, height: Self.size)
+                    .background(AppTheme.pillFill, in: Circle())
+            } else {
+                ForEach(Array(shown.enumerated()), id: \.offset) { index, email in
+                    let initials = AvatarInitials.from(email.fromAddress.resolvedName)
+                    Text(initials)
+                        .font(.inter(size: initials.count > 1 ? 10 : 11, weight: .semibold))
+                        .foregroundStyle(AppTheme.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(width: Self.size, height: Self.size)
+                        .background(AppTheme.pillFill, in: Circle())
+                        // Background ring separates overlapping discs.
+                        .overlay(Circle().stroke(AppTheme.background, lineWidth: 2))
+                        .zIndex(Double(shown.count - index))
+                }
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

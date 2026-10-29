@@ -1,6 +1,7 @@
 /**
- * Android swipe tabs must expose Screener, Promotions, Updates, and Spam
- * in the same order as iOS HomeShellView.folderTabs.
+ * Android swipe tabs must expose Promotions, Updates, and Spam in the same
+ * order as iOS HomeShellView.folderTabs. Screener is not a tab: it's the
+ * Screening room, opened from the Inbox row (AVE-136).
  * Run: node android/test/folder-tabs.test.mjs
  */
 
@@ -33,7 +34,6 @@ const fcm = readFileSync(
 
 const expectedSwipe = [
 	"INBOX",
-	"SCREENER",
 	"PROMOTIONS",
 	"UPDATES",
 	"SENT",
@@ -54,7 +54,7 @@ assert.match(shell, /FolderIds\.swipeFolderIds\.map \{ HomeTab\.Folder\(it\) \}/
 assert.match(shell, /listOf\(HomeTab\.AiInbox\) \+ FolderIds\.swipeFolderIds/);
 
 for (const [id, title] of [
-	["SCREENER", "Screener"],
+	["SCREENER", "Screening room"],
 	["PROMOTIONS", "Promotions"],
 	["UPDATES", "Updates"],
 	["SPAM", "Spam"],
@@ -68,9 +68,10 @@ for (const [id, title] of [
 
 assert.match(
 	overlay,
-	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Spam,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*Updates,[\s\S]*Promotions,[\s\S]*Screener,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
-	"long-press overlay lists every folder, Spam between Trash and Archive",
+	/enum class ComposeActionItem \{[\s\S]*Settings,[\s\S]*Trash,[\s\S]*Spam,[\s\S]*Archive,[\s\S]*Drafts,[\s\S]*Sent,[\s\S]*Updates,[\s\S]*Promotions,[\s\S]*Inbox,[\s\S]*ForYou,[\s\S]*Compose,/,
+	"long-press overlay lists every folder except Screener, Spam between Trash and Archive",
 );
+assert.doesNotMatch(overlay, /^\s*Screener,/m, "Screener is not in the long-press overlay");
 assert.match(overlay, /Spam -> HomeTab\.Folder\(FolderIds\.SPAM\)/, "the Spam row opens the Spam tab");
 
 // iOS twin: same row, same place.
