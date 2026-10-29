@@ -60,6 +60,9 @@ struct LoadFailedContent<Extra: View>: View {
                         Text("Retry")
                     }
                     .font(.inter(size: 14, weight: .semibold))
+                    // `.borderedProminent` draws its label white, which vanishes on the
+                    // near-white dark-mode `ink` fill. Match the spinner: label = background.
+                    .foregroundStyle(AppTheme.background)
                     .frame(minWidth: 96)
                 }
                 .buttonStyle(.borderedProminent)
