@@ -20,6 +20,7 @@ import {
 	type InboxSectionQuery,
 } from "../../shared/list-sections";
 import { AUTO_REPLY_WINDOW_MS } from "../lib/mail-automations";
+import { sendQuotaError } from "../lib/send-quota";
 import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
@@ -3223,31 +3224,37 @@ export class MailboxDO extends DurableObject<Env> {
 	// ── Rate limiting (raw SQL) ────────────────────────────────────
 
 	/**
-	 * Send rate limit: 20 per hour, 100 per day per mailbox. When under the limit
-	 * this also reserves the slot (check + insert run without awaiting, so two
+	 * Send quota (AVE-125): recipients, not messages, count against the hourly
+	 * and daily windows (lib/send-quota.ts). When the message fits, this also
+	 * reserves its recipients (check + insert run without awaiting, so two
 	 * concurrent sends can't both pass). Returns an error message when exceeded.
+	 * `recipients` is To + Cc + Bcc; callers enforce the 50-per-message cap first.
 	 */
-	async checkSendRateLimit(): Promise<string | null> {
+	async checkSendRateLimit(recipients: number = 1): Promise<string | null> {
+		const units = Math.max(1, Math.floor(Number(recipients)) || 1);
 		const now = Date.now();
 		const hourAgo = new Date(now - 60 * 60 * 1000).toISOString();
 		const dayAgo = new Date(now - 24 * 60 * 60 * 1000).toISOString();
-		const count = (since: string) =>
-			([...this.ctx.storage.sql.exec(
-				`SELECT COUNT(*) as cnt FROM send_log WHERE sent_at >= ?1`,
-				since,
-			)][0] as { cnt: number } | undefined)?.cnt ?? 0;
+		const used = (since: string) =>
+			Number(
+				([...this.ctx.storage.sql.exec(
+					`SELECT COALESCE(SUM(recipients), 0) as cnt FROM send_log WHERE sent_at >= ?1`,
+					since,
+				)][0] as { cnt: number } | undefined)?.cnt ?? 0,
+			);
 
-		if (count(hourAgo) >= 20) {
-			return "Rate limit exceeded: max 20 emails per hour per mailbox";
-		}
-		if (count(dayAgo) >= 100) {
-			return "Rate limit exceeded: max 100 emails per day per mailbox";
-		}
+		const error = sendQuotaError({
+			recipients: units,
+			usedLastHour: used(hourAgo),
+			usedLastDay: used(dayAgo),
+		});
+		if (error) return error;
 
 		this.ctx.storage.sql.exec(`DELETE FROM send_log WHERE sent_at < ?1`, dayAgo);
 		this.ctx.storage.sql.exec(
-			`INSERT INTO send_log (sent_at) VALUES (?1)`,
+			`INSERT INTO send_log (sent_at, recipients) VALUES (?1, ?2)`,
 			new Date(now).toISOString(),
+			units,
 		);
 		return null;
 	}

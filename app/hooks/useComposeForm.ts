@@ -29,6 +29,7 @@ import {
 import {
 	estimateOutboundMessageBytes,
 	MAX_OUTBOUND_MESSAGE_BYTES,
+	recipientCapError,
 } from "shared/outbound-limits";
 import { useDeleteEmail, useForwardEmail, useReplyToEmail, useSaveDraft, useSendEmail } from "~/queries/emails";
 import { useMailbox } from "~/queries/mailboxes";
@@ -518,6 +519,14 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 			text,
 			attachments: attachments.map((item) => ({ content: item.content })),
 		};
+		// Same 50-recipient cap and sentence as the Worker (AVE-125), before a round trip.
+		const tooMany = recipientCapError(toRecipients, ccRecipients, bccRecipients);
+		if (tooMany) {
+			isSendingRef.current = false;
+			setError(tooMany);
+			toastManager.add({ title: tooMany, variant: "error" });
+			return;
+		}
 		if (estimateOutboundMessageBytes(sizeInput) > MAX_OUTBOUND_MESSAGE_BYTES) {
 			isSendingRef.current = false;
 			setError(OUTBOUND_SIZE_ERROR);

@@ -12,6 +12,7 @@
  */
 import { z } from "zod";
 import type { DeliveryRecipient } from "./delivery-recipients";
+import { recipientCapError, TOO_MANY_RECIPIENTS_ERROR } from "./send-quota";
 
 // ── TypeScript Interfaces ──────────────────────────────────────────
 
@@ -126,6 +127,10 @@ export const SendEmailRequestSchema = z
 	})
 	.refine((data) => data.html || data.text, {
 		message: "Either 'html' or 'text' must be provided",
+	})
+	// To + Cc + Bcc together (AVE-125); no path, so the 400 reads as the sentence alone.
+	.refine((data) => !recipientCapError(data.to, data.cc, data.bcc), {
+		message: TOO_MANY_RECIPIENTS_ERROR,
 	});
 
 export const SendEmailResponseSchema = z.object({
