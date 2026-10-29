@@ -28,8 +28,10 @@ export type McpGrantView = {
 	clientUri: string | null;
 	scopes: string[];
 	/**
-	 * Mailboxes the grant is limited to, when the grant records them in its
-	 * metadata (AVE-68). Null means every mailbox the user can open.
+	 * Mailboxes the grant is limited to, from the grant's metadata (written
+	 * by the consent page since AVE-129). Null means no limit is recorded:
+	 * every mailbox the user can open, or a grant approved before AVE-129
+	 * whose limit lives only in its encrypted props.
 	 */
 	mailboxIds: string[] | null;
 	createdAt: string;

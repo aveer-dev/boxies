@@ -389,6 +389,25 @@ let code;
 	assert.equal(mcp.status, 200);
 	assert.deepEqual(mcp.data.props.oauth.scopes, ["read", "draft"]);
 	assert.deepEqual(mcp.data.props.oauth.mailboxIds, ["team@inboxies.email"]);
+
+	// Settings → Sessions shows the limit (AVE-129), and a refresh keeps it.
+	const listed = async () =>
+		(await call(env, `${ISSUER}/api/v1/me/mcp-grants`, { headers: bearer(adaSession.token) })).data.filter(
+			(grant) => grant.clientId === clientId,
+		);
+	let grants = await listed();
+	assert.equal(grants.length, 1, JSON.stringify(grants));
+	assert.deepEqual(grants[0].mailboxIds, ["team@inboxies.email"]);
+	assert.deepEqual(grants[0].scopes, ["read", "draft"]);
+	const refreshed = await call(env, `${ISSUER}/token`, {
+		method: "POST",
+		form: { client_id: clientId, grant_type: "refresh_token", refresh_token: res.data.refresh_token },
+	});
+	assert.equal(refreshed.status, 200, refreshed.text);
+	grants = await listed();
+	assert.deepEqual(grants[0].mailboxIds, ["team@inboxies.email"], "refresh keeps the recorded limit");
+	const after = await call(env, `${ISSUER}/mcp`, { method: "POST", headers: bearer(refreshed.data.access_token), json: {} });
+	assert.deepEqual(after.data.props.oauth.mailboxIds, ["team@inboxies.email"]);
 }
 
 // A mailbox ada lost access to after the page opened can't be granted.
