@@ -544,7 +544,11 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthApi, issuer
 	const { redirectTo } = await oauth.completeAuthorization({
 		request: approved.request,
 		userId: principal.userId,
-		metadata: {},
+		// Plain-text copy of the mailbox limit so Settings → Sessions can show
+		// it (workers/mcp/grants.ts); props are encrypted with the token and
+		// can't be read there. Display only: access is still enforced from
+		// props. The code and refresh exchanges keep the grant's metadata.
+		metadata: { mailboxIds: [...selection.mailboxIds] },
 		scope: approved.request.scope,
 		props,
 	});
