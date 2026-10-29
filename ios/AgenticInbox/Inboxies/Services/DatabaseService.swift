@@ -214,6 +214,15 @@ final class DatabaseService: @unchecked Sendable {
             exec("ALTER TABLE emails ADD COLUMN inline_note_count INTEGER;")
             setVersion(7)
         }
+
+        // Why mail was filed where it was (spam-reason line) + alias state (AVE-111).
+        if (getVersion() < 8) {
+            exec("ALTER TABLE emails ADD COLUMN alias_active INTEGER;")
+            exec("ALTER TABLE emails ADD COLUMN auth_tier TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN classification_reason TEXT;")
+            exec("ALTER TABLE emails ADD COLUMN matched_rule_id TEXT;")
+            setVersion(8)
+        }
     }
 
     private func getVersion() -> Int {
@@ -418,7 +427,8 @@ final class DatabaseService: @unchecked Sendable {
                 folder_name, has_draft, needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id, reply_later, reply_later_at,
                 updated_at, alias_id, alias_email,
-                has_sticky_note, sticky_note_text, inline_note_count
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?, ?, ?,
@@ -426,7 +436,8 @@ final class DatabaseService: @unchecked Sendable {
                 ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?,
                 ?, ?, ?,
-                ?, ?, ?
+                ?, ?, ?,
+                ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 mailbox_id = excluded.mailbox_id,
@@ -467,7 +478,12 @@ final class DatabaseService: @unchecked Sendable {
                 has_sticky_note = COALESCE(excluded.has_sticky_note, emails.has_sticky_note),
                 sticky_note_text = CASE WHEN excluded.has_sticky_note IS NULL
                     THEN emails.sticky_note_text ELSE excluded.sticky_note_text END,
-                inline_note_count = COALESCE(excluded.inline_note_count, emails.inline_note_count);
+                inline_note_count = COALESCE(excluded.inline_note_count, emails.inline_note_count),
+                -- Set once at receive time; payloads that omit them keep the cached values.
+                alias_active = COALESCE(excluded.alias_active, emails.alias_active),
+                auth_tier = COALESCE(excluded.auth_tier, emails.auth_tier),
+                classification_reason = COALESCE(excluded.classification_reason, emails.classification_reason),
+                matched_rule_id = COALESCE(excluded.matched_rule_id, emails.matched_rule_id);
             """
             var stmt: OpaquePointer?
             if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
@@ -520,6 +536,10 @@ final class DatabaseService: @unchecked Sendable {
                     bindOptionalBool(stmt, 36, e.hasStickyNote)
                     bindOptionalString(stmt, 37, e.stickyNoteText)
                     bindOptionalInt(stmt, 38, e.inlineNoteCount)
+                    bindOptionalBool(stmt, 39, e.aliasActive)
+                    bindOptionalString(stmt, 40, e.authTier)
+                    bindOptionalString(stmt, 41, e.classificationReason)
+                    bindOptionalString(stmt, 42, e.matchedRuleId)
 
                     sqlite3_step(stmt)
                 }
@@ -550,7 +570,8 @@ final class DatabaseService: @unchecked Sendable {
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
                 reply_later, reply_later_at, alias_id, alias_email,
-                has_sticky_note, sticky_note_text, inline_note_count
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id
             FROM emails
             WHERE mailbox_id = ? AND folder_id = ? AND (? IS NULL OR date >= ?)
             ORDER BY date DESC
@@ -594,7 +615,8 @@ final class DatabaseService: @unchecked Sendable {
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
                 reply_later, reply_later_at, alias_id, alias_email,
-                has_sticky_note, sticky_note_text, inline_note_count
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id
             FROM emails
             WHERE mailbox_id = ? AND reply_later = 1 AND (folder_id IS NULL OR folder_id NOT IN ('trash', 'spam', 'draft', 'drafts'))
             ORDER BY CASE WHEN reply_later_at IS NOT NULL THEN reply_later_at ELSE date END ASC, date DESC
@@ -644,7 +666,8 @@ final class DatabaseService: @unchecked Sendable {
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
                 reply_later, reply_later_at, alias_id, alias_email,
-                has_sticky_note, sticky_note_text, inline_note_count
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id
             FROM emails
             WHERE id = ?
             LIMIT 1;
@@ -674,7 +697,8 @@ final class DatabaseService: @unchecked Sendable {
                 needs_reply, has_attachment, attachments_json, auth_json,
                 delivery_status, delivery_error, provider_message_id,
                 reply_later, reply_later_at, alias_id, alias_email,
-                has_sticky_note, sticky_note_text, inline_note_count
+                has_sticky_note, sticky_note_text, inline_note_count,
+                alias_active, auth_tier, classification_reason, matched_rule_id
             FROM emails
             WHERE mailbox_id = ? AND (thread_id = ? OR id = ?)
             ORDER BY date ASC;
@@ -1002,7 +1026,8 @@ final class DatabaseService: @unchecked Sendable {
                 e.needs_reply, e.has_attachment, e.attachments_json, e.auth_json,
                 e.delivery_status, e.delivery_error, e.provider_message_id,
                 e.reply_later, e.reply_later_at, e.alias_id, e.alias_email,
-                e.has_sticky_note, e.sticky_note_text, e.inline_note_count
+                e.has_sticky_note, e.sticky_note_text, e.inline_note_count,
+                e.alias_active, e.auth_tier, e.classification_reason, e.matched_rule_id
             FROM emails e
             JOIN emails_fts fts ON fts.id = e.id
             WHERE e.mailbox_id = ? AND emails_fts MATCH ?
@@ -1164,9 +1189,13 @@ final class DatabaseService: @unchecked Sendable {
             deliveryError: columnOptionalString(stmt, 27),
             aliasId: columnOptionalString(stmt, 31),
             aliasEmail: columnOptionalString(stmt, 32),
+            aliasActive: columnOptionalBool(stmt, 36),
             hasStickyNote: columnOptionalBool(stmt, 33),
             stickyNoteText: columnOptionalString(stmt, 34),
-            inlineNoteCount: columnOptionalInt(stmt, 35)
+            inlineNoteCount: columnOptionalInt(stmt, 35),
+            authTier: columnOptionalString(stmt, 37),
+            classificationReason: columnOptionalString(stmt, 38),
+            matchedRuleId: columnOptionalString(stmt, 39)
         )
     }
 
