@@ -97,7 +97,7 @@ Corner radii: digest cards **18.dp**, compose dock top **18.dp**, settings group
 
 ## Liquid glass and system bars
 
-`Modifier.liquidGlass(shape)` is the **pre-26 iOS fallback**: frost ~92% surface, white 0.45 hairline, 12.dp shadow — not Android 16+ real blur. Toolbar chips use `homeChromeToolbarSurface`. Menus: `InboxiesMenu` (iOS `Menu` look), not default `DropdownMenu` chrome.
+`Modifier.liquidGlass(shape)` is the **pre-26 iOS fallback**: frost ~92% surface, white 0.45 hairline, 12.dp shadow — not Android 16+ real blur. Toolbar chips use `homeChromeToolbarSurface`. Toasts: one component, `InboxiesToast` (`ui/components/InboxiesToast.kt`) — `liquidGlass` pill (26.dp radius, min height 52.dp, max width 440.dp), Inter 15.sp medium, optional `ToastIcon` / `iconVector` + trailing `ToastAction` (accent on an accent-12% capsule), swipe down / tap to dismiss. Wrap in `AnimatedToast` (spring slide+fade, fade-only with animations off) and place with `ToastMetrics` (`screenInset`, `barGap`, `standaloneBottomInset`). App-level: `AppModel.showToast(message, isError, isLoading, isUndo, icon, action, durationMs)`. Never build an ad-hoc toast. Menus: `InboxiesMenu` (iOS `Menu` look), not default `DropdownMenu` chrome.
 
 Edge-to-edge is required:
 
@@ -214,8 +214,8 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |
 | AI limit reached | `previewAiUsageLimit` | `aiUsageLimit` | Agent chat at 50 / 50: limit notice, composer disabled |
 | AI usage (Settings) | `previewAiUsageSettings` | `aiUsageSettings` | Settings sheet scrolled to the AI usage section |
-| Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures |
-| Screener | `previewScreener` | `screener` | Screener folder + detail open |
+| Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures + the pinned "3 waiting to be screened" row (AVE-136) |
+| Screener | `previewScreener` | `screener` | Screening room + detail open (`screenerList` for the room alone). Pushed from the Inbox row; not a folder tab or menu item (AVE-136) |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
@@ -223,6 +223,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Notes to self (detail) | `previewNotesDetail` | `notesDetail` | Q3 thread open: draggable sticky + inline private notes (in-memory edits) |
 | Load more | `previewLoadMore` | `loadMore` | Inbox with more pages; scroll down for the pulsing skeleton footer row |
 | Many New | `previewManyNew` | `manyNew` | Inbox New capped at 5 + "Show N more new" (opens the All new screen) above Seen |
+| Toast | `previewToast` | `toast` | Inbox with a pinned "Archived · Undo" toast above the bottom bar (AVE-134) |
 | Load failed | `previewLoadFailed` | `loadFailed` | Signed in, first mailbox load failed, nothing cached: Retry + Sign out (never onboarding) |
 | List error | `previewListError` | `listError` | Inbox fetch failed with an empty cache: "Couldn’t load emails" + Retry |
 | Widget mocks | `previewWidgets` | `widgets` | "Today's inbox" widget design mocks, 2×2/4×2 × new mail/inbox zero; Light/Dark pill flips the screen (AVE-138, `ui/widget/`) |

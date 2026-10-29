@@ -1,0 +1,40 @@
+---
+// /request (AVE-81): ask for a feature, report a bug or send feedback. Each one
+// becomes an issue in our Linear Triage (POST /api/requests); the roadmap only
+// shows issues we label for it, so a request isn't public unless we make it so.
+import PageIntro from "../components/PageIntro.astro";
+import RequestForm from "../components/request/RequestForm.astro";
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+	title="Send a request"
+	currentNav="roadmap"
+	description="Ask for a feature, report a bug or tell us what you think of Inboxies. No account needed."
+>
+	<PageIntro
+		title="Send a request"
+		description="Ask for a feature, report a bug or tell us what you think. No account needed: leave an email and we’ll follow up there."
+	>
+		<p class="intro-links">
+			<a class="quiet-link" href="/roadmap#next">See what’s coming next</a>
+			<span aria-hidden="true">·</span>
+			<a class="quiet-link" href="/support">Need help with your account? Support</a>
+		</p>
+	</PageIntro>
+
+	<RequestForm />
+</Base>
+
+<style>
+	.intro-links {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0 6px;
+		margin-top: 4px;
+		font-size: var(--fs-meta);
+		line-height: 1rem;
+		color: var(--text-subtle);
+	}
+</style>

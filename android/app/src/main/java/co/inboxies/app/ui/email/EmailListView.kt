@@ -167,9 +167,29 @@ fun EmailListView(
     inboxNewCount: Int? = null,
     /** Inbox: opens the "All new" screen from the row under the capped New section. */
     onShowAllNew: (() -> Unit)? = null,
+    /**
+     * Inbox: first-time senders waiting to be screened (AVE-136). Above zero (with
+     * [onOpenScreeningRoom]) pins the "N waiting to be screened" row to the list top.
+     */
+    screeningRoomCount: Int = 0,
+    /** One email per waiting sender, newest first; the row stacks their avatars. */
+    screeningRoomSenders: List<Email> = emptyList(),
+    onOpenScreeningRoom: (() -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     val scope = rememberCoroutineScope()
+    val screeningRoomRow: (@Composable () -> Unit)? =
+        if (screeningRoomCount > 0 && onOpenScreeningRoom != null && !isSelectMode) {
+            {
+                ScreeningRoomRow(
+                    count = screeningRoomCount,
+                    senders = screeningRoomSenders,
+                    onClick = onOpenScreeningRoom,
+                )
+            }
+        } else {
+            null
+        }
     var refreshing by remember { mutableStateOf(false) }
     var retrying by remember { mutableStateOf(false) }
     var actionsEmail by remember { mutableStateOf<Email?>(null) }
@@ -199,6 +219,7 @@ fun EmailListView(
                 onClearFilters = onClearFilters,
                 filterChipsBar = filterChipsBar,
                 bottomInset = bottomInset,
+                topRow = screeningRoomRow,
             )
             else -> EmailRows(
                 emails = emails,
@@ -217,6 +238,7 @@ fun EmailListView(
                 onMore = { actionsEmail = it },
                 inboxNewCount = if (isFiltered) null else inboxNewCount,
                 onShowAllNew = onShowAllNew,
+                topRow = screeningRoomRow,
             )
         }
     }
@@ -275,6 +297,8 @@ private fun EmailRows(
     onMore: (Email) -> Unit,
     inboxNewCount: Int? = null,
     onShowAllNew: (() -> Unit)? = null,
+    /** Pinned first row (Inbox: the Screening room entry, AVE-136). */
+    topRow: (@Composable () -> Unit)? = null,
 ) {
     val app = LocalAppModel.current
     val swipePreferences by app.swipePreferences.collectAsState()
@@ -307,6 +331,9 @@ private fun EmailRows(
         modifier = Modifier.fillMaxSize(),
         userScrollEnabled = true,
     ) {
+        if (topRow != null) {
+            item(key = "screening-room") { topRow() }
+        }
         if (filterChipsBar != null) {
             item {
                 Box(modifier = Modifier.padding(bottom = 4.dp)) {
@@ -998,6 +1025,7 @@ private fun EmptyList(
     onClearFilters: (() -> Unit)?,
     filterChipsBar: (@Composable () -> Unit)?,
     bottomInset: Dp,
+    topRow: (@Composable () -> Unit)? = null,
 ) {
     val colors = inboxiesColors()
     LazyColumn(
@@ -1005,6 +1033,11 @@ private fun EmptyList(
         contentPadding = PaddingValues(bottom = bottomInset),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (topRow != null) {
+            item(key = "screening-room") {
+                Box(modifier = Modifier.padding(top = 12.dp)) { topRow() }
+            }
+        }
         if (filterChipsBar != null) {
             item { filterChipsBar() }
         }

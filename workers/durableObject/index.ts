@@ -24,6 +24,20 @@ import type { InboxDigest } from "../../shared/inbox-digest";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 import {
+	CONVERSATION_FLUSH_ALARM_BUDGET,
+	CONVERSATION_FLUSH_CONTINUE_DELAY_MS,
+	CONVERSATION_FLUSH_READ_BUDGET,
+	SENT_FOLDER_ID_SQL,
+	conversationIndexIsClean,
+	countConversationsFromIndex,
+	countThreadedByScan,
+	countThreadedSectionsByScan,
+	flushConversationIndex,
+	readThreadedListByScan,
+	readThreadedListFromIndex,
+	resolveFolderId,
+} from "../lib/conversation-index";
+import {
 	abandonInboundDelivery,
 	claimInboundMessage,
 	completeInboundMessageClaim,
@@ -185,26 +199,6 @@ import {
  * thrown error because custom error classes don't survive the RPC boundary.
  */
 export type MailboxSummaryResult = AiSummaryResponse | { status: "generation_failed"; error: string };
-
-/**
- * SQL expression to normalize email subjects by stripping common
- * reply/forward prefixes (Re:, Fwd:, FW:, AW:, WG:, Réf:, SV:).
- * Used for conversation grouping. Hardcoded to the `subject` column.
- */
-const NORMALIZED_SUBJECT_SQL = `LOWER(TRIM(
-	REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-		LOWER(subject),
-		'aw: ', ''), 'wg: ', ''), 'réf: ', ''), 'sv: ', ''),
-		're: ', ''), 'fwd: ', ''), 'fw: ', '')
-))`;
-
-/** Resolve a system folder by id or name. `name = 'draft'` does not match the
- *  stored display name `'Drafts'`; looking up `id` as well is the same pattern
- *  used for the folder filter (`name = ?1 OR id = ?1`). */
-const folderIdSql = (id: string) =>
-	`(SELECT id FROM folders WHERE name = '${id}' OR id = '${id}' LIMIT 1)`;
-const DRAFT_FOLDER_ID_SQL = folderIdSql(Folders.DRAFT);
-const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
 
 /** KV flag set when a purge starts (before any wipe) so writers cannot resurrect mail. */
 const MAILBOX_DELETED_KEY = "mailbox_deleted";
@@ -452,12 +446,25 @@ export class MailboxDO extends DurableObject<Env> {
 		this.#resumePendingBlobDeletes();
 		this.#resumeStuckSendSweep();
 		this.#armRetentionSweep();
+		this.#resumeConversationIndexFlush();
+	}
+
+	/** Pending conversation index changes (e.g. the migration 42 backfill): let the alarm work through them. */
+	#resumeConversationIndexFlush(): void {
+		try {
+			if (!conversationIndexIsClean(this.ctx.storage.sql)) {
+				this.#scheduleConversationIndexFlush(1_000);
+			}
+		} catch (e) {
+			console.error("Conversation index check failed:", (e as Error).message);
+		}
 	}
 
 	/**
 	 * One alarm serves every scheduled job: incremental R2 → FTS indexing for
 	 * mail created before FTS existed, the Spam / Trash retention purge, the
-	 * sweep of queued blob deletes, and the stuck-send sweeper. Every job runs
+	 * sweep of queued blob deletes, the stuck-send sweeper, and batches of
+	 * conversation index changes (AVE-105). Every job runs
 	 * on every firing (each is a cheap no-op when it has nothing to do). FTS
 	 * may set the alarm directly; the others only ever move it earlier, and
 	 * the retention job re-arms last, so a nearer FTS / blob / send alarm
@@ -468,6 +475,7 @@ export class MailboxDO extends DurableObject<Env> {
 		const retention = await this.#runRetentionPurge();
 		await this.#sweepPendingBlobDeletes();
 		await this.#sweepStuckSends();
+		await this.#runConversationIndexBatch();
 		if (retention === "more") {
 			await this.#scheduleAlarmWithin(RETENTION_CONTINUE_DELAY_MS);
 		}
@@ -1213,106 +1221,28 @@ export class MailboxDO extends DurableObject<Env> {
 			);
 		}
 
-		// Non-draft folders: full threading logic. Inbox can window New/Seen
-		// (only one section, or the newest N New + all Seen) over `listed`.
-		const sectionFilter = useNewSeen
-			? inboxSectionFilterSql(options.inboxSections ?? {})
-			: "1 = 1";
-		const result = this.ctx.storage.sql.exec(
-			`WITH
-			folder_emails AS (
-				SELECT *,
-					COALESCE(thread_id, id) as raw_thread_id,
-					${NORMALIZED_SUBJECT_SQL} as normalized_subject
-				FROM emails
-				WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-			),
-			thread_to_conversation AS (
-				SELECT
-					raw_thread_id,
-					normalized_subject,
-					CASE
-						WHEN thread_id IS NOT NULL THEN raw_thread_id
-						ELSE MIN(raw_thread_id) OVER (PARTITION BY normalized_subject)
-					END as conversation_id
-				FROM folder_emails
-				GROUP BY raw_thread_id, normalized_subject, thread_id
-			),
-			all_emails_with_conversation AS (
-				SELECT
-					e.*,
-					COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
-				FROM emails e
-				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
-					ON COALESCE(e.thread_id, e.id) = tc.raw_thread_id
-			),
-			conversation_stats AS (
-				SELECT
-					conversation_id,
-					COUNT(*) as thread_count,
-					SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count,
-					SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) as thread_read_count,
-					GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants,
-					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft
-				FROM all_emails_with_conversation
-				WHERE conversation_id IN (
-					SELECT DISTINCT conversation_id FROM all_emails_with_conversation
-					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-				)
-				GROUP BY conversation_id
-			),
-			latest_message_per_conversation AS (
-				SELECT
-					conversation_id,
-					folder_id,
-					ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY date DESC) as rn
-				FROM all_emails_with_conversation
-			),
-			latest_in_folder AS (
-				SELECT
-					fe.*,
-					COALESCE(tc.conversation_id, fe.raw_thread_id) as conversation_id,
-					ROW_NUMBER() OVER (
-						PARTITION BY COALESCE(tc.conversation_id, fe.raw_thread_id)
-						ORDER BY fe.date DESC
-					) as rn
-				FROM folder_emails fe
-				LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
-					ON fe.raw_thread_id = tc.raw_thread_id
-			),
-			listed AS (
-			SELECT
-				lif.id, lif.subject, lif.sender, lif.sender_name, lif.recipient, lif.date,
-				lif.read, lif.starred, lif.reply_later, lif.reply_later_at, lif.thread_id, lif.folder_id,
-				lif.in_reply_to, lif.email_references,
-				lif.provider_message_id, lif.delivery_status, lif.delivery_error,
-				lif.snippet as snippet,
-				lif.auth, lif.auth_tier, lif.classification_reason, lif.matched_rule_id,
-				cs.thread_count, cs.thread_unread_count, cs.participants,
-				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
-					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
-					AND cs.thread_read_count > 0
-					THEN 1 ELSE 0 END as needs_reply,
-				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft,
-				CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END as is_new,
-				ROW_NUMBER() OVER (
-					PARTITION BY CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END
-					ORDER BY lif.date DESC
-				) as section_rank
-			FROM latest_in_folder lif
-			JOIN conversation_stats cs ON lif.conversation_id = cs.conversation_id
-			LEFT JOIN latest_message_per_conversation lmc
-				ON lmc.conversation_id = lif.conversation_id AND lmc.rn = 1
-			WHERE lif.rn = 1
-			)
-			SELECT * FROM listed
-			WHERE ${sectionFilter}
-			ORDER BY ${useNewSeen ? `is_new DESC, date DESC` : `date DESC`}
-			LIMIT ?2 OFFSET ?3`,
-			folder, limit, offset
-		);
-
-		const rows = [...result];
+		// Non-draft folders: read the conversation index (AVE-105). While it
+		// still has pending changes after a bounded flush (backfill, a large
+		// bulk change), fall back to the original full-mailbox scan.
+		const folderId = this.#conversationIndexReady() ? resolveFolderId(this.ctx.storage.sql, folder) : undefined;
+		const sections = options.inboxSections ?? {};
+		const rows =
+			folderId === null
+				? []
+				: folderId !== undefined
+					? readThreadedListFromIndex(this.ctx.storage.sql, folderId, {
+							limit,
+							offset,
+							useNewSeen,
+							section: sections.section,
+							newLimit: sections.newLimit,
+						})
+					: readThreadedListByScan(this.ctx.storage.sql, folder, {
+							limit,
+							offset,
+							useNewSeen,
+							sectionFilter: useNewSeen ? inboxSectionFilterSql(sections) : "1 = 1",
+						});
 		const mapped = rows.map(({ is_new: _isNew, section_rank: _rank, ...row }: any) => this.#withDecodedAuth({
 			...row,
 			read: !!row.read,
@@ -1329,6 +1259,51 @@ export class MailboxDO extends DurableObject<Env> {
 			this.#withFileAttachmentFlag(annotateListSections(mapped, useNewSeen)),
 			options.userId,
 		);
+	}
+
+	/**
+	 * Bring the conversation index up to date with a bounded flush. False when
+	 * changes are still pending (the alarm keeps working through them) or the
+	 * flush failed; callers then use the scan.
+	 */
+	#conversationIndexReady(): boolean {
+		try {
+			if (conversationIndexIsClean(this.ctx.storage.sql)) return true;
+			const clean = this.ctx.storage.transactionSync(() =>
+				flushConversationIndex(this.ctx.storage.sql, CONVERSATION_FLUSH_READ_BUDGET),
+			);
+			if (!clean) this.#scheduleConversationIndexFlush();
+			return clean;
+		} catch (e) {
+			console.error("Conversation index flush failed:", (e as Error).message);
+			this.#scheduleConversationIndexFlush();
+			return false;
+		}
+	}
+
+	/** Arm the alarm to keep flushing the conversation index. */
+	#scheduleConversationIndexFlush(delayMs = CONVERSATION_FLUSH_CONTINUE_DELAY_MS): void {
+		void this.#scheduleAlarmWithin(delayMs).catch((e) =>
+			console.error("Conversation index schedule failed:", (e as Error).message),
+		);
+	}
+
+	/** Alarm job: flush pending conversation index changes in batches. Never throws. */
+	async #runConversationIndexBatch(): Promise<void> {
+		try {
+			if (conversationIndexIsClean(this.ctx.storage.sql)) return;
+			const clean = this.ctx.storage.transactionSync(() =>
+				flushConversationIndex(this.ctx.storage.sql, CONVERSATION_FLUSH_ALARM_BUDGET),
+			);
+			if (!clean) await this.#scheduleAlarmWithin(CONVERSATION_FLUSH_CONTINUE_DELAY_MS);
+		} catch (e) {
+			console.error("Conversation index batch failed:", (e as Error).message);
+			try {
+				await this.#scheduleAlarmWithin(5_000);
+			} catch {
+				/* ignore reschedule failure */
+			}
+		}
 	}
 
 	/**
@@ -1350,34 +1325,11 @@ export class MailboxDO extends DurableObject<Env> {
 			return row?.total ?? 0;
 		}
 
-		const row = [
-			...this.ctx.storage.sql.exec(
-				`WITH
-				folder_emails AS (
-					SELECT
-						COALESCE(thread_id, id) as raw_thread_id,
-						thread_id,
-					${NORMALIZED_SUBJECT_SQL} as normalized_subject
-					FROM emails
-					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-				),
-				thread_to_conversation AS (
-					SELECT
-						raw_thread_id,
-						CASE
-							WHEN thread_id IS NOT NULL THEN raw_thread_id
-							WHEN normalized_subject != '' THEN MIN(raw_thread_id) OVER (PARTITION BY normalized_subject)
-							ELSE raw_thread_id
-						END as conversation_id
-					FROM folder_emails
-					GROUP BY raw_thread_id, normalized_subject, thread_id
-				)
-				SELECT COUNT(DISTINCT conversation_id) as total
-				FROM thread_to_conversation`,
-				folder,
-			),
-		][0] as { total: number } | undefined;
-		return row?.total ?? 0;
+		if (this.#conversationIndexReady()) {
+			const folderId = resolveFolderId(this.ctx.storage.sql, folder);
+			return folderId === null ? 0 : countConversationsFromIndex(this.ctx.storage.sql, folderId).totalCount;
+		}
+		return countThreadedByScan(this.ctx.storage.sql, folder);
 	}
 
 	/**
@@ -1393,62 +1345,13 @@ export class MailboxDO extends DurableObject<Env> {
 			return { newCount: 0, seenCount: totalCount, totalCount };
 		}
 
-		const row = [
-			...this.ctx.storage.sql.exec(
-				`WITH
-				folder_emails AS (
-					SELECT *,
-						COALESCE(thread_id, id) as raw_thread_id,
-						${NORMALIZED_SUBJECT_SQL} as normalized_subject
-					FROM emails
-					WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-				),
-				thread_to_conversation AS (
-					SELECT
-						raw_thread_id,
-						normalized_subject,
-						CASE
-							WHEN thread_id IS NOT NULL THEN raw_thread_id
-							ELSE MIN(raw_thread_id) OVER (PARTITION BY normalized_subject)
-						END as conversation_id
-					FROM folder_emails
-					GROUP BY raw_thread_id, normalized_subject, thread_id
-				),
-				all_emails_with_conversation AS (
-					SELECT
-						e.*,
-						COALESCE(tc.conversation_id, COALESCE(e.thread_id, e.id)) as conversation_id
-					FROM emails e
-					LEFT JOIN (SELECT raw_thread_id, MIN(conversation_id) AS conversation_id FROM thread_to_conversation GROUP BY raw_thread_id) tc
-						ON COALESCE(e.thread_id, e.id) = tc.raw_thread_id
-				),
-				conversation_stats AS (
-					SELECT
-						conversation_id,
-						SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count
-					FROM all_emails_with_conversation
-					WHERE conversation_id IN (
-						SELECT DISTINCT conversation_id FROM all_emails_with_conversation
-						WHERE folder_id = (SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1)
-					)
-					GROUP BY conversation_id
-				)
-				SELECT
-					COALESCE(SUM(CASE WHEN thread_unread_count > 0 THEN 1 ELSE 0 END), 0) as new_count,
-					COALESCE(SUM(CASE WHEN thread_unread_count = 0 THEN 1 ELSE 0 END), 0) as seen_count,
-					COUNT(*) as total_count
-				FROM conversation_stats`,
-				folder,
-			),
-		][0] as
-			| { new_count: number; seen_count: number; total_count: number }
-			| undefined;
-
-		return {
-			newCount: Number(row?.new_count ?? 0),
-			seenCount: Number(row?.seen_count ?? 0),
-			totalCount: Number(row?.total_count ?? 0),
-		};
+		if (this.#conversationIndexReady()) {
+			const folderId = resolveFolderId(this.ctx.storage.sql, folder);
+			return folderId === null
+				? { newCount: 0, seenCount: 0, totalCount: 0 }
+				: countConversationsFromIndex(this.ctx.storage.sql, folderId);
+		}
+		return countThreadedSectionsByScan(this.ctx.storage.sql, folder);
 	}
 
 	// ── Single email operations (Drizzle) ──────────────────────────
@@ -2668,7 +2571,9 @@ export class MailboxDO extends DurableObject<Env> {
 				? options.folder
 				: null;
 
-		const clauses: string[] = [];
+		// A plain Screener Accept used to store Inbox; it doesn't pin (AVE-139,
+		// pinnedPreferenceFolderId), so Settings → Senders doesn't list it.
+		const clauses: string[] = [`NOT (source = 'screener' AND folder_id = 'inbox')`];
 		const params: (string | number)[] = [];
 		let i = 1;
 		if (folder) {

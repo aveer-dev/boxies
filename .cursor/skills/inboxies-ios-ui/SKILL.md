@@ -116,7 +116,7 @@ func liquidGlass<S: Shape>(in shape: S) -> some View {
 }
 ```
 
-Home large-title fade: `ProgressiveBlurBackground` (ultraThinMaterial masked to a top gradient). Toasts: `.regularMaterial` capsule + hairline + shadow `black 0.12 / r12 / y4`. Undo uses `accent`.
+Home large-title fade: `ProgressiveBlurBackground` (ultraThinMaterial masked to a top gradient). Toasts: one component, `InboxiesToast` (`Views/Components/InboxiesToast.swift`) — `.liquidGlass` pill (26pt continuous radius, min height 52 = `actionBarHeight`, max width 440), Inter 15 medium, optional leading `ToastIcon` + trailing `ToastAction` (accent text on an `accent` 12% capsule), swipe down / tap to dismiss. Place with `ToastMetrics` (`screenInset`, `barGap` above the bottom bar, `standaloneBottomInset`), animate with `ToastMetrics.animation`. App-level: `AppModel.showToast(_:isError:isLoading:isUndo:icon:action:duration:)`. Never build an ad-hoc toast.
 
 ## Navigation (not TabView)
 
@@ -205,14 +205,15 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
 | `-previewSettings` | Settings sheet on the fixture mailbox (add `-previewScreenerOff` for the Screener switch off) |
 | `-previewAIUsage normal\|warning\|exhausted` | Stub AI usage (12/50, 42/50, 50/50 chats). Pair with `-previewChat` (meter / limit notice above the composer) or `-previewSettings` (AI usage section) (AVE-45) |
-| `-previewMailbox` | Inbox New/Seen |
-| `-previewScreener` | Screener + detail |
+| `-previewMailbox` | Inbox New/Seen, with the pinned "3 waiting to be screened" row (AVE-136) |
+| `-previewScreener` | Screening room + detail (`-previewScreenerList` for the room alone). The Screener folder is a subpage pushed from the Inbox row, not a folder tab or menu item (AVE-136) |
 | `-previewReplyLater` | Reply Later pile |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
 | `-previewDetail -previewNewsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
 | `-previewMailbox -previewLoadFailed` | First mailbox load failed, nothing cached (error + Retry / Sign out, not onboarding) |
 | `-previewMailbox -previewListError` | Folder fetch failed with an empty cache (error + Retry, not "This folder is empty") |
 | `-previewMailbox -previewLoadMore` | Inbox with the infinite-scroll skeleton footer (scroll to the bottom) |
+| `-previewMailbox -previewToast` | Inbox with a pinned "Archived · Undo" toast above the bottom bar (AVE-134) |
 | `-previewMailbox -previewManyNew` | Inbox with a dozen New: New capped at 5 + "Show N more new" (pushes the All new screen) above Seen |
 | `-previewMailbox -previewNotes` | Inbox rows with the notes-to-self strip and "N private notes" chip |
 | `-previewDetail -previewNotes` | Q3 thread with a sticky note + inline notes (add `-previewNotesMoved` for a dragged sticky, `-previewNotesThrow` for a scripted drag/throw/spring loop to screen-record) |

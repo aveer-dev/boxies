@@ -1,5 +1,9 @@
 package co.inboxies.app.ui.auth
 
+import co.inboxies.app.theme.ToastMetrics
+import co.inboxies.app.ui.components.ToastIcon
+import co.inboxies.app.ui.components.InboxiesToast
+import co.inboxies.app.ui.components.AnimatedToast
 import android.app.Activity
 import android.view.HapticFeedbackConstants
 import android.webkit.WebView
@@ -1098,33 +1102,20 @@ fun SignInView(
         }
 
         // Error Toast
-        AnimatedVisibility(
-            visible = error != null,
-            enter = slideInVertically(
-                animationSpec = spring(
-                    dampingRatio = 0.86f,
-                    stiffness = Spring.StiffnessMediumLow,
-                )
-            ) { it } + fadeIn(),
-            exit = slideOutVertically(
-                animationSpec = spring(
-                    dampingRatio = 0.86f,
-                    stiffness = Spring.StiffnessMediumLow,
-                )
-            ) { it } + fadeOut(),
+        AnimatedToast(
+            value = error,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .imePadding()
-                .padding(bottom = 24.dp)
-                .padding(horizontal = 24.dp),
-        ) {
-            error?.let { msg ->
-                AuthToastBanner(
-                    message = msg,
-                    onDismiss = { auth.clearError() },
-                )
-            }
+                .padding(horizontal = ToastMetrics.screenInset)
+                .padding(bottom = ToastMetrics.standaloneBottomInset),
+        ) { msg ->
+            InboxiesToast(
+                message = msg,
+                icon = ToastIcon.Error,
+                onDismiss = { auth.clearError() },
+            )
         }
     }
 }
@@ -2098,41 +2089,6 @@ private fun InAppBrowserDialog(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun AuthToastBanner(
-    message: String,
-    onDismiss: () -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    val colors = inboxiesColors()
-    Row(
-        modifier = modifier
-            .shadow(12.dp, RoundedCornerShape(50))
-            .clip(RoundedCornerShape(50))
-            .background(colors.surface)
-            .border(0.5.dp, colors.line.copy(alpha = 0.6f), RoundedCornerShape(50))
-            .clickable(onClick = onDismiss)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Icon(
-            Icons.Outlined.Error,
-            contentDescription = null,
-            tint = colors.deepDarkRed,
-            modifier = Modifier.size(16.dp),
-        )
-        Text(
-            text = message,
-            fontFamily = InterFontFamily,
-            fontWeight = FontWeight.Medium,
-            fontSize = 13.sp,
-            color = colors.ink,
-            maxLines = 2,
-        )
     }
 }
 

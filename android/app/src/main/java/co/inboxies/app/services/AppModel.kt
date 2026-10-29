@@ -1,9 +1,11 @@
 package co.inboxies.app.services
 
+import androidx.compose.ui.graphics.vector.ImageVector
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.AgentConversation
 import co.inboxies.app.models.AiUsageSnapshot
 import co.inboxies.app.models.AppToast
+import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.ChatSession
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.ComposeMode
@@ -78,6 +80,12 @@ class AppModel {
 
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails.asStateFlow()
+    /**
+     * Page 1 of the Screener folder, kept while Inbox shows so its "N waiting to be
+     * screened" row can count senders and show their avatars (AVE-136).
+     */
+    private val _screenerQueue = MutableStateFlow<List<Email>>(emptyList())
+    val screenerQueue: StateFlow<List<Email>> = _screenerQueue.asStateFlow()
 
     /** Inbox page 1's server New total, for the list it came from (AVE-23). */
     data class InboxNewTotal(val scope: EmailListScope, val count: Int)
@@ -284,23 +292,46 @@ class AppModel {
     val isScreenerEnabled: Boolean
         get() = selectedMailbox?.settings?.screener?.enabled != false
 
-    /** Screener off: hide its folder unless something unread is still waiting there. */
-    val showsScreenerFolder: Boolean
-        get() = isScreenerEnabled || unreadCount(forFolderId = FolderIds.SCREENER) > 0
+    /**
+     * First-time senders waiting in the Screening room: one email per sender, newest
+     * first. Feeds the Inbox "N waiting to be screened" row and its avatars (AVE-136).
+     */
+    fun screenerSenders(queue: List<Email> = _screenerQueue.value): List<Email> =
+        queue.filter { it.sender.trim().isNotEmpty() }.distinctBy { it.sender.trim().lowercase() }
 
     val screenerSenderCount: Int
-        get() {
-            val mailboxId = _selectedMailboxId.value
-            if (mailboxId != null) {
-                val cached = db.getEmails(mailboxId, FolderIds.SCREENER)
-                val distinct = cached.map { it.sender.trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
-                if (distinct > 0) return distinct
-            }
-            val inMemory = _emails.value.filter { it.folderId == FolderIds.SCREENER }
-                .map { it.sender.trim().lowercase() }.filter { it.isNotEmpty() }.distinct().size
-            if (inMemory > 0) return inMemory
-            return unreadCount(forFolderId = FolderIds.SCREENER)
+        get() = screenerSenderCount(_screenerQueue.value)
+
+    fun screenerSenderCount(queue: List<Email>): Int {
+        val distinct = screenerSenders(queue).size
+        if (distinct > 0) return distinct
+        return unreadCount(forFolderId = FolderIds.SCREENER)
+    }
+
+    /**
+     * Re-reads the Screener queue behind the Inbox row: cache first, then page 1 from the
+     * server. Off (AVE-104) clears it so no row shows. DEBUG fixtures set it themselves.
+     */
+    suspend fun refreshScreenerQueue() {
+        val mailboxId = _selectedMailboxId.value
+        if (mailboxId == null || !isScreenerEnabled) {
+            _screenerQueue.value = emptyList()
+            return
         }
+        if (isDebugPreview) return
+        val cached = db.getEmails(mailboxId, FolderIds.SCREENER, limit = EmailPaging.PAGE_SIZE)
+        if (cached.isNotEmpty() || _screenerQueue.value.isEmpty()) _screenerQueue.value = cached
+        // Window prune: keep deeper pages the Screening room may have loaded.
+        val synced = runCatching {
+            MailboxSyncService.syncFolder(mailboxId, FolderIds.SCREENER, page = 1) { FolderPrune.Window }
+        }.getOrNull() ?: return
+        ifStillSelected(mailboxId) { _screenerQueue.value = synced.emails.take(EmailPaging.PAGE_SIZE) }
+    }
+
+    /** DEBUG previews: seed the Screening room queue from fixtures. */
+    fun setScreenerQueueForPreview(queue: List<Email>) {
+        _screenerQueue.value = queue
+    }
 
     fun adjustFolderUnread(folderId: String, delta: Int) {
         if (delta == 0) return
@@ -572,6 +603,7 @@ class AppModel {
             }
             // Never show the previous mailbox's rows, folders or open thread under the new one.
             _emails.value = emptyList()
+            _screenerQueue.value = emptyList()
             _folders.value = emptyList()
             _selectedEmail.value = null
             _threadEmails.value = emptyList()
@@ -971,8 +1003,10 @@ class AppModel {
                         loadedCount = synced.emails.size,
                     )
                 }
+                if (folderId == FolderIds.SCREENER) _screenerQueue.value = _emails.value
             }
             refreshReplyLaterCount()
+            if (folderId == FolderIds.INBOX) refreshScreenerQueue()
         } catch (e: Exception) {
             ifStillShowing(listScope) {
                 if (_emails.value.isEmpty()) {
@@ -1120,6 +1154,7 @@ class AppModel {
             if (isSelected(mailboxId) && _selectedTab.value is HomeTab.AiInbox) {
                 loadInboxDigest(showLoading = false)
             }
+            if (isSelected(mailboxId) && folderId == FolderIds.INBOX) refreshScreenerQueue()
         }
         if (isSelected(mailboxId)) refreshOpenEmailDetailSilently()
     }
@@ -1733,10 +1768,19 @@ class AppModel {
         isError: Boolean = false,
         isLoading: Boolean = false,
         isUndo: Boolean = false,
+        icon: ImageVector? = null,
+        action: ToastAction? = null,
         durationMs: Long = 2500,
     ) {
         toastDismissJob?.cancel()
-        _toast.value = AppToast(message = message, isError = isError, isLoading = isLoading, isUndo = isUndo)
+        _toast.value = AppToast(
+            message = message,
+            isError = isError,
+            isLoading = isLoading,
+            isUndo = isUndo,
+            icon = icon,
+            action = action,
+        )
         if (durationMs > 0) {
             toastDismissJob = scope.launch {
                 delay(durationMs)
@@ -2372,13 +2416,14 @@ class AppModel {
                 emailId = email.id,
                 displayName = email.senderName,
             )
-            val queued = _emails.value.filter {
+            val queued = (_emails.value + _screenerQueue.value).filter {
                 it.sender.trim().lowercase() == sender &&
                     (it.folderId == FolderIds.SCREENER || it.id == email.id)
-            }
+            }.distinctBy { it.id }
             queued.forEach { db.moveEmail(it.id, destinationFolderId) }
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
+            _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
             if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
@@ -2406,13 +2451,14 @@ class AppModel {
                 emailId = email.id,
                 displayName = email.senderName,
             )
-            val queued = _emails.value.filter {
+            val queued = (_emails.value + _screenerQueue.value).filter {
                 it.sender.trim().lowercase() == sender &&
                     (it.folderId == FolderIds.SCREENER || it.id == email.id)
-            }
+            }.distinctBy { it.id }
             queued.forEach { db.moveEmail(it.id, FolderIds.SCREENED_OUT) }
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
+            _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
             if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
@@ -2506,6 +2552,7 @@ class AppModel {
         if (!ok || !wasEnabled || enabled) return ok
         val mailboxId = _selectedMailboxId.value ?: return ok
         db.getEmails(mailboxId, FolderIds.SCREENER).forEach { db.moveEmail(it.id, FolderIds.INBOX) }
+        _screenerQueue.value = emptyList()
         if ((_selectedTab.value as? HomeTab.Folder)?.id == FolderIds.SCREENER) {
             _selectedTab.value = HomeTab.Folder(FolderIds.INBOX)
         }

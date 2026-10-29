@@ -7,6 +7,7 @@
 #   ./scripts/run-debug-preview.sh mailbox
 #   ./scripts/run-debug-preview.sh loadMore
 #   ./scripts/run-debug-preview.sh manyNew
+#   ./scripts/run-debug-preview.sh toast
 #   ./scripts/run-debug-preview.sh loadFailed
 #   ./scripts/run-debug-preview.sh listError
 #   ./scripts/run-debug-preview.sh screener
@@ -67,6 +68,7 @@ case "$mode" in
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;
   loadMore|LoadMore|previewLoadMore) extra=previewLoadMore; label=loadMore ;;
   manyNew|ManyNew|previewManyNew) extra=previewManyNew; label=manyNew ;;
+  toast|Toast|previewToast) extra=previewToast; label=toast ;;
   loadFailed|LoadFailed|previewLoadFailed) extra=previewLoadFailed; label=loadFailed ;;
   listError|ListError|previewListError) extra=previewListError; label=listError ;;
   screener|Screener|previewScreener) extra=previewScreener; label=screener ;;
@@ -96,7 +98,7 @@ case "$mode" in
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | loadFailed | listError | screener | replyLater | spam | newsletter | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | toast | loadFailed | listError | screener | replyLater | spam | newsletter | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
     exit 1
     ;;
 esac

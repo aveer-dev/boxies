@@ -76,6 +76,30 @@ enum HomeChromeMetrics {
     static let listColumnNavigationBarMargin: CGFloat = 20
 }
 
+/// Toast metrics (AVE-134): body-size type, a 52pt pill like the bottom bar, capped
+/// width on iPad, lifted clear of the bar. Android twin: `ToastMetrics` in HomeChrome.kt.
+enum ToastMetrics {
+    static let minHeight: CGFloat = HomeChromeMetrics.actionBarHeight
+    static let cornerRadius: CGFloat = HomeChromeMetrics.actionBarHeight / 2
+    static let maxWidth: CGFloat = 440
+    static let fontSize: CGFloat = 15
+    static let iconSize: CGFloat = 18
+    static let contentSpacing: CGFloat = 10
+    static let horizontalPadding: CGFloat = 18
+    static let verticalPadding: CGFloat = 12
+    static let actionHeight: CGFloat = 36
+    static let actionHorizontalPadding: CGFloat = 14
+    static let actionTrailingPadding: CGFloat = 8
+    /// Side inset from the screen edge.
+    static let screenInset: CGFloat = 16
+    /// Gap between the toast and the floating bottom bar / composer below it.
+    static let barGap: CGFloat = 12
+    /// Bottom inset when nothing sits under the toast (sheets, sign-in).
+    static let standaloneBottomInset: CGFloat = 24
+    static let dismissDistance: CGFloat = 36
+    static let animation: Animation = .spring(response: 0.32, dampingFraction: 0.86)
+}
+
 extension View {
     @ViewBuilder
     func liquidGlass<S: Shape>(in shape: S) -> some View {

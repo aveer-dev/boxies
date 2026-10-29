@@ -42,6 +42,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     LoadMore("loadMore", "previewLoadMore"),
     /** Inbox with a dozen New: capped New + "Show N more new" above Seen (iOS `-previewManyNew`). */
     ManyNew("manyNew", "previewManyNew"),
+    /** Inbox with a pinned "Archived · Undo" toast above the bottom bar (iOS `-previewToast`, AVE-134). */
+    Toast("toast", "previewToast"),
     /** Signed in, first mailbox load failed, nothing cached (iOS `-previewLoadFailed`). */
     LoadFailed("loadFailed", "previewLoadFailed"),
     /** Inbox fetch failed with an empty cache: error + Retry (iOS `-previewListError`). */

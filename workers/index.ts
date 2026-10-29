@@ -171,7 +171,9 @@ import {
 	senderLessonForMove,
 	normalizeTriageSender,
 	parseScreenerEnabled,
+	pinnedPreferenceFolderId,
 	resolveInboundFolder,
+	screenerAcceptDestination,
 	screenerSettingsError,
 } from "./lib/sender-triage";
 import { recordSenderAllow, recordSenderBlock } from "./lib/sender-verdicts";
@@ -1357,19 +1359,30 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/approve", async (c: AppCont
 		);
 	}
 
+	// Accept is consent, not a filing rule (AVE-139): Inbox (the default)
+	// pins nothing, so the classifier still sorts their newsletters and
+	// receipts. Only a picked Promotions / Updates sticks. This message and
+	// the queued ones still go where the user accepted them.
+	const pinned = screenerAcceptDestination(destinationFolderId);
 	const triage = await stub.upsertSenderTriage({
 		sender,
 		status: "allowed",
-		destination_folder_id: destinationFolderId,
+		destination_folder_id: pinned,
 		display_name: body.displayName ?? null,
 	});
-	await stub.upsertSenderPreference({
-		address: sender,
-		folderId: destinationFolderId,
-		displayName: body.displayName ?? null,
-		source: "screener",
-		refile: false,
-	});
+	if (pinned) {
+		await stub.upsertSenderPreference({
+			address: sender,
+			folderId: pinned,
+			displayName: body.displayName ?? null,
+			source: "screener",
+			refile: false,
+		});
+	} else {
+		// Drop an earlier Screener pick; a box the user chose elsewhere stays.
+		const existingPref = await stub.getSenderPreference(sender);
+		if (existingPref?.source === "screener") await stub.deleteSenderPreference(sender);
+	}
 	// Accepting is implicit trust, not an allow rule; it only stops an earlier
 	// address block (a backfilled or Report spam one) from still winning.
 	await stub.clearAddressBlockRule(sender);
@@ -1459,17 +1472,22 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 			);
 		}
 	}
+	// Same as approve: Inbox is the default, not a pin (AVE-139).
+	const pinned =
+		destinationFolderId && isScreenerDestination(destinationFolderId)
+			? screenerAcceptDestination(destinationFolderId)
+			: null;
 
 	const triage = await stub.upsertSenderTriage({
 		sender,
 		status,
-		destination_folder_id: destinationFolderId,
+		destination_folder_id: pinned,
 		display_name: body.displayName ?? existing?.display_name ?? null,
 	});
-	if (status === "allowed" && destinationFolderId) {
+	if (status === "allowed" && pinned) {
 		await stub.upsertSenderPreference({
 			address: sender,
-			folderId: destinationFolderId,
+			folderId: pinned,
 			displayName: body.displayName ?? existing?.display_name ?? null,
 			source: "screener",
 			refile: false,
@@ -2328,11 +2346,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			filterHit,
 			screenerEnabled,
 			preferenceFolderId: purposePref?.folderId ?? null,
+			preferenceSource: purposePref?.source ?? null,
 		});
 		console.log(
 			`Triage for ${mailboxId} sender=${fromAddress}: action=${triageDecision.triageAction} -> ${triageDecision.folderId}`,
 		);
-		if (purposePref && triageDecision.folderId === purposePref.folderId) {
+		if (
+			pinnedPreferenceFolderId(purposePref?.folderId, purposePref?.source) &&
+			triageDecision.folderId === purposePref?.folderId
+		) {
 			console.log(
 				`Sender preference filed ${fromAddress} → ${purposePref.folderId} for ${mailboxId}`,
 			);

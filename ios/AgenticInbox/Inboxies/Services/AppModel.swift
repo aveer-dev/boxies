@@ -19,6 +19,9 @@ final class AppModel {
     var folders: [Folder] = []
     var selectedTab: HomeTab = .folder("inbox")
     var emails: [Email] = []
+    /// Page 1 of the Screener folder, kept while Inbox shows so its "N waiting to be
+    /// screened" row can count senders and show their avatars (AVE-136).
+    var screenerQueue: [Email] = []
     var inboxDigest: InboxDigest?
     var isDigestLoading = false
     var conversations: [AgentConversation] = []
@@ -226,20 +229,43 @@ final class AppModel {
         selectedMailbox?.settings?.screener?.enabled != false
     }
 
-    /// Screener off: hide its folder unless something unread is still waiting there.
-    var showsScreenerFolder: Bool {
-        isScreenerEnabled || unreadCount(forFolderId: "screener") > 0
+    /// First-time senders waiting in the Screening room: one row per sender, newest first.
+    /// Feeds the Inbox "N waiting to be screened" row and its avatars (AVE-136).
+    var screenerSenders: [Email] {
+        var seen = Set<String>()
+        return screenerQueue.filter { email in
+            let key = Self.screenerSenderKey(email)
+            guard !key.isEmpty else { return false }
+            return seen.insert(key).inserted
+        }
     }
 
     var screenerSenderCount: Int {
-        if let mailboxId = selectedMailboxId {
-            let cached = db.getEmails(mailboxId: mailboxId, folderId: "screener")
-            let distinct = Set(cached.map { $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }).count
-            if distinct > 0 { return distinct }
-        }
-        let inMemory = Set(emails.filter { $0.folderId == "screener" }.map { $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }).count
-        if inMemory > 0 { return inMemory }
+        let distinct = screenerSenders.count
+        if distinct > 0 { return distinct }
         return unreadCount(forFolderId: "screener")
+    }
+
+    static func screenerSenderKey(_ email: Email) -> String {
+        email.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// Re-reads the Screener queue behind the Inbox row: cache first, then page 1 from
+    /// the server. Off (AVE-104) clears it so no row shows.
+    func refreshScreenerQueue() async {
+        guard let mailboxId = selectedMailboxId, isScreenerEnabled else {
+            screenerQueue = []
+            return
+        }
+        // DEBUG fixtures set the queue themselves; there is no server to ask.
+        if isDebugPreview { return }
+        let cached = db.getEmails(mailboxId: mailboxId, folderId: "screener", limit: EmailListPaging.pageSize)
+        if !cached.isEmpty || screenerQueue.isEmpty {
+            screenerQueue = cached
+        }
+        guard (try? await syncService.syncFolderPage(mailboxId: mailboxId, folderId: "screener", page: 1)) != nil,
+              selectedMailboxId == mailboxId else { return }
+        screenerQueue = db.getEmails(mailboxId: mailboxId, folderId: "screener", limit: EmailListPaging.pageSize)
     }
 
     func adjustFolderUnread(folderId: String, delta: Int) {
@@ -476,6 +502,7 @@ final class AppModel {
             pendingConversationIds.removeAll()
             conversations = []
             inboxDigest = nil
+            screenerQueue = []
             listPaging = nil
             emailListError = nil
             if chatSession != .dismissed {
@@ -744,7 +771,13 @@ final class AppModel {
             if page == nil, emails.isEmpty, await !syncService.isOnline {
                 emailListError = "You’re offline. Connect to the internet to load this folder."
             }
+            if folderId == "screener" {
+                screenerQueue = emails
+            }
             await refreshReplyLaterCount()
+            if folderId == "inbox" {
+                await refreshScreenerQueue()
+            }
         } catch {
             if emails.isEmpty, currentListKey == key {
                 errorMessage = error.localizedDescription
@@ -891,6 +924,9 @@ final class AppModel {
                 applyFirstPage(page, resetPaging: false)
                 emails = cachedFolderEmails(mailboxId: mailboxId, folderId: folderId)
                 lastSyncedAt = Date()
+            }
+            if folderId == "inbox" {
+                await refreshScreenerQueue()
             }
             if selectedTab == .aiInbox {
                 await loadInboxDigest(showLoading: false)
@@ -1553,9 +1589,20 @@ final class AppModel {
     }
 
 
-    func showToast(_ message: String, isError: Bool = false, isLoading: Bool = false, isUndo: Bool = false, duration: TimeInterval = 2.5) {
+    /// - Parameters:
+    ///   - icon: SF Symbol for the leading glyph (defaults to a check, or the error mark).
+    ///   - action: Trailing button (e.g. "Add reminder"); `isUndo` supplies Undo instead.
+    func showToast(
+        _ message: String,
+        isError: Bool = false,
+        isLoading: Bool = false,
+        isUndo: Bool = false,
+        icon: String? = nil,
+        action: ToastAction? = nil,
+        duration: TimeInterval = 2.5
+    ) {
         toastDismissTask?.cancel()
-        toast = AppToast(message: message, isError: isError, isLoading: isLoading, isUndo: isUndo)
+        toast = AppToast(message: message, isError: isError, isLoading: isLoading, isUndo: isUndo, icon: icon, action: action)
         if duration > 0 {
             toastDismissTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(duration))
@@ -2220,6 +2267,8 @@ struct AppToast: Identifiable, Equatable {
     var isError: Bool = false
     var isLoading: Bool = false
     var isUndo: Bool = false
+    var icon: String? = nil
+    var action: ToastAction? = nil
 }
 
 enum HomeTab: Hashable {
@@ -2244,7 +2293,7 @@ enum HomeTab: Hashable {
         case .folder(let id):
             switch id {
             case "inbox": return "Inbox"
-            case "screener": return "Screener"
+            case "screener": return "Screening room"
             case "promotions": return "Promotions"
             case "updates": return "Updates"
             case "sent": return "Sent"

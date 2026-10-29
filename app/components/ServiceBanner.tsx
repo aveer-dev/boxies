@@ -79,6 +79,7 @@ export default function ServiceBanner({ mailboxId, billed }: { mailboxId: string
 	return (
 		<div
 			role="status"
+			data-service-banner
 			className="fixed bottom-16 left-1/2 -translate-x-1/2 z-40 w-[min(672px,calc(100vw-2rem))] flex items-center gap-2.5 px-3 py-2 rounded-lg border border-kumo-line bg-kumo-base/90 backdrop-blur-md shadow-lg text-xs"
 		>
 			{ended ? (

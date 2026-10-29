@@ -8,6 +8,12 @@
  * Spam files to spam first. Rejected → screened_out. Allowed → explicit
  * destination, else classify (filters may override). Unknown → screener
  * (filters cannot bypass).
+ *
+ * Accepting a sender is consent, not a filing rule (AVE-139): a plain Accept
+ * (to Inbox) leaves their mail to the classifier, so newsletters still land
+ * in Promotions and receipts in Updates. Only a deliberate pick pins a box:
+ * Accept into Promotions / Updates, "Put future mail here", Settings →
+ * Senders, Not spam, or a filter.
  */
 
 import {
@@ -53,6 +59,12 @@ export interface ResolveInboundFolderInput {
 	 * Used after filters for allowed senders, or when screener is disabled.
 	 */
 	preferenceFolderId?: string | null;
+	/**
+	 * Who set the preference. A Screener-sourced Inbox preference is what a
+	 * plain Accept wrote before AVE-139, so it doesn't pin (see
+	 * `pinnedPreferenceFolderId`). Omitted means a deliberate choice.
+	 */
+	preferenceSource?: string | null;
 }
 
 export interface ResolveInboundFolderResult {
@@ -70,6 +82,46 @@ export interface ResolveInboundFolderResult {
 
 export function isScreenerDestination(folderId: string): folderId is ScreenerDestinationId {
 	return (SCREENER_DESTINATION_IDS as readonly string[]).includes(folderId);
+}
+
+/**
+ * The purpose box a sender preference pins their mail to, or null when it
+ * leaves filing to the classifier. A plain Screener Accept used to record
+ * Inbox (source "screener"); that is the default, not a choice, so it
+ * doesn't pin. Inbox picked in Settings, a move, or Not spam (source
+ * "user") still does.
+ */
+export function pinnedPreferenceFolderId(
+	folderId: string | null | undefined,
+	source?: string | null,
+): string | null {
+	const folder = folderId?.trim() || null;
+	if (!folder) return null;
+	if (source === "screener" && folder === Folders.INBOX) return null;
+	return folder;
+}
+
+/**
+ * The Screener destination an allowed triage row pins, or null. Inbox is
+ * never a pin here: a plain Accept stored it, and every deliberate Inbox
+ * choice also writes a user preference, which is read first.
+ */
+export function pinnedTriageDestination(
+	destination: string | null | undefined,
+): ScreenerDestinationId | null {
+	if (!destination || !isScreenerDestination(destination)) return null;
+	return destination === Folders.INBOX ? null : destination;
+}
+
+/**
+ * What Accept in the Screener stores for `destinationFolderId`. Inbox (the
+ * Accept button's default) stores nothing, so the classifier keeps sorting
+ * the sender's mail; Promotions / Updates is a deliberate pick and sticks.
+ */
+export function screenerAcceptDestination(
+	destinationFolderId: ScreenerDestinationId,
+): ScreenerDestinationId | null {
+	return destinationFolderId === Folders.INBOX ? null : destinationFolderId;
 }
 
 export function parseScreenerEnabled(raw: unknown): boolean {
@@ -102,6 +154,8 @@ export function screenerSettingsError(raw: unknown): string | null {
  *
  * Order: spam → rejected → unknown(screener) → allowed:
  *   filter folder → purpose preference → explicit triage destination → classify.
+ * A plain Accept's Inbox (screener preference / triage destination) is not a
+ * pin; see `pinnedPreferenceFolderId` / `pinnedTriageDestination`.
  * When screener is disabled: spam → rejected (to Spam) → filter → preference → classify.
  */
 export function resolveInboundFolder(
@@ -109,7 +163,10 @@ export function resolveInboundFolder(
 ): ResolveInboundFolderResult {
 	const { classification, triage, filterHit } = input;
 	const screenerEnabled = input.screenerEnabled !== false;
-	const preferenceFolder = input.preferenceFolderId?.trim() || null;
+	const preferenceFolder = pinnedPreferenceFolderId(
+		input.preferenceFolderId,
+		input.preferenceSource,
+	);
 	// A filter that files mail away (archive, trash, a custom folder…) means the
 	// user doesn't want to be pinged or have the agent draft a reply for it.
 	const filedAway = Boolean(filterHit?.folderId && !isScreenerDestination(filterHit.folderId));
@@ -162,10 +219,7 @@ export function resolveInboundFolder(
 	}
 
 	if (triage?.status === "allowed") {
-		const explicitDest =
-			triage.destination_folder_id && isScreenerDestination(triage.destination_folder_id)
-				? triage.destination_folder_id
-				: null;
+		const explicitDest = pinnedTriageDestination(triage.destination_folder_id);
 		return {
 			folderId:
 				filterHit?.folderId ||

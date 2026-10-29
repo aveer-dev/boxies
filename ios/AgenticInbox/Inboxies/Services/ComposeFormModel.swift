@@ -322,16 +322,21 @@ final class ComposeFormModel {
 
     func showToast(_ message: String, isError: Bool = false) {
         toastDismissTask?.cancel()
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+        withAnimation(ToastMetrics.animation) {
             toast = ComposeToast(message: message, isError: isError)
         }
         toastDismissTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(2.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(ToastMetrics.animation) {
                 toast = nil
             }
         }
+    }
+
+    func hideToast() {
+        toastDismissTask?.cancel()
+        withAnimation(ToastMetrics.animation) { toast = nil }
     }
 
     func commitPendingTokens() {
