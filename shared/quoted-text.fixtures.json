@@ -1,0 +1,32 @@
+[
+	{
+		"name": "plain text keeps its own line breaks",
+		"html": "Hi Sam,\r\n\r\nSee you at 5 & bring snacks.\n\n\n\nThanks,\nAlex  ",
+		"expected": "Hi Sam,\n\nSee you at 5 & bring snacks.\n\nThanks,\nAlex"
+	},
+	{
+		"name": "marketing newsletter with head, style, hidden preheader and tables",
+		"html": "<!DOCTYPE html><html><head><title>Uber</title><style type=\"text/css\">body{margin:0} .x td{padding:0}</style><!--[if mso]><style>table{border:0}</style><![endif]--></head><body><div style=\"display:none;max-height:0;overflow:hidden;mso-hide:all\">Grab everything for spooky season in one easy order.&#847; &zwnj; &nbsp; &shy; &#847; &zwnj; &nbsp; &shy;<div>nested hidden</div></div>\n  <table role=\"presentation\" width=\"100%\">\n    <tr>\n      <td align=\"center\">\n        <img src=\"https://x/logo.png\" alt=\"Uber\" width=\"80\">\n      </td>\n    </tr>\n    <tr>\n      <td>\n        <h1 style=\"font-size:40px\">Don&rsquo;t let the details haunt you. Save 30%.</h1>\n        <p>Whatever's on your Halloween list, you'll find it on Uber&nbsp;Eats. Spend $40+ and save up to $20. Terms&nbsp;apply.</p>\n        <a href=\"https://x/shop\" style=\"background:#000;color:#fff\">Shop now</a>\n      </td>\n    </tr>\n    <tr><td>$17.09</td><td><s>$24.39</s></td><td>30% off</td></tr>\n  </table>\n<img src=\"https://t.x/open.gif\" width=\"1\" height=\"1\" style=\"display:none\"></body></html>",
+		"expected": "Don’t let the details haunt you. Save 30%.\n\nWhatever's on your Halloween list, you'll find it on Uber Eats. Spend $40+ and save up to $20. Terms apply.\n\nShop now\n\n$17.09 $24.39 30% off"
+	},
+	{
+		"name": "gmail style reply with nested quote",
+		"html": "<div dir=\"ltr\">Sounds good, see you then.<br><br>Jordan</div><br><div class=\"gmail_quote\"><div dir=\"ltr\" class=\"gmail_attr\">On Mon, Sep 7, 2026 at 9:12 AM Alex Rivera &lt;<a href=\"mailto:alex@example.com\">alex@example.com</a>&gt; wrote:<br></div><blockquote class=\"gmail_quote\" style=\"margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex\"><div dir=\"ltr\">Can we meet <b>Thursday</b>?<div><br></div><div>- Alex</div></div></blockquote></div>",
+		"expected": "Sounds good, see you then.\n\nJordan\n\nOn Mon, Sep 7, 2026 at 9:12 AM Alex Rivera <alex@example.com> wrote:\n\nCan we meet Thursday?\n\n- Alex"
+	},
+	{
+		"name": "outlook html with mso markup",
+		"html": "<html xmlns:o=\"urn:schemas-microsoft-com:office:office\"><head><meta charset=\"utf-8\"><style><!-- p.MsoNormal{margin:0cm;font-family:\"Calibri\",sans-serif} --></style><!--[if gte mso 9]><xml><o:shapedefaults v:ext=\"edit\" spidmax=\"1026\" /></xml><![endif]--></head><body lang=\"EN-US\"><div class=\"WordSection1\"><p class=\"MsoNormal\">Hi team,<o:p></o:p></p><p class=\"MsoNormal\"><o:p>&nbsp;</o:p></p><p class=\"MsoNormal\">Q3 numbers are attached &#8211; please review by Friday.<o:p></o:p></p><ul><li class=\"MsoNormal\">Revenue &uarr; 12%</li><li class=\"MsoNormal\">Churn &darr; 3%</li></ul><p class=\"MsoNormal\">Regards,<br>Priya<o:p></o:p></p></div></body></html>",
+		"expected": "Hi team,\n\nQ3 numbers are attached – please review by Friday.\n\n• Revenue ↑ 12%\n• Churn ↓ 3%\n\nRegards,\nPriya"
+	},
+	{
+		"name": "entities and emoji survive",
+		"html": "<p>Caf&eacute; &amp; cr&egrave;me &mdash; &#x1F383; &#127875; &copy; 2026 &unknownentity;</p>",
+		"expected": "Café & crème — 🎃 🎃 © 2026 &unknownentity;"
+	},
+	{
+		"name": "empty and whitespace-only html",
+		"html": "<div>&nbsp;</div><p>   </p><br>",
+		"expected": ""
+	}
+]

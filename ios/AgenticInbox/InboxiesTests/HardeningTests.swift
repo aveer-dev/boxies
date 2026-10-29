@@ -407,6 +407,53 @@ final class HardeningTests: XCTestCase {
         XCTAssertEqual(cached, prepared, "Same key is served from the cache")
     }
 
+    // MARK: - Quoted original (AVE-133)
+
+    /// The quote is not inlined: the reply shows the original's HTML as-is and
+    /// the Worker appends it on send (`quote_original`).
+    func testQuotedOriginalKeepsTheOriginalHTML() {
+        let original = Email(
+            id: "o1",
+            folderId: "spam",
+            subject: "Deals",
+            sender: "news@example.com",
+            senderName: "News",
+            recipient: "me@example.com",
+            date: "2026-10-27T16:46:00.000Z",
+            read: true,
+            starred: false,
+            body: "<table><tr><td><b>Big</b> <a href=\"https://example.com\">sale</a></td></tr></table>",
+            snippet: "Big sale"
+        )
+        let reply = ComposeHTML.quotedOriginal(from: original)
+        XCTAssertEqual(reply?.bodyHTML, original.body)
+        XCTAssertEqual(reply?.folderId, "spam")
+        XCTAssertEqual(reply?.isForward, false)
+        XCTAssertTrue(reply?.header.hasSuffix("News <news@example.com> wrote:") == true, reply?.header ?? "")
+
+        let forward = ComposeHTML.quotedOriginal(from: original, isForward: true)
+        XCTAssertEqual(forward?.detailLines.first, "---------- Forwarded message ---------")
+        XCTAssertEqual(forward?.detailLines.last, "To: me@example.com")
+
+        var empty = original
+        empty.body = "  "
+        empty.snippet = nil
+        XCTAssertNil(ComposeHTML.quotedOriginal(from: empty))
+    }
+
+    func testLegacyDraftQuoteIsStrippedFromTheEditor() {
+        let reply = ComposeHTML.editableReply(
+            fromDraftHTML: "<p>Thanks!</p><br><blockquote>On Tue, Oct 27, 2026, News wrote:<br><br>old</blockquote>",
+            quotedHeader: nil
+        )
+        XCTAssertEqual(reply, "Thanks!")
+        let forward = ComposeHTML.editableReply(
+            fromDraftHTML: "FYI\n\n---------- Forwarded message ----------\nFrom: News\n\nold",
+            quotedHeader: "Forwarded message from News"
+        )
+        XCTAssertEqual(forward, "FYI")
+    }
+
     // MARK: - Dark mode: own colours
 
     /// Same fixtures as web (`workers/test/email-colors.test.mjs`) and Android.
