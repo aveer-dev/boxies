@@ -1917,7 +1917,7 @@ final class AppModel {
     func showAddedToReplyLaterToast(for email: Email, duration: TimeInterval = 5) {
         showToast(
             "Added to Reply Later",
-            action: ToastAction(title: "Add reminder", accessibilityHint: "Choose when to be reminded") { [weak self] in
+            action: ToastAction(title: "Add reminder", accessibilityHint: "Choose when to be reminded", tone: .ink) { [weak self] in
                 guard let self else { return }
                 self.hideToast()
                 self.reminderPickerEmail = self.currentCopy(of: email)

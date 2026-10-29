@@ -30,7 +30,7 @@ struct ReplyLaterReminderView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "alarm")
                             .font(.inter(size: 14, weight: .medium))
-                            .foregroundStyle(AppTheme.accent)
+                            .foregroundStyle(AppTheme.muted)
                         Text("Reminder set for \(ReplyLaterReminder.longLabel(pendingDate, now: now))")
                             .font(.inter(size: 14, weight: .medium))
                             .foregroundStyle(AppTheme.ink)
@@ -54,7 +54,7 @@ struct ReplyLaterReminderView: View {
                     )
                     .font(.inter(size: 15))
                     .foregroundStyle(AppTheme.ink)
-                    .tint(AppTheme.accent)
+                    .tint(AppTheme.ink)
                     .accessibilityIdentifier("reminderCustomPicker")
 
                     Button {
@@ -76,12 +76,12 @@ struct ReplyLaterReminderView: View {
 
             if pendingDate != nil {
                 Section {
-                    Button(role: .destructive) {
+                    Button {
                         onPick(nil)
                     } label: {
                         Label("Remove reminder", systemImage: "bell.slash")
                             .font(.inter(size: 15))
-                            .foregroundStyle(.red)
+                            .foregroundStyle(AppTheme.ink)
                     }
                     .accessibilityIdentifier("reminderRemove")
                 }

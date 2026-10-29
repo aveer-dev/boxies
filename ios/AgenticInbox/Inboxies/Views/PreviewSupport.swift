@@ -370,7 +370,7 @@ enum PreviewSupport {
 
     // MARK: Reply Later reminders (AVE-86)
 
-    /// `-previewReminders`: "Invoice for March" fired (unread, due → amber bottom bar,
+    /// `-previewReminders`: "Invoice for March" fired (unread, due → ink-glow bottom bar,
     /// "Due" chip, top of New) and "Can you review the contract?" waits for tomorrow 9:00
     /// (alarm chip). `-previewReminderPicker` opens the picker on the pending one
     /// (`-previewReminderCustom` expands the custom date + time). `-previewReminderToast`

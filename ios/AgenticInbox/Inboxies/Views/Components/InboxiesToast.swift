@@ -2,12 +2,17 @@ import SwiftUI
 
 /// Trailing button on a toast: Undo, Add reminder, …
 struct ToastAction: Equatable {
+    /// `.accent` (Undo) or `.ink`: grey-scale, for actions that shouldn't add colour
+    /// to the shell (Add reminder, AVE-86).
+    enum Tone: Equatable { case accent, ink }
+
     let title: String
     var accessibilityHint: String? = nil
+    var tone: Tone = .accent
     let perform: @MainActor () -> Void
 
     static func == (lhs: ToastAction, rhs: ToastAction) -> Bool {
-        lhs.title == rhs.title && lhs.accessibilityHint == rhs.accessibilityHint
+        lhs.title == rhs.title && lhs.accessibilityHint == rhs.accessibilityHint && lhs.tone == rhs.tone
     }
 }
 
@@ -57,10 +62,13 @@ struct InboxiesToast: View {
                 } label: {
                     Text(action.title)
                         .font(.inter(size: ToastMetrics.fontSize, weight: .semibold))
-                        .foregroundStyle(AppTheme.accent)
+                        .foregroundStyle(action.tone == .ink ? AppTheme.ink : AppTheme.accent)
                         .padding(.horizontal, ToastMetrics.actionHorizontalPadding)
                         .frame(minHeight: ToastMetrics.actionHeight)
-                        .background(AppTheme.accent.opacity(0.12), in: Capsule())
+                        .background(
+                            action.tone == .ink ? AppTheme.ink.opacity(0.08) : AppTheme.accent.opacity(0.12),
+                            in: Capsule()
+                        )
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)

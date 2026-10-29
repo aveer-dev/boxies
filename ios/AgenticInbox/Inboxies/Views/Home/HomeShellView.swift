@@ -1618,7 +1618,7 @@ private struct AskAIButtonLabel: View {
     }
 }
 
-/// Soft amber halo behind the Reply Later button while a reminder is due (AVE-86): a
+/// Soft ink halo behind the Reply Later button while a reminder is due (AVE-86): a
 /// slow breath (~1.8s period) of opacity and scale. Reduce Motion keeps a static glow.
 /// Android twin: `ReplyLaterAttentionGlow` in HomeChrome.
 struct ReplyLaterAttentionGlow: View {
@@ -1630,7 +1630,7 @@ struct ReplyLaterAttentionGlow: View {
 
     var body: some View {
         Capsule()
-            .fill(AppTheme.attention.opacity(0.38))
+            .fill(AppTheme.attention.opacity(0.22))
             .blur(radius: 9)
             .scaleEffect(reduceMotion ? 1.06 : (breathing ? 1.14 : 1.0))
             .opacity(reduceMotion ? 0.75 : (breathing ? 1 : 0.4))
