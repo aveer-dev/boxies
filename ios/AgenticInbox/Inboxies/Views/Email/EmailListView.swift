@@ -833,7 +833,7 @@ struct EmailRowView: View {
                 }
 
                 if email.isReplyLaterDue {
-                    ReplyLaterReminderChip(text: "Due", tint: AppTheme.attention, filled: true)
+                    ReplyLaterReminderChip(text: "Due", tint: AppTheme.attention)
                         .accessibilityLabel("Reply later reminder due")
                 } else if let remindAt = email.replyLaterRemindDate {
                     let label = ReplyLaterReminder.shortLabel(remindAt)
@@ -1122,8 +1122,6 @@ private struct ScreenerActionButtonStyle: ButtonStyle {
 struct ReplyLaterReminderChip: View {
     let text: String
     let tint: Color
-    /// "Due": an ink pill with background-coloured text (grey-scale attention).
-    var filled: Bool = false
 
     var body: some View {
         HStack(spacing: 3) {
@@ -1133,12 +1131,7 @@ struct ReplyLaterReminderChip: View {
                 .font(.inter(size: AppTheme.List.badge, weight: .medium))
                 .lineLimit(1)
         }
-        .foregroundStyle(filled ? AppTheme.background : tint)
-        .padding(.horizontal, filled ? 6 : 0)
-        .padding(.vertical, filled ? 1.5 : 0)
-        .background {
-            if filled { Capsule().fill(tint) }
-        }
+        .foregroundStyle(tint)
         .fixedSize()
         .accessibilityElement(children: .ignore)
     }

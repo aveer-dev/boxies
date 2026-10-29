@@ -961,7 +961,8 @@ struct HomeShellView: View {
             .overlay {
                 if replyLaterIsDue {
                     Capsule()
-                        .strokeBorder(AppTheme.attention.opacity(0.55), lineWidth: 1)
+                        // Soft hairline: the halo carries the attention, the edge stays glass.
+                        .strokeBorder(AppTheme.attention.opacity(0.22), lineWidth: 0.5)
                         .allowsHitTesting(false)
                 }
             }
@@ -1618,7 +1619,7 @@ private struct AskAIButtonLabel: View {
     }
 }
 
-/// Soft ink halo behind the Reply Later button while a reminder is due (AVE-86): a
+/// Soft amber halo behind the Reply Later button while a reminder is due (AVE-86): a
 /// slow breath (~1.8s period) of opacity and scale. Reduce Motion keeps a static glow.
 /// Android twin: `ReplyLaterAttentionGlow` in HomeChrome.
 struct ReplyLaterAttentionGlow: View {
@@ -1630,7 +1631,7 @@ struct ReplyLaterAttentionGlow: View {
 
     var body: some View {
         Capsule()
-            .fill(AppTheme.attention.opacity(0.22))
+            .fill(AppTheme.attention.opacity(0.38))
             .blur(radius: 9)
             .scaleEffect(reduceMotion ? 1.06 : (breathing ? 1.14 : 1.0))
             .opacity(reduceMotion ? 0.75 : (breathing ? 1 : 0.4))

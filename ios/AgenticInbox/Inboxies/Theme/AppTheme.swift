@@ -14,10 +14,9 @@ enum AppTheme {
     static let uiAccent = dynamicColor(light: UIColor(red: 0.15, green: 0.35, blue: 0.85, alpha: 1), dark: UIColor(red: 0.35, green: 0.55, blue: 1.0, alpha: 1))
     static let uiUnread = dynamicColor(light: UIColor(red: 0.22, green: 0.22, blue: 0.24, alpha: 1), dark: UIColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1))
     static let uiDeepDarkRed = dynamicColor(light: UIColor(red: 0.42, green: 0.08, blue: 0.10, alpha: 1), dark: UIColor(red: 0.90, green: 0.35, blue: 0.35, alpha: 1))
-    /// "Needs attention now" (a fired Reply Later reminder, AVE-86): ink, not a hue, so
-    /// the shell stays grey-scale; attention comes from an ink ring, halo and filled pills.
-    /// Twins: Android `InboxiesColors.attention`, web `--attention`.
-    static let uiAttention = uiInk
+    /// Warm amber for "needs attention now" (a fired Reply Later reminder, AVE-86).
+    /// #B45309 light / #F59E0B dark; twins: Android `InboxiesColors.attention`, web CSS var.
+    static let uiAttention = dynamicColor(light: UIColor(red: 180 / 255, green: 83 / 255, blue: 9 / 255, alpha: 1), dark: UIColor(red: 245 / 255, green: 158 / 255, blue: 11 / 255, alpha: 1))
     /// Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). Not dynamic.
     static let uiMailPaper = UIColor.white
 

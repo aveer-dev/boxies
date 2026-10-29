@@ -221,11 +221,11 @@ export default function ThreadRow({
 	);
 }
 
-/** Reply Later reminder (AVE-86): pending time in muted ink, or "Due" as an ink pill (grey-scale). */
+/** Reply Later reminder (AVE-86): pending time in muted ink, or "Due" in the attention colour (no fill). */
 function ReminderChip({ email }: { email: Email }) {
 	if (isReplyLaterDue(email)) {
 		return (
-			<span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-[var(--attention)] px-1.5 text-xs font-medium leading-[18px] text-[var(--bg)]">
+			<span className="shrink-0 inline-flex items-center gap-1 text-xs font-medium leading-[18px] text-[var(--attention)]">
 				<AlarmIcon size={12} weight="fill" aria-hidden />
 				Due
 			</span>

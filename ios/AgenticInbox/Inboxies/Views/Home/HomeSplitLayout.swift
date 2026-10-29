@@ -187,10 +187,7 @@ struct HomeFolderColumn: View {
                             .font(.inter(size: AppTheme.FontSize.meta, weight: .medium))
                             .monospacedDigit()
                     }
-                    .foregroundStyle(AppTheme.background)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1.5)
-                    .background(AppTheme.attention, in: Capsule())
+                    .foregroundStyle(AppTheme.attention)
                 }
                 if count > 0 {
                     Text(count > 999 ? "999+" : "\(count)")

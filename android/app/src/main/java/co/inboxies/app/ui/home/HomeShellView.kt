@@ -1640,7 +1640,7 @@ private fun BottomBar(
                         .homeChromeToolbarSurface(RoundedCornerShape(50))
                         .then(
                             if (isDue) {
-                                Modifier.background(colors.attention.copy(alpha = 0.08f), RoundedCornerShape(50))
+                                Modifier.background(colors.attention.copy(alpha = 0.12f), RoundedCornerShape(50))
                             } else {
                                 Modifier
                             },
@@ -1994,7 +1994,7 @@ private fun <T> selectModeSpring() = spring<T>(
 )
 
 /**
- * Soft attention halo behind the Reply Later pill while a reminder is due (AVE-86): an ink
+ * Soft attention halo behind the Reply Later pill while a reminder is due (AVE-86): a warm
  * glow that breathes (opacity + spread, ~1.8s). With animations off it stays static.
  */
 @Composable
@@ -2018,9 +2018,10 @@ private fun Modifier.replyLaterAttentionGlow(active: Boolean, color: Color): Mod
     }
     return this.drawBehind {
         val radius = size.height / 2f
-        // Two stacked rings read as a soft glow without a blur effect.
+        // Two stacked rings read as a soft glow without a blur effect. The inner ring is the
+        // pill's visible edge: kept thin and faint so it reads as glass, not an outline.
         val outer = (3.dp.toPx() + 3.dp.toPx() * pulse)
-        val inner = (1.dp.toPx() + 1.5.dp.toPx() * pulse)
+        val inner = (0.5.dp.toPx() + 0.75.dp.toPx() * pulse)
         drawRoundRect(
             color = color.copy(alpha = 0.06f + 0.08f * pulse),
             topLeft = Offset(-outer, -outer),
@@ -2028,7 +2029,7 @@ private fun Modifier.replyLaterAttentionGlow(active: Boolean, color: Color): Mod
             cornerRadius = CornerRadius(radius + outer),
         )
         drawRoundRect(
-            color = color.copy(alpha = 0.14f + 0.12f * pulse),
+            color = color.copy(alpha = 0.07f + 0.07f * pulse),
             topLeft = Offset(-inner, -inner),
             size = Size(size.width + inner * 2, size.height + inner * 2),
             cornerRadius = CornerRadius(radius + inner),

@@ -1646,7 +1646,7 @@ fun ScreenerActionButtons(
 
 /**
  * Row meta for Reply Later (AVE-86): the clock alone, a clock + short time for a pending
- * reminder, or an ink "Due" pill once the reminder fired (grey-scale).
+ * reminder, or the attention-tinted clock + "Due" (no fill) once the reminder fired.
  */
 @Composable
 private fun ReplyLaterReminderChip(email: Email) {
@@ -1659,7 +1659,7 @@ private fun ReplyLaterReminderChip(email: Email) {
         null
     }
     val tint = when {
-        due -> colors.background
+        due -> colors.attention
         pending != null -> colors.muted
         else -> colors.accent
     }
@@ -1671,17 +1671,7 @@ private fun ReplyLaterReminderChip(email: Email) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
-        modifier = Modifier
-            .then(
-                if (due) {
-                    Modifier
-                        .background(colors.attention, RoundedCornerShape(50))
-                        .padding(horizontal = 6.dp, vertical = 1.dp)
-                } else {
-                    Modifier
-                },
-            )
-            .semantics(mergeDescendants = true) { contentDescription = description },
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = description },
     ) {
         Icon(
             if (due || pending != null) Icons.Outlined.NotificationsActive else Icons.Outlined.Schedule,

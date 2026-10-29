@@ -65,7 +65,7 @@ function FolderRow({
 	label: string;
 	count?: number;
 	muted?: boolean;
-	/** Reply Later reminders due (AVE-86): ink text, a breathing ink ring and an ink "N due" pill. */
+	/** Reply Later reminders due (AVE-86): attention colour, a soft breathing glow and a "N due" pill. */
 	attention?: number;
 }) {
 	const due = attention != null && attention > 0;
@@ -96,7 +96,7 @@ function FolderRow({
 			{due && (
 				<span
 					key={`due-${attention}`}
-					className="shrink-0 rounded-full bg-[var(--attention)] px-1.5 text-2xs font-semibold leading-[16px] text-[var(--bg)] tabular-nums animate-reveal"
+					className="shrink-0 rounded-full bg-[var(--attention-soft)] px-1.5 text-2xs font-semibold leading-[16px] text-[var(--attention)] tabular-nums animate-reveal"
 				>
 					{formatCount(attention)} due
 				</span>
