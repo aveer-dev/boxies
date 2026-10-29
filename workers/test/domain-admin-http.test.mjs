@@ -148,9 +148,28 @@ let ownerInviteToken;
 	assert.equal(list.payload[0].token, undefined);
 }
 
-// ── Accept (signed out, app builds without codes): new user, owner login ──
+// ── Codeless accept is off unless LEGACY_INVITE_ACCEPT is "true" ──
+// An invite link alone (no emailed code) must not create a login — for an
+// owner invite that login would be the mailbox address itself.
+for (const value of [undefined, "false", "", "yes", "1"]) {
+	const target = value === undefined ? env : { ...env, LEGACY_INVITE_ACCEPT: value };
+	const denied = await request(target, {
+		method: "POST",
+		path: `/api/v1/invites/${ownerInviteToken}/accept`,
+		body: { password: "alex password 123", displayName: "Alex" },
+	});
+	assert.equal(denied.status, 400, `codeless accept rejected (LEGACY_INVITE_ACCEPT=${value})`);
+	assert.equal(denied.payload.codeRequired, true);
+	assert.equal(denied.headers.get("set-cookie"), null, "no session");
+	assert.equal(await d1.prepare("select count(*) as n from user where email = 'alex@acme.com'").first("n"), 0, "no user created");
+	assert.equal((await request(env, { path: `/api/v1/invites/${ownerInviteToken}` })).payload.status, "pending", "the invite is still pending");
+}
+
+const legacy = { ...env, LEGACY_INVITE_ACCEPT: "true" };
+
+// ── Accept (signed out, LEGACY_INVITE_ACCEPT="true"): new user, owner login ──
 {
-	const accept = await request(env, {
+	const accept = await request(legacy, {
 		method: "POST",
 		path: `/api/v1/invites/${ownerInviteToken}/accept`,
 		body: { password: "alex password 123", displayName: "Alex" },
@@ -167,11 +186,11 @@ let ownerInviteToken;
 	assert.deepEqual(list.payload.map((m) => m.id), ["alex@acme.com"]);
 
 	// Single use.
-	const again = await request(env, { method: "POST", path: `/api/v1/invites/${ownerInviteToken}/accept`, body: { password: "another password 1" } });
+	const again = await request(legacy, { method: "POST", path: `/api/v1/invites/${ownerInviteToken}/accept`, body: { password: "another password 1" } });
 	assert.equal(again.status, 410);
 }
 
-// ── Member invite: login is the invitee address, unverified without a code ──
+// ── Member invite (legacy, no code): login is the invitee address, unverified ──
 {
 	const inv = await request(env, {
 		method: "POST",
@@ -180,7 +199,7 @@ let ownerInviteToken;
 		body: { inviteEmail: "member@gmail.com", role: "member" },
 	});
 	assert.equal(inv.status, 201);
-	const accept = await request(env, { method: "POST", path: `/api/v1/invites/${inv.payload.token}/accept`, body: { password: "member password 1" } });
+	const accept = await request(legacy, { method: "POST", path: `/api/v1/invites/${inv.payload.token}/accept`, body: { password: "member password 1" } });
 	assert.equal(accept.status, 200);
 	assert.equal(accept.payload.email, "member@gmail.com");
 	const row = await d1.prepare("select email_verified from user where id = ?").bind(accept.payload.userId).first("email_verified");
@@ -198,9 +217,9 @@ let ownerInviteToken;
 	assert.equal((await request(env, { path: `/api/v1/invites/${inv2.payload.token}` })).status, 200, "the invite is still pending");
 }
 
-// ── With codes required: verified address becomes the recovery email ──
+// ── Default (codes required): verified address becomes the recovery email ──
 {
-	const strict = { ...env, LEGACY_INVITE_ACCEPT: "false" };
+	const strict = env;
 	const inv = await request(strict, { method: "POST", path: "/api/v1/mailboxes/existing@acme.com/invites", principal: asAdmin, body: { inviteEmail: "carol@gmail.com", role: "member" } });
 	const token = inv.payload.token;
 	const noCode = await request(strict, { method: "POST", path: `/api/v1/invites/${token}/accept`, body: { password: "carol password 1" } });

@@ -316,9 +316,14 @@ function claimInviteStatement(db: AuthDb, tokenHash: string, userId: string) {
 		.returning({ tokenHash: schema.invite.tokenHash });
 }
 
-/** Without a code, new accounts can still be created by app builds that predate invite codes. */
+/**
+ * Off by default: a signed-out accept must carry the emailed code, so an invite
+ * link alone can't create a login (for an owner, the mailbox address itself).
+ * Only `LEGACY_INVITE_ACCEPT="true"` lets app builds that predate invite codes
+ * create an account without one.
+ */
 function codelessAcceptAllowed(env: Env): boolean {
-	return env.LEGACY_INVITE_ACCEPT?.trim().toLowerCase() !== "false";
+	return env.LEGACY_INVITE_ACCEPT?.trim().toLowerCase() === "true";
 }
 
 // ── Routes ───────────────────────────────────────────────────────
@@ -603,9 +608,9 @@ export function registerAdminAndInviteRoutes(app: App) {
 	 * Accept an invite.
 	 * - Signed in: the code is required; the invite joins the signed-in user.
 	 * - Signed out: creates a new user with `password`. With a valid code the
-	 *   invitee address is verified (and becomes the recovery email); app
-	 *   builds that predate codes may still accept without one
-	 *   (LEGACY_INVITE_ACCEPT), leaving the address unverified.
+	 *   invitee address is verified (and becomes the recovery email). Without
+	 *   one: 400 `codeRequired`, unless LEGACY_INVITE_ACCEPT="true" lets app
+	 *   builds that predate codes accept, leaving the address unverified.
 	 */
 	app.post("/api/v1/invites/:token/accept", async (c) => {
 		const db = authDb(c.env.AUTH_DB);
