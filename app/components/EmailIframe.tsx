@@ -83,7 +83,9 @@ interface EmailIframeProps {
  * - A strict CSP meta tag blocks external resource loads inside the
  *   iframe as a defense-in-depth layer. Only images are allowed out: remote
  *   https images load by default, except in Spam, where they stay blocked
- *   until the reader opts in. Same-origin inline (cid) images always load.
+ *   until the reader opts in. Inline (cid) images arrive as `data:` URLs:
+ *   the app fetches them before rendering (MessageBody / useInlineImages),
+ *   because this opaque-origin frame can't send the session cookie (AVE-110).
  * - Links always open in a new tab; the email can't navigate the app away.
  */
 export default function EmailIframe({ body, autoSize, blockRemoteImages = false }: EmailIframeProps) {
@@ -162,8 +164,8 @@ export default function EmailIframe({ body, autoSize, blockRemoteImages = false 
 		if (!body) return;
 
 		// Remote https images load unless this is a Spam message the reader
-		// hasn't opted in on (same as iOS and Android). The app's own origin is
-		// always listed so inline (cid) images load in local dev.
+		// hasn't opted in on (same as iOS and Android). Inline (cid) images are
+		// already data: URLs by now (AVE-110), so Spam never blocks them.
 		const imgSrc = emailImgSrc({
 			blockRemoteImages,
 			loadedRemoteImages,

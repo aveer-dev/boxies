@@ -5,9 +5,8 @@
 import { PaperclipIcon, ShieldCheckIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import EmailAttachmentList from "~/components/EmailAttachmentList";
-import EmailIframe from "~/components/EmailIframe";
-import { formatDetailDate, hasFileAttachment, rewriteInlineImages } from "~/lib/utils";
-import { blocksRemoteImages } from "shared/remote-images";
+import MessageBody from "~/components/email-panel/MessageBody";
+import { formatDetailDate, hasFileAttachment } from "~/lib/utils";
 import { displaySenderName } from "shared/sender";
 import type { Email } from "~/types";
 import { deliveryStatusLabel, isDeliveryFailure } from "~/lib/delivery-status";
@@ -104,15 +103,7 @@ export default function SingleMessageView({
 			{notes && <div className="mx-4 mt-3 md:mx-6 max-h-[40%] overflow-y-auto shrink-0">{notes}</div>}
 
 			<div className="flex-1 min-h-0">
-				<EmailIframe
-					body={rewriteInlineImages(
-						email.body || "",
-						mailboxId || "",
-						email.id,
-						email.attachments,
-					)}
-					blockRemoteImages={blocksRemoteImages(email.folder_id)}
-				/>
+				<MessageBody email={email} mailboxId={mailboxId} />
 			</div>
 
 			<EmailAttachmentList
