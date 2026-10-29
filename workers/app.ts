@@ -20,6 +20,7 @@ import {
 import { EmailMCP } from "./mcp";
 import { createMcpOAuth, registerMcpOAuthRoutes, registerMcpRoutes } from "./mcp/oauth";
 import { strictMailboxId } from "./lib/mailbox-routing";
+import { withSecurityHeaders } from "./lib/security-headers";
 import { authDb, authorizeMailboxAccess } from "./auth/authz";
 import type { RequestPrincipal } from "./auth/principal";
 import type { Operator } from "./auth/operators";
@@ -66,6 +67,14 @@ export { isPublicAuthPath };
 type AppVariables = { principal?: RequestPrincipal; operator?: Operator };
 // Main app that wraps the API and adds React Router fallback
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
+
+// Security headers on every response (AVE-115, workers/lib/security-headers.ts).
+// First, so redirects and early returns below get them too.
+app.use("*", async (c, next) => {
+	await next();
+	const res = withSecurityHeaders(c.res, c.req.raw);
+	if (res !== c.res) c.res = res;
+});
 
 // The web app lives on APP_BASE_URL; old hosts (inboxies.email) send browsers there.
 app.use("*", async (c, next) => webHostRedirect(c.env, c.req.raw) ?? next());
