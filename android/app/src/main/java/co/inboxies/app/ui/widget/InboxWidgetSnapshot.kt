@@ -15,7 +15,7 @@ data class InboxWidgetSnapshot(
     /** Count of New conversations in the Inbox (same number as the Inbox "New" section). */
     val newCount: Int,
     val replyLaterCount: Int,
-    /** Newest New threads, at most three (4×2 shows three, 2×2 shows their avatars). */
+    /** Newest New threads, at most [MAX_THREADS] (five). 4×2 lists three, the 2×2 avatar stack shows three, the depth card stack flips through all of them. */
     val threads: List<Thread>,
     val updatedAt: ZonedDateTime,
 ) {
@@ -30,6 +30,8 @@ data class InboxWidgetSnapshot(
     val isInboxZero: Boolean get() = newCount == 0
 
     companion object {
+        const val MAX_THREADS = 5
+
         /**
          * Copy under "Inbox zero". One line per day, picked by day of the year.
          * Same lines and order as iOS.
@@ -57,6 +59,8 @@ data class InboxWidgetSnapshot(
                 Thread("t-1", "Maya Chen", "Q3 roadmap: final draft for review", sampleNow.minusMinutes(4)),
                 Thread("t-2", "Jonas Weber", "Dinner on Friday?", sampleNow.minusMinutes(38)),
                 Thread("t-3", "Priya Natarajan", "Contract signed, next steps", sampleNow.minusMinutes(95)),
+                Thread("t-4", "Leo Martins", "Photos from the offsite", sampleNow.minusMinutes(140)),
+                Thread("t-5", "Ada Okafor", "Can we move our 1:1 to Thursday?", sampleNow.minusMinutes(185)),
             ),
             updatedAt = sampleNow,
         )

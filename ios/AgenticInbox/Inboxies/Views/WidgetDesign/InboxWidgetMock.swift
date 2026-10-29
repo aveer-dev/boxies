@@ -136,7 +136,7 @@ private struct SmallHasMail: View {
                 .padding(.top, 2)
             Spacer(minLength: 10)
             HStack(alignment: .center, spacing: 6) {
-                InboxWidgetAvatarStack(names: snapshot.threads.map(\.senderName), extra: max(snapshot.newCount - snapshot.threads.count, 0))
+                InboxWidgetAvatarStack(names: snapshot.threads.map(\.senderName), extra: max(snapshot.newCount - min(snapshot.threads.count, 3), 0))
                 Spacer(minLength: 0)
                 if snapshot.replyLaterCount > 0 {
                     InboxWidgetReplyLaterPill(count: snapshot.replyLaterCount, compact: true)
@@ -230,7 +230,7 @@ private struct MediumInboxZero: View {
 // MARK: - Pieces
 
 /// "Inbox" with the tray glyph; the unread dot when there's something new.
-private struct InboxWidgetHeader: View {
+struct InboxWidgetHeader: View {
     let isLive: Bool
 
     var body: some View {
@@ -250,7 +250,7 @@ private struct InboxWidgetHeader: View {
     }
 }
 
-private struct InboxWidgetCount: View {
+struct InboxWidgetCount: View {
     let count: Int
     let size: CGFloat
 
@@ -262,6 +262,8 @@ private struct InboxWidgetCount: View {
             .monospacedDigit()
             .lineLimit(1)
             .minimumScaleFactor(0.6)
+            // WidgetKit plays this when a new timeline entry changes the count (iOS 17+).
+            .contentTransition(.numericText(value: Double(count)))
     }
 }
 
@@ -309,7 +311,7 @@ private struct InboxWidgetAvatarStack: View {
 }
 
 /// Glass pill: clock glyph + count ("2" compact, "2 Reply later" otherwise).
-private struct InboxWidgetReplyLaterPill: View {
+struct InboxWidgetReplyLaterPill: View {
     let count: Int
     let compact: Bool
 
@@ -330,7 +332,7 @@ private struct InboxWidgetReplyLaterPill: View {
 }
 
 /// Inbox-zero mark: ink check inside a glass disc with a faint ink halo.
-private struct InboxWidgetZeroMark: View {
+struct InboxWidgetZeroMark: View {
     let size: CGFloat
 
     var body: some View {

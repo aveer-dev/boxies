@@ -101,6 +101,7 @@
 		AB932202FDC329C27C143391 /* EmailHTMLSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8658FB20162E4931296C3338 /* EmailHTMLSanitizer.swift */; };
 		AD5A72B5AFFB651EACFC1EB2 /* ChatSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0EDC9246D251503A2C2895D /* ChatSheetView.swift */; };
 		B157225C80D0523AE6C6CDC9 /* DomainAdminDNSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49649C28917B9CFF9BDA12B5 /* DomainAdminDNSView.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* InboxWidgetDepth.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A60718293A4B5D /* InboxWidgetDepth.swift */; };
 		B158790A486A5A6772C224AC /* InboxWidgetMock.swift in Sources */ = {isa = PBXBuildFile; fileRef = F689FFC0A7CFCA67D81095C6 /* InboxWidgetMock.swift */; };
 		BEABE6117A87AF07E976CF2E /* PreviewSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4D9A4CBE7DF8D0E6DA68CFB /* PreviewSupport.swift */; };
 		C08F4C03E2FD7A5DEB6A55CB /* PrivateEmailRequestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74FC3A9EFF9C884E623775CF /* PrivateEmailRequestView.swift */; };
@@ -279,6 +280,7 @@
 		F188CBAA8BD1E3594EECDC0A /* AutofillSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutofillSession.swift; sourceTree = "<group>"; };
 		F26FD269635314B4336F3D84 /* ComposeDockBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeDockBar.swift; sourceTree = "<group>"; };
 		F3485CC457F14D933E111031 /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5A60718293A4B5D /* InboxWidgetDepth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWidgetDepth.swift; sourceTree = "<group>"; };
 		F46FEEEA6AAF7DE092247193 /* InboxWidgetGallery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWidgetGallery.swift; sourceTree = "<group>"; };
 		F689FFC0A7CFCA67D81095C6 /* InboxWidgetMock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxWidgetMock.swift; sourceTree = "<group>"; };
 		F692AD79040A16E97A770F3F /* RealTimeStreamClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RealTimeStreamClient.swift; sourceTree = "<group>"; };
@@ -556,6 +558,7 @@
 		DDBAA65A79AC81B4981DCBC3 /* WidgetDesign */ = {
 			isa = PBXGroup;
 			children = (
+				B1C2D3E4F5A60718293A4B5D /* InboxWidgetDepth.swift */,
 				F46FEEEA6AAF7DE092247193 /* InboxWidgetGallery.swift */,
 				F689FFC0A7CFCA67D81095C6 /* InboxWidgetMock.swift */,
 				4DC0F8F590D1F62CBB7B8B68 /* InboxWidgetSnapshot.swift */,
@@ -792,6 +795,7 @@
 				FC991A4DFE575F4AE22826B6 /* HomeSplitLayout.swift in Sources */,
 				3770413860D08C5653807FD5 /* InboxDigestView.swift in Sources */,
 				8D71C210B786877436A48B37 /* InboxNewListView.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* InboxWidgetDepth.swift in Sources */,
 				55073E9F341EE7B5A4FEC969 /* InboxWidgetGallery.swift in Sources */,
 				B158790A486A5A6772C224AC /* InboxWidgetMock.swift in Sources */,
 				E555E486DCF9161C977A78F0 /* InboxWidgetSnapshot.swift in Sources */,

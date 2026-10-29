@@ -133,7 +133,7 @@ fun InboxWidgetMock(
  * bottom-start. Deeper as New grows; nearly gone at inbox zero.
  */
 @Composable
-private fun Modifier.inboxWidgetAmbientBackground(newCount: Int): Modifier {
+internal fun Modifier.inboxWidgetAmbientBackground(newCount: Int): Modifier {
     val colors = inboxiesColors()
     val strength = InboxWidgetMetrics.glowStrength(newCount, colors.isDark)
     val sheen = Color.White.copy(alpha = if (colors.isDark) 0.05f else 0.35f)
@@ -171,7 +171,7 @@ private fun Modifier.inboxWidgetAmbientBackground(newCount: Int): Modifier {
  * [co.inboxies.app.theme.liquidGlass] chrome so the glow shows through.
  */
 @Composable
-private fun Modifier.inboxWidgetFrost(shape: Shape): Modifier {
+internal fun Modifier.inboxWidgetFrost(shape: Shape): Modifier {
     val colors = inboxiesColors()
     return this
         .clip(shape)
@@ -202,7 +202,7 @@ private fun SmallHasMail(snapshot: InboxWidgetSnapshot) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             InboxWidgetAvatarStack(
                 names = snapshot.threads.map { it.senderName },
-                extra = max(snapshot.newCount - snapshot.threads.size, 0),
+                extra = max(snapshot.newCount - min(snapshot.threads.size, 3), 0),
             )
             Spacer(Modifier.weight(1f))
             if (snapshot.replyLaterCount > 0) {
@@ -315,7 +315,7 @@ private fun MediumInboxZero(snapshot: InboxWidgetSnapshot) {
 
 /** "Inbox" with the tray glyph; the unread dot when there's something new. */
 @Composable
-private fun InboxWidgetHeader(isLive: Boolean) {
+internal fun InboxWidgetHeader(isLive: Boolean) {
     val colors = inboxiesColors()
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         Icon(Icons.Rounded.Inbox, contentDescription = null, tint = colors.ink, modifier = Modifier.size(13.dp))
@@ -333,7 +333,7 @@ private fun InboxWidgetHeader(isLive: Boolean) {
 }
 
 @Composable
-private fun InboxWidgetCount(count: Int) {
+internal fun InboxWidgetCount(count: Int) {
     Text(
         if (count > 99) "99+" else count.toString(),
         fontFamily = InterFontFamily,
@@ -403,7 +403,7 @@ private fun InboxWidgetAvatarStack(names: List<String>, extra: Int) {
 
 /** Frosted pill: clock glyph + count ("2" compact, "2 Reply later" otherwise). */
 @Composable
-private fun InboxWidgetReplyLaterPill(count: Int, compact: Boolean) {
+internal fun InboxWidgetReplyLaterPill(count: Int, compact: Boolean) {
     val colors = inboxiesColors()
     Row(
         modifier = Modifier
@@ -428,7 +428,7 @@ private fun InboxWidgetReplyLaterPill(count: Int, compact: Boolean) {
 
 /** Inbox-zero mark: ink check inside a frosted disc with a faint ink halo. */
 @Composable
-private fun InboxWidgetZeroMark(size: Dp) {
+internal fun InboxWidgetZeroMark(size: Dp) {
     val colors = inboxiesColors()
     Box(modifier = Modifier.size(size).wrapContentSize(unbounded = true), contentAlignment = Alignment.Center) {
         // Soft halo: a radial wash past the disc edge (Glance: a drawable behind the disc).

@@ -18,11 +18,14 @@ struct InboxWidgetSnapshot: Codable, Equatable {
     /// Count of New conversations in the Inbox (the same number as the Inbox "New" section).
     let newCount: Int
     let replyLaterCount: Int
-    /// Newest New threads, at most three (medium shows three, small shows their avatars).
+    /// Newest New threads, at most `maxThreads` (five). Medium lists three, the small
+    /// avatar stack shows three, and the depth card stack flips through all of them.
     let threads: [Thread]
     let updatedAt: Date
 
     var isInboxZero: Bool { newCount == 0 }
+
+    static let maxThreads = 5
 }
 
 extension InboxWidgetSnapshot {
@@ -78,6 +81,18 @@ extension InboxWidgetSnapshot {
                 senderName: "Priya Natarajan",
                 subject: "Contract signed, next steps",
                 receivedAt: sampleNow.addingTimeInterval(-95 * 60)
+            ),
+            Thread(
+                id: "t-4",
+                senderName: "Leo Martins",
+                subject: "Photos from the offsite",
+                receivedAt: sampleNow.addingTimeInterval(-140 * 60)
+            ),
+            Thread(
+                id: "t-5",
+                senderName: "Ada Okafor",
+                subject: "Can we move our 1:1 to Thursday?",
+                receivedAt: sampleNow.addingTimeInterval(-185 * 60)
             ),
         ],
         updatedAt: sampleNow

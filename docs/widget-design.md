@@ -4,10 +4,11 @@ This is a design sign-off for the home-screen widget on iOS and Android. The moc
 
 | | iOS | Android |
 | --- | --- | --- |
-| Mock views | `ios/AgenticInbox/Inboxies/Views/WidgetDesign/InboxWidgetMock.swift` (`#Preview` per state) | `android/app/src/main/java/co/inboxies/app/ui/widget/InboxWidgetMock.kt` (`@Preview` per state × light/dark) |
+| Mock views, round 1 "Calm" | `ios/AgenticInbox/Inboxies/Views/WidgetDesign/InboxWidgetMock.swift` (`#Preview` per state) | `android/app/src/main/java/co/inboxies/app/ui/widget/InboxWidgetMock.kt` (`@Preview` per state × light/dark) |
+| Mock views, round 2 "Depth" | `InboxWidgetDepth.swift` | `InboxWidgetDepth.kt` |
 | Data model + samples | `InboxWidgetSnapshot.swift` | `InboxWidgetSnapshot.kt` |
 | DEBUG gallery | `InboxWidgetGallery.swift`, launch arg `-previewWidgets` (add `-app_theme Dark` / `Light`) | `InboxWidgetGallery.kt`, `./scripts/run-debug-preview.sh widgets` (the Light/Dark pill flips the screen) |
-| Tokens | `AppTheme.Widget` (extends `AppTheme`) | `InboxWidgetMetrics` (next to `InboxiesColors` / `HomeChromeMetrics`) |
+| Tokens | `AppTheme.Widget` + `AppTheme.Widget.Depth` (extends `AppTheme`) | `InboxWidgetMetrics` + `InboxWidgetDepthMetrics` (next to `InboxiesColors` / `HomeChromeMetrics`) |
 
 ## The idea
 
@@ -35,7 +36,48 @@ The widget is a calm summary of today's inbox that deepens when something arrive
 
 Corner radius is 22pt on iOS, close to the system mask that clips the real widget. On Android it's 24dp, mapped to `@android:dimen/system_app_widget_background_radius` in the build. Padding is 16 on both. The Android dp sizes are typical for a 4-column Pixel launcher. The Glance build should use `SizeMode.Responsive` with these two breakpoints.
 
-**Tapping.** In the small size the whole widget opens the Inbox. In the medium size each row opens its own thread and the rest of the widget opens the Inbox. There are no interactive buttons in v1. Large and lock-screen widgets come later.
+**Tapping.** In round 1, the whole small widget opens the Inbox. In the medium size each row opens its own thread and the rest of the widget opens the Inbox. Round 2 adds one interactive control, the deck's › button (see Depth). Large and lock-screen widgets come later.
+
+## Round 2: Depth
+
+Round 2 keeps everything above (grey-scale, ink bloom, Inter, glass pieces) and adds depth people can touch. The gallery shows Depth first, a preview-only tilt inspector, then round 1 ("Calm") for comparison.
+
+- **A deck of New mail.** The New-mail state shows the newest threads as a stack of cards. The front card has the avatar, sender, time (medium only) and a two-line subject. Two cards peek out behind it. Each one is 6% smaller, anchored at its top edge, sits 7pt/dp higher, and gets a little darker (black at 4.5% per layer in light mode, 16% in dark). Every card has a soft black shadow and a white top-lip highlight that fades down the sides, so it looks like it has thickness. In dark mode the front card is lifted with 5% `ink`, because raised surfaces look lighter in the dark. Everything stays grey-scale.
+- **Tap › to flip.** An `ink` disc with a `surface` chevron sits at the bottom trailing corner of the front card. Tapping it deals the front card off to the trailing side with a 7° turn as it fades out. The cards behind move forward, and the deck wraps around after the last thread. Dots on the card (the current one is a wider `ink` capsule) show which thread you're on, out of up to five. Tapping the card itself opens that thread, and tapping anywhere else opens the Inbox, as before.
+- **The count rolls.** On iOS the New count uses `contentTransition(.numericText(value:))`, so when a new timeline entry changes it, the digits roll instead of jumping.
+- **Inbox zero floats.** The check disc sits 8pt/dp above a soft elliptical ground shadow, so it looks like it's hovering. It's a still image, not an animation.
+- **Small layout.** The header shows "Inbox ●" with "7 new" on the right, and the deck fills the rest of the widget. The avatar stack and the Reply later pill only appear in round 1's small widget. **Medium layout:** the left column is unchanged (count, "New", Reply later pill), and the deck replaces the thread panel.
+- **Data.** The snapshot now stores up to **5** threads (`InboxWidgetSnapshot.maxThreads` / `MAX_THREADS`). The medium list in round 1 still shows 3. The widget also stores which thread is on top (`frontIndex`, per widget instance). The app resets it to 0 whenever the snapshot changes.
+
+### What the platform allows
+
+Home-screen widgets are static snapshots that the system renders from a timeline (iOS) or from RemoteViews (Android). They can't run code while you look at them. The table below shows what each effect needs and whether the platform can do it.
+
+| Effect | iOS WidgetKit (17+, 26) | Android Glance / RemoteViews | Used here |
+| --- | --- | --- | --- |
+| Layered cards, shading, soft shadows, gradients | Yes. Static SwiftUI rendering (`shadow`, `RadialGradient`, `blur` all render) | Partly. No shadows or blur, so the back cards and their shadows are one **pre-rendered bitmap** (`ImageProvider`) behind a real front `Box` with `cornerRadius` (API 31+) | Deck, floating check |
+| Tap a button to change what's shown | Yes. `Button(intent:)` / `Toggle(intent:)` with an `AppIntent` (iOS 17+), which writes `frontIndex` to the App Group and reloads the timeline | Yes. `actionRunCallback<ShowNextThreadAction>()`, which updates the Glance state and calls `update()` | › flips the deck |
+| Animated change between two states | Yes. Short system-run transitions between timeline entries: `.transition`, view identity (`id`), `contentTransition(.numericText)`, about 2s max | **No.** RemoteViews swaps instantly. The deck jumps to the next card (the in-app spring is preview only) | Deal/advance, count roll (iOS) |
+| Pending state while an intent runs | Yes. `invalidatableContent()` dims the card until the new entry lands | No equivalent. The update is fast because it's local state | Front card |
+| Theme-aware rendering | Yes. `widgetRenderingMode` (full color / accented / vibrant). On iOS 26, tinted and clear glass home screens: mark the count, the check and the › disc `widgetAccentable()`, and the user's tint replaces ink | Yes. Light/dark via `GlanceTheme` or resources. Android 12+ dynamic color exists, but we stay grey-scale | Default grey-scale; follows the system tint |
+| Surfacing at the right time | Yes. Smart Stack relevance (`TimelineEntryRelevance`, iOS 26 `WidgetRelevance`) when New grows | No equivalent | Raise relevance when `newCount` increases |
+| Continuous animation (bobbing, shimmer, looping) | **No** | **No** | Not used |
+| Drag, swipe, long-press-to-peek inside the widget | **No.** Only taps on buttons, toggles and links | **No.** Only clicks (plus list scrolling in collection widgets) | Not used |
+| Tilt/parallax from the gyroscope, 3D rotation on touch | **No.** No motion data, no gestures, no live rendering. (The visionOS-only `levelOfDetail`/`widgetTexture` APIs don't apply to iPhone) | **No** | **Preview-only inspector**, clearly labelled |
+| Real-time count without the app | No. Updates come from the app (`WidgetCenter.reloadTimelines`) or a push-driven reload | No. Updates come from the app (`updateAll`) or a WorkManager job | Snapshot write on refresh |
+
+The **depth inspector** in the gallery lets you drag the medium widget to tilt it in 3D and spread its layers apart, so the depth recipe can be reviewed. It is labelled "Preview only · Not possible in a home-screen widget" on both platforms, and nothing in the widget build depends on it. The same tilt could someday be used inside the app (for example, an inbox-zero moment), but not on the home screen.
+
+### Effect → API mapping
+
+| Effect | iOS | Android |
+| --- | --- | --- |
+| Deck poses | `InboxWidgetDeckPose.forSlot` → `scaleEffect(anchor: .top)`, `offset`, `rotationEffect`, `opacity`, `zIndex`, with all stored threads drawn and keyed by `thread.id` | Same math in `InboxWidgetDeckPose.forSlot`. In Glance, only the front card is a live `Box`; the back cards are the bitmap background |
+| › button | `Button(intent: ShowNextThreadIntent(mailboxId:))` | `actionRunCallback<ShowNextThreadAction>(actionParametersOf(mailboxKey to id))` |
+| Flip motion | WidgetKit animates the pose change between entries because view identity is stable | None (instant swap) |
+| Count roll | `contentTransition(.numericText(value:))` | None |
+| Ground shadow / lip highlight / shade | `Ellipse().blur`, `strokeBorder(LinearGradient)`, black overlays | Drawn into the background bitmap at the widget's size |
+| Tinted / clear (iOS 26) | `widgetAccentable()` on the count, check and ›; `containerBackground(for: .widget)` for the bloom so the system can remove it in clear mode | n/a |
 
 ## Data the app must provide
 
@@ -45,7 +87,8 @@ Both platforms use the same snapshot, written by the app whenever the Inbox for 
 mailboxId, mailboxAddress
 newCount          // the Inbox "New" count, same rule as the New section
 replyLaterCount
-threads[≤3]       // newest New: id, senderName, subject, receivedAt
+threads[≤5]       // newest New: id, senderName, subject, receivedAt
+frontIndex        // deck position, per widget instance; reset to 0 on a new snapshot
 updatedAt
 ```
 
@@ -54,7 +97,7 @@ The mailbox comes from the widget's configuration and defaults to the last activ
 - **iOS:** add an App Group (`group.co.inboxies.app`) to the app and to a new `InboxiesWidget` extension. The app writes `InboxWidgetSnapshot` as JSON into the group container, one file per mailbox, then calls `WidgetCenter.shared.reloadTimelines(ofKind:)`. The extension's `TimelineProvider` reads that file. It never touches the network or the session token. Mailbox selection uses an `AppIntentConfiguration` with a `MailboxEntity` query over the mailbox list stored in the group.
 - **Android:** a Glance `GlanceAppWidget` with `PreferencesGlanceStateDefinition` (or a small custom JSON state). The app updates it from `AppModel` refreshes via `updateAll` or `update(glanceId)`. Mailbox selection lives in a configuration activity, registered as `android:configure` and made reconfigurable.
 - **Deep links:** a row opens `inboxies://thread?mailbox=<id>&thread=<threadId>`, and the background opens `inboxies://inbox?mailbox=<id>`. On iOS that's `widgetURL` / `Link`; on Android it's `actionStartActivity` with the same intent extras the push-notification open path already handles. Both clients route these to the same place a notification tap goes today.
-- **Privacy:** sender names and subjects show on the home screen. iOS should mark them with `.privacySensitive()` so they redact on a locked device. Android shows them as is, as Gmail does. Only the top 3 threads are stored, and the snapshot is cleared on sign-out.
+- **Privacy:** sender names and subjects show on the home screen. iOS should mark them with `.privacySensitive()` so they redact on a locked device. Android shows them as is, as Gmail does. Only the top 5 threads are stored, and the snapshot is cleared on sign-out.
 
 ## Porting notes
 
