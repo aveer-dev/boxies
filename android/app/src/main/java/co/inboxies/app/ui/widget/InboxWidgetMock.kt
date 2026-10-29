@@ -60,7 +60,7 @@ import kotlin.math.min
 // them (the ambient glow becomes a bitmap / drawable background).
 // iOS twin: `Views/WidgetDesign/InboxWidgetMock.swift`.
 
-/** Widget tokens. Colors stay `inboxiesColors()`; these are sizes and the glow recipe. */
+/** Widget tokens. Colors stay `inboxiesColors()` grey-scale (no `accent`, no new hues); these are sizes and the ink-bloom recipe. */
 object InboxWidgetMetrics {
     /** Representative cell sizes on a 4-column phone launcher (Pixel, ~412.dp wide). */
     val smallSize = DpSize(176.dp, 176.dp)
@@ -75,10 +75,13 @@ object InboxWidgetMetrics {
     val avatarRing = 2.dp
     val threadPanelRadius = 16.dp
 
-    /** Ambient glow strength (accent alpha at the hot corner); grows with New, saturates at [glowFullAt]. */
-    const val glowCalm = 0.10f
-    const val glowActiveLight = 0.42f
-    const val glowActiveDark = 0.62f
+    /**
+     * Ambient ink bloom strength (`ink` alpha at the hot corner): a soft graphite shade in
+     * light, a pale moonlit glow in dark. Grows with New, saturates at [glowFullAt].
+     */
+    const val glowCalm = 0.03f
+    const val glowActiveLight = 0.15f
+    const val glowActiveDark = 0.17f
     const val glowFullAt = 5
 
     fun glowStrength(newCount: Int, dark: Boolean): Float {
@@ -126,8 +129,8 @@ fun InboxWidgetMock(
 // region Ambient background
 
 /**
- * Surface with a soft accent glow: a hot corner top-end and a dimmer echo bottom-start.
- * Brighter as New grows; nearly gone at inbox zero.
+ * Surface with a soft ink bloom (grey-scale only): a hot corner top-end and a dimmer echo
+ * bottom-start. Deeper as New grows; nearly gone at inbox zero.
  */
 @Composable
 private fun Modifier.inboxWidgetAmbientBackground(newCount: Int): Modifier {
@@ -139,14 +142,14 @@ private fun Modifier.inboxWidgetAmbientBackground(newCount: Int): Modifier {
         drawRect(colors.surface)
         drawRect(
             Brush.radialGradient(
-                colors = listOf(colors.accent.copy(alpha = strength), colors.accent.copy(alpha = 0f)),
+                colors = listOf(colors.ink.copy(alpha = strength), colors.ink.copy(alpha = 0f)),
                 center = Offset(size.width * 1.0f, size.height * -0.05f),
                 radius = reach * 0.95f,
             ),
         )
         drawRect(
             Brush.radialGradient(
-                colors = listOf(colors.accent.copy(alpha = strength * 0.45f), colors.accent.copy(alpha = 0f)),
+                colors = listOf(colors.ink.copy(alpha = strength * 0.45f), colors.ink.copy(alpha = 0f)),
                 center = Offset(size.width * -0.1f, size.height * 1.1f),
                 radius = reach * 0.7f,
             ),
@@ -310,12 +313,12 @@ private fun MediumInboxZero(snapshot: InboxWidgetSnapshot) {
 
 // region Pieces
 
-/** "Inbox" with the tray glyph; a small accent dot when there's something new. */
+/** "Inbox" with the tray glyph; the unread dot when there's something new. */
 @Composable
 private fun InboxWidgetHeader(isLive: Boolean) {
     val colors = inboxiesColors()
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        Icon(Icons.Rounded.Inbox, contentDescription = null, tint = colors.accent, modifier = Modifier.size(13.dp))
+        Icon(Icons.Rounded.Inbox, contentDescription = null, tint = colors.ink, modifier = Modifier.size(13.dp))
         Text(
             "Inbox",
             fontFamily = InterFontFamily,
@@ -324,7 +327,7 @@ private fun InboxWidgetHeader(isLive: Boolean) {
             color = colors.ink.copy(alpha = 0.8f),
         )
         if (isLive) {
-            Box(Modifier.size(5.dp).background(colors.accent, CircleShape))
+            Box(Modifier.size(5.dp).background(colors.unread, CircleShape))
         }
     }
 }
@@ -343,7 +346,7 @@ private fun InboxWidgetCount(count: Int) {
     )
 }
 
-/** Initials avatar: accent-tinted disc, ringed in surface so overlaps read cleanly. */
+/** Initials avatar: grey ink-tinted disc (lightens down the stack), ringed in surface so overlaps read cleanly. */
 @Composable
 fun InboxWidgetAvatar(name: String, size: Dp = InboxWidgetMetrics.avatarSize, index: Int = 0) {
     val colors = inboxiesColors()
@@ -351,7 +354,7 @@ fun InboxWidgetAvatar(name: String, size: Dp = InboxWidgetMetrics.avatarSize, in
         modifier = Modifier
             .size(size)
             .background(colors.surface, CircleShape)
-            .background(colors.accent.copy(alpha = 0.18f - index * 0.04f), CircleShape)
+            .background(colors.ink.copy(alpha = 0.14f - index * 0.03f), CircleShape)
             .border(InboxWidgetMetrics.avatarRing, colors.surface, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
@@ -360,7 +363,7 @@ fun InboxWidgetAvatar(name: String, size: Dp = InboxWidgetMetrics.avatarSize, in
             fontFamily = InterFontFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = (size.value * 0.38f).sp,
-            color = colors.accent,
+            color = colors.ink,
             maxLines = 1,
         )
     }
@@ -423,7 +426,7 @@ private fun InboxWidgetReplyLaterPill(count: Int, compact: Boolean) {
     }
 }
 
-/** Inbox-zero mark: accent check inside a frosted disc with a faint accent halo. */
+/** Inbox-zero mark: ink check inside a frosted disc with a faint ink halo. */
 @Composable
 private fun InboxWidgetZeroMark(size: Dp) {
     val colors = inboxiesColors()
@@ -434,7 +437,7 @@ private fun InboxWidgetZeroMark(size: Dp) {
                 .size(size * 1.6f)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(colors.accent.copy(alpha = 0.22f), colors.accent.copy(alpha = 0f)),
+                        colors = listOf(colors.ink.copy(alpha = 0.12f), colors.ink.copy(alpha = 0f)),
                     ),
                     CircleShape,
                 ),
@@ -443,7 +446,7 @@ private fun InboxWidgetZeroMark(size: Dp) {
             modifier = Modifier.size(size).inboxWidgetFrost(CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Rounded.Check, contentDescription = null, tint = colors.accent, modifier = Modifier.size(size * 0.48f))
+            Icon(Icons.Rounded.Check, contentDescription = null, tint = colors.ink, modifier = Modifier.size(size * 0.48f))
         }
     }
 }

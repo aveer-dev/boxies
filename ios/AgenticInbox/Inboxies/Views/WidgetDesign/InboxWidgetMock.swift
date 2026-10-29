@@ -6,7 +6,8 @@ import SwiftUI
 // Android twin: `ui/widget/InboxWidgetMock.kt`.
 
 extension AppTheme {
-    /// Widget tokens. Colors stay `AppTheme.*`; these are sizes and the glow recipe.
+    /// Widget tokens. Colors stay `AppTheme.*` grey-scale (no `accent`, no new hues);
+    /// these are sizes and the ink-bloom recipe.
     enum Widget {
         /// iPhone home-screen widget sizes (6.1"/6.3" class: iPhone 15/16/17 Pro).
         static let smallSize = CGSize(width: 170, height: 170)
@@ -21,11 +22,12 @@ extension AppTheme {
         static let avatarOverlap: CGFloat = 9
         static let avatarRing: CGFloat = 2
         static let threadPanelRadius: CGFloat = 16
-        /// Ambient glow strength (accent opacity at the hot corner). The glow grows with
-        /// the New count and saturates at `glowFullAt` conversations.
-        static let glowCalm: Double = 0.10
-        static let glowActiveLight: Double = 0.42
-        static let glowActiveDark: Double = 0.62
+        /// Ambient ink bloom strength (`AppTheme.ink` opacity at the hot corner). Light
+        /// mode reads as a soft graphite shade, dark mode as a pale moonlit glow. Grows
+        /// with the New count and saturates at `glowFullAt` conversations.
+        static let glowCalm: Double = 0.03
+        static let glowActiveLight: Double = 0.15
+        static let glowActiveDark: Double = 0.17
         static let glowFullAt = 5
 
         static func glowStrength(newCount: Int, dark: Bool) -> Double {
@@ -83,8 +85,8 @@ struct InboxWidgetMock: View {
 
 // MARK: - Ambient background
 
-/// Surface with a soft accent glow: a hot corner top-trailing and a dimmer echo
-/// bottom-leading. Brighter as New grows; nearly gone at inbox zero.
+/// Surface with a soft ink bloom (grey-scale only): a hot corner top-trailing and a
+/// dimmer echo bottom-leading. Deeper as New grows; nearly gone at inbox zero.
 struct InboxWidgetAmbientBackground: View {
     let newCount: Int
     @Environment(\.colorScheme) private var colorScheme
@@ -96,13 +98,13 @@ struct InboxWidgetAmbientBackground: View {
             ZStack {
                 AppTheme.surface
                 RadialGradient(
-                    colors: [AppTheme.accent.opacity(strength), AppTheme.accent.opacity(0)],
+                    colors: [AppTheme.ink.opacity(strength), AppTheme.ink.opacity(0)],
                     center: UnitPoint(x: 1.0, y: -0.05),
                     startRadius: 0,
                     endRadius: reach * 0.95
                 )
                 RadialGradient(
-                    colors: [AppTheme.accent.opacity(strength * 0.45), AppTheme.accent.opacity(0)],
+                    colors: [AppTheme.ink.opacity(strength * 0.45), AppTheme.ink.opacity(0)],
                     center: UnitPoint(x: -0.1, y: 1.1),
                     startRadius: 0,
                     endRadius: reach * 0.7
@@ -227,7 +229,7 @@ private struct MediumInboxZero: View {
 
 // MARK: - Pieces
 
-/// "Inbox" with the tray glyph; a small accent dot when there's something new.
+/// "Inbox" with the tray glyph; the unread dot when there's something new.
 private struct InboxWidgetHeader: View {
     let isLive: Bool
 
@@ -235,13 +237,13 @@ private struct InboxWidgetHeader: View {
         HStack(spacing: 5) {
             Image(systemName: "tray.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(AppTheme.accent)
+                .foregroundStyle(AppTheme.ink)
             Text("Inbox")
                 .font(.inter(size: 12, weight: .semibold))
                 .foregroundStyle(AppTheme.ink.opacity(0.8))
             if isLive {
                 Circle()
-                    .fill(AppTheme.accent)
+                    .fill(AppTheme.unread)
                     .frame(width: 5, height: 5)
             }
         }
@@ -263,7 +265,8 @@ private struct InboxWidgetCount: View {
     }
 }
 
-/// Initials avatar: accent-tinted disc, ringed in surface so overlaps read cleanly.
+/// Initials avatar: grey ink-tinted disc (lightens down the stack), ringed in surface
+/// so overlaps read cleanly.
 struct InboxWidgetAvatar: View {
     let name: String
     var size: CGFloat = AppTheme.Widget.avatarSize
@@ -272,12 +275,12 @@ struct InboxWidgetAvatar: View {
     var body: some View {
         Text(AvatarInitials.from(name))
             .font(.inter(size: size * 0.38, weight: .semibold))
-            .foregroundStyle(AppTheme.accent)
+            .foregroundStyle(AppTheme.ink)
             .frame(width: size, height: size)
             .background {
                 Circle()
                     .fill(AppTheme.surface)
-                    .overlay { Circle().fill(AppTheme.accent.opacity(0.18 - Double(index) * 0.04)) }
+                    .overlay { Circle().fill(AppTheme.ink.opacity(0.14 - Double(index) * 0.03)) }
             }
             .overlay { Circle().strokeBorder(AppTheme.surface, lineWidth: AppTheme.Widget.avatarRing) }
     }
@@ -326,19 +329,19 @@ private struct InboxWidgetReplyLaterPill: View {
     }
 }
 
-/// Inbox-zero mark: accent check inside a glass disc with a faint accent halo.
+/// Inbox-zero mark: ink check inside a glass disc with a faint ink halo.
 private struct InboxWidgetZeroMark: View {
     let size: CGFloat
 
     var body: some View {
         Image(systemName: "checkmark")
             .font(.system(size: size * 0.4, weight: .bold))
-            .foregroundStyle(AppTheme.accent)
+            .foregroundStyle(AppTheme.ink)
             .frame(width: size, height: size)
             .liquidGlass(in: Circle())
             .background {
                 Circle()
-                    .fill(AppTheme.accent.opacity(0.18))
+                    .fill(AppTheme.ink.opacity(0.10))
                     .blur(radius: size * 0.3)
             }
     }
