@@ -88,7 +88,12 @@ const renderConsent = (_request, _env, _ctx, view) =>
 	new Response(JSON.stringify({ consentView: view }), {
 		status: 200,
 		// Like React Router's response: the Worker must add its own headers on top.
-		headers: { "Content-Type": "application/json", "X-Frame-Options": "SAMEORIGIN" },
+		headers: {
+			"Content-Type": "application/json",
+			"X-Frame-Options": "SAMEORIGIN",
+			// The app's own policy (AVE-148) once enforced.
+			"Content-Security-Policy": "script-src 'nonce-test'",
+		},
 	});
 
 function buildApp() {
@@ -324,6 +329,7 @@ let code;
 	);
 	assert.equal(res.headers.get("x-frame-options"), "DENY", "the library's anti-framing header wins");
 	assert.match(res.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+	assert.match(res.headers.get("content-security-policy"), /script-src 'nonce-test'/, "the app's CSP is kept alongside");
 	assert.equal(res.headers.get("cache-control"), "no-store");
 	assert.equal(res.headers.get("referrer-policy"), "same-origin", "no-referrer would make the post's Origin null");
 

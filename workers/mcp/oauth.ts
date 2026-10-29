@@ -475,6 +475,11 @@ async function showConsent(
 	// The library's headers: the binding cookie, no-store and anti-framing.
 	for (const [name, value] of consent.headers) {
 		if (name.toLowerCase() === "set-cookie") continue;
+		// Its `frame-ancestors 'none'` joins the app's own CSP rather than replacing it.
+		if (name.toLowerCase() === "content-security-policy") {
+			res.headers.append(name, value);
+			continue;
+		}
 		res.headers.set(name, value);
 	}
 	for (const cookie of consent.headers.getSetCookie()) res.headers.append("Set-Cookie", cookie);
