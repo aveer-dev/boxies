@@ -8,7 +8,8 @@ import java.net.URI
 
 /**
  * Runtime configuration. Mirrors iOS `AppConfig`.
- * Default: https://inboxies.email. Editable on the sign-in screen.
+ * Default: https://inboxies.email. Editable on the sign-in screen in DEBUG builds only;
+ * release builds ignore any stored override and always use [BuildConfig.DEFAULT_API_BASE].
  */
 object AppConfig {
     const val PREFS_NAME = "inboxies_config"
@@ -21,6 +22,13 @@ object AppConfig {
     /** Legal pages live on the marketing site (`site/src/pages/legal.astro`); these redirect to its anchors. */
     const val TERMS_URL = "https://inboxies.co/terms"
     const val PRIVACY_URL = "https://inboxies.co/privacy"
+
+    /**
+     * Whether the sign-in screen opens with the API base editor showing. The launcher
+     * activity is exported, so the `showApiBase` extra is honored only in DEBUG builds.
+     */
+    fun shouldShowDevConfig(isDebug: Boolean, showApiBaseExtra: Boolean): Boolean =
+        isDebug && showApiBaseExtra
 
     fun wsBaseURL(context: Context? = null): String {
         if (context != null) init(context)
@@ -44,6 +52,12 @@ object AppConfig {
     var apiBaseURL: String
         get() {
             val override = prefs?.getString(KEY_API_BASE, null)
+            if (!BuildConfig.DEBUG) {
+                // Release always talks to production. A stored override can only have come
+                // from a dev-only path, so drop it rather than send credentials elsewhere.
+                if (override != null) prefs?.edit { remove(KEY_API_BASE) }
+                return BuildConfig.DEFAULT_API_BASE
+            }
             if (override != null && (override.contains("localhost") || override.contains("127.0.0.1") || override.contains("10.0.2.2"))) {
                 prefs?.edit { remove(KEY_API_BASE) }
                 return BuildConfig.DEFAULT_API_BASE
@@ -52,6 +66,10 @@ object AppConfig {
             return parsed ?: BuildConfig.DEFAULT_API_BASE
         }
         set(value) {
+            if (!BuildConfig.DEBUG) {
+                prefs?.edit { remove(KEY_API_BASE) }
+                return
+            }
             if (value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")) {
                 prefs?.edit { remove(KEY_API_BASE) }
             } else {
