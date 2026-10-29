@@ -11,6 +11,7 @@ import type { ComposeOptions } from "~/hooks/useUIStore";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
 import ComposeBodyChrome from "./compose/ComposeBodyChrome";
 import ComposeSuppressionNotice from "./compose/ComposeSuppressionNotice";
+import ComposeQuotedOriginal from "./compose/ComposeQuotedOriginal";
 import PrivateEmailLogo from "./PrivateEmailLogo";
 
 export default function ComposePanel({ panelKey, options }: { panelKey: string; options: ComposeOptions }) {
@@ -42,6 +43,7 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 		saveStatus,
 		formTitle,
 		aliasEmail,
+		quote,
 		handleSaveDraft,
 		handleDiscard,
 		handleSend,
@@ -171,6 +173,9 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 							onAddFiles={addFiles}
 							onRemoveAttachment={removeAttachment}
 						/>
+						{quote?.original?.body ? (
+							<ComposeQuotedOriginal original={quote.original} mode={quote.mode} />
+						) : null}
 					</div>
 				</div>
 

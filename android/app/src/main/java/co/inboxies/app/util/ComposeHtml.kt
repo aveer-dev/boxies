@@ -6,9 +6,17 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.utils.DateUtils
 
+/**
+ * The message a reply / forward quotes (AVE-133). Shown rendered, read-only, under
+ * the editor; the Worker appends it, sanitised, to the sent mail (`quote_original`).
+ */
 data class QuotedOriginal(
+    /** Dock label: "On <date>, <sender> wrote:" or "Forwarded message from <sender>". */
     val header: String,
-    val text: String,
+    /** Header lines shown above the message in the sheet. */
+    val detailLines: List<String>,
+    val email: Email,
+    val isForward: Boolean,
 )
 
 /** Port of iOS `ComposeHTML` — rich compose with quoted original kept aside. */
@@ -77,23 +85,34 @@ object ComposeHtml {
         return "<p>$withBreaks</p>"
     }
 
-    fun quotedOriginal(from: Email): QuotedOriginal? {
-        val text = stripHtml(from.body ?: from.snippet.orEmpty())
-        if (text.isEmpty()) return null
-        return QuotedOriginal(
-            header = "On ${DateUtils.formatMediumDateTime(from.date)}, ${from.formattedFrom} wrote:",
-            text = text,
-        )
-    }
-
-    fun quotedHtml(from: QuotedOriginal): String {
-        val header = escapeHtml(from.header)
-        val bodyToQuote = escapeHtml(from.text).replace("\n", "<br>")
-        return "<br><blockquote style=\"border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;\">$header<br><br>$bodyToQuote</blockquote>"
+    fun quotedOriginal(from: Email, isForward: Boolean = false): QuotedOriginal? {
+        val body = from.body ?: from.snippet.orEmpty()
+        if (body.isBlank()) return null
+        val date = DateUtils.formatMediumDateTime(from.date)
+        val header = if (isForward) {
+            "Forwarded message from ${from.formattedFrom}"
+        } else {
+            "On $date, ${from.formattedFrom} wrote:"
+        }
+        val detailLines = if (isForward) {
+            listOf(
+                "---------- Forwarded message ---------",
+                "From: ${from.formattedFrom}",
+                "Date: $date",
+                "Subject: ${from.subject}",
+                "To: ${from.recipient}",
+            )
+        } else {
+            listOf(header)
+        }
+        return QuotedOriginal(header = header, detailLines = detailLines, email = from, isForward = isForward)
     }
 
     fun editableReply(fromDraftHtml: String, quotedHeader: String?): String {
         var text = stripHtml(fromDraftHtml)
+        // Drafts saved before AVE-133 carry the forwarded message inline.
+        val forwarded = text.indexOf("---------- Forwarded message")
+        if (forwarded >= 0) text = text.substring(0, forwarded)
         if (!quotedHeader.isNullOrEmpty()) {
             val index = text.lastIndexOf(quotedHeader)
             if (index >= 0) text = text.substring(0, index)
@@ -102,26 +121,6 @@ object ComposeHtml {
             if (match != null) text = text.substring(0, match.range.first)
         }
         return text.trim()
-    }
-
-    fun forwardBody(original: Email, signature: String): String {
-        val parts = mutableListOf<String>()
-        if (signature.isEmpty()) {
-            parts += ""
-        } else {
-            parts += ""
-            parts += ""
-            parts += signature
-        }
-        parts += ""
-        parts += "---------- Forwarded message ----------"
-        parts += "From: ${original.formattedFrom}"
-        parts += "Date: ${DateUtils.formatMediumDateTime(original.date)}"
-        parts += "Subject: ${original.subject}"
-        parts += "To: ${original.recipient}"
-        parts += ""
-        parts += stripHtml(original.body.orEmpty())
-        return parts.joinToString("\n")
     }
 
     fun selfAddresses(mailbox: Mailbox): Set<String> =

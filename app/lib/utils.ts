@@ -10,6 +10,7 @@
  */
 import DOMPurify from "dompurify";
 import { formatQuotedDate } from "shared/dates";
+import { decodeEntities } from "shared/quoted-text";
 import type { Attachment } from "~/types";
 
 export {
@@ -107,39 +108,8 @@ export function stripHtml(html: string): string {
 		.trim();
 }
 
-/**
- * Plain text that keeps paragraph and line breaks, for quoting a message in a
- * reply or forward (works without a DOM, unlike htmlToPlainText).
- */
-export function htmlToQuotedText(html: string): string {
-	const withBreaks = dropNonContent(html)
-		.replace(/<br\s*\/?>/gi, "\n")
-		.replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, "\n")
-		.replace(/<li[^>]*>/gi, "• ")
-		.replace(/<[^>]*>/g, "");
-	return decodeHtmlEntities(withBreaks)
-		.split("\n")
-		.map((line) => line.replace(/[ \t\u00a0]+/g, " ").trim())
-		.join("\n")
-		.replace(/\n{3,}/g, "\n\n")
-		.trim();
-}
-
 function decodeHtmlEntities(text: string): string {
-	return text
-		.replace(/&#(\d+);/g, (_match: string, code: string) =>
-			String.fromCharCode(Number(code)),
-		)
-		.replace(/&#x([0-9a-f]+);/gi, (_match: string, hex: string) =>
-			String.fromCharCode(Number.parseInt(hex, 16)),
-		)
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'")
-		.replace(/&apos;/g, "'")
-		.replace(/&nbsp;/g, " ");
+	return decodeEntities(text).replace(/[\u00ad\u034f\u200b\u200c\ufeff]/g, "");
 }
 
 export function getSnippetText(
@@ -200,29 +170,6 @@ export function getSignatureBlock(settings?: {
 		return `${COMPOSE_SIGNATURE_SPACER}<div style="border-top: 1px solid #ccc; margin-top: 16px; padding-top: 12px;">${content}</div>`;
 	}
 	return "";
-}
-
-/**
- * Build a quoted reply block HTML string from original email data.
- */
-export function buildQuotedReplyBlock(
-	dateStr: string | undefined,
-	sender: string,
-	body: string,
-): string {
-	if (!body) return "";
-	const formattedDate = formatComposeDate(dateStr);
-	
-	// HTML-escape sender to prevent <john@example.com> from disappearing as a tag
-	const escapedSender = escapeHtml(sender);
-
-	// Sanitize the body to plain text to prevent stored XSS.
-	// The original HTML renders safely in the sandboxed iframe, but quoted
-	// reply blocks are injected into the compose editor where raw HTML would
-	// execute. Convert to escaped plain text instead.
-	const bodyToQuote = escapeHtml(htmlToQuotedText(body)).replace(/\n/g, "<br>");
-
-	return `<br><blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;">On ${formattedDate}, ${escapedSender} wrote:<br><br>${bodyToQuote}</blockquote>`;
 }
 
 /**

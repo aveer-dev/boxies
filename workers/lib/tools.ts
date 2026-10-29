@@ -211,15 +211,9 @@ export async function toolDraftReply(
 		: params.to;
 	const to = Array.isArray(rewrittenTo) ? rewrittenTo.join(", ") : rewrittenTo;
 
-	// Append quoted original message
-	const quotedBlock = original
-		? buildQuotedReplyBlock({
-				date: original.date,
-				sender: original.sender_name || original.sender || to,
-				body: original.body ?? undefined,
-			})
-		: "";
-	const bodyHtml = processedBody + quotedBlock;
+	// The quote is not stored in the draft: the apps show the original under
+	// the editor and the reply endpoint appends it on send (AVE-133).
+	const bodyHtml = processedBody;
 
 	await stub.createEmail(
 		Folders.DRAFT,
@@ -538,7 +532,8 @@ export async function toolSendReply(
 	}
 	const quotedBlock = buildQuotedReplyBlock({
 		date: originalEmail.date,
-		sender: originalEmail.sender_name || originalEmail.sender || to,
+		sender: originalEmail.sender || to,
+		sender_name: originalEmail.sender_name,
 		body: originalEmail.body ?? undefined,
 	});
 	const fullBodyHtml = sanitizedBody + quotedBlock;

@@ -115,6 +115,14 @@ export const SendEmailRequestSchema = z
 		in_reply_to: z.string().optional(),
 		references: z.array(z.string()).optional(),
 		thread_id: z.string().optional(),
+		/**
+		 * Reply / forward only: append the original message as a sanitised HTML
+		 * quote (and a `> ` text quote) server-side, so every client sends the
+		 * same quote (AVE-133). Older clients that inline their own quote omit it.
+		 */
+		quote_original: z.boolean().optional(),
+		/** IANA zone for the quote's "On <date>" line (the sender's); defaults to UTC. */
+		quote_time_zone: z.string().max(64).optional(),
 	})
 	.refine((data) => data.html || data.text, {
 		message: "Either 'html' or 'text' must be provided",

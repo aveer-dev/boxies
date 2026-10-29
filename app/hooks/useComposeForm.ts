@@ -6,16 +6,12 @@ import { useKumoToastManager } from "@cloudflare/kumo";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import api, { ApiError } from "~/services/api";
 import {
-	buildQuotedReplyBlock,
-	escapeHtml,
-	formatComposeDate,
 	getSignatureBlock,
 	htmlToPlainText,
 	splitEmailList,
-	htmlToQuotedText,
 	toEmailListValue,
 } from "~/lib/utils";
-import { displaySenderName } from "shared/sender";
+import { bodyHasInlineQuote } from "shared/quoted-html";
 import {
 	isSameAddress,
 	replyToAddresses,
@@ -66,22 +62,6 @@ const EMPTY_FIELDS: ComposeFormFields = {
 	subject: "",
 	body: "",
 };
-
-function buildForwardBody(
-	original: NonNullable<ComposeOptions["originalEmail"]>,
-	sigBlock: string,
-) {
-	const senderLabel = displaySenderName(original);
-	const safeSender = escapeHtml(
-		senderLabel !== original.sender
-			? `${senderLabel} <${original.sender}>`
-			: original.sender,
-	);
-	const safeSubject = escapeHtml(original.subject);
-	const safeBody = escapeHtml(htmlToQuotedText(original.body || "")).replace(/\n/g, "<br>");
-
-	return `${sigBlock || "<p><br></p>"}<div style="border: 1px solid #ddd; padding: 1em; background-color: #f9f9f9; margin: 1em 0;"><strong>Forwarded message:</strong><br><strong>From:</strong> ${safeSender}<br><strong>Date:</strong> ${formatComposeDate(original.date)}<br><strong>Subject:</strong> ${safeSubject}<br><br>${safeBody}</div>`;
-}
 
 function buildReplyAllFields(
 	original: NonNullable<ComposeOptions["originalEmail"]>,
@@ -190,7 +170,7 @@ function buildInitialComposeFields(
 			...EMPTY_FIELDS,
 			to: replyToAddresses(original, replySelfAddress(original, mailboxEmail?.toLowerCase(), aliasEmail)).join(", "),
 			subject: prefixSubject(original.subject, "Re"),
-			body: `${plainTextToHtml(composeOptions.initialBody ?? "")}${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
+			body: `${plainTextToHtml(composeOptions.initialBody ?? "")}${sigBlock || "<p><br></p>"}`,
 		};
 	}
 
@@ -204,7 +184,7 @@ function buildInitialComposeFields(
 			...EMPTY_FIELDS,
 			...recipients,
 			subject: prefixSubject(original.subject, "Re"),
-			body: `${plainTextToHtml(composeOptions.initialBody ?? "")}${sigBlock || "<p><br></p>"}${buildQuotedReplyBlock(original.date, displaySenderName(original), original.body || "")}`,
+			body: `${plainTextToHtml(composeOptions.initialBody ?? "")}${sigBlock || "<p><br></p>"}`,
 		};
 	}
 
@@ -212,7 +192,7 @@ function buildInitialComposeFields(
 		return {
 			...EMPTY_FIELDS,
 			subject: prefixSubject(original.subject, "Fwd"),
-			body: buildForwardBody(original, sigBlock),
+			body: sigBlock || "<p><br></p>",
 		};
 	}
 
@@ -223,6 +203,34 @@ function buildInitialComposeFields(
 }
 
 export type DraftSaveStatus = "idle" | "saving" | "saved" | "error";
+
+/**
+ * The original a reply / forward quotes (AVE-133). It is shown rendered under
+ * the editor, never edited, and the Worker appends it to the sent mail
+ * (`quote_original`), so the quote looks like the real message. A draft saved
+ * before that change still has its quote inline and sends as-is.
+ */
+export function composeQuote(composeOptions: ComposeOptions): {
+	mode: "reply" | "forward";
+	originalId: string;
+	original: ComposeOptions["originalEmail"];
+} | null {
+	const { mode, originalEmail: original, draftEmail: draft } = composeOptions;
+	if (mode !== "reply" && mode !== "reply-all" && mode !== "forward") return null;
+	const originalId = original?.id || draft?.in_reply_to;
+	if (!originalId) return null;
+	if (draft && bodyHasInlineQuote(draft.body)) return null;
+	return { mode: mode === "forward" ? "forward" : "reply", originalId, original };
+}
+
+/** The viewer's zone, for the quote's "On <date>" line. */
+function localTimeZone(): string | undefined {
+	try {
+		return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+	} catch {
+		return undefined;
+	}
+}
 
 /**
  * State and actions for one compose column. `panelKey` identifies the column
@@ -274,6 +282,9 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	}, [composeOptions.mode, isDraftEdit]);
 
 	const aliasEmail = useMemo(() => composeAliasEmail(composeOptions), [composeOptions]);
+	const quote = useMemo(() => composeQuote(composeOptions), [composeOptions]);
+	/** The quoted original's size counts toward the 5 MiB limit too. */
+	const quoteBody = quote?.original?.body ?? "";
 	// A signature usually carries your real name, so private-email replies go without.
 	const sigBlock = useMemo(
 		() => (aliasEmail ? "" : getSignatureBlock(currentMailbox?.settings)),
@@ -503,7 +514,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		}
 		const text = htmlToPlainText(body);
 		const sizeInput = {
-			html: body,
+			html: body + quoteBody,
 			text,
 			attachments: attachments.map((item) => ({ content: item.content })),
 		};
@@ -521,6 +532,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 			subject,
 			html: body,
 			text,
+			...(quote ? { quote_original: true, quote_time_zone: localTimeZone() } : {}),
 			attachments: attachments.length
 				? attachments.map((item) => ({
 					content: item.content,
@@ -606,7 +618,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 
 	const addFiles = async (files: File[]) => {
 		let budget = remainingOutboundBudget({
-			html: body,
+			html: body + quoteBody,
 			text: htmlToPlainText(body),
 			attachments: attachments.map((item) => ({ content: item.content })),
 		});
@@ -633,11 +645,11 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	const overSize = useMemo(
 		() =>
 			estimateOutboundMessageBytes({
-				html: body,
+				html: body + quoteBody,
 				text: htmlToPlainText(body),
 				attachments: attachments.map((item) => ({ content: item.content })),
 			}) > MAX_OUTBOUND_MESSAGE_BYTES,
-		[body, attachments],
+		[body, quoteBody, attachments],
 	);
 
 	return {
@@ -667,6 +679,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		saveStatus,
 		formTitle,
 		aliasEmail,
+		quote,
 		handleSaveDraft,
 		handleDiscard,
 		handleSend,
