@@ -1550,4 +1550,88 @@ for (const [policy, tier] of [
 	assert.equal(auth.arcSealer, "google.com");
 }
 
+// Real Cloudflare Email Routing headers captured for AVE-102 (2026-10-29).
+// Values are verbatim apart from the test sender's own addresses
+// (owner.example, relay.example) and shortened ARC-Seal signatures. They
+// confirm Cloudflare states `policy.dmarc=` on both pass and fail, and still
+// delivers p=quarantine failures to the Worker.
+const CF_REAL_PASS =
+	"mx.cloudflare.net; dkim=pass header.d=inboxies.email header.s=cf-bounce header.b=Px9vMp/T; dkim=pass header.d=cloudflare-smtp.net header.s=cf2024-1 header.b=bq8eZZHN; dmarc=pass header.from=inboxies.email policy.dmarc=reject; spf=none (mx.cloudflare.net: no SPF records found for postmaster@bg-bbi.cloudflare-smtp.net) smtp.helo=bg-bbi.cloudflare-smtp.net; spf=pass (mx.cloudflare.net: domain of b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email designates 104.30.16.118 as permitted sender) smtp.mailfrom=b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email; arc=none smtp.remote-ip=104.30.16.118";
+const cfRealDmarcFail = (policy) =>
+	`mx.cloudflare.net; dmarc=fail (policy not aligned) header.from=owner.example policy.dmarc=${policy}; spf=none (mx.cloudflare.net: no SPF records found for postmaster@sender5-of-o54.zoho.com) smtp.helo=sender5-of-o54.zoho.com; spf=pass (mx.cloudflare.net: domain of sender@relay.example designates 165.173.182.54 as permitted sender) smtp.mailfrom=sender@relay.example; arc=pass smtp.remote-ip=165.173.182.54`;
+// Zoho seals the mail it sends (i=1) and claims dmarc=pass for the "Send Mail
+// As" address. zohomail.com is an allowlisted sealer, but Cloudflare adds its
+// own seal on top (i=2, cloudflare-email.net) and only the top seal is read,
+// so the claim must not count.
+const ZOHO_SEAL_1 = "i=1; a=rsa-sha256; t=1793232963; cv=none; d=zohomail.com; s=zohoarc; b=Wm9obw==";
+const ZOHO_AAR_1 =
+	"i=1; mx.zohomail.com; spf=pass smtp.mailfrom=sender@relay.example; dmarc=pass header.from=<personal@owner.example>";
+
+function cfRealZohoSendAs(policy) {
+	const cf = cfRealDmarcFail(policy);
+	return parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Seal", "i=2; a=rsa-sha256; s=cf2024-1; d=cloudflare-email.net; cv=pass; b=Q2xvdWRmbGFyZQ=="],
+			["ARC-Authentication-Results", `i=2; ${cf}`],
+			["Authentication-Results", cf],
+			["ARC-Seal", ZOHO_SEAL_1],
+			["ARC-Authentication-Results", ZOHO_AAR_1],
+		),
+		headerFrom: "AVE-102 test <personal@owner.example>",
+		envelopeFrom: "sender@relay.example",
+	});
+}
+
+{
+	// Email Sending from inboxies.email: aligned DKIM, p=reject → verified.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Authentication-Results", `i=1; ${CF_REAL_PASS}`],
+			["Authentication-Results", CF_REAL_PASS],
+		),
+		headerFrom: "AVE-102 test <ave102-test@inboxies.email>",
+		envelopeFrom: "b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email",
+	});
+	assert.equal(auth.dmarc, "pass");
+	assert.equal(auth.dmarcPolicy, "reject");
+	assert.equal(auth.aligned, true);
+	assert.equal(auth.authTier, "verified");
+}
+
+{
+	// Zoho "Send Mail As" another domain, From domain at p=none → unverified.
+	const auth = cfRealZohoSendAs("none");
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.dmarcPolicy, "none");
+	assert.equal(auth.aligned, false);
+	assertNotUpgraded(auth, "unverified");
+	assert.notEqual(
+		classifyFromHeaders({
+			headers: headers(["From", "AVE-102 test <personal@owner.example>"]),
+			subject: "[AVE-102 test] dmarc none",
+			sender: "personal@owner.example",
+			auth,
+		})?.reason,
+		"auth-failed",
+	);
+}
+
+{
+	// Same send with the From domain at p=quarantine → failed → spam.
+	const auth = cfRealZohoSendAs("quarantine");
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.dmarcPolicy, "quarantine");
+	assertNotUpgraded(auth, "failed");
+	assert.equal(auth.spoofed, true);
+	assert.deepEqual(
+		classifyFromHeaders({
+			headers: headers(["From", "AVE-102 test <personal@owner.example>"]),
+			subject: "[AVE-102 test] dmarc quarantine",
+			sender: "personal@owner.example",
+			auth,
+		}),
+		{ class: "spam", folderId: Folders.SPAM, reason: "auth-failed" },
+	);
+}
+
 console.log("email-auth tests passed");
