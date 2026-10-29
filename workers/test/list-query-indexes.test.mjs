@@ -284,7 +284,7 @@ assert.equal(sql.exec(`SELECT COUNT(*) AS n FROM attachments WHERE email_id = 'e
 	assert.deepEqual(
 		readThreadedListFromIndex(bsql, "inbox", window).map((row) => ({ ...row })),
 		readThreadedListByScan(bsql, "inbox", { ...window, sectionFilter: "1 = 1" }).map(
-			({ is_new: _n, section_rank: _r, ...row }) => row,
+			({ is_new: _n, section_rank: _r, sort_date: _s, ...row }) => row,
 		),
 	);
 	assert.deepEqual(countConversationsFromIndex(bsql, "inbox"), countThreadedSectionsByScan(bsql, "inbox"));

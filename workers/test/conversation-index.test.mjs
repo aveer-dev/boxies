@@ -57,7 +57,7 @@ function rng(seed) {
 const LIST_FOLDERS = [
 	"inbox", "Inbox", "sent", "archive", "trash", "spam", "screener", "promotions", "projects", "nope",
 ];
-const strip = ({ is_new: _n, section_rank: _r, ...row }) => ({ ...row });
+const strip = ({ is_new: _n, section_rank: _r, sort_date: _s, ...row }) => ({ ...row });
 
 function compareFolder(sql, folder, label) {
 	const [folderRow] = sql.exec(`SELECT id FROM folders WHERE name = ?1 OR id = ?1 LIMIT 1`, folder);
@@ -209,6 +209,18 @@ const ops = {
 	star: () => db.prepare(`UPDATE emails SET starred = 1 - COALESCE(starred, 0) WHERE id = ?`).run(pick(ids())),
 	replyLater: () =>
 		db.prepare(`UPDATE emails SET reply_later = 1, reply_later_at = ? WHERE id = ?`).run(nextDate(), pick(ids())),
+	// AVE-86: a fired reminder (unread, back to Inbox, stamped) lifts the
+	// conversation's sort date; clearing Reply Later drops it again.
+	remindFire: () =>
+		db
+			.prepare(`UPDATE emails SET reply_later = 1, read = 0, folder_id = 'inbox', reply_later_reminded_at = ? WHERE id = ?`)
+			.run(nextDate(), pick(ids())),
+	remindFireInPlace: () =>
+		db.prepare(`UPDATE emails SET reply_later = 1, reply_later_reminded_at = ? WHERE id = ?`).run(nextDate(), pick(ids())),
+	clearReplyLater: () =>
+		db
+			.prepare(`UPDATE emails SET reply_later = 0, reply_later_at = NULL, reply_later_remind_at = NULL, reply_later_reminded_at = NULL WHERE id = ?`)
+			.run(pick(ids())),
 	subject: () => db.prepare(`UPDATE emails SET subject = ? WHERE id = ?`).run(pick(SUBJECTS), pick(ids())),
 	sender: () => db.prepare(`UPDATE emails SET sender_name = ? WHERE id = ?`).run(pick(NAMES), pick(ids())),
 	date: () => db.prepare(`UPDATE emails SET date = ? WHERE id = ?`).run(nextDate(), pick(ids())),
@@ -222,7 +234,7 @@ const ops = {
 	},
 };
 const opNames = Object.keys(ops);
-for (let round = 0; round < 40; round++) {
+for (let round = 0; round < 48; round++) {
 	const n = 1 + Math.floor(random() * 6);
 	const applied = [];
 	for (let i = 0; i < n; i++) {
@@ -274,13 +286,15 @@ assert.deepEqual(snapshot(), incremental, "incremental index equals a rebuild");
 	const migration = mailboxMigrations.find((m) => m.name === MIGRATION);
 	assert.ok(migration, `${MIGRATION} is registered`);
 	assert.equal(mailboxMigrations.filter((m) => m.name === MIGRATION).length, 1, "unique name");
-	assert.equal(mailboxMigrations.at(-1).name, MIGRATION, "last migration");
+	// Later migrations (43_reply_later_reminders) follow it; the DO in this
+	// block predates 42 and is brought fully up to date.
+	const migrationIndex = mailboxMigrations.indexOf(migration);
 	// Additive only: no DROP, ALTER, UPDATE, or DELETE outside trigger bodies
 	// (which only append dirty marks).
 	assert.doesNotMatch(migration.sql, /\b(DROP|ALTER)\b/i);
 	assert.doesNotMatch(migration.sql, /\bUPDATE\s+emails\b|\bDELETE\s+FROM\b/i);
 
-	const before = mailboxMigrations.slice(0, -1);
+	const before = mailboxMigrations.slice(0, migrationIndex);
 	const legacy = new DatabaseSync(":memory:");
 	legacy.exec("PRAGMA foreign_keys = ON");
 	const lsql = sqlStorage(legacy);
@@ -295,12 +309,23 @@ assert.deepEqual(snapshot(), incremental, "incremental index equals a rebuild");
 	}
 	const emailCount = legacy.prepare(`SELECT COUNT(*) AS n FROM emails`).get().n;
 	const emailsBefore = legacy.prepare(`SELECT * FROM emails ORDER BY id`).all();
+	const legacyColumns = Object.keys(emailsBefore[0]).join(", ");
 
 	applyMigrations(lsql, mailboxMigrations);
 	assert.equal(lsql.exec(`SELECT COUNT(*) AS n FROM d1_migrations WHERE name = ?`, MIGRATION)[0].n, 1);
 	assert.equal(legacy.prepare(`SELECT COUNT(*) AS n FROM conversations`).get().n, 0, "rows come from the backfill");
 	assert.equal(conversationIndexIsClean(lsql), false, "migration seeds the backfill");
-	assert.deepEqual(legacy.prepare(`SELECT * FROM emails ORDER BY id`).all(), emailsBefore, "no email data changes");
+	assert.deepEqual(legacy.prepare(`SELECT ${legacyColumns} FROM emails ORDER BY id`).all(), emailsBefore, "no email data changes");
+	// Columns added after 42 (AVE-86 reminders) carry over as the mail syncs.
+	const copyReminder = legacy.prepare(
+		`UPDATE emails SET reply_later_remind_at = ?, reply_later_reminded_at = ? WHERE id = ?`,
+	);
+	for (const r of db
+		.prepare(`SELECT id, reply_later_remind_at, reply_later_reminded_at FROM emails
+		          WHERE reply_later_remind_at IS NOT NULL OR reply_later_reminded_at IS NOT NULL`)
+		.all()) {
+		copyReminder.run(r.reply_later_remind_at, r.reply_later_reminded_at, r.id);
+	}
 
 	// Batched backfill (as the alarm runs it), with a write between batches.
 	assert.equal(flushConversationIndex(lsql, 25), false, "first batch leaves work");

@@ -143,6 +143,10 @@ struct HomeShellView: View {
             }) {
                 expandedComposeSheet
             }
+            .sheet(item: reminderPickerItem) { email in
+                ReplyLaterReminderSheet(email: email)
+                    .formSheetSizing()
+            }
             .sheet(isPresented: $showSettings) {
                 SettingsSheetView()
                     .presentationDetents([.large])
@@ -908,6 +912,22 @@ struct HomeShellView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: showReplyLaterButton)
     }
 
+    /// A Reply Later reminder fired on mail that's still unread (AVE-86).
+    private var replyLaterIsDue: Bool {
+        app.replyLaterDueCount > 0
+    }
+
+    private var replyLaterTint: Color {
+        if app.selectedTab == .replyLater { return AppTheme.accent }
+        return replyLaterIsDue ? AppTheme.attention : AppTheme.ink
+    }
+
+    private var replyLaterAccessibilityValue: String {
+        let count = app.replyLaterCount
+        let queued = count == 0 ? "No queued emails" : "\(count) queued"
+        return replyLaterIsDue ? "\(queued), \(app.replyLaterDueCount) due" : queued
+    }
+
     private var replyLaterPileButton: some View {
         Button {
             if showComposeActions {
@@ -925,22 +945,49 @@ struct HomeShellView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "clock.arrow.circlepath")
+                Image(systemName: replyLaterIsDue ? "alarm.fill" : "clock.arrow.circlepath")
                     .font(.inter(size: 15, weight: .medium))
+                    .contentTransition(.symbolEffect(.replace))
                 if app.replyLaterCount > 0 {
                     Text("\(app.replyLaterCount)")
                         .font(.inter(size: 13, weight: .semibold))
+                        .contentTransition(.numericText())
                 }
             }
-            .foregroundStyle(app.selectedTab == .replyLater ? AppTheme.accent : AppTheme.ink)
+            .foregroundStyle(replyLaterTint)
             .padding(.horizontal, 14)
             .frame(height: HomeChromeMetrics.actionBarHeight)
             .liquidGlass(in: Capsule())
+            .overlay {
+                if replyLaterIsDue {
+                    Capsule()
+                        // Soft hairline: the halo carries the attention, the edge stays glass.
+                        .strokeBorder(AppTheme.attention.opacity(0.22), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background {
+                if replyLaterIsDue {
+                    ReplyLaterAttentionGlow()
+                        .transition(.opacity)
+                }
+            }
+            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: replyLaterIsDue)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Reply Later")
-        .accessibilityValue(app.replyLaterCount == 0 ? "No queued emails" : "\(app.replyLaterCount) queued")
+        .accessibilityValue(replyLaterAccessibilityValue)
         .accessibilityHint(app.selectedTab == .replyLater ? "Returns to previous folder" : (app.replyLaterCount == 0 ? "Shows status toast when empty" : "Opens Reply Later pile"))
+        .accessibilityIdentifier("replyLaterPileButton")
+    }
+
+    /// Presents the reminder picker for `app.reminderPickerEmail` (toast "Add reminder",
+    /// list context menu).
+    private var reminderPickerItem: Binding<Email?> {
+        Binding(
+            get: { app.reminderPickerEmail },
+            set: { app.reminderPickerEmail = $0 }
+        )
     }
 
     private var composeButton: some View {
@@ -1568,6 +1615,40 @@ private struct AskAIButtonLabel: View {
                 .font(.inter(size: 16, weight: .medium))
                 .foregroundStyle(AppTheme.muted)
             Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Soft amber halo behind the Reply Later button while a reminder is due (AVE-86): a
+/// slow breath (~1.8s period) of opacity and scale. Reduce Motion keeps a static glow.
+/// Android twin: `ReplyLaterAttentionGlow` in HomeChrome.
+struct ReplyLaterAttentionGlow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var breathing = false
+
+    /// One inhale or exhale; autoreversed, so a full breath is twice this.
+    static let halfPeriod: Double = 0.9
+
+    var body: some View {
+        Capsule()
+            .fill(AppTheme.attention.opacity(0.38))
+            .blur(radius: 9)
+            .scaleEffect(reduceMotion ? 1.06 : (breathing ? 1.14 : 1.0))
+            .opacity(reduceMotion ? 0.75 : (breathing ? 1 : 0.4))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onAppear { startBreathing() }
+            .onChange(of: reduceMotion) { _, _ in startBreathing() }
+    }
+
+    private func startBreathing() {
+        guard !reduceMotion else {
+            breathing = false
+            return
+        }
+        breathing = false
+        withAnimation(.easeInOut(duration: Self.halfPeriod).repeatForever(autoreverses: true)) {
+            breathing = true
         }
     }
 }

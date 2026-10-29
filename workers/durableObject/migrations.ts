@@ -846,5 +846,30 @@ export const mailboxMigrations: Migration[] = [
               FROM emails;
         `),
 	},
+	{
+		// Reply Later reminders (AVE-86, workers/lib/reply-later-reminders.ts):
+		// a pending reminder time and the time it fired. The mailbox alarm fires
+		// due reminders; the partial index keeps "next reminder" lookups cheap.
+		// The extra trigger marks the conversation index (42) dirty when a
+		// reminder fires or Reply Later is cleared: a fired reminder lifts the
+		// conversation's sort date (see workers/lib/conversation-index.ts), and
+		// neither column is in 42's update trigger list.
+		// Additive only. Numbered 43, after 42_conversation_index.
+		name: "43_reply_later_reminders",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN reply_later_remind_at TEXT;
+            ALTER TABLE emails ADD COLUMN reply_later_reminded_at TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_reply_later_remind_at
+                ON emails(reply_later_remind_at)
+                WHERE reply_later_remind_at IS NOT NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_reply_later
+            AFTER UPDATE OF reply_later, reply_later_reminded_at ON emails
+            WHEN NEW.reply_later IS NOT OLD.reply_later
+              OR NEW.reply_later_reminded_at IS NOT OLD.reply_later_reminded_at
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(NEW.thread_id, NEW.id), NEW.folder_id, ${normalizedSubjectSql("NEW.subject")});
+            END;
+        `),
+	},
 ];
-

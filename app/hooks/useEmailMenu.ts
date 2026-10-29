@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import {
+	AlarmIcon,
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
 	ArrowBendUpRightIcon,
@@ -20,6 +21,7 @@ import { type MouseEvent, useCallback } from "react";
 import { Folders } from "shared/folders";
 import { type MenuEntry, useContextMenu } from "~/components/ContextMenu";
 import { type EmailActions, hasUnread } from "~/hooks/useEmailActions";
+import { pendingReminder } from "~/lib/reply-later-reminders";
 import { keysFor } from "~/lib/shortcuts";
 import { useFolders } from "~/queries/folders";
 import type { Email } from "~/types";
@@ -68,6 +70,12 @@ export function buildEmailMenu(
 			icon: ClockCounterClockwiseIcon,
 			shortcut: keysFor("replyLater"),
 			onSelect: () => actions.toggleReplyLater(email),
+		},
+		{
+			type: "item",
+			label: pendingReminder(email) ? "Change reminder" : "Remind me…",
+			icon: AlarmIcon,
+			onSelect: () => actions.remindMe(email),
 		},
 		{ type: "separator" },
 		{

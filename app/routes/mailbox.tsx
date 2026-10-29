@@ -16,6 +16,7 @@ import { ContextMenuHost } from "~/components/ContextMenu";
 import PopOutReader from "~/components/PopOutReader";
 import TextSizeWheelHost from "~/components/TextSizeWheel";
 import ShortcutSheet from "~/components/ShortcutSheet";
+import ReplyLaterReminderDialog from "~/components/ReplyLaterReminderDialog";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
 import { forgetLastMailbox, readLastMailbox, rememberLastMailbox } from "~/lib/last-mailbox";
@@ -100,6 +101,7 @@ export default function MailboxRoute() {
 			<ContextMenuHost />
 			<PopOutReader />
 			<TextSizeWheelHost />
+			<ReplyLaterReminderDialog />
 		</>
 	);
 }

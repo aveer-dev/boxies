@@ -665,7 +665,7 @@ const api = {
 	listFolders: (mailboxId: string) =>
 		get<Folder[]>(`/api/v1/mailboxes/${mailboxId}/folders`),
 	listWorkflowPiles: (mailboxId: string) =>
-		get<{ piles: { id: string; count: number }[] }>(
+		get<{ piles: { id: string; count: number; due_count?: number }[] }>(
 			`/api/v1/mailboxes/${mailboxId}/workflow-piles`,
 		),
 	createFolder: (mailboxId: string, name: string) =>

@@ -49,6 +49,13 @@ object InboxiesColors {
     val LightDanger = Color(0xFFDC2626)
     val DarkDanger = Color(0xFFEF5350)
 
+    /**
+     * Needs attention: a Reply Later reminder fired (AVE-86). Warm amber-orange, readable
+     * on the frosted chrome in both themes. Twin of iOS `AppTheme.attention`, web `--attention`.
+     */
+    val LightAttention = Color(0xFFB45309)
+    val DarkAttention = Color(0xFFF59E0B)
+
     /** Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). */
     val MailPaper = Color(0xFFFFFFFF)
 }

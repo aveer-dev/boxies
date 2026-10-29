@@ -97,8 +97,8 @@ import {
 } from "./lib/inbound-dsn";
 import { getDomainMetadata } from "./lib/domain-registry";
 import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
-import { sendAPNsPush, type APNsPayload } from "./lib/apns";
-import { sendFcmPush } from "./lib/fcm";
+import { dispatchPushToDevices } from "./lib/push-dispatch";
+import { parseReminderInput } from "./lib/reply-later-reminders";
 import {
 	aliasMetadataKey,
 	allowedMailboxSet,
@@ -188,27 +188,6 @@ import {
 } from "./lib/email-auth";
 
 type AppContext = Context<MailboxContext>;
-
-type DeviceTokenRow = { token: string; platform: string };
-
-async function dispatchPushToDevices(
-	env: Env,
-	stub: { getDeviceTokens: () => Promise<DeviceTokenRow[]>; unregisterDeviceToken: (token: string) => Promise<unknown> },
-	payload: APNsPayload,
-): Promise<{ deviceCount: number; ios: unknown; android: unknown }> {
-	const rows = await stub.getDeviceTokens();
-	const iosTokens = rows.filter((r) => r.platform !== "android").map((r) => r.token);
-	const androidTokens = rows.filter((r) => r.platform === "android").map((r) => r.token);
-
-	const ios = await sendAPNsPush(env, iosTokens, payload);
-	const android = await sendFcmPush(env, androidTokens, payload);
-
-	for (const stale of [...ios.staleTokens, ...android.staleTokens]) {
-		await stub.unregisterDeviceToken(stale);
-	}
-
-	return { deviceCount: rows.length, ios, android };
-}
 
 // -- Request body schemas (kept for validation) ---------------------
 
@@ -722,16 +701,26 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 });
 
 app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
-	const { read, starred, reply_later } = (await c.req.json()) as {
+	const body = (await c.req.json()) as {
 		read?: boolean;
 		starred?: boolean;
 		reply_later?: boolean;
+		/** UTC ISO reminder time, or null to clear (AVE-86). Setting one implies reply_later. */
+		reply_later_remind_at?: string | null;
 	};
+	const { read, starred, reply_later } = body;
+	let reply_later_remind_at: string | null | undefined;
+	if (body.reply_later_remind_at !== undefined) {
+		const parsed = parseReminderInput(body.reply_later_remind_at);
+		if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+		reply_later_remind_at = parsed.remindAt;
+	}
 	const email = await c.var.mailboxStub.updateEmail(c.req.param("id")!, {
 		read,
 		starred,
 		reply_later,
-	});
+		reply_later_remind_at,
+	}, c.var.mailboxId);
 	return email ? c.json(email) : c.json({ error: "Email not found" }, 404);
 });
 

@@ -76,6 +76,21 @@ struct EmailActionsSheet: View {
                         Task { await app.toggleReplyLater(on: source) }
                     }
 
+                    // AVE-86: any mail can get a reminder; picking a time also adds it
+                    // to Reply Later.
+                    NavigationLink {
+                        ReplyLaterReminderView(email: source, onClose: dismissSheet) { date in
+                            dismiss()
+                            Task { await app.setReplyLaterReminder(on: source, at: date) }
+                        }
+                    } label: {
+                        Label(
+                            source.replyLaterRemindDate == nil ? "Remind me…" : "Change reminder",
+                            systemImage: "alarm"
+                        )
+                    }
+                    .accessibilityIdentifier("emailActionRemindMe")
+
                     actionRow(
                         source.read ? "Mark as Unread" : "Mark as Read",
                         systemImage: source.read ? "envelope.badge" : "envelope.open"
@@ -212,7 +227,7 @@ struct EmailActionsSheet: View {
         if availability.showsReplyActions {
             h += 130 // quick actions row + section spacing
         }
-        var rows = 3 // Star, Reply Later, Read
+        var rows = 4 // Star, Reply Later, Remind me, Read
         if !moveTargets.isEmpty { rows += 1 }
         if showsSpamAction { rows += 1 }
         rows += 1 // View Source
@@ -486,7 +501,8 @@ private struct ActionsSheetChrome: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
+    /// Inline title, hidden bar, xmark close: the email actions sheet's pages.
     func actionsSheetChrome(onClose: @escaping () -> Void) -> some View {
         modifier(ActionsSheetChrome(onClose: onClose))
     }

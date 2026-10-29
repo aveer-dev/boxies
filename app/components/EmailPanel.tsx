@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, useKumoToastManager } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
@@ -23,6 +24,7 @@ import { isSummaryFolderEligible, MIN_SUMMARY_CHARS } from "shared/ai-summaries"
 import { splitEmailList, stripHtml, toEmailListValue } from "~/lib/utils";
 import { createSendKeyStore } from "~/lib/send-idempotency";
 import api from "~/services/api";
+import { useReplyLater } from "~/hooks/useReplyLater";
 import { useSpamVerdictToast } from "~/hooks/useSpamVerdictToast";
 import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
@@ -95,6 +97,7 @@ export default function EmailPanel({
 	const [alsoUnsubscribe, setAlsoUnsubscribe] = useState(false);
 	const [alsoRefile, setAlsoRefile] = useState(true);
 	const showSpamVerdictToast = useSpamVerdictToast(mailboxId);
+	const replyLaterActions = useReplyLater(mailboxId);
 	const isDraftFolder = folder === Folders.DRAFT;
 	// Notes to self (AVE-60): stickies float over the messages, inline notes sit under theirs.
 	const threadKey = email ? threadKeyFor(email) : undefined;
@@ -203,15 +206,8 @@ export default function EmailPanel({
 	}
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
-	const toggleReplyLater = () => {
-		if (mailboxId) {
-			updateEmail.mutate({
-				mailboxId,
-				id: email.id,
-				data: { reply_later: !email.reply_later },
-			});
-		}
-	};
+	const toggleReplyLater = () => replyLaterActions.toggleReplyLater(email);
+	const remindMe = () => replyLaterActions.openReminderPicker(email);
 	const runMove = (folderId: string, setSenderPreference: boolean) => {
 		if (!mailboxId) return;
 		moveEmailMut.mutate(
@@ -419,6 +415,7 @@ export default function EmailPanel({
 				onForward={forward}
 				onToggleStar={toggleStar}
 				onToggleReplyLater={toggleReplyLater}
+				onRemindMe={remindMe}
 				onToggleRead={toggleRead}
 				onArchive={archive}
 				onPopOut={popOut}
@@ -517,17 +514,15 @@ export default function EmailPanel({
 			/>
 
 			<Dialog.Root open={reportSpamOpen} onOpenChange={setReportSpamOpen}>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-2">
-						Report spam?
-					</Dialog.Title>
-					<p className="text-sm text-kumo-subtle mb-4">
-						Future mail from{" "}
+				<Modal size="sm">
+					<ModalHeader
+						title="Report spam?"
+						description={<>Future mail from{" "}
 						<span className="font-medium text-kumo-default">
 							{displaySenderName(email)}
 						</span>{" "}
-						will go to Spam.
-					</p>
+						will go to Spam.</>}
+					/>
 					<div className="flex flex-col gap-3 mb-5">
 						<label className="flex items-start gap-2.5 cursor-pointer select-none">
 							<input
@@ -577,7 +572,7 @@ export default function EmailPanel({
 							Report spam
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 
 			<Dialog.Root
@@ -586,12 +581,10 @@ export default function EmailPanel({
 					if (!open) setPendingPurposeMove(null);
 				}}
 			>
-				<Dialog size="sm" className="p-6">
-					<Dialog.Title className="text-base font-semibold mb-2">
-						Put future mail here?
-					</Dialog.Title>
-					<p className="text-sm text-kumo-subtle mb-4">
-						Also file future messages from{" "}
+				<Modal size="sm">
+					<ModalHeader
+						title="Put future mail here?"
+						description={<>Also file future messages from{" "}
 						<span className="font-medium text-kumo-default">
 							{displaySenderName(email)}
 						</span>{" "}
@@ -599,8 +592,8 @@ export default function EmailPanel({
 						{pendingPurposeMove
 							? FOLDER_DISPLAY_NAMES[pendingPurposeMove] ?? pendingPurposeMove
 							: "this folder"}
-						, and move their existing Inbox / Promotions / Updates mail.
-					</p>
+						, and move their existing Inbox / Promotions / Updates mail.</>}
+					/>
 					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
 						<Button
 							variant="ghost"
@@ -623,7 +616,7 @@ export default function EmailPanel({
 							Yes, for this sender
 						</Button>
 					</div>
-				</Dialog>
+				</Modal>
 			</Dialog.Root>
 		</div>
 	);

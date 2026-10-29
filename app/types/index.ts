@@ -418,6 +418,10 @@ export interface Email {
 	starred: boolean;
 	reply_later?: boolean;
 	reply_later_at?: string | null;
+	/** Pending Reply Later reminder, UTC ISO (AVE-86). */
+	reply_later_remind_at?: string | null;
+	/** When the reminder fired; with `read === false` the mail is due. */
+	reply_later_reminded_at?: string | null;
 	body?: string | null;
 	in_reply_to?: string | null;
 	email_references?: string | null;

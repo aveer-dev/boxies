@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Button, Dialog, Input, useKumoToastManager } from "@cloudflare/kumo";
+import { Modal, ModalHeader } from "~/components/Modal";
 import { HourglassIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -117,20 +118,18 @@ function FinalizeDomainDialog({ target, onClose }: { target: OffboardingDomain |
 
 	return (
 		<Dialog.Root open={target !== null} onOpenChange={(open) => !open && close()}>
-			<Dialog size="lg" className="p-6">
-				<Dialog.Title className="text-base font-semibold mb-1 flex items-center gap-2 text-red-600 dark:text-red-400">
-					<WarningCircleIcon size={20} weight="fill" />
-					Delete {domain} now
-				</Dialog.Title>
-				<p className="text-xs text-kumo-subtle mb-4">
-					This permanently deletes every mailbox on{" "}
+			<Modal size="lg">
+				<ModalHeader
+					title={<><span className="flex items-center gap-2 text-red-600 dark:text-red-400"><WarningCircleIcon size={20} weight="fill" />
+					Delete {domain} now</span></>}
+					description={<>This permanently deletes every mailbox on{" "}
 					<span className="font-semibold text-kumo-default">{domain}</span> with its mail and
 					attachments, its aliases, members and pending invites, and cancels its subscription
 					without a refund for the unused time. It also deletes the domain's Cloudflare DNS zone.
 					If you bought the domain through Inboxies, it turns off auto-renew instead: the domain
 					lapses when it expires, and its DNS zone is deleted once the registration ends. It
-					can't be undone.
-				</p>
+					can't be undone.</>}
+				/>
 				{error && (
 					<div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-600 dark:text-red-400 mb-3">{error}</div>
 				)}
@@ -146,7 +145,7 @@ function FinalizeDomainDialog({ target, onClose }: { target: OffboardingDomain |
 						{busy ? "Deleting..." : "Delete all data"}
 					</Button>
 				</div>
-			</Dialog>
+			</Modal>
 		</Dialog.Root>
 	);
 }
