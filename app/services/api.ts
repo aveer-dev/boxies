@@ -637,8 +637,8 @@ const api = {
 		),
 	deleteThreadNote: (mailboxId: string, noteId: string) =>
 		del<void>(`/api/v1/mailboxes/${encodeURIComponent(mailboxId)}/notes/${encodeURIComponent(noteId)}`),
-	getAttachment: (mailboxId: string, emailId: string, attachmentId: string) =>
-		get<Blob>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/attachments/${attachmentId}`, { responseType: "blob" }),
+	getAttachment: (mailboxId: string, emailId: string, attachmentId: string, opts?: RequestOptions) =>
+		get<Blob>(`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/attachments/${attachmentId}`, { responseType: "blob", ...opts }),
 	saveDraft: (
 		mailboxId: string,
 		draft: {

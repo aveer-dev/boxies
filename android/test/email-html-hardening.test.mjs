@@ -35,6 +35,8 @@ const webIframe = readFileSync(
 const webRemoteImages = readFileSync(join(repo, "shared/remote-images.ts"), "utf8");
 const webSingle = readFileSync(join(repo, "app/components/email-panel/SingleMessageView.tsx"), "utf8");
 const webThread = readFileSync(join(repo, "app/components/email-panel/ThreadMessage.tsx"), "utf8");
+// Both reader views render bodies through MessageBody (inline cid images, AVE-110).
+const webMessageBody = readFileSync(join(repo, "app/components/email-panel/MessageBody.tsx"), "utf8");
 const iosDetail = readFileSync(
 	join(repo, "ios/AgenticInbox/Inboxies/Views/Email/EmailDetailView.swift"),
 	"utf8",
@@ -63,8 +65,13 @@ for (const [name, src] of [
 	["web SingleMessageView", webSingle],
 	["web ThreadMessage", webThread],
 ]) {
-	assert.match(src, /blockRemoteImages=\{blocksRemoteImages\(email\.folder_id\)\}/, `${name} blocks by the message's own folder`);
+	assert.match(src, /<MessageBody email=\{email\}/, `${name} renders the body through MessageBody`);
 }
+assert.match(
+	webMessageBody,
+	/blockRemoteImages=\{blocksRemoteImages\(email\.folder_id\)\}/,
+	"web MessageBody blocks by the message's own folder",
+);
 
 for (const [name, src] of [
 	["android sanitizer", androidSanitizer],

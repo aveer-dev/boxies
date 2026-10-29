@@ -24,6 +24,7 @@ import {
 } from "react-router";
 import { ApiError } from "~/services/api";
 import "./index.css";
+import { useCspNonce } from "~/lib/csp-nonce";
 import { signOut } from "~/lib/sign-out";
 import { TEXT_SIZE_BOOT_SCRIPT, useTextSize } from "~/lib/text-size";
 import { THEME_BOOT_SCRIPT, useTheme } from "~/lib/theme";
@@ -79,12 +80,18 @@ const KumoLink = forwardRef<
 });
 
 export function Layout({ children }: { children: React.ReactNode }) {
+	const nonce = useCspNonce();
 	return (
 		// The boot script sets data-mode and --font-scale before hydration, so React must not undo them.
 		<html lang="en" suppressHydrationWarning>
 			<head>
 				<meta charSet="UTF-8" />
-				<script dangerouslySetInnerHTML={{ __html: `${THEME_BOOT_SCRIPT};${TEXT_SIZE_BOOT_SCRIPT}` }} />
+				{/* Browsers blank the nonce attribute after load, so the client never sees it. */}
+				<script
+					nonce={nonce}
+					suppressHydrationWarning
+					dangerouslySetInnerHTML={{ __html: `${THEME_BOOT_SCRIPT};${TEXT_SIZE_BOOT_SCRIPT}` }}
+				/>
 				<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 				<link
 					rel="icon"
@@ -106,7 +113,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
 					href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
 				/>
 				<Meta />
-				<Links />
+				{/* Stylesheets need no nonce (style-src allows 'self'); an empty one
+				    keeps the server and client markup equal for hydration. */}
+				<Links nonce="" />
 			</head>
 			<body className="bg-kumo-recessed text-kumo-default antialiased">
 				{children}

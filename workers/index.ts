@@ -43,7 +43,7 @@ import {
 	senderNameFromRawHeaders,
 } from "../shared/sender";
 import { SendEmailRequestSchema } from "./lib/schemas";
-import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
+import { handleReplyEmail, handleForwardEmail, handleQuickReply } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
 import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
 import {
@@ -98,6 +98,7 @@ import {
 import { getDomainMetadata } from "./lib/domain-registry";
 import { isMailboxSuspended, mailboxServiceSummary, suspendedDomains } from "./lib/domain-service";
 import { dispatchPushToDevices } from "./lib/push-dispatch";
+import { MAIL_NOTIFICATION_CATEGORY } from "./lib/apns";
 import { parseReminderInput } from "./lib/reply-later-reminders";
 import {
 	aliasMetadataKey,
@@ -1231,6 +1232,8 @@ app.post("/api/v1/mailboxes/:mailboxId/test-push", async (c: AppContext) => {
 // -- Reply / Forward ------------------------------------------------
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", handleReplyEmail);
+// Short reply composed by the Worker (notification / watch actions, AVE-140).
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/quick-reply", handleQuickReply);
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
 
 // -- Folders --------------------------------------------------------
@@ -2509,6 +2512,8 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 						mailboxId,
 						emailId: messageId,
 						folderId: filedFolder,
+						threadId,
+						category: MAIL_NOTIFICATION_CATEGORY,
 					});
 					console.log(
 						`[Push] Results for "${mailboxId}": ios=${JSON.stringify(result.ios)} android=${JSON.stringify(result.android)}`,
