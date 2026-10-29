@@ -80,6 +80,7 @@ import {
 	type FiredReminder,
 } from "../lib/reply-later-reminders";
 import { dispatchPushToDevices } from "../lib/push-dispatch";
+import { MAIL_NOTIFICATION_CATEGORY } from "../lib/apns";
 import {
 	RETENTION_CONTINUE_DELAY_MS,
 	nextRetentionSweepDelayMs,
@@ -583,6 +584,8 @@ export class MailboxDO extends DurableObject<Env> {
 					mailboxId,
 					emailId: r.id,
 					folderId: r.folder_id,
+					threadId: r.thread_id ?? undefined,
+					category: MAIL_NOTIFICATION_CATEGORY,
 				});
 			} catch (e) {
 				console.error("[Push] Reply Later reminder push failed:", (e as Error).message);
