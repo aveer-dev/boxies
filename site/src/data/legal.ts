@@ -12,7 +12,7 @@ import { APP_HOST, GITHUB_URL, SUPPORT_EMAIL, flags } from "../config";
 import type { LegalDoc } from "./types";
 
 /** The date these documents last changed. Bump it with any edit to the copy below. */
-export const legalUpdated = "2026-10-28";
+export const legalUpdated = "2026-10-29";
 
 const MAIL_US = `[${SUPPORT_EMAIL}](mailto:${SUPPORT_EMAIL})`;
 
@@ -69,10 +69,10 @@ export const privacy: LegalDoc = {
 						"To meet legal obligations, such as keeping payment records.",
 					],
 				},
-				"We don’t sell your personal data, we don’t share it for advertising, and there are no ads in Inboxies. We don’t use analytics, tracking or crash-reporting tools in the apps, the web app or this site.",
+				"We don’t sell your personal data, we don’t share it for advertising, and there are no ads in Inboxies. We don’t use analytics, tracking or crash-reporting tools in the apps or the web app. This website counts visits with Cloudflare Web Analytics, which uses no cookies, as [This website and its contact form](#privacy-site) explains.",
 				"Under the GDPR and UK GDPR, we rely on: performance of our contract with you for running the service and billing; our legitimate interests for spam protection, security and abuse prevention; legal obligation for tax and payment records; and your consent for notifications, which you can withdraw in Settings at any time.",
 			],
-			src: "workers/index.ts (inbound pipeline); workers/lib/classify-email.ts; workers/lib/sender-triage.ts; workers/auth/rate-limit.ts; workers/lib/service-reminders.ts; workers/auth/mail.ts; no analytics/crash SDKs in app/, ios/, android/, extension/, site/ (ios PrivacyInfo.xcprivacy NSPrivacyTracking false)",
+			src: "workers/index.ts (inbound pipeline); workers/lib/classify-email.ts; workers/lib/sender-triage.ts; workers/auth/rate-limit.ts; workers/lib/service-reminders.ts; workers/auth/mail.ts; no analytics/crash SDKs in app/, ios/, android/, extension/ (ios PrivacyInfo.xcprivacy NSPrivacyTracking false); inboxies.co only: Cloudflare Web Analytics beacon injected at the edge by the zone's automatic setup (AVE-126)",
 			ownerConfirm: "no sale / no ads as a standing commitment (README Q9); lawful bases",
 		},
 		{
@@ -128,7 +128,7 @@ export const privacy: LegalDoc = {
 				"We use a small number of service providers. They process data for us under their own terms and privacy commitments.",
 				{
 					table: [
-						["Cloudflare", "Runs everything: hosting, storage (Durable Objects, R2 and D1), receiving and sending mail (Email Routing and Email Service), the AI models (Workers AI), DNS for custom domains, and domain registration (Cloudflare Registrar)."],
+						["Cloudflare", "Runs everything: hosting, storage (Durable Objects, R2 and D1), receiving and sending mail (Email Routing and Email Service), the AI models (Workers AI), DNS for custom domains, domain registration (Cloudflare Registrar), and visit counts for this website (Web Analytics)."],
 						["Stripe", "Payments for domains you buy: card details, billing address and invoices. We share the domain, your username, display name and price."],
 						["Apple", "Sign in with Apple, and notifications to iPhone (the sender, subject and a short preview of a new email pass through Apple’s push service)."],
 						[
@@ -206,7 +206,7 @@ export const privacy: LegalDoc = {
 			id: "privacy-cookies",
 			title: "Cookies and local storage",
 			body: [
-				"Inboxies uses one cookie: the session cookie that keeps you signed in to the web app. It’s strictly necessary, so there’s no cookie banner. This website sets no cookies at all.",
+				"Inboxies uses one cookie: the session cookie that keeps you signed in to the web app. It’s strictly necessary, so there’s no cookie banner. This website sets no cookies at all, and neither does its analytics.",
 				{
 					table: [
 						["Web app session cookie", "Keeps you signed in, for up to 30 days. Not readable by scripts."],
@@ -222,10 +222,11 @@ export const privacy: LegalDoc = {
 			id: "privacy-site",
 			title: "This website and its contact form",
 			body: [
-				"inboxies.co has no analytics, no trackers and no third-party scripts, and its fonts are served from our own domain.",
+				"inboxies.co uses Cloudflare Web Analytics to count visits and see how fast pages load. Cloudflare adds a small script to the website’s pages that reports the page you viewed (without anything after the “?” in its address), the site that sent you, your country, your browser, operating system and type of device, and page load timings. It sets no cookies and stores nothing in your browser, and Cloudflare says it doesn’t collect visitors’ personal data, fingerprint them, or track them across other sites. Your browser fetches the script from Cloudflare, which already serves every page of this website. That script is the only third-party script on the website, and the website’s fonts are served from our own domain.",
+				"Web Analytics runs only on this website, inboxies.co. The apps and the web app don’t use it or any other analytics.",
 				`The contact form sends your name, email, Inboxies address (if you give one), topic and message, with the page you came from and your browser’s description, to ${SUPPORT_EMAIL} as an email. The website doesn’t store it, and its logs record only whether a message was sent and its topic. Our support mailbox runs on Inboxies, so your message is handled like any other mail there, spam check included.`,
 			],
-			src: "site/src/pages/api/contact.ts:7,40-43,216-248; @fontsource/inter; no analytics in site/",
+			src: "site/src/pages/api/contact.ts:7,40-43,216-248; @fontsource/inter; Cloudflare Web Analytics on inboxies.co via the zone's automatic setup (not in site/ code; AVE-126). Claims per developers.cloudflare.com/web-analytics/about/, /data-metrics/dimensions/, /data-metrics/data-origin-and-collection/, /faq/ (no query strings) and cloudflare.com/web-analytics/ (no cookies or localStorage, no fingerprinting)",
 		},
 		{
 			id: "privacy-children",
