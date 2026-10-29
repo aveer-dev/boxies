@@ -1262,8 +1262,10 @@ const CF_REAL_PASS =
 	"mx.cloudflare.net; dkim=pass header.d=inboxies.email header.s=cf-bounce header.b=Px9vMp/T; dkim=pass header.d=cloudflare-smtp.net header.s=cf2024-1 header.b=bq8eZZHN; dmarc=pass header.from=inboxies.email policy.dmarc=reject; spf=none (mx.cloudflare.net: no SPF records found for postmaster@bg-bbi.cloudflare-smtp.net) smtp.helo=bg-bbi.cloudflare-smtp.net; spf=pass (mx.cloudflare.net: domain of b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email designates 104.30.16.118 as permitted sender) smtp.mailfrom=b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email; arc=none smtp.remote-ip=104.30.16.118";
 const cfRealDmarcFail = (policy) =>
 	`mx.cloudflare.net; dmarc=fail (policy not aligned) header.from=owner.example policy.dmarc=${policy}; spf=none (mx.cloudflare.net: no SPF records found for postmaster@sender5-of-o54.zoho.com) smtp.helo=sender5-of-o54.zoho.com; spf=pass (mx.cloudflare.net: domain of sender@relay.example designates 165.173.182.54 as permitted sender) smtp.mailfrom=sender@relay.example; arc=pass smtp.remote-ip=165.173.182.54`;
-// Zoho seals i=1 and claims dmarc=pass for the From it was told to use.
-// zohomail.com is not a trusted sealer, so that claim must not count.
+// Zoho seals the mail it sends (i=1) and claims dmarc=pass for the "Send Mail
+// As" address. zohomail.com is an allowlisted sealer, but Cloudflare adds its
+// own seal on top (i=2, cloudflare-email.net) and only the top seal is read,
+// so the claim must not count.
 const ZOHO_SEAL_1 = "i=1; a=rsa-sha256; t=1793232963; cv=none; d=zohomail.com; s=zohoarc; b=Wm9obw==";
 const ZOHO_AAR_1 =
 	"i=1; mx.zohomail.com; spf=pass smtp.mailfrom=sender@relay.example; dmarc=pass header.from=<personal@owner.example>";
