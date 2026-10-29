@@ -120,6 +120,7 @@ import co.inboxies.app.util.ComposeHtml
 import co.inboxies.app.util.OutboundAttachmentException
 import co.inboxies.app.util.OutboundImageCompressor
 import co.inboxies.app.util.OutboundLimits
+import co.inboxies.app.ui.email.EmailBodyView
 import co.inboxies.app.util.QuotedOriginal
 import android.Manifest
 import android.content.pm.PackageManager
@@ -1543,28 +1544,37 @@ private fun QuotedOriginalSheet(
                         onClick = {},
                     ),
             ) {
-                Text(
-                    quoted.header,
-                    fontFamily = InterFontFamily,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
-                    color = colors.ink,
-                )
+                quoted.detailLines.forEachIndexed { index, line ->
+                    Text(
+                        line,
+                        fontFamily = InterFontFamily,
+                        fontWeight = if (index == 0) FontWeight.SemiBold else FontWeight.Normal,
+                        fontSize = if (index == 0 && !quoted.isForward) 16.sp else AppThemeDims.FontSize.meta,
+                        color = if (index == 0) colors.ink else colors.muted,
+                    )
+                }
                 Spacer(Modifier.height(16.dp))
-                Text(
-                    quoted.text,
-                    fontFamily = InterFontFamily,
-                    fontSize = AppThemeDims.FontSize.body,
-                    color = colors.muted,
+                // Rendered like the reader renders it (same WebView, sanitiser and
+                // remote-image rule); the Worker appends it to the sent mail (AVE-133).
+                val lineColor = colors.line
+                EmailBodyView(
+                    email = quoted.email,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 12.dp)
-                        .drawBehind {
-                            drawRect(
-                                color = colors.muted.copy(alpha = 0.35f),
-                                size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height),
-                            )
-                        },
+                        .then(
+                            if (quoted.isForward) {
+                                Modifier
+                            } else {
+                                Modifier
+                                    .drawBehind {
+                                        drawRect(
+                                            color = lineColor,
+                                            size = androidx.compose.ui.geometry.Size(2.dp.toPx(), size.height),
+                                        )
+                                    }
+                                    .padding(start = 12.dp)
+                            },
+                        ),
                 )
             }
         }

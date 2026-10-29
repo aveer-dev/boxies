@@ -224,7 +224,7 @@ enum PreviewSupport {
 
     /// `-previewMailbox -previewReplyQuote` (AVE-133): reply to a promo mail whose HTML carries a
     /// `<style>` block, a hidden `&shy;`/`&zwnj;` preheader and layout tables, so the quoted
-    /// original shows the cleaned text. Add `-previewQuoteOpen` to open the quote sheet.
+    /// original shows rendered as the real message. Add `-previewQuoteOpen` to open the quote sheet.
     /// Android twin: `PreviewSupport.promoEmail` (`run-debug-preview.sh replyQuote`).
     static let promoEmail = Email(
         id: "preview-promo",

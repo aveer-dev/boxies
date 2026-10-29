@@ -567,7 +567,7 @@ object PreviewSupport {
 
     /**
      * AVE-133: a promo mail whose HTML carries a `<style>` block, a hidden `&shy;`/`&zwnj;`
-     * preheader and layout tables, so the reply's quoted original shows the cleaned text.
+     * preheader and layout tables, so the reply's quoted original shows rendered as the real message.
      * iOS twin: `PreviewSupport.promoEmail` (`-previewMailbox -previewReplyQuote`).
      */
     fun promoEmail(you: String = addr("you")): Email = Email(

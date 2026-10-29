@@ -436,28 +436,44 @@ struct ComposeSheetView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
-        .accessibilityLabel("Show original email")
+        .accessibilityLabel(quoted.isForward ? "Show forwarded email" : "Show original email")
         .accessibilityHint("Opens the original message. Swipe down to close.")
     }
 
+    /// The quoted original rendered like the reader renders it (same web view,
+    /// sanitiser and remote-image rule), read-only. The Worker appends it to the
+    /// sent mail, so this is what the recipient sees under the reply (AVE-133).
     private func quotedOriginalSheet(_ quoted: QuotedOriginal) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text(quoted.header)
-                    .font(.inter(size: 16, weight: .semibold))
-                    .foregroundStyle(AppTheme.ink)
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(quoted.detailLines.enumerated()), id: \.offset) { index, line in
+                        Text(line)
+                            .font(.inter(
+                                size: index == 0 && !quoted.isForward ? 16 : AppTheme.FontSize.meta,
+                                weight: index == 0 ? .semibold : .regular
+                            ))
+                            .foregroundStyle(index == 0 ? AppTheme.ink : AppTheme.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
 
-                Text(quoted.text)
-                    .font(.inter(size: AppTheme.FontSize.body))
-                    .foregroundStyle(AppTheme.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 12)
-                    .overlay(alignment: .leading) {
+                EmailBodyView(
+                    htmlOrText: quoted.bodyHTML,
+                    mailboxId: form.fromMailboxId,
+                    emailId: quoted.emailId,
+                    attachments: quoted.attachments,
+                    blocksRemoteImages: EmailHTMLSanitizer.blocksRemoteImages(folderId: quoted.folderId)
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, quoted.isForward ? 0 : 12)
+                .overlay(alignment: .leading) {
+                    if !quoted.isForward {
                         Rectangle()
-                            .fill(AppTheme.muted.opacity(0.35))
+                            .fill(AppTheme.line)
                             .frame(width: 2)
                     }
-                    .textSelection(.enabled)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 28)

@@ -409,32 +409,49 @@ final class HardeningTests: XCTestCase {
 
     // MARK: - Quoted original (AVE-133)
 
-    /// Same fixtures as web/Worker (`workers/test/quoted-text.test.mjs`) and Android.
-    func testQuotedTextMatchesSharedFixtures() throws {
-        struct Fixture: Decodable {
-            let name: String
-            let html: String
-            let expected: String
-        }
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // InboxiesTests
-            .deletingLastPathComponent() // AgenticInbox
-            .deletingLastPathComponent() // ios
-            .deletingLastPathComponent() // repo root
-            .appendingPathComponent("shared/quoted-text.fixtures.json")
-        let fixtures = try JSONDecoder().decode([Fixture].self, from: Data(contentsOf: url))
-        XCTAssertGreaterThanOrEqual(fixtures.count, 5)
-        for fixture in fixtures {
-            XCTAssertEqual(QuotedText.fromHTML(fixture.html), fixture.expected, fixture.name)
-        }
+    /// The quote is not inlined: the reply shows the original's HTML as-is and
+    /// the Worker appends it on send (`quote_original`).
+    func testQuotedOriginalKeepsTheOriginalHTML() {
+        let original = Email(
+            id: "o1",
+            folderId: "spam",
+            subject: "Deals",
+            sender: "news@example.com",
+            senderName: "News",
+            recipient: "me@example.com",
+            date: "2026-10-27T16:46:00.000Z",
+            read: true,
+            starred: false,
+            body: "<table><tr><td><b>Big</b> <a href=\"https://example.com\">sale</a></td></tr></table>",
+            snippet: "Big sale"
+        )
+        let reply = ComposeHTML.quotedOriginal(from: original)
+        XCTAssertEqual(reply?.bodyHTML, original.body)
+        XCTAssertEqual(reply?.folderId, "spam")
+        XCTAssertEqual(reply?.isForward, false)
+        XCTAssertTrue(reply?.header.hasSuffix("News <news@example.com> wrote:") == true, reply?.header ?? "")
+
+        let forward = ComposeHTML.quotedOriginal(from: original, isForward: true)
+        XCTAssertEqual(forward?.detailLines.first, "---------- Forwarded message ---------")
+        XCTAssertEqual(forward?.detailLines.last, "To: me@example.com")
+
+        var empty = original
+        empty.body = "  "
+        empty.snippet = nil
+        XCTAssertNil(ComposeHTML.quotedOriginal(from: empty))
     }
 
-    func testQuotedHTMLStaysEscapedAndClean() {
-        let text = QuotedText.fromHTML(#"<div style="display:none">pre&shy;header</div><p>x &lt;b&gt; &amp;shy;</p>"#)
-        XCTAssertEqual(text, "x <b> &shy;")
-        let html = ComposeHTML.quotedHTML(from: QuotedOriginal(header: "On Tue, Uber wrote:", text: text))
-        XCTAssertTrue(html.contains("x &lt;b&gt; &amp;shy;"))
-        XCTAssertFalse(html.contains("preheader"))
+    func testLegacyDraftQuoteIsStrippedFromTheEditor() {
+        let reply = ComposeHTML.editableReply(
+            fromDraftHTML: "<p>Thanks!</p><br><blockquote>On Tue, Oct 27, 2026, News wrote:<br><br>old</blockquote>",
+            quotedHeader: nil
+        )
+        XCTAssertEqual(reply, "Thanks!")
+        let forward = ComposeHTML.editableReply(
+            fromDraftHTML: "FYI\n\n---------- Forwarded message ----------\nFrom: News\n\nold",
+            quotedHeader: "Forwarded message from News"
+        )
+        XCTAssertEqual(forward, "FYI")
     }
 
     // MARK: - Dark mode: own colours

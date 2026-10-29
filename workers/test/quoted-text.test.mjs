@@ -31,25 +31,16 @@ assert.equal(htmlToQuotedText('<div style="display: none">Keep me'), "Keep me");
 assert.equal(htmlToQuotedText(""), "");
 assert.equal(htmlToQuotedText(null), "");
 
-// Outgoing reply HTML built by the Worker (agent/MCP) uses the same text, escaped.
+// The Worker's agent/MCP quote is HTML now (see quoted-html.test.mjs); its
+// text/plain part still comes from htmlToQuotedText. An empty original adds no quote.
 const block = buildQuotedReplyBlock({
 	date: "2026-10-27T17:46:00Z",
-	sender: "Uber <uber@uber.com>",
+	sender: "uber@uber.com",
+	sender_name: "Uber",
 	body: newsletter,
 });
-assert.ok(block.includes("Don’t let the details haunt you. Save 30%.<br><br>Whatever"));
 assert.ok(block.includes("Uber &lt;uber@uber.com&gt; wrote:"));
-assert.ok(!block.includes("&amp;shy;") && !block.includes("spooky"));
-assert.equal(
-	buildQuotedReplyBlock({ sender: "a", body: "<p>&nbsp;</p>" }),
-	"",
-	"no empty quote block",
-);
-assert.ok(
-	buildQuotedReplyBlock({ sender: "a", body: "<p>x <script>alert(1)</script>&lt;img onerror&gt;</p>" }).includes(
-		"x &lt;img onerror&gt;",
-	),
-	"decoded markup is re-escaped",
-);
+assert.ok(!/<style|<script|<title/i.test(block));
+assert.equal(buildQuotedReplyBlock({ sender: "a", body: "<p>&nbsp;</p>" }), "", "no empty quote block");
 
 console.log("quoted-text: ok");

@@ -178,8 +178,8 @@ class ComposeFormModel(
                 fromName = fromName,
             )
         }
-        quotedOriginal = if (mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll) {
-            original?.let { ComposeHtml.quotedOriginal(it) }
+        quotedOriginal = if (quotesOriginal) {
+            original?.let { ComposeHtml.quotedOriginal(it, isForward = mode == ComposeMode.Forward) }
         } else {
             null
         }
@@ -218,7 +218,8 @@ class ComposeFormModel(
             }
             mode == ComposeMode.Forward && original != null -> {
                 subject = ComposeHtml.prefixedSubject(original.subject, "Fwd")
-                body = ComposeHtml.forwardBody(original, signature)
+                // The forwarded message is shown under the editor and appended on send.
+                body = ComposeHtml.bodyWithSignature(signature)
             }
             else -> {
                 if (initialTo.isNotEmpty()) toTokens = initialTo
@@ -277,29 +278,33 @@ class ComposeFormModel(
         }
     }
 
-    fun outgoingHtml(): String {
-        val html = if (body.contains('<')) body else ComposeHtml.textToHtml(body)
-        quotedOriginal?.let { return html + ComposeHtml.quotedHtml(it) }
-        return html
-    }
+    /**
+     * Reply / forward: the Worker appends the original as a sanitised, formatted
+     * quote (`quote_original`, AVE-133), so it is never part of the body or the
+     * saved draft. Also true for a reopened draft whose original didn't load.
+     */
+    val quotesOriginal: Boolean
+        get() = mode == ComposeMode.Reply || mode == ComposeMode.ReplyAll || mode == ComposeMode.Forward
 
-    fun outgoingPlainText(): String {
-        val plain = ComposeHtml.stripHtml(body)
-        val quoted = quotedOriginal ?: return plain
-        val quotedLines = quoted.text.split("\n").map { "> $it" }
-        return (listOf(plain, "", quoted.header) + quotedLines).joinToString("\n")
-    }
+    /** What the user wrote; the quote is appended server-side. */
+    fun outgoingHtml(): String =
+        if (body.contains('<')) body else ComposeHtml.textToHtml(body)
+
+    fun outgoingPlainText(): String = ComposeHtml.stripHtml(body)
+
+    /** The outgoing HTML plus the quoted original, for the 5 MiB estimate. */
+    fun sizedHtml(): String = outgoingHtml() + (quotedOriginal?.email?.body.orEmpty())
 
     fun remainingAttachmentBudget(): Int =
         OutboundLimits.remainingBudget(
-            html = outgoingHtml(),
+            html = sizedHtml(),
             text = outgoingPlainText(),
             attachmentBytes = attachments.map { it.size },
         )
 
     fun exceedsOutboundLimit(): Boolean =
         OutboundLimits.estimateMessageBytes(
-            html = outgoingHtml(),
+            html = sizedHtml(),
             text = outgoingPlainText(),
             attachmentBytes = attachments.map { it.size },
         ) > OutboundLimits.MAX_MESSAGE_BYTES
@@ -324,6 +329,10 @@ class ComposeFormModel(
             put("subject", subject)
             put("html", outgoingHtml())
             put("text", outgoingPlainText())
+            if (quotesOriginal) {
+                put("quote_original", true)
+                put("quote_time_zone", java.util.TimeZone.getDefault().id)
+            }
             val name = fromName
             if (isAliasBound) {
                 // Bare address: a display name would pair the alias with the real owner.

@@ -54,7 +54,7 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */
     Newsletter("newsletter", "previewNewsletter"),
-    /** Reply composer to a promo mail with CSS + hidden preheader junk; tap the quote dock (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
+    /** Reply composer to a promo mail (tables, CSS, hidden preheader); tap the quote dock to see it rendered (iOS `-previewMailbox -previewReplyQuote`, AVE-133). */
     ReplyQuote("replyQuote", "previewReplyQuote"),
     /** Inbox rows with notes to self: sticky strip + private note chip (iOS `-previewMailbox -previewNotes`). */
     Notes("notes", "previewNotes"),
