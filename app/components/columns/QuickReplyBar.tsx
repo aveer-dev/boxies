@@ -10,11 +10,7 @@ import { buildReplyEnvelope, plainTextToHtml } from "shared/reply-envelope";
 import { Tip } from "~/components/IconButton";
 import { useUIStore } from "~/hooks/useUIStore";
 import { keysFor, useShortcut } from "~/lib/shortcuts";
-import {
-	buildQuotedReplyBlock,
-	getSignatureBlock,
-	htmlToPlainText,
-} from "~/lib/utils";
+import { getSignatureBlock, htmlToPlainText } from "~/lib/utils";
 import { useReplyToEmail } from "~/queries/emails";
 import { newIdempotencyKey } from "~/lib/send-idempotency";
 import { useMailbox } from "~/queries/mailboxes";
@@ -73,11 +69,8 @@ export default function QuickReplyBar({
 		if (!text.trim() || isSending || !mailbox || !envelope) return;
 		setIsSending(true);
 		try {
-			const html = `${plainTextToHtml(text)}${getSignatureBlock(mailbox.settings)}${buildQuotedReplyBlock(
-				replyTarget.date,
-				displaySenderName(replyTarget),
-				replyTarget.body || "",
-			)}`;
+			// The Worker appends the original as a formatted quote (AVE-133).
+			const html = `${plainTextToHtml(text)}${getSignatureBlock(mailbox.settings)}`;
 			// One key per quick reply: kept across failed attempts, new after success.
 			const idempotencyKey = (sendKeyRef.current ??= newIdempotencyKey());
 			await replyMut.mutateAsync({
@@ -91,6 +84,8 @@ export default function QuickReplyBar({
 					subject: envelope.subject,
 					html,
 					text: htmlToPlainText(html),
+					quote_original: true,
+					quote_time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
 				},
 			});
 			sendKeyRef.current = null;

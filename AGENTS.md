@@ -37,3 +37,18 @@ Adapted Emil skills keep MIT copyright; Cloudflare skills keep Apache 2.0 copyri
 ## Tooling
 
 Use **pnpm** for JS/Worker work. iOS: Xcode + `ios/AgenticInbox`. Android: Gradle from `android/`. Android DEBUG previews: `cd android && INSTALL=1 ./scripts/run-debug-preview.sh <mode>`.
+
+## Production secrets (`agentic-inbox` Worker)
+
+Change production secrets **only** by deploying code with them, from a clean, up-to-date `dev` checkout (`git status` empty, `git pull --ff-only`):
+
+```bash
+pnpm install --frozen-lockfile && pnpm run ensure-queues && pnpm run build
+pnpm wrangler deploy --secrets-file <file>
+```
+
+`<file>` is JSON or `.env` (`NAME=value`), kept outside the repo and deleted afterwards. It is additive: secrets not in the file keep their values.
+
+**Never** change production secrets in the dashboard (Variables & Secrets), with `wrangler versions secret put` + `versions deploy`, or with `wrangler secret put`. This overrides the `wrangler` skill's `versions secret` advice. Each of those builds the new version on the Worker's **newest uploaded** version, not the live one, and Workers Builds uploads an undeployed version for every push to a branch other than `main`. On 2026-10-28 a dashboard secret edit shipped an unmerged branch build to production this way.
+
+Pushes to `main` also deploy production, through Workers Builds (`pnpm run deploy`). Sessions do not run `wrangler deploy`, `versions upload` or secret commands against `agentic-inbox` unless the user asks.

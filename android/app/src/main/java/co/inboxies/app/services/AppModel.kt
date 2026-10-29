@@ -1437,10 +1437,12 @@ class AppModel {
 
     suspend fun openDraft(draft: Email) {
         val original = resolveReplyOriginal(draft)
-        val mode = if (original != null || !draft.inReplyTo.isNullOrEmpty()) {
-            ComposeMode.Reply
-        } else {
-            ComposeMode.EditDraft
+        val isReplyDraft = original != null || !draft.inReplyTo.isNullOrEmpty()
+        // A "Fwd:" draft reopens as a forward, so it keeps the forwarded-message quote (AVE-133).
+        val mode = when {
+            isReplyDraft && draft.subject.lowercase().startsWith("fwd:") -> ComposeMode.Forward
+            isReplyDraft -> ComposeMode.Reply
+            else -> ComposeMode.EditDraft
         }
         startCompose(mode = mode, original = original, draft = draft)
     }
@@ -2042,7 +2044,7 @@ class AppModel {
                 val mailboxId = form.fromMailboxId.ifBlank {
                     _selectedMailboxId.value ?: error("No mailbox")
                 }
-                val html = form.bodyHtml
+                val html = form.sizedHtml()
                 val text = form.outgoingPlainText()
                 val estimated = co.inboxies.app.util.OutboundLimits.estimateMessageBytes(
                     html,

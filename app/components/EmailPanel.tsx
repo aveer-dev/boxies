@@ -33,6 +33,7 @@ import { useUIStore } from "~/hooks/useUIStore";
 import { type ShortcutId, useShortcut } from "~/lib/shortcuts";
 import type { Email, Folder, Mailbox } from "~/types";
 import { displaySenderName } from "shared/sender";
+import { bodyHasInlineQuote } from "shared/quoted-html";
 
 function EmailPanelSkeleton() {
 	return (
@@ -296,7 +297,8 @@ export default function EmailPanel({
 
 	const handleEditDraft = (draftMsg?: Email) => {
 		const target = draftMsg || email;
-		if (target.in_reply_to) { startCompose({ mode: "reply", originalEmail: allMessages.find((msg) => msg.id === target.in_reply_to), draftEmail: target }); }
+		// A "Fwd:" draft reopens as a forward, so it keeps the forwarded-message quote.
+		if (target.in_reply_to) { startCompose({ mode: /^fwd:/i.test(target.subject || "") ? "forward" : "reply", originalEmail: allMessages.find((msg) => msg.id === target.in_reply_to), draftEmail: target }); }
 		else { startCompose({ mode: "new", originalEmail: undefined, draftEmail: target }); }
 	};
 
@@ -333,6 +335,10 @@ export default function EmailPanel({
 				subject: target.subject || "(no subject)",
 				html: target.body || "",
 				text: target.body ? target.body.replace(/<[^>]*>/g, "").trim() : "",
+				// The Worker quotes the original, unless this older draft already has it inline (AVE-133).
+				...(originalEmail && !bodyHasInlineQuote(target.body)
+					? { quote_original: true, quote_time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || undefined }
+					: {}),
 			};
 			const idempotencyKey = draftSendKeys.keyFor(target.id);
 			if (originalEmail) await replyMut.mutateAsync({ mailboxId, emailId: originalEmail.id, email: emailData, idempotencyKey }); else await sendEmailMut.mutateAsync({ mailboxId, email: emailData, idempotencyKey });

@@ -17,6 +17,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,8 @@ import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
 import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.ui.splash.SplashScreenView
+import co.inboxies.app.models.ComposeMode
+import kotlinx.coroutines.delay
 
 /**
  * DEBUG emulator roots — mirror iOS `PreviewMailboxRoot` / `PreviewAdminAuthRoot`.
@@ -133,6 +136,7 @@ object PreviewHarness {
             PreviewMode.ReplyLater,
             PreviewMode.Spam,
             PreviewMode.Newsletter,
+            PreviewMode.ReplyQuote,
             PreviewMode.Notes,
             PreviewMode.NotesDetail,
             PreviewMode.ServiceEnded,
@@ -237,17 +241,26 @@ fun PreviewRoot(
         PreviewMode.ReplyLater,
         PreviewMode.Spam,
         PreviewMode.Newsletter,
+        PreviewMode.ReplyQuote,
         PreviewMode.Notes,
         PreviewMode.NotesDetail,
         PreviewMode.ServiceEnded,
         PreviewMode.ServiceEndedMember,
         PreviewMode.ServiceEnding,
-        -> HomeShellView(
-            auth = auth,
-            appModel = appModel,
-            themeMode = themeMode,
-            onThemeModeChange = onThemeModeChange,
-        )
+        -> {
+            if (mode == PreviewMode.ReplyQuote) {
+                LaunchedEffect(Unit) {
+                    delay(400)
+                    appModel.startCompose(ComposeMode.Reply, original = PreviewSupport.promoEmail())
+                }
+            }
+            HomeShellView(
+                auth = auth,
+                appModel = appModel,
+                themeMode = themeMode,
+                onThemeModeChange = onThemeModeChange,
+            )
+        }
     }
 }
 

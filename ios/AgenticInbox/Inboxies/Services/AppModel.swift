@@ -1383,7 +1383,10 @@ final class AppModel {
     /// Open a saved draft in compose. Reply-drafts keep reply send semantics.
     func openDraft(_ draft: Email) async {
         let original = await resolveReplyOriginal(for: draft)
-        let mode: ComposeMode = original != nil || (draft.inReplyTo?.isEmpty == false) ? .reply : .editDraft
+        let isReplyDraft = original != nil || (draft.inReplyTo?.isEmpty == false)
+        // A "Fwd:" draft reopens as a forward, so it keeps the forwarded-message quote (AVE-133).
+        let isForwardDraft = isReplyDraft && draft.subject.lowercased().hasPrefix("fwd:")
+        let mode: ComposeMode = isForwardDraft ? .forward : (isReplyDraft ? .reply : .editDraft)
         await startCompose(mode: mode, original: original, draft: draft)
     }
 
