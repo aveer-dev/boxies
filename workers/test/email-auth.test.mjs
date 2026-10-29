@@ -766,8 +766,6 @@ assert.deepEqual(
 		"protonmail.ch",
 		"proton.me",
 		"messagingengine.com",
-		"zohomail.com",
-		"zohomail.eu",
 		"yahoo.com",
 		"aol.com",
 	],
@@ -787,8 +785,6 @@ for (const d of [
 	"protonmail.ch",
 	"proton.me",
 	"messagingengine.com",
-	"zohomail.com",
-	"zohomail.eu",
 	"yahoo.com",
 	"aol.com",
 ]) {
@@ -804,6 +800,9 @@ for (const d of [
 	"fakemessagingengine.com",
 	"fastmail.com",
 	"zoho.com",
+	// Zoho seals mail it sends with its own dmarc=pass claim (AVE-102).
+	"zohomail.com",
+	"zohomail.eu",
 	"zohomail.com.evil.io",
 	"notyahoo.com",
 	"yahoo.co",
@@ -827,12 +826,39 @@ const MICROSOFT_SEAL_1 =
 const MICROSOFT_AAR_1 =
 	"i=1; mx.microsoft.com 1; spf=pass smtp.mailfrom=contoso.com; dmarc=pass action=none header.from=contoso.com; dkim=pass header.d=contoso.com; arc=none";
 
-function forwarded(extra, { cf = CF_FORWARDED_ARC_PASS, from = "Ada <ada@example.com>" } = {}) {
+// Cloudflare's own ARC set, as Email Routing adds it to every message it
+// delivers (AVE-102): one instance above the chain that arrived, its results
+// repeating Cloudflare's Authentication-Results.
+function cloudflareSet(instance, cf, cv = instance === 1 ? "none" : "pass") {
+	return [
+		["ARC-Seal", `i=${instance}; a=rsa-sha256; s=cf2024-1; d=cloudflare-email.net; cv=${cv}; b=Q2xvdWRmbGFyZQ==`],
+		["ARC-Message-Signature", `i=${instance}; a=rsa-sha256; c=relaxed/relaxed; d=cloudflare-email.net; s=cf2024-1; h=from:to; bh=x; b=y`],
+		["ARC-Authentication-Results", `i=${instance}; ${cf}`],
+	];
+}
+
+function delivered(pairs, from = "Ada <ada@example.com>") {
 	return parseAuthSignals({
-		envelopeHeaders: headers(["Authentication-Results", cf], ...extra),
+		envelopeHeaders: headers(...pairs),
 		headerFrom: from,
 		envelopeFrom: "me+caf_=me=inboxies.example@gmail.com",
 	});
+}
+
+// Parses `extra` as Cloudflare delivers it, with its own set above the
+// highest instance in `extra`, and checks that the same headers without
+// that set (mail stored before Cloudflare sealed) parse identically: the
+// upstream set is judged the same way either way.
+function forwarded(extra, { cf = CF_FORWARDED_ARC_PASS, from = "Ada <ada@example.com>" } = {}) {
+	const top = Math.max(
+		0,
+		...extra
+			.filter(([key]) => key === "ARC-Seal")
+			.map(([, value]) => Number(/^\s*i=(\d+)/.exec(value)?.[1] ?? 0)),
+	);
+	const auth = delivered([...cloudflareSet(top + 1, cf), ["Authentication-Results", cf], ...extra], from);
+	assert.deepEqual(delivered([["Authentication-Results", cf], ...extra], from), auth);
+	return auth;
 }
 
 {
@@ -864,14 +890,15 @@ function forwarded(extra, { cf = CF_FORWARDED_ARC_PASS, from = "Ada <ada@example
 }
 
 {
-	// Microsoft 365 forward (d=microsoft.com) → verified.
+	// Microsoft 365 forward (d=microsoft.com) → verified. Exchange Online
+	// resends under an SRS envelope in the forwarding tenant's domain.
 	const auth = forwarded(
 		[
 			["ARC-Seal", MICROSOFT_SEAL_1],
 			["ARC-Authentication-Results", MICROSOFT_AAR_1],
 		],
 		{
-			cf: "mx.cloudflare.net; dkim=fail header.d=contoso.com; spf=fail smtp.mailfrom=user@contoso.com; dmarc=fail header.from=contoso.com policy.dmarc=quarantine; arc=pass",
+			cf: "mx.cloudflare.net; dkim=fail header.d=contoso.com; spf=pass smtp.mailfrom=bounces+SRS=k5mZq=QD@fabrikam.onmicrosoft.com; dmarc=fail header.from=contoso.com policy.dmarc=quarantine; arc=pass",
 			from: "user@contoso.com",
 		},
 	);
@@ -881,16 +908,17 @@ function forwarded(extra, { cf = CF_FORWARDED_ARC_PASS, from = "Ada <ada@example
 
 {
 	// outlook.com subdomain sealing as the second hop (cv=pass) after a list
-	// at i=1; DKIM-aligned pass is enough without a DMARC verdict.
+	// at i=1; DKIM-aligned pass is enough without a DMARC verdict (the SPF
+	// pass is for the list, not the From).
 	const auth = forwarded(
 		[
 			["ARC-Seal", "i=2; a=rsa-sha256; s=arcselector9901; d=eur.outlook.com; cv=pass; b=AAAA"],
-			["ARC-Authentication-Results", "i=2; mx.microsoft.com 1; dkim=pass header.d=mail.fabrikam.example; arc=pass (0 oda=0 ltdi=0)"],
+			["ARC-Authentication-Results", "i=2; mx.microsoft.com 1; spf=pass smtp.mailfrom=bounce@lists.example; dkim=pass header.d=mail.fabrikam.example; arc=pass (0 oda=0 ltdi=0)"],
 			["ARC-Seal", "i=1; a=rsa-sha256; d=lists.example; s=s1; cv=none; b=BBBB"],
 			["ARC-Authentication-Results", "i=1; lists.example; dkim=pass header.d=fabrikam.example"],
 		],
 		{
-			cf: "mx.cloudflare.net; dkim=fail header.d=fabrikam.example; spf=softfail smtp.mailfrom=bounce@lists.example; dmarc=none header.from=fabrikam.example; arc=pass",
+			cf: "mx.cloudflare.net; dkim=fail header.d=fabrikam.example; spf=pass smtp.mailfrom=bounces+SRS=Lm3Qw=RT@fabrikam.onmicrosoft.com; dmarc=none header.from=fabrikam.example; arc=pass",
 			from: "ana@fabrikam.example",
 		},
 	);
@@ -910,12 +938,20 @@ function forwarded(extra, { cf = CF_FORWARDED_ARC_PASS, from = "Ada <ada@example
 	assert.equal(auth.authTier, "verified");
 }
 
-{
-	// workerd Headers: get() comma-joins duplicates, getAll() throws.
+// workerd Headers: get() comma-joins duplicates, getAll() throws. Both as
+// Cloudflare delivers it (its seal and results joined ahead of Google's)
+// and without Cloudflare's set.
+for (const [seals, arcResultsJoined] of [
+	[
+		`${cloudflareSet(2, CF_FORWARDED_ARC_PASS)[0][1]}, ${GOOGLE_SEAL_1}`,
+		`i=2; ${CF_FORWARDED_ARC_PASS}, ${GOOGLE_AAR_1}`,
+	],
+	[GOOGLE_SEAL_1, GOOGLE_AAR_1],
+]) {
 	const values = new Map([
 		["authentication-results", CF_FORWARDED_ARC_PASS],
-		["arc-seal", GOOGLE_SEAL_1],
-		["arc-authentication-results", GOOGLE_AAR_1],
+		["arc-seal", seals],
+		["arc-authentication-results", arcResultsJoined],
 	]);
 	const auth = parseAuthSignals({
 		envelopeHeaders: {
@@ -928,6 +964,7 @@ function forwarded(extra, { cf = CF_FORWARDED_ARC_PASS, from = "Ada <ada@example
 		envelopeFrom: "x@gmail.com",
 	});
 	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.arcSealer, "google.com");
 }
 
 // Each additional mailbox provider, sealing a forward from Ada at
@@ -948,22 +985,13 @@ const PROVIDER_SEALS = [
 	{
 		d: "proton.me",
 		seal: "i=1; a=rsa-sha256; s=protonmail; d=proton.me; t=1729500000; cv=none; b=UHJvdG9uTWU=",
-		aar: "i=1; mail.protonmail.ch; dmarc=pass (p=reject dis=none) header.from=example.com",
+		// DMARC is the only proof: the SPF pass is for an ESP, not the From.
+		aar: "i=1; mail.protonmail.ch; spf=pass smtp.mailfrom=bounce@esp.example; dmarc=pass (p=reject dis=none) header.from=example.com",
 	},
 	{
 		d: "messagingengine.com",
 		seal: "i=1; a=rsa-sha256; cv=none; d=messagingengine.com; s=fm2; t=1729500000; b=RmFzdG1haWw=",
 		aar: "i=1; mx.messagingengine.com; x-csa=none; x-me-sender=none; x-ptr=pass smtp.helo=mail.example.com policy.ptr=mail.example.com; bimi=none (No BIMI records found); arc=none (no signatures found); dkim=pass (2048-bit rsa key sha256) header.d=example.com header.i=@example.com header.b=AbCd header.a=rsa-sha256 header.s=s1 x-bits=2048; dmarc=pass policy.published-domain-policy=reject policy.applied-disposition=none policy.evaluated-disposition=none (p=reject,d=none,d.eval=none) policy.policy-from=p header.from=example.com; spf=pass smtp.mailfrom=ada@example.com smtp.helo=mail.example.com",
-	},
-	{
-		d: "zohomail.com",
-		seal: "i=1; a=rsa-sha256; t=1729500000; cv=none; d=zohomail.com; s=zohoarc; b=Wm9obw==",
-		aar: "i=1; mx.zohomail.com; dkim=pass header.i=example.com; spf=pass smtp.mailfrom=ada@example.com; dmarc=pass header.from=<ada@example.com>",
-	},
-	{
-		d: "zohomail.eu",
-		seal: "i=1; a=rsa-sha256; t=1729500000; cv=none; d=zohomail.eu; s=zohoarc; b=Wm9ob0VV",
-		aar: "i=1; mx.zohomail.eu; dkim=pass header.i=example.com; spf=pass smtp.mailfrom=ada@example.com; dmarc=pass header.from=<ada@example.com>",
 	},
 	{
 		d: "yahoo.com",
@@ -1251,6 +1279,359 @@ for (const { d, seal, aar } of PROVIDER_SEALS) {
 			]),
 		);
 	}
+	// Nor is Zoho, even forwarding in its own header shape (see the AVE-102
+	// fixtures below for why it was taken off the list).
+	for (const d of ["zohomail.com", "zohomail.eu"]) {
+		assertNotUpgraded(
+			forwarded([
+				["ARC-Seal", `i=1; a=rsa-sha256; t=1729500000; cv=none; d=${d}; s=zohoarc; b=Wm9obw==`],
+				["ARC-Authentication-Results", `i=1; mx.${d}; dkim=pass header.i=example.com; spf=pass smtp.mailfrom=ada@example.com; dmarc=pass header.from=<ada@example.com>`],
+			]),
+		);
+	}
+}
+
+// --- Behind Cloudflare's own ARC set -------------------------------------
+// Real deliveries carry Cloudflare's set on top (AVE-102), so the upstream
+// sealer is read one instance below it. `forwarded` above covers the common
+// shapes; these pin the Cloudflare set itself.
+
+const GOOGLE_SET_1 = [
+	["ARC-Seal", GOOGLE_SEAL_1],
+	["ARC-Message-Signature", "i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605; h=from:to; bh=x; b=y"],
+	["ARC-Authentication-Results", GOOGLE_AAR_1],
+];
+const GOOGLE_SEAL_2 = GOOGLE_SEAL_1.replace("i=1", "i=2").replace("cv=none", "cv=pass");
+const GOOGLE_AAR_2 = GOOGLE_AAR_1.replace("i=1", "i=2");
+
+{
+	// Gmail forward in the order Cloudflare hands it to the Worker: its set
+	// at i=2, then Authentication-Results, then Google's set at i=1.
+	const auth = delivered([
+		...cloudflareSet(2, CF_FORWARDED_ARC_PASS),
+		["Authentication-Results", CF_FORWARDED_ARC_PASS],
+		...GOOGLE_SET_1,
+	]);
+	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.arcSealer, "google.com");
+	assert.equal(auth.dmarc, "fail");
+}
+
+{
+	// Direct mail: Cloudflare's set is the only one (i=1), so there is no
+	// upstream sealer and Cloudflare's own tier stands.
+	const auth = delivered([
+		...cloudflareSet(1, CF_FORWARDED_ARC_PASS.replace("arc=pass", "arc=none")),
+		["Authentication-Results", CF_FORWARDED_ARC_PASS.replace("arc=pass", "arc=none")],
+	]);
+	assertNotUpgraded(auth);
+}
+
+// A Cloudflare seal that isn't on top. Google at i=2 over Cloudflare at i=1
+// would upgrade without the Cloudflare seal; with it, it must not.
+assert.equal(
+	delivered([
+		["Authentication-Results", CF_FORWARDED_ARC_PASS],
+		["ARC-Seal", GOOGLE_SEAL_2],
+		["ARC-Authentication-Results", GOOGLE_AAR_2],
+	]).arcSealer,
+	"google.com",
+);
+assertNotUpgraded(
+	delivered([
+		["Authentication-Results", CF_FORWARDED_ARC_PASS],
+		["ARC-Seal", GOOGLE_SEAL_2],
+		["ARC-Authentication-Results", GOOGLE_AAR_2],
+		...cloudflareSet(1, CF_FORWARDED_ARC_PASS),
+	]),
+);
+
+// Forged extra sets around Cloudflare's: each must not upgrade.
+for (const [label, forged] of [
+	[
+		// A set claiming the instance above Cloudflare's, lower in the message.
+		"set above cloudflare",
+		[
+			["ARC-Seal", "i=3; a=rsa-sha256; t=1729500000; cv=pass; d=google.com; s=arc-20240605; b=Rm9yZ2Vk"],
+			["ARC-Authentication-Results", GOOGLE_AAR_1.replace("i=1", "i=3")],
+		],
+	],
+	// A results header alone above Cloudflare's instance.
+	["results above cloudflare", [["ARC-Authentication-Results", "i=3; mx.google.com; dmarc=pass header.from=example.com"]]],
+	// A second results header at Cloudflare's instance.
+	["results beside cloudflare", [["ARC-Authentication-Results", "i=2; mx.google.com; dmarc=pass header.from=example.com"]]],
+	// A second seal at Cloudflare's instance.
+	["seal beside cloudflare", [["ARC-Seal", "i=2; a=rsa-sha256; t=1729500000; cv=pass; d=google.com; s=arc-20240605; b=Rm9yZ2Vk"]]],
+	// A second Cloudflare seal under the upstream set.
+	["second cloudflare seal", [["ARC-Seal", "i=1; a=rsa-sha256; s=cf2024-1; d=cloudflare-email.net; cv=none; b=Rm9yZ2Vk"]]],
+	// A second upstream seal at i=1.
+	["second upstream seal", [["ARC-Seal", GOOGLE_SEAL_1]]],
+]) {
+	const auth = delivered([
+		...cloudflareSet(2, CF_FORWARDED_ARC_PASS),
+		["Authentication-Results", CF_FORWARDED_ARC_PASS],
+		...GOOGLE_SET_1,
+		...forged,
+	]);
+	assert.equal(auth.authTier, "failed", label);
+	assert.equal(auth.arcSealer, undefined, label);
+}
+
+// Cloudflare's set itself must be well formed.
+for (const [label, top] of [
+	// Seal at i=2 with cv=none: not a valid chain.
+	["cv=none at i=2", cloudflareSet(2, CF_FORWARDED_ARC_PASS, "none")],
+	// Results at Cloudflare's instance that aren't Cloudflare's.
+	[
+		"untrusted results",
+		[cloudflareSet(2, CF_FORWARDED_ARC_PASS)[0], ["ARC-Authentication-Results", `i=2; mx.google.com; dmarc=pass header.from=example.com; arc=pass`]],
+	],
+	// Cloudflare's results don't say arc=pass, though Authentication-Results does.
+	["results without arc=pass", cloudflareSet(2, CF_FORWARDED_ARC_PASS.replace("arc=pass", "arc=none"))],
+	// Seal with no results header at all.
+	["seal only", [cloudflareSet(2, CF_FORWARDED_ARC_PASS)[0]]],
+]) {
+	const auth = delivered([...top, ["Authentication-Results", CF_FORWARDED_ARC_PASS], ...GOOGLE_SET_1]);
+	assert.equal(auth.authTier, "failed", label);
+	assert.equal(auth.arcSealer, undefined, label);
+}
+
+// A trusted sealer that sent the message rather than forwarded it: Cloudflare
+// saw the same envelope the sealer recorded, so the sealer's dmarc=pass is
+// only its own claim and Cloudflare's dmarc=fail stands.
+{
+	const cf =
+		"mx.cloudflare.net; dkim=fail header.d=example.com; spf=pass smtp.mailfrom=bounce@esp.example; dmarc=fail header.from=example.com policy.dmarc=quarantine; arc=pass";
+	const sent = (mailfrom) => [
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Authentication-Results", `i=1; mx.google.com; spf=pass smtp.mailfrom=${mailfrom}; dmarc=pass header.from=example.com`],
+	];
+	assertNotUpgraded(forwarded(sent("bounce@esp.example"), { cf }));
+	// Same organisation's envelope (parent or subdomain) counts as the same.
+	assertNotUpgraded(forwarded(sent("bounce@mail.esp.example"), { cf }));
+	assertNotUpgraded(forwarded(sent("bounce@esp.example"), { cf: cf.replace("@esp.example", "@mail.esp.example") }));
+	// Control: under a forwarder's envelope the same results upgrade.
+	const forward = forwarded(sent("bounce@esp.example"), {
+		cf: cf.replace("bounce@esp.example", "me+caf_=me=inboxies.example@gmail.com"),
+	});
+	assert.equal(forward.authTier, "verified");
+	assert.equal(forward.arcSealer, "google.com");
+}
+// When either side names no envelope we can't tell a forward from a send.
+assertNotUpgraded(
+	forwarded([
+		["ARC-Seal", GOOGLE_SEAL_1],
+		["ARC-Authentication-Results", "i=1; mx.google.com; dkim=pass header.d=example.com; dmarc=pass header.from=example.com"],
+	]),
+);
+assertNotUpgraded(
+	forwarded(
+		[
+			["ARC-Seal", GOOGLE_SEAL_1],
+			["ARC-Authentication-Results", GOOGLE_AAR_1],
+		],
+		{ cf: CF_FORWARDED_ARC_PASS.replace(/spf=pass smtp\.mailfrom=\S+;/, "spf=none smtp.helo=mail-sor-f41.google.com;") },
+	),
+);
+
+// Real Cloudflare Email Routing headers captured for AVE-102 (2026-10-29).
+// Values are verbatim apart from the test sender's own addresses
+// (owner.example, relay.example) and shortened ARC-Seal signatures. They
+// confirm Cloudflare states `policy.dmarc=` on both pass and fail, and still
+// delivers p=quarantine failures to the Worker.
+const CF_REAL_PASS =
+	"mx.cloudflare.net; dkim=pass header.d=inboxies.email header.s=cf-bounce header.b=Px9vMp/T; dkim=pass header.d=cloudflare-smtp.net header.s=cf2024-1 header.b=bq8eZZHN; dmarc=pass header.from=inboxies.email policy.dmarc=reject; spf=none (mx.cloudflare.net: no SPF records found for postmaster@bg-bbi.cloudflare-smtp.net) smtp.helo=bg-bbi.cloudflare-smtp.net; spf=pass (mx.cloudflare.net: domain of b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email designates 104.30.16.118 as permitted sender) smtp.mailfrom=b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email; arc=none smtp.remote-ip=104.30.16.118";
+const cfRealDmarcFail = (policy) =>
+	`mx.cloudflare.net; dmarc=fail (policy not aligned) header.from=owner.example policy.dmarc=${policy}; spf=none (mx.cloudflare.net: no SPF records found for postmaster@sender5-of-o54.zoho.com) smtp.helo=sender5-of-o54.zoho.com; spf=pass (mx.cloudflare.net: domain of sender@relay.example designates 165.173.182.54 as permitted sender) smtp.mailfrom=sender@relay.example; arc=pass smtp.remote-ip=165.173.182.54`;
+// Zoho seals the mail it sends (i=1) and claims dmarc=pass for the "Send Mail
+// As" address, though Cloudflare finds DMARC failing. Two things keep that
+// claim from counting: Zoho isn't an allowlisted sealer, and Cloudflare's SPF
+// names the same envelope Zoho recorded (sender@relay.example), so the
+// message was sent by Zoho, not forwarded through it.
+const ZOHO_SEAL_1 = "i=1; a=rsa-sha256; t=1793232963; cv=none; d=zohomail.com; s=zohoarc; b=Wm9obw==";
+const ZOHO_AAR_1 =
+	"i=1; mx.zohomail.com; spf=pass smtp.mailfrom=sender@relay.example; dmarc=pass header.from=<personal@owner.example>";
+
+// `cloudflare: false` drops Cloudflare's set (stored mail); `sealer` swaps
+// Zoho's seal domain; `envelope` swaps the envelope Cloudflare's SPF saw.
+function cfRealZohoSendAs(policy, { cloudflare = true, sealer = "zohomail.com", envelope } = {}) {
+	let cf = cfRealDmarcFail(policy);
+	if (envelope) cf = cf.replace("smtp.mailfrom=sender@relay.example", `smtp.mailfrom=${envelope}`);
+	return parseAuthSignals({
+		envelopeHeaders: headers(
+			...(cloudflare
+				? [
+						["ARC-Seal", "i=2; a=rsa-sha256; s=cf2024-1; d=cloudflare-email.net; cv=pass; b=Q2xvdWRmbGFyZQ=="],
+						["ARC-Authentication-Results", `i=2; ${cf}`],
+					]
+				: []),
+			["Authentication-Results", cf],
+			["ARC-Seal", ZOHO_SEAL_1.replace("d=zohomail.com", `d=${sealer}`)],
+			["ARC-Authentication-Results", ZOHO_AAR_1],
+		),
+		headerFrom: "AVE-102 test <personal@owner.example>",
+		envelopeFrom: "sender@relay.example",
+	});
+}
+
+{
+	// Email Sending from inboxies.email: aligned DKIM, p=reject → verified.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Authentication-Results", `i=1; ${CF_REAL_PASS}`],
+			["Authentication-Results", CF_REAL_PASS],
+		),
+		headerFrom: "AVE-102 test <ave102-test@inboxies.email>",
+		envelopeFrom: "b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email",
+	});
+	assert.equal(auth.dmarc, "pass");
+	assert.equal(auth.dmarcPolicy, "reject");
+	assert.equal(auth.aligned, true);
+	assert.equal(auth.authTier, "verified");
+}
+
+{
+	// Zoho "Send Mail As" another domain, From domain at p=none → unverified.
+	const auth = cfRealZohoSendAs("none");
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.dmarcPolicy, "none");
+	assert.equal(auth.aligned, false);
+	assertNotUpgraded(auth, "unverified");
+	assert.notEqual(
+		classifyFromHeaders({
+			headers: headers(["From", "AVE-102 test <personal@owner.example>"]),
+			subject: "[AVE-102 test] dmarc none",
+			sender: "personal@owner.example",
+			auth,
+		})?.reason,
+		"auth-failed",
+	);
+}
+
+{
+	// Same send with the From domain at p=quarantine → failed → spam.
+	const auth = cfRealZohoSendAs("quarantine");
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.dmarcPolicy, "quarantine");
+	assertNotUpgraded(auth, "failed");
+	assert.equal(auth.spoofed, true);
+	assert.deepEqual(
+		classifyFromHeaders({
+			headers: headers(["From", "AVE-102 test <personal@owner.example>"]),
+			subject: "[AVE-102 test] dmarc quarantine",
+			sender: "personal@owner.example",
+			auth,
+		}),
+		{ class: "spam", folderId: Folders.SPAM, reason: "auth-failed" },
+	);
+}
+
+// Zoho's claim doesn't count with or without Cloudflare's set, from either
+// Zoho data centre, or even under a trusted sealer's d=: the unchanged
+// envelope alone stops it.
+for (const [policy, tier] of [
+	["none", "unverified"],
+	["quarantine", "failed"],
+]) {
+	for (const cloudflare of [true, false]) {
+		for (const sealer of ["zohomail.com", "zohomail.eu", "google.com"]) {
+			assertNotUpgraded(cfRealZohoSendAs(policy, { cloudflare, sealer }), tier);
+		}
+	}
+}
+{
+	// Control: it's the envelope that stops the google.com variant. Under a
+	// forwarder's envelope the same claim would upgrade.
+	const auth = cfRealZohoSendAs("quarantine", {
+		sealer: "google.com",
+		envelope: "me+caf_=me=inboxies.example@gmail.com",
+	});
+	assert.equal(auth.authTier, "verified");
+	assert.equal(auth.arcSealer, "google.com");
+}
+
+// Real Cloudflare Email Routing headers captured for AVE-102 (2026-10-29).
+// Values are verbatim apart from the test sender's own addresses
+// (owner.example, relay.example) and shortened ARC-Seal signatures. They
+// confirm Cloudflare states `policy.dmarc=` on both pass and fail, and still
+// delivers p=quarantine failures to the Worker.
+const CF_REAL_PASS =
+	"mx.cloudflare.net; dkim=pass header.d=inboxies.email header.s=cf-bounce header.b=Px9vMp/T; dkim=pass header.d=cloudflare-smtp.net header.s=cf2024-1 header.b=bq8eZZHN; dmarc=pass header.from=inboxies.email policy.dmarc=reject; spf=none (mx.cloudflare.net: no SPF records found for postmaster@bg-bbi.cloudflare-smtp.net) smtp.helo=bg-bbi.cloudflare-smtp.net; spf=pass (mx.cloudflare.net: domain of b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email designates 104.30.16.118 as permitted sender) smtp.mailfrom=b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email; arc=none smtp.remote-ip=104.30.16.118";
+const cfRealDmarcFail = (policy) =>
+	`mx.cloudflare.net; dmarc=fail (policy not aligned) header.from=owner.example policy.dmarc=${policy}; spf=none (mx.cloudflare.net: no SPF records found for postmaster@sender5-of-o54.zoho.com) smtp.helo=sender5-of-o54.zoho.com; spf=pass (mx.cloudflare.net: domain of sender@relay.example designates 165.173.182.54 as permitted sender) smtp.mailfrom=sender@relay.example; arc=pass smtp.remote-ip=165.173.182.54`;
+// Zoho seals the mail it sends (i=1) and claims dmarc=pass for the "Send Mail
+// As" address. zohomail.com is an allowlisted sealer, but Cloudflare adds its
+// own seal on top (i=2, cloudflare-email.net) and only the top seal is read,
+// so the claim must not count.
+const ZOHO_SEAL_1 = "i=1; a=rsa-sha256; t=1793232963; cv=none; d=zohomail.com; s=zohoarc; b=Wm9obw==";
+const ZOHO_AAR_1 =
+	"i=1; mx.zohomail.com; spf=pass smtp.mailfrom=sender@relay.example; dmarc=pass header.from=<personal@owner.example>";
+
+function cfRealZohoSendAs(policy) {
+	const cf = cfRealDmarcFail(policy);
+	return parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Seal", "i=2; a=rsa-sha256; s=cf2024-1; d=cloudflare-email.net; cv=pass; b=Q2xvdWRmbGFyZQ=="],
+			["ARC-Authentication-Results", `i=2; ${cf}`],
+			["Authentication-Results", cf],
+			["ARC-Seal", ZOHO_SEAL_1],
+			["ARC-Authentication-Results", ZOHO_AAR_1],
+		),
+		headerFrom: "AVE-102 test <personal@owner.example>",
+		envelopeFrom: "sender@relay.example",
+	});
+}
+
+{
+	// Email Sending from inboxies.email: aligned DKIM, p=reject → verified.
+	const auth = parseAuthSignals({
+		envelopeHeaders: headers(
+			["ARC-Authentication-Results", `i=1; ${CF_REAL_PASS}`],
+			["Authentication-Results", CF_REAL_PASS],
+		),
+		headerFrom: "AVE-102 test <ave102-test@inboxies.email>",
+		envelopeFrom: "b1auisllvs4odkrxqxxxcv5yvaffaimunktcq4ucnttyndaawqpq@cf-bounce.inboxies.email",
+	});
+	assert.equal(auth.dmarc, "pass");
+	assert.equal(auth.dmarcPolicy, "reject");
+	assert.equal(auth.aligned, true);
+	assert.equal(auth.authTier, "verified");
+}
+
+{
+	// Zoho "Send Mail As" another domain, From domain at p=none → unverified.
+	const auth = cfRealZohoSendAs("none");
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.dmarcPolicy, "none");
+	assert.equal(auth.aligned, false);
+	assertNotUpgraded(auth, "unverified");
+	assert.notEqual(
+		classifyFromHeaders({
+			headers: headers(["From", "AVE-102 test <personal@owner.example>"]),
+			subject: "[AVE-102 test] dmarc none",
+			sender: "personal@owner.example",
+			auth,
+		})?.reason,
+		"auth-failed",
+	);
+}
+
+{
+	// Same send with the From domain at p=quarantine → failed → spam.
+	const auth = cfRealZohoSendAs("quarantine");
+	assert.equal(auth.dmarc, "fail");
+	assert.equal(auth.dmarcPolicy, "quarantine");
+	assertNotUpgraded(auth, "failed");
+	assert.equal(auth.spoofed, true);
+	assert.deepEqual(
+		classifyFromHeaders({
+			headers: headers(["From", "AVE-102 test <personal@owner.example>"]),
+			subject: "[AVE-102 test] dmarc quarantine",
+			sender: "personal@owner.example",
+			auth,
+		}),
+		{ class: "spam", folderId: Folders.SPAM, reason: "auth-failed" },
+	);
 }
 
 console.log("email-auth tests passed");

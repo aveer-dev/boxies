@@ -282,7 +282,7 @@ extension AppModel {
                 displayName: email.senderName
             )
             // Mirror archive: update local SQLite so empty-folder sync cannot revive ghosts.
-            let queued = emails.filter {
+            let queued = (emails + screenerQueue).filter {
                 $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
                     && ($0.folderId == "screener" || $0.id == email.id)
             }
@@ -291,6 +291,7 @@ extension AppModel {
             }
             let queuedIds = Set(queued.map(\.id))
             emails.removeAll { queuedIds.contains($0.id) }
+            screenerQueue.removeAll { queuedIds.contains($0.id) }
             if let selected = selectedEmail, queuedIds.contains(selected.id)
                 || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
             {
@@ -319,7 +320,7 @@ extension AppModel {
                 emailId: email.id,
                 displayName: email.senderName
             )
-            let queued = emails.filter {
+            let queued = (emails + screenerQueue).filter {
                 $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
                     && ($0.folderId == "screener" || $0.id == email.id)
             }
@@ -328,6 +329,7 @@ extension AppModel {
             }
             let queuedIds = Set(queued.map(\.id))
             emails.removeAll { queuedIds.contains($0.id) }
+            screenerQueue.removeAll { queuedIds.contains($0.id) }
             if let selected = selectedEmail, queuedIds.contains(selected.id)
                 || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
             {
@@ -412,6 +414,7 @@ extension AppModel {
         for email in DatabaseService.shared.getEmails(mailboxId: mailboxId, folderId: "screener", limit: nil) {
             DatabaseService.shared.moveEmail(id: email.id, toFolderId: "inbox")
         }
+        screenerQueue = []
         if selectedTab == .folder("screener") {
             selectedTab = .folder("inbox")
         }

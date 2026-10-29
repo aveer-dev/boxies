@@ -22,7 +22,7 @@ enum PreviewSupport {
         app.selectedMailboxId = "mb-preview"
         app.folders = [
             Folder(id: "inbox", name: "Inbox", unreadCount: 3),
-            Folder(id: "screener", name: "Screener", unreadCount: 1),
+            Folder(id: "screener", name: "Screener", unreadCount: 2),
             Folder(id: "promotions", name: "Promotions", unreadCount: 0),
             Folder(id: "updates", name: "Updates", unreadCount: 0),
             Folder(id: "sent", name: "Sent", unreadCount: 0),
@@ -35,6 +35,8 @@ enum PreviewSupport {
         DatabaseService.shared.upsertFolders(mailboxId: "mb-preview", folders: app.folders)
         DatabaseService.shared.upsertEmails(mailboxId: "mb-preview", emails: emails)
         app.emails = emails
+        // Screening room queue behind the Inbox "N waiting to be screened" row (AVE-136).
+        app.screenerQueue = emails.filter { $0.folderId == "screener" }
         app.replyLaterCount = emails.filter(\.replyLater).count
         app.isLoading = false
         app.isMailboxLoading = false
@@ -119,6 +121,34 @@ enum PreviewSupport {
             starred: false,
             body: "<p>Hi — we'd love to show you Acme. No pressure.</p>",
             snippet: "Hi — we'd love to show you Acme. No pressure.",
+            folderName: "Screener"
+        ),
+        Email(
+            id: "preview-screener-2",
+            folderId: "screener",
+            subject: "Coffee next week?",
+            sender: "maya@lumen.example",
+            senderName: "Maya Patel",
+            recipient: "you@inboxies.email",
+            date: "2026-09-18T16:40:00.000Z",
+            read: false,
+            starred: false,
+            body: "<p>Saw your talk at the meetup and would love to compare notes.</p>",
+            snippet: "Saw your talk at the meetup and would love to compare notes.",
+            folderName: "Screener"
+        ),
+        Email(
+            id: "preview-screener-3",
+            folderId: "screener",
+            subject: "Your free trial is waiting",
+            sender: "team@northwind.example",
+            senderName: "Northwind",
+            recipient: "you@inboxies.email",
+            date: "2026-09-17T09:05:00.000Z",
+            read: true,
+            starred: false,
+            body: "<p>Start your 14-day trial of Northwind Analytics today.</p>",
+            snippet: "Start your 14-day trial of Northwind Analytics today.",
             folderName: "Screener"
         ),
         Email(

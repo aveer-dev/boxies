@@ -16,8 +16,8 @@ struct HomeShellView: View {
     @State private var chatSeedPrompt: String?
     @State private var tabNavigatingForward = true
     @State private var previousTabBeforeReplyLater: HomeTab = .folder("inbox")
-    /// Entering or leaving Reply Later is a push, not a folder-tab slide.
-    @State private var isReplyLaterPush = false
+    /// Entering or leaving Reply Later or the Screening room is a push, not a folder-tab slide.
+    @State private var isPushTransition = false
     @State private var tabContentWidth: CGFloat = 390
     @State private var registeredUndoID: UUID?
     @State private var showSettings = false
@@ -47,15 +47,12 @@ struct HomeShellView: View {
     @AppStorage("home_folder_column_visible") private var showsFolderColumn = true
     @GestureState private var isComposePressed = false
 
-    private var folderTabs: [HomeTab] {
-        app.showsScreenerFolder ? allFolderTabs : allFolderTabs.filter { $0 != .folder("screener") }
-    }
-
-    private let allFolderTabs: [HomeTab] = [
+    /// Swipe / folder-column order. No Screener: the Screening room is a subpage pushed
+    /// from the Inbox "N waiting to be screened" row (AVE-136).
+    private let folderTabs: [HomeTab] = [
 //        .aiInbox,
 //        .chats,
         .folder("inbox"),
-        .folder("screener"),
         .folder("promotions"),
         .folder("updates"),
         .folder("sent"),
@@ -74,7 +71,19 @@ struct HomeShellView: View {
 
     /// The implicit tab animations override `withAnimation`, so pick the push spring here too.
     private var tabAnimation: Animation {
-        isReplyLaterPush ? Self.pushSpring : tabSpring
+        isPushTransition ? Self.pushSpring : tabSpring
+    }
+
+    /// The Screener folder, shown as the Screening room subpage of Inbox (AVE-136).
+    private static let screeningRoomTab: HomeTab = .folder("screener")
+
+    private var isScreeningRoom: Bool {
+        app.selectedTab == Self.screeningRoomTab
+    }
+
+    /// Tabs that push over the list instead of sliding between folders.
+    private static func isPushedTab(_ tab: HomeTab) -> Bool {
+        tab == .replyLater || tab == screeningRoomTab
     }
 
     private var hasMinimizedCompose: Bool {
@@ -94,14 +103,13 @@ struct HomeShellView: View {
         serviceNotice != nil && !isSelectMode && !showComposeActions
     }
 
-    private var hasScreenerBanner: Bool {
-        // Screening moves mail, which a read-only mailbox can't do; the service banner wins.
-        isInboxTab && app.isScreenerEnabled && app.screenerSenderCount > 0 && !isSelectMode && !showComposeActions && !hasServiceBanner
+    /// Inbox row count; 0 hides the row (Screener off or nobody waiting).
+    private var screeningRoomCount: Int {
+        app.isScreenerEnabled ? app.screenerSenderCount : 0
     }
 
     private var listBottomInset: CGFloat {
         HomeChromeMetrics.listBottomInset(hasMinimizedCompose: hasMinimizedCompose)
-            + (hasScreenerBanner ? 48 : 0)
             + (hasServiceBanner ? serviceBannerHeight + 8 : 0)
     }
 
@@ -124,7 +132,6 @@ struct HomeShellView: View {
         splitLayout
             .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isComposeExpanded)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasMinimizedCompose)
-            .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
             .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasServiceBanner)
             .sheet(item: selectedEmailItem) { _ in
                 EmailDetailView()
@@ -233,7 +240,6 @@ struct HomeShellView: View {
                     highlightedID: highlightedComposeAction,
                     isClosing: isClosingComposeActions,
                     hidesCompose: app.isReadOnly,
-                    hidesScreener: !app.showsScreenerFolder,
                     onSelect: { item in
                         performComposeAction(item)
                     },
@@ -286,7 +292,11 @@ struct HomeShellView: View {
                 .modifier(HomeNavigationSubtitle(subtitle: navigationSubtitleText, fontWeight: .regular))
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        mailboxControl
+                        if isScreeningRoom {
+                            screeningRoomBackButton
+                        } else {
+                            mailboxControl
+                        }
                     }
                     if case .folder = app.selectedTab {
                         // Trailing items are placed outside-in: declare rightmost first.
@@ -322,6 +332,21 @@ struct HomeShellView: View {
         }
         .onChange(of: app.selectedMailboxId) { _, _ in
             showAllNew = false
+            // The room belongs to the mailbox it was opened from (and may be off in the next).
+            if isScreeningRoom {
+                popScreeningRoom()
+            }
+        }
+        .onChange(of: app.screenerQueue.isEmpty) { _, isEmpty in
+            // Screened the last sender: nothing left in the room, back to Inbox.
+            if isEmpty, isScreeningRoom, !app.isLoading {
+                popScreeningRoom()
+            }
+        }
+        .onChange(of: app.isScreenerEnabled) { _, enabled in
+            if !enabled, isScreeningRoom {
+                popScreeningRoom()
+            }
         }
         .onChange(of: app.selectedTab) { _, _ in
             showAllNew = false
@@ -401,10 +426,6 @@ struct HomeShellView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                if hasScreenerBanner {
-                    screenerBanner
-                }
-
                 if isSelectMode {
                     selectionActionBar
                         .padding(.horizontal, 16)
@@ -427,50 +448,25 @@ struct HomeShellView: View {
         }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: app.pendingUndoAction?.id)
         .animation(ToastMetrics.animation, value: app.toast?.id)
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasScreenerBanner)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: hasServiceBanner)
         .animation(tabAnimation, value: app.selectedTab)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isSelectMode)
         .padding(.bottom, -12)
     }
 
-    private var screenerBanner: some View {
+    /// Leading toolbar control inside the Screening room: back to Inbox.
+    private var screeningRoomBackButton: some View {
         Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            selectTab(.folder("screener"))
+            popScreeningRoom()
         } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.shield")
-                    .font(.inter(size: 13, weight: .semibold))
-                    .foregroundStyle(AppTheme.accent)
-
-                Text(app.screenerSenderCount == 1
-                     ? "1 first-time sender to screen"
-                     : "\(app.screenerSenderCount) first-time senders to screen")
-                    .font(.inter(size: 13, weight: .medium))
-                    .foregroundStyle(AppTheme.ink)
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.inter(size: 11, weight: .semibold))
-                    .foregroundStyle(AppTheme.muted)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.regularMaterial, in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(AppTheme.line.opacity(0.6), lineWidth: 0.5)
-            }
-            .shadow(color: .black.opacity(0.08), radius: 10, y: 3)
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: Self.mailboxAvatarSize, height: Self.mailboxAvatarSize)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 8)
-        .transition(.move(edge: .bottom).combined(with: .opacity))
-        .accessibilityLabel(app.screenerSenderCount == 1 ? "1 first-time sender to screen" : "\(app.screenerSenderCount) first-time senders to screen")
-        .accessibilityHint("Opens Screener")
+        .accessibilityLabel("Back to Inbox")
     }
 
     private func registerUndoIfNeeded(_ newID: UUID?) {
@@ -638,6 +634,9 @@ struct HomeShellView: View {
     }
 
     private var navigationTitleText: String {
+        if isScreeningRoom {
+            return ScreeningRoom.title
+        }
         if case .aiInbox = app.selectedTab {
             if let name = app.inboxDigest?.greetingName, !name.isEmpty {
                 return "Hi \(name) 👋"
@@ -667,6 +666,10 @@ struct HomeShellView: View {
             return "\(count) to reply"
         }
         guard case .folder = app.selectedTab else { return "" }
+        if isScreeningRoom, !isSelectMode, !filterState.isActive {
+            let count = app.screenerSenderCount
+            return count == 0 ? "Nobody waiting" : ScreeningRoom.waitingLabel(count: count)
+        }
         if isSelectMode {
             return selectedEmailIDs.isEmpty ? "Select emails" : "\(selectedEmailIDs.count) selected"
         }
@@ -733,7 +736,10 @@ struct HomeShellView: View {
                     paging: app.visibleListPaging,
                     onLoadMore: { await app.loadMoreEmails() },
                     inboxNewCount: currentFolderId == "inbox" ? app.inboxNewCount : nil,
-                    onShowAllNew: currentFolderId == "inbox" ? { showAllNew = true } : nil
+                    onShowAllNew: currentFolderId == "inbox" ? { showAllNew = true } : nil,
+                    screeningRoomCount: currentFolderId == "inbox" && !filterState.isActive ? screeningRoomCount : 0,
+                    screeningRoomSenders: app.screenerSenders,
+                    onOpenScreeningRoom: currentFolderId == "inbox" ? { openScreeningRoom() } : nil
                 ) { email in
                     Task { await app.openEmail(email) }
                 }
@@ -786,10 +792,10 @@ struct HomeShellView: View {
     /// in and pops back out toward the trailing edge either way.
     private func tabTransition(for tab: HomeTab) -> AnyTransition {
         let width = max(tabContentWidth, 1)
-        if tab == .replyLater {
+        if Self.isPushedTab(tab) {
             return .offset(x: width / 4).combined(with: .opacity)
         }
-        if isReplyLaterPush {
+        if isPushTransition {
             return .offset(x: -width / 6).combined(with: .opacity)
         }
         return .asymmetric(
@@ -811,13 +817,17 @@ struct HomeShellView: View {
             isSelectMode = false
             selectedEmailIDs.removeAll()
         }
-        isReplyLaterPush = tab == .replyLater || app.selectedTab == .replyLater
+        isPushTransition = Self.isPushedTab(tab) || Self.isPushedTab(app.selectedTab)
         if tab == .replyLater {
             if app.selectedTab != .replyLater {
                 previousTabBeforeReplyLater = app.selectedTab
             }
             tabNavigatingForward = true
         } else if app.selectedTab == .replyLater {
+            tabNavigatingForward = false
+        } else if tab == Self.screeningRoomTab {
+            tabNavigatingForward = true
+        } else if isScreeningRoom {
             tabNavigatingForward = false
         } else {
             let current = folderTabs.firstIndex(of: app.selectedTab) ?? 0
@@ -836,6 +846,18 @@ struct HomeShellView: View {
         selectTab(target)
     }
 
+    /// Inbox row → Screening room, pushed over the list (AVE-136).
+    private func openScreeningRoom() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        selectTab(Self.screeningRoomTab)
+    }
+
+    /// Back out of the Screening room to Inbox, its only parent.
+    private func popScreeningRoom() {
+        guard isScreeningRoom else { return }
+        selectTab(.folder("inbox"))
+    }
+
     private func selectAdjacentTab(forward: Bool) {
         guard let current = folderTabs.firstIndex(of: app.selectedTab) else { return }
         let next = forward ? current + 1 : current - 1
@@ -850,6 +872,11 @@ struct HomeShellView: View {
                 if app.selectedTab == .replyLater {
                     // Reply Later is pushed over a folder: swipe right pops back.
                     if value.translation.width > threshold { popReplyLater() }
+                    return
+                }
+                if isScreeningRoom {
+                    // The Screening room is pushed over Inbox: swipe right pops back.
+                    if value.translation.width > threshold { popScreeningRoom() }
                     return
                 }
                 if value.translation.width < -threshold {
@@ -1144,6 +1171,8 @@ struct HomeShellView: View {
                 Text("Select")
                     .font(.inter(size: 14, weight: .medium))
                     .foregroundStyle(AppTheme.ink)
+                    // The toolbar can under-measure this on a pushed first render ("…").
+                    .fixedSize()
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .contentShape(Rectangle())
