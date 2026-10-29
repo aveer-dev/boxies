@@ -50,11 +50,12 @@ object InboxiesColors {
     val DarkDanger = Color(0xFFEF5350)
 
     /**
-     * Needs attention: a Reply Later reminder fired (AVE-86). Warm amber-orange, readable
-     * on the frosted chrome in both themes. Twin of iOS `AppTheme.attention`.
+     * Needs attention: a Reply Later reminder fired (AVE-86). Ink, not a hue, so the shell
+     * stays grey-scale; attention comes from an ink ring, halo and filled pills. Same values
+     * as the light / dark ink. Twin of iOS `AppTheme.attention`, web `--attention`.
      */
-    val LightAttention = Color(0xFFB45309)
-    val DarkAttention = Color(0xFFF59E0B)
+    val LightAttention = LightInk
+    val DarkAttention = DarkInk
 
     /** Light "paper" behind designed HTML mail in dark mode (it keeps its own colours). */
     val MailPaper = Color(0xFFFFFFFF)

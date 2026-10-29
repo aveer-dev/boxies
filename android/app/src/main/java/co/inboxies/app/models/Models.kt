@@ -1191,6 +1191,8 @@ enum class ComposePresentation {
 /** Trailing button on a toast: Undo, Add reminder, … */
 data class ToastAction(
     val title: String,
+    /** Ink (grey-scale) instead of the accent capsule; Add reminder (AVE-86). Twin of iOS `ToastAction.Tone`. */
+    val ink: Boolean = false,
     val onClick: () -> Unit,
 )
 

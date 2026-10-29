@@ -1640,7 +1640,7 @@ private fun BottomBar(
                         .homeChromeToolbarSurface(RoundedCornerShape(50))
                         .then(
                             if (isDue) {
-                                Modifier.background(colors.attention.copy(alpha = 0.12f), RoundedCornerShape(50))
+                                Modifier.background(colors.attention.copy(alpha = 0.08f), RoundedCornerShape(50))
                             } else {
                                 Modifier
                             },
@@ -1994,7 +1994,7 @@ private fun <T> selectModeSpring() = spring<T>(
 )
 
 /**
- * Soft attention halo behind the Reply Later pill while a reminder is due (AVE-86): a warm
+ * Soft attention halo behind the Reply Later pill while a reminder is due (AVE-86): an ink
  * glow that breathes (opacity + spread, ~1.8s). With animations off it stays static.
  */
 @Composable

@@ -349,7 +349,7 @@ object PreviewSupport {
             val target = allEmails.first { it.id == "preview-1" }
             app.showToast(
                 "Added to Reply Later",
-                action = ToastAction("Add reminder") { app.openReminderPicker(target) },
+                action = ToastAction("Add reminder", ink = true) { app.openReminderPicker(target) },
                 durationMs = 0,
             )
         }

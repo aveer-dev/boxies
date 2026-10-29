@@ -2257,7 +2257,7 @@ class AppModel {
         }
         showToast(
             "Added to Reply Later",
-            action = ToastAction("Add reminder") { openReminderPicker(email) },
+            action = ToastAction("Add reminder", ink = true) { openReminderPicker(email) },
             durationMs = REMINDER_TOAST_DURATION_MS,
         )
     }

@@ -269,7 +269,7 @@ private fun PresetsScreen(
                     .padding(bottom = 12.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(colors.accent.copy(alpha = 0.10f))
+                    .background(colors.pillFill)
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -277,7 +277,7 @@ private fun PresetsScreen(
                 Icon(
                     Icons.Outlined.NotificationsActive,
                     contentDescription = null,
-                    tint = colors.accent,
+                    tint = colors.muted,
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
@@ -285,7 +285,7 @@ private fun PresetsScreen(
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.Medium,
                     fontSize = 13.sp,
-                    color = colors.accent,
+                    color = colors.ink,
                 )
             }
         }
@@ -318,7 +318,6 @@ private fun PresetsScreen(
                 ReminderRow(
                     label = "Remove reminder",
                     icon = Icons.Outlined.AlarmOff,
-                    destructive = true,
                     onClick = onRemove,
                 )
             }
@@ -424,13 +423,15 @@ private fun CustomScreen(
                         weekdayContentColor = colors.muted,
                         navigationContentColor = colors.ink,
                         yearContentColor = colors.ink,
-                        currentYearContentColor = colors.accent,
-                        selectedYearContainerColor = colors.accent,
+                        currentYearContentColor = colors.ink,
+                        selectedYearContainerColor = colors.ink,
+                        selectedYearContentColor = colors.background,
                         dayContentColor = colors.ink,
                         disabledDayContentColor = colors.muted.copy(alpha = 0.45f),
-                        selectedDayContainerColor = colors.accent,
-                        todayContentColor = colors.accent,
-                        todayDateBorderColor = colors.accent,
+                        selectedDayContainerColor = colors.ink,
+                        selectedDayContentColor = colors.background,
+                        todayContentColor = colors.ink,
+                        todayDateBorderColor = colors.ink,
                         subheadContentColor = colors.muted,
                     ),
                 )
@@ -453,14 +454,14 @@ private fun CustomScreen(
                     TimeInput(
                         state = timeState,
                         colors = TimePickerDefaults.colors(
-                            timeSelectorSelectedContainerColor = colors.accent.copy(alpha = 0.12f),
+                            timeSelectorSelectedContainerColor = colors.ink.copy(alpha = 0.10f),
                             timeSelectorUnselectedContainerColor = colors.pillFill,
-                            timeSelectorSelectedContentColor = colors.accent,
+                            timeSelectorSelectedContentColor = colors.ink,
                             timeSelectorUnselectedContentColor = colors.ink,
                             periodSelectorBorderColor = colors.line,
-                            periodSelectorSelectedContainerColor = colors.accent.copy(alpha = 0.12f),
+                            periodSelectorSelectedContainerColor = colors.ink.copy(alpha = 0.10f),
                             periodSelectorUnselectedContainerColor = Color.Transparent,
-                            periodSelectorSelectedContentColor = colors.accent,
+                            periodSelectorSelectedContentColor = colors.ink,
                             periodSelectorUnselectedContentColor = colors.muted,
                         ),
                     )

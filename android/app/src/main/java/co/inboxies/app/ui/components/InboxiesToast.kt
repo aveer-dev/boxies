@@ -213,7 +213,7 @@ fun InboxiesToast(
                 modifier = Modifier
                     .heightIn(min = ToastMetrics.actionHeight)
                     .clip(CircleShape)
-                    .background(colors.accent.copy(alpha = 0.12f))
+                    .background(if (action.ink) colors.ink.copy(alpha = 0.08f) else colors.accent.copy(alpha = 0.12f))
                     .clickable(role = Role.Button, onClick = action.onClick)
                     .padding(horizontal = ToastMetrics.actionHorizontalPadding),
                 contentAlignment = Alignment.Center,
@@ -223,7 +223,7 @@ fun InboxiesToast(
                     fontFamily = InterFontFamily,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
-                    color = colors.accent,
+                    color = if (action.ink) colors.ink else colors.accent,
                 )
             }
         }
