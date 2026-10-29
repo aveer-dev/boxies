@@ -297,27 +297,6 @@ export function parseAuthenticationResultsValue(
 	return instance === undefined ? { authserv, methods } : { instance, authserv, methods };
 }
 
-function parseReceivedSpf(value: string): MethodHit | null {
-	const stripped = stripComments(value);
-	const first = stripped.split(/\s+/)[0]?.toLowerCase() ?? "";
-	if (!first) return null;
-	const result = VERDICT_WORDS.has(first as AuthVerdict)
-		? (first as AuthVerdict)
-		: "unknown";
-	const properties: Record<string, string> = {};
-	const re = /([a-z0-9._-]+)=("(?:\\.|[^"\\])*"|[^\s;]+)/gi;
-	let match: RegExpExecArray | null;
-	while ((match = re.exec(stripped)) !== null) {
-		properties[match[1].toLowerCase()] = unquote(match[2]);
-	}
-	const envelope =
-		properties["envelope-from"] ||
-		properties["envelope_from"] ||
-		properties["smtp.mailfrom"];
-	if (envelope) properties["smtp.mailfrom"] = envelope;
-	return { method: "spf", result, properties };
-}
-
 /**
  * Each receiving hop prepends its results, so the first Cloudflare-stamped
  * header from the top is ours; a sender can only add forged ones below it.
@@ -329,20 +308,6 @@ function firstTrusted(values: string[]): ParsedAuthHeader | null {
 		if (parsed && isTrustedAuthserv(parsed.authserv)) return parsed;
 	}
 	return null;
-}
-
-/**
- * When both a plain and an ARC results header are present we can't tell
- * which one our hop wrote, so take the one that passes less: a forged pass
- * must never outvote a real fail.
- */
-function stricterResults(
-	a: ParsedAuthHeader | null,
-	b: ParsedAuthHeader | null,
-): ParsedAuthHeader | null {
-	if (!a || !b) return a ?? b;
-	const passes = (h: ParsedAuthHeader) => h.methods.filter((m) => m.result === "pass").length;
-	return passes(b) < passes(a) ? b : a;
 }
 
 /**
@@ -694,41 +659,26 @@ function trustedArcSealerEvidence(params: {
 	return sameEnvelope ? null : upstream.seal.d;
 }
 
-/**
- * Our verdict comes from Cloudflare's Authentication-Results and
- * ARC-Authentication-Results (our own hop), via `firstTrusted`. Upstream
- * sealers' results only count through `trustedArcSealerEvidence`: an
- * allowlisted sealer whose chain Cloudflare validated can raise the tier
- * to `verified` for forwarded mail.
- */
-export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
-	const headerFrom = (input.headerFrom ?? "").trim();
-	const envelopeFrom = (input.envelopeFrom ?? "").trim();
+interface Verdict {
+	source: AuthSource;
+	dkimHit: MethodHit | null;
+	spfHit: MethodHit | null;
+	dmarcHit: MethodHit | null;
+	dkimDomain: string | null;
+	spfMailfrom?: string;
+	dmarcPolicy?: DmarcPolicy;
+	dmarcFromMismatch: boolean;
+	aligned: boolean | null;
+	authTier: AuthTier;
+}
 
-	// Use the delivery headers when we have them. The message's own MIME
-	// headers are what the sender wrote, so they only stand in when no
-	// delivery headers were given (tests, re-parsing stored mail).
-	const ordered = (name: string) =>
-		input.envelopeHeaders != null
-			? orderedHeaderValues(input.envelopeHeaders, name)
-			: orderedHeaderValues(input.mimeHeaders, name);
-	const trustedAr = firstTrusted(ordered("authentication-results"));
-	const trustedArc = firstTrusted(ordered("arc-authentication-results"));
-	const chosen = stricterResults(trustedAr, trustedArc);
-
-	let source: AuthSource = "none";
-	let methods: MethodHit[] = [];
-	if (chosen) {
-		source = chosen === trustedAr ? "authentication-results" : "arc-authentication-results";
-		methods = chosen.methods;
-	}
-
-	const receivedSpf = ordered("received-spf");
-	if (receivedSpf.length > 0 && !pickVerdict(methods, "spf")) {
-		const spfHit = parseReceivedSpf(receivedSpf[0] ?? "");
-		if (spfHit) methods = [...methods, spfHit];
-	}
-
+/** Cloudflare's tier and alignment from one results header on its own. */
+function evaluateResults(
+	header: ParsedAuthHeader | null,
+	source: AuthSource,
+	headerFrom: string,
+): Verdict {
+	const methods = header?.methods ?? [];
 	const dkimHit = pickVerdict(methods, "dkim");
 	const spfHit = pickVerdict(methods, "spf");
 	const dmarcHit = pickVerdict(methods, "dmarc");
@@ -767,7 +717,7 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 	const dmarcFromMismatch = Boolean(
 		dmarcFromDomain && headerFromDomain && dmarcFromDomain !== headerFromDomain,
 	);
-	let authTier = tierFor({
+	const authTier = tierFor({
 		trusted: source !== "none",
 		aligned,
 		dmarcFailEnforced:
@@ -776,11 +726,91 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 		dmarcFromMismatch,
 		spfHardFailNoDkim: spfHit?.result === "fail" && dkimHit?.result !== "pass",
 	});
+	return {
+		source,
+		dkimHit,
+		spfHit,
+		dmarcHit,
+		dkimDomain,
+		spfMailfrom,
+		dmarcPolicy,
+		dmarcFromMismatch,
+		aligned,
+		authTier,
+	};
+}
+
+/**
+ * How much a verdict trusts the From, lowest first. `aligned: false` ranks
+ * below "no verdict": it keeps sender filters and auto-drafts off
+ * (`isFromUntrusted`), which a missing verdict doesn't.
+ */
+function verdictRank(verdict: Verdict): number {
+	if (verdict.authTier === "failed") return 0;
+	if (verdict.authTier === "verified") return 3;
+	return verdict.aligned === false ? 1 : 2;
+}
+
+/**
+ * Both a plain and an ARC results header claim to be Cloudflare's. Real
+ * deliveries carry both with the same results, but a sender can write either
+ * name with our authserv-id (Cloudflare only adds its own, it doesn't strip
+ * theirs), and we can't always tell which one our hop wrote. So judge each on
+ * its own and keep the outcome that trusts the From least: the real header
+ * alone decides the best a message can get, and a forged one can only make
+ * it worse. Counting passes across the two (AVE-107) let a forged
+ * `dmarc=pass` out-vote Cloudflare's `dmarc=fail` that came with
+ * unaligned DKIM/SPF passes. On a tie the plain header is kept.
+ */
+function strictestVerdict(a: Verdict, b: Verdict): Verdict {
+	return verdictRank(b) < verdictRank(a) ? b : a;
+}
+
+/**
+ * Our verdict comes from Cloudflare's Authentication-Results and
+ * ARC-Authentication-Results (our own hop), via `firstTrusted` and
+ * `strictestVerdict`. Upstream sealers' results only count through
+ * `trustedArcSealerEvidence`: an allowlisted sealer whose chain Cloudflare
+ * validated can raise the tier to `verified` for forwarded mail.
+ *
+ * Received-SPF is never read. Nothing marks one as ours: the "(mx.cloudflare.net: …)"
+ * comment is free text a sender can write, and Headers can't tell us its
+ * position relative to Cloudflare's results. Cloudflare reports SPF in its
+ * results headers, which is the only SPF verdict we use (AVE-107).
+ */
+export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
+	const headerFrom = (input.headerFrom ?? "").trim();
+	const envelopeFrom = (input.envelopeFrom ?? "").trim();
+
+	// Use the delivery headers when we have them. The message's own MIME
+	// headers are what the sender wrote, so they only stand in when no
+	// delivery headers were given (tests, re-parsing stored mail).
+	const ordered = (name: string) =>
+		input.envelopeHeaders != null
+			? orderedHeaderValues(input.envelopeHeaders, name)
+			: orderedHeaderValues(input.mimeHeaders, name);
+	const trustedAr = firstTrusted(ordered("authentication-results"));
+	const trustedArc = firstTrusted(ordered("arc-authentication-results"));
+	const arVerdict = trustedAr
+		? evaluateResults(trustedAr, "authentication-results", headerFrom)
+		: null;
+	const arcVerdict = trustedArc
+		? evaluateResults(trustedArc, "arc-authentication-results", headerFrom)
+		: null;
+	const verdict =
+		arVerdict && arcVerdict
+			? strictestVerdict(arVerdict, arcVerdict)
+			: (arVerdict ?? arcVerdict ?? evaluateResults(null, "none", headerFrom));
+	const { source, dkimHit, spfHit, dmarcHit, dkimDomain, spfMailfrom, dmarcPolicy } = verdict;
+	let authTier = verdict.authTier;
 
 	// Forwarded mail: Cloudflare's own checks fail or don't align once a
 	// forwarder rewrites the envelope, but a trusted sealer saw it pass.
 	let arcSealer: string | null = null;
-	if (authTier !== "verified" && !dmarcFromMismatch) {
+	const anyFromMismatch = Boolean(
+		arVerdict?.dmarcFromMismatch || arcVerdict?.dmarcFromMismatch,
+	);
+	if (authTier !== "verified" && !anyFromMismatch) {
 		arcSealer = trustedArcSealerEvidence({
 			trustedAr,
 			trustedArc,
@@ -794,7 +824,7 @@ export function parseAuthSignals(input: ParseAuthSignalsInput): EmailAuth {
 		headerFrom,
 		envelopeFrom,
 		source,
-		aligned,
+		aligned: verdict.aligned,
 		authTier,
 		spoofed: authTier === "failed",
 	};
