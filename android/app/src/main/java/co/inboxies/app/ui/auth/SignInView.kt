@@ -228,7 +228,10 @@ fun SignInView(
     val showDevLogin = BuildConfig.DEBUG && AppConfig.isLocalDevelopmentAPI
     var showDevConfig by remember {
         mutableStateOf(
-            (context as? Activity)?.intent?.getBooleanExtra("showApiBase", false) == true
+            AppConfig.shouldShowDevConfig(
+                isDebug = BuildConfig.DEBUG,
+                showApiBaseExtra = (context as? Activity)?.intent?.getBooleanExtra("showApiBase", false) == true,
+            )
         )
     }
     var devTapCount by remember { mutableStateOf(0) }
@@ -1056,7 +1059,7 @@ fun SignInView(
         }
 
         // Dev Config Dialog / Bar
-        if (showDevConfig) {
+        if (BuildConfig.DEBUG && showDevConfig) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
