@@ -54,6 +54,12 @@ actor MailboxSyncService {
 
         do {
             let folders = try await foldersTask
+            // Folders deleted elsewhere (web, another device) leave the cache too.
+            let serverIds = Set(folders.map(\.id))
+            for stale in db.getFolders(mailboxId: mailboxId)
+            where CustomFolders.isCustom(stale) && !serverIds.contains(stale.id) {
+                db.deleteFolder(mailboxId: mailboxId, folderId: stale.id)
+            }
             db.upsertFolders(mailboxId: mailboxId, folders: folders)
 
             if let mailbox = try? await mailboxTask {

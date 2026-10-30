@@ -73,6 +73,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
+import co.inboxies.app.services.CustomFolders
+import androidx.compose.material.icons.outlined.Tag
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.SignatureSettings
@@ -99,6 +101,7 @@ private sealed class SettingsPage {
     data object Forwarding : SettingsPage()
     data object AutoReply : SettingsPage()
     data object Filters : SettingsPage()
+    data object Tags : SettingsPage()
     data object Senders : SettingsPage()
     data object Suppressions : SettingsPage()
     data object Aliases : SettingsPage()
@@ -236,6 +239,7 @@ fun SettingsSheetView(
                     onOpenForwarding = { page = SettingsPage.Forwarding },
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenFilters = { page = SettingsPage.Filters },
+                    onOpenTags = { page = SettingsPage.Tags },
                     onOpenSenders = { page = SettingsPage.Senders },
                     onOpenSuppressions = { page = SettingsPage.Suppressions },
                     onOpenAliases = { page = SettingsPage.Aliases },
@@ -271,6 +275,9 @@ fun SettingsSheetView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Filters -> FiltersSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.Tags -> TagsSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Senders -> SendersSettingsView(
@@ -319,6 +326,7 @@ private fun SettingsRootPage(
     onOpenForwarding: () -> Unit,
     onOpenAutoReply: () -> Unit,
     onOpenFilters: () -> Unit,
+    onOpenTags: () -> Unit,
     onOpenSenders: () -> Unit,
     onOpenSuppressions: () -> Unit,
     onOpenAliases: () -> Unit,
@@ -478,6 +486,12 @@ private fun SettingsRootPage(
                     title = "Filters",
                     icon = Icons.Outlined.FilterList,
                     onClick = onOpenFilters,
+                )
+                // Custom folders, shown as tags like web (AVE-158).
+                SettingsNavRow(
+                    title = CustomFolders.PAGE_TITLE,
+                    icon = Icons.Outlined.Tag,
+                    onClick = onOpenTags,
                 )
                 SettingsNavRow(
                     title = "Senders",

@@ -437,4 +437,73 @@ final class ClientContractTests: XCTestCase {
             "Moved out of Spam"
         )
     }
+    // MARK: - Custom folders / tags (AVE-158)
+
+    func testFolderCreateResponseDecodes() throws {
+        // POST /folders: `{ ...row, unreadCount: 0 }` (Durable Object createFolder).
+        let folder = try decode(Folder.self, #"{"id":"engineering-prs","name":"Engineering-PRs","unreadCount":0}"#)
+        XCTAssertEqual(folder.id, "engineering-prs")
+        XCTAssertEqual(folder.unreadCount, 0)
+    }
+
+    func testFolderRenameResponseDecodesWithoutUnreadCount() throws {
+        // PUT /folders/:id answers `{ id, name }` only.
+        let renamed = try decode(RenamedFolder.self, #"{"id":"receipts","name":"Bills"}"#)
+        XCTAssertEqual(renamed.id, "receipts")
+        XCTAssertEqual(renamed.name, "Bills")
+    }
+
+    func testCustomFolderSlugMatchesWorker() {
+        XCTAssertEqual(CustomFolders.slug("Engineering PRs"), "engineering-prs")
+        XCTAssertEqual(CustomFolders.slug("  Q3 -- Plans!  "), "q3-plans")
+        XCTAssertEqual(CustomFolders.slug("snake_case"), "snake_case")
+        // JS `\w` is ASCII: accented letters drop out, like the Worker.
+        XCTAssertEqual(CustomFolders.slug("Café"), "caf")
+        XCTAssertEqual(CustomFolders.slug("🎉🎉"), "")
+    }
+
+    func testCustomFoldersExcludeSystemFolders() {
+        let folders = [
+            Folder(id: "inbox", name: "Inbox", unreadCount: 1),
+            Folder(id: "travel", name: "Travel", unreadCount: 0),
+            Folder(id: "screened_out", name: "Screened out", unreadCount: 0),
+            Folder(id: "receipts", name: "Receipts", unreadCount: 2),
+        ]
+        XCTAssertEqual(CustomFolders.custom(in: folders).map(\.id), ["receipts", "travel"])
+    }
+
+    func testCreateValidationUsesWorkerCopy() {
+        let existing = [
+            Folder(id: "inbox", name: "Inbox", unreadCount: 0),
+            Folder(id: "receipts", name: "Receipts", unreadCount: 0),
+        ]
+        XCTAssertEqual(CustomFolders.validateCreate("   ", existing: existing), CustomFolders.nameRequired)
+        XCTAssertEqual(CustomFolders.validateCreate("#", existing: existing), CustomFolders.nameRequired)
+        XCTAssertEqual(CustomFolders.validateCreate("!!!", existing: existing), "Folder name must contain alphanumeric characters")
+        XCTAssertEqual(CustomFolders.validateCreate("receipts", existing: existing), "Folder with this name already exists")
+        XCTAssertEqual(CustomFolders.validateCreate("#Receipts", existing: existing), CustomFolders.duplicateName)
+        // System ids are reserved even when the list doesn't carry them.
+        XCTAssertEqual(CustomFolders.validateCreate("Trash", existing: existing), CustomFolders.duplicateName)
+        XCTAssertNil(CustomFolders.validateCreate("Travel", existing: existing))
+    }
+
+    func testRenameValidationIgnoresTheFolderItself() {
+        let receipts = Folder(id: "receipts", name: "Receipts", unreadCount: 0)
+        let existing = [Folder(id: "inbox", name: "Inbox", unreadCount: 0), receipts,
+                        Folder(id: "travel", name: "Trips", unreadCount: 0)]
+        XCTAssertNil(CustomFolders.validateRename("RECEIPTS", folder: receipts, existing: existing))
+        XCTAssertEqual(CustomFolders.validateRename("", folder: receipts, existing: existing), "Folder name is required")
+        XCTAssertEqual(CustomFolders.validateRename("trips", folder: receipts, existing: existing), CustomFolders.duplicateName)
+        // Lookups resolve by id too, so another folder's id is taken.
+        XCTAssertEqual(CustomFolders.validateRename("Travel", folder: receipts, existing: existing), CustomFolders.duplicateName)
+        XCTAssertEqual(CustomFolders.validateRename("inbox", folder: receipts, existing: existing), CustomFolders.duplicateName)
+        XCTAssertNil(CustomFolders.validateRename("Bills", folder: receipts, existing: existing))
+    }
+
+    func testTagCopy() {
+        let tag = Folder(id: "receipts", name: "#Receipts", unreadCount: 0)
+        XCTAssertEqual(CustomFolders.displayName(tag), "#Receipts")
+        XCTAssertEqual(CustomFolders.normalizedName("  #Receipts "), "Receipts")
+        XCTAssertEqual(CustomFolders.deleteConfirmTitle(tag), "Delete #Receipts?")
+    }
 }
