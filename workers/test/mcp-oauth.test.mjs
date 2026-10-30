@@ -154,7 +154,7 @@ assert.equal(isOAuthMcpRequest("/mcp", new Headers({ authorization: `Bearer ${ad
 assert.equal(bearerTokenFromHeaders(new Headers({ authorization: "Bearer a b" })), null);
 assert.equal(isWorkerPagePath("/authorize?client_id=x"), true);
 assert.equal(isWorkerPagePath("/authorized"), false);
-assert.equal(isWorkerPagePath("/mailbox/x"), false);
+assert.equal(isWorkerPagePath("/mailbox/0"), false);
 
 // Config: issuer is APP_BASE_URL; resources are /mcp there and on WEB_REDIRECT_HOSTS.
 assert.deepEqual(mcpOAuthConfig(env, new URL("https://inboxies.test/x")), {

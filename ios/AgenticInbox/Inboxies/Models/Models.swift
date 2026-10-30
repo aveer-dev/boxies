@@ -1550,6 +1550,14 @@ struct PasswordLoginResponse: Codable {
     var keys: [String]?
 }
 
+/// `/api/v1/auth/exchange`: the owner session a checkout return code was traded for.
+struct CheckoutExchangeResponse: Codable {
+    var token: String
+    var expiresAt: String
+    var email: String?
+    var mailboxId: String?
+}
+
 /// `/api/v1/auth/password/reset`. With two-factor on, the reset answers with a
 /// challenge instead of a session (a reset proves the recovery email, not the
 /// second factor).

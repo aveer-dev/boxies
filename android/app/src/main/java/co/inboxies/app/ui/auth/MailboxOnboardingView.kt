@@ -228,6 +228,15 @@ fun MailboxOnboardingView(
 
     var isSubmitting by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    val authError by auth.errorMessage.collectAsState()
+    // The checkout return code didn't redeem (wrong, used or expired): stop waiting and
+    // point the buyer at sign-in with the password they chose.
+    LaunchedEffect(authError, isPaymentSyncing) {
+        if (isPaymentSyncing && token.isNullOrBlank() && !authError.isNullOrBlank()) {
+            isPaymentSyncing = false
+            errorMessage = authError
+        }
+    }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
     val canGoBack = backStack.size > 1 && !(currentTrack is OnboardingTrack.Domain && currentTrack.step >= 11)

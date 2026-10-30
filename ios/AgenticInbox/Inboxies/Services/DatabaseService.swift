@@ -406,6 +406,27 @@ final class DatabaseService: @unchecked Sendable {
         }
     }
 
+    /// Drops a deleted custom folder and re-files its cached mail under Inbox, where the
+    /// Worker moved it (AVE-158).
+    func deleteFolder(mailboxId: String, folderId: String) {
+        queue.sync {
+            sqlite3_exec(db, "BEGIN TRANSACTION;", nil, nil, nil)
+            for sql in [
+                "UPDATE emails SET folder_id = 'inbox' WHERE mailbox_id = ? AND folder_id = ?;",
+                "DELETE FROM folders WHERE mailbox_id = ? AND id = ?;",
+            ] {
+                var stmt: OpaquePointer?
+                if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+                    sqlite3_bind_text(stmt, 1, (mailboxId as NSString).utf8String, -1, nil)
+                    sqlite3_bind_text(stmt, 2, (folderId as NSString).utf8String, -1, nil)
+                    sqlite3_step(stmt)
+                }
+                sqlite3_finalize(stmt)
+            }
+            sqlite3_exec(db, "COMMIT;", nil, nil, nil)
+        }
+    }
+
     func updateFolderUnread(mailboxId: String, folderId: String, delta: Int) {
         queue.sync {
             var stmt: OpaquePointer?
