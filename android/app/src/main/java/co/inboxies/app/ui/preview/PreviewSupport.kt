@@ -7,6 +7,7 @@ import co.inboxies.app.models.Email
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
 import co.inboxies.app.services.ReplyLaterReminderPresets
+import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
@@ -151,8 +152,12 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
-            PreviewMode.ScreenerList -> {
-                val screener = allEmails.filter { it.folderId == FolderIds.SCREENER }
+            PreviewMode.ScreenerList, PreviewMode.ScreenerUndo, PreviewMode.ScreenerUndoAccept -> {
+                val screener = allEmails.filter { it.folderId == FolderIds.SCREENER }.let { queue ->
+                    // Undo modes: the first sender was just decided, so their rows are gone.
+                    if (mode == PreviewMode.ScreenerList) queue
+                    else queue.filterNot { it.sender.equals(queue.firstOrNull()?.sender, ignoreCase = true) }
+                }
                 app.applyDebugPreview(
                     mailboxes = listOf(mailbox),
                     selectedMailboxId = mailbox.id,
@@ -340,6 +345,12 @@ object PreviewSupport {
         app.setScreenerQueueForPreview(
             if (mode == PreviewMode.SettingsScreenerOff) emptyList() else allEmails.filter { it.folderId == FolderIds.SCREENER },
         )
+        if (mode == PreviewMode.ScreenerUndo || mode == PreviewMode.ScreenerUndoAccept) {
+            // Decision toast with Undo (AVE-159); the decided sender has left the room and its count.
+            app.setScreenerQueueForPreview(app.emails.value)
+            val destination = if (mode == PreviewMode.ScreenerUndoAccept) "promotions" else null
+            app.showToast(ScreenerDecision.toastTitle(destination), isUndo = true, durationMs = 0)
+        }
         if (mode == PreviewMode.Toast) {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo = true, durationMs = 0)

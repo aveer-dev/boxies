@@ -391,6 +391,15 @@ enum PreviewSupport {
             || args.contains("-previewReminderToast") {
             applyReminderFixtures(to: app, args: args)
         }
+        if args.contains("-previewScreenerUndo"), app.selectedTab == .folder("screener"),
+           let decided = app.emails.first {
+            // Just declined the first sender: their row is gone and the toast offers
+            // Undo (AVE-159). Add `-previewScreenerAccept` for the Accept → Promotions copy.
+            app.emails.removeAll { screenerSenderKeyMatches($0, decided) }
+            app.screenerQueue.removeAll { screenerSenderKeyMatches($0, decided) }
+            let destination: String? = args.contains("-previewScreenerAccept") ? "promotions" : nil
+            app.showToast(ScreenerDecision.toastTitle(destinationFolderId: destination), isUndo: true, duration: 0)
+        }
         if args.contains("-previewToast") {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo: true, duration: 0)
@@ -402,6 +411,11 @@ enum PreviewSupport {
             applyPreviewService(service, to: app)
         }
         return app
+    }
+
+    @MainActor
+    private static func screenerSenderKeyMatches(_ lhs: Email, _ rhs: Email) -> Bool {
+        AppModel.screenerSenderKey(lhs) == AppModel.screenerSenderKey(rhs)
     }
 
     // MARK: Reply Later reminders (AVE-86)

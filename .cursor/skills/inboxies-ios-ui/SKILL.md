@@ -208,6 +208,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewAIUsage normal\|warning\|exhausted` | Stub AI usage (12/50, 42/50, 50/50 chats). Pair with `-previewChat` (meter / limit notice above the composer) or `-previewSettings` (AI usage section) (AVE-45) |
 | `-previewMailbox` | Inbox New/Seen, with the pinned "3 waiting to be screened" row (AVE-136) |
 | `-previewScreener` | Screening room + detail (`-previewScreenerList` for the room alone). The Screener folder is a subpage pushed from the Inbox row, not a folder tab or menu item (AVE-136) |
+| `-previewScreenerList -previewScreenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (add `-previewScreenerAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
 | `-previewReplyLater` | Reply Later pile |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
 | `-previewDetail -previewNewsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
