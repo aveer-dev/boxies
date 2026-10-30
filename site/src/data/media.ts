@@ -62,7 +62,7 @@ export const stills: Record<StillName, { alt: string }> = {
 		alt: "The Inboxies welcome screen on iPhone: “Your Personal email app” and a round button to continue.",
 	},
 	"get-started": {
-		alt: "“Welcome to Inboxies” on iPhone with two choices: Personal Address, an instant @inboxies.email address, and Custom Domain, set up through Cloudflare DNS.",
+		alt: "“Welcome to Inboxies” on iPhone with two choices: Personal Address, an instant @inboxies.email address, and Custom Domain, for an address on a domain you own.",
 	},
 	"domain-admin": {
 		alt: "Domain Admin on iPhone: DNS & Domain Configuration, a Create email button, and the domain’s mailboxes you@, ops@ and pending@.",

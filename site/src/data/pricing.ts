@@ -6,8 +6,8 @@
 // its compare column, the brief row), so no page has to check the flag for data.
 // Prices are "no charge today", never "free forever": the owner hasn't said
 // how long either free tier lasts (§10 Q2–Q3).
-import { GITHUB_URL, IOS_STATUS, SIGN_UP_URL, flags, primaryCta } from "../config";
-import type { BriefRow, CompareGroup, Plan, PlanCompare, PriceBreakdown, RecordRow, SelfHost } from "./types";
+import { IOS_STATUS, SIGN_UP_URL, flags, primaryCta } from "../config";
+import type { BriefRow, CompareGroup, Plan, PlanCompare, PriceBreakdown, RecordRow } from "./types";
 
 // "The web app and the iPhone beta"; the platform list follows the flags.
 function appsLine(): string {
@@ -37,7 +37,7 @@ const allPlans: Plan[] = [
 			"you@inboxies.email",
 			"The Screener, Reply Later, Promotions and Updates",
 			"Ask AI, drafting replies you approve",
-			"Search with Gmail-style operators",
+			"Gmail-style search that reads every word",
 			...(appsLine() ? [appsLine()] : []),
 		],
 		footnote: "Pick a username, a password and a backup email. No card.",
@@ -53,13 +53,13 @@ const allPlans: Plan[] = [
 		cta: signUp("Connect a domain", "secondary"),
 		leadIn: "Everything in Personal, and:",
 		includes: [
-			"you@yourdomain, after a TXT check and a nameserver switch",
-			"MX, SPF and DMARC written for you",
-			"Email DNS health check and one-click fix",
-			"Team mailboxes, invites and aliases",
-			"Whole-domain .mbox export",
+			"you@yourdomain, after a quick ownership check",
+			"Email set up for you",
+			"Email health check and one-click fix",
+			"Team mailboxes, invites, and addresses like hello@",
+			"Export every mailbox on the domain",
 		],
-		footnote: "Your domain’s DNS moves to a Cloudflare zone that Inboxies runs for you. You keep renewing the domain with your registrar.",
+		footnote: "You make two quick changes where you bought the domain, and Inboxies looks after its settings from then on. You keep renewing it there.",
 		src: "PS#2 (no charge in code; full zone move); PS#5 (DNS setup); dev ca531c6 (TXT proof before the zone); FSW#custom-domains; FSW#domain-admin-console; FSW#domain-aliases; FSW#leave-anytime; cloudflare-client.ts createZone (zone in the operator's account)",
 		ownerConfirm: "connecting your own domain stays free",
 	},
@@ -72,9 +72,9 @@ const allPlans: Plan[] = [
 		cta: signUp("Find a domain", "secondary"),
 		leadIn: "Everything in Your domain, and:",
 		includes: [
-			"A year of registration through Cloudflare Registrar",
-			"ICANN fee and WHOIS privacy",
-			"DNS, SSL and Email Routing set up for you",
+			"A year of registration at the wholesale price",
+			"Required domain fees, and your contact details kept private",
+			"Domain settings, secure connections and email set up for you",
 			"Your first mailbox, ready after checkout",
 			"The transfer code, whenever you want it",
 		],
@@ -87,22 +87,14 @@ const allPlans: Plan[] = [
 /** Two plans when domain purchase is off, three when it's live. */
 export const plans: Plan[] = allPlans.filter((p) => !p.hidden);
 
-export const selfHost: SelfHost = {
-	title: "Run it yourself",
-	href: GITHUB_URL,
-	meta: "Apache-2.0",
-	description: "Free and open source. Deploy it to your own Cloudflare account and pay Cloudflare for what you use. The iPhone app connects only to inboxies.email, so a self-hosted install is used from the web.",
-	src: "PS#7",
-};
-
 // "How the price works". No per-domain price list: the fallback table in code
-// can disagree with live Cloudflare prices, so the page states the rule.
+// can disagree with the registrar's live prices, so the page states the rule.
 export const priceRule: RecordRow[] = [
 	{ label: "Domains that cost $15 or less wholesale", value: "$20 a year in total", src: "PS#1 (computeDomainPricing)" },
 	{ label: "Domains that cost more", value: "wholesale + $10 a year", src: "PS#1 (computeDomainPricing)" },
-	{ label: "Where the wholesale price comes from", value: "Cloudflare Registrar’s price when you search, or our copy of its price list if that lookup fails", src: "PS#1 (live Cloudflare price); cloudflare-registrar.ts (TLD_WHOLESALE_PRICING fallback)" },
+	{ label: "Where the wholesale price comes from", value: "the registrar’s live price when you search, or our copy of its price list if that lookup fails", src: "PS#1 (live Cloudflare price); cloudflare-registrar.ts (TLD_WHOLESALE_PRICING fallback)" },
 	{ label: "When you see the total", value: "before you pay", src: "PS#1; PS#3" },
-	{ label: "How you pay", value: "Stripe, once a year", src: "PS#1 (interval year, USD); PS#3" },
+	{ label: "How you pay", value: "by card at checkout, once a year", src: "PS#1 (interval year, USD); PS#3" },
 ];
 
 // "Where the $20 goes": a .com at $10.44 wholesale (the case the pricing
@@ -112,19 +104,19 @@ export const breakdown: PriceBreakdown = {
 	lines: [
 		{
 			label: "Domain registration",
-			detail: "at Cloudflare’s wholesale price, with the ICANN fee and WHOIS privacy",
+			detail: "at the wholesale price, with the required domain fees and your contact details kept private",
 			amount: "$10.44",
 			src: "PS#1 (tests assert .com 20.00 = 10.44 + 9.56)",
 		},
 		{
 			label: "Inboxies platform",
-			detail: "the assistant, sync and search, storage, DNS, SSL and Email Routing",
+			detail: "the assistant, sync and search, storage, domain setup and mail delivery",
 			amount: "$9.56",
 			src: "PS#1 (platform share = 20 − domain fee)",
 		},
 	],
 	total: { label: "Per year", amount: "$20.00", src: "PS#1" },
-	note: "Example: a .com with a wholesale price of $10.44. The two lines always add up to $20 when the wholesale price is $15 or less, so the platform share changes with the domain. Above $15, the platform share is a flat $10. Stripe checkout shows the exact split for your domain.",
+	note: "Example: a .com with a wholesale price of $10.44. The two lines always add up to $20 when the wholesale price is $15 or less, so the platform share changes with the domain. Above $15, the platform share is a flat $10. Checkout shows the exact split for your domain.",
 	src: "PS#1 (tests assert .com 20.00 = 10.44 + 9.56; platform share = 20 − domain fee; flat $10 above $15)",
 	ownerConfirm: "native fallbacks still say 10.46 when the API sends no price (RootView.swift:1262, MailboxOnboardingView.kt:1259); the web reads domainFeeUsd on dev",
 };
@@ -141,7 +133,7 @@ const compareGroups: CompareGroup[] = [
 			{ label: "Address", values: ["you@inboxies.email", "you@yourdomain", "you@yourdomain"], src: "PS#2" },
 			{ label: "Screener, New and Seen, Reply Later", values: [true, true, true], src: "FSW#headline-features" },
 			{ label: "Promotions, Updates and Spam", values: [true, true, true], src: "FSW#smart-sorting; dev 31c58c6 (header sorting for senders without a chosen destination; accepted senders filed where you chose)" },
-			{ label: "Search operators", values: [true, true, true], src: "FSW#search" },
+			{ label: "Gmail-style search", values: [true, true, true], src: "FSW#search" },
 			{ label: "Filters", values: ["50", "50", "50"], src: "PS#4" },
 			{ label: "Auto-reply", values: [true, true, true], src: "FSW#supporting-features (vacation auto-reply)" },
 			{
@@ -162,7 +154,6 @@ const compareGroups: CompareGroup[] = [
 			...(flags.autoDraftsFromDayOne
 				? [{ label: "Draft replies as mail arrives", values: [true, true, true], src: "PR #49 / b7895d9 on dev; index.ts auto-draft gate (no plan check)" }]
 				: []),
-			{ label: "MCP for your own AI tools", values: ["Self-host only", "Self-host only", "Self-host only"], src: "FSW#mcp-server; D3 (no way to connect a client to inboxies.email)" },
 		],
 	},
 	{
@@ -171,17 +162,17 @@ const compareGroups: CompareGroup[] = [
 			{ label: "More than one mailbox", values: [true, true, true], src: "RM#2 (multiple accounts)" },
 			{ label: "Share a mailbox", values: [true, true, true], src: "FSW#shared-mailboxes" },
 			{ label: "Team mailboxes and invites", values: [false, true, true], src: "FSW#domain-admin-console" },
-			{ label: "hello@ and support@ aliases", values: [false, true, true], src: "FSW#domain-aliases" },
+			{ label: "hello@ and support@ addresses", values: [false, true, true], src: "FSW#domain-aliases" },
 		],
 	},
 	{
 		label: "Domain",
 		rows: [
-			{ label: "Email DNS set up for you", values: [false, "after the nameserver switch", true], src: "PS#5 (DNS setup)" },
-			{ label: "DNS editor and health check", values: [false, true, true], src: "FSW#custom-domains" },
-			{ label: "WHOIS privacy", values: [false, "from your registrar", "Included"], src: "PS#1" },
+			{ label: "Email set up for you", values: [false, "after two quick changes", true], src: "PS#5 (DNS setup)" },
+			{ label: "Domain health check and settings", values: [false, true, true], src: "FSW#custom-domains" },
+			{ label: "Contact details kept private", values: [false, "from your registrar", "Included"], src: "PS#1" },
 			{ label: "Transfer code", values: [false, "from your registrar", true], src: "PS#5 (EPP for domains bought through Inboxies)" },
-			{ label: "Whole-domain .mbox export", values: [false, true, true], src: "FSW#leave-anytime" },
+			{ label: "Export every mailbox on the domain", values: [false, true, true], src: "FSW#leave-anytime" },
 		],
 	},
 	{
@@ -211,15 +202,21 @@ export const compare: PlanCompare = {
 // Limits: the same on every plan, per mailbox.
 export const limits: RecordRow[] = [
 	{ label: "Sending", value: "20 emails an hour, 100 a day", src: "PS#4 (hard limits)" },
-	{ label: "Outgoing message", value: "5 MiB including attachments; photos are resized to fit, videos can’t be attached", src: "PS#4 (hard limits); FC#4.6" },
-	{ label: "Incoming message", value: "25 MiB", src: "PS#4 (hard limits)" },
+	{ label: "Outgoing message", value: "5 MB including attachments; photos are resized to fit, videos can’t be attached", src: "PS#4 (hard limits); FC#4.6" },
+	{ label: "Incoming message", value: "25 MB", src: "PS#4 (hard limits)" },
 	{ label: "Filters", value: "50", src: "PS#4 (hard limits)" },
 	{ label: "Auto-reply", value: "once per sender every 24 hours", src: "PS#4 (hard limits)" },
+	{ label: "Ask AI", value: "50 chats a day", src: "workers/lib/ai-quota.ts AI_DAILY_LIMITS (AVE-45: free tier for everyone, per mailbox, UTC day)" },
 	{
-		label: "Storage and AI",
+		label: "AI on incoming mail",
+		value: "200 spam checks and drafts a day; past that, mail is still sorted, without them",
+		src: "workers/lib/ai-quota.ts (inbound bucket 200; over quota falls back to rules-only classification, no auto-draft)",
+	},
+	{
+		label: "Storage",
 		value: "no quota is set today",
-		src: "PS#4 (\"Storage quota / AI quota: None in code\")",
-		ownerConfirm: "no quotas planned near-term",
+		src: "PS#4 (\"Storage quota: None in code\")",
+		ownerConfirm: "no storage quota planned near-term",
 	},
 ];
 
@@ -246,7 +243,7 @@ const allBrief: (BriefRow & { hidden?: boolean })[] = [
 		title: "A domain we register",
 		href: "/pricing#how-pricing-works",
 		meta: "$20/yr",
-		description: "Registration, WHOIS privacy, DNS, the platform and the assistant in one yearly price when the domain costs $15 or less wholesale. Pricier domains are wholesale + $10 a year.",
+		description: "The domain, private contact details, setup, the platform and the assistant in one yearly price when the domain costs $15 or less wholesale. Pricier domains are wholesale + $10 a year.",
 		hidden: !flags.domainPurchaseLive,
 		src: "PS#1 (computeDomainPricing)",
 	},

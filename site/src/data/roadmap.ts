@@ -31,7 +31,7 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	// ── Triage ──
 	{ id: "screener", group: "triage", name: "Screener", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "On for every new mailbox. No off switch yet.", landing: true, src: "FSW#the-screener; RM#3" },
 	{ id: "new-and-seen", group: "triage", name: "New and Seen", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Opening a thread moves it to Seen.", src: "FSW#supporting-features" },
-	{ id: "categories", group: "triage", name: "Promotions and Updates", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Choose one per sender, or let list mail from people you’ve emailed be sorted by its headers. No Social or Forums.", landing: true, src: "RM#2 (categories); dev 31c58c6 (explicit destination wins; classifier files allowed senders without one; classify-email.ts header rules)" },
+	{ id: "categories", group: "triage", name: "Promotions and Updates", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Choose one per sender, or let newsletters from people you’ve emailed be sorted for you. No Social or Forums.", landing: true, src: "RM#2 (categories); dev 31c58c6 (explicit destination wins; classifier files allowed senders without one; classify-email.ts header rules)" },
 	{ id: "sender-destinations", group: "triage", name: "Sender destinations", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Settings → Senders.", src: "FSW#sender-destinations" },
 	{ id: "reply-later", group: "triage", name: "Reply Later", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Leaves the pile when you reply.", landing: true, src: "RM#3" },
 	{ id: "focus-reply", group: "triage", name: "Focus & Reply", status: "available", lineage: "HEY", platforms: ["web"], note: "Web only.", landing: true, src: "RM#3 (web only)" },
@@ -45,7 +45,6 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	// ── AI ──
 	{ id: "ask-ai", group: "ai", name: "Ask AI", status: "available", platforms: ["ios", "android", "web"], note: flags.webAppPublic ? "Drafts and files; never sends. Several chats in the apps, one on the web." : "Drafts and files; never sends. Several chats at once.", landing: true, src: "FSW#ai-email-agent; FC#4.8; FC#2" },
 	{ id: "ai-prompt", group: "ai", name: "Custom AI prompt", status: "available", platforms: ["ios", "android", "web"], note: "One per mailbox.", src: "FC#4.8" },
-	{ id: "mcp", group: "ai", name: "MCP server", status: "available", platforms: ["mcp"], note: "On self-hosted installs today. 13 tools with your permissions, including sending and deleting mail.", src: "FSW#mcp-server; mcp/index.ts (13 tools incl. delete_email); D3 (no way to connect a client to inboxies.email: app.ts auth, MCPPanel.tsx)" },
 	{
 		id: "drafts-day-one",
 		group: "ai",
@@ -61,10 +60,10 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	},
 	{ id: "for-you", group: "ai", name: "“For you” brief", status: "progress", lineage: "HEY", platforms: ["ios", "android"], note: "To-dos and topics to catch up on. Built, not switched on yet.", src: "FC#7 (built, hidden)", ownerConfirm: "tease publicly" },
 	{ id: "rewrite", group: "ai", name: "Rewrite in the composer", status: "exploring", lineage: "Gmail", platforms: [], note: "Ask the assistant to tighten or rephrase.", src: "RM#1 (11)" },
-	{ id: "scoped-keys", group: "ai", name: "Scoped keys for outside agents", status: "exploring", platforms: [], note: "Read, draft or send permissions per mailbox, so MCP clients can connect to inboxies.email.", src: "RM#1 (12); D3" },
+	{ id: "scoped-keys", group: "ai", name: "Connect your own AI tools", status: "available", platforms: [], note: "Claude, Cursor and other AI apps, with the mailboxes and permissions you choose.", src: "RM#1 (12); MCP OAuth on main since #152 (AVE-67/68/69/70): mcp/oauth.ts, shared/mcp-consent.ts, mcp/scopes.ts, SessionsSettings.tsx" },
 
 	// ── Search and compose ──
-	{ id: "search-operators", group: "search-compose", name: "Search operators", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "from: to: subject: in: is: has: before: after:", landing: true, src: "FSW#search; RM#2" },
+	{ id: "search-operators", group: "search-compose", name: "Gmail-style search", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "from: to: subject: in: is: has: before: after:", landing: true, src: "FSW#search; RM#2" },
 	{ id: "full-text-search", group: "search-compose", name: "Full-text search", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Message bodies, not just previews.", src: "FSW#search" },
 	{ id: "on-device-search", group: "search-compose", name: "Instant on-device search", status: "available", platforms: ["ios"], note: "Your phone’s index first, then the server.", src: "FC#4.7" },
 	{ id: "compose-dock", group: "search-compose", name: "Compose dock", status: "available", platforms: ["ios", "android"], note: "Swipe a draft down to park it.", src: "FC#4.6" },
@@ -79,14 +78,14 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	{
 		id: "custom-domains",
 		group: "domains",
-		name: "Custom domains with automatic DNS",
+		name: "Custom domains, set up for you",
 		status: "available",
 		platforms: ["ios", "android", "web"],
 		note: flags.domainPurchaseLive ? "Connect one you own, or register one." : "Connect one you own.",
 		landing: true,
 		src: "FSW#custom-domains",
 	},
-	{ id: "dns", group: "domains", name: "DNS editor and health check", status: "available", platforms: ["ios", "android", "web"], note: "One-click Fix Email DNS.", src: "FSW#custom-domains" },
+	{ id: "dns", group: "domains", name: "Domain health check", status: "available", platforms: ["ios", "android", "web"], note: "See what’s working, and fix what’s off in one click. Edit the domain’s records yourself if you need to.", src: "FSW#custom-domains" },
 	{ id: "domain-admin", group: "domains", name: "Domain Admin and invites", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Create, assign, invite, delete.", src: "FSW#domain-admin-console" },
 	{ id: "shared-mailboxes", group: "domains", name: "Shared mailboxes", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Owners and members.", src: "FSW#shared-mailboxes" },
 	{ id: "domain-export", group: "domains", name: "Whole-domain .mbox export", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Domain admins.", src: "FSW#leave-anytime" },
@@ -128,8 +127,8 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 		src: "1afa7e3 (MV3, Chrome 120+, aliases-only pairing via /extension/connect, sign-up pill); dev extension/manifest.json (no store listing)",
 		ownerConfirm: flags.chromeExtensionPublic ? undefined : "submit to the Chrome Web Store",
 	},
-	{ id: "spoofing", group: "privacy", name: "Spoofing warnings", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "SPF, DKIM and DMARC alignment.", src: "FSW#spoofing-protection" },
-	{ id: "safe-html", group: "privacy", name: "Safe HTML", status: "available", platforms: ["ios", "android", "web"], note: "Cleaned and sandboxed.", src: "FSW#supporting-features" },
+	{ id: "spoofing", group: "privacy", name: "Spoofing warnings", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Mail pretending to be from someone else is flagged.", src: "FSW#spoofing-protection" },
+	{ id: "safe-html", group: "privacy", name: "Safe to open", status: "available", platforms: ["ios", "android", "web"], note: "Code hidden in an email never runs.", src: "FSW#supporting-features" },
 	{ id: "tracking-pixels", group: "privacy", name: "Remote images held back in Spam", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Hidden in Spam until you choose Load images; elsewhere they load.", src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
 	{
 		id: "delete-account",

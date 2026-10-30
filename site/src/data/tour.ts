@@ -84,14 +84,9 @@ const allChapters: TourChapter[] = [
 				src: "FC#4.8 (custom AI prompt per mailbox)",
 			},
 			{
-				lead: "Runs on Cloudflare.",
-				text: "The assistant uses models on Cloudflare Workers AI. Inboxies doesn’t send your mail to another AI provider.",
+				lead: "Stays in-house.",
+				text: "The assistant runs on the same network as your mail. Inboxies doesn’t send your mail to another AI company.",
 				src: "PS#5 (AI data handling: no third-party LLM API)",
-			},
-			{
-				lead: "Your own AI tools, too.",
-				text: "On a self-hosted install, connect Claude Code, Cursor or another MCP client. It acts with your access, including sending and deleting mail, so only connect tools you trust.",
-				src: "FSW#mcp-server (send_reply, send_email, delete_email tools); dev tools.ts toolDeleteEmail (to Trash first, permanent only from Trash or Drafts); D3: /mcp needs Access or a session token, and inboxies.email offers no way to get one (app.ts, MCPPanel.tsx, unchanged on dev); BRIEF (disclose plainly)",
 			},
 		],
 		supportHref: "/support#ask-ai",
@@ -106,7 +101,7 @@ const allChapters: TourChapter[] = [
 		lineage: "Gmail",
 		platforms: ["ios", "android", "web"],
 		title: "Find it the way you remember it.",
-		body: "Search reads the whole message body, not just the preview, and understands the operators you already use in Gmail.",
+		body: "Search reads the whole message body, not just the preview, and understands the search terms you already use in Gmail.",
 		extra: "operators",
 		rows: [
 			{
@@ -152,7 +147,7 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "Fits the limit.",
-				text: "Photos are resized on your phone to fit the 5 MiB send limit. Videos can’t be attached.",
+				text: "Photos are resized on your phone to fit the 5 MB send limit. Videos can’t be attached.",
 				src: "FC#4.6; PS#4",
 			},
 		],
@@ -166,10 +161,10 @@ const allChapters: TourChapter[] = [
 		num: "06",
 		name: "Your domain",
 		platforms: ["ios", "android", "web"],
-		title: "Your own name, with the records written for you.",
+		title: "Your own name, set up for you.",
 		body: flags.domainPurchaseLive
-			? "Connect a domain you own with one TXT record and a nameserver switch, or register a new one in the app. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off."
-			: "Connect a domain you own with one TXT record and a nameserver switch. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off.",
+			? "Register a new domain in the app and it’s ready as soon as you’ve paid. Or bring one you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off."
+			: "Bring a domain you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off.",
 		rows: [
 			{
 				lead: "Bring the team.",

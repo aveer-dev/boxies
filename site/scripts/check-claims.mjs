@@ -1,9 +1,10 @@
 // After the build: reads every page in dist/client and fails if a phrase we
 // can't stand behind made it onto the site (§1.7). Copy that describes unbuilt
 // work sits inside data-claim="roadmap"; candid "we don't do X" lines sit
-// inside data-claim="negated". Those wrappers are the only places some words
-// may appear. It also checks where links into the web app go (D1). Exits 1 on
-// any hit, printing file · phrase · context.
+// inside data-claim="negated"; developer copy (open source, MCP) sits inside
+// data-claim="dev". Those wrappers are the only places some words may appear.
+// It also checks where links into the web app go (D1). Exits 1 on any hit,
+// printing file · phrase · context.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,9 +75,16 @@ const bannedFull = [
 	// own needs a TXT record you add yourself (ca531c6).
 	/delet\w* (?:the|your) account[^.]{0,60}isn[’']t in the apps/i,
 	/without the DNS homework/i,
+	// The site sells the service (29 Oct 2026): no origin story, and no
+	// framework or model names. Open-source and stack wording is for developers
+	// only (bannedOutsideDev).
+	/agentic-inbox/i,
+	/\bfork(?:ed)? (?:of|from)\b/i,
+	/\b(?:SwiftUI|Jetpack Compose)\b/,
+	/\b(?:Kimi|Llama|Mistral|Gemma|Qwen)\b/i,
 ];
 
-// Only inside a data-claim wrapper (roadmap or negated).
+// Only inside data-claim="roadmap" or "negated" ("dev" doesn't exempt these).
 const bannedPlain = [
 	/end-to-end/i,
 	/\bencrypt/i,
@@ -85,6 +93,27 @@ const bannedPlain = [
 	/\bset aside\b/i,
 	/schedul(ed|e) send/i,
 	/hide my email/i,
+];
+
+// Only inside data-claim="dev" (30 Oct 2026). The code is open source again,
+// but it isn't a selling point: it's mentioned where developers look (the
+// Source link, Support → For developers, the legal clauses about the code),
+// and Cloudflare is named elsewhere only as the network Inboxies runs on,
+// never by its products (Cloudflare Registrar stays allowed: the terms name
+// the registrar).
+const bannedOutsideDev = [
+	/open[- ]source/i,
+	/\bself[- ]host/i,
+	/Apache[- ]?(?:2|License)/i,
+	/\bGitHub\b/i,
+	/\bMCP\b|Model Context Protocol/i,
+	/Durable Objects?/i,
+	/\bSQLite\b/i,
+	/\b(?:R2|D1)\b/,
+	/Workers AI/i,
+	/Cloudflare (?:Workers|Access|Email Service)\b/i,
+	/Email Routing/i,
+	/\bwrangler\b/i,
 ];
 
 // Only inside data-claim="roadmap" ("negated" doesn't exempt these).
@@ -188,10 +217,15 @@ for (const file of files) {
 		seenIds.add(id);
 	}
 	hits.push(...appLinkHits(root, name));
+	// Links to the repository are developer copy too.
+	for (const a of root.querySelectorAll('a[href*="github.com"]')) {
+		if (!a.closest('[data-claim="dev"]')) hits.push(`${name} · link to GitHub outside data-claim="dev" · ${a.getAttribute("href")}`);
+	}
 	const views = [
 		[pageText(html), bannedFull, ""],
-		[pageText(html, "[data-claim]"), bannedPlain, " (outside data-claim)"],
+		[pageText(html, '[data-claim="roadmap"], [data-claim="negated"]'), bannedPlain, ' (outside data-claim="roadmap" or "negated")'],
 		[pageText(html, '[data-claim="roadmap"]'), bannedOutsideRoadmap, ' (outside data-claim="roadmap")'],
+		[pageText(html, '[data-claim="dev"]'), bannedOutsideDev, ' (outside data-claim="dev")'],
 	];
 	for (const [text, rules, where] of views) {
 		for (const rule of rules) {
