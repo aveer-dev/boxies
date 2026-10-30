@@ -1,71 +1,73 @@
 /**
  * Headless E2E: horizontal Miller-column mailbox (web).
  *
- * Seeds its own mailbox through the local API + `/cdn-cgi/handler/email`, then
- * walks the columns: folder → thread (URL) → reload → Back, Screener triage,
- * quick reply send, Pop Out, AI Assist, search, settings panels, Esc,
- * Reply Later, and the phone layout.
+ * Signs in through the dev-only `/api/v1/auth/dev`, seeds its own mailbox
+ * through the local API + `/cdn-cgi/handler/email`, then walks the columns:
+ * folder → thread (URL) → reload → Back, Screener triage, inline cid: image in
+ * the reader (AVE-110), quick reply send, Pop Out, AI Assist, search,
+ * settings panels, Esc, Reply Later, and the phone layout.
  *
- * Requires local `pnpm run dev` (DEV auth) on :5173.
- *   E2E_BASE=http://localhost:5173 E2E_CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
- *     node scripts/e2e-mail-columns.mjs
+ * Requires local `pnpm dev`. The quick reply goes through the dev server's
+ * send path to a `.test` address (reserved, never delivered).
+ *   E2E_BASE=http://localhost:5173 node scripts/e2e-mail-columns.mjs
+ * E2E_CHROME and E2E_SHOTS: see scripts/e2e-lib.mjs.
  */
-import { chromium } from "playwright-core";
 import assert from "node:assert/strict";
+import { BASE, api, createMailbox, deliver, deliverRaw, launchBrowser, runId, shotsDir, signIn, step } from "./e2e-lib.mjs";
 
-const BASE = process.env.E2E_BASE || "http://localhost:5173";
-const CHROME = process.env.E2E_CHROME || "/usr/local/bin/google-chrome";
-const SHOTS = process.env.E2E_SHOTS || "";
-const MAILBOX = `columns-${Date.now().toString(36)}@inboxies.email`;
+const RUN = runId();
+const MAILBOX = `columns-${RUN}@inboxies.email`;
 const MB = `/mailbox/${MAILBOX}`;
+const SHOTS = shotsDir("columns");
+// 1×1 PNG for the inline cid: image.
+const PIXEL_PNG =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
-const browser = await chromium.launch({
-	executablePath: CHROME,
-	headless: true,
-	args: ["--no-sandbox", "--disable-dev-shm-usage"],
-});
+const browser = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1512, height: 982 } });
 const columns = () =>
 	page.$$eval("section[data-column-id]", (els) => els.map((el) => el.dataset.columnId));
-const shot = async (name) => {
-	if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` });
-};
-const step = (name) => console.log(`✓ ${name}`);
+const shot = (name) => page.screenshot({ path: `${SHOTS}/${name}.png` });
+// Compose columns are `column-compose-<id>`, one per open draft.
+const COMPOSE = "[id^='column-compose']";
 
 async function seed() {
-	await page.goto(BASE, { waitUntil: "domcontentloaded" });
-	await page.evaluate(
-		async ({ mailbox }) => {
-			const res = await fetch("/api/v1/mailboxes", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ email: mailbox, name: "Columns E2E" }),
-			});
-			if (res.status !== 201) throw new Error(`create mailbox: ${res.status}`);
-			const send = async (from, name, subject, body, extra = {}) => {
-				const headers = [
-					`From: ${name} <${from}>`,
-					`To: ${mailbox}`,
-					`Subject: ${subject}`,
-					`Message-ID: <${extra.id || crypto.randomUUID()}@e2e.test>`,
-					`Date: ${new Date(Date.now() - (extra.ago || 0)).toUTCString()}`,
-					"MIME-Version: 1.0",
-					"Content-Type: text/html; charset=utf-8",
-				];
-				if (extra.inReplyTo) headers.push(`In-Reply-To: <${extra.inReplyTo}@e2e.test>`);
-				const r = await fetch(
-					`/cdn-cgi/handler/email?from=${encodeURIComponent(from)}&to=${encodeURIComponent(mailbox)}`,
-					{ method: "POST", body: `${headers.join("\r\n")}\r\n\r\n${body}` },
-				);
-				if (!r.ok) throw new Error(`inbound: ${r.status}`);
-			};
-			await send("marcus@hyperion.test", "Marcus Vance", "ADR: Vector Cache", "<p>p99 from 42ms to 7.4ms.</p>", { ago: 60_000 });
-			await send("julian@kodo.test", "Julian Thorne", "Design tokens", "<p>Specs attached.</p>", { ago: 120_000, id: "tokens" });
-			await send("julian@kodo.test", "Julian Thorne", "Re: Design tokens", "<p>Use brand blue for focus.</p>", { ago: 90_000, inReplyTo: "tokens" });
-		},
-		{ mailbox: MAILBOX },
-	);
-	step(`seeded ${MAILBOX}`);
+	await signIn(page, `columns-${RUN}@example.com`);
+	await createMailbox(page, MAILBOX, "Columns E2E");
+	const to = MAILBOX;
+	await deliver(page, { to, from: "marcus@hyperion.test", name: "Marcus Vance", subject: "ADR: Vector Cache", html: "<p>p99 from 42ms to 7.4ms.</p>", ago: 60_000 });
+	await deliver(page, { to, from: "julian@kodo.test", name: "Julian Thorne", subject: "Design tokens", html: "<p>Specs attached.</p>", ago: 120_000, id: `tokens-${RUN}` });
+	await deliver(page, { to, from: "julian@kodo.test", name: "Julian Thorne", subject: "Re: Design tokens", html: "<p>Use brand blue for focus.</p>", ago: 90_000, inReplyTo: `tokens-${RUN}` });
+	// multipart/related with an inline image the HTML references by cid: (AVE-110).
+	const boundary = `rel-${RUN}`;
+	await deliverRaw(page, {
+		from: "ines@pixel.test",
+		to,
+		raw: [
+			"From: Ines Duarte <ines@pixel.test>",
+			`To: ${to}`,
+			"Subject: Inline logo",
+			`Message-ID: <cid-${RUN}@e2e.test>`,
+			`Date: ${new Date(Date.now() - 30_000).toUTCString()}`,
+			"MIME-Version: 1.0",
+			`Content-Type: multipart/related; boundary="${boundary}"`,
+			"",
+			`--${boundary}`,
+			"Content-Type: text/html; charset=utf-8",
+			"",
+			'<p>Logo below.</p><img id="inline-logo" alt="logo" src="cid:logo@e2e.test">',
+			`--${boundary}`,
+			"Content-Type: image/png",
+			"Content-Transfer-Encoding: base64",
+			"Content-ID: <logo@e2e.test>",
+			'Content-Disposition: inline; filename="logo.png"',
+			"",
+			PIXEL_PNG,
+			`--${boundary}--`,
+			"",
+		].join("\r\n"),
+	});
+	step(`signed in and seeded ${MAILBOX}`);
 }
 
 try {
@@ -89,6 +91,28 @@ try {
 	await page.goBack();
 	await page.waitForFunction(() => !document.querySelector("#column-reader"));
 	step("thread deep link survives reload; Back closes the reader");
+
+	// Inline cid: image (AVE-110): the sandboxed reader shows it as a data: URL.
+	await page.locator("#column-list [data-email-id]", { hasText: "Inline logo" }).first().click();
+	await page.waitForSelector("#column-reader iframe[title='Email content']");
+	const reader = page.frameLocator("#column-reader iframe[title='Email content']");
+	const logo = reader.locator("img#inline-logo");
+	await logo.waitFor();
+	const loaded = await logo.evaluate(
+		(img) =>
+			new Promise((resolve) => {
+				const done = () => resolve({ src: img.getAttribute("src") || "", width: img.naturalWidth });
+				if (img.complete) return done();
+				img.addEventListener("load", done, { once: true });
+				img.addEventListener("error", done, { once: true });
+			}),
+	);
+	assert.match(loaded.src, /^data:image\/png;base64,/, "cid: swapped for a data: URL");
+	assert.equal(loaded.width, 1, "inline image decoded");
+	await shot("01b-inline-image");
+	await page.goBack();
+	await page.waitForFunction(() => !document.querySelector("#column-reader"));
+	step("inline cid: image renders in the sandboxed reader");
 
 	// Screener triage closes the reader and files the thread into Inbox.
 	await page.locator("#column-list [data-email-id]", { hasText: "Design tokens" }).first().click();
@@ -114,8 +138,8 @@ try {
 	// Pop Out moves the text into a reply compose column.
 	await page.getByLabel("Quick reply").fill("Draft for later");
 	await page.getByLabel("Quick reply").press("Meta+Shift+O");
-	await page.waitForSelector("#column-compose");
-	assert.match(await page.locator("#column-compose [contenteditable]").innerText(), /Draft for later/);
+	await page.waitForSelector(COMPOSE);
+	assert.match(await page.locator(`${COMPOSE} [contenteditable]`).innerText(), /Draft for later/);
 	assert.equal(await page.getByLabel("Quick reply").inputValue(), "");
 	await shot("02-compose");
 	step("Pop Out carries the text to the composer");
@@ -123,7 +147,7 @@ try {
 	// Esc closes the deepest column: compose, then reader.
 	await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());
 	await page.keyboard.press("Escape");
-	await page.waitForFunction(() => !document.querySelector("#column-compose"));
+	await page.waitForFunction((sel) => !document.querySelector(sel), COMPOSE);
 	await page.keyboard.press("Escape");
 	await page.waitForFunction(() => !document.querySelector("#column-reader"));
 	step("Esc unwinds compose → reader");
@@ -179,7 +203,7 @@ try {
 	);
 	await page.goto(`${BASE}${MB}/reply-later`, { waitUntil: "networkidle" });
 	await page.getByRole("button", { name: "Focus & Reply" }).click();
-	await page.waitForSelector("#column-compose");
+	await page.waitForSelector(COMPOSE);
 	assert.ok(await page.getByRole("button", { name: "Skip" }).isVisible());
 	step("Reply Later Focus & Reply");
 
