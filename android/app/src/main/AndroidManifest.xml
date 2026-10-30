@@ -115,6 +115,31 @@
                 android:resource="@xml/autofill_service_config" />
         </service>
 
+        <!-- "Today's inbox" home-screen widget (AVE-150, Jetpack Glance). -->
+        <receiver
+            android:name=".widget.TodayInboxWidgetReceiver"
+            android:exported="true"
+            android:label="@string/widget_today_inbox_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/today_inbox_widget_info" />
+        </receiver>
+
+        <!-- Widget mailbox picker; exported for the launcher, checks the widget is ours. -->
+        <activity
+            android:name=".widget.InboxWidgetConfigureActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Inboxies">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

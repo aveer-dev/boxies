@@ -45,3 +45,7 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**
+
+# ── Glance widget (AVE-150) ──────────────────────────────────────────────────
+# actionRunCallback<T>() stores the class name and recreates it reflectively.
+-keep class * implements androidx.glance.appwidget.action.ActionCallback { <init>(); }

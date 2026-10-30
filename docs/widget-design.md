@@ -109,3 +109,18 @@ The mailbox comes from the widget's configuration and defaults to the last activ
 
 1. **iOS: "Today's inbox" widget (small + medium).** Add the App Group and an `InboxiesWidget` WidgetKit extension in `project.yml`. Write the snapshot from `AppModel`, add the `AppIntent` mailbox picker defaulting to the last active mailbox, add deep-link routing for thread and inbox, add `privacySensitive` and the tinted/clear rendering modes, and clear the snapshot on sign-out. Reuse `InboxWidgetMock` as the entry view.
 2. **Android: "Today's inbox" widget (2×2 + 4×2).** Add the Glance dependency, `GlanceAppWidget` + receiver + `appwidget-provider` XML (responsive sizes, preview layout or `previewImage`), a state written from `AppModel` refreshes, a configuration activity for the mailbox defaulting to the last active one, the bitmap ink-bloom background, deep-link intents through the push-open path, and clearing the state on sign-out. Port `InboxWidgetMock` layouts to Glance.
+
+## Android build (AVE-150)
+
+The Glance widget lives in `android/app/src/main/java/co/inboxies/app/widget/`. It draws round 2 "Depth" with the same `InboxWidgetDepthMetrics`, `InboxWidgetMetrics` and `InboxWidgetDeckPose.forSlot` the mocks use.
+
+- **Widget:** `TodayInboxWidget` + `TodayInboxWidgetReceiver`, provider `res/xml/today_inbox_widget_info.xml` (2×2 by default, resizable, `reconfigurable|configuration_optional`, picker preview `widget_today_inbox_preview.xml`).
+- **Sizes:** `SizeMode.Exact` rather than Responsive. The bitmaps have to be drawn at the cell's real size, and real cells don't match the design sizes (a Pixel 2×2 is about 172×234dp, so a 176×176 breakpoint never fits). The 4×2 layout is used from 300dp wide.
+- **Bitmaps:** `InboxWidgetArt` draws the ink bloom, the card backs with every card shadow, and the floating check's halo and ground shadow. The front card, text, dots, › and the check glyph are live views.
+- **Type:** text uses small RemoteViews layouts that ask for `@font/inter_*` with a `textFontWeight`. Launchers inflate widgets in a restricted context that skips app fonts, so on Pixel the text falls back to the system sans at Inter's weights.
+- **Data:** `AppModel` writes the active mailbox's snapshot through `InboxWidgetPublisher`, debounced by 1s, from the cached Inbox and the server's New total, and once more when the app goes to the background. `InboxWidgetStore` stores it as the same JSON iOS writes, and skips writes whose content hasn't changed. Sign-out (`AuthStore.signOut`) clears the store.
+- **State per widget:** Glance preferences hold `frontIndex` along with the content key of the snapshot it was set on, so a new snapshot puts the deck back on card 1. They also hold the configured `mailboxId`. Without one, the widget follows the last active mailbox.
+- **Taps:** a card opens `inboxies://thread?…` and the rest opens `inboxies://inbox?…`. Both are explicit `MainActivity` intents routed through `PushNotificationManager`, the same path a notification tap takes. › runs `ShowNextThreadAction`.
+- **Light/dark:** the widget follows the system theme. The bitmaps use one palette, so `InboxiesApplication.onConfigurationChanged` redraws the widget when night mode flips.
+- **Review:** `./scripts/run-debug-preview.sh widgetData` (or `widgetZero`; add `PIN=1` to request placement).
+

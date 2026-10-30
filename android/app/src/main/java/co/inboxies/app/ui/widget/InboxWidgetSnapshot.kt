@@ -5,9 +5,10 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
- * What the "Today's inbox" widget draws (AVE-138). Design-stage model: the later
- * Glance build stores this as the widget's state (serialized to JSON) whenever the
- * Inbox refreshes. iOS twin: `InboxWidgetSnapshot.swift` (App Group snapshot).
+ * What the "Today's inbox" widget draws (AVE-138, built in AVE-150). The app writes it
+ * as JSON (`InboxWidgetStore`, one per mailbox) whenever the Inbox refreshes, and the
+ * Glance widget reads it back. iOS twin: `InboxWidgetSnapshot.swift` (App Group
+ * snapshot); the JSON shape is the same (sorted keys, dates as seconds since 1970).
  */
 data class InboxWidgetSnapshot(
     val mailboxId: String,

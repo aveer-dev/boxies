@@ -26,6 +26,8 @@ import co.inboxies.app.ui.RootView
 import co.inboxies.app.ui.preview.PreviewHarness
 import co.inboxies.app.ui.preview.PreviewMode
 import co.inboxies.app.ui.preview.PreviewRoot
+import co.inboxies.app.widget.InboxWidgetLink
+import co.inboxies.app.widget.InboxWidgetPublisher
 
 val LocalAuthStore = staticCompositionLocalOf<AuthStore> { error("AuthStore missing") }
 val LocalAppModel = staticCompositionLocalOf<AppModel> { error("AppModel missing") }
@@ -50,6 +52,7 @@ class MainActivity : ComponentActivity() {
         val model = appModel
         val previewMode = PreviewMode.fromIntent(intent)
         val isRecreation = savedInstanceState != null
+        if (BuildConfig.DEBUG && !isRecreation) handleWidgetPreviewData(intent)
         if (previewMode != null) {
             // Re-seed only on a cold start (or after process death); a config change
             // keeps the already-seeded app-scoped model.
@@ -68,6 +71,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             handlePushIntent(intent)
+            handleWidgetIntent(intent)
             handleInviteIntent(intent)
             handleOnboardingIntent(intent)
             handleBillingIntent(intent)
@@ -122,8 +126,10 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (BuildConfig.DEBUG) handleWidgetPreviewData(intent)
         if (PreviewMode.fromIntent(intent) != null) return
         handlePushIntent(intent)
+        handleWidgetIntent(intent)
         handleInviteIntent(intent)
         handleOnboardingIntent(intent)
         handleBillingIntent(intent)
@@ -189,6 +195,41 @@ class MainActivity : ComponentActivity() {
             appModel.setPendingInviteToken(token)
         }
         intent.data = null
+    }
+
+    /**
+     * "Today's inbox" widget taps (AVE-150) take the notification-tap path: a card opens
+     * its thread, anywhere else opens that mailbox's Inbox.
+     */
+    private fun handleWidgetIntent(intent: Intent?) {
+        val link = InboxWidgetLink.parse(intent?.data?.toString()) ?: return
+        when (link) {
+            is InboxWidgetLink.Thread ->
+                PushNotificationManager.shared.setPendingDeepLink(link.mailboxId, link.threadId, "inbox")
+            is InboxWidgetLink.Inbox ->
+                PushNotificationManager.shared.setPendingInboxLink(link.mailboxId)
+        }
+        intent?.data = null
+    }
+
+    /**
+     * DEBUG `--es previewWidgetData mail|zero`: sample data for the real home-screen
+     * widget, no sign-in needed (iOS `-previewWidgetData`). See run-debug-preview.sh.
+     */
+    private fun handleWidgetPreviewData(intent: Intent?) {
+        val value = intent?.getStringExtra("previewWidgetData") ?: return
+        InboxWidgetPublisher.publishPreviewData(inboxZero = value.equals("zero", ignoreCase = true))
+        // `--ez previewWidgetPin true`: ask the launcher to add the widget (one "Add" tap).
+        if (intent.getBooleanExtra("previewWidgetPin", false)) {
+            val manager = getSystemService(android.appwidget.AppWidgetManager::class.java)
+            if (manager?.isRequestPinAppWidgetSupported == true) {
+                manager.requestPinAppWidget(
+                    android.content.ComponentName(this, co.inboxies.app.widget.TodayInboxWidgetReceiver::class.java),
+                    null,
+                    null,
+                )
+            }
+        }
     }
 
     private fun handlePushIntent(intent: Intent?) {

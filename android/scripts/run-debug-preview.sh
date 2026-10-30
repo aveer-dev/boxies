@@ -43,6 +43,9 @@
 #   ./scripts/run-debug-preview.sh serviceEnding       # admin "Keep subscription"
 #   ./scripts/run-debug-preview.sh domainDnsEnded      # DNS console, Subscription card
 #   ./scripts/run-debug-preview.sh widgets             # "Today's inbox" widget mocks (AVE-138)
+#   ./scripts/run-debug-preview.sh widgetData          # sample data for the real home-screen widget (AVE-150)
+#   ./scripts/run-debug-preview.sh widgetZero          # same, inbox zero
+#   PIN=1 ./scripts/run-debug-preview.sh widgetData    # also ask the launcher to add the widget
 #
 # Env:
 #   ANDROID_SERIAL  — optional adb device serial
@@ -95,6 +98,8 @@ case "$mode" in
   aiUsageLimit|AiUsageLimit|ai-usage-limit|previewAiUsageLimit) extra=previewAiUsageLimit; label=aiUsageLimit ;;
   aiUsageSettings|AiUsageSettings|ai-usage-settings|previewAiUsageSettings) extra=previewAiUsageSettings; label=aiUsageSettings ;;
   widgets|Widgets|widget|previewWidgets) extra=previewWidgets; label=widgets ;;
+  widgetData|WidgetData|previewWidgetData) extra=previewWidgetData; label=widgetData; widget_data=mail ;;
+  widgetZero|WidgetZero) extra=previewWidgetData; label=widgetZero; widget_data=zero ;;
   splash|Splash|previewSplash) extra=previewSplash; label=splash ;;
   welcome|Welcome|previewWelcome) extra=previewWelcome; label=welcome ;;
   authOptions|AuthOptions|previewAuthOptions) extra=previewAuthOptions; label=authOptions ;;
@@ -103,12 +108,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,41p' "$0"
+    sed -n '2,48p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets | widgetData | widgetZero" >&2
     exit 1
     ;;
 esac
@@ -123,7 +128,13 @@ fi
 echo "→ force-stop $PKG"
 "$ADB" shell am force-stop "$PKG" || true
 
-echo "→ start $ACTIVITY ($label / --ez $extra true)"
-"$ADB" shell am start -n "$ACTIVITY" --ez "$extra" true
+if [[ -n "${widget_data:-}" ]]; then
+  # The real widget reads this data; add it from the launcher (or PIN=1) to see it.
+  echo "→ start $ACTIVITY ($label / --es $extra $widget_data)"
+  "$ADB" shell am start -n "$ACTIVITY" --es "$extra" "$widget_data" --ez previewWidgetPin "$([[ "${PIN:-0}" == "1" ]] && echo true || echo false)"
+else
+  echo "→ start $ACTIVITY ($label / --ez $extra true)"
+  "$ADB" shell am start -n "$ACTIVITY" --ez "$extra" true
+fi
 
 echo "Done. Screencap: adb exec-out screencap -p > /tmp/inboxies-$label.png"
