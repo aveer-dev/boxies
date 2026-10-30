@@ -872,4 +872,14 @@ export const mailboxMigrations: Migration[] = [
             END;
         `),
 	},
+	{
+		// Send quota counts recipients, not messages (AVE-125): each send_log
+		// row carries its message's To + Cc + Bcc count. Rows already logged
+		// were one message each and count as 1. Additive only; numbered 44,
+		// after 43_reply_later_reminders.
+		name: "44_send_log_recipients",
+		sql: txn(`
+            ALTER TABLE send_log ADD COLUMN recipients INTEGER NOT NULL DEFAULT 1;
+        `),
+	},
 ];

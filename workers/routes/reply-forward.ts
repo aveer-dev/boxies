@@ -26,6 +26,7 @@ import {
 } from "../lib/email-helpers";
 import { rewriteSelfReplyTo } from "../../shared/reply-recipients";
 import { SendEmailRequestSchema } from "../lib/schemas";
+import { countRecipients, recipientCapError } from "../lib/send-quota";
 import { buildReplyEnvelope, plainTextToHtml } from "../../shared/reply-envelope";
 import { mailboxMetadataKey } from "../lib/mailbox-routing";
 import { z } from "zod";
@@ -45,7 +46,7 @@ import {
 type AppContext = Context<MailboxContext>;
 type SendEmailRequest = z.infer<typeof SendEmailRequestSchema>;
 type RateLimitStub = {
-	checkSendRateLimit: () => Promise<string | null>;
+	checkSendRateLimit: (recipients?: number) => Promise<string | null>;
 	releaseSendSlot: () => Promise<void>;
 };
 
@@ -181,6 +182,11 @@ async function sendReply(
 		throw e;
 	}
 
+	// 50 recipients at most (AVE-125). The schema checks /reply and /forward
+	// bodies; this also covers /quick-reply, whose body the Worker builds.
+	const tooMany = recipientCapError(to, cc, bcc);
+	if (tooMany) return c.json({ error: tooMany }, 400);
+
 	// Suppressed recipients block the send before a slot or Sent row exists.
 	const suppressed = await blockSuppressedSend(c, { fromEmail, to, cc, bcc });
 	if (suppressed) return suppressed;
@@ -195,8 +201,9 @@ async function sendReply(
 		throw e;
 	}
 
+	// The quota counts recipients (AVE-125).
 	const rateLimitError = await (stub as unknown as RateLimitStub)
-		.checkSendRateLimit();
+		.checkSendRateLimit(countRecipients(to, cc, bcc));
 	if (rateLimitError) {
 		return c.json({ error: rateLimitError }, 429);
 	}
@@ -338,8 +345,9 @@ export async function handleForwardEmail(c: AppContext) {
 		throw e;
 	}
 
+	// The quota counts recipients (AVE-125).
 	const rateLimitError = await (stub as unknown as RateLimitStub)
-		.checkSendRateLimit();
+		.checkSendRateLimit(countRecipients(to, cc, bcc));
 	if (rateLimitError) {
 		return c.json({ error: rateLimitError }, 429);
 	}

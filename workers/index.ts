@@ -43,6 +43,7 @@ import {
 	senderNameFromRawHeaders,
 } from "../shared/sender";
 import { SendEmailRequestSchema } from "./lib/schemas";
+import { countRecipients } from "./lib/send-quota";
 import { handleReplyEmail, handleForwardEmail, handleQuickReply } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
 import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
@@ -567,7 +568,8 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 		if (e instanceof OutboundSizeError) return c.json({ error: e.message }, 413);
 		throw e;
 	}
-	const rateLimitError = await (stub as any).checkSendRateLimit();
+	// The quota counts recipients (AVE-125); the schema already capped them at 50.
+	const rateLimitError = await (stub as any).checkSendRateLimit(countRecipients(to, cc, bcc));
 	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
 
 	if (!resolvedThreadId) {
@@ -1675,7 +1677,7 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 type AutomationStub = {
 	claimAutoReply: (sender: string) => Promise<boolean>;
 	releaseAutoReply: (sender: string) => Promise<void>;
-	checkSendRateLimit: () => Promise<string | null>;
+	checkSendRateLimit: (recipients?: number) => Promise<string | null>;
 	releaseSendSlot: () => Promise<void>;
 	createEmail: (
 		folder: string,
@@ -1804,7 +1806,8 @@ export async function sendInboundAutoReply(options: {
 		return;
 	}
 
-	const rateLimitError = await stub.checkSendRateLimit();
+	// One recipient: the sender being auto-replied to.
+	const rateLimitError = await stub.checkSendRateLimit(1);
 	if (rateLimitError) {
 		console.log(`Skipping auto-reply for ${mailboxId}: ${rateLimitError}`);
 		await stub.releaseAutoReply(sender).catch(() => {});
