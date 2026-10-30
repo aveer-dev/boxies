@@ -219,15 +219,7 @@ fun SignInView(
     var emailPastThreshold by remember { mutableStateOf(false) }
     var onboardingPastThreshold by remember { mutableStateOf(false) }
 
-    var apiBase by remember {
-        mutableStateOf(
-            if (AppConfig.apiBaseURL.contains("localhost") || AppConfig.apiBaseURL.contains("127.0.0.1") || AppConfig.apiBaseURL.contains("10.0.2.2")) {
-                BuildConfig.DEFAULT_API_BASE
-            } else {
-                AppConfig.apiBaseURL
-            }
-        )
-    }
+    var apiBase by remember { mutableStateOf(AppConfig.apiBaseURL) }
     val showDevLogin = BuildConfig.DEBUG && AppConfig.isLocalDevelopmentAPI
     var showDevConfig by remember {
         mutableStateOf(
@@ -241,7 +233,7 @@ fun SignInView(
 
     fun commitApiBase() {
         val trimmed = apiBase.trim()
-        if (trimmed.isEmpty() || trimmed.contains("localhost") || trimmed.contains("127.0.0.1") || trimmed.contains("10.0.2.2")) {
+        if (trimmed.isEmpty()) {
             apiBase = BuildConfig.DEFAULT_API_BASE
             AppConfig.apiBaseURL = BuildConfig.DEFAULT_API_BASE
             return
