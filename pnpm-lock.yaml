@@ -53,6 +53,9 @@ importers:
       '@phosphor-icons/react':
         specifier: ^2.1.10
         version: 2.1.10(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@simplewebauthn/browser':
+        specifier: 13.3.0
+        version: 13.3.0
       '@tanstack/react-query':
         specifier: ^5.99.0
         version: 5.101.4(react@19.2.8)

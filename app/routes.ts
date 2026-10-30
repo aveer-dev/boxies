@@ -19,6 +19,8 @@ export default [
 	route("onboarding", "routes/onboarding.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
 	route("extension/connect", "routes/extension-connect.tsx"),
+	// Mailbox-free settings links (account emails' "wasn't me" → /settings/sign-in).
+	route("settings/:page?", "routes/account-settings.tsx"),
 	// MCP OAuth consent; only the Worker's GET /authorize gives it data.
 	route("authorize", "routes/authorize.tsx"),
 	// Miller columns: each child route renders its own column(s); an optional

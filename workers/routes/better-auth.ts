@@ -24,11 +24,19 @@
  * Every route that checks a password also counts wrong ones per account
  * (`isAccountLocked` / `recordPasswordFailure`): the login in the body for
  * email sign-in, the signed-in user's email for the rest.
+ *
+ * Routes that change how the account is signed in to (adding or removing a
+ * passkey, linking or unlinking Apple/Google, changing the password) need a
+ * session that signed in or re-authenticated in the last 5 minutes (AVE-113,
+ * `auth/reauth.ts`): otherwise they answer 403 `reauth_required`. A change
+ * that went through mails a "was this you?" notice.
  */
 
 import { getAuth, AUTH_BASE_PATH } from "../auth";
 import { principalFromHeaders } from "../auth/principal";
 import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MANY } from "../auth/rate-limit";
+import { reauthGate } from "../auth/reauth";
+import { sendSecurityNotice, type SecurityChange } from "../auth/security-notice";
 import type { Env } from "../types";
 
 type RouteRule = {
@@ -44,7 +52,16 @@ type RouteRule = {
 	 * `auth/rate-limit.ts`), named by the body's `email` or the session.
 	 */
 	password?: "body-email" | "session";
+	/** Needs a freshly (re-)authenticated session (`auth/reauth.ts`). */
+	reauth?: boolean;
+	/** "Was this you?" mail after a 2xx answer. */
+	notice?: (body: Record<string, unknown> | null) => SecurityChange;
 };
+
+function providerOf(body: Record<string, unknown> | null): string {
+	const provider = body?.provider ?? body?.providerId;
+	return typeof provider === "string" ? provider : "a provider";
+}
 
 const ROUTES: Record<string, RouteRule> = {
 	"/sign-in/email": { methods: ["POST"], limit: "sign-in", password: "body-email" },
@@ -55,19 +72,34 @@ const ROUTES: Record<string, RouteRule> = {
 	"/revoke-session": { methods: ["POST"] },
 	"/revoke-sessions": { methods: ["POST"] },
 	"/revoke-other-sessions": { methods: ["POST"] },
-	"/change-password": { methods: ["POST"], limit: "sign-in", password: "session" },
-	"/link-social": { methods: ["POST"], idTokenOnly: true },
-	"/unlink-account": { methods: ["POST"] },
+	"/change-password": {
+		methods: ["POST"],
+		limit: "sign-in",
+		password: "session",
+		reauth: true,
+		notice: () => ({ kind: "password_changed" }),
+	},
+	"/link-social": {
+		methods: ["POST"],
+		idTokenOnly: true,
+		reauth: true,
+		notice: (body) => ({ kind: "sign_in_method_added", provider: providerOf(body) }),
+	},
+	"/unlink-account": {
+		methods: ["POST"],
+		reauth: true,
+		notice: (body) => ({ kind: "sign_in_method_removed", provider: providerOf(body) }),
+	},
 	"/list-accounts": { methods: ["GET"] },
 	"/update-user": { methods: ["POST"] },
 	// Passkeys (@better-auth/passkey).
-	"/passkey/generate-register-options": { methods: ["GET"] },
-	"/passkey/verify-registration": { methods: ["POST"] },
+	"/passkey/generate-register-options": { methods: ["GET"], reauth: true },
+	"/passkey/verify-registration": { methods: ["POST"], reauth: true, notice: () => ({ kind: "passkey_added" }) },
 	"/passkey/generate-authenticate-options": { methods: ["GET"], limit: "sign-in" },
 	"/passkey/verify-authentication": { methods: ["POST"], limit: "sign-in" },
 	"/passkey/list-user-passkeys": { methods: ["GET"] },
 	"/passkey/update-passkey": { methods: ["POST"] },
-	"/passkey/delete-passkey": { methods: ["POST"] },
+	"/passkey/delete-passkey": { methods: ["POST"], reauth: true, notice: () => ({ kind: "passkey_removed" }) },
 	// Two-factor (twoFactor plugin; TOTP only, so no /two-factor/*-otp routes).
 	"/two-factor/enable": { methods: ["POST"], limit: "sign-in", password: "session" },
 	"/two-factor/disable": { methods: ["POST"], limit: "sign-in", password: "session" },
@@ -89,7 +121,11 @@ async function isWrongPassword(response: Response): Promise<boolean> {
 	return typeof body?.code === "string" && WRONG_PASSWORD_CODES.has(body.code);
 }
 
-export async function handleBetterAuthRequest(env: Env, request: Request): Promise<Response> {
+export async function handleBetterAuthRequest(
+	env: Env,
+	request: Request,
+	ctx?: Pick<ExecutionContext, "waitUntil">,
+): Promise<Response> {
 	if (!env.AUTH_DB || !env.BETTER_AUTH_SECRET) return json({ error: "Not found" }, 404);
 	const path = new URL(request.url).pathname.slice(AUTH_BASE_PATH.length);
 	const rule = ROUTES[path];
@@ -105,10 +141,17 @@ export async function handleBetterAuthRequest(env: Env, request: Request): Promi
 		}
 	}
 	let accountEmail: string | null = null;
+	let userId: string | null = null;
 	if (!rule.scoped) {
 		const principal = await principalFromHeaders(env, request.headers);
 		if (principal?.scope) return json({ error: "This session can only manage private emails" }, 403);
 		if (rule.password === "session") accountEmail = principal?.email ?? null;
+		userId = principal?.userId ?? null;
+		// No session: Better Auth answers 401 itself.
+		if (rule.reauth && principal) {
+			const stale = await reauthGate(env, principal);
+			if (stale) return json(stale, 403);
+		}
 	}
 	if (rule.password === "body-email") {
 		const body = (await request.clone().json().catch(() => null)) as { email?: unknown } | null;
@@ -116,7 +159,17 @@ export async function handleBetterAuthRequest(env: Env, request: Request): Promi
 	}
 	if (accountEmail && (await isAccountLocked(env, accountEmail))) return json(TOO_MANY, 429);
 
+	const noticeBody = rule.notice
+		? ((await request.clone().json().catch(() => null)) as Record<string, unknown> | null)
+		: null;
 	const response = await getAuth(env).handler(request);
 	if (accountEmail && (await isWrongPassword(response))) await recordPasswordFailure(env, accountEmail);
+	if (rule.notice && userId && response.ok) {
+		const sending = sendSecurityNotice(env, { userId, requestUrl: request.url, change: rule.notice(noticeBody) }).catch((e) =>
+			console.error("[Auth] Security notice failed:", (e as Error).message || e),
+		);
+		if (ctx) ctx.waitUntil(sending);
+		else await sending;
+	}
 	return response;
 }

@@ -106,7 +106,7 @@ app.use("*", async (c, next) => httpsRedirect(c.req.raw) ?? next());
 app.use("*", async (c, next) => webHostRedirect(c.env, c.req.raw) ?? next());
 
 // Better Auth (AUTH_DB): an allowlisted subset of its routes.
-app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw));
+app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw, c.executionCtx));
 
 // CSP violation reports (AVE-148): browsers send them without cookies, so
 // this is public. Logged only, size-capped, nothing stored.

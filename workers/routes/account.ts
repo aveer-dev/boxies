@@ -31,6 +31,8 @@ import { consumeCheckoutExchangeCode } from "../auth/checkout-exchange";
 import { consumeLinkToken, consumeOtp, issueLinkToken, issueOtp, revokeLinkTokens } from "../auth/otp";
 import { userKey, type RequestPrincipal } from "../auth/principal";
 import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MANY } from "../auth/rate-limit";
+import { isReauthFresh, reauthGate, recordReauth } from "../auth/reauth";
+import { securityNoticeRecipients, sendSecurityNotice, type SecurityChange } from "../auth/security-notice";
 import * as schema from "../auth/schema";
 import {
 	clearSessionCookieHeader,
@@ -68,6 +70,30 @@ const GENERIC_FORGOT_REPLY = {
 
 export function requirePrincipal(c: C): RequestPrincipal | null {
 	return c.get("principal") ?? null;
+}
+
+/**
+ * Sensitive changes need a session that signed in or re-authenticated in the
+ * last 5 minutes (AVE-113, `auth/reauth.ts`). Returns the 403 to send, or
+ * null to go ahead.
+ */
+async function requireFreshSession(c: C, principal: RequestPrincipal): Promise<Response | null> {
+	const body = await reauthGate(c.env, principal);
+	return body ? c.json(body, 403) : null;
+}
+
+/** Mail the "was this you?" notice after the response (`auth/security-notice.ts`). */
+function notifySecurityChange(
+	c: C,
+	userId: string,
+	change: SecurityChange,
+	opts: { extra?: (string | null | undefined)[]; recipients?: string[]; login?: string } = {},
+): void {
+	c.executionCtx.waitUntil(
+		sendSecurityNotice(c.env, { userId, requestUrl: c.req.url, change, ...opts }).catch((e) =>
+			console.error("[Auth] Security notice failed:", (e as Error).message || e),
+		),
+	);
 }
 
 /**
@@ -628,7 +654,13 @@ export function registerAccountRoutes(app: App) {
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
 		const body = (await c.req.json().catch(() => ({}))) as { confirm?: string };
 		if (body.confirm !== "DELETE") return c.json({ error: 'Confirm with { "confirm": "DELETE" }' }, 400);
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
+		// Addresses first: the user row and their sole-owned mailboxes go away.
+		const user = await findUserById(authDb(c.env.AUTH_DB), principal.userId);
+		const recipients = user ? await securityNoticeRecipients(c.env, user, { skipHostedLogin: true }) : [];
 		const result = await deleteUserAccount(c.env, principal.userId);
+		if (user) notifySecurityChange(c, user.id, { kind: "account_deleted" }, { recipients, login: user.email });
 		c.header("Set-Cookie", await clearSessionCookieHeader(c.env));
 		return c.json({ ok: true, ...result });
 	});
@@ -748,6 +780,8 @@ export function registerAccountRoutes(app: App) {
 		if (await isHostedEmailDomain(c.env, email)) {
 			return c.json({ error: "Use an address outside Inboxies for account recovery" }, 400);
 		}
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
 		if (
 			(await isRateLimited(c.env, "otp-send", principal.userId)) ||
 			(await isRateLimited(c.env, "otp-send", email))
@@ -755,6 +789,11 @@ export function registerAccountRoutes(app: App) {
 			return c.json(TOO_MANY, 429);
 		}
 		const db = authDb(c.env.AUTH_DB);
+		const previous = await db
+			.select()
+			.from(schema.recoveryEmail)
+			.where(eq(schema.recoveryEmail.userId, principal.userId))
+			.get();
 		await db
 			.insert(schema.recoveryEmail)
 			.values({ userId: principal.userId, email, verifiedAt: null })
@@ -766,6 +805,14 @@ export function registerAccountRoutes(app: App) {
 		if (!otp.ok) return c.json({ error: "A code was just sent. Wait a minute before asking again." }, 429);
 		const mail = codeEmail({ purposeLine: "Confirm this address as your Inboxies recovery email.", code: otp.code });
 		await sendSystemEmail(c.env, { to: email, subject: "Your Inboxies verification code", ...mail });
+		// A resend to the same unconfirmed address changes nothing worth telling.
+		if (!previous || previous.email !== email || previous.verifiedAt) {
+			// The replaced address hears about it too, even though it no longer
+			// gets reset codes.
+			notifySecurityChange(c, principal.userId, { kind: "recovery_email_set", email }, {
+				extra: [previous?.verifiedAt ? previous.email : null],
+			});
+		}
 		return c.json({ ok: true, email, verified: false, ...(isDevRuntime() ? { devCode: otp.code } : {}) });
 	});
 
@@ -807,7 +854,18 @@ export function registerAccountRoutes(app: App) {
 				400,
 			);
 		}
-		await authDb(c.env.AUTH_DB).delete(schema.recoveryEmail).where(eq(schema.recoveryEmail.userId, principal.userId));
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
+		const removed = await authDb(c.env.AUTH_DB)
+			.delete(schema.recoveryEmail)
+			.where(eq(schema.recoveryEmail.userId, principal.userId))
+			.returning({ email: schema.recoveryEmail.email, verifiedAt: schema.recoveryEmail.verifiedAt });
+		const was = removed[0];
+		if (was) {
+			notifySecurityChange(c, principal.userId, { kind: "recovery_email_removed" }, {
+				extra: [was.verifiedAt ? was.email : null],
+			});
+		}
 		return c.json({ ok: true });
 	});
 
@@ -846,13 +904,18 @@ export function registerAccountRoutes(app: App) {
 		const db = authDb(c.env.AUTH_DB);
 		const user = await findUserById(db, principal.userId);
 		if (!user) return c.json({ error: "Unauthorized" }, 401);
+		if (body.provider !== "password" && body.provider !== "apple" && body.provider !== "google") {
+			return c.json({ error: "provider must be apple, google or password" }, 400);
+		}
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
 
 		if (body.provider === "password") {
 			if (await hasPassword(db, user.id)) return c.json({ error: "This account already has a password" }, 409);
 			const strength = validatePasswordStrength(body.password ?? "");
 			if (strength) return c.json({ error: strength }, 400);
 			await setUserPassword(db, user.id, body.password!);
-		} else if (body.provider === "apple" || body.provider === "google") {
+		} else {
 			const token = body.provider === "apple" ? body.identityToken ?? body.idToken : body.idToken ?? body.identityToken;
 			if (!token) return c.json({ error: "An identity token is required" }, 400);
 			try {
@@ -879,9 +942,12 @@ export function registerAccountRoutes(app: App) {
 					}),
 				);
 			}
-		} else {
-			return c.json({ error: "provider must be apple, google or password" }, 400);
 		}
+		notifySecurityChange(
+			c,
+			user.id,
+			body.provider === "password" ? { kind: "password_added" } : { kind: "sign_in_method_added", provider: body.provider },
+		);
 		return c.json({
 			ok: true,
 			isAdmin: await isAdminUser(db, user.id),
@@ -900,6 +966,13 @@ export function registerAccountRoutes(app: App) {
 		if (await isRateLimited(c.env, "sign-in", principal.userId)) return c.json(TOO_MANY, 429);
 		if (await isAccountLocked(c.env, principal.email)) return c.json(TOO_MANY, 429);
 		const db = authDb(c.env.AUTH_DB);
+		// The current password is the re-auth proof on its own, unless 2FA is
+		// on: then the session must be fresh (password + code at /me/reauth).
+		const fresh = await isReauthFresh(db, principal);
+		if (!fresh && (await findUserById(db, principal.userId))?.twoFactorEnabled) {
+			const stale = await requireFreshSession(c, principal);
+			if (stale) return stale;
+		}
 		const credential = await db
 			.select({ password: schema.account.password })
 			.from(schema.account)
@@ -910,10 +983,12 @@ export function registerAccountRoutes(app: App) {
 			await recordPasswordFailure(c.env, principal.email);
 			return c.json({ error: "Current password is incorrect" }, 403);
 		}
+		if (!fresh) await recordReauth(db, principal);
 		const strength = validatePasswordStrength(parsed.data.newPassword);
 		if (strength) return c.json({ error: strength }, 400);
 		await setUserPassword(db, principal.userId, parsed.data.newPassword);
 		await revokeUserSessions(c.env, principal.userId, { exceptSessionId: principal.sessionId });
+		notifySecurityChange(c, principal.userId, { kind: "password_changed" });
 		const user = await findUserById(db, principal.userId);
 		return c.json({ ok: true, identities: user ? await listIdentities(db, user.id, user) : [] });
 	});
@@ -922,6 +997,8 @@ export function registerAccountRoutes(app: App) {
 	app.delete("/api/v1/me/identities/:type", async (c) => {
 		const principal = requirePrincipal(c);
 		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		const stale = await requireFreshSession(c, principal);
+		if (stale) return stale;
 		const type = c.req.param("type");
 		const providerId = type === "password" ? "credential" : type;
 		const db = authDb(c.env.AUTH_DB);
@@ -940,6 +1017,7 @@ export function registerAccountRoutes(app: App) {
 			await deleteAppleTokens(db, principal.userId);
 		}
 		for (const a of target) await db.delete(schema.account).where(eq(schema.account.id, a.id));
+		notifySecurityChange(c, principal.userId, { kind: "sign_in_method_removed", provider: type });
 		return c.json({ ok: true });
 	});
 
