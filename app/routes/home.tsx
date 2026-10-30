@@ -25,6 +25,7 @@ import {
 } from "~/queries/mailboxes";
 import { queryKeys } from "~/queries/keys";
 import { signOut } from "~/lib/sign-out";
+import { mailboxHref } from "shared/mailbox-url";
 import {
 	forgetLastMailbox,
 	pickRememberedMailbox,
@@ -70,18 +71,18 @@ export default function HomeRoute() {
 		() => (showAllMailboxes || !mailboxesLoaded ? null : readLastMailbox(me?.userId)),
 		[showAllMailboxes, mailboxesLoaded, me?.userId],
 	);
-	const restoreTarget = pickRememberedMailbox(
-		rememberedMailboxId,
-		mailboxes.map((m) => m.id),
-	);
+	const mailboxIds = mailboxes.map((m) => m.id);
+	const restoreTarget = pickRememberedMailbox(rememberedMailboxId, mailboxIds);
+	// Mailbox URLs name the mailbox by its index, never its address (AVE-126).
+	const restoreHref = restoreTarget ? mailboxHref(restoreTarget, mailboxIds) : null;
 	useEffect(() => {
-		if (restoreTarget) {
-			navigate(`/mailbox/${encodeURIComponent(restoreTarget)}`, { replace: true });
+		if (restoreHref) {
+			navigate(restoreHref, { replace: true });
 		} else if (rememberedMailboxId) {
 			// No longer one of the user's mailboxes: fall back to the list.
 			forgetLastMailbox(me?.userId);
 		}
-	}, [restoreTarget, rememberedMailboxId, me?.userId, navigate]);
+	}, [restoreHref, rememberedMailboxId, me?.userId, navigate]);
 
 	const { data: adminDomainsData } = useQuery({
 		queryKey: ["admin-domains"],
@@ -268,7 +269,7 @@ export default function HomeRoute() {
 						{accounts.map((account, idx) => (
 							<RouterLink
 								key={account.id}
-								to={`/mailbox/${account.id}`}
+								to={mailboxHref(account.id, mailboxIds) ?? "/"}
 								className={`group flex items-center gap-4 px-5 py-4 no-underline transition-colors hover:bg-kumo-tint ${
 									idx > 0 ? "border-t border-kumo-line" : ""
 								}`}

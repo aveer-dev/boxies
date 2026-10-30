@@ -5,7 +5,8 @@
 import { Button, Dialog, useKumoToastManager } from "@cloudflare/kumo";
 import { Modal, ModalHeader } from "~/components/Modal";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { useListFolderId } from "~/hooks/useListFolder";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { Folders, FOLDER_DISPLAY_NAMES, isPurposeFolderId } from "shared/folders";
 import { rewriteSelfReplyTo } from "shared/reply-recipients";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
@@ -66,9 +67,10 @@ export default function EmailPanel({
 	/** Shown in the pop-out sheet (AVE-29) rather than a column. */
 	inPopOut?: boolean;
 }) {
-	const params = useParams<{ mailboxId: string; folder: string }>();
-	const mailboxId = propMailboxId || params.mailboxId;
-	const folder = propFolder || params.folder;
+	const listFolder = useListFolderId();
+	const routeMailboxId = useMailboxId();
+	const mailboxId = propMailboxId || routeMailboxId;
+	const folder = propFolder || listFolder || undefined;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: threadRepliesRaw } = useThreadReplies(mailboxId, email?.thread_id) as {
 		data?: Email[];
