@@ -44,6 +44,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -116,6 +118,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.platform.LocalDensity
@@ -280,9 +283,17 @@ fun SignInView(
         label = "heroProgress",
     )
 
-    val authRevealHeightDp = 300.dp
     val density = LocalDensity.current
-    val authRevealHeightPx = with(density) { authRevealHeightDp.toPx() }
+    // The welcome card lifts at least 300.dp, and further when the auth column is taller
+    // (Apple-account hint, DEBUG dev login), so it never covers "Get started".
+    var authColumnHeightPx by remember { mutableIntStateOf(0) }
+    val navigationBarBottomPx = WindowInsets.navigationBars.getBottom(density)
+    val authRevealHeightPx = with(density) {
+        maxOf(
+            300.dp.toPx(),
+            authColumnHeightPx + navigationBarBottomPx + (16.dp + 20.dp).toPx(),
+        )
+    }
 
     val welcomeOffsetYAnimated by animateFloatAsState(
         targetValue = if (isAuthRevealed) -authRevealHeightPx else 0f,
@@ -360,7 +371,9 @@ fun SignInView(
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onSizeChanged { authColumnHeightPx = it.height },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -440,24 +453,24 @@ fun SignInView(
                         )
                     }
 
-                    // Secondary: Apple & Google side-by-side as liquid glass capsule buttons
+                    // Secondary: Apple, Google and passkey side-by-side as liquid glass capsule buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        // Apple button (Black logo only, liquid glass capsule)
-                        Box(
+                        // Apple button (logo only, liquid glass capsule). Android has no Apple sign-in
+                        // yet, so the capsule shows only where it does something: the DEBUG dev login
+                        // against a local API. Release builds show Google and passkey only (AVE-130).
+                        if (showDevLogin) Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(50.dp)
                                 .liquidGlass(CircleShape)
                                 .clip(CircleShape)
                                 .clickable {
-                                    if (showDevLogin) {
-                                        scope.launch {
-                                            commitApiBase()
-                                            auth.signInDev()
-                                        }
+                                    scope.launch {
+                                        commitApiBase()
+                                        auth.signInDev()
                                     }
                                 },
                             contentAlignment = Alignment.Center,
@@ -547,6 +560,17 @@ fun SignInView(
                             )
                         }
                     }
+
+                    // Apple-only accounts have no way in on Android yet: point them at a method
+                    // they can add elsewhere (web/iOS Settings → add a password or passkey).
+                    Text(
+                        "Signed up with Apple? Sign in on the web or iPhone, then add a password or passkey in Settings.",
+                        fontFamily = InterFontFamily,
+                        fontSize = 12.sp,
+                        color = colors.muted,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
 
                     if (showDevLogin) {
                         TextButton(
