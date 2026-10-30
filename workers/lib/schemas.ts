@@ -76,6 +76,8 @@ export interface AttachmentInfo {
 	size: number;
 	content_id?: string | null;
 	disposition?: string | null;
+	/** Program, script, disk image or macro document (AVE-114); clients warn before download. */
+	dangerous?: boolean;
 }
 
 // ── Zod Schemas ────────────────────────────────────────────────────

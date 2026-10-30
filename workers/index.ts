@@ -46,6 +46,7 @@ import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail, handleQuickReply } from "./routes/reply-forward";
 import { Folders, SYSTEM_FOLDER_IDS } from "../shared/folders";
 import { inboxSectionTotal, parseInboxSectionQuery } from "../shared/list-sections";
+import { attachmentResponseHeaders } from "../shared/attachment-risk";
 import {
 	AUTO_CONVERSATION_ID,
 	agentInstanceName,
@@ -1627,11 +1628,8 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 	if (!attachment) return c.json({ error: "Attachment not found" }, 404);
 	const obj = await c.env.BUCKET.get(attachmentKey(emailId, attachmentId, attachment.filename));
 	if (!obj) return c.json({ error: "Attachment file not found" }, 404);
-	const headers = new Headers();
-	headers.set("Content-Type", attachment.mimetype);
-	const sanitized = attachment.filename.replace(/[\x00-\x1f"\\]/g, "_");
-	headers.set("Content-Disposition", `attachment; filename="${sanitized}"; filename*=UTF-8''${encodeURIComponent(attachment.filename)}`);
-	return new Response(obj.body, { headers });
+	// Always a download, never rendered: see shared/attachment-risk.ts (AVE-114).
+	return new Response(obj.body, { headers: attachmentResponseHeaders(attachment) });
 });
 
 // -- Receive inbound email ------------------------------------------

@@ -470,6 +470,8 @@ export interface Attachment {
 	size: number;
 	content_id?: string;
 	disposition?: string;
+	/** Program, script, disk image or macro document (AVE-114): warn before download. */
+	dangerous?: boolean;
 }
 
 export interface Folder {
