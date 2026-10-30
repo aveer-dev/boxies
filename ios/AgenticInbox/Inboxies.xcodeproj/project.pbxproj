@@ -73,6 +73,7 @@
 		6CA4B65B3CF144644AF4EB1A /* ComposeSheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D9BCCA2D7465A3A3E00D1BC /* ComposeSheetView.swift */; };
 		6D12A46B63106251C99390BB /* EmailListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E51724FD6B45BEDFE570B2A8 /* EmailListView.swift */; };
 		6F17F8B8217404E90E12A455 /* StickyNotesLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3CF55DA7504567B5E8D8CB4 /* StickyNotesLayer.swift */; };
+		B4A61C19CD723FD2B3345367 /* SuppressionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0BFFF943A2EB8B1755ED08 /* SuppressionsSettingsView.swift */; };
 		70FD6A8944FFB04CF64D387B /* AutoReplySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 273A93AC90119EF2F433C2D5 /* AutoReplySettingsView.swift */; };
 		71896C3C5A158905BB63AA41 /* ThreadNotesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5A9689D0BB46A6D36E54F81 /* ThreadNotesTests.swift */; };
 		735E1C05C28F1E399465E7C4 /* ThemeMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 168D2CAE4DACFFB82CF3CA0B /* ThemeMode.swift */; };
@@ -267,6 +268,7 @@
 		CAD6F28F3D52BDF30B14FA46 /* PendingSendStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingSendStore.swift; sourceTree = "<group>"; };
 		CBE6FBAD12807A14146DD27D /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		CCD95D2B6409E0F2FA0959D7 /* Inter-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Inter-Bold.ttf"; sourceTree = "<group>"; };
+		CE0BFFF943A2EB8B1755ED08 /* SuppressionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuppressionsSettingsView.swift; sourceTree = "<group>"; };
 		CF4FD5C59586C8DB4C992196 /* AppleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignIn.swift; sourceTree = "<group>"; };
 		CF9E023F2D3695A19FF9DC25 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D15D212B8760486348D4206E /* PrivateEmailIdentities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivateEmailIdentities.swift; sourceTree = "<group>"; };
@@ -456,6 +458,7 @@
 				789C13DE076FDF45C432F26B /* SettingsSheetView.swift */,
 				F15ED9A63F7F7DC5C3405A9C /* SharingSettingsView.swift */,
 				B9003AA3BAEDF7626B89A4FC /* SignInMethodsSettingsView.swift */,
+				CE0BFFF943A2EB8B1755ED08 /* SuppressionsSettingsView.swift */,
 				8F4A9BE28CD5C12A238585ED /* SwipeSettingsView.swift */,
 				2A2645A47707A5FB83AB692C /* ThemeSettingsView.swift */,
 			);
@@ -843,6 +846,7 @@
 				DDD0D7757CBEBB4D166EE59D /* SignInView.swift in Sources */,
 				F96094F83B37222A8FD02A81 /* SplashScreenView.swift in Sources */,
 				6F17F8B8217404E90E12A455 /* StickyNotesLayer.swift in Sources */,
+				B4A61C19CD723FD2B3345367 /* SuppressionsSettingsView.swift in Sources */,
 				5510A17A43A4EE36F6302D8D /* SwipeActionPreferences.swift in Sources */,
 				3DC940505BA0CE48B10AD127 /* SwipeSettingsView.swift in Sources */,
 				7B7D0DD6B5B25BDC18FE5ED1 /* TextFlowLayout.swift in Sources */,

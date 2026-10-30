@@ -209,6 +209,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Devices & sessions | `previewSessions` | `sessions` | Session list |
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
+| Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |

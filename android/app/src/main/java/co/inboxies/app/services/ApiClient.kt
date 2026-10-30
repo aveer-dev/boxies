@@ -1235,6 +1235,13 @@ class ApiClient private constructor() {
         )
     }
 
+    /** The bounce / complaint suppressions this mailbox can see (AVE-37 / AVE-157). */
+    suspend fun listSuppressions(mailboxId: String): SuppressionList {
+        val obj = request<JsonObject>("/api/v1/mailboxes/${pathEncode(mailboxId)}/suppressions")
+        return BounceSuppression.list(obj)
+            ?: throw ApiException.Decoding(IllegalStateException("Not a suppression list"))
+    }
+
     /**
      * Lifts a bounce / complaint suppression (AVE-37). 404 means it is already gone;
      * 403 `suppression_not_manageable` means only a domain admin can lift it.

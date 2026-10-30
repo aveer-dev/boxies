@@ -33,6 +33,8 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     Senders("senders", "previewSenders"),
     /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */
     SendersBlocked("sendersBlocked", "previewSendersBlocked"),
+    /** Settings → Outgoing mail → Bounced addresses with fixture rows (iOS `-previewSuppressions`, AVE-157). */
+    Suppressions("suppressions", "previewSuppressions"),
     /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
     Settings("settings", "previewSettings"),
     /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */
