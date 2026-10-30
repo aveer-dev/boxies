@@ -108,8 +108,9 @@ enum KeychainStore {
     }()
 
     /// Readable after the first unlock so background push sync works while the
-    /// device is locked.
-    private static let accessibility = kSecAttrAccessibleAfterFirstUnlock
+    /// device is locked, and never migrated: items are left out of backups and
+    /// don't restore onto another device, so a restored device signs in again.
+    static let accessibility = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 
     private static func groupName(_ group: Group) -> String? {
         switch group {
@@ -138,12 +139,20 @@ enum KeychainStore {
         let name = groupName(group)
         // With a group name, look only there: a group-less query would also
         // match the same key in the other group.
-        let item = name.flatMap { readItem(baseQuery(key, group: $0)) }
-            ?? (name == nil || !entitled ? readItem(baseQuery(key, group: nil)) : nil)
-        guard let item, let value = String(data: item.data, encoding: .utf8) else { return nil }
-        // Items saved by older builds used the default (WhenUnlocked) class; re-save once.
+        var found = name.map { baseQuery(key, group: $0) }
+        var item = found.flatMap(readItem)
+        if item == nil, name == nil || !entitled {
+            found = baseQuery(key, group: nil)
+            item = found.flatMap(readItem)
+        }
+        guard let found, let item, let value = String(data: item.data, encoding: .utf8) else { return nil }
+        // Items saved by older builds used another class (WhenUnlocked, or
+        // AfterFirstUnlock, which backups carry to other devices). Change it
+        // in place so the token is never deleted; on failure the old item
+        // stays readable and the next read retries.
         if item.accessible != (accessibility as String) {
-            write(key, value: value, in: group)
+            let update = [kSecAttrAccessible as String: accessibility]
+            SecItemUpdate(found as CFDictionary, update as CFDictionary)
         }
         return value
     }
