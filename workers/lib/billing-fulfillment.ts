@@ -99,7 +99,10 @@ export interface BillingSessionRecord {
 	createdAt: string;
 	updatedAt: string;
 	error?: string;
-	/** Set once checkout-return has handed out the owner session; never mint twice. */
+	/**
+	 * Set once checkout-return has handed out the owner session (web cookie) or its
+	 * one-time exchange code (mobile); never mint twice.
+	 */
 	tokenIssuedAt?: string;
 	/** Registrar result, kept so a webhook retry never pays for the domain twice. */
 	registration?: Awaited<ReturnType<typeof registerDomain>>;

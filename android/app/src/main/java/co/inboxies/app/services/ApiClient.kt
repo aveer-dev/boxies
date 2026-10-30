@@ -58,6 +58,7 @@ import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.MailboxSettings
 import co.inboxies.app.models.MeResponse
 import co.inboxies.app.models.PasswordLoginResponse
+import co.inboxies.app.models.CheckoutExchangeResponse
 import co.inboxies.app.models.ResetPasswordResponse
 import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.models.MailboxInviteRow
@@ -598,6 +599,21 @@ class ApiClient private constructor() {
         body = buildJsonObject {
             put("email", email)
             put("password", password)
+        },
+        authed = false,
+    )
+
+    /**
+     * Trades the one-time `code` from the Stripe checkout return link, plus the checkout
+     * session id this app started, for the new owner's session (AVE-118). A wrong, used
+     * or expired code answers 400.
+     */
+    suspend fun exchangeCheckoutCode(code: String, sessionId: String): CheckoutExchangeResponse = request(
+        "/api/v1/auth/exchange",
+        method = "POST",
+        body = buildJsonObject {
+            put("code", code)
+            put("sessionId", sessionId)
         },
         authed = false,
     )

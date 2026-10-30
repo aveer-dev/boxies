@@ -27,6 +27,7 @@ import { isHostedEmailDomain } from "../auth/hooks";
 import { deleteLegacyIdentityForUser } from "../auth/migrate";
 import { appBaseUrl, codeEmail, sendSystemEmail } from "../auth/mail";
 import { deleteMailboxRows, pruneDeviceTokensToMembership } from "../auth/mailboxes";
+import { consumeCheckoutExchangeCode } from "../auth/checkout-exchange";
 import { consumeLinkToken, consumeOtp, issueLinkToken, issueOtp, revokeLinkTokens } from "../auth/otp";
 import { userKey, type RequestPrincipal } from "../auth/principal";
 import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MANY } from "../auth/rate-limit";
@@ -44,6 +45,7 @@ import {
 	verifiedRecoveryEmail,
 	type MintedSession,
 } from "../auth/users";
+import { loadBillingSession } from "../lib/billing-fulfillment";
 import { isDevRuntime } from "../lib/dev-runtime";
 import { purgeEmailAgents } from "../lib/email-agent";
 import { getMailboxStub } from "../lib/email-helpers";
@@ -319,6 +321,10 @@ const TwoFactorVerifyBody = z.object({
 	code: z.string().trim().min(1).max(64),
 	method: z.enum(["totp", "backup_code"]).default("totp"),
 });
+const ExchangeBody = z.object({
+	code: z.string().trim().min(1).max(128),
+	sessionId: z.string().trim().min(1).max(256),
+});
 const ForgotBody = z.object({ email: z.string().email() });
 const ResetBody = z.object({
 	token: z.string().optional(),
@@ -425,6 +431,35 @@ export function registerAccountRoutes(app: App) {
 			if (apiErrorCode(e) === "INVALID_EMAIL_OR_PASSWORD") await recordPasswordFailure(c.env, email);
 			return c.json({ error: "Invalid email or password" }, 401);
 		}
+	});
+
+	/**
+	 * Mobile Stripe checkout return (AVE-118): trade the one-time `code` from the
+	 * `inboxies://onboarding/domain-ready` link, plus the checkout session id the
+	 * app started, for the owner's session. A code redeems once, within 60s, and
+	 * only with its own checkout. Answers like `/api/v1/auth/password`, plus
+	 * `mailboxId`. Wrong, used or expired → 400 `EXCHANGE_INVALID` (the app falls
+	 * back to sign-in).
+	 */
+	app.post("/api/v1/auth/exchange", async (c) => {
+		if (await isRateLimited(c.env, "sign-in", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
+		const parsed = ExchangeBody.safeParse(await c.req.json().catch(() => ({})));
+		if (!parsed.success) return c.json({ error: "code and sessionId are required" }, 400);
+		const invalid = () =>
+			c.json({ error: "This sign-in link has expired. Sign in with your email and password.", code: "EXCHANGE_INVALID" }, 400);
+		const db = authDb(c.env.AUTH_DB);
+		const { sessionId, code } = parsed.data;
+		const redeemed = await consumeCheckoutExchangeCode(db, sessionId, code);
+		if (!redeemed) return invalid();
+		// The checkout must still name this owner, and have handed out its one code.
+		const record = await loadBillingSession(c.env.BUCKET, sessionId);
+		if (!record?.tokenIssuedAt || record.ownerUserId !== redeemed.userId || record.mailboxId !== redeemed.mailboxId) {
+			return invalid();
+		}
+		const owner = await findUserById(db, redeemed.userId);
+		if (!owner || owner.email !== redeemed.mailboxId) return invalid();
+		const session = await createSessionForUser(c.env, owner.id, { headers: c.req.raw.headers });
+		return c.json({ ...(await sessionResponseFields(c.env, session, owner)), mailboxId: redeemed.mailboxId });
 	});
 
 	/**

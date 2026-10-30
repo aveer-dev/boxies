@@ -505,6 +505,18 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Trades the one-time `code` from the Stripe checkout return link, plus the
+    /// checkout session id this app started, for the new owner's session (AVE-118).
+    /// A wrong, used or expired code answers 400.
+    func exchangeCheckoutCode(code: String, sessionId: String) async throws -> CheckoutExchangeResponse {
+        try await request(
+            path: "/api/v1/auth/exchange",
+            method: "POST",
+            body: ["code": code, "sessionId": sessionId],
+            authed: false
+        )
+    }
+
     func forgotPassword(email: String) async throws -> ForgotPasswordResponse {
         try await request(
             path: "/api/v1/auth/password/forgot",
