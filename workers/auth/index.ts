@@ -148,6 +148,11 @@ export function createAuth(env: Env) {
 		session: {
 			expiresIn: 30 * DAY_SECONDS,
 			updateAge: DAY_SECONDS,
+			// Better Auth's own freshness check (session created < 1 day ago,
+			// on passkey registration and unlink) is off: those routes need our
+			// stricter 5-minute re-auth instead (`auth/reauth.ts`), which a
+			// session of any age can pass by confirming it's the user again.
+			freshAge: 0,
 			additionalFields: {
 				// Set only by our own routes (extension / AutoFill tokens).
 				scope: { type: "string", required: false, input: false },
