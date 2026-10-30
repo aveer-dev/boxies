@@ -16,6 +16,10 @@ const CHECK_ICON =
 
 let currentHost = null;
 let lastCreated = null;
+// A just-created address animates in only on the renders right after creating it.
+let lastCreatedAt = 0;
+const FRESH_MS = 1500;
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 let apiUrlEdited = false;
 
 function send(message) {
@@ -59,28 +63,54 @@ function copyButton(email) {
 	return button;
 }
 
-/** Rows of { email, sub } with a copy button each. */
+/** Soft opacity crossfade when a value the user is watching changes (e.g. the site on tab switch). */
+function setTextSoftly(el, text) {
+	if (el.textContent === text) return;
+	const hadText = el.textContent !== "";
+	el.textContent = text;
+	if (hadText && !reducedMotion.matches && el.animate) {
+		el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "cubic-bezier(0.23, 1, 0.32, 1)" });
+	}
+}
+
+function emailRow(item) {
+	const li = document.createElement("li");
+	li.dataset.email = item.email;
+	if (item.email === lastCreated && Date.now() - lastCreatedAt < FRESH_MS) {
+		li.className = "fresh";
+		// Drop the class once the entrance and wash have played, so a later move can't replay them.
+		setTimeout(() => li.classList.remove("fresh"), 2000);
+	}
+	const text = document.createElement("div");
+	text.className = "text";
+	const email = document.createElement("div");
+	email.className = "email";
+	email.textContent = item.email;
+	const sub = document.createElement("div");
+	sub.className = "sub";
+	text.append(email, sub);
+	li.append(text, copyButton(item.email));
+	return li;
+}
+
+/**
+ * Rows of { email, sub } with a copy button each. Rows are kept by address across
+ * re-renders (the panel re-renders on every tab switch), so an entrance plays once
+ * and a copy button's "copied" check isn't wiped mid-feedback.
+ */
 function renderEmails(list, items) {
-	list.replaceChildren(
-		...items.map((item) => {
-			const li = document.createElement("li");
-			if (item.email === lastCreated) li.className = "fresh";
-			const text = document.createElement("div");
-			text.className = "text";
-			const email = document.createElement("div");
-			email.className = "email";
-			email.textContent = item.email;
-			text.appendChild(email);
-			if (item.sub) {
-				const sub = document.createElement("div");
-				sub.className = "sub";
-				sub.textContent = item.sub;
-				text.appendChild(sub);
-			}
-			li.append(text, copyButton(item.email));
-			return li;
-		}),
-	);
+	const existing = new Map([...list.children].map((li) => [li.dataset.email, li]));
+	items.forEach((item, index) => {
+		const li = existing.get(item.email) || emailRow(item);
+		existing.delete(item.email);
+		const sub = li.querySelector(".sub");
+		sub.textContent = item.sub || "";
+		sub.hidden = !item.sub;
+		// Only touch the DOM when the row isn't already in place: re-inserting restarts its CSS animations.
+		const at = list.children[index];
+		if (at !== li) list.insertBefore(li, at || null);
+	});
+	for (const stale of existing.values()) stale.remove();
 }
 
 /** Hostname of the active tab in this window, or null for non-web pages. */
@@ -160,7 +190,7 @@ async function render() {
 	const aliases = res?.ok && Array.isArray(res.aliases) ? res.aliases : [];
 	const showMailbox = status.mailboxes.length > 1;
 
-	$("siteHost").textContent = res?.site || host || "No website open";
+	setTextSoftly($("siteHost"), res?.site || host || "No website open");
 	showText(
 		$("siteEmpty"),
 		aliases.length ? "" : host ? "No private email for this site yet." : "Open a website to create a private email for it.",
@@ -224,6 +254,7 @@ $("create").addEventListener("click", async () => {
 	button.textContent = "Create private email";
 	if (res?.ok) {
 		lastCreated = res.email;
+		lastCreatedAt = Date.now();
 		const copied = await copyToClipboard(res.email);
 		showText($("createStatus"), copied ? `Created and copied ${res.email}` : `Created ${res.email}`);
 	} else if (res?.error !== "session_expired" && res?.error !== "not_connected") {

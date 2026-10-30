@@ -133,10 +133,12 @@
 					border-radius: 9999px; border: 1px solid var(--border); background: var(--control); color: var(--text);
 					font: 500 12px/1 var(--font); font-feature-settings: "cv11", "ss01"; -webkit-font-smoothing: antialiased;
 					box-shadow: var(--shadow); cursor: pointer; white-space: nowrap;
-					transition: background-color 150ms var(--ease-out), transform 150ms var(--ease-out);
+					transition: background-color 150ms var(--ease-out), opacity 200ms var(--ease-out), transform 150ms var(--ease-out);
+					/* Fades in each time it's shown beside a field (restarts when the host un-hides). */
+					transform-origin: right center; animation: pill-in 180ms var(--ease-out) backwards;
 				}
 				.pill:hover { background: var(--hover); }
-				.pill:active { transform: scale(0.97); }
+				.pill:active { transform: scale(0.97); transition-duration: 0ms; }
 				.pill:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 				.pill[aria-busy="true"] { cursor: progress; opacity: 0.7; }
 				.icon { width: 16px; height: 16px; flex-shrink: 0; }
@@ -156,13 +158,17 @@
 					display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
 					background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere;
 				}
+				.item { transition: background-color 120ms var(--ease-out), opacity 150ms var(--ease-out); }
 				.item:hover, .item:focus-visible { background: var(--hover); outline: none; }
+				/* Press lands instantly, matching the native rows' 0.55 press; release eases back. */
+				.item:active { opacity: 0.55; transition-duration: 0ms; }
 				.item.create { font-weight: 500; }
 				.item.create svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--muted); }
 				.sep { height: 1px; margin: 4px 0; background: var(--line); }
 				@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
+				@keyframes pill-in { from { opacity: 0; transform: scale(0.96); } }
 				@media (prefers-reduced-motion: reduce) {
-					.pill, .menu { transition: none; animation: none; }
+					.pill, .menu, .item { transition: none; animation: none; }
 				}
 			</style>
 			<button type="button" class="pill" aria-label="Create a private email for this site">
@@ -198,6 +204,17 @@
 		const createItem = shadow.querySelector(".create");
 		let hideTimer = null;
 		let busy = false;
+		let closing = null;
+		const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+		const menuOpen = () => !menu.hidden && !closing;
+
+		/** Swap the pill's label with a short fade so "Creating…" → "Filled" reads as a state change. */
+		function setLabel(text) {
+			if (label.textContent === text) return;
+			label.textContent = text;
+			if (!reducedMotion() && label.animate) label.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: EASE_OUT });
+		}
 
 		function position() {
 			const rect = input.getBoundingClientRect();
@@ -221,7 +238,7 @@
 			clearTimeout(hideTimer);
 			hideTimer = setTimeout(() => {
 				if (busy || focusInside()) return;
-				closeMenu();
+				closeMenu(true);
 				host.style.display = "none";
 			}, 300);
 		}
@@ -243,7 +260,7 @@
 		}
 		function resetLabel(delay) {
 			setTimeout(() => {
-				label.textContent = "Private email";
+				setLabel("Private email");
 				btn.removeAttribute("aria-busy");
 				busy = false;
 				scheduleHide();
@@ -254,6 +271,10 @@
 			if (!event.composedPath().includes(host)) closeMenu();
 		}
 		function openMenu(aliases, site, focusFirst) {
+			// Reopening mid-exit: stop fading out and show it as-is.
+			closing?.cancel();
+			closing = null;
+			menu.inert = false;
 			menuHeading.textContent = site ? `Used on ${site}` : "Used on this site";
 			menuItems.replaceChildren(
 				...aliases.map((alias) => {
@@ -266,7 +287,7 @@
 						if (!event.isTrusted) return;
 						closeMenu();
 						setInputValue(input, alias.email);
-						label.textContent = "Filled";
+						setLabel("Filled");
 						busy = true;
 						resetLabel(1200);
 					});
@@ -284,14 +305,34 @@
 			document.addEventListener("pointerdown", onOutsidePointer, true);
 			if (focusFirst) shadow.querySelector(".item")?.focus();
 		}
-		function closeMenu() {
+		/** Exits the way it entered (shorter, softer); `immediate` when the pill itself is going away. */
+		function closeMenu(immediate) {
 			if (menu.hidden) return;
-			menu.hidden = true;
+			if (closing && !immediate) return;
 			btn.setAttribute("aria-expanded", "false");
 			document.removeEventListener("pointerdown", onOutsidePointer, true);
+			closing?.cancel();
+			closing = null;
+			if (immediate || reducedMotion() || !menu.animate) {
+				menu.hidden = true;
+				return;
+			}
+			const exit = menu.animate(
+				[{ opacity: 1 }, { opacity: 0, transform: "translateY(-2px) scale(0.98)" }],
+				{ duration: 120, easing: EASE_OUT, fill: "forwards" },
+			);
+			closing = exit;
+			// A fading menu no longer takes clicks or focus.
+			menu.inert = true;
+			exit.onfinish = () => {
+				if (closing !== exit) return;
+				closing = null;
+				menu.hidden = true;
+				exit.cancel();
+			};
 		}
 		function onMenuKeydown(event) {
-			if (menu.hidden) return;
+			if (!menuOpen()) return;
 			if (event.key === "Escape") {
 				event.preventDefault();
 				event.stopPropagation();
@@ -310,7 +351,7 @@
 		async function createAndFill() {
 			busy = true;
 			btn.setAttribute("aria-busy", "true");
-			label.textContent = "Creating…";
+			setLabel("Creating…");
 			let res;
 			try {
 				res = await chrome.runtime.sendMessage({ action: "CREATE_ALIAS", host: location.hostname });
@@ -320,13 +361,14 @@
 			if (res?.ok && res.email) {
 				siteAliasesRequest = null;
 				setInputValue(input, res.email);
-				label.textContent = "Filled";
+				setLabel("Filled");
 				resetLabel(1200);
 			} else {
-				label.textContent =
+				setLabel(
 					res?.error === "not_connected" || res?.error === "session_expired"
 						? "Connect the extension first"
-						: "Couldn't create one";
+						: "Couldn't create one",
+				);
 				resetLabel(2400);
 			}
 		}
@@ -336,7 +378,7 @@
 			if (!event.isTrusted || busy) return;
 			event.preventDefault();
 			event.stopPropagation();
-			if (!menu.hidden) {
+			if (menuOpen()) {
 				closeMenu();
 				return;
 			}
@@ -367,7 +409,7 @@
 
 		return function cleanup() {
 			clearTimeout(hideTimer);
-			closeMenu();
+			closeMenu(true);
 			input.removeEventListener("focus", show);
 			input.removeEventListener("mouseenter", show);
 			input.removeEventListener("mouseleave", scheduleHide);

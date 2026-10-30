@@ -28,6 +28,7 @@
 				--focus-ring: #8a8a8a;
 				--danger: #c4362f;
 				--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+				/* Native chrome spring (iOS response 0.32 / damping 0.86) sampled for CSS; it settles without a visible overshoot. */
 				--spring: linear(0, 0.062, 0.197, 0.355, 0.506, 0.638, 0.745, 0.828, 0.889, 0.933, 0.962, 0.981, 0.993, 1, 1.003, 1.005, 1.005, 1.005, 1.004, 1.003, 1.002, 1.002, 1);
 				color-scheme: light;
 			}
@@ -92,8 +93,12 @@
 
 			button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
 			button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-			button:not(:disabled) { transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 150ms var(--ease-out); }
-			button:not(:disabled):active { transform: scale(0.97); }
+			button {
+				transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), opacity 200ms var(--ease-out),
+					transform 150ms var(--ease-out);
+			}
+			/* Press lands instantly (touch-down feedback); release eases back. */
+			button:not(:disabled):active { transform: scale(0.97); transition-duration: 0ms; }
 			button:disabled { opacity: 0.5; cursor: default; }
 			.btn {
 				display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 36px;
@@ -109,14 +114,21 @@
 
 			.list { list-style: none; }
 			.site .list { margin-top: 10px; border-top: 1px solid var(--border-subtle); }
-			.list li { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+			.list li { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
 			.site .list li:last-child { border-bottom: 0; padding-bottom: 0; }
 			.list.boxed { border: 1px solid var(--border-subtle); border-radius: 18px; padding: 0 6px 0 14px; }
 			.list.boxed li:last-child { border-bottom: 0; }
 			.list .text { flex: 1; min-width: 0; }
 			.list .email { font-weight: 500; overflow-wrap: anywhere; }
 			.list .sub { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
-			.list li.fresh { animation: menu-in 220ms var(--ease-out) backwards; }
+			/* A just-created address settles in, then a soft wash marks it and fades away. */
+			.list li.fresh { animation: row-in 280ms var(--spring) backwards; }
+			.list li.fresh::after {
+				content: ""; position: absolute; inset: 2px -4px 2px -8px; z-index: -1; border-radius: 10px; background: var(--accent-soft);
+				opacity: 0; animation: wash 1600ms var(--ease-out) 120ms backwards;
+			}
+			.list li { isolation: isolate; }
+			.list li:hover .icon-btn { color: var(--text-strong); }
 
 			.icon-btn {
 				position: relative; isolation: isolate; flex-shrink: 0; width: 32px; height: 32px;
@@ -131,10 +143,18 @@
 			.icon-btn svg { width: 16px; height: 16px; transition: transform 280ms var(--spring); }
 			.icon-btn:hover svg { transform: translateY(-1px) scale(1.08); }
 			.icon-btn.copied { color: var(--text-primary); }
-			.icon-btn.copied svg { animation: pop 360ms var(--spring) backwards; }
+			.icon-btn.copied svg { animation: pop 280ms var(--spring) backwards; }
 
 			.status { margin-top: 8px; font-size: 12px; color: var(--text-muted); min-height: 0; }
 			.error { margin-top: 8px; font-size: 12px; color: var(--danger); }
+			/* Notes, errors and empty states rise in each time they're shown (CSS animations restart on un-hide). */
+			.status, .error, .site-empty, #recentEmpty { animation: rise-in 240ms var(--ease-out) backwards; }
+
+			/* Panel open: header, then each section, settles in once — a short stagger, never in the way. */
+			header.top { animation: fade-in 260ms var(--ease-out) backwards; }
+			main > section { animation: rise-in 300ms var(--spring) 40ms backwards; }
+			main > section + section { animation-delay: 90ms; }
+			footer { animation: fade-in 260ms var(--ease-out) 140ms backwards; }
 
 			footer {
 				display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -144,10 +164,13 @@
 			footer .who div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 			#footMailbox { font-size: 12px; font-weight: 500; }
 
-			@keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(0.97); } }
-			@keyframes pop { 0% { transform: scale(0.6); } 60% { transform: scale(1.18); } }
+			@keyframes fade-in { from { opacity: 0; } }
+			@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } }
+			@keyframes row-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
+			@keyframes wash { from { opacity: 1; } to { opacity: 0; } }
+			@keyframes pop { from { opacity: 0.4; transform: scale(0.8); } }
 			@media (prefers-reduced-motion: reduce) {
-				*, *::before { animation: none !important; transition: none !important; }
+				*, *::before, *::after { animation: none !important; transition: none !important; }
 			}
 		</style>
 	</head>
