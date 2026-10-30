@@ -7,7 +7,7 @@
 // Connect in the side panel, and are scoped by the Worker to private emails only
 // (list mailboxes, list/create aliases).
 
-importScripts("site-match.js");
+importScripts("psl-data.js", "site-match.js");
 const { siteOf, labelMatchesSite } = globalThis.InboxiesSiteMatch;
 
 const DEFAULT_API_URL = "https://inboxies.app";
