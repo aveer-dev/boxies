@@ -20,7 +20,8 @@ import {
 	WarningIcon,
 } from "@phosphor-icons/react";
 import { type ReactNode, useMemo, useState } from "react";
-import { NavLink, useLocation, useParams } from "react-router";
+import { NavLink, useLocation } from "react-router";
+import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import {
 	FOLDER_DISPLAY_NAMES,
 	Folders,
@@ -123,7 +124,8 @@ function SectionLabel({ children, action }: { children: ReactNode; action?: Reac
 
 /** Column 2 — the open mailbox's folders, workflow piles and tags. */
 export default function FoldersColumn() {
-	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
+	const mailboxRef = useMailboxRef();
 	const { data: mailbox } = useMailbox(mailboxId);
 	const { data: folders = [] } = useFolders(mailboxId);
 	const { data: workflowPiles = [] } = useWorkflowPiles(mailboxId);
@@ -187,7 +189,7 @@ export default function FoldersColumn() {
 					{visibleSystemFolders.map((id) => (
 						<FolderRow
 							key={id}
-							to={folderPath(mailboxId, id)}
+							to={folderPath(mailboxRef, id)}
 							icon={FOLDER_ICONS[id]}
 							label={FOLDER_DISPLAY_NAMES[id] ?? id}
 							count={unreadById[id]}
@@ -197,7 +199,7 @@ export default function FoldersColumn() {
 
 				<SectionLabel>Workflow</SectionLabel>
 				<FolderRow
-					to={`${mailboxPath(mailboxId)}/reply-later`}
+					to={`${mailboxPath(mailboxRef)}/reply-later`}
 					icon={
 						replyLaterDue > 0 ? <AlarmIcon size={16} weight="fill" /> : <ClockCounterClockwiseIcon size={16} />
 					}
@@ -229,7 +231,7 @@ export default function FoldersColumn() {
 						tags.map((tag) => (
 							<FolderRow
 								key={tag.id}
-								to={folderPath(mailboxId, tag.id)}
+								to={folderPath(mailboxRef, tag.id)}
 								icon={<span className="text-xs">#</span>}
 								label={tag.name.replace(/^#/, "")}
 								count={tag.unreadCount}

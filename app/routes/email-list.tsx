@@ -126,11 +126,8 @@ const FOLDER_EMPTY_STATES: Record<
 
 /** Column 3 for `/emails/:folder` (+ the reader for `:emailId`). */
 export default function EmailListRoute() {
-	const { mailboxId = "", folder = Folders.INBOX } = useParams<{
-		mailboxId: string;
-		folder: string;
-	}>();
-	const { emailId, openEmail, closeEmail } = useMailNavigation();
+	const { folder = Folders.INBOX } = useParams<{ folder: string }>();
+	const { mailboxId, mailboxRef, emailId, openEmail, closeEmail } = useMailNavigation();
 	const startCompose = useUIStore((s) => s.startCompose);
 	const isReadOnly = useUIStore((s) => s.isReadOnly);
 	const navigate = useNavigate();
@@ -231,7 +228,7 @@ export default function EmailListRoute() {
 	};
 
 	const filterBy = (operator: string) =>
-		navigate(searchPath(mailboxId, `in:${folder} ${operator}`));
+		navigate(searchPath(mailboxRef, `in:${folder} ${operator}`));
 
 	const retentionNotice = folderRetentionNotice(folder);
 
@@ -336,7 +333,7 @@ export default function EmailListRoute() {
 									<button
 										key="show-more-new"
 										type="button"
-										onClick={() => navigate(inboxNewPath(mailboxId))}
+										onClick={() => navigate(inboxNewPath(mailboxRef))}
 										className="flex w-full items-center gap-1 pl-10 pr-4 py-3 text-left text-sm font-medium text-kumo-link hover:underline focus-visible:underline outline-none"
 									>
 										Show {item.hiddenCount} more new

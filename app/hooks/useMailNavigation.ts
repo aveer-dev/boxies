@@ -4,42 +4,50 @@
 
 import { useCallback, useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
+import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import { Folders } from "shared/folders";
 import { useUIStore } from "~/hooks/useUIStore";
 
-export function mailboxPath(mailboxId: string) {
-	return `/mailbox/${mailboxId}`;
+/**
+ * Paths take the mailbox's URL segment (`useMailboxRef()`, its index in the
+ * user's list), never its id: page addresses carry no account details
+ * (AVE-126, shared/mailbox-url.ts).
+ */
+export function mailboxPath(mailboxRef: string) {
+	return `/mailbox/${mailboxRef}`;
 }
 
-export function folderPath(mailboxId: string, folderId: string) {
-	return `${mailboxPath(mailboxId)}/emails/${folderId}`;
+export function folderPath(mailboxRef: string, folderId: string) {
+	return `${mailboxPath(mailboxRef)}/emails/${folderId}`;
 }
 
 /** Every New Inbox conversation (the Inbox list shows only the newest few). */
-export function inboxNewPath(mailboxId: string) {
-	return `${mailboxPath(mailboxId)}/new`;
+export function inboxNewPath(mailboxRef: string) {
+	return `${mailboxPath(mailboxRef)}/new`;
 }
 
-export function searchPath(mailboxId: string, query: string) {
-	return `${mailboxPath(mailboxId)}/search?q=${encodeURIComponent(query)}`;
+/** The query rides in `?q=`, which Web Analytics drops. */
+export function searchPath(mailboxRef: string, query: string) {
+	return `${mailboxPath(mailboxRef)}/search?q=${encodeURIComponent(query)}`;
 }
 
 /**
  * The URL decides which Miller columns are open:
  *
- *   /mailbox/:id/emails/:folder/:emailId?   folder list → reader
- *   /mailbox/:id/reply-later/:emailId?      Reply Later → reader
- *   /mailbox/:id/new/:emailId?              all New Inbox mail → reader
- *   /mailbox/:id/search/:emailId?q=…        results → reader
+ *   /mailbox/:ref/emails/:folder/:emailId?   folder list → reader
+ *   /mailbox/:ref/reply-later/:emailId?      Reply Later → reader
+ *   /mailbox/:ref/new/:emailId?              all New Inbox mail → reader
+ *   /mailbox/:ref/search/:emailId?q=…        results → reader
+ *
+ * `:ref` is the mailbox's index in the user's list (useMailboxRef).
  *
  * Compose, extra readers, agent and settings are side panels (`useUIStore`):
  * they open to the right of these columns, in the order they were opened.
  */
 export function useMailNavigation() {
-	const { mailboxId = "", emailId } = useParams<{
-		mailboxId: string;
-		emailId?: string;
-	}>();
+	const { emailId } = useParams<{ emailId?: string }>();
+	const mailboxId = useMailboxId();
+	const mailboxRef = useMailboxRef();
 	const location = useLocation();
 	const navigate = useNavigate();
 	const {
@@ -61,9 +69,9 @@ export function useMailNavigation() {
 	}, [location.pathname, emailId]);
 
 	const isSearch = location.pathname.startsWith(
-		`${mailboxPath(mailboxId)}/search`,
+		`${mailboxPath(mailboxRef)}/search`,
 	);
-	const inboxPath = folderPath(mailboxId, Folders.INBOX);
+	const inboxPath = folderPath(mailboxRef, Folders.INBOX);
 
 	const openEmail = useCallback(
 		(id: string) =>
@@ -77,8 +85,8 @@ export function useMailNavigation() {
 	);
 
 	const search = useCallback(
-		(query: string) => navigate(searchPath(mailboxId, query)),
-		[navigate, mailboxId],
+		(query: string) => navigate(searchPath(mailboxRef, query)),
+		[navigate, mailboxRef],
 	);
 
 	const closeSearch = useCallback(
@@ -129,6 +137,7 @@ export function useMailNavigation() {
 
 	return {
 		mailboxId,
+		mailboxRef,
 		emailId,
 		listPath,
 		isSettings,

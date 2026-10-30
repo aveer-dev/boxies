@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { Link, useParams } from "react-router";
+import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import { FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "shared/folders";
 import EmailPanel from "~/components/EmailPanel";
 import { folderPath, useMailNavigation } from "~/hooks/useMailNavigation";
@@ -28,7 +29,9 @@ export default function ReaderColumn({
 	/** Closes this column; defaults to closing the route's reader. */
 	onClose?: () => void;
 }) {
-	const { mailboxId = "", folder } = useParams<{ mailboxId: string; folder?: string }>();
+	const { folder } = useParams<{ folder?: string }>();
+	const mailboxId = useMailboxId();
+	const mailboxRef = useMailboxRef();
 	const { closeEmail } = useMailNavigation();
 	const close = onClose ?? closeEmail;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
@@ -45,7 +48,7 @@ export default function ReaderColumn({
 	const chips = (
 		<>
 			{folderName && folderId && (
-				<Link to={folderPath(mailboxId, folderId)} className="no-underline">
+				<Link to={folderPath(mailboxRef, folderId)} className="no-underline">
 					<ThreadChip>{folderName}</ThreadChip>
 				</Link>
 			)}

@@ -8,6 +8,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import { AuthShell } from "~/components/AuthShell";
 import { OnboardingFlow } from "~/components/OnboardingFlow";
 import { isWorkerPagePath, safeRedirectPath } from "~/lib/safe-redirect";
+import { openMailbox } from "~/lib/open-mailbox";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
 
@@ -52,8 +53,7 @@ export default function OnboardingRoute() {
 
 	const handleSuccess = async (mailboxId: string) => {
 		if (fromMailboxes) {
-			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
-			routerNavigate(`/mailbox/${encodeURIComponent(mailboxId)}`);
+			await openMailbox(queryClient, routerNavigate, mailboxId);
 			return;
 		}
 		// Same-origin paths only, so `next` can't be used as an open redirect.

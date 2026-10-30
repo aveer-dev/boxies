@@ -14,7 +14,10 @@ export default [
 	route("checkout/mock", "routes/checkout-mock.tsx"),
 	route("checkout/success", "routes/checkout-success.tsx"),
 	route("checkout/cancel", "routes/checkout-cancel.tsx"),
-	route("invite/:token", "routes/invite.tsx"),
+	// The token rides in the query string, which Web Analytics drops (AVE-126);
+	// old /invite/<token> links are rewritten (the Worker does it on page load).
+	route("invite", "routes/invite.tsx"),
+	route("invite/:token", "routes/invite-legacy.tsx"),
 	route("login", "routes/login.tsx"),
 	route("onboarding", "routes/onboarding.tsx"),
 	route("reset-password", "routes/reset-password.tsx"),
@@ -22,8 +25,10 @@ export default [
 	// MCP OAuth consent; only the Worker's GET /authorize gives it data.
 	route("authorize", "routes/authorize.tsx"),
 	// Miller columns: each child route renders its own column(s); an optional
-	// trailing :emailId opens the reader beside the list.
-	route("mailbox/:mailboxId", "routes/mailbox.tsx", [
+	// trailing :emailId opens the reader beside the list. :mailboxRef is the
+	// mailbox's index in the user's list, never its address (AVE-126,
+	// shared/mailbox-url.ts); read the real id with useMailboxId().
+	route("mailbox/:mailboxRef", "routes/mailbox.tsx", [
 		index("routes/mailbox-index.tsx"),
 		route("emails/:folder/:emailId?", "routes/email-list.tsx"),
 		route("reply-later/:emailId?", "routes/reply-later.tsx"),

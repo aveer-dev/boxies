@@ -21,7 +21,8 @@ import { EmailMCP } from "./mcp";
 import { createMcpOAuth, registerMcpOAuthRoutes, registerMcpRoutes } from "./mcp/oauth";
 import { strictMailboxId } from "./lib/mailbox-routing";
 import { withSecurityHeaders } from "./lib/security-headers";
-import { authDb, authorizeMailboxAccess } from "./auth/authz";
+import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "./auth/authz";
+import { isLegacyMailboxPage, legacyInviteResponse, legacyMailboxResponse } from "./lib/legacy-app-urls";
 import type { RequestPrincipal } from "./auth/principal";
 import type { Operator } from "./auth/operators";
 import { operatorMiddleware, sessionMiddleware } from "./auth/middleware";
@@ -131,8 +132,22 @@ const mcpOAuth = createMcpOAuth(mcpHandler, {
 });
 registerMcpOAuthRoutes(app, mcpOAuth);
 
+// Old invite links (`/invite/<token>`) move the token into the query string
+// before the page loads (AVE-126, workers/lib/legacy-app-urls.ts). Public.
+app.use("/invite/*", async (c, next) => legacyInviteResponse(c.req.raw) ?? next());
+
 // Everyone else: a Better Auth session.
 app.use("*", sessionMiddleware);
+
+// Old address-style mailbox links (`/mailbox/you@domain/...`) go to the
+// mailbox's index before the page loads (AVE-126). Signed-out visitors were
+// already sent to /login above.
+app.use("/mailbox/*", async (c, next) => {
+	const userId = c.get("principal")?.userId;
+	if (!userId || !isLegacyMailboxPage(c.req.raw)) return next();
+	const rows = await listMailboxesForUser(authDb(c.env.AUTH_DB), userId);
+	return legacyMailboxResponse(c.req.raw, rows.map((r) => r.mailboxId)) ?? next();
+});
 
 // /mcp: an OAuth access token goes to the resource server; anything else
 // already went through the session middleware (Bearer session token or

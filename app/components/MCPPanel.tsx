@@ -10,7 +10,7 @@ import {
 } from "@phosphor-icons/react";
 import { useState } from "react";
 import { IconButton } from "~/components/IconButton";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 
 function CopyButton({ text }: { text: string }) {
 	const [copied, setCopied] = useState(false);
@@ -52,7 +52,7 @@ const TOOLS = [
 ];
 
 export default function MCPPanel() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const baseUrl =
 		typeof window !== "undefined" ? window.location.origin : "https://your-app.workers.dev";
 	const mcpUrl = `${baseUrl}/mcp`;
