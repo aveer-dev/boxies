@@ -924,6 +924,33 @@ class ApiClient private constructor() {
     suspend fun listFolders(mailboxId: String): List<Folder> =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/folders")
 
+    /**
+     * Custom folder ("tag", AVE-158). The Worker derives the id from the name: 409 when it
+     * clashes, 400 when the name has no letters or digits.
+     */
+    suspend fun createFolder(mailboxId: String, name: String): Folder =
+        request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/folders",
+            method = "POST",
+            body = buildJsonObject { put("name", name) },
+        )
+
+    /** Renames a custom folder; its id stays. The answer is `{ id, name }` (no unread count). */
+    suspend fun renameFolder(mailboxId: String, folderId: String, name: String): Folder =
+        request(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/folders/${pathEncode(folderId)}",
+            method = "PUT",
+            body = buildJsonObject { put("name", name) },
+        )
+
+    /** Deletes a custom folder (204). The Worker moves its mail to the Inbox first. */
+    suspend fun deleteFolder(mailboxId: String, folderId: String) {
+        request<EmptyResponse>(
+            "/api/v1/mailboxes/${pathEncode(mailboxId)}/folders/${pathEncode(folderId)}",
+            method = "DELETE",
+        )
+    }
+
     suspend fun getInboxDigest(mailboxId: String): InboxDigest =
         request("/api/v1/mailboxes/${pathEncode(mailboxId)}/inbox-digest")
 

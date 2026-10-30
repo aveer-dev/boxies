@@ -7,6 +7,7 @@ enum SettingsDestination: Hashable {
     case forwarding
     case autoReply
     case filters
+    case tags
     case senders
     case suppressions
     case aliases
@@ -81,6 +82,8 @@ struct SettingsSheetView: View {
                         settingsNavRow("Forwarding", systemImage: "arrowshape.turn.up.right", destination: .forwarding)
                         settingsNavRow("Auto-reply", systemImage: "arrowshape.turn.up.left", destination: .autoReply)
                         settingsNavRow("Filters", systemImage: "line.3.horizontal.decrease.circle", destination: .filters)
+                        // Custom folders, shown as tags like web (AVE-158).
+                        settingsNavRow(CustomFolders.pageTitle, systemImage: "number", destination: .tags)
                         settingsNavRow("Senders", systemImage: "person.crop.circle", destination: .senders)
                         settingsNavRow("Private email", destination: .aliases) {
                             PrivateEmailLogoView(size: 18, showTile: false)
@@ -218,6 +221,8 @@ struct SettingsSheetView: View {
                     AutoReplySettingsView()
                 case .filters:
                     FiltersSettingsView()
+                case .tags:
+                    TagsSettingsView()
                 case .senders:
                     SendersSettingsView()
                 case .suppressions:
