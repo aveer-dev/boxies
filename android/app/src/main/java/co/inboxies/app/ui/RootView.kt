@@ -93,6 +93,15 @@ fun RootView(
         appModel.openEmailFromNotification(link.mailboxId, link.emailId, link.folderId)
     }
 
+    // "Today's inbox" widget tap outside the cards (AVE-150): that mailbox's Inbox.
+    val pendingInboxLink by PushNotificationManager.shared.pendingInboxLink.collectAsState()
+    LaunchedEffect(pendingInboxLink, isAuthenticated, isMailboxLoading, mailboxes) {
+        val link = pendingInboxLink ?: return@LaunchedEffect
+        if (!isAuthenticated || isMailboxLoading || mailboxes.isEmpty()) return@LaunchedEffect
+        PushNotificationManager.shared.clearPendingInboxLink()
+        appModel.openInboxFromWidget(link.mailboxId)
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         val inviteToken = pendingInvite
         if (inviteToken != null && (isAuthenticated || !inviteWaitsForSignIn)) {

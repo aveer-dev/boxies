@@ -248,6 +248,8 @@ class AuthStore(context: Context) {
         _token.value = null
         _userEmail.value = null
         clearStoredSession()
+        // Nothing about the account stays on the home screen (AVE-150).
+        co.inboxies.app.widget.InboxWidgetPublisher.clear()
     }
 
     fun clearError() {

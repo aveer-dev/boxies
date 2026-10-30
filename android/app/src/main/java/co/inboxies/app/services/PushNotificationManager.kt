@@ -51,6 +51,12 @@ data class PushDeepLink(
     val folderId: String = "inbox",
 )
 
+/**
+ * A "Today's inbox" widget tap outside the cards (AVE-150): open this mailbox's Inbox.
+ * [nonce] makes a second tap on the same mailbox a new request.
+ */
+data class PendingInboxLink(val mailboxId: String?, val nonce: Long = System.nanoTime())
+
 class PushNotificationManager private constructor(private val appContext: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val prefs get() = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -61,6 +67,9 @@ class PushNotificationManager private constructor(private val appContext: Contex
     private val registeredMailboxIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private val _pendingDeepLink = MutableStateFlow<PushDeepLink?>(null)
     val pendingDeepLink: StateFlow<PushDeepLink?> = _pendingDeepLink.asStateFlow()
+    /** Set by a widget tap outside the cards; consumed like [pendingDeepLink]. */
+    private val _pendingInboxLink = MutableStateFlow<PendingInboxLink?>(null)
+    val pendingInboxLink: StateFlow<PendingInboxLink?> = _pendingInboxLink.asStateFlow()
 
     /**
      * The signed-in user's mailboxes, persisted for the FCM service. Null = never written
@@ -228,6 +237,14 @@ class PushNotificationManager private constructor(private val appContext: Contex
 
     fun clearPendingDeepLink() {
         _pendingDeepLink.value = null
+    }
+
+    fun setPendingInboxLink(mailboxId: String?) {
+        _pendingInboxLink.value = PendingInboxLink(mailboxId?.takeIf { it.isNotBlank() })
+    }
+
+    fun clearPendingInboxLink() {
+        _pendingInboxLink.value = null
     }
 
     companion object {

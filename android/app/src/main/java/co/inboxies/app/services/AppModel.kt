@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -41,6 +42,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
+import co.inboxies.app.ui.widget.InboxWidgetSnapshot
+import co.inboxies.app.widget.InboxWidgetPublisher
+import co.inboxies.app.widget.make
 import java.time.Instant
 import java.util.UUID
 
@@ -462,6 +466,8 @@ class AppModel {
     fun onAppBackgrounded() {
         isAppInForeground = false
         streamClient.stop()
+        // Leave the "Today's inbox" widget current (AVE-150).
+        publishInboxWidgetNow()
     }
 
     private fun handleIncomingRealTimeEmail(mailboxId: String, email: Email) {
@@ -2017,6 +2023,65 @@ class AppModel {
     var isDebugPreview: Boolean = false
         private set
 
+    // region "Today's inbox" widget (AVE-150)
+
+    // Declared after every state it reads, so the collectors start on initialised fields.
+    init {
+        // Debounced: list refreshes, SSE, reads and archives arrive in bursts. The
+        // publisher also skips writes whose content didn't change.
+        scope.launch {
+            combine(_selectedMailboxId, _emails, _inboxNewTotal, _replyLaterCount) { _, _, _, _ -> Unit }
+                .collectLatest {
+                    delay(INBOX_WIDGET_DEBOUNCE_MS)
+                    publishInboxWidgetNow()
+                }
+        }
+        scope.launch {
+            _mailboxes.collect { list ->
+                if (publishesInboxWidget && list.isNotEmpty()) InboxWidgetPublisher.publishMailboxes(list)
+            }
+        }
+    }
+
+    private val publishesInboxWidget: Boolean
+        get() = !isDebugPreview && bootstrappedToken != null
+
+    /**
+     * Writes the active mailbox's Inbox to the widget now (also when the app goes to the
+     * background). Built from the cached Inbox, not the visible list, so it's right
+     * whichever folder is open. iOS twin: `AppModel.publishInboxWidgetNow()`.
+     */
+    fun publishInboxWidgetNow() {
+        if (!publishesInboxWidget) return
+        val mailbox = selectedMailbox ?: return
+        val inboxRows = db.getEmails(mailbox.id, FolderIds.INBOX)
+        val serverNewCount = _inboxNewTotal.value
+            ?.takeIf { it.scope.mailboxId == mailbox.id && it.scope.folderId == FolderIds.INBOX }
+            ?.count
+        // The Inbox hasn't loaded for this mailbox yet: keep the last snapshot rather
+        // than claim inbox zero.
+        if (inboxRows.isEmpty() && serverNewCount == null) return
+        InboxWidgetPublisher.publish(
+            InboxWidgetSnapshot.make(
+                mailbox = mailbox,
+                inboxRows = inboxRows,
+                serverNewCount = serverNewCount,
+                replyLaterCount = _replyLaterCount.value,
+            ),
+        )
+    }
+
+    /** Widget tap outside the cards: the Inbox of the widget's mailbox. */
+    suspend fun openInboxFromWidget(mailboxId: String?) {
+        if (mailboxId != null && mailboxId != _selectedMailboxId.value && _mailboxes.value.any { it.id == mailboxId }) {
+            loadMailbox(mailboxId)
+        }
+        val inbox = HomeTab.Folder(FolderIds.INBOX)
+        if (_selectedTab.value != inbox || _selectedEmail.value != null) selectTab(inbox)
+    }
+
+    // endregion
+
     fun updateComposeFromMailbox(mailboxId: String) {
         val session = _composeSession.value ?: return
         // Private-email replies are pinned to the alias by the server.
@@ -3002,6 +3067,8 @@ class AppModel {
     companion object {
         private const val AUTO_CONVERSATION_ID = "auto"
         private const val PUSH_UNREGISTER_TIMEOUT_MS = 4_000L
+        /** Quiet period before the widget snapshot is written (iOS uses 1 s too). */
+        private const val INBOX_WIDGET_DEBOUNCE_MS = 1_000L
 
         /** "Added to Reply Later · Add reminder" stays up longer than a plain toast (AVE-86). */
         const val REMINDER_TOAST_DURATION_MS = 5_000L
