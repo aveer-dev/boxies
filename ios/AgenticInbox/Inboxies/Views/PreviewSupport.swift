@@ -917,6 +917,13 @@ struct PreviewAdminAuthRoot: View {
                     SendersSettingsView(initialTab: args.contains("-previewSendersBlocked") ? .blocked : .allowed)
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewSuppressions") {
+                // Settings → Outgoing mail → Bounced addresses with fixture rows, no API
+                // (AVE-157; Android: `suppressions`).
+                NavigationStack {
+                    SuppressionsSettingsView()
+                }
+                .environment(PreviewSupport.appModel())
             } else if args.contains("-previewSettings") {
                 // Settings sheet on the fixture mailbox; add `-previewScreenerOff` for the
                 // Screener switch off (AVE-104; Android: `settings` / `settingsScreenerOff`).

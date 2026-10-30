@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.AdminPanelSettings
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Group
@@ -75,6 +76,7 @@ import co.inboxies.app.LocalAppModel
 import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.models.Mailbox
 import co.inboxies.app.models.SignatureSettings
+import co.inboxies.app.services.BounceSuppression
 import co.inboxies.app.services.PushNotificationManager
 import co.inboxies.app.theme.AppThemeDims
 import co.inboxies.app.theme.AvatarInitials
@@ -98,6 +100,7 @@ private sealed class SettingsPage {
     data object AutoReply : SettingsPage()
     data object Filters : SettingsPage()
     data object Senders : SettingsPage()
+    data object Suppressions : SettingsPage()
     data object Aliases : SettingsPage()
     data object Sharing : SettingsPage()
     data object SignInMethods : SettingsPage()
@@ -234,6 +237,7 @@ fun SettingsSheetView(
                     onOpenAutoReply = { page = SettingsPage.AutoReply },
                     onOpenFilters = { page = SettingsPage.Filters },
                     onOpenSenders = { page = SettingsPage.Senders },
+                    onOpenSuppressions = { page = SettingsPage.Suppressions },
                     onOpenAliases = { page = SettingsPage.Aliases },
                     onOpenSharing = { page = SettingsPage.Sharing },
                     onOpenSignInMethods = { page = SettingsPage.SignInMethods },
@@ -270,6 +274,9 @@ fun SettingsSheetView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Senders -> SendersSettingsView(
+                    onBack = { page = SettingsPage.Root },
+                )
+                SettingsPage.Suppressions -> SuppressionsSettingsView(
                     onBack = { page = SettingsPage.Root },
                 )
                 SettingsPage.Aliases -> AliasesSettingsView(
@@ -313,6 +320,7 @@ private fun SettingsRootPage(
     onOpenAutoReply: () -> Unit,
     onOpenFilters: () -> Unit,
     onOpenSenders: () -> Unit,
+    onOpenSuppressions: () -> Unit,
     onOpenAliases: () -> Unit,
     onOpenSharing: () -> Unit,
     onOpenSignInMethods: () -> Unit,
@@ -607,6 +615,14 @@ private fun SettingsRootPage(
                     },
                 )
             }
+
+            // Web: Settings → Outgoing mail → Bounced addresses (AVE-157).
+            SettingsSectionHeader("Outgoing mail")
+            SettingsNavRow(
+                title = BounceSuppression.PAGE_TITLE,
+                icon = Icons.Outlined.Block,
+                onClick = onOpenSuppressions,
+            )
 
             AiUsageSettingsSection(mailboxId = mailbox?.id)
 

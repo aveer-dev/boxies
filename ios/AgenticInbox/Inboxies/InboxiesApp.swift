@@ -59,6 +59,7 @@ struct InboxiesApp: App {
                 || ProcessInfo.processInfo.arguments.contains("-previewMembers")
                 || ProcessInfo.processInfo.arguments.contains("-previewSessions")
                 || ProcessInfo.processInfo.arguments.contains("-previewSenders")
+                || ProcessInfo.processInfo.arguments.contains("-previewSuppressions")
                 || ProcessInfo.processInfo.arguments.contains("-previewSettings") {
                 PreviewAdminAuthRoot()
                     .applyThemeController()

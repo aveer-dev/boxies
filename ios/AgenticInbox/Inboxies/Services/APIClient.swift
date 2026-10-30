@@ -1223,6 +1223,19 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// The bounce / complaint suppressions this mailbox can see (AVE-37 / AVE-157).
+    func listSuppressions(mailboxId: String) async throws -> SuppressionList {
+        let (data, _) = try await requestData(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/suppressions"
+        )
+        guard let list = BounceSuppression.list(data: data) else {
+            throw APIError.decoding(
+                DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Not a suppression list"))
+            )
+        }
+        return list
+    }
+
     /// Lifts a bounce / complaint suppression (AVE-37). 404 means it is already gone;
     /// 403 `suppression_not_manageable` means only a domain admin can lift it.
     func unsuppress(mailboxId: String, address: String) async throws {

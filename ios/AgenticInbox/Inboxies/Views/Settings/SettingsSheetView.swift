@@ -8,6 +8,7 @@ enum SettingsDestination: Hashable {
     case autoReply
     case filters
     case senders
+    case suppressions
     case aliases
     case sharing
     case signInMethods
@@ -109,6 +110,18 @@ struct SettingsSheetView: View {
                 }
                 .listRowSeparator(.hidden)
 
+                // Web: Settings → Outgoing mail → Bounced addresses (AVE-157).
+                Section {
+                    settingsNavRow(
+                        BounceSuppression.pageTitle,
+                        systemImage: "nosign",
+                        destination: .suppressions
+                    )
+                } header: {
+                    Text("Outgoing mail")
+                }
+                .listRowSeparator(.hidden)
+
                 if let aiUsage {
                     aiUsageSection(aiUsage)
                 }
@@ -207,6 +220,8 @@ struct SettingsSheetView: View {
                     FiltersSettingsView()
                 case .senders:
                     SendersSettingsView()
+                case .suppressions:
+                    SuppressionsSettingsView()
                 case .aliases:
                     AliasesSettingsView()
                 case .sharing:
