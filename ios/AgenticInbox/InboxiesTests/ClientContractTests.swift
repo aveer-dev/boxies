@@ -181,11 +181,27 @@ final class ClientContractTests: XCTestCase {
     // MARK: - Payment return deep links
 
     func testPaymentCallbackDomainReady() {
+        let url = URL(string: "inboxies://onboarding/domain-ready?domain=acme.com&code=abc123")!
+        XCTAssertEqual(PaymentCallback.parse(url), .domainReady(domain: "acme.com", code: "abc123"))
+    }
+
+    func testPaymentCallbackDomainReadyWithoutCode() {
+        let url = URL(string: "inboxies://onboarding/domain-ready?domain=acme.com")!
+        XCTAssertEqual(PaymentCallback.parse(url), .domainReady(domain: "acme.com", code: nil))
+    }
+
+    /// AVE-118: links from older Workers carried the session token; the app no longer reads it.
+    func testPaymentCallbackIgnoresLegacySessionToken() {
         let url = URL(string: "inboxies://onboarding/domain-ready?domain=acme.com&session_id=cs_1&token=tok&mailbox_id=me%40acme.com")!
-        XCTAssertEqual(
-            PaymentCallback.parse(url),
-            .domainReady(domain: "acme.com", sessionId: "cs_1", token: "tok", mailboxId: "me@acme.com")
-        )
+        XCTAssertEqual(PaymentCallback.parse(url), .domainReady(domain: "acme.com", code: nil))
+    }
+
+    func testCheckoutExchangeResponseDecodes() throws {
+        let res = try decode(CheckoutExchangeResponse.self, """
+        {"token":"s1","expiresAt":"2026-11-01T00:00:00.000Z","email":"me@acme.com","sub":"u","keys":[],"mailboxId":"me@acme.com"}
+        """)
+        XCTAssertEqual(res.token, "s1")
+        XCTAssertEqual(res.mailboxId, "me@acme.com")
     }
 
     func testPaymentCallbackCancelledIsNotSuccess() {

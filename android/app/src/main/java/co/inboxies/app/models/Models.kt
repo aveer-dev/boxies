@@ -233,6 +233,15 @@ data class InviteCodeResponse(
     val devCode: String? = null,
 )
 
+/** `/api/v1/auth/exchange`: the owner session a checkout return code was traded for. */
+@Serializable
+data class CheckoutExchangeResponse(
+    val token: String,
+    val expiresAt: String,
+    val email: String? = null,
+    val mailboxId: String? = null,
+)
+
 @Serializable
 data class PasswordLoginResponse(
     val token: String,
