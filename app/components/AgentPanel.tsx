@@ -20,7 +20,7 @@ import {
 	WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { IconButton } from "~/components/IconButton";
@@ -601,7 +601,7 @@ function AgentChatConnected({
 }
 
 export default function AgentPanel() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const [hooks, setHooks] = useState<{
 		useAgent: typeof import("agents/react").useAgent;
 		useAgentChat: typeof import("@cloudflare/ai-chat/react").useAgentChat;

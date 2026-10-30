@@ -41,6 +41,7 @@ import type {
 	UpdateThreadNoteRequest,
 } from "~/types";
 import { idempotencyHeaders } from "~/lib/send-idempotency";
+import { reauthChallenge, requestReauth, type ReauthChallenge } from "~/lib/reauth";
 import type { AiUsageSnapshot } from "../../shared/ai-quota";
 import { suppressionAddressPath, type SuppressedRecipient } from "~/lib/suppression";
 
@@ -79,7 +80,25 @@ export function twoFactorChallenge(source: unknown): TwoFactorChallenge | null {
 	return { twoFactorToken: body.twoFactorToken, methods };
 }
 
+/**
+ * A request, retried once after the user re-authenticates when the Worker
+ * answers 403 `reauth_required` (AVE-113, `~/lib/reauth`). Cancelling the
+ * prompt rethrows the original error.
+ */
 async function request<T>(
+	url: string,
+	options: RequestInit = {},
+): Promise<T> {
+	try {
+		return await requestOnce<T>(url, options);
+	} catch (err) {
+		const challenge = err instanceof ApiError && err.status === 403 ? reauthChallenge(err.body) : null;
+		if (!challenge || !(await requestReauth(challenge))) throw err;
+		return requestOnce<T>(url, options);
+	}
+}
+
+async function requestOnce<T>(
 	url: string,
 	options: RequestInit = {},
 ): Promise<T> {
@@ -245,6 +264,26 @@ const api = {
 	verifyRecoveryEmail: (code: string) =>
 		post<{ ok: boolean; email: string; verified: true }>("/api/v1/me/recovery-email/verify", { code }),
 	removeRecoveryEmail: () => del<{ ok: boolean }>("/api/v1/me/recovery-email"),
+
+	// Re-authentication for sensitive changes (AVE-113). Not retried through
+	// the prompt: these are what the prompt calls.
+	getReauthStatus: () =>
+		requestOnce<ReauthChallenge & { fresh: boolean; freshUntil: string | null; maxAgeSeconds: number }>(
+			"/api/v1/me/reauth",
+			{ method: "GET" },
+		),
+	sendReauthEmailCode: () =>
+		requestOnce<{ ok: boolean; sentTo: string; devCode?: string }>("/api/v1/me/reauth/email-code", { method: "POST" }),
+	reauth: (
+		body:
+			| { method: "password"; password: string; code?: string; codeType?: "totp" | "backup_code" }
+			| { method: "passkey"; response: unknown }
+			| { method: "email_code"; code: string },
+	) =>
+		requestOnce<{ ok: boolean; freshUntil: string }>("/api/v1/me/reauth", {
+			method: "POST",
+			body: JSON.stringify(body),
+		}),
 
 	listIdentities: () =>
 		get<{

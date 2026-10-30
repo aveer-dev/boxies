@@ -148,30 +148,31 @@ class MainActivity : ComponentActivity() {
     private fun handleOnboardingIntent(intent: Intent?) {
         if (intent == null) return
         val data = intent.data ?: return
-        val isOnboarding = (data.scheme == "inboxies" && (data.host == "onboarding" || data.host == "domain-ready"))
-            || (data.host == "inboxies.email" && data.path?.startsWith("/onboarding") == true)
-        if (isOnboarding) {
-            val domain = data.getQueryParameter("domain")
-            // Only trust a token returned for the checkout this app started.
-            val token = data.getQueryParameter("token")?.takeIf {
-                co.inboxies.app.config.AppConfig.consumePendingCheckout(data.getQueryParameter("session_id"))
-            }
-            if (!token.isNullOrBlank()) {
-                val auth = (application as InboxiesApplication).authStore
-                val email = if (!domain.isNullOrBlank()) "admin@$domain" else null
-                auth.applySession(token, email)
-                if (::appModel.isInitialized) {
-                    lifecycleScope.launch {
-                        appModel.bootstrap(token)
+        val link = co.inboxies.app.services.CheckoutReturnLink.parse(data.toString()) ?: return
+        intent.data = null
+        val auth = (application as InboxiesApplication).authStore
+        // Only a checkout this app started can be redeemed; the session id never rides in the link.
+        val checkoutSessionId = co.inboxies.app.config.AppConfig.pendingCheckout()
+        val code = link.code
+        if (code != null && checkoutSessionId != null) {
+            val domain = link.domain?.trim()?.lowercase()
+            val fallbackEmail = if (!domain.isNullOrBlank()) "admin@$domain" else null
+            lifecycleScope.launch {
+                val signedIn = auth.signInWithCheckoutCode(code, checkoutSessionId, fallbackEmail)
+                if (signedIn) {
+                    co.inboxies.app.config.AppConfig.consumePendingCheckout(checkoutSessionId)
+                    if (::appModel.isInitialized) {
+                        auth.currentToken()?.let { appModel.bootstrap(it) }
                         appModel.refreshMailboxes(showLoading = true)
                     }
-                }
-            } else if (::appModel.isInitialized) {
-                lifecycleScope.launch {
+                } else if (::appModel.isInitialized && auth.isAuthenticated) {
                     appModel.refreshMailboxes(showLoading = true)
                 }
             }
-            intent.data = null
+        } else if (::appModel.isInitialized) {
+            lifecycleScope.launch {
+                appModel.refreshMailboxes(showLoading = true)
+            }
         }
     }
 

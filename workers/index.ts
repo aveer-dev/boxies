@@ -84,6 +84,7 @@ import {
 } from "./auth/mailboxes";
 import type { MailboxRole } from "./auth/schema";
 import { registerAccountRoutes } from "./routes/account";
+import { registerReauthRoutes } from "./routes/reauth";
 import { registerAdminAndInviteRoutes } from "./routes/admin-invites";
 import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerDomainDnsRoutes } from "./routes/domain-dns";
@@ -291,6 +292,7 @@ app.get("/api/v1/config", (c) => {
 });
 
 registerAccountRoutes(app);
+registerReauthRoutes(app);
 registerAdminAndInviteRoutes(app);
 registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);

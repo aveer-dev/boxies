@@ -22,6 +22,7 @@ import {
 	Scripts,
 	ScrollRestoration,
 } from "react-router";
+import ReauthDialog from "~/components/ReauthDialog";
 import { ApiError } from "~/services/api";
 import "./index.css";
 import { useCspNonce } from "~/lib/csp-nonce";
@@ -151,6 +152,7 @@ export default function App() {
 				<TooltipProvider>
 					<Toasty>
 						<Outlet />
+						<ReauthDialog />
 					</Toasty>
 				</TooltipProvider>
 			</LinkProvider>

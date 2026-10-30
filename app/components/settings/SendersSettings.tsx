@@ -5,7 +5,7 @@
 import { Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { TrashIcon } from "@phosphor-icons/react";
 import { type FormEvent, useMemo, useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import {
 	FOLDER_DISPLAY_NAMES,
 	PURPOSE_FOLDER_IDS,
@@ -39,7 +39,7 @@ const TABS: { id: SendersTab; label: string }[] = [
 ];
 
 export default function SendersSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const [tab, setTab] = useState<SendersTab>("allowed");
 
 	if (!mailboxId) return null;

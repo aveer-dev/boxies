@@ -4,6 +4,7 @@
 
 import { useEffect } from "react";
 import { Navigate, useParams } from "react-router";
+import { useMailboxRef } from "~/hooks/useCurrentMailbox";
 import { Folders } from "shared/folders";
 import { isSettingsPageId } from "~/components/settings/pages";
 import { folderPath } from "~/hooks/useMailNavigation";
@@ -14,10 +15,11 @@ import { useUIStore } from "~/hooks/useUIStore";
  * mail columns), so open it and land on the inbox.
  */
 export default function SettingsRedirectRoute() {
-	const { mailboxId = "", page } = useParams<{ mailboxId: string; page?: string }>();
+	const { page } = useParams<{ page?: string }>();
+	const mailboxRef = useMailboxRef();
 	const openSettings = useUIStore((s) => s.openSettings);
 	useEffect(() => {
 		openSettings(isSettingsPageId(page) ? page : null);
 	}, [openSettings, page]);
-	return <Navigate to={folderPath(mailboxId, Folders.INBOX)} replace />;
+	return <Navigate to={folderPath(mailboxRef, Folders.INBOX)} replace />;
 }
