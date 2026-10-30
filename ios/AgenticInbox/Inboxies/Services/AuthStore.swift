@@ -209,6 +209,7 @@ final class AuthStore {
         KeychainStore.deleteEverywhere(tokenKey)
         UserDefaults.standard.removeObject(forKey: emailKey)
         SharedSession.clear()
+        InboxWidgetPublisher.clear()
     }
 
     private func persist(token: String, email: String?) {

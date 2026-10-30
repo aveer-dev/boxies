@@ -1,6 +1,8 @@
 import SwiftUI
+import WidgetKit
 
-// "Today's inbox" widget, round 2: depth (AVE-138). A deck of New mail you can flip
+// "Today's inbox" widget, round 2: depth (AVE-138). The real widget (AVE-149, the
+// `InboxiesWidget` extension) draws `InboxWidgetDepthContent` with a `live` mailbox. A deck of New mail you can flip
 // through on the home screen. Everything here is something a real widget can draw or
 // do: layered cards, shading and shadows are static rendering; the › button is an
 // interactive `Button(intent:)` (iOS 17+) that moves the front card to the next thread,
@@ -79,9 +81,15 @@ struct InboxWidgetDeckPose: Equatable {
     }
 }
 
-/// One "Today's inbox" widget in the depth direction: a card deck for New mail, a floating
-/// check for inbox zero. `front` is which thread is on top; `onNext` stands in for the
-/// widget's `Button(intent: ShowNextThreadIntent())` (nil hides nothing; the button still draws).
+/// The home-screen widget's wiring: with it, › is `Button(intent: ShowNextThreadIntent)`
+/// and the front card links to its thread. Without it (the gallery), › calls `onNext`.
+struct InboxWidgetLive: Equatable {
+    let mailboxId: String
+}
+
+/// One "Today's inbox" widget in the depth direction, framed like the home screen for the
+/// gallery: a card deck for New mail, a floating check for inbox zero. `front` is which
+/// thread is on top; `onNext` stands in for the widget's intent button.
 struct InboxWidgetDepthMock: View {
     let family: InboxWidgetFamily
     let snapshot: InboxWidgetSnapshot
@@ -90,7 +98,7 @@ struct InboxWidgetDepthMock: View {
     var onNext: (() -> Void)?
 
     var body: some View {
-        content
+        InboxWidgetDepthContent(family: family, snapshot: snapshot, front: front, spread: spread, onNext: onNext)
             .padding(AppTheme.Widget.padding)
             .frame(width: family.size.width, height: family.size.height, alignment: .topLeading)
             .background { InboxWidgetAmbientBackground(newCount: snapshot.newCount) }
@@ -101,25 +109,43 @@ struct InboxWidgetDepthMock: View {
             }
             .environment(\.font, .inter(size: 13))
     }
+}
 
-    @ViewBuilder
-    private var content: some View {
+/// The widget's content without its frame: the gallery mock pads and frames it, the
+/// WidgetKit entry view puts it inside the system's content margins and puts the bloom in
+/// `containerBackground(for: .widget)`.
+struct InboxWidgetDepthContent: View {
+    let family: InboxWidgetFamily
+    let snapshot: InboxWidgetSnapshot
+    var front: Int = 0
+    var spread: CGFloat = 1
+    /// Picks the inbox-zero line; defaults to the snapshot's time.
+    var now: Date?
+    var live: InboxWidgetLive?
+    var onNext: (() -> Void)?
+
+    private var zeroLine: String {
+        InboxWidgetSnapshot.inboxZeroLine(on: now ?? snapshot.updatedAt)
+    }
+
+    var body: some View {
         switch (family, snapshot.isInboxZero) {
         case (.small, false):
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     InboxWidgetHeader(isLive: true)
                     Spacer(minLength: 4)
-                    Text("\(snapshot.newCount)")
+                    Text(snapshot.newCount > 99 ? "99+" : "\(snapshot.newCount)")
                         .font(.inter(size: 13, weight: .bold))
                         .foregroundStyle(AppTheme.ink)
                         .monospacedDigit()
                         .contentTransition(.numericText(value: Double(snapshot.newCount)))
+                        .widgetAccentable()
                     Text(" new")
                         .font(.inter(size: 12, weight: .medium))
                         .foregroundStyle(AppTheme.muted)
                 }
-                InboxWidgetDeck(threads: snapshot.threads, front: front, compact: true, spread: spread, onNext: onNext)
+                InboxWidgetDeck(threads: snapshot.threads, front: front, compact: true, spread: spread, live: live, onNext: onNext)
                     .padding(.top, 10 + AppTheme.Widget.Depth.rise * CGFloat(AppTheme.Widget.Depth.backLayers) * spread)
             }
         case (.small, true):
@@ -131,7 +157,7 @@ struct InboxWidgetDepthMock: View {
                     .font(.inter(size: 17, weight: .semibold))
                     .foregroundStyle(AppTheme.ink)
                     .padding(.top, 12)
-                Text(InboxWidgetSnapshot.inboxZeroLine(on: snapshot.updatedAt))
+                Text(zeroLine)
                     .font(.inter(size: 12))
                     .foregroundStyle(AppTheme.muted)
                     .lineLimit(2)
@@ -157,7 +183,7 @@ struct InboxWidgetDepthMock: View {
                 .frame(width: 108, alignment: .leading)
                 .frame(maxHeight: .infinity, alignment: .topLeading)
 
-                InboxWidgetDeck(threads: snapshot.threads, front: front, compact: false, spread: spread, onNext: onNext)
+                InboxWidgetDeck(threads: snapshot.threads, front: front, compact: false, spread: spread, live: live, onNext: onNext)
                     .padding(.top, AppTheme.Widget.Depth.rise * CGFloat(AppTheme.Widget.Depth.backLayers) * spread)
             }
         case (.medium, true):
@@ -170,7 +196,7 @@ struct InboxWidgetDepthMock: View {
                         .tracking(-0.3)
                         .foregroundStyle(AppTheme.ink)
                         .padding(.top, 14)
-                    Text(InboxWidgetSnapshot.inboxZeroLine(on: snapshot.updatedAt))
+                    Text(zeroLine)
                         .font(.inter(size: 13))
                         .foregroundStyle(AppTheme.muted)
                         .lineLimit(2)
@@ -197,6 +223,7 @@ struct InboxWidgetDeck: View {
     let front: Int
     let compact: Bool
     var spread: CGFloat = 1
+    var live: InboxWidgetLive?
     var onNext: (() -> Void)?
 
     var body: some View {
@@ -212,6 +239,7 @@ struct InboxWidgetDeck: View {
                     compact: compact,
                     position: slot == 0 ? index : nil,
                     total: count,
+                    live: live,
                     onNext: onNext
                 )
                 .scaleEffect(pose.scale, anchor: .top)
@@ -234,6 +262,7 @@ private struct InboxWidgetDeckCard: View {
     /// Index of the front thread, for the position dots (nil on back cards).
     let position: Int?
     let total: Int
+    var live: InboxWidgetLive?
     var onNext: (() -> Void)?
 
     @Environment(\.colorScheme) private var colorScheme
@@ -267,10 +296,37 @@ private struct InboxWidgetDeckCard: View {
                 )
             }
             .overlay { shape.strokeBorder(AppTheme.line.opacity(dark ? 0.5 : 0.7), lineWidth: 0.5) }
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
+            // While › runs, WidgetKit dims the front card until the next entry lands.
+            .modifier(FrontCardPending(isFront: isFront))
     }
 
     private var cardContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            threadLink(summary)
+            Spacer(minLength: 0)
+            HStack(spacing: 0) {
+                InboxWidgetDeckDots(position: position ?? 0, total: total)
+                Spacer(minLength: 0)
+                InboxWidgetNextButton(mailboxId: isFront ? live?.mailboxId : nil, onNext: onNext)
+            }
+        }
+    }
+
+    /// On the home screen the card's sender and subject open the thread; the dots and ›
+    /// stay outside the link, and the rest of the widget opens the Inbox.
+    @ViewBuilder
+    private func threadLink<Content: View>(_ content: Content) -> some View {
+        if isFront, let live {
+            Link(destination: InboxWidgetLink.thread(mailboxId: live.mailboxId, threadId: thread.id).url) {
+                content.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            content
+        }
+    }
+
+    private var summary: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: compact ? 6 : 8) {
                 InboxWidgetAvatar(name: thread.senderName, size: compact ? 20 : 24)
@@ -292,12 +348,20 @@ private struct InboxWidgetDeckCard: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, compact ? 5 : 7)
-            Spacer(minLength: 0)
-            HStack(spacing: 0) {
-                InboxWidgetDeckDots(position: position ?? 0, total: total)
-                Spacer(minLength: 0)
-                InboxWidgetNextButton(onNext: onNext)
-            }
+        }
+        // Names and subjects redact on a locked device.
+        .privacySensitive()
+    }
+}
+
+private struct FrontCardPending: ViewModifier {
+    let isFront: Bool
+
+    func body(content: Content) -> some View {
+        if isFront {
+            content.invalidatableContent()
+        } else {
+            content
         }
     }
 }
@@ -320,24 +384,38 @@ private struct InboxWidgetDeckDots: View {
     }
 }
 
-/// The deck's › control. In the widget: `Button(intent: ShowNextThreadIntent(mailboxId:))`.
+/// The deck's ›. On the home screen (`mailboxId` set) it's
+/// `Button(intent: ShowNextThreadIntent(mailboxId:))`; in the gallery it calls `onNext`.
 struct InboxWidgetNextButton: View {
+    var mailboxId: String?
     var onNext: (() -> Void)?
 
     var body: some View {
-        Button {
-            onNext?()
-        } label: {
-            Image(systemName: "chevron.forward")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(AppTheme.surface)
-                .frame(width: AppTheme.Widget.Depth.nextButtonSize, height: AppTheme.Widget.Depth.nextButtonSize)
-                .background { Circle().fill(AppTheme.ink) }
-                .shadow(color: .black.opacity(0.18), radius: 3, y: 1.5)
-                .contentShape(Circle())
+        if let mailboxId {
+            Button(intent: ShowNextThreadIntent(mailboxId: mailboxId)) { label }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Next email")
+        } else {
+            Button {
+                onNext?()
+            } label: {
+                label
+            }
+            .buttonStyle(InboxWidgetPressStyle())
+            .accessibilityLabel("Next email")
         }
-        .buttonStyle(InboxWidgetPressStyle())
-        .accessibilityLabel("Next email")
+    }
+
+    private var label: some View {
+        Image(systemName: "chevron.forward")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(AppTheme.surface)
+            .frame(width: AppTheme.Widget.Depth.nextButtonSize, height: AppTheme.Widget.Depth.nextButtonSize)
+            .background { Circle().fill(AppTheme.ink) }
+            // Tinted / clear home screens (iOS 26): the disc takes the user's tint.
+            .widgetAccentable()
+            .shadow(color: .black.opacity(0.18), radius: 3, y: 1.5)
+            .contentShape(Circle())
     }
 }
 

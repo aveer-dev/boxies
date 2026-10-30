@@ -1,8 +1,8 @@
 import Foundation
 
-/// What the "Today's inbox" widget draws (AVE-138). Design-stage model: the later
-/// WidgetKit build writes this to the App Group as JSON whenever the Inbox refreshes,
-/// and the timeline provider reads it back. Keep it small and Codable.
+/// What the "Today's inbox" widget draws (AVE-138, built in AVE-149). The app writes it
+/// to the App Group as JSON whenever the Inbox refreshes (`InboxWidgetStore`), and the
+/// `InboxiesWidget` timeline provider reads it back. Keep it small and Codable.
 /// Android twin: `InboxWidgetSnapshot` in `ui/widget/InboxWidgetSnapshot.kt`.
 struct InboxWidgetSnapshot: Codable, Equatable {
     struct Thread: Codable, Equatable, Identifiable {
