@@ -20,9 +20,10 @@ import {
 import { EmailMCP } from "./mcp";
 import { createMcpOAuth, registerMcpOAuthRoutes, registerMcpRoutes } from "./mcp/oauth";
 import { strictMailboxId } from "./lib/mailbox-routing";
+import { getMailboxStub } from "./lib/email-helpers";
 import { withSecurityHeaders } from "./lib/security-headers";
 import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "./auth/authz";
-import { isLegacyMailboxPage, legacyInviteResponse, legacyMailboxResponse } from "./lib/legacy-app-urls";
+import { isLegacyMailboxPage, legacyAppPageResponse, legacyInviteResponse } from "./lib/legacy-app-urls";
 import type { RequestPrincipal } from "./auth/principal";
 import type { Operator } from "./auth/operators";
 import { operatorMiddleware, sessionMiddleware } from "./auth/middleware";
@@ -139,14 +140,20 @@ app.use("/invite/*", async (c, next) => legacyInviteResponse(c.req.raw) ?? next(
 // Everyone else: a Better Auth session.
 app.use("*", sessionMiddleware);
 
-// Old address-style mailbox links (`/mailbox/you@domain/...`) go to the
-// mailbox's index before the page loads (AVE-126). Signed-out visitors were
-// already sent to /login above.
+// Old mailbox links with an address (`/mailbox/you@domain/...`) or a tag name
+// (`.../emails/<tag>`) in the path go to the mailbox's and the tag's index
+// before the page loads (AVE-126). Signed-out visitors were already sent to
+// /login above. The folder list is read only for these old links.
 app.use("/mailbox/*", async (c, next) => {
 	const userId = c.get("principal")?.userId;
 	if (!userId || !isLegacyMailboxPage(c.req.raw)) return next();
 	const rows = await listMailboxesForUser(authDb(c.env.AUTH_DB), userId);
-	return legacyMailboxResponse(c.req.raw, rows.map((r) => r.mailboxId)) ?? next();
+	const response = await legacyAppPageResponse(
+		c.req.raw,
+		rows.map((r) => r.mailboxId),
+		async (mailboxId) => (await getMailboxStub(c.env, mailboxId).getFolders()).map((f) => f.id),
+	);
+	return response ?? next();
 });
 
 // /mcp: an OAuth access token goes to the resource server; anything else

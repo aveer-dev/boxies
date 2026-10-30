@@ -30,7 +30,11 @@ export default [
 	// shared/mailbox-url.ts); read the real id with useMailboxId().
 	route("mailbox/:mailboxRef", "routes/mailbox.tsx", [
 		index("routes/mailbox-index.tsx"),
+		// Built-in folders by name; tags (named by the user) by their index in
+		// the mailbox's tag list, never their name (shared/tag-url.ts). Old
+		// emails/<tag> links are rewritten to tags/<index>.
 		route("emails/:folder/:emailId?", "routes/email-list.tsx"),
+		route("tags/:tagRef/:emailId?", "routes/email-list.tsx", { id: "routes/tag-list" }),
 		route("reply-later/:emailId?", "routes/reply-later.tsx"),
 		route("new/:emailId?", "routes/inbox-new.tsx"),
 		route("search/:emailId?", "routes/search-results.tsx"),

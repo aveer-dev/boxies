@@ -13,6 +13,8 @@
  *   shows), so the same index means different mailboxes for different people
  *   and never identifies anyone. API calls keep using the real mailbox id.
  * - Invite links carry their token in the query string: `/invite?token=…`.
+ * - A tag is named by its index among the mailbox's tags: `/mailbox/0/tags/1`
+ *   (shared/tag-url.ts). Built-in folders keep their fixed names.
  *
  * Old links (`/mailbox/you@domain/...`, `/invite/<token>`) still work: the
  * Worker answers them with a redirect before any page loads, and the app

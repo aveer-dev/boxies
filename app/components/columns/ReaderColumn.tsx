@@ -2,11 +2,12 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Link, useParams } from "react-router";
+import { Link } from "react-router";
 import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
 import { FOLDER_DISPLAY_NAMES, SYSTEM_FOLDER_IDS } from "shared/folders";
 import EmailPanel from "~/components/EmailPanel";
-import { folderPath, useMailNavigation } from "~/hooks/useMailNavigation";
+import { folderHref as folderHrefFor, useMailNavigation } from "~/hooks/useMailNavigation";
+import { useListFolderId } from "~/hooks/useListFolder";
 import { useEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import type { Email } from "~/types";
@@ -29,7 +30,7 @@ export default function ReaderColumn({
 	/** Closes this column; defaults to closing the route's reader. */
 	onClose?: () => void;
 }) {
-	const { folder } = useParams<{ folder?: string }>();
+	const folder = useListFolderId() ?? undefined;
 	const mailboxId = useMailboxId();
 	const mailboxRef = useMailboxRef();
 	const { closeEmail } = useMailNavigation();
@@ -45,12 +46,24 @@ export default function ReaderColumn({
 			: (FOLDER_DISPLAY_NAMES[folderId] ?? folderId)
 		: null;
 
+	const folderHref = folderId
+		? folderHrefFor(
+				mailboxRef,
+				folderId,
+				folders.map((f) => f.id),
+			)
+		: null;
+
 	const chips = (
 		<>
 			{folderName && folderId && (
-				<Link to={folderPath(mailboxRef, folderId)} className="no-underline">
+				folderHref ? (
+					<Link to={folderHref} className="no-underline">
+						<ThreadChip>{folderName}</ThreadChip>
+					</Link>
+				) : (
 					<ThreadChip>{folderName}</ThreadChip>
-				</Link>
+				)
 			)}
 			{email?.starred && <ThreadChip>Starred</ThreadChip>}
 			{email?.reply_later && <ThreadChip>Reply later</ThreadChip>}

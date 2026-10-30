@@ -5,7 +5,8 @@
 import { useCallback, useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { useMailboxId, useMailboxRef } from "~/hooks/useCurrentMailbox";
-import { Folders } from "shared/folders";
+import { type FolderId, Folders } from "shared/folders";
+import { folderListSegment } from "shared/tag-url";
 import { useUIStore } from "~/hooks/useUIStore";
 
 /**
@@ -17,8 +18,23 @@ export function mailboxPath(mailboxRef: string) {
 	return `/mailbox/${mailboxRef}`;
 }
 
-export function folderPath(mailboxRef: string, folderId: string) {
+/** A built-in folder's list. Tags use `tagPath` / `folderHref`: their names stay out of URLs. */
+export function folderPath(mailboxRef: string, folderId: FolderId) {
 	return `${mailboxPath(mailboxRef)}/emails/${folderId}`;
+}
+
+/** A tag's list by its index (`tagRefFor`, shared/tag-url.ts), never its name. */
+export function tagPath(mailboxRef: string, tagRef: string) {
+	return `${mailboxPath(mailboxRef)}/tags/${tagRef}`;
+}
+
+/**
+ * The list for any folder id: built-in folders by name, tags by index in
+ * `folderIds` (the mailbox's folders). Null for a tag `folderIds` lacks.
+ */
+export function folderHref(mailboxRef: string, folderId: string, folderIds: readonly string[]) {
+	const list = folderListSegment(folderId, folderIds);
+	return list === null ? null : `${mailboxPath(mailboxRef)}/${list}`;
 }
 
 /** Every New Inbox conversation (the Inbox list shows only the newest few). */
@@ -34,7 +50,8 @@ export function searchPath(mailboxRef: string, query: string) {
 /**
  * The URL decides which Miller columns are open:
  *
- *   /mailbox/:ref/emails/:folder/:emailId?   folder list → reader
+ *   /mailbox/:ref/emails/:folder/:emailId?   built-in folder list → reader
+ *   /mailbox/:ref/tags/:tagRef/:emailId?     tag list (by index) → reader
  *   /mailbox/:ref/reply-later/:emailId?      Reply Later → reader
  *   /mailbox/:ref/new/:emailId?              all New Inbox mail → reader
  *   /mailbox/:ref/search/:emailId?q=…        results → reader

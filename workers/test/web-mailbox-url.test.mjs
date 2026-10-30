@@ -18,7 +18,7 @@ import {
 	resolveMailboxRef,
 	withMailboxRef,
 } from "../../shared/mailbox-url.ts";
-import { isLegacyMailboxPage, legacyInviteResponse, legacyMailboxResponse } from "../lib/legacy-app-urls.ts";
+import { isLegacyMailboxPage, legacyAppPageResponse, legacyInviteResponse } from "../lib/legacy-app-urls.ts";
 import { isWorkerPagePath } from "../../app/lib/safe-redirect.ts";
 
 // The server's order (ORDER BY mailbox_id), whatever order the ids arrive in.
@@ -100,11 +100,14 @@ assert.equal(isLegacyMailboxPage(req("/mailbox/bob@acme.com/emails/inbox")), tru
 assert.equal(isLegacyMailboxPage(req("/mailbox/1/emails/inbox")), false);
 assert.equal(isLegacyMailboxPage(req("/mailbox/bob@acme.com", "POST")), false);
 assert.equal(isLegacyMailboxPage(req("/api/v1/mailboxes/bob@acme.com")), false);
-const mb = legacyMailboxResponse(req("/mailbox/bob@acme.com/emails/inbox?x=1"), ids);
+const noFolders = async () => {
+	throw new Error("built-in folders need no folder list");
+};
+const mb = await legacyAppPageResponse(req("/mailbox/bob@acme.com/emails/inbox?x=1"), ids, noFolders);
 assert.equal(mb?.status, 302);
 assert.equal(mb?.headers.get("Location"), "/mailbox/1/emails/inbox?x=1");
-assert.equal(legacyMailboxResponse(req("/mailbox/eve@acme.com"), ids)?.headers.get("Location"), "/");
-assert.equal(legacyMailboxResponse(req("/mailbox/0"), ids), null);
+assert.equal((await legacyAppPageResponse(req("/mailbox/eve@acme.com"), ids, noFolders))?.headers.get("Location"), "/");
+assert.equal(await legacyAppPageResponse(req("/mailbox/0"), ids, noFolders), null);
 
 // After sign-in, old-style `next` targets load in full so the Worker rewrites them.
 assert.equal(isWorkerPagePath("/mailbox/bob@acme.com/emails/inbox"), true);

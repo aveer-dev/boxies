@@ -27,10 +27,11 @@ import {
 	Folders,
 	SYSTEM_FOLDER_IDS,
 } from "shared/folders";
-import { folderPath, mailboxPath } from "~/hooks/useMailNavigation";
+import { folderPath, mailboxPath, tagPath } from "~/hooks/useMailNavigation";
 import { isScreenerEnabled } from "~/lib/mailbox-settings";
 import { slidingMarkClass, useSlidingHighlight } from "~/hooks/useSlidingHighlight";
 import { mailboxDisplayName } from "~/lib/mailbox-display";
+import { orderTagIds } from "shared/tag-url";
 import { useCreateFolder, useFolders, useWorkflowPiles } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { IconButton } from "~/components/IconButton";
@@ -141,10 +142,14 @@ export default function FoldersColumn() {
 		[folders],
 	);
 	// Custom folders render as tags (a message carries one: the folder it's in).
-	const tags = useMemo(
-		() => folders.filter((f) => !(SYSTEM_FOLDER_IDS as readonly string[]).includes(f.id)),
-		[folders],
-	);
+	// Each links by its index, never its name (AVE-126, shared/tag-url.ts).
+	const tags = useMemo(() => {
+		const refs = new Map(orderTagIds(folders.map((f) => f.id)).map((id, i) => [id, String(i)]));
+		return folders.flatMap((f) => {
+			const ref = refs.get(f.id);
+			return ref === undefined ? [] : [{ ...f, ref }];
+		});
+	}, [folders]);
 	// Screener off (AVE-104): hide its row unless something is still unread there.
 	const screenerOn = isScreenerEnabled(mailbox?.settings);
 	const visibleSystemFolders = useMemo(
@@ -231,7 +236,7 @@ export default function FoldersColumn() {
 						tags.map((tag) => (
 							<FolderRow
 								key={tag.id}
-								to={folderPath(mailboxRef, tag.id)}
+								to={tagPath(mailboxRef, tag.ref)}
 								icon={<span className="text-xs">#</span>}
 								label={tag.name.replace(/^#/, "")}
 								count={tag.unreadCount}
