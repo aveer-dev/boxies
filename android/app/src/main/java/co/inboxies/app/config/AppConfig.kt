@@ -43,6 +43,18 @@ object AppConfig {
     @Volatile
     private var prefs: SharedPreferences? = null
 
+    /** DEBUG-only local Worker base for this process; see [isLocalWorkerBase]. */
+    @Volatile
+    private var localWorkerBase: String? = null
+
+    /**
+     * A `pnpm dev` Worker on the host. DEBUG builds keep it in memory for this process
+     * only: stored, it outlived the dev server and stranded every later launch on a dead
+     * host, so a stored one is dropped instead.
+     */
+    fun isLocalWorkerBase(value: String): Boolean =
+        value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")
+
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -58,7 +70,8 @@ object AppConfig {
                 if (override != null) prefs?.edit { remove(KEY_API_BASE) }
                 return BuildConfig.DEFAULT_API_BASE
             }
-            if (override != null && (override.contains("localhost") || override.contains("127.0.0.1") || override.contains("10.0.2.2"))) {
+            localWorkerBase?.let { return it }
+            if (override != null && isLocalWorkerBase(override)) {
                 prefs?.edit { remove(KEY_API_BASE) }
                 return BuildConfig.DEFAULT_API_BASE
             }
@@ -70,9 +83,11 @@ object AppConfig {
                 prefs?.edit { remove(KEY_API_BASE) }
                 return
             }
-            if (value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")) {
+            if (isLocalWorkerBase(value)) {
+                localWorkerBase = value
                 prefs?.edit { remove(KEY_API_BASE) }
             } else {
+                localWorkerBase = null
                 prefs?.edit { putString(KEY_API_BASE, value) }
             }
         }
