@@ -60,9 +60,33 @@ jobs:
       # android/gradle/gradle-daemon-jvm.properties pins the Gradle daemon to JetBrains
       # Runtime 21 (Android Studio's JBR). Providing it here avoids Gradle downloading
       # one on every run; the app itself compiles for Java 17.
-      - uses: actions/setup-java@v6
+      #
+      # The jetbrains distribution lookup sometimes fails with "No matching version
+      # found" (AVE-168), so try it twice and then fall back to Temurin 21. On the
+      # fallback, Gradle still runs its daemon on JBR 21: it provisions one from the
+      # toolchainUrl entries in gradle-daemon-jvm.properties.
+      - id: jbr
+        uses: actions/setup-java@v6
+        continue-on-error: true
         with:
           distribution: jetbrains
+          java-version: 21
+
+      - if: steps.jbr.outcome == 'failure'
+        run: sleep 20
+
+      - id: jbr-retry
+        if: steps.jbr.outcome == 'failure'
+        uses: actions/setup-java@v6
+        continue-on-error: true
+        with:
+          distribution: jetbrains
+          java-version: 21
+
+      - if: steps.jbr.outcome == 'failure' && steps.jbr-retry.outcome == 'failure'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
           java-version: 21
 
       - uses: gradle/actions/setup-gradle@v6
