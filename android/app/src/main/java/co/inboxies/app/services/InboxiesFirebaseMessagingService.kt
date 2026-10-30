@@ -52,16 +52,21 @@ class InboxiesFirebaseMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         PushNotificationManager.ensureChannel(this)
-        val notification = NotificationCompat.Builder(this, PushNotificationManager.CHANNEL_ID)
+        val notificationId = message.messageId?.hashCode() ?: body.hashCode()
+        val builder = NotificationCompat.Builder(this, PushNotificationManager.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_inboxies_glyph)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setAutoCancel(true)
+            // A failed or blank Reply re-posts this notification; don't alert twice.
+            .setOnlyAlertOnce(true)
             .setContentIntent(pending)
-            .build()
-        getSystemService(NotificationManager::class.java)
-            ?.notify(message.messageId?.hashCode() ?: body.hashCode(), notification)
+        // Archive / Mark read / Reply Later / Reply / Spam, bridged to Wear OS (AVE-142).
+        MailNotificationActions.target(message.data)?.let { target ->
+            MailNotificationActions.addActions(this, builder, target, notificationId)
+        }
+        getSystemService(NotificationManager::class.java)?.notify(notificationId, builder.build())
     }
 
     private companion object {

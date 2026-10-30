@@ -1062,6 +1062,23 @@ class ApiClient private constructor() {
         },
     )
 
+    /**
+     * Add to Reply Later with a reminder in one PUT (`reply_later: true` +
+     * `reply_later_remind_at`), as the iOS notification action does (AVE-142).
+     */
+    suspend fun setReplyLaterWithReminder(
+        mailboxId: String,
+        id: String,
+        remindAt: String,
+    ): Email = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(id)}",
+        method = "PUT",
+        body = buildJsonObject {
+            put("reply_later", true)
+            put("reply_later_remind_at", remindAt)
+        },
+    )
+
     suspend fun listReplyLaterEmails(
         mailboxId: String,
         page: Int = 1,
@@ -1332,6 +1349,22 @@ class ApiClient private constructor() {
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/reply",
         method = "POST",
         body = payload,
+        headers = idempotencyHeaders(idempotencyKey),
+    )
+
+    /**
+     * Short plain-text reply from a notification (AVE-140). The Worker builds the
+     * recipients and subject; pass a fresh [idempotencyKey] per attempt.
+     */
+    suspend fun quickReply(
+        mailboxId: String,
+        emailId: String,
+        text: String,
+        idempotencyKey: String,
+    ): SendEmailResponse = request(
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/emails/${pathEncode(emailId)}/quick-reply",
+        method = "POST",
+        body = buildJsonObject { put("text", text) },
         headers = idempotencyHeaders(idempotencyKey),
     )
 
