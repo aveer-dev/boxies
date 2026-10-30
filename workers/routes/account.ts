@@ -29,7 +29,7 @@ import { appBaseUrl, codeEmail, sendSystemEmail } from "../auth/mail";
 import { deleteMailboxRows, pruneDeviceTokensToMembership } from "../auth/mailboxes";
 import { consumeLinkToken, consumeOtp, issueLinkToken, issueOtp, revokeLinkTokens } from "../auth/otp";
 import { userKey, type RequestPrincipal } from "../auth/principal";
-import { clientIp, isRateLimited, TOO_MANY } from "../auth/rate-limit";
+import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MANY } from "../auth/rate-limit";
 import * as schema from "../auth/schema";
 import {
 	clearSessionCookieHeader,
@@ -404,8 +404,10 @@ export function registerAccountRoutes(app: App) {
 		const parsed = PasswordLoginBody.safeParse(await c.req.json().catch(() => ({})));
 		if (!parsed.success) return c.json({ error: "Email and password are required" }, 400);
 		if (await isRateLimited(c.env, "sign-in", clientIp(c.req.raw.headers))) return c.json(TOO_MANY, 429);
+		const email = loginEmail(parsed.data.email);
+		if (await isAccountLocked(c.env, email)) return c.json(TOO_MANY, 429);
 		try {
-			const result = await passwordSignIn(c.env, c.req.raw.headers, loginEmail(parsed.data.email), parsed.data.password);
+			const result = await passwordSignIn(c.env, c.req.raw.headers, email, parsed.data.password);
 			if (!result) return c.json({ error: "Invalid email or password" }, 401);
 			forwardSetCookies(c, result.headers);
 			if (result.kind === "two-factor") {
@@ -420,6 +422,7 @@ export function registerAccountRoutes(app: App) {
 		} catch (e) {
 			const status = apiErrorStatus(e);
 			if (status >= 500) console.error("[Auth] Password sign-in failed:", apiErrorMessage(e));
+			if (apiErrorCode(e) === "INVALID_EMAIL_OR_PASSWORD") await recordPasswordFailure(c.env, email);
 			return c.json({ error: "Invalid email or password" }, 401);
 		}
 	});
@@ -860,6 +863,7 @@ export function registerAccountRoutes(app: App) {
 			.safeParse(await c.req.json().catch(() => ({})));
 		if (!parsed.success) return c.json({ error: "currentPassword and newPassword are required" }, 400);
 		if (await isRateLimited(c.env, "sign-in", principal.userId)) return c.json(TOO_MANY, 429);
+		if (await isAccountLocked(c.env, principal.email)) return c.json(TOO_MANY, 429);
 		const db = authDb(c.env.AUTH_DB);
 		const credential = await db
 			.select({ password: schema.account.password })
@@ -868,6 +872,7 @@ export function registerAccountRoutes(app: App) {
 			.get();
 		if (!credential?.password) return c.json({ error: "This account has no password yet" }, 400);
 		if (!(await verifyPassword(parsed.data.currentPassword, credential.password))) {
+			await recordPasswordFailure(c.env, principal.email);
 			return c.json({ error: "Current password is incorrect" }, 403);
 		}
 		const strength = validatePasswordStrength(parsed.data.newPassword);
