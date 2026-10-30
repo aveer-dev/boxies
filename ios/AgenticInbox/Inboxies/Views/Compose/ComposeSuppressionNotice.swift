@@ -50,6 +50,7 @@ struct ComposeSuppressionNotice: View {
                         Text(BounceSuppression.buttonTitle(count: suppressed.count))
                     }
                     .font(.inter(size: 13, weight: .semibold))
+                    .foregroundStyle(AppTheme.background)
                 }
                 .buttonStyle(.borderedProminent)
                 .buttonBorderShape(.capsule)
