@@ -15,10 +15,10 @@
     { "pattern": "inboxies.co", "custom_domain": true },
     { "pattern": "www.inboxies.co", "custom_domain": true }
   ],
-  // On for staging while inboxies.co moves to Cloudflare. Turn both off once the custom domain serves,
-  // so the site and /api/contact live on one host.
-  "workers_dev": true,
-  "preview_urls": true,
+  // Off (AVE-166): the site and /api/contact live on inboxies.co only, behind the zone's rules.
+  // So site PRs (Workers Builds) get no preview URLs.
+  "workers_dev": false,
+  "preview_urls": false,
   // Contact form → support. The destination must be a verified Email Routing destination in this
   // account, and the From domain (inboxies.co) must be onboarded to Email Service:
   // `npx wrangler email sending enable inboxies.co`, then check `npx wrangler email sending list`.

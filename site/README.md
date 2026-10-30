@@ -71,9 +71,13 @@ Also before launch: reserve the role usernames on inboxies.email (question 17) a
    1. Add `inboxies.co` to the account and switch the nameservers at Namecheap; wait until the zone shows Active.
    2. Delete the imported parking records: the apex `A 162.255.119.103` and the `www` CNAME to `parkingpage.namecheap.com`. A custom domain can't attach over an existing A/AAAA/CNAME record.
    3. Decide what happens to Namecheap's email forwarding on `inboxies.co`: enabling Email Routing replaces those MX records.
-   4. Until the zone is Active, deploy to staging only: comment out `routes` (`workers_dev` is on) and run the smoke tests below on the `workers.dev` URL.
+   4. Until the zone is Active, deploy to staging only: comment out `routes`, set `workers_dev` back to `true`, and run the smoke tests below on the `workers.dev` URL.
 1. `wrangler login` (there's no `account_id`, so wrangler uses the logged-in account), then `pnpm site:deploy`.
-2. The `routes` block attaches `inboxies.co` and `www.inboxies.co` as custom domains. Add a Single Redirect rule on the zone: `http.host eq "www.inboxies.co"` → `concat("https://inboxies.co", http.request.uri.path)`, 301, query string kept. Redirect rules run before the Worker, and the canonical tags already point at `https://inboxies.co`. Turn on HSTS in the zone's SSL/TLS settings too (`_headers` sends a one-year `Strict-Transport-Security` without `includeSubDomains`).
+2. The `routes` block attaches `inboxies.co` and `www.inboxies.co` as custom domains. Then, on the zone (owner, dashboard):
+   - SSL/TLS → Edge Certificates: turn on **Always Use HTTPS** and **HSTS**. `_headers` and the Worker send a one-year `Strict-Transport-Security` without `includeSubDomains`.
+   - A Single Redirect rule: `http.host eq "www.inboxies.co"` → `concat("https://inboxies.co", http.request.uri.path)`, 301, query string kept. Redirect rules run before the Worker, and the canonical tags already point at `https://inboxies.co`.
+
+   In code (AVE-166, `src/lib/canonical-redirect.ts`): a fallback for both, for requests that reach the Worker (`/api/*`, `/roadmap`, `/media/*`, 404s). HTTP gets a 301 to HTTPS (308 for a POST, so the body survives), and a GET or HEAD on `www.inboxies.co` gets one 301 to `https://inboxies.co`, path and query kept. Local hosts are never redirected. Prerendered pages are served by the asset server before the Worker runs, so `http://inboxies.co/` and `https://www.inboxies.co/` only redirect once the zone settings are on.
 3. The build writes `dist/server/wrangler.json` and a redirect in `.wrangler/deploy/config.json`. Plain `wrangler dev` / `wrangler deploy` from `site/` pick it up.
 4. After the first deploy, smoke test:
    - `/` returns 200 and `/does-not-exist` returns 404 with the Screener line.
@@ -81,7 +85,7 @@ Also before launch: reserve the role usernames on inboxies.email (question 17) a
    - `/terms` and `/privacy` answer `301` to `/legal#terms` and `/legal#privacy` (`_redirects`, from `redirects` in `astro.config.mjs`).
    - `curl -sI -H "Range: bytes=0-1" https://inboxies.co/media/inbox-open.mp4` answers `206` with `Content-Range: bytes 0-1/330088`. Without it, Safari and every iOS browser keep the clips on their posters. `pnpm preview` answers the same locally.
    - A signed-out visit to the sign-up link reaches “Get started”, not an Access login (open question 1).
-5. Once `https://inboxies.co` serves, set `"workers_dev": false` and `"preview_urls": false` in `wrangler.jsonc` and deploy again, so the site and `/api/contact` live on one host (behind the zone's WAF and rate-limiting rules).
+5. `"workers_dev"` and `"preview_urls"` are `false` in `wrangler.jsonc` (AVE-166), so the site and `/api/contact` live on one host, behind the zone's WAF and rate-limiting rules. Site PRs get no preview URLs.
 
 ## Contact form
 
