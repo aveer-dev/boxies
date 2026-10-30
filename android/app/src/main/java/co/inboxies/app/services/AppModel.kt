@@ -2166,9 +2166,22 @@ class AppModel {
         pendingMessage: String?,
         completedMessage: String,
     ) {
+        scheduleUndoableAction(
+            action = UndoableAction(message = completedMessage, execute = commit, rollback = rollback),
+            optimistic = optimistic,
+            pendingMessage = pendingMessage,
+        )
+    }
+
+    /** Shows [action]'s Undo toast and commits it when the toast times out or the next action starts. */
+    private fun scheduleUndoableAction(
+        action: UndoableAction,
+        optimistic: () -> Unit,
+        pendingMessage: String?,
+    ) {
+        val completedMessage = action.message
         optimistic()
         commitPendingActionImmediately()
-        val action = UndoableAction(message = completedMessage, execute = commit, rollback = rollback)
         val actionId = action.id
         _pendingUndoAction.value = action
         pendingUndoJob = scope.launch {
@@ -2612,12 +2625,67 @@ class AppModel {
         }
     }
 
+    /**
+     * Multi-select archive: one undoable action for the whole selection, so Undo restores
+     * every row (AVE-163). The server calls run per id inside that single commit.
+     */
     suspend fun archiveEmails(ids: Set<String>) {
-        ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }.forEach { archiveEmail(it) }
+        val mailboxId = _selectedMailboxId.value ?: return
+        val targets = ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }
+        if (targets.isEmpty()) return
+        if (blockIfReadOnly()) return
+        val action = bulkUndoableAction(
+            ids = targets.map { it.id },
+            message = "Archived",
+            perform = { id ->
+                ApiClient.shared.moveEmail(mailboxId, id, FolderIds.ARCHIVE)
+                db.moveEmail(id, FolderIds.ARCHIVE)
+            },
+            onFailures = { _, error ->
+                loadEmailsForCurrentTab(showLoading = false)
+                val ended = noteServiceEnded(error)
+                showToast(if (ended) error.message.orEmpty() else "Couldn't archive", isError = true)
+            },
+            rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
+        )
+        scheduleUndoableAction(
+            action = action,
+            optimistic = { targets.forEach { removeEmailLocally(it) } },
+            pendingMessage = "Archiving...",
+        )
     }
 
+    /**
+     * Multi-select delete: one undoable action for the whole selection (AVE-163). Each row
+     * keeps [deleteEmail]'s Trash-vs-permanent rule.
+     */
     suspend fun deleteEmails(ids: Set<String>) {
-        ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }.forEach { deleteEmail(it) }
+        val mailboxId = _selectedMailboxId.value ?: return
+        val targets = ids.mapNotNull { id -> _emails.value.firstOrNull { it.id == id } }
+        if (targets.isEmpty()) return
+        if (blockIfReadOnly()) return
+        val permanentIds = targets
+            .filter { it.isDraft || it.folderId == FolderIds.TRASH }
+            .mapTo(mutableSetOf()) { it.id }
+        val action = bulkUndoableAction(
+            ids = targets.map { it.id },
+            message = if (permanentIds.size == targets.size) "Deleted" else "Moved to Trash",
+            perform = { id ->
+                ApiClient.shared.deleteEmail(mailboxId, id)
+                if (id in permanentIds) db.deleteEmail(id) else db.moveEmail(id, FolderIds.TRASH)
+            },
+            onFailures = { _, error ->
+                loadEmailsForCurrentTab(showLoading = false)
+                val ended = noteServiceEnded(error)
+                showToast(if (ended) error.message.orEmpty() else "Couldn't delete", isError = true)
+            },
+            rollback = { scope.launch { loadEmailsForCurrentTab(showLoading = false) } },
+        )
+        scheduleUndoableAction(
+            action = action,
+            optimistic = { targets.forEach { removeEmailLocally(it) } },
+            pendingMessage = "Deleting...",
+        )
     }
 
     fun clearSelectedEmail() {
