@@ -33,6 +33,9 @@
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
+#   ./scripts/run-debug-preview.sh tags                # Settings → Tags (custom folders, AVE-158)
+#   ./scripts/run-debug-preview.sh tagsRename          # Settings → Tags, rename dialog open
+#   ./scripts/run-debug-preview.sh tagsDelete          # Settings → Tags, delete confirmation open
 #   ./scripts/run-debug-preview.sh settings            # Settings sheet (Screener switch on)
 #   ./scripts/run-debug-preview.sh settingsScreenerOff # Settings sheet, Screener off
 #   ./scripts/run-debug-preview.sh aiUsage             # agent chat, usage meter at 42 / 50 (warning)
@@ -69,6 +72,9 @@ case "$mode" in
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
   suppressions|Suppressions|previewSuppressions) extra=previewSuppressions; label=suppressions ;;
+  tags|Tags|previewTags) extra=previewTags; label=tags ;;
+  tagsRename|TagsRename|previewTagsRename) extra=previewTagsRename; label=tagsRename ;;
+  tagsDelete|TagsDelete|previewTagsDelete) extra=previewTagsDelete; label=tagsDelete ;;
   settings|Settings|previewSettings) extra=previewSettings; label=settings ;;
   settingsScreenerOff|SettingsScreenerOff|previewSettingsScreenerOff) extra=previewSettingsScreenerOff; label=settingsScreenerOff ;;
   mailbox|Mailbox|previewMailbox) extra=previewMailbox; label=mailbox ;;

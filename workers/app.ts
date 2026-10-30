@@ -20,8 +20,10 @@ import {
 import { EmailMCP } from "./mcp";
 import { createMcpOAuth, registerMcpOAuthRoutes, registerMcpRoutes } from "./mcp/oauth";
 import { strictMailboxId } from "./lib/mailbox-routing";
+import { getMailboxStub } from "./lib/email-helpers";
 import { withSecurityHeaders } from "./lib/security-headers";
-import { authDb, authorizeMailboxAccess } from "./auth/authz";
+import { authDb, authorizeMailboxAccess, listMailboxesForUser } from "./auth/authz";
+import { isLegacyMailboxPage, legacyAppPageResponse, legacyInviteResponse } from "./lib/legacy-app-urls";
 import type { RequestPrincipal } from "./auth/principal";
 import type { Operator } from "./auth/operators";
 import { operatorMiddleware, sessionMiddleware } from "./auth/middleware";
@@ -106,7 +108,7 @@ app.use("*", async (c, next) => httpsRedirect(c.req.raw) ?? next());
 app.use("*", async (c, next) => webHostRedirect(c.env, c.req.raw) ?? next());
 
 // Better Auth (AUTH_DB): an allowlisted subset of its routes.
-app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw));
+app.on(["GET", "POST"], `${AUTH_BASE_PATH}/*`, (c) => handleBetterAuthRequest(c.env, c.req.raw, c.executionCtx));
 
 // CSP violation reports (AVE-148): browsers send them without cookies, so
 // this is public. Logged only, size-capped, nothing stored.
@@ -131,8 +133,28 @@ const mcpOAuth = createMcpOAuth(mcpHandler, {
 });
 registerMcpOAuthRoutes(app, mcpOAuth);
 
+// Old invite links (`/invite/<token>`) move the token into the query string
+// before the page loads (AVE-126, workers/lib/legacy-app-urls.ts). Public.
+app.use("/invite/*", async (c, next) => legacyInviteResponse(c.req.raw) ?? next());
+
 // Everyone else: a Better Auth session.
 app.use("*", sessionMiddleware);
+
+// Old mailbox links with an address (`/mailbox/you@domain/...`) or a tag name
+// (`.../emails/<tag>`) in the path go to the mailbox's and the tag's index
+// before the page loads (AVE-126). Signed-out visitors were already sent to
+// /login above. The folder list is read only for these old links.
+app.use("/mailbox/*", async (c, next) => {
+	const userId = c.get("principal")?.userId;
+	if (!userId || !isLegacyMailboxPage(c.req.raw)) return next();
+	const rows = await listMailboxesForUser(authDb(c.env.AUTH_DB), userId);
+	const response = await legacyAppPageResponse(
+		c.req.raw,
+		rows.map((r) => r.mailboxId),
+		async (mailboxId) => (await getMailboxStub(c.env, mailboxId).getFolders()).map((f) => f.id),
+	);
+	return response ?? next();
+});
 
 // /mcp: an OAuth access token goes to the resource server; anything else
 // already went through the session middleware (Bearer session token or

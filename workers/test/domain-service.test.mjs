@@ -173,7 +173,7 @@ let inviteToken = "";
 	});
 	assert.equal(invited.status, 201);
 	inviteToken = decodeURIComponent(
-		email.sent.map((m) => m.text?.match(/\/invite\/([^\s"<]+)/)?.[1]).filter(Boolean).at(-1),
+		email.sent.map((m) => m.text?.match(/\/invite\?token=([^\s"&<]+)/)?.[1]).filter(Boolean).at(-1),
 	);
 
 	const service = await request(env, { path: "/api/v1/billing/domains/acme.com/service", principal: asAda });

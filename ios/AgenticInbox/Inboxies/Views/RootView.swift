@@ -267,6 +267,8 @@ struct MailboxOnboardingView: View {
     @State private var isPaymentSyncing = false
     @State private var createdAuthToken: String?
     @State private var webAuthSession: ASWebAuthenticationSession?
+    /// Stripe checkout this view started; the return link's code only redeems with it.
+    @State private var pendingCheckoutSessionId: String?
 
     // Team users state
     @State private var teamUsers: [OnboardingUserItem] = []
@@ -1838,6 +1840,7 @@ struct MailboxOnboardingView: View {
                 client: "ios"
             )
             guard let url = URL(string: res.checkoutUrl) else { return }
+            pendingCheckoutSessionId = res.sessionId
 
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "inboxies") { callbackUrl, error in
                 DispatchQueue.main.async {
@@ -1863,8 +1866,8 @@ struct MailboxOnboardingView: View {
     /// Only `domain-ready` advances; a cancelled checkout leaves the buyer on this step.
     private func handlePaymentCallback(_ callbackUrl: URL) {
         switch PaymentCallback.parse(callbackUrl) {
-        case .domainReady(let domain, _, let token, _):
-            handlePaymentComplete(domain: domain, token: token)
+        case .domainReady(let domain, let code):
+            handlePaymentComplete(domain: domain, code: code)
         case .cancelled:
             errorMessage = "Checkout was cancelled, so the domain was not purchased. You can try again."
         case .renewed, .renewCancelled, .unrecognized:
@@ -1872,18 +1875,38 @@ struct MailboxOnboardingView: View {
         }
     }
 
-    private func handlePaymentComplete(domain domainFromUrl: String?, token: String?) {
+    private func handlePaymentComplete(domain domainFromUrl: String?, code: String?) {
         errorMessage = nil
         isPaymentSyncing = true
+        // The checkout this view started: one return, one exchange.
+        let checkoutSessionId = pendingCheckoutSessionId
+        pendingCheckoutSessionId = nil
         Task {
             let targetDomain = domainFromUrl ?? customDomain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let username = customUsername.isEmpty ? "admin" : customUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-            if let token = token, !token.isEmpty {
-                createdAuthToken = token
-                let username = customUsername.isEmpty ? "admin" : customUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                let email = "\(username)@\(targetDomain)"
-                // RootView's `.task(id: auth.token)` bootstraps the new session.
-                auth.applySession(token: token, email: email)
+            if let code, let checkoutSessionId {
+                do {
+                    let res = try await APIClient.shared.exchangeCheckoutCode(code: code, sessionId: checkoutSessionId)
+                    createdAuthToken = res.token
+                    // RootView's `.task(id: auth.token)` bootstraps the new session.
+                    auth.applySession(token: res.token, email: res.email ?? res.mailboxId ?? "\(username)@\(targetDomain)")
+                } catch {
+                    if !auth.isAuthenticated {
+                        // The code was wrong, used or expired: the domain is still paid
+                        // for, so send the buyer to sign in with the password they chose.
+                        isPaymentSyncing = false
+                        let message = "Your domain is ready. Sign in as \(username)@\(targetDomain) with the password you chose."
+                        if let onDismiss {
+                            // Dismissing clears the sign-in error, so set it after.
+                            onDismiss()
+                            auth.errorMessage = message
+                        } else {
+                            errorMessage = message
+                        }
+                        return
+                    }
+                }
             }
 
             _ = try? await APIClient.shared.fixDomainEmailDns(domain: targetDomain)

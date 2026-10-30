@@ -5,7 +5,7 @@
 import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQueries } from "@tanstack/react-query";
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { mailboxesPurgedOnDelete } from "~/lib/account-deletion";
 import { useMe } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
@@ -72,7 +72,7 @@ function PurgedMailboxList() {
 
 /** Danger zone: permanently delete the signed-in account (type-to-confirm). */
 export default function DeleteAccountSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const { data: me } = useMe();
 	const [typed, setTyped] = useState("");

@@ -3,8 +3,10 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
-import { Outlet, useNavigate, useParams } from "react-router";
+import { Loader } from "@cloudflare/kumo";
+import { useEffect, useMemo, useRef } from "react";
+import { Outlet, useLocation, useNavigate, useParams } from "react-router";
+import { orderMailboxIds, reconcileMailboxRef, withMailboxRef } from "shared/mailbox-url";
 import AccountsColumn from "~/components/columns/AccountsColumn";
 import ColumnCanvas from "~/components/columns/ColumnCanvas";
 import FloatingDock from "~/components/columns/FloatingDock";
@@ -20,8 +22,88 @@ import ReplyLaterReminderDialog from "~/components/ReplyLaterReminderDialog";
 import { useMailboxEvents } from "~/hooks/useMailboxEvents";
 import { useUIStore } from "~/hooks/useUIStore";
 import { forgetLastMailbox, readLastMailbox, rememberLastMailbox } from "~/lib/last-mailbox";
-import { useMailbox } from "~/queries/mailboxes";
+import { CurrentMailboxContext, useMailboxId } from "~/hooks/useCurrentMailbox";
+import { useMailbox, useMailboxes } from "~/queries/mailboxes";
 import api, { ApiError } from "~/services/api";
+
+/**
+ * `/mailbox/:mailboxRef`: the segment is the mailbox's index in the user's
+ * mailbox list, never its address, so page analytics can't tie a URL to a
+ * person (AVE-126, shared/mailbox-url.ts). This resolves it to the real id
+ * for everything below (useMailboxId), rewrites old address-style URLs with
+ * `replace`, and sends an index the user doesn't have to their last-used
+ * (or first) mailbox.
+ */
+export default function MailboxRoute() {
+	const { mailboxRef = "" } = useParams<{ mailboxRef: string }>();
+	const location = useLocation();
+	const navigate = useNavigate();
+	const mailboxesQuery = useMailboxes();
+	const { data: me } = useQuery({
+		queryKey: ["me"],
+		queryFn: () => api.getMe(),
+		staleTime: 60_000,
+	});
+	const ids = useMemo(
+		() => orderMailboxIds((mailboxesQuery.data ?? []).map((m) => m.id)),
+		[mailboxesQuery.data],
+	);
+	const idsKey = ids.join("\n");
+
+	// The mailbox on screen, the list it was resolved against and the URL it
+	// was shown at. When only the list changes (a mailbox added or removed),
+	// indexes can shift: the open mailbox keeps its place instead of the
+	// unchanged URL quietly naming another one. A navigation resolves afresh.
+	const shownRef = useRef<{ idsKey: string; mailboxId: string; locationKey: string } | null>(null);
+	const shown = shownRef.current;
+	const pinned =
+		shown && shown.idsKey !== idsKey && shown.locationKey === location.key ? shown.mailboxId : null;
+	const outcome = mailboxesQuery.data
+		? reconcileMailboxRef(mailboxRef, ids, pinned, readLastMailbox(me?.userId))
+		: null;
+	const mailboxId = outcome && outcome.kind !== "leave" ? outcome.mailboxId : null;
+
+	useEffect(() => {
+		if (outcome?.kind === "show") {
+			shownRef.current = { idsKey, mailboxId: outcome.mailboxId, locationKey: location.key };
+		}
+	});
+
+	const target =
+		outcome?.kind === "redirect"
+			? `${withMailboxRef(location.pathname, outcome.ref)}${location.search}${location.hash}`
+			: outcome?.kind === "leave"
+				? outcome.fallbackRef === null
+					? "/"
+					: `/mailbox/${outcome.fallbackRef}`
+				: null;
+	useEffect(() => {
+		if (target) navigate(target, { replace: true });
+	}, [target, navigate]);
+
+	useEffect(() => {
+		// The list couldn't load: the mailbox list page handles that.
+		if (mailboxesQuery.isError) navigate("/", { replace: true });
+	}, [mailboxesQuery.isError, navigate]);
+
+	const currentRef = outcome?.kind === "redirect" ? outcome.ref : mailboxRef;
+	const current = useMemo(
+		() => (mailboxId ? { mailboxId, mailboxRef: currentRef } : null),
+		[mailboxId, currentRef],
+	);
+	if (!current) {
+		return (
+			<div className="flex min-h-screen items-center justify-center bg-kumo-recessed">
+				<Loader size="lg" />
+			</div>
+		);
+	}
+	return (
+		<CurrentMailboxContext.Provider value={current}>
+			<MailboxShell />
+		</CurrentMailboxContext.Provider>
+	);
+}
 
 /**
  * Horizontal Miller columns:
@@ -31,8 +113,8 @@ import api, { ApiError } from "~/services/api";
  * transient UI state: each opens at the far right, beside whatever is
  * already open.
  */
-export default function MailboxRoute() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+function MailboxShell() {
+	const mailboxId = useMailboxId();
 	const navigate = useNavigate();
 	const mailboxQuery = useMailbox(mailboxId);
 	useMailboxEvents(mailboxId);

@@ -93,13 +93,17 @@ object AppConfig {
         }
 
     /**
-     * Stripe checkout session this app started. The `inboxies://onboarding` deep link
-     * only applies its session token when it returns this id, so a crafted link
-     * can't sign the user into someone else's account.
+     * Stripe checkout session this app started. The `inboxies://onboarding` return link
+     * carries only a one-time code, which the Worker redeems together with this id
+     * (never in the link), so neither an intercepted nor a crafted link can sign anyone in.
      */
     fun rememberPendingCheckout(sessionId: String) {
         prefs?.edit { putString(KEY_PENDING_CHECKOUT_SESSION, sessionId) }
     }
+
+    /** The checkout this app started, if any; [consumePendingCheckout] forgets it. */
+    fun pendingCheckout(): String? =
+        prefs?.getString(KEY_PENDING_CHECKOUT_SESSION, null)?.takeIf { it.isNotBlank() }
 
     /** True (and forgets it) when [sessionId] is the checkout this app started. */
     fun consumePendingCheckout(sessionId: String?): Boolean {

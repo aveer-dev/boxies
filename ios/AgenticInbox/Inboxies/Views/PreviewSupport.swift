@@ -43,6 +43,14 @@ enum PreviewSupport {
         return app
     }
 
+    /// `-previewTags`: the fixture mailbox plus a few custom folders (AVE-158).
+    @MainActor
+    static func tagsPreviewModel() -> AppModel {
+        let app = appModel()
+        app.folders += PreviewTags.folders
+        return app
+    }
+
     @MainActor
     static func authStore() -> AuthStore {
         let store = AuthStore(persistsSession: false)
@@ -924,6 +932,13 @@ struct PreviewAdminAuthRoot: View {
                     SuppressionsSettingsView()
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewTags") {
+                // Settings → Tags with fixture custom folders, no API (AVE-158; Android:
+                // `tags`). Add `-previewTagsRename` / `-previewTagsDelete` for the dialogs.
+                NavigationStack {
+                    TagsSettingsView()
+                }
+                .environment(PreviewSupport.tagsPreviewModel())
             } else if args.contains("-previewSettings") {
                 // Settings sheet on the fixture mailbox; add `-previewScreenerOff` for the
                 // Screener switch off (AVE-104; Android: `settings` / `settingsScreenerOff`).

@@ -6,7 +6,8 @@ import { Badge, Button, Loader, Select, useKumoToastManager } from "@cloudflare/
 import { TrashIcon } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { useUIStore } from "~/hooks/useUIStore";
 import { queryKeys } from "~/queries/keys";
 import { useMailbox } from "~/queries/mailboxes";
@@ -86,7 +87,7 @@ function MemberRow({
 
 /** Members of this mailbox: owners manage them; anyone can leave. */
 export default function SharingSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const navigate = useNavigate();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();

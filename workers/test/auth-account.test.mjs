@@ -191,7 +191,10 @@ let adaToken;
 	assert.equal(forgot.status, 200);
 	const mail = email.sent.at(-1);
 	assert.equal(mail.to, "ada.other@gmail.com", "the code goes to the recovery address, never the mailbox");
-	assert.equal(email.sent.some((m) => m.to === "ada@inboxies.email" || m.to === "shared@inboxies.email"), false);
+	assert.equal(
+		email.sent.some((m) => /password/i.test(m.subject) && (m.to === "ada@inboxies.email" || m.to === "shared@inboxies.email")),
+		false,
+	);
 	const code = lastCodeSentTo(email, "ada.other@gmail.com");
 
 	const badCode = await authedRequest(env, {

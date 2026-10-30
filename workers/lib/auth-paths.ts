@@ -32,6 +32,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 		pathname === "/api/v1/auth/dev" ||
 		pathname === "/api/v1/auth/password" ||
 		pathname === "/api/v1/auth/two-factor/verify" ||
+		pathname === "/api/v1/auth/exchange" ||
 		pathname === "/api/v1/auth/password/logout" ||
 		pathname === "/api/v1/auth/logout" ||
 		pathname === "/api/v1/auth/password/forgot" ||
