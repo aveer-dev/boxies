@@ -6,11 +6,16 @@ import UIKit
 @Observable
 @MainActor
 final class AppModel {
-    var mailboxes: [Mailbox] = []
+    var mailboxes: [Mailbox] = [] {
+        didSet {
+            if mailboxes != oldValue { publishInboxWidgetMailboxes() }
+        }
+    }
     var selectedMailboxId: String? {
         didSet {
             if selectedMailboxId != oldValue {
                 publishSharedSession()
+                scheduleInboxWidgetSnapshot()
                 // A switch, not the first pick on launch or the reset on sign-out.
                 if oldValue != nil, selectedMailboxId != nil { refreshAutofillIdentities() }
             }
@@ -18,7 +23,9 @@ final class AppModel {
     }
     var folders: [Folder] = []
     var selectedTab: HomeTab = .folder("inbox")
-    var emails: [Email] = []
+    var emails: [Email] = [] {
+        didSet { scheduleInboxWidgetSnapshot() }
+    }
     /// Page 1 of the Screener folder, kept while Inbox shows so its "N waiting to be
     /// screened" row can count senders and show their avatars (AVE-136).
     var screenerQueue: [Email] = []
@@ -56,7 +63,11 @@ final class AppModel {
     /// Inbox page 1's New window (AVE-23): the server's New total and the New rows it sent,
     /// scoped to `mailboxId|inbox`. Those rows can be older than the page's Seen rows, so
     /// they're merged into the cached window explicitly.
-    var inboxNewWindow: InboxNewWindow?
+    var inboxNewWindow: InboxNewWindow? {
+        didSet {
+            if inboxNewWindow != oldValue { scheduleInboxWidgetSnapshot() }
+        }
+    }
     var selectedEmail: Email?
     var threadEmails: [Email] = []
     /// Notes to self on the open conversation (the signed-in user's own only).
@@ -66,7 +77,11 @@ final class AppModel {
     var composeSession: ComposeSession?
     var toast: AppToast?
     /// Count for bottom Reply Later chrome (workflow pile).
-    var replyLaterCount: Int = 0
+    var replyLaterCount: Int = 0 {
+        didSet {
+            if replyLaterCount != oldValue { scheduleInboxWidgetSnapshot() }
+        }
+    }
     /// Reply Later mails whose reminder fired and are still unread (piles `due_count`,
     /// else the cache). Drives the bottom-bar attention state (AVE-86).
     var replyLaterDueCount: Int = 0
@@ -205,6 +220,55 @@ final class AppModel {
     private func publishSharedSession() {
         guard persistsPreferences, !isDebugPreview else { return }
         SharedSession.publish(mailboxId: selectedMailboxId, apiBaseURL: AppConfig.apiBaseURL)
+    }
+
+    // MARK: - "Today's inbox" widget (AVE-149)
+
+    /// Debounces snapshot writes: list refreshes, SSE, reads and archives arrive in bursts.
+    @ObservationIgnored private var inboxWidgetTask: Task<Void, Never>?
+
+    private var publishesInboxWidget: Bool { persistsPreferences && !isDebugPreview }
+
+    /// Something the widget shows may have changed: write a fresh snapshot shortly.
+    private func scheduleInboxWidgetSnapshot() {
+        guard publishesInboxWidget, selectedMailboxId != nil else { return }
+        inboxWidgetTask?.cancel()
+        inboxWidgetTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.publishInboxWidgetNow()
+        }
+    }
+
+    /// Writes the active mailbox's Inbox to the widget now (also on backgrounding). Built
+    /// from the cached Inbox, not the visible list, so it's right whichever folder is open.
+    func publishInboxWidgetNow() {
+        inboxWidgetTask?.cancel()
+        inboxWidgetTask = nil
+        guard publishesInboxWidget, APIClient.shared.authToken != nil, let mailbox = selectedMailbox else { return }
+        let inboxKey = EmailListPaging.key(mailboxId: mailbox.id, listId: "inbox")
+        let serverNewCount = inboxNewWindow?.key == inboxKey ? inboxNewWindow?.count : nil
+        InboxWidgetPublisher.publish(.make(
+            mailbox: mailbox,
+            inboxRows: cachedFolderEmails(mailboxId: mailbox.id, folderId: "inbox"),
+            serverNewCount: serverNewCount,
+            replyLaterCount: replyLaterCount
+        ))
+    }
+
+    private func publishInboxWidgetMailboxes() {
+        guard publishesInboxWidget, !mailboxes.isEmpty else { return }
+        InboxWidgetPublisher.publishMailboxes(mailboxes)
+    }
+
+    /// Widget tap on the background: the Inbox of the widget's mailbox.
+    func openInboxFromWidget(mailboxId: String?) async {
+        if let mailboxId, mailboxId != selectedMailboxId, mailboxes.contains(where: { $0.id == mailboxId }) {
+            await loadMailbox(mailboxId)
+        }
+        if selectedTab != .folder("inbox") || selectedEmail != nil {
+            selectTab(.folder("inbox"))
+        }
     }
 
     /// QuickType suggestions follow the active mailbox. Bootstrap covers launch.
@@ -1704,6 +1768,9 @@ final class AppModel {
 
     func reset() {
         sessionGeneration += 1
+        // Sign-out clears the widget's data (AuthStore.signOut); no late write may follow.
+        inboxWidgetTask?.cancel()
+        inboxWidgetTask = nil
         // Sign-out forgets the last mailbox; the next account starts on its own first one.
         if persistsLastMailbox {
             lastMailboxStore.clear()

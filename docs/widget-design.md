@@ -1,6 +1,6 @@
 # "Today's inbox" widget design (AVE-138)
 
-This is a design sign-off for the home-screen widget on iOS and Android. The mocks are plain views inside the existing app targets. There is no WidgetKit extension, no App Group and no Glance yet. They use sample data and don't touch the network.
+This is a design sign-off for the home-screen widget on iOS and Android. **iOS is built (AVE-149):** the `InboxiesWidget` WidgetKit extension draws the round 2 "Depth" views from `InboxWidgetDepth.swift` (`InboxWidgetDepthContent`), the app writes snapshots through `InboxWidgetStore` (`Inboxies/WidgetShared/`), and the App Group is `group.co.inboxies.app`. Android is AVE-150. The mocks are plain views inside the existing app targets. There is no WidgetKit extension, no App Group and no Glance yet. They use sample data and don't touch the network.
 
 | | iOS | Android |
 | --- | --- | --- |
