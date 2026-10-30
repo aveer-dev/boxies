@@ -28,7 +28,13 @@ Designed for people coming from **web / Ionic / Capacitor**: Compose screens ≈
 
 - **Production:** `https://inboxies.email`, the default. That host serves mail and the native apps' API; its web pages redirect to the web app at `inboxies.app`. Release builds always use it and ignore any stored override.
 - **Another deployed Worker (DEBUG builds):** tap the logo on the welcome screen five times to show the API base field, or launch with `adb shell am start -n co.inboxies.app/.MainActivity --ez showApiBase true`. You can also pass the URL directly with `--es apiBase https://…`. Use an HTTPS origin.
-- **Local Worker:** not reachable from a debug build right now. The API base field and the `apiBase` extra drop `localhost`, `127.0.0.1` and `10.0.2.2` and go back to the default, and debug builds allow cleartext HTTP only to those hosts, so neither `http://10.0.2.2:5173` nor a LAN IP reaches `pnpm dev`. Dev login appears only with a local API base, so it is unreachable too. Use the iOS Simulator (see [`ios/README.md`](../ios/README.md#api-base-url)) to test against a local Worker.
+- **Local Worker (DEBUG builds):** run `pnpm dev` on the host, then launch the emulator build with the host's address as the `apiBase` extra. The sign-in screen then shows **Continue with Dev Login**.
+
+  ```bash
+  adb shell am start -S -n co.inboxies.app/.MainActivity --es apiBase http://10.0.2.2:5173
+  ```
+
+  `10.0.2.2` is the host as the emulator sees it. `-S` stops the app first, because a running app ignores the extra. The app keeps a local address only while its process lives and never stores it, so a later launch can't get stuck on a dev server that has stopped. Launch with the extra again after the app is stopped. Debug builds allow cleartext HTTP only to `10.0.2.2`, `localhost` and `127.0.0.1`, so a LAN IP won't work. On a physical device, run `adb reverse tcp:5173 tcp:5173` and pass `http://localhost:5173`.
 
 ### How the app signs in
 
