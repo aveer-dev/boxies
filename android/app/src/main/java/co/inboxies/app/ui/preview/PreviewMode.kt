@@ -27,6 +27,16 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     InviteAccept("inviteAccept", "previewInviteAccept"),
     InviteAcceptSignedIn("inviteAcceptSignedIn", "previewInviteAcceptSignedIn"),
     SignInMethods("signInMethods", "previewSignInMethods"),
+    /** "Confirm it's you" over Sign-in & recovery, password (iOS `-previewSignInMethods -previewReauth password`, AVE-171). */
+    Reauth("reauth", "previewReauth"),
+    /** "Confirm it's you", password + authenticator code (iOS `-previewReauth twoFactor`). */
+    ReauthTwoFactor("reauthTwoFactor", "previewReauthTwoFactor"),
+    /** "Confirm it's you", passkey only (iOS `-previewReauth passkey`). */
+    ReauthPasskey("reauthPasskey", "previewReauthPasskey"),
+    /** "Confirm it's you", emailed code (iOS `-previewReauth emailCode`). */
+    ReauthEmailCode("reauthEmailCode", "previewReauthEmailCode"),
+    /** "Confirm it's you", sign in again only (iOS `-previewReauth signIn`). */
+    ReauthSignIn("reauthSignIn", "previewReauthSignIn"),
     Members("members", "previewMembers"),
     Sessions("sessions", "previewSessions"),
     /** Settings → Senders, Allowed tab with fixture rules (iOS `-previewSenders`). */

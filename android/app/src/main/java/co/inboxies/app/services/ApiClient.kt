@@ -137,10 +137,19 @@ sealed class ApiException(message: String) : Exception(message) {
         "Enter the code from your authenticator app.",
     )
 
+    /**
+     * 403 `code: "reauth_required"`: a sensitive account change needs a session that signed
+     * in or confirmed it's the user in the last 5 minutes (`Reauth.kt`). Thrown to the screen
+     * only when "Confirm it's you" was closed (or couldn't be shown); its text is the server's.
+     */
+    class ReauthRequired(val challenge: ReauthChallenge) : ApiException(
+        challenge.message.ifBlank { "For your security, confirm it's you first, then try again." },
+    )
+
     /** The server's readable `error` text, for paths that show it as-is. */
     val serverMessage: String?
         get() = when (this) {
-            is Http, is ServiceEnded, is RecipientSuppressed -> message?.takeIf { it.isNotBlank() }
+            is Http, is ServiceEnded, is RecipientSuppressed, is ReauthRequired -> message?.takeIf { it.isNotBlank() }
             else -> null
         }
 }
@@ -233,6 +242,7 @@ class ApiClient private constructor() {
 
     internal fun httpFailure(code: Int, body: String, sentToken: String?): ApiException {
         if (code == 401) TwoFactorChallenge.parse(body)?.let { return ApiException.TwoFactorRequired(it) }
+        ReauthChallenge.parse(code, body)?.let { return ApiException.ReauthRequired(it) }
         val message = httpErrorMessage(body)
         if (sentToken != null && isExpiredSessionResponse(code, message)) {
             sessionExpired.tryEmit(sentToken)
@@ -269,18 +279,26 @@ class ApiClient private constructor() {
         authed: Boolean = true,
         bearerToken: String? = null,
         headers: Map<String, String> = emptyMap(),
-    ): Pair<T, okhttp3.Headers> = withContext(Dispatchers.IO) {
-        val raw = performRaw(
-            path,
-            method,
-            query,
-            body,
-            authed,
-            bearerToken = bearerToken,
-            headers = headers,
-        )
-        Pair(decodeBody<T>(raw.text, raw.code, raw.contentType), raw.headers)
-    }
+    ): Pair<T, okhttp3.Headers> =
+        // A `reauth_required` 403 opens "Confirm it's you"; confirmed, the request runs once more.
+        ReauthRetry.run(confirm = ::reauthPrompt) {
+            withContext(Dispatchers.IO) {
+                val raw = performRaw(
+                    path,
+                    method,
+                    query,
+                    body,
+                    authed,
+                    bearerToken = bearerToken,
+                    headers = headers,
+                )
+                Pair(decodeBody<T>(raw.text, raw.code, raw.contentType), raw.headers)
+            }
+        }
+
+    /** Asks the user to confirm it's them; true once the session is fresh again. */
+    suspend fun reauthPrompt(challenge: ReauthChallenge): Boolean =
+        ReauthCoordinator.shared.confirm(challenge)
 
     inline fun <reified T> decodeBody(data: String, code: Int, contentType: String): T {
         if (code == 204 && T::class == EmptyResponse::class) {
@@ -477,6 +495,33 @@ class ApiClient private constructor() {
     suspend fun revokeMcpGrant(id: String) {
         request<EmptyResponse>("/api/v1/me/mcp-grants/${pathEncode(id)}", method = "DELETE")
     }
+
+    // ── Re-authentication (AVE-113 / AVE-171) ──
+
+    /**
+     * Confirms it's the user with the account password (plus an authenticator or backup
+     * code when 2FA is on). The session is fresh for 5 minutes.
+     */
+    suspend fun reauthWithPassword(password: String, code: String?, useBackupCode: Boolean): ReauthResponse =
+        request(
+            "/api/v1/me/reauth",
+            method = "POST",
+            body = ReauthBodies.password(password, code, useBackupCode),
+        )
+
+    /** Confirms with a code mailed by [sendReauthEmailCode] (accounts without a password). */
+    suspend fun reauthWithEmailCode(code: String): ReauthResponse = request(
+        "/api/v1/me/reauth",
+        method = "POST",
+        body = ReauthBodies.emailCode(code),
+    )
+
+    /** Mails a 6-digit confirmation code to the recovery (or outside login) address. */
+    suspend fun sendReauthEmailCode(): ReauthEmailCodeResponse = request(
+        "/api/v1/me/reauth/email-code",
+        method = "POST",
+        body = JsonObject(emptyMap()),
+    )
 
     // ── Recovery email ──
 

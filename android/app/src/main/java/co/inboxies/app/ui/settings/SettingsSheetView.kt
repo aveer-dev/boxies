@@ -180,6 +180,10 @@ fun SettingsSheetView(
 
     TransparentSystemBars()
 
+    // Sign-in & recovery, passkeys and Delete account answer `reauth_required` until the
+    // user confirms it's them (AVE-171).
+    ReauthPromptHost()
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
