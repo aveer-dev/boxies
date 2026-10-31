@@ -28,6 +28,7 @@ import type { RequestPrincipal } from "./auth/principal";
 import type { Operator } from "./auth/operators";
 import { operatorMiddleware, sessionMiddleware } from "./auth/middleware";
 import { handleBetterAuthRequest } from "./routes/better-auth";
+import { withSecurityScope } from "./auth/security-scope";
 import { registerOpsRoutes } from "./routes/ops";
 import { runScheduledMaintenance } from "./lib/maintenance";
 import { mailboxIdFromAgentsUrl } from "../shared/agent-conversations";
@@ -99,6 +100,10 @@ app.use("*", async (c, next) => {
 	const res = withSecurityHeaders(c.res, c.req.raw);
 	if (res !== c.res) c.res = res;
 });
+
+// Sign-ins made by this request are recorded (and a new device is mailed
+// about) after the response (AVE-151, workers/auth/security-scope.ts).
+app.use("*", (c, next) => withSecurityScope(c.env, c.req.raw, c.executionCtx, next));
 
 // Cleartext requests go to HTTPS (AVE-109, workers/lib/https-redirect.ts):
 // a fallback for the zones' "Always Use HTTPS". Never in local dev.

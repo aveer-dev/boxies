@@ -4,11 +4,14 @@
 
 /**
  * "Was this you?" mail after a sensitive account change (AVE-113): the
- * recovery email, a sign-in method or passkey, the password, or the account
- * itself. One email per address: the login address and the verified recovery
+ * recovery email, a sign-in method or passkey, the password, two-factor, or
+ * the account itself; and after a sign-in from a new device (AVE-151). One email per address: the login address and the verified recovery
  * email, plus any old address the change replaced (a stolen session that
  * swaps the recovery email still tells the previous one). Each links to the
  * web sign-in settings so the owner can react.
+ *
+ * Each change is also recorded as a security event (`auth/security-activity.ts`)
+ * for the "Recent security activity" list.
  *
  * Sending never fails the change: errors are logged by `sendSystemEmail`.
  */
@@ -19,6 +22,13 @@ import { authDb } from "./authz";
 import { isHostedEmailDomain } from "./hooks";
 import { appBaseUrl, sendSystemEmail } from "./mail";
 import { isDeliverableLogin, maskEmail } from "./reauth";
+import {
+	locationLabel,
+	noteSecurityNotice,
+	recordSecurityEvent,
+	type RequestDevice,
+	type SecurityEventKind,
+} from "./security-activity";
 import { findUserById, verifiedRecoveryEmail } from "./users";
 
 export type SecurityChange =
@@ -26,6 +36,10 @@ export type SecurityChange =
 	| { kind: "recovery_email_removed" }
 	| { kind: "password_added" }
 	| { kind: "password_changed" }
+	| { kind: "password_reset" }
+	| { kind: "two_factor_enabled" }
+	| { kind: "two_factor_disabled" }
+	| { kind: "new_device_sign_in" }
 	| { kind: "sign_in_method_added"; provider: string }
 	| { kind: "sign_in_method_removed"; provider: string }
 	| { kind: "passkey_added" }
@@ -40,6 +54,20 @@ function providerLabel(provider: string): string {
 	if (provider === "apple") return "Apple";
 	if (provider === "password" || provider === "credential") return "password";
 	return provider;
+}
+
+/** The activity-list kind for a change; null for the account's deletion (nothing left to list). */
+function recordedKind(change: SecurityChange): SecurityEventKind | null {
+	if (change.kind === "account_deleted") return null;
+	if (change.kind === "new_device_sign_in") return "sign_in";
+	return change.kind;
+}
+
+function changeDetail(change: SecurityChange): Record<string, string> | null {
+	if (change.kind === "sign_in_method_added" || change.kind === "sign_in_method_removed") {
+		return { provider: change.provider === "credential" ? "password" : change.provider };
+	}
+	return null;
 }
 
 /** Subject and the one-line "what happened" for a change. Plain text. */
@@ -59,6 +87,26 @@ export function describeChange(change: SecurityChange): { subject: string; line:
 			return { subject: "A password was added to your Inboxies account", line: "A password was added to your Inboxies account." };
 		case "password_changed":
 			return { subject: "Your Inboxies password was changed", line: "The password on your Inboxies account was changed." };
+		case "password_reset":
+			return {
+				subject: "Your Inboxies password was reset",
+				line: "The password on your Inboxies account was reset with a code sent to your recovery email. Your other devices were signed out.",
+			};
+		case "two_factor_enabled":
+			return {
+				subject: "Two-factor authentication was turned on for your Inboxies account",
+				line: "Two-factor authentication was turned on for your Inboxies account.",
+			};
+		case "two_factor_disabled":
+			return {
+				subject: "Two-factor authentication was turned off for your Inboxies account",
+				line: "Two-factor authentication was turned off for your Inboxies account. Signing in now needs only your password.",
+			};
+		case "new_device_sign_in":
+			return {
+				subject: "New sign-in to your Inboxies account",
+				line: "Your Inboxies account was signed in to from a device or place it hasn't been used from recently.",
+			};
 		case "sign_in_method_added":
 			return {
 				subject: `${providerLabel(change.provider)} sign-in was connected to your Inboxies account`,
@@ -78,18 +126,33 @@ export function describeChange(change: SecurityChange): { subject: string; line:
 	}
 }
 
-/** The notice for `change` on the account `login`. `settingsUrl` is null when there's nothing left to review. */
-export function securityNoticeEmail(opts: { change: SecurityChange; login: string; when: Date; settingsUrl: string | null }) {
+/**
+ * The notice for `change` on the account `login`. `settingsUrl` is null when
+ * there's nothing left to review. `device` adds the browser/app and the
+ * approximate location the change came from, when known (never an address).
+ */
+export function securityNoticeEmail(opts: {
+	change: SecurityChange;
+	login: string;
+	when: Date;
+	settingsUrl: string | null;
+	device?: RequestDevice | null;
+}) {
 	const { subject, line } = describeChange(opts.change);
 	const when = `${opts.when.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-	const account = `Account: ${opts.login}\nWhen: ${when}`;
+	const deviceName = opts.device?.device ?? null;
+	const location = opts.device ? locationLabel(opts.device.country, opts.device.city) : null;
+	const details: [string, string][] = [["Account", opts.login], ["When", when]];
+	if (deviceName) details.push(["Device", deviceName]);
+	if (location) details.push(["Location", `${location} (approximate)`]);
+	const account = details.map(([k, v]) => `${k}: ${v}`).join("\n");
 	const action = opts.settingsUrl
 		? `If this was you, you can ignore this email.\n\nIf it wasn't you, sign in now and review your sign-in methods and recovery email:\n${opts.settingsUrl}\n\nIf you can't sign in, use "Forgot password" on the sign-in page.\n`
 		: "If this wasn't you, someone else had access to your account. Your data can't be recovered.\n";
 	const text = `${line}\n\n${account}\n\n${action}`;
 	const html =
 		`<p>${escapeHtml(line)}</p>` +
-		`<p style="color:#64748b;font-size:13px;">Account: ${escapeHtml(opts.login)}<br>When: ${escapeHtml(when)}</p>` +
+		`<p style="color:#64748b;font-size:13px;">${details.map(([k, v]) => `${k}: ${escapeHtml(v)}`).join("<br>")}</p>` +
 		(opts.settingsUrl
 			? `<p>If this was you, you can ignore this email.</p>` +
 				`<p>If it wasn't you, <a href="${escapeHtml(opts.settingsUrl)}">sign in and review your sign-in settings</a> now. ` +
@@ -132,8 +195,25 @@ export async function sendSecurityNotice(
 		recipients?: string[];
 		login?: string;
 		extra?: (string | null | undefined)[];
+		/** Where the change came from (`requestDevice`): shown in the mail and recorded. */
+		device?: RequestDevice | null;
+		/** Already recorded by the caller (new-device sign-ins). */
+		skipRecord?: boolean;
 	},
 ): Promise<string[]> {
+	// Synchronous, so it lands in the request's scope before the caller moves on.
+	noteSecurityNotice(opts.userId);
+	if (!opts.skipRecord) {
+		const kind = recordedKind(opts.change);
+		if (kind) {
+			await recordSecurityEvent(authDb(env.AUTH_DB), {
+				userId: opts.userId,
+				kind,
+				device: opts.device,
+				detail: changeDetail(opts.change),
+			}).catch((e) => console.error("[Auth] Security event not recorded:", (e as Error).message || e));
+		}
+	}
 	let login = opts.login;
 	let recipients = opts.recipients;
 	if (!recipients || !login) {
@@ -144,7 +224,7 @@ export async function sendSecurityNotice(
 	}
 	const settingsUrl =
 		opts.change.kind === "account_deleted" ? null : `${appBaseUrl(env, opts.requestUrl)}${SIGN_IN_SETTINGS_PATH}`;
-	const mail = securityNoticeEmail({ change: opts.change, login, when: new Date(), settingsUrl });
+	const mail = securityNoticeEmail({ change: opts.change, login, when: new Date(), settingsUrl, device: opts.device });
 	const sent: string[] = [];
 	for (const to of recipients) {
 		if (await sendSystemEmail(env, { to, ...mail })) sent.push(to);
