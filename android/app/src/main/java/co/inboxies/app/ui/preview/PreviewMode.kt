@@ -64,6 +64,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ListError("listError", "previewListError"),
     Screener("screener", "previewScreener"),
     ScreenerList("screenerList", "previewScreenerList"),
+    /** Screening room right after Decline: row gone, "Declined · Undo" toast pinned (iOS `-previewScreenerList -previewScreenerUndo`, AVE-159). */
+    ScreenerUndo("screenerUndo", "previewScreenerUndo"),
+    /** Same after Accept → Promotions (iOS `… -previewScreenerUndo -previewScreenerAccept`). */
+    ScreenerUndoAccept("screenerUndoAccept", "previewScreenerUndoAccept"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */

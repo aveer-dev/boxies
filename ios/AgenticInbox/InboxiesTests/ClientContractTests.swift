@@ -437,6 +437,44 @@ final class ClientContractTests: XCTestCase {
             "Moved out of Spam"
         )
     }
+
+    // MARK: - Screener Undo (AVE-159)
+
+    func testSenderTriageDecisionDecodesMovedIds() throws {
+        let response = try decode(SenderTriageDecisionResponse.self, """
+        {"triage":{"sender":"a@x.com","status":"rejected"},"moved":{"moved":2,"ids":["e1","e2"]}}
+        """)
+        XCTAssertEqual(response.moved?.ids, ["e1", "e2"])
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: response, emailId: "e2"), ["e1", "e2"])
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: response, emailId: "e3"), ["e1", "e2", "e3"])
+        let bare = try decode(SenderTriageDecisionResponse.self, #"{"triage":null}"#)
+        XCTAssertEqual(ScreenerDecision.restoreIds(response: bare, emailId: "e9"), ["e9"])
+    }
+
+    func testScreenerDecisionToastCopy() {
+        XCTAssertEqual(ScreenerDecision.toastTitle(destinationFolderId: nil), "Declined")
+        XCTAssertEqual(ScreenerDecision.toastTitle(destinationFolderId: "inbox"), "Accepted")
+        XCTAssertEqual(
+            ScreenerDecision.toastTitle(destinationFolderId: "promotions"),
+            "Accepted · future mail goes to Promotions"
+        )
+        XCTAssertEqual(
+            ScreenerDecision.toastTitle(destinationFolderId: "updates"),
+            "Accepted · future mail goes to Updates"
+        )
+    }
+
+    func testSenderTriagePathEncodesTheAddress() {
+        XCTAssertEqual(
+            APIClient.senderTriagePath(mailboxId: "me@acme.com", sender: "ada+news@x.example"),
+            "/api/v1/mailboxes/me@acme.com/sender-triage/ada+news@x.example"
+        )
+        XCTAssertEqual(
+            APIClient.senderTriagePath(mailboxId: "me@acme.com", sender: "a/b?c@x.example"),
+            "/api/v1/mailboxes/me@acme.com/sender-triage/a%2Fb%3Fc@x.example"
+        )
+    }
+
     // MARK: - Custom folders / tags (AVE-158)
 
     func testFolderCreateResponseDecodes() throws {

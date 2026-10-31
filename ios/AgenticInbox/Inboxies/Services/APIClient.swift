@@ -1135,14 +1135,14 @@ final class APIClient: @unchecked Sendable {
         destinationFolderId: String,
         emailId: String? = nil,
         displayName: String? = nil
-    ) async throws {
+    ) async throws -> SenderTriageDecisionResponse {
         var body: [String: Any] = [
             "sender": sender,
             "destinationFolderId": destinationFolderId,
         ]
         if let emailId { body["emailId"] = emailId }
         if let displayName { body["displayName"] = displayName }
-        let _: EmptyResponse = try await request(
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/approve",
             method: "POST",
             body: body
@@ -1154,15 +1154,27 @@ final class APIClient: @unchecked Sendable {
         sender: String,
         emailId: String? = nil,
         displayName: String? = nil
-    ) async throws {
+    ) async throws -> SenderTriageDecisionResponse {
         var body: [String: Any] = ["sender": sender]
         if let emailId { body["emailId"] = emailId }
         if let displayName { body["displayName"] = displayName }
-        let _: EmptyResponse = try await request(
+        return try await request(
             path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/reject",
             method: "POST",
             body: body
         )
+    }
+
+    /// Undo a Screener Accept / Decline: the sender is undecided again (AVE-159).
+    func deleteSenderTriage(mailboxId: String, sender: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: Self.senderTriagePath(mailboxId: mailboxId, sender: sender),
+            method: "DELETE"
+        )
+    }
+
+    static func senderTriagePath(mailboxId: String, sender: String) -> String {
+        "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/sender-triage/\(sender.urlPathEncoded)"
     }
 
     func deleteEmail(mailboxId: String, id: String, bearerToken: String? = nil) async throws {

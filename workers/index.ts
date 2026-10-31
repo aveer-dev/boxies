@@ -1437,6 +1437,14 @@ app.post("/api/v1/mailboxes/:mailboxId/sender-triage/reject", async (c: AppConte
 	return c.json({ triage, moved });
 });
 
+/**
+ * Change a Screener decision in place: switch allowed ↔ rejected or move an
+ * accepted sender's destination, optionally refiling their queued mail.
+ * No client calls this today (AVE-159): iOS and Android undo a decision with
+ * `DELETE sender-triage/:sender`, and Settings → Senders changes a decline by
+ * removing its block rule. Kept as API surface for a future "change decision"
+ * control rather than removed.
+ */
 app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppContext) => {
 	const stub = c.var.mailboxStub as any;
 	const sender = normalizeTriageSender(
@@ -1520,6 +1528,11 @@ app.patch("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCon
 	return c.json({ triage, moved });
 });
 
+/**
+ * Back to undecided: the sender's next message waits in the Screener again.
+ * Native Undo after Accept / Decline calls this (AVE-159), then moves the
+ * messages the decision refiled back to the Screener itself.
+ */
 app.delete("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppContext) => {
 	const stub = c.var.mailboxStub as any;
 	const sender = normalizeTriageSender(
@@ -1529,6 +1542,10 @@ app.delete("/api/v1/mailboxes/:mailboxId/sender-triage/:sender", async (c: AppCo
 	const ok = await stub.deleteSenderTriage(sender);
 	// Back to undecided: a leftover address block rule would keep them out.
 	const clearedRule = await stub.clearAddressBlockRule(sender);
+	// An Accept into Promotions / Updates also pinned that box (source
+	// "screener"); undoing the Accept drops it. A box the user chose elsewhere stays.
+	const existingPref = await stub.getSenderPreference(sender);
+	if (existingPref?.source === "screener") await stub.deleteSenderPreference(sender);
 	return ok || clearedRule ? c.body(null, 204) : c.json({ error: "Not found" }, 404);
 });
 

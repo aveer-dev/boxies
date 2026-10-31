@@ -3,6 +3,7 @@ package co.inboxies.app.services
 import co.inboxies.app.config.AppConfig
 import co.inboxies.app.models.AccountSession
 import co.inboxies.app.models.MoveEmailResponse
+import co.inboxies.app.models.SenderTriageDecisionResponse
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.models.ThreadNotesResponse
 import co.inboxies.app.models.AdminCreateMailboxResponse
@@ -1248,8 +1249,8 @@ class ApiClient private constructor() {
         destinationFolderId: String,
         emailId: String? = null,
         displayName: String? = null,
-    ) {
-        request<EmptyResponse>(
+    ): SenderTriageDecisionResponse =
+        request(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/approve",
             method = "POST",
             body = buildJsonObject {
@@ -1259,15 +1260,14 @@ class ApiClient private constructor() {
                 if (displayName != null) put("displayName", displayName)
             },
         )
-    }
 
     suspend fun rejectSender(
         mailboxId: String,
         sender: String,
         emailId: String? = null,
         displayName: String? = null,
-    ) {
-        request<EmptyResponse>(
+    ): SenderTriageDecisionResponse =
+        request(
             "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/reject",
             method = "POST",
             body = buildJsonObject {
@@ -1276,6 +1276,10 @@ class ApiClient private constructor() {
                 if (displayName != null) put("displayName", displayName)
             },
         )
+
+    /** Undo a Screener Accept / Decline: the sender is undecided again (AVE-159). */
+    suspend fun deleteSenderTriage(mailboxId: String, sender: String) {
+        request<EmptyResponse>(senderTriagePath(mailboxId, sender), method = "DELETE")
     }
 
     /** The bounce / complaint suppressions this mailbox can see (AVE-37 / AVE-157). */
@@ -1654,6 +1658,9 @@ class ApiClient private constructor() {
         "/api/v1/mailboxes/${pathEncode(mailboxId)}/aliases/${pathEncode(aliasId)}",
         method = "DELETE",
     )
+
+    internal fun senderTriagePath(mailboxId: String, sender: String): String =
+        "/api/v1/mailboxes/${pathEncode(mailboxId)}/sender-triage/${pathEncode(sender)}"
 
     internal fun pathEncode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
