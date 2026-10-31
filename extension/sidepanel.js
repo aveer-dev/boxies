@@ -12,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 const COPY_ICON =
 	'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M10.5 3.5v-.25A.75.75 0 0 0 9.75 2.5h-6.5a.75.75 0 0 0-.75.75v6.5c0 .41.34.75.75.75h.25"/></svg>';
 const CHECK_ICON =
-	'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
+	'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path pathLength="1" d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
 
 let currentHost = null;
 let lastCreated = null;
@@ -20,7 +20,15 @@ let lastCreated = null;
 let lastCreatedAt = 0;
 const FRESH_MS = 1500;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+// The native chrome spring, as sampled for CSS in sidepanel.html.
+const SPRING = getComputedStyle(document.documentElement).getPropertyValue("--spring").trim() || EASE_OUT;
+const canAnimate = () => !reducedMotion.matches && typeof Element.prototype.animate === "function";
 let apiUrlEdited = false;
+// Undefined until the first status, so opening the panel already connected isn't a "just connected" moment.
+let wasConnected;
+// The site card shows skeleton bones until it first learns which site the tab is on.
+let siteLoaded = false;
 
 function send(message) {
 	return chrome.runtime.sendMessage(message);
@@ -40,6 +48,21 @@ async function copyToClipboard(text) {
 	}
 }
 
+/** Replays a one-shot CSS animation class (removing and re-adding it in one frame doesn't restart it). */
+function replayClass(el, className) {
+	if (!el) return;
+	el.classList.remove(className);
+	void el.offsetWidth;
+	el.classList.add(className);
+}
+
+/** The paper-plane mark glides a couple of pixels: something just landed. */
+function glideLogo() {
+	const logo = document.querySelector(".logo");
+	replayClass(logo, "glide");
+	logo?.addEventListener("animationend", () => logo.classList.remove("glide"), { once: true });
+}
+
 function copyButton(email) {
 	const button = document.createElement("button");
 	button.type = "button";
@@ -54,9 +77,12 @@ function copyButton(email) {
 		button.innerHTML = ok ? CHECK_ICON : COPY_ICON;
 		button.classList.toggle("copied", ok);
 		button.title = ok ? "Copied" : "Couldn't copy";
+		// The address itself answers the click: a brief wash, as if it had just been selected.
+		if (ok) replayClass(button.closest("li"), "flash");
 		reset = setTimeout(() => {
 			button.innerHTML = COPY_ICON;
 			button.classList.remove("copied");
+			button.closest("li")?.classList.remove("flash");
 			button.title = "Copy";
 		}, 1400);
 	});
@@ -109,8 +135,42 @@ function renderEmails(list, items) {
 		// Only touch the DOM when the row isn't already in place: re-inserting restarts its CSS animations.
 		const at = list.children[index];
 		if (at !== li) list.insertBefore(li, at || null);
+		if (!li.isConnected || li.dataset.grown || !li.classList.contains("fresh")) return;
+		li.dataset.grown = "1";
+		growIn(li);
 	});
 	for (const stale of existing.values()) stale.remove();
+}
+
+/**
+ * A new row opens its own space instead of shoving everything below it down in one frame,
+ * so the Create button and the rows beneath glide. Rare (once per created address), so the
+ * height animation is worth its layout cost.
+ */
+function growIn(li) {
+	if (!canAnimate() || li.closest("[hidden]")) return;
+	const style = getComputedStyle(li);
+	const to = {
+		height: `${li.offsetHeight}px`,
+		paddingTop: style.paddingTop,
+		paddingBottom: style.paddingBottom,
+	};
+	li.style.overflow = "hidden";
+	const grow = li.animate([{ height: "0px", paddingTop: "0px", paddingBottom: "0px" }, to], {
+		duration: 300,
+		easing: SPRING,
+	});
+	grow.onfinish = grow.oncancel = () => {
+		li.style.overflow = "";
+	};
+}
+
+/** A soft fade for content that changed because the user moved to another tab. */
+function fadeIn(...els) {
+	if (!canAnimate()) return;
+	for (const el of els) {
+		if (!el.hidden) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: EASE_OUT });
+	}
 }
 
 /** Hostname of the active tab in this window, or null for non-web pages. */
@@ -146,6 +206,8 @@ async function render() {
 	const status = await send({ action: "STATUS" });
 	if (token !== renderToken) return;
 
+	if (wasConnected === false && status.connected) glideLogo();
+	wasConnected = status.connected;
 	$("connected").hidden = !status.connected;
 	$("recentSection").hidden = !status.connected;
 	$("footer").hidden = !status.connected;
@@ -182,6 +244,7 @@ async function render() {
 	// Addresses this site already has come first, above creating another.
 	const res = host ? await send({ action: "SITE_ALIASES", host }).catch(() => null) : null;
 	if (token !== renderToken) return;
+	const siteChanged = siteLoaded && host !== currentHost;
 	if (host !== currentHost) {
 		showText($("createStatus"), "");
 		showText($("createError"), "");
@@ -195,11 +258,21 @@ async function render() {
 		$("siteEmpty"),
 		aliases.length ? "" : host ? "No private email for this site yet." : "Open a website to create a private email for it.",
 	);
+	// Unhide before rendering, so a new row can measure the height it grows into.
+	$("siteAliases").hidden = aliases.length === 0;
 	renderEmails(
 		$("siteAliases"),
 		aliases.map((alias) => ({ email: alias.email, sub: showMailbox ? alias.mailboxId : "" })),
 	);
-	$("siteAliases").hidden = aliases.length === 0;
+	if (!siteLoaded) {
+		// Bones give way to the real site: the content fades up where they were.
+		siteLoaded = true;
+		$("siteSkeleton").hidden = true;
+		fadeIn($("siteHost"), $("siteAliases"), $("siteEmpty"));
+	} else if (siteChanged) {
+		// The name already crossfades; its addresses (or empty note) come along with it.
+		fadeIn($("siteAliases"));
+	}
 	if (!$("create").disabled) {
 		$("create").textContent = aliases.length ? "Create another private email" : "Create private email";
 	}
@@ -246,15 +319,19 @@ $("mailbox").addEventListener("change", (event) => {
 $("create").addEventListener("click", async () => {
 	const button = $("create");
 	button.disabled = true;
+	button.setAttribute("aria-busy", "true");
 	button.textContent = "Creating…";
 	showText($("createError"), "");
 	showText($("createStatus"), "");
 	const res = await send({ action: "CREATE_ALIAS", host: currentHost });
 	button.disabled = false;
-	button.textContent = "Create private email";
+	button.removeAttribute("aria-busy");
+	// Keep the label the site already had, so it doesn't flick back before render() catches up.
+	button.textContent = $("siteAliases").children.length ? "Create another private email" : "Create private email";
 	if (res?.ok) {
 		lastCreated = res.email;
 		lastCreatedAt = Date.now();
+		glideLogo();
 		const copied = await copyToClipboard(res.email);
 		showText($("createStatus"), copied ? `Created and copied ${res.email}` : `Created ${res.email}`);
 	} else if (res?.error !== "session_expired" && res?.error !== "not_connected") {

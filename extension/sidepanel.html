@@ -92,10 +92,12 @@
 			input:focus, select:focus { outline: none; box-shadow: 0 0 0 1px var(--focus-ring), 0 0 0 4px var(--accent-soft); }
 
 			button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
-			button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+			/* Focus ring draws in: it starts a little wider and transparent, then tightens onto the control. */
+			button { outline: 2px solid transparent; outline-offset: 4px; }
+			button:focus-visible { outline-color: var(--focus-ring); outline-offset: 2px; }
 			button {
 				transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), opacity 200ms var(--ease-out),
-					transform 150ms var(--ease-out);
+					transform 150ms var(--ease-out), outline-color 160ms var(--ease-out), outline-offset 220ms var(--spring);
 			}
 			/* Press lands instantly (touch-down feedback); release eases back. */
 			button:not(:disabled):active { transform: scale(0.97); transition-duration: 0ms; }
@@ -106,11 +108,42 @@
 			}
 			.btn.primary { background: var(--accent); color: var(--accent-ink); }
 			.btn.primary:not(:disabled):hover { background: var(--accent-hover); }
+			/* Waiting on the server: the button breathes like the native skeleton pulse, only while busy. */
+			.btn[aria-busy="true"] { cursor: progress; animation: breathe 950ms ease-in-out infinite alternate; }
 			.link { color: var(--text-muted); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
 			.link:hover { color: var(--text-primary); }
 
 			.site-host { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 			.site-empty { margin-top: 6px; }
+
+			/* First load of the site card: quiet bones in place of the site and its addresses (native skeleton pulse). */
+			.skeleton { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 2px; }
+			.bone {
+				display: block; height: 12px; border-radius: 6px; background: var(--bg-card-hover);
+				animation: breathe 950ms ease-in-out infinite alternate;
+			}
+			.bone.host { width: 46%; height: 16px; }
+			.bone.row { width: 72%; }
+			.bone.row + .bone.row { width: 58%; animation-delay: 120ms; }
+
+			/* First run: one inbox fanning out to a private address per site, drawn once. */
+			.fanout { display: block; width: 100%; max-width: 232px; height: auto; margin: 2px auto 14px; overflow: visible; }
+			.fanout .hub { fill: var(--accent); }
+			.fanout .hub-glyph { stroke: var(--accent-ink); }
+			.fanout .wire {
+				stroke: var(--border-control); stroke-dasharray: 1;
+				animation: draw 420ms var(--ease-out) backwards;
+			}
+			.fanout .chip { animation: chip-in 320ms var(--spring) backwards; }
+			.fanout .chip rect.shell { fill: var(--control); stroke: var(--border-card); }
+			.fanout .chip .ink { fill: var(--text-subtle); }
+			.fanout .chip .dot { fill: var(--text-strong); }
+			/* Wires draw first, 70ms apart; each chip follows its wire. */
+			.fanout .wire:nth-child(2) { animation-delay: 70ms; }
+			.fanout .wire:nth-child(3) { animation-delay: 140ms; }
+			.fanout .chip:nth-child(1) { animation-delay: 220ms; }
+			.fanout .chip:nth-child(2) { animation-delay: 290ms; }
+			.fanout .chip:nth-child(3) { animation-delay: 360ms; }
 
 			.list { list-style: none; }
 			.site .list { margin-top: 10px; border-top: 1px solid var(--border-subtle); }
@@ -121,12 +154,16 @@
 			.list .text { flex: 1; min-width: 0; }
 			.list .email { font-weight: 500; overflow-wrap: anywhere; }
 			.list .sub { font-size: 11px; color: var(--text-muted); overflow-wrap: anywhere; }
-			/* A just-created address settles in, then a soft wash marks it and fades away. */
+			/* A just-created address opens its own space (sidepanel.js grows the height), settles in,
+			   then a soft wash marks it and fades away. */
 			.list li.fresh { animation: row-in 280ms var(--spring) backwards; }
-			.list li.fresh::after {
+			.list li.fresh::after, .list li.flash::before {
 				content: ""; position: absolute; inset: 2px -4px 2px -8px; z-index: -1; border-radius: 10px; background: var(--accent-soft);
-				opacity: 0; animation: wash 1600ms var(--ease-out) 120ms backwards;
+				opacity: 0;
 			}
+			.list li.fresh::after { animation: wash 1600ms var(--ease-out) 300ms backwards; }
+			/* Copying washes the address for a beat, like a selection that lets go. */
+			.list li.flash::before { animation: wash 900ms var(--ease-out) backwards; }
 			.list li { isolation: isolate; }
 			.list li:hover .icon-btn { color: var(--text-strong); }
 
@@ -143,7 +180,12 @@
 			.icon-btn svg { width: 16px; height: 16px; transition: transform 280ms var(--spring); }
 			.icon-btn:hover svg { transform: translateY(-1px) scale(1.08); }
 			.icon-btn.copied { color: var(--text-primary); }
+			/* The check settles in and draws its stroke, left to right. */
 			.icon-btn.copied svg { animation: pop 280ms var(--spring) backwards; }
+			.icon-btn.copied svg path { stroke-dasharray: 1; animation: draw 260ms var(--ease-out) 60ms backwards; }
+
+			/* The paper plane takes a short glide when something lands: connected, or a new address created. */
+			.logo.glide { animation: glide 560ms ease-in-out; }
 
 			.status { margin-top: 8px; font-size: 12px; color: var(--text-muted); min-height: 0; }
 			.error { margin-top: 8px; font-size: 12px; color: var(--danger); }
@@ -169,6 +211,10 @@
 			@keyframes row-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
 			@keyframes wash { from { opacity: 1; } to { opacity: 0; } }
 			@keyframes pop { from { opacity: 0.4; transform: scale(0.8); } }
+			@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+			@keyframes breathe { from { opacity: 1; } to { opacity: 0.45; } }
+			@keyframes chip-in { from { opacity: 0; transform: translateX(-6px); } }
+			@keyframes glide { 45% { transform: translate(2px, -2px); } }
 			@media (prefers-reduced-motion: reduce) {
 				*, *::before, *::after { animation: none !important; transition: none !important; }
 			}
@@ -192,6 +238,20 @@
 		<main>
 			<section id="disconnected" hidden>
 				<div class="card">
+					<svg class="fanout" aria-hidden="true" viewBox="0 0 232 76" fill="none" stroke-linecap="round" stroke-linejoin="round">
+						<rect class="hub" x="4" y="22" width="32" height="32" rx="9" />
+						<path class="hub-glyph" d="M12 32.5h16v11a1.5 1.5 0 0 1-1.5 1.5h-13a1.5 1.5 0 0 1-1.5-1.5zM12.4 33l7.6 5.6 7.6-5.6" stroke-width="1.5" />
+						<g stroke-width="1.25">
+							<path class="wire" pathLength="1" d="M40 38C62 38 62 12 86 12" />
+							<path class="wire" pathLength="1" d="M40 38H86" />
+							<path class="wire" pathLength="1" d="M40 38C62 38 62 64 86 64" />
+						</g>
+						<g>
+							<g class="chip"><rect class="shell" x="88.5" y="3.5" width="139" height="17" rx="8.5" /><circle class="dot" cx="98" cy="12" r="2.5" /><rect class="ink" x="106" y="10" width="62" height="4" rx="2" /><rect class="ink" x="172" y="10" width="34" height="4" rx="2" opacity="0.6" /></g>
+							<g class="chip"><rect class="shell" x="88.5" y="29.5" width="139" height="17" rx="8.5" /><circle class="dot" cx="98" cy="38" r="2.5" /><rect class="ink" x="106" y="36" width="48" height="4" rx="2" /><rect class="ink" x="158" y="36" width="44" height="4" rx="2" opacity="0.6" /></g>
+							<g class="chip"><rect class="shell" x="88.5" y="55.5" width="139" height="17" rx="8.5" /><circle class="dot" cx="98" cy="64" r="2.5" /><rect class="ink" x="106" y="62" width="70" height="4" rx="2" /><rect class="ink" x="180" y="62" width="30" height="4" rx="2" opacity="0.6" /></g>
+						</g>
+					</svg>
 					<p class="lead">Give every site its own address</p>
 					<p class="muted">
 						Connect your Inboxies account to create private emails from any sign-up form. The extension can
@@ -208,9 +268,14 @@
 			<section id="connected" hidden>
 				<div class="card site">
 					<div class="eyebrow">This site</div>
+					<div id="siteSkeleton" class="skeleton" aria-hidden="true">
+						<span class="bone host"></span>
+						<span class="bone row"></span>
+						<span class="bone row"></span>
+					</div>
 					<div id="siteHost" class="site-host"></div>
 					<p id="siteEmpty" class="muted site-empty" hidden></p>
-					<ul id="siteAliases" class="list"></ul>
+					<ul id="siteAliases" class="list" hidden></ul>
 					<div id="mailboxField" hidden>
 						<label for="mailbox">Create in</label>
 						<select id="mailbox"></select>
