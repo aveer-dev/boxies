@@ -200,6 +200,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewInviteAccept` | Invite accept (signed out: code + create account) |
 | `-previewInviteAcceptSignedIn` | Invite accept into the signed-in account |
 | `-previewSignInMethods` | Sign-in & recovery (methods + recovery email) |
+| `-previewSignInMethods -previewReauth [password\|twoFactor\|passkey\|emailCode\|signIn]` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API (AVE-170) |
 | `-previewMembers` | Mailbox members + pending invites |
 | `-previewSessions` | Devices & sessions |
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |

@@ -307,6 +307,31 @@ enum PreviewSupport {
     /// `-previewAIUsage normal|warning|exhausted` (AVE-45): stub usage snapshot
     /// (12/50, 42/50, 50/50 chats) so the meter renders without a backend. Nil
     /// outside DEBUG previews; `AppModel.loadAIUsage()` returns it instead of fetching.
+    /// `-previewReauth <variant>`: the "Confirm it's you" challenge to show (AVE-170).
+    /// `password` (default) · `twoFactor` · `passkey` · `emailCode` · `signIn`.
+    static var reauthChallengeFixture: ReauthChallenge? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-previewReauth") else { return nil }
+        let variant = index + 1 < args.count ? args[index + 1] : "password"
+        let message = "For your security, confirm it's you first. Sign out and sign back in, then try again within 5 minutes."
+        switch variant {
+        case "twoFactor":
+            return ReauthChallenge(methods: [.password, .passkey, .signIn], twoFactor: true, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        case "passkey":
+            return ReauthChallenge(methods: [.passkey, .signIn], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        case "emailCode":
+            return ReauthChallenge(methods: [.emailCode, .signIn], twoFactor: false, emailCodeTo: "a•••x@gmail.com", maxAgeSeconds: 300, message: message)
+        case "signIn":
+            return ReauthChallenge(methods: [.signIn], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        default:
+            return ReauthChallenge(methods: [.password, .passkey, .signIn], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        }
+        #else
+        return nil
+        #endif
+    }
+
     static var aiUsageFixture: AIUsage? {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
@@ -910,9 +935,12 @@ struct PreviewAdminAuthRoot: View {
             } else if args.contains("-previewInviteAcceptSignedIn") {
                 InviteAcceptPreview(signedIn: true)
             } else if args.contains("-previewSignInMethods") {
+                // Add `-previewReauth [password|twoFactor|passkey|emailCode|signIn]` for the
+                // "Confirm it's you" sheet over it, no API (AVE-170).
                 NavigationStack {
                     SignInMethodsPreview()
                 }
+                .reauthPromptHost()
             } else if args.contains("-previewMembers") {
                 NavigationStack {
                     SharingSettingsView()
@@ -1011,6 +1039,11 @@ private struct SignInMethodsPreview: View {
     var body: some View {
         if ready {
             SignInMethodsSettingsView()
+                .task {
+                    guard let challenge = PreviewSupport.reauthChallengeFixture else { return }
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    ReauthCoordinator.shared.presentForPreview(challenge)
+                }
         } else {
             Color.clear.onAppear {
                 app.setIdentities([
