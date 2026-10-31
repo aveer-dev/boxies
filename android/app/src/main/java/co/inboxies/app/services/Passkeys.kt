@@ -99,6 +99,56 @@ object Passkeys {
         }
     }
 
+    // Confirm it's you (signed in)
+
+    const val REAUTH_FAILED = "That passkey couldn't confirm it's you. Try again or use another way."
+
+    /**
+     * Step-up re-auth with a passkey (`POST /api/v1/me/reauth`, AVE-113): the same ceremony
+     * as sign-in, but the assertion goes to `/me/reauth` with the challenge cookie echoed
+     * back, and no new session comes out of it.
+     */
+    suspend fun reauthenticate(activity: Activity) {
+        val api = ApiClient.shared
+        val (options, headers) = try {
+            // Signed in, so the options list only this account's passkeys.
+            api.requestWithHeaders<JsonObject>("/api/auth/passkey/generate-authenticate-options")
+        } catch (e: Exception) {
+            throw friendly(e, REAUTH_FAILED)
+        }
+        val rpId = options.string("rpId")
+        val cookie = challengeCookie(headers.values("Set-Cookie"))
+        if (rpId.isNullOrEmpty() || options.string("challenge").isNullOrEmpty() || cookie == null) {
+            throw Failure(BAD_OPTIONS)
+        }
+
+        val request = GetCredentialRequest.Builder()
+            .addCredentialOption(GetPublicKeyCredentialOption(requestJson = options.toString()))
+            .build()
+        val credential = try {
+            CredentialManager.create(activity).getCredential(activity, request).credential
+        } catch (e: GetCredentialException) {
+            throw credentialFailure(e)
+        }
+        val assertion = (credential as? PublicKeyCredential)?.authenticationResponseJson
+            ?: throw Failure(REAUTH_FAILED)
+        try {
+            api.request<ReauthResponse>(
+                "/api/v1/me/reauth",
+                method = "POST",
+                body = ReauthBodies.passkey(json.parseToJsonElement(assertion)),
+                headers = ceremonyHeaders(cookie, rpId),
+            )
+        } catch (e: ApiException.Http) {
+            // The Worker's own sentence ("That passkey couldn't confirm it's you…", too many tries).
+            val text = e.message.orEmpty()
+            if (e.code != 429 && text.isNotBlank() && !text.startsWith("{")) throw Failure(text)
+            throw friendly(e, REAUTH_FAILED)
+        } catch (e: Exception) {
+            throw friendly(e, REAUTH_FAILED)
+        }
+    }
+
     // Manage (signed in)
 
     /** Creates a passkey for the signed-in account (saved to the user's password manager). */
@@ -204,7 +254,12 @@ object Passkeys {
                     else -> Failure(fallback)
                 }
             }
-            is ApiException.Transport, is ApiException.SessionExpired, is ApiException.CloudflareAccess -> error as Exception
+            is ApiException.Transport,
+            is ApiException.SessionExpired,
+            is ApiException.CloudflareAccess,
+            // "Confirm it's you" was closed: the server's sentence says why nothing changed.
+            is ApiException.ReauthRequired,
+            -> error as Exception
             else -> Failure(fallback)
         }
     }
