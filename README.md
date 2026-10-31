@@ -1,111 +1,149 @@
 <div align="center">
-  <h1>Agentic Inbox</h1>
-  <p><em>A self-hosted email client with an AI agent, running entirely on Cloudflare Workers</em></p>
+  <h1>Inboxies</h1>
+  <p><em>Email with an AI assistant built in. A hosted service at <a href="https://inboxies.app">inboxies.app</a>, open source so you can also run your own copy on Cloudflare Workers.</em></p>
 </div>
 
-Agentic Inbox lets you send, receive, and manage emails through a modern web interface -- all powered by your own Cloudflare account. Incoming emails arrive via [Cloudflare Email Routing](https://developers.cloudflare.com/email-routing/), each mailbox is isolated in its own [Durable Object](https://developers.cloudflare.com/durable-objects/) with a SQLite database for metadata and snippets, and message bodies (HTML), raw MIME (`.eml`), and attachments are stored in [R2](https://developers.cloudflare.com/r2/).
+Inboxies is an email client for the web, iOS and Android. Most people use the hosted service at [inboxies.app](https://inboxies.app), with an address on `inboxies.email` or on their own domain. This repository is the code behind that service, under the Apache 2.0 license. You can read it, contribute to it, or deploy it to your own Cloudflare account and run it there.
 
-An **AI-powered Email Agent** can read your inbox, search conversations, and draft replies -- built with the [Cloudflare Agents SDK](https://developers.cloudflare.com/agents/) and [Workers AI](https://developers.cloudflare.com/workers-ai/).
+Everything runs on Cloudflare. Incoming mail arrives through [Email Routing](https://developers.cloudflare.com/email-routing/) and outgoing mail leaves through [Email Service](https://developers.cloudflare.com/email-service/). Each mailbox lives in its own [Durable Object](https://developers.cloudflare.com/durable-objects/) with a SQLite database. Message bodies, raw MIME and attachments are kept in [R2](https://developers.cloudflare.com/r2/), and accounts in [D1](https://developers.cloudflare.com/d1/). The assistant is built with the [Agents SDK](https://developers.cloudflare.com/agents/) and [Workers AI](https://developers.cloudflare.com/workers-ai/).
 
-![Agentic Inbox screenshot](./demo_app.png)
+## Use the hosted service
 
+- **Web:** sign up at [inboxies.app](https://inboxies.app).
+- **iOS and Android:** the native apps in [`ios/`](./ios/README.md) and [`android/`](./android/README.md) connect to the hosted service.
+- **MCP:** connect an MCP client to `https://inboxies.app/mcp`. It signs in with OAuth. You choose the scopes (`read` always, plus `draft`, `send` or `manage`) and the mailboxes the client may use.
 
-Read the blog post to learn more about Cloudflare Email Service and how to use it with the Agents SDK, MCP, and from the Wrangler CLI: [Email for Agents](https://blog.cloudflare.com/email-for-agents/).
-
-## How to setup
-
-**Important**: Clicking the 'Deploy to Cloudflare' button is only one part of the setup. You must follow the **After deploying** steps as well. For a full step-by-step guide with screenshots, refer to this comment: 
-https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
-
-### To set up
-
-1. Deploy to Cloudflare. The deploy flow will automatically provision R2, Durable Objects, and Workers AI. You'll be prompted for **DOMAINS** (comma-separated hosts you receive mail for). Optionally set **MAIL_DOMAIN** to pin the primary create-address suffix; when both are unset the API falls back to `inboxies.email` for hosted SaaS compatibility only.
-
-     [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/agentic-inbox)
-
-2. **Configure Cloudflare Access** -- Enable [one-click Cloudflare Access](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/) on your Worker under Settings > Domains & Routes. The modal will show your `POLICY_AUD` and `TEAM_DOMAIN` values. `TEAM_DOMAIN` can be either your Access team URL or the full `.../cdn-cgi/access/certs` URL. **You must set these as secrets for your Worker.**
-3. **Set up Email Routing** -- In the Cloudflare dashboard, go to your domain > Email Routing and create a catch-all rule that forwards to this Worker
-4. **Enable Email Service** -- The worker needs the `send_email` binding to send outbound emails. See [Email Service docs](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/)
-   Outbound sends, replies and forwards are delivered through a Cloudflare Queue, with a dead-letter queue for messages that run out of retries. Create both before deploying (`npm run ensure-queues` does this too):
-
-   ```sh
-   npx wrangler queues create outbound-send
-   npx wrangler queues create outbound-send-dlq
-   ```
-5. **Subscribe to Email Sending events (recommended)** -- Create the Queues `email-sending-events` and `email-sending-events-dlq` before the first deploy (`npm run ensure-queues`, or `npx wrangler queues create email-sending-events` and `npx wrangler queues create email-sending-events-dlq`). Wrangler attaches the consumer on deploy, but it will not create the queue. In the Cloudflare dashboard, open **Queues → email-sending-events → Event subscriptions**, choose **Email Sending** for your sending domain, and subscribe at least to `message.bounced` and `message.complained` (optionally `message.failed` / `message.rejected`). Bounce and complaint events are then written onto the matching Sent message in the thread; subscribe to `message.delivered` / `message.deferred` too to get per-recipient status (`delivery_recipients` on the email). Events that fail 5 times go to `email-sending-events-dlq`, are kept in R2, and can be listed, replayed or discarded under `/ops/dead-letters/email-sending-events`.
-6. **Create a mailbox** -- Visit your deployed app and create a mailbox for any address on your domain (e.g. `hello@example.com`)
-
-Outbound messages larger than **5 MiB** (body + attachments) are rejected with HTTP `413` before send. Mailbox send rate limits return HTTP `429`. Deferred delivery failures, bounces, and complaints appear as delivery badges on the Sent message in the thread.
-
-### Troubleshooting Access
-
-1. If you see `Invalid or expired Access token`, that usually means `POLICY_AUD` or `TEAM_DOMAIN` secrets are incorrect.
-   * Resolution: [turn Access off and back on for the Worker to get the Access modal again](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/), then reset your Worker secrets to the latest `POLICY_AUD` and `TEAM_DOMAIN` values shown there.
-2. If you see `Cloudflare Access must be configured in production`, this application is intentionally enforcing Cloudflare Access so your inbox is not exposed to anyone on the internet.
-   * Resolution: enable Access using [one-click Cloudflare Access for Workers](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/), then set the `POLICY_AUD` and `TEAM_DOMAIN` Worker secrets from the modal values.
+You don't need anything in this repository to use Inboxies. The rest of this README is for developers.
 
 ## Features
 
-- **Full email client** — Send and receive emails via Cloudflare Email Routing with a rich text composer, reply/forward threading, folder organization, search, and attachments
-- **Per-mailbox isolation** — Each mailbox runs in its own Durable Object with SQLite for metadata/snippets/FTS and R2 for HTML bodies, raw MIME, and attachments
-- **Built-in AI agent** — Side panel with 9 email tools for reading, searching, drafting, and sending
-- **Auto-draft on new email** — Agent automatically reads inbound emails and generates draft replies, always requiring explicit confirmation before sending
-- **Configurable and persistent** — Custom system prompts per mailbox, persistent chat history, streaming markdown responses, and tool call visibility
+- **Full email client:** send and receive mail with a rich text composer, threaded replies and forwards, folders, full-text search and attachments.
+- **Per-mailbox isolation:** each mailbox runs in its own Durable Object, with SQLite for metadata, snippets and the search index, and R2 for bodies, raw MIME and attachments.
+- **Built-in AI assistant:** a side panel that can read, search and draft mail. It saves drafts. Sending is always your choice.
+- **MCP server:** outside AI tools can work with your mailboxes over OAuth 2.1, with scopes and a mailbox list you approve.
+- **Accounts:** passwords, passkeys, two-factor authentication, and Sign in with Apple or Google. Mailboxes can be shared with other people as owners or members.
+- **Native apps:** SwiftUI for iOS and Jetpack Compose for Android, using the same Worker API.
 
 ## Stack
 
 - **Frontend:** React 19, React Router v7, Tailwind CSS, Zustand, TipTap, `@cloudflare/kumo`
-- **Backend:** Hono, Cloudflare Workers, Durable Objects (SQLite), R2, Email Routing
-- **AI Agent:** Cloudflare Agents SDK (`AIChatAgent`), AI SDK v6, Workers AI (`@cf/moonshotai/kimi-k2.5`), `react-markdown` + `remark-gfm`
-- **Auth:** Cloudflare Access JWT validation (required outside local development)
+- **Backend:** Hono, Cloudflare Workers, Durable Objects (SQLite), D1, R2, KV, Queues, Email Routing, Email Service
+- **AI assistant:** Cloudflare Agents SDK (`AIChatAgent`), AI SDK v6, Workers AI (`@cf/moonshotai/kimi-k2.5`), `react-markdown` + `remark-gfm`
+- **Auth:** [Better Auth](https://www.better-auth.com/) with users and sessions in D1; Cloudflare Access for operator routes under `/ops`
 
-## Getting Started
+## Run it locally
+
+You need Node.js, [pnpm](https://pnpm.io/) and a Cloudflare account. Workers AI and the `send_email` binding run against Cloudflare even in local dev, so sign in to Wrangler first.
 
 ```bash
 pnpm install
-pnpm run dev
+pnpm wrangler login
+cp .dev.vars.example .dev.vars
+pnpm auth:migrate:local
+pnpm dev
 ```
 
-### Native iOS client
+Open `http://localhost:5173` and create an account at `/onboarding`. Local dev keeps D1, KV and R2 data in `.wrangler/state`, apart from any deployed Worker.
 
-A SwiftUI app lives in [`ios/`](./ios/README.md) (open `ios/AgenticInbox/Inboxies.xcodeproj`). It reuses this Worker API with Sign in with Apple (mobile JWT), Notion-inspired shell, multi-conversation AI chat, and Phase 2 Mail-like minimizable compose (send/reply/forward/drafts, HTML bodies, attachments).
+## Self-host on Cloudflare
 
-### Native Android client
+Self-hosting is supported. You deploy the same Worker to your own Cloudflare account and receive mail on your own domain. `wrangler.jsonc` in this repository is set up for the hosted service: it names its resources, routes and domains. Before your first deploy, create your own resources and point the config at them.
 
-A Jetpack Compose app lives in [`android/`](./android/README.md). It reuses the same Worker API with Google Sign-In (mobile JWT), Notion-inspired shell, inbox digest, multi-conversation AI chat, and minimizable compose. Default API base is `https://inboxies.email` (or `http://10.0.2.2:5173` for emulator against local dev).
-### Configuration
+There is no Deploy to Cloudflare button. The config's custom-domain routes and production values would make that flow fail or deploy a broken copy.
 
-1. Set your mailbox domain(s) in `wrangler.jsonc` (`DOMAINS`, optional `MAIL_DOMAIN`) or via Worker vars. `GET /api/v1/config` returns `{ mailDomain, domains, emailAddresses }` for web and native clients.
-2. Create an R2 bucket named `agentic-inbox`: `wrangler r2 bucket create agentic-inbox`
+### Prerequisites
 
-### Deploy
+- A Cloudflare account with a domain on Cloudflare DNS
+- [Email Routing](https://developers.cloudflare.com/email-routing/) for that domain, to receive mail
+- [Email Service](https://developers.cloudflare.com/email-service/) set up for that domain, to send mail
+- [Workers AI](https://developers.cloudflare.com/workers-ai/), for the assistant
+- Node.js and pnpm
+
+### 1. Clone and install
 
 ```bash
-npm run deploy
+git clone https://github.com/aveer-dev/boxies.git
+cd boxies
+pnpm install
+pnpm wrangler login
 ```
 
-## Prerequisites
+### 2. Create the resources
 
-- Cloudflare account with a domain
-- [Email Routing](https://developers.cloudflare.com/email-routing/) enabled for receiving
-- [Email Service](https://developers.cloudflare.com/email-service/) enabled for sending
-- [Workers AI](https://developers.cloudflare.com/workers-ai/) enabled (for the agent)
-- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) configured for deployed/shared environments (required in production)
+Create these in your account, then put the new IDs in `wrangler.jsonc`:
 
-Any authenticated user is authorized **per mailbox**. Each mailbox stores an explicit ACL (`acl.owners` + `acl.members`) in its R2 settings blob. Owners can share access by adding another person's Access or mobile email (`email:you@example.com`). A principal may own many mailboxes. Unclaimed mailboxes (missing `acl` or empty `owners`) are claimed on first access when the caller's email matches the canonical mailbox address. If your Access email is not the mailbox address (for example personal Gmail Access into a domain mailbox), you cannot auto-claim it — create the mailbox, or have an owner add your Access email. `EMAIL_ADDRESSES` remains a create allowlist only, not authorization. MCP `/mcp` and Agents `/agents/*` use the same helper.
+| Resource | Command | In `wrangler.jsonc` |
+| --- | --- | --- |
+| D1 database for accounts | `pnpm wrangler d1 create inboxies-auth` | `d1_databases[0].database_id` (and `database_name` if you chose another name) |
+| KV namespace for MCP OAuth | `pnpm wrangler kv namespace create OAUTH_KV` | `kv_namespaces[0].id` |
+| R2 bucket for mail | `pnpm wrangler r2 bucket create agentic-inbox` | `r2_buckets[0].bucket_name` and `preview_bucket_name` if you chose another name |
+| Queues for sending and delivery events | `pnpm run ensure-queues` | Nothing to change. It creates `outbound-send`, `outbound-send-dlq`, `email-sending-events` and `email-sending-events-dlq` |
 
-MCP clients authenticate to `/mcp` with OAuth 2.1 (dynamic client registration + PKCE S256; discovery at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server` on `APP_BASE_URL`; consent at `/authorize` for a signed-in user, who picks the scopes (`read`, always granted, plus `draft` / `send` / `manage`) and the mailboxes the app may use). This needs the `OAUTH_KV` KV namespace in `wrangler.jsonc`. In local dev (`pnpm dev`) `OAUTH_KV` is a local simulated namespace under `.wrangler/state`, not production: it starts empty, so register and authorize an MCP client against your local server; production grants are not visible locally (inspect them read-only with `pnpm wrangler kv key list --binding OAUTH_KV --remote`). A Better Auth session token sent as `Authorization: Bearer` still works on `/mcp` during the migration and will be deprecated. See `workers/mcp/oauth.ts`.
+Durable Objects, Workers AI and the rate limiters need nothing created. Each rate limiter's `namespace_id` must be unique in your account, so change them if they clash with limiters you already have.
 
-**Domain Admin:** set Worker secret/var `DOMAIN_ADMINS` to a comma-separated list of Access emails and optional `sub:…` keys (matched against `GET /api/v1/me` → `keys`). Admins get `isAdmin: true`, can list/create/assign/delete via `/api/v1/admin/*`, and are not subject to silent mailbox-content omniscience (ACL still gates mail). When `DOMAIN_ADMINS` is non-empty, mailbox create defaults to **admin-only** unless you set `MAILBOX_CREATE_POLICY=open`. Invitees set a password via `/invite/<token>` (public Worker paths; also add Cloudflare Access **bypass** for `/invite/*`, `/login`, and `/api/v1/invites/*` + `/api/v1/auth/password*`). Optional: `INVITE_FROM_EMAIL`, `APP_BASE_URL`, `MAIL_DOMAIN` (primary create-address suffix; else first `DOMAINS` entry; else `inboxies.email`). Password sessions reuse `MOBILE_JWT_SECRET` (cookie `inboxies_session` or Bearer).
+### 3. Point the config at your domain
 
-**Mobile Apple / Google vs Access:** Assign-to-me and Sharing store the **web Access** principal (`email:you@gmail.com`). Sign in with Apple often uses a different key (`email:…@privaterelay.appleid.com` and/or `sub:…`), so mobile can show Welcome even when web works. Fixes:
+In `wrangler.jsonc`:
 
-1. If Apple/Google returns an email that is already in `DOMAIN_ADMINS`, the Worker **auto-links** that IdP `sub` to the email (durable identity account in R2). Later mobile sessions expand to the same ACL/admin keys.
-2. **Product flow (preferred — in-session Connect):** While signed in, Settings → **Sign-in methods** → **Connect Apple** (iOS) / **Connect Google** (Android or web GIS) / **Add password** or **Change password**. Completes that provider’s normal auth on *this* device and attaches it to the current durable account via `POST /api/v1/me/identities/attach` (rejects if the IdP is already tied to a different account). Change password uses `POST /api/v1/me/password` (requires current password).
-3. **Cross-device fallback:** Settings → Sign-in methods → **Link another device** (secondary) → generate/redeem a 15‑minute code. Use when Connect IdP can’t run on that surface (e.g. Connect Apple from Access web).
-4. API: `GET /api/v1/me/identities`, `POST /api/v1/me/identities/attach`, `POST /api/v1/me/identity-link-codes`, `POST /api/v1/auth/redeem-identity-link`. Legacy `POST /api/v1/auth/link-provider` remains for password sessions.
-5. **Web limits:** Cloudflare Access does not mint Apple ID tokens in the browser — Connect Apple is iOS-only (or use a link code). Connect Google on web needs Worker `GOOGLE_CLIENT_ID` (exposed as `googleClientId` on `/api/v1/config`) for Google Identity Services.
-6. Interim ops: add the mobile `sub:…` (from `/api/v1/me` on the device) to `DOMAIN_ADMINS`, and/or add `email:…@privaterelay.appleid.com` / `sub:…` under Settings → Sharing on each mailbox.
+- `name`: your Worker's name.
+- `routes`: replace `inboxies.email` and `inboxies.app` with your own hostname(s). You can also delete `routes` and set `workers_dev` to `true` to use a `workers.dev` address.
+- `vars.DOMAINS`: the domain(s) you receive mail for, comma-separated. New addresses use the first one, unless you set `MAIL_DOMAIN`.
+- `vars.APP_BASE_URL`: the URL the web app is served from, for example `https://mail.example.com`. Sign-in, passkeys, MCP OAuth and links in emails all use it.
+- `vars.WEB_REDIRECT_HOSTS`: hosts whose web pages should redirect to `APP_BASE_URL`. Use `""` if you serve from one host.
+- `vars.APPLE_WEB_SERVICES_ID`, `APNS_TOPIC` and `APNS_SANDBOX` are the hosted service's Apple identifiers. They do nothing until you add Apple secrets (step 5). Change them to your own when you do.
+
+### 4. Create the account tables
+
+```bash
+pnpm auth:migrate:remote
+```
+
+This applies `migrations/auth` to the D1 database bound as `AUTH_DB`.
+
+### 5. Set secrets and deploy
+
+Put your secrets in a file outside the repository, as JSON or `.env` lines (`NAME=value`). `BETTER_AUTH_SECRET` is required. Without it nobody can sign in. Generate one with `openssl rand -base64 32`.
+
+```bash
+pnpm run build
+pnpm wrangler deploy --secrets-file ../inboxies-secrets.env
+```
+
+Delete the file afterwards. Secrets you leave out of a later `--secrets-file` deploy keep their values, so you only need to include the ones you are adding or changing. After that, `pnpm run deploy` deploys code changes.
+
+Optional secrets (see `.dev.vars.example` and `workers/types.ts`):
+
+| Secret | What it turns on |
+| --- | --- |
+| `POLICY_AUD`, `TEAM_DOMAIN` | Operator tools under `/ops`, behind [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/). Unset leaves `/ops` closed. `TEAM_DOMAIN` may be the Access team URL or the full `.../cdn-cgi/access/certs` URL. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_EXTRA_CLIENT_IDS` | Sign in with Google |
+| `APPLE_CLIENT_ID`, `APPLE_CLIENT_SECRET`, `APPLE_TEAM_ID`, `APPLE_SIGNIN_KEY_ID`, `APPLE_SIGNIN_PRIVATE_KEY` | Sign in with Apple |
+| `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_PRIVATE_KEY`, `FCM_SERVICE_ACCOUNT_JSON` | Push notifications for your own builds of the native apps |
+| `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `WORKER_NAME`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | The hosted service's sign-up with a custom domain, which sets up the domain's zone and Email Routing and takes payment. Not needed to run on your own domain. |
+
+### 6. Connect email
+
+1. **Receive:** in the Cloudflare dashboard, open your domain → **Email Routing** and add a catch-all rule that sends to this Worker.
+2. **Send:** set up your domain for [Email Service](https://developers.cloudflare.com/email-service/) so the Worker's `send_email` binding can send from it. Sends, replies and forwards go through the `outbound-send` queue. Messages that run out of retries go to `outbound-send-dlq`, and the Sent message is marked failed.
+3. **Delivery events (recommended):** open **Queues → email-sending-events → Event subscriptions**, choose **Email Sending** for your domain, and subscribe at least to `message.bounced` and `message.complained` (optionally `message.failed` and `message.rejected`). Subscribe to `message.delivered` and `message.deferred` too for per-recipient status. Bounces and complaints then show on the Sent message in the thread. Events that fail 5 times go to `email-sending-events-dlq`, are kept in R2, and can be listed, replayed or discarded under `/ops/dead-letters/email-sending-events`.
+
+### 7. Create your account
+
+Open `APP_BASE_URL` and sign up at `/onboarding` for an address on your domain. Anyone who can reach your Worker can sign up the same way.
+
+Outbound messages larger than **5 MiB** (body and attachments) are rejected with HTTP `413` before sending. Mailbox send rate limits return HTTP `429`.
+
+## Accounts and mailbox access
+
+Users, sessions, passkeys and two-factor settings live in D1 through Better Auth (`workers/auth/`). Each mailbox has members with a role, `owner` or `member`, and every request is checked against that role (`workers/auth/authz.ts`). Owners can share a mailbox with other people. MCP (`/mcp`) and the assistant (`/agents/*`) go through the same checks.
+
+Operators (people running the deployment) are a separate group. They sign in to `/ops` through Cloudflare Access to manage domains and mailboxes, read the audit log, replay dead-lettered events and see spam metrics (`workers/routes/ops.ts`).
+
+## MCP
+
+MCP clients authenticate to `/mcp` with OAuth 2.1: dynamic client registration and PKCE S256. Discovery is at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server` on `APP_BASE_URL`. A signed-in user gives consent at `/authorize` and picks the scopes (`read`, always granted, plus `draft` / `send` / `manage`) and the mailboxes the client may use. Clients, grants and tokens are stored in the `OAUTH_KV` namespace. Without that binding OAuth is off, and `/mcp` accepts only a session token sent as `Authorization: Bearer`, which is being deprecated. See `workers/mcp/oauth.ts`.
+
+In local dev (`pnpm dev`), `OAUTH_KV` is a local namespace under `.wrangler/state` that starts empty, so register and authorize an MCP client against your local server. On the hosted service, MCP is at `https://inboxies.app/mcp`.
 
 ## Architecture
 
@@ -129,8 +167,12 @@ MCP clients authenticate to `/mcp` with OAuth 2.1 (dynamic client registration +
                      └──────────────────┘     └─────────────────┘
 ```
 
-Full HTML and raw MIME are stored in R2 (`emails/{id}/body.html`, `emails/{id}/raw.eml`). The Durable Object SQLite database keeps metadata and a short `snippet` for list previews, plus an **FTS5** index (`emails_fts`) over subject, sender, recipients, and plain-text body so free-text search matches the full message — not just the first 300 characters. Existing mail is backfilled from R2 in alarm-driven batches. Deleting a mailbox purges the Durable Object inventory, R2 bodies/attachments, and related EmailAgent chat storage before removing `mailboxes/{id}.json`.
+The Worker also uses D1 (`AUTH_DB`) for accounts, mailbox membership and domains; KV (`OAUTH_KV`) for MCP OAuth; the `EmailMCP` Durable Object for the MCP server; the `ExportJobDO` Durable Object for mailbox exports; and Queues for outbound sends and Email Sending events. An hourly cron does upkeep (`workers/lib/maintenance.ts`).
+
+Full HTML and raw MIME are stored in R2 (`emails/{id}/body.html`, `emails/{id}/raw.eml`). The mailbox's SQLite database keeps metadata and a short `snippet` for list previews, plus an **FTS5** index (`emails_fts`) over subject, sender, recipients and plain-text body, so search matches the whole message and not just its first 300 characters. Deleting a mailbox purges its Durable Object, its R2 bodies and attachments, and its assistant chat history.
 
 ## License
 
-Apache 2.0 -- see [LICENSE](LICENSE).
+Apache 2.0. See [LICENSE](LICENSE).
+
+Inboxies started as a fork of [Agentic Inbox](https://github.com/cloudflare/agentic-inbox) by Cloudflare, Inc., also licensed under Apache 2.0. Files from that project keep their Cloudflare copyright headers, and the copyright notice in [LICENSE](LICENSE) is Cloudflare's. You can read more about the original project in Cloudflare's [Email for Agents](https://blog.cloudflare.com/email-for-agents/) blog post.

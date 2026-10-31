@@ -84,6 +84,7 @@ import {
 } from "./auth/mailboxes";
 import type { MailboxRole } from "./auth/schema";
 import { registerAccountRoutes } from "./routes/account";
+import { registerReauthRoutes } from "./routes/reauth";
 import { registerAdminAndInviteRoutes } from "./routes/admin-invites";
 import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerDomainDnsRoutes } from "./routes/domain-dns";
@@ -291,6 +292,7 @@ app.get("/api/v1/config", (c) => {
 });
 
 registerAccountRoutes(app);
+registerReauthRoutes(app);
 registerAdminAndInviteRoutes(app);
 registerOnboardingRoutes(app);
 registerDomainDnsRoutes(app);
@@ -2457,10 +2459,19 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			);
 		}
 
-		// Auto-draft personal ham only. Spam, bulk, and Screener skip the agent.
+		// Auto-draft direct personal mail only (AVE-172). Spam, bulk, Screener,
+		// notifications, no-reply senders, Bcc/list delivery, and anything not
+		// filed to Inbox skip the agent.
 		if (
 			!triageDecision.skipAutoDraft &&
-			shouldAutoDraft(classification, auth) &&
+			shouldAutoDraft(classification, auth, {
+				headers: storedHeaders,
+				sender: fromRaw,
+				replyTo: (parsedEmail.replyTo || []).map((a) => a.address),
+				recipients: [...allRecipients, ...ccRecipients],
+				ownAddresses: [message.to, mailboxId, routedAliasMeta?.aliasEmail],
+				folderId: filedFolder,
+			}) &&
 			!filterHit?.skipAutoDraft
 		) {
 			ctx.waitUntil(

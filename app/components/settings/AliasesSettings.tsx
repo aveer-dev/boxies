@@ -11,7 +11,7 @@ import {
 	TrashIcon,
 } from "@phosphor-icons/react";
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import PrivateEmailLogo from "~/components/PrivateEmailLogo";
 import SettingsSubpage from "./SettingsSubpage";
 import {
@@ -275,7 +275,7 @@ function AliasListItem({ mailboxId, alias }: { mailboxId: string; alias: MaskedA
 }
 
 export default function AliasesSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const { data: aliases = [], isLoading, isError, error, refetch } = useAliases(mailboxId);
 	const createMutation = useCreateAlias();

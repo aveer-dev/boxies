@@ -9,7 +9,7 @@ import {
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { formatParticipants } from "shared/sender";
 import ColumnPane from "~/components/columns/ColumnPane";
 import { IconButton } from "~/components/IconButton";
@@ -31,7 +31,7 @@ const PAGE_SIZE = 25;
 
 /** Column 3 for `/reply-later` (+ the reader for `:emailId`). */
 export default function ReplyLaterRoute() {
-	const { mailboxId = "" } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const { emailId, openEmail, closeEmail } = useMailNavigation();
 	const startCompose = useUIStore((s) => s.startCompose);
 	const isComposing = useUIStore(selectIsComposing);

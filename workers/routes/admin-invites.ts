@@ -58,6 +58,7 @@ import { validatePasswordStrength } from "../lib/password-auth";
 import type { Env } from "../types";
 import { compatKeys, leaveMailbox } from "./account";
 import { serviceEndedErrorForMailbox } from "../lib/domain-service";
+import { invitePath } from "../../shared/mailbox-url";
 
 type App = Hono<MailboxContext>;
 type C = Context<MailboxContext>;
@@ -214,7 +215,7 @@ async function sendInviteEmail(
 	c: C,
 	invite: { token: string; mailboxId: string; inviteeEmail: string; inviteeName?: string | null },
 ): Promise<{ sent: boolean; inviteUrl: string; error?: string }> {
-	const inviteUrl = `${appBaseUrl(c.env, c.req.url)}/invite/${encodeURIComponent(invite.token)}`;
+	const inviteUrl = `${appBaseUrl(c.env, c.req.url)}${invitePath(invite.token)}`;
 	// The inviter chooses the name; it goes out from our noreply address, so
 	// it must never become markup (links, fake warnings).
 	const name = invite.inviteeName ? ` ${escapeHtml(invite.inviteeName)}` : "";
