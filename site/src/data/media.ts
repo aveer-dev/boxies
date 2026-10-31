@@ -68,7 +68,7 @@ export const stills: Record<StillName, { alt: string }> = {
 		alt: "Domain Admin on iPhone: DNS & Domain Configuration, a Create email button, and the domain’s mailboxes you@, ops@ and pending@.",
 	},
 	"sign-in-methods": {
-		alt: "Sign-in methods on iPhone: the methods connected to you@inboxies.email, a form to change the password, and Link another device.",
+		alt: "Sign-in & recovery on iPhone: a password and Apple connected, Change password, a saved passkey with Add a passkey, and two-factor authentication.",
 	},
 };
 
