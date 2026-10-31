@@ -26,7 +26,7 @@ export const facts: Principle[] = [
 	{
 		id: "delete",
 		title: "Deleting is permanent",
-		body: "Deleting a mailbox erases its messages, attachments, raw files and assistant history, and you can delete your whole account from the iPhone app. Neither can be undone. An .mbox export made earlier isn’t deleted with it.",
+		body: "Deleting a mailbox erases its messages, attachments, raw files and assistant history, and you can delete your whole account in Settings. Neither can be undone. An .mbox export made earlier isn’t deleted with it.",
 		src: "FSW#supporting-features (purgeMailbox); PS#5 (deleting a mailbox); durableObject purgeMailbox leaves exports/data/* in R2 (email-exporter.ts); dev eda481f (Settings → Account → Delete account; DELETE /api/v1/me)",
 	},
 ];

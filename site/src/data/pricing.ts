@@ -201,7 +201,8 @@ export const compare: PlanCompare = {
 
 // Limits: the same on every plan, per mailbox.
 export const limits: RecordRow[] = [
-	{ label: "Sending", value: "20 emails an hour, 100 a day", src: "PS#4 (hard limits)" },
+	{ label: "Sending", value: "100 recipients an hour, 300 a day", src: "AVE-125 b04d196: workers/lib/send-quota.ts SEND_QUOTA_RECIPIENTS_PER_HOUR 100, _PER_DAY 300 (rolling, counted per recipient)" },
+	{ label: "Recipients per message", value: "50, across To, Cc and Bcc", src: "AVE-125: shared/outbound-limits.ts MAX_RECIPIENTS_PER_MESSAGE" },
 	{ label: "Outgoing message", value: "5 MB including attachments; photos are resized to fit, videos can’t be attached", src: "PS#4 (hard limits); FC#4.6" },
 	{ label: "Incoming message", value: "25 MB", src: "PS#4 (hard limits)" },
 	{ label: "Filters", value: "50", src: "PS#4 (hard limits)" },

@@ -91,11 +91,12 @@ export const privacy: LegalDoc = {
 			id: "privacy-ai",
 			title: "AI and your mail",
 			body: [
-				"Inboxies uses AI models in three places:",
+				"Inboxies uses AI models in four places:",
 				{
 					list: [
 						"**Spam check.** Incoming mail that its headers don’t already settle is checked for spam by a small model, which reads the sender, the subject and the first 2,000 characters of the text.",
-						"**Draft replies.** When mail arrives from a sender you’ve let in, the assistant reads that email and its thread to prepare a draft reply for you to review. It doesn’t draft for mail in the Screener, Spam, bulk mail, spoofed senders, or mail a filter files away or tells it to skip. Before drafting, the message and thread are checked for prompt injection.",
+						"**Draft replies.** When mail addressed to you arrives in your Inbox from a sender you’ve let in, the assistant reads that email and its thread to prepare a draft reply for you to review. It doesn’t draft for newsletters, notifications or other automated mail, mail outside your Inbox (including the Screener, Spam, Promotions and Updates), spoofed senders, or mail a filter tells it to skip. Before drafting, the message and thread are checked for prompt injection.",
+						"**Summaries.** On the web, when you open a longer message, a small model writes a short summary that’s shown above it and saved with the message. It isn’t made for mail in the Screener, Spam, Trash or Drafts.",
 						"**Ask AI.** When you ask the assistant something, it can search and read your mail to answer, draft emails, mark mail read and move it between folders. It saves drafts; it doesn’t send.",
 					],
 				},
@@ -158,7 +159,7 @@ export const privacy: LegalDoc = {
 			body: [
 				{
 					table: [
-						["Mail and attachments", "Until you delete them. Deleting moves mail to Trash; deleting it from Trash, or emptying Trash, erases it. Trash and Spam aren’t emptied automatically."],
+						["Mail and attachments", "Until you delete them. Deleting moves mail to Trash. Mail in Trash or Spam is erased 30 days after it got there, and deleting it from Trash, or emptying Trash, erases it sooner."],
 						["A deleted mailbox", "Its messages, attachments, settings, search index, private email addresses and assistant history are erased at once."],
 						["A deleted account", "Your sign-in methods, sessions and memberships are erased, along with every mailbox you’re the only owner of. You’re removed from mailboxes that have other owners."],
 						[".mbox exports", "7 days, then the file is deleted. An export made before a mailbox was deleted lasts its 7 days."],
@@ -184,7 +185,7 @@ export const privacy: LegalDoc = {
 					list: [
 						"**See and take your data.** Your mail is in the apps. Domain admins can export every mailbox on a domain to .mbox from Admin → Export.",
 						`**Correct it.** Change your backup email, password, sign-in methods and the name your mail is sent from in Settings, or write to ${MAIL_US} to fix anything else.`,
-						"**Delete it.** Delete a mailbox in its settings, or your whole account in Settings → Account → Delete account, on the web or in the iPhone app.",
+						"**Delete it.** Delete a mailbox in its settings, or your whole account in Settings → Account → Delete account in the apps, or Settings → Your account → Delete account on the web.",
 						"**Control what reaches you.** Keep new senders in the Screener, leave remote images in Spam blocked, turn notifications off, and sign out other sessions from Settings.",
 					],
 				},
@@ -311,7 +312,8 @@ export const terms: LegalDoc = {
 				"To keep mail flowing and stop abuse, Inboxies sets limits. Today they include:",
 				{
 					records: [
-						["Sending", "20 an hour, 100 a day per mailbox"],
+						["Sending", "100 recipients an hour, 300 a day per mailbox"],
+						["Recipients per message", "50, across To, Cc and Bcc"],
 						["Largest message you send", "5 MiB, attachments included"],
 						["Largest message you receive", "25 MiB"],
 						["Filters", "50 per mailbox"],

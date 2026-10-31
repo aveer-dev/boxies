@@ -27,8 +27,8 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "On from the first email.",
-				text: "Every new mailbox starts with the Screener on. There’s no switch to turn it off yet.",
-				src: "FSW#the-screener (screener.enabled true; no client switch); PS#5",
+				text: "Every new mailbox starts with the Screener on. Rather not screen? Switch it off in Settings, and new senders’ mail is sorted like everyone else’s.",
+				src: "FSW#the-screener (screener.enabled defaults true); AVE-104 a9fead1 (Screener switch in Settings on web, iOS, Android; off: unknown senders file like everyone else, spam and blocked still to Spam); PS#5",
 			},
 		],
 		supportHref: "/support#screener",
@@ -48,9 +48,9 @@ const allChapters: TourChapter[] = [
 			: "Mark a thread Reply Later from its actions and it joins a pile with a live count in the bar at the bottom of the screen. Send your reply and it leaves the pile on its own.",
 		rows: [
 			{
-				lead: "A pile, not a timer.",
-				text: "Nothing disappears and nothing comes back at a set time. The pile waits until you’re ready.",
-				src: "RM#2 (Snooze: \"Reply Later is a pile, not a timer\")",
+				lead: "Reminders when you want them.",
+				text: "Nothing is hidden while it waits. Add a reminder and, at the time you pick, the thread comes back unread at the top of your Inbox, with a notification on your phone.",
+				src: "AVE-86 409d1b4: reply-later-reminders.ts (due: mark unread, back to Inbox if filed away, top of New, push to iOS/Android; web shows N due); Remind me… on web, iOS, Android",
 			},
 			{
 				lead: "Needs reply.",

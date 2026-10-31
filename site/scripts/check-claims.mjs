@@ -117,9 +117,9 @@ const bannedOutsideDev = [
 ];
 
 // Only inside data-claim="roadmap" ("negated" doesn't exempt these).
-// Gmail-style j and k and the ? list aren't built, though the welcome
-// emails still promise them (welcome-emails.ts).
-const bannedOutsideRoadmap = [/\bj and k\b/i, /\? (?:overlay|list)\b/i];
+// Gmail-style j and k aren't built, though the welcome emails still promise
+// them (welcome-emails.ts). The ? list shipped with AVE-28.
+const bannedOutsideRoadmap = [/\bj and k\b/i];
 
 if (iosStatus !== "appstore") bannedFull.push(/App Store/);
 if (!flags.androidPublic) {

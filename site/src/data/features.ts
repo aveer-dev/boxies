@@ -128,10 +128,10 @@ const rows: Feature[] = [
 		href: "/support#sign-in",
 		platforms: ["ios", "android", "web"],
 		description: flags.androidPublic
-			? "Sign in with Apple on iPhone, Google on Android, or email and password everywhere."
-			: "Sign in with Apple on iPhone, or with your email and password anywhere.",
+			? "A passkey, Google, or your email and password everywhere, and Sign in with Apple on iPhone and the web. Add two-step verification if you like."
+			: "A passkey, Google, Sign in with Apple, or your email and password. Add two-step verification if you like.",
 		status: "available",
-		src: "FC#8.3; PS#5 (sign-in methods)",
+		src: "FC#8.3; PS#5; SignInView.swift, login.tsx, SignInView.kt (Apple hidden on Android, AVE-130); AVE-56 Google; AVE-74..77 passkeys and 2FA",
 	},
 ];
 
@@ -157,7 +157,7 @@ const autoDrafts: Feature = {
 	title: "Draft replies, ready when you are",
 	href: "/support#ai-reads",
 	platforms: ["ios", "android", "web"],
-	description: "When personal mail arrives from someone you’ve let in, the assistant writes a reply into Drafts for you to edit or send. It skips the Screener, Spam, bulk and spoofed mail, and first checks each message for hidden instructions aimed at the assistant.",
+	description: "When personal mail addressed to you lands in your Inbox from someone you’ve let in, the assistant writes a reply into Drafts for you to edit or send. It skips newsletters, notifications and spoofed mail, and first checks each message for hidden instructions aimed at the assistant.",
 	status: "available",
 	src: "dev b7895d9 (PR #49, dev 9 Oct): email-agent.ts getAgentByName, so the auto conversation runs on brand-new mailboxes; index.ts auto-draft gate (ham, not Screener, not filed away, not spoofed); agent/index.ts handleNewEmail (injection scan of subject, body and thread)",
 };

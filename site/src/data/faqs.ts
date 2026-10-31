@@ -109,10 +109,10 @@ export const billing: Faq[] = visible([
 
 // The iPhone line in "Which apps are there?", by status. null when the app isn't shown.
 function iphoneAppLine(): string | null {
-	if (IOS_STATUS === "appstore" && APP_STORE_URL) return `An iPhone app for iOS 17 and later, on the [App Store](${APP_STORE_URL}). There’s no iPad version.`;
+	if (IOS_STATUS === "appstore" && APP_STORE_URL) return `An iPhone app for iOS 17 and later, on the [App Store](${APP_STORE_URL}). It runs on iPad too, with the list and the message side by side.`;
 	if (IOS_STATUS === "testflight") {
 		const invite = TESTFLIGHT_URL ? `[join the beta](${TESTFLIGHT_URL})` : `[ask for an invite](${IOS_BETA_MAILTO})`;
-		return `An iPhone app for iOS 17 and later, in beta on TestFlight: ${invite}. There’s no iPad version.`;
+		return `An iPhone app for iOS 17 and later, in beta on TestFlight: ${invite}. It runs on iPad too, with the list and the message side by side.`;
 	}
 	return null;
 }
@@ -159,7 +159,7 @@ const gettingStarted: Faq[] = [
 		group: "getting-started",
 		q: "Why are there three emails in my new mailbox?",
 		claim: "roadmap",
-		a: ["Every new mailbox starts with three short guides. They come from welcome@, agent@ and security@ on your own domain, and they’re automated, so don’t reply to them. Some of what they describe isn’t there yet: most of the web keyboard shortcuts they list (C to compose and ⌘K to search work today), a signature editor in web Settings, and an export button in Settings. All three are on the [roadmap](/roadmap)."],
+		a: ["Every new mailbox starts with three short guides. They come from welcome@, agent@ and security@ on your own domain, and they’re automated, so don’t reply to them. Some of what they describe isn’t there yet: j, k and / among the web keyboard shortcuts they list (the rest work), a signature editor in web Settings, and an export button in Settings. All three are on the [roadmap](/roadmap)."],
 		src: "PS#5 (other support facts); RM#5 (welcome-email overclaims); dev welcome-emails.ts (shortcut table and ? overlay, Settings → Email Signature, Settings → Export Mailbox; its /mcp section is true since MCP OAuth shipped, #152); FloatingDock.tsx (C, ⌘K); onboarding.ts (those usernames aren't reserved)",
 	},
 	{
@@ -190,8 +190,8 @@ const sorting: Faq[] = [
 		id: "screener-off",
 		group: "sorting-topic",
 		q: "Can I turn the Screener off?",
-		a: ["Not yet. It’s on for every mailbox, and there’s no switch in the apps today."],
-		src: "FSW#the-screener (no client switch)",
+		a: ["Yes. Every mailbox starts with it on, and the Screener switch in Settings turns it off. New senders’ mail is then sorted like everyone else’s, and spam and senders you’ve screened out still go to Spam. Mail already waiting in the Screener moves to your Inbox. Turn it back on and new senders are screened again from then on."],
+		src: "AVE-104 a9fead1: SettingsColumns.tsx ScreenerToggle (\"First-time senders go to your Inbox. Spam and blocked senders are still filtered.\"), SettingsSheetView.swift / .kt screener toggle; MailboxDO.releaseScreenerToInbox on on→off; back on screens only new mail; workers/index.ts honours settings.screener.enabled",
 	},
 	{
 		id: "new-and-seen",
@@ -241,9 +241,9 @@ const everyday: Faq[] = [
 	{
 		id: "reply-later-timer",
 		group: "everyday-topic",
-		q: "Does Reply Later bring mail back at a set time?",
-		a: ["No. It’s a pile, not a timer. A thread stays there until you reply or take it off."],
-		src: "RM#2",
+		q: "Can Reply Later remind me?",
+		a: ["Yes. Choose Remind me… in a thread’s actions, or Add reminder right after you add it to Reply Later, and pick later today, tomorrow, next week, or a date and time up to a year ahead. When it’s due, the thread is marked unread and comes back to the top of your Inbox if you’d filed it away, and it stays in Reply Later. Your phone gets a notification; on the web, Reply Later shows what’s due. Nothing is hidden while you wait."],
+		src: "AVE-86 409d1b4: workers/lib/reply-later-reminders.ts, durableObject/index.ts (unread, refile to Inbox from Archive/Promotions/Updates/tags, top of New, one push); useEmailMenu.ts / EmailActionsSheet.swift / .kt \"Remind me…\"; toast \"Add reminder\"; max one year ahead",
 	},
 	{
 		id: "search",
@@ -277,9 +277,9 @@ const everyday: Faq[] = [
 		claim: "roadmap",
 		hidden: !flags.webAppPublic,
 		a: [
-			"A few. The web app opens your mailboxes, folders, the list and the message as columns side by side. C starts a new message, ⌘K jumps to search, [ and ] move between columns, and Esc closes the right-most one. In an open message, ⌘J asks the assistant to draft a reply, ⌘↵ sends the quick reply and ⇧⌘O moves it into the full composer. On Windows and Linux, use Ctrl for ⌘. Gmail-style j and k, r for reply and a ? list aren’t built yet; they’re on the [roadmap](/roadmap).",
+			"Yes. Press ? to see them all. On a selected email or the open message: C writes a new message, R replies, A replies to all, F forwards, E archives, # deletes, U marks read or unread, S stars and L adds it to Reply Later. ⌘K jumps to search, [ and ] move between columns, Esc closes the right-most one, and ⌘J opens the assistant; in an open message it drafts a reply. ⌘↵ sends a quick reply and ⇧⌘O moves it into the full composer. On Windows and Linux, use Ctrl for ⌘. Gmail-style j and k aren’t built yet; they’re on the [roadmap](/roadmap).",
 		],
-		src: "dev 87720b1 (#53): FloatingDock.tsx (C, ⌘K; metaKey || ctrlKey), ColumnCanvas.tsx ([ ], Esc → closeDeepest), QuickReplyBar.tsx (⌘J, ⌘↵, ⇧⌘O); RM#1 (6)",
+		src: "AVE-28 1e535a7: app/lib/shortcuts.ts SHORTCUTS, ShortcutSheet.tsx (? overlay), useListShortcuts.ts / EmailPanel.tsx (focused row or open message); QuickReplyBar.tsx (⌘J, ⌘↵, ⇧⌘O); no j/k or / handler; RM#1 (6)",
 	},
 	{
 		id: "compose",
@@ -298,7 +298,7 @@ const everyday: Faq[] = [
 			(flags.androidPublic
 				? "In the iPhone and Android apps, delete, archive and move wait about five seconds for Undo. On iPhone you can also shake to undo, and sending gets a short undo window."
 				: "In the iPhone app, delete, archive and move wait about five seconds for Undo, and you can shake to undo. Sending gets a short undo window too.") +
-				(flags.webAppPublic ? " The web app has no undo, but Delete there moves mail to Trash, so you can move it back." : ""),
+				(flags.webAppPublic ? " The web app has no undo, but Delete there moves mail to Trash, so you can move it back within 30 days." : ""),
 		],
 		src: "FC#4.4; RM#2 (undo send iOS only); J (no undo on web); dev email-list.tsx (outside Trash, delete moves to Trash); cb0b217 trashOrDeleteEmail",
 	},
@@ -367,9 +367,9 @@ const ai: Faq[] = [
 		a: [
 			"Personal mail that its headers don’t already settle is checked for spam by a small model, which reads the sender, the subject and the first 2,000 characters. The assistant reads your mail when you ask it something in Ask AI. " +
 				(flags.autoDraftsFromDayOne
-					? "When personal mail arrives from a sender you’ve let in, it also reads that email and its thread to prepare a draft reply for you to review."
+					? "When personal mail addressed to you lands in your Inbox from a sender you’ve let in, it also reads that email and its thread to prepare a draft reply for you to review."
 					: "On some mailboxes it may also read new personal mail to prepare a draft reply for you to review; that doesn’t run on brand-new mailboxes yet."),
-			"It never drafts for mail in the Screener, Spam, bulk mail or spoofed senders, or for mail a filter files away or tells it to skip. Before any such draft, the message, its subject and the rest of the thread are checked for prompt injection. A new draft only replaces the assistant’s own earlier draft, never one you wrote. You can’t switch the assistant off for a mailbox yet.",
+			"On the web, opening a longer message also has a small model write a short summary of it. The assistant never drafts for newsletters, notifications or other automated mail, no-reply senders, mail you were only Bcc’d on, spoofed senders, or anything outside your Inbox, including the Screener, Spam, Promotions and Updates, or for mail a filter tells it to skip. Before any such draft, the message, its subject and the rest of the thread are checked for prompt injection. A new draft only replaces the assistant’s own earlier draft, never one you wrote. You can’t switch the assistant off for a mailbox yet.",
 		],
 		src: "PS#5 (AI data handling: 2,000 chars; auto-draft on ham); classify-email.ts (model only when classifyFromHeaders returns null; spam vs ham only); FSW#auto-drafted-replies (skips; injection scan); dev b7895d9/PR #49 (auto-drafts on new mailboxes); cb0b217 (agent/index.ts subject + thread scan; tools.ts draft source agent, deleteSiblingDrafts onlySource agent; sender-triage.ts filedAway skip); J (gate auto-draft wording)",
 	},
@@ -384,7 +384,7 @@ const ai: Faq[] = [
 		id: "ai-off",
 		group: "ai-topic",
 		q: "Can I turn the AI off?",
-		a: ["There’s no off switch per mailbox yet. To stop drafts for particular senders, lists or subjects, add a filter with “Skip auto-draft”, or one that moves their mail out of Inbox, Promotions and Updates."],
+		a: ["There’s no off switch per mailbox yet. To stop drafts for particular senders, lists or subjects, add a filter with “Skip auto-draft”, or one that moves their mail out of your Inbox."],
 		src: "PS#5 (\"no per-user switch to turn AI off\"); FSW#filters; settings-filters.tsx (label “Skip auto-draft”); dev sender-triage.ts (skipAutoDraft || filedAway); no auto-draft setting in dev app/, ios/, android/",
 	},
 	{
@@ -459,30 +459,31 @@ const account: Faq[] = [
 		a: [
 			{
 				list: [
-					...(IOS_STATUS !== "hidden" ? ["On iPhone: Sign in with Apple, or your email and password."] : []),
-					...(flags.webAppPublic ? ["On the web: your email and password."] : []),
-					...(flags.androidPublic ? ["On Android: Google, or your email and password."] : []),
+					...(IOS_STATUS !== "hidden" ? ["On iPhone: Sign in with Apple, Google, a passkey, or your email and password."] : []),
+					...(flags.webAppPublic ? ["On the web: your email and password, Google, Sign in with Apple, or a passkey."] : []),
+					...(flags.androidPublic ? ["On Android: Google, a passkey, or your email and password."] : []),
 				],
 			},
-			"Signing in with Apple doesn’t create a mailbox by itself; choose Get started to make one.",
+			"If you’ve turned on two-step verification, signing in with a password also asks for your code; a passkey doesn’t. Signing in with Apple or Google doesn’t create a mailbox by itself; choose Get started to make one.",
 		],
-		src: "FC#2; FC#8.3; PS#5 (sign-in methods: Apple/Google don't auto-create a mailbox)",
+		src: "FC#2; FC#8.3; PS#5 (Apple/Google don't auto-create a mailbox); SignInView.swift (Apple, Google, passkey, password); app/routes/login.tsx (password, Google, Apple, passkey); SignInView.kt (Google, passkey, password; Apple hidden, AVE-130); AVE-74..77 (passkeys, 2FA; passkey skips 2FA)",
 	},
 	{
 		id: "sign-in-methods",
 		group: "account-topic",
 		q: "Can I use more than one way to sign in?",
-		a: ["Yes. Settings → Sign-in methods shows what’s connected. From there you can connect Apple on iPhone, set or change a password, or use Link another device: it gives you a code that works for 15 minutes on your other device."],
-		src: "FC#4.1; PS#4 (device-link code 15 min); MEDIA (sign-in-methods still)",
+		a: ["Yes. Settings → Sign-in & recovery shows how you can sign in. There you can add or remove passkeys, set or change a password, connect Google, and connect Apple on iPhone." + (flags.webAppPublic ? " Two-step verification with an authenticator app, and its backup codes, are set up there on the web." : "")],
+		src: "SettingsSheetView.swift / .kt Sign-in & recovery; SignInSettings.tsx, TwoFactorSection.tsx (2FA setup web only); account.ts link codes return 410 (removed); AVE-74..77",
 	},
 	{
-		// Codes are bound to the account, capped at 5 tries and 5 issues an hour,
-		// and a reset revokes older password sessions (a85c07e, ca531c6).
+		// Codes go only to the verified recovery email (workers/auth/otp.ts),
+		// last 15 minutes with 5 tries, and a reset revokes every session
+		// (routes/account.ts password/forgot, password/reset).
 		id: "forgot-password",
 		group: "account-topic",
 		q: "I forgot my password.",
-		a: ["Choose Forgot password? on the sign-in screen and enter your email. We send a 6-digit code and a link, both valid for an hour, to your backup email and your mailbox. Enter the code with that same email, or open the link. Five wrong tries cancel a code, so ask for a new one. Resetting your password signs you out everywhere else you signed in with it. Set a backup email: if you’re locked out, the copy sent to your Inboxies mailbox won’t help. Accounts that only use Apple sign-in have no password to reset."],
-		src: "PS#5 (password reset); dev password-reset.ts (1 h, 5 attempts, 5 issues per window); admin-invites.ts (email required with the code; tokenVersion bump revokes password sessions); app.ts passwordSessionIsCurrent",
+		a: ["Choose Forgot password? on the sign-in screen and enter your email. If your account has a password and a confirmed recovery email, we send a 6-digit code and a link to that recovery email: the code works for 15 minutes and the link for an hour. Enter the code with the email you sign in with, or open the link. Five wrong tries cancel a code, so ask for a new one. Resetting your password signs you out everywhere. Nothing is sent to your Inboxies mailbox, so add a recovery email in Settings → Sign-in & recovery before you need it. Accounts that only use Apple, Google or a passkey have no password to reset."],
+		src: "workers/routes/account.ts /api/v1/auth/password/forgot (verifiedRecoveryEmail only; OTP 15 min, link RESET_LINK_TTL_MS 1 h) and /reset (revokeUserSessions); workers/auth/otp.ts (password-reset: never a mailbox; MAX_ATTEMPTS 5)",
 	},
 	{
 		id: "mailboxes",
@@ -500,7 +501,7 @@ const account: Faq[] = [
 		q: "How do I delete a mailbox or my account?",
 		a: [
 			`Owners can delete a mailbox in Settings → Delete email in the iPhone app${flags.webAppPublic ? ", or from the mailbox list on the web" : ""}. It’s permanent: messages, attachments and assistant history are erased.`,
-			`To delete your account, go to Settings → Account → Delete account in the iPhone app${flags.androidPublic ? " or the Android app" : ""}${flags.webAppPublic ? ", or Settings → Delete account on the web" : ""}. Mailboxes where you’re the only owner are erased with all their mail, even for people you shared them with. From mailboxes that have other owners, you’re just removed. Your sign-in methods go too, and it can’t be undone.${flags.domainPurchaseLive ? ` Deleting your account doesn’t stop a domain’s yearly bill; write to ${MAIL_US} for that.` : ""}`,
+			`To delete your account, go to Settings → Account → Delete account in the iPhone app${flags.androidPublic ? " or the Android app" : ""}${flags.webAppPublic ? ", or Settings → Your account → Delete account on the web" : ""}. You need to have signed in within the last few minutes, so you may be asked to sign in again first. Mailboxes where you’re the only owner are erased with all their mail, even for people you shared them with. From mailboxes that have other owners, you’re just removed. Your sign-in methods go too, and it can’t be undone.${flags.domainPurchaseLive ? ` Deleting your account doesn’t stop a domain’s yearly bill; write to ${MAIL_US} for that.` : ""}`,
 		],
 		src: "PS#5 (deleting a mailbox); dev eda481f + cb0b217: index.ts DELETE /api/v1/me (sole owner → purgeMailboxAndAgents; else removed from the ACL; deleteIdentityAccountData; no Stripe call); SettingsSheetView.swift / .kt (Account → Delete account); app/components/settings/pages.tsx:102-107 + DeleteAccountSettings.tsx (web)",
 		ownerConfirm: "what happens to a registered domain's subscription and registration when its owner deletes their account",
@@ -592,7 +593,8 @@ const data: Faq[] = [
 				records: [
 					["Largest message you send", "5 MB, attachments included"],
 					["Largest message you receive", "25 MB"],
-					["Sending", "20 an hour, 100 a day per mailbox"],
+					["Sending", "100 recipients an hour, 300 a day per mailbox"],
+					["Recipients per message", "50, across To, Cc and Bcc"],
 					["Ask AI", "50 chats a day per mailbox"],
 					["Videos in compose", "not supported"],
 					["Filters", "50 per mailbox"],
