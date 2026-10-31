@@ -166,13 +166,13 @@ export const entries: ChangeEntry[] = [
 	{
 		date: "2026-09-03",
 		title: "The iPhone app",
-		description: "A native SwiftUI app with live sync, push notifications, Sign in with Apple and multi-chat AI.",
+		description: "A native iPhone app with live sync, push notifications, Sign in with Apple and multi-chat AI.",
 		src: "RM#4 (#3, #4)",
 	},
 	{
 		date: "2026-04-16",
 		title: "Where it started",
-		description: "A fork of Cloudflare’s open-source agentic-inbox: a web client, an AI agent and an MCP server.",
+		description: "The first Inboxies: a web inbox with an AI assistant built in.",
 		src: "RM#4 (cff1a79)",
 	},
 ];

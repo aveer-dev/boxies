@@ -6,8 +6,7 @@ import type { Status } from "../../data/types";
 import StatusPill from "../StatusPill.astro";
 
 const LEGEND: { status: Status; meaning: string }[] = [
-	// "Works today", not "in the apps": the MCP server is Available on
-	// self-hosted installs only, and its note says so.
+	// "Works today", not "in the apps": a note can still narrow it.
 	{ status: "available", meaning: "Works today, on the platforms listed. The note says if there’s a limit." },
 	{ status: "next", meaning: "Finished, and arriving in the next release." },
 	{ status: "review", meaning: "Built, and being reviewed before it ships." },

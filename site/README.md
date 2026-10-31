@@ -34,8 +34,14 @@ From `site/` (`pnpm <script>`):
 ## Checks that fail the build
 
 - `src/data/validate.ts` (runs inside every page render): every data entry has a `src`, ids are unique, nothing Available carries an owner gate, no changelog date is after `asOf`, and private email isn't described as shipped while `privateEmailShipped` is false. It warns when `asOf` is more than 45 days old.
-- `scripts/check-claims.mjs`: scans the built HTML for banned phrases (“unlimited”, “end-to-end encrypted”, “24/7”, any claim that mail sorts itself…), and for phrases allowed only inside `data-claim` (unbuilt work), plus flag-dependent ones (`$20` when domain purchase is off, “App Store” before an App Store listing, Android before it's public, “Web” while the web app isn't). It checks links into the app too: while `webAppPublic` is true every link to the web app's host (`APP_URL`) must go to `/login`, and while it's false there may be none. It also fails on duplicate element ids.
+- `scripts/check-claims.mjs`: scans the built HTML for banned phrases (“unlimited”, “end-to-end encrypted”, “24/7”, any claim that mail sorts itself…), for open-source, self-hosting, MCP and stack talk outside `data-claim="dev"` ([Positioning](#positioning)), and for phrases allowed only inside `data-claim="roadmap"` or `"negated"` (unbuilt work, candid “we don't” lines), plus flag-dependent ones (`$20` when domain purchase is off, “App Store” before an App Store listing, Android before it's public, “Web” while the web app isn't). It checks links into the app too: while `webAppPublic` is true every link to the web app's host (`APP_URL`) must go to `/login`, and while it's false there may be none. It also fails on duplicate element ids and on any link to GitHub outside `data-claim="dev"`.
 - `scripts/check-budget.mjs`: at most 20KB of JS and 30KB of CSS (gzip) per page. It also fails if anything built points at an `/_astro/*.png`: those are unused image originals, and `public/.assetsignore` keeps them out of the deploy.
+
+## Positioning
+
+The site sells the hosted service. Say what happens to someone's mail, not which services do it: no Cloudflare product names (Workers, Durable Objects, R2, D1, Workers AI, Email Routing), no AI model names, no app frameworks, and no fork or origin story. Name Cloudflare only where a reader needs it to judge where their mail lives or who handles it: “Under the hood” on the landing, the storage, encryption and AI answers in Support, and the privacy policy and terms.
+
+The code is open source (Apache-2.0, public again since 30 Oct 2026), but it isn't a selling point. It's mentioned where developers look, and only inside `data-claim="dev"`: the Developers row in the site map (Source, MCP, Self-hosting), Support → For developers (open source, connecting an MCP client, running your own copy), and the two legal clauses about the code (privacy “Copies run by others”, terms “Open source”). That's also the only place for the words open source, self-host, Apache, GitHub and MCP, links to the repository, and Cloudflare product names. Elsewhere, connecting AI apps is described in plain words (Ask AI → “Can I connect my own AI tools?”). `check-claims` enforces all of this.
 
 ## Config (`src/config.ts`)
 
@@ -50,8 +56,9 @@ Every switchable claim reads from here. Flip a value and rebuild; the checks re-
 | `flags.domainPurchaseLive` | `true` | `false` removes every `$20` surface (the third plan, “How the price works”, the price lines) |
 | `flags.androidPublic` | `false` | `true` adds Android to platform lines, the sign-in copy and the apps answer, and turns its roadmap row from “Coming soon” to available |
 | `asOf` | `"2026-10-09"` | “Updated …” date on the roadmap, and the sitemap `lastmod` |
+| `GITHUB_URL` | `https://github.com/aveer-dev/boxies` | The repository, linked only from developer copy (`data-claim="dev"`) |
 | `X_URL` | `https://x.com/inboxies_app` | `null` hides every X link |
-| `SIGN_UP_URL` (= `SIGN_IN_URL`), `SUPPORT_EMAIL`, `GITHUB_URL` | | Link targets used site-wide. Sign-up and sign-in both go to `https://inboxies.app/login`; the app's root sits behind Access. `primaryCta()` picks the main button |
+| `SIGN_UP_URL` (= `SIGN_IN_URL`), `SUPPORT_EMAIL` | | Link targets used site-wide. Sign-up and sign-in both go to `https://inboxies.app/login`; the app's root sits behind Access. `primaryCta()` picks the main button |
 
 Copy lives in `src/data/*.ts`, one module per surface, and each entry carries its source in `src`.
 
@@ -221,10 +228,10 @@ Spec §10. The site ships with each default until it's answered.
 - [ ] **8.** Is @inboxies_app on X live and owned? Default: shown in the colophon and Other ways. `X_URL = null` hides both.
 - [ ] **9.** OK to state “There are no ads in Inboxies today” as a plain fact? Default: shown, in the present tense, with no business-model claim.
 - [ ] **10.** Approve the candid lines (the Plainly callout, encryption, who can read my mail, tracking pixels, AI reads)? Default: shown.
-- [ ] **11.** Can the site say anything about AI training on mail (this depends on the Cloudflare Workers AI terms)? Keep the model names in Support? Default: no training claim either way; model names shown.
+- [ ] **11.** Can the site say anything about AI training on mail (this depends on Cloudflare's AI terms)? Default: no training claim either way. Model names were dropped on 29 Oct 2026 ([Positioning](#positioning)).
 - [ ] **12.** Tease “Drafts from day one” and the “For you” brief publicly? Default: both on /roadmap only, not in the landing table.
-- [ ] **13.** Forwarding and MCP for hosted accounts. Forwarding only delivers to an address verified in Cloudflare Email Routing, and the apps have no way to verify one. Default: “to an address verified in Cloudflare Email Routing; on inboxies.email, ask support to add yours”, and “On request” in the plans table. That assumes support adds destinations in the Cloudflare account by hand; if not, change the copy to self-hosted installs only (`features.ts`, `faqs.ts`, `parity.ts`, `pricing.ts`). MCP has no way in for an inboxies.email account (`/mcp` needs Access or a session token), so it's “on self-hosted installs today”, with scoped keys on the roadmap.
-- [ ] **14.** No storage or AI quotas and no per-mailbox charge “today”: OK to say? Default: shown.
+- [ ] **13.** Forwarding and MCP for hosted accounts. Forwarding only delivers to an address verified in Cloudflare Email Routing, and the apps have no way to verify one. Default: “ask support to verify yours”, and “On request” in the plans table. That assumes support adds destinations in the Cloudflare account by hand; if not, drop forwarding from the copy (`features.ts`, `faqs.ts`, `parity.ts`, `pricing.ts`). MCP: since the #152 release, hosted accounts connect over OAuth at `inboxies.app/mcp` with per-mailbox scopes, so the site lists “Connect your own AI tools” as available and Support → For developers has the setup.
+- [ ] **14.** No storage quota and no per-mailbox charge “today”: OK to say? Default: shown. AI has had daily limits since AVE-45 (50 chats and 200 inbound runs per mailbox, `workers/lib/ai-quota.ts`), and the site states them: change the `pricing.ts` limits, the `faqs.ts` caps and limits answers and the `ai-included` fact if they move.
 - [ ] **15.** Fix the in-app price display before launch? `app/components/OnboardingFlow.tsx:935` shows $10.46 for every TLD, and iOS/Android label the retail total “Wholesale price”. Default: “Where the $20 goes” ships with the $10.44 worked example; fix the app before launch.
 - [ ] **16. Launch blocker.** Contact form: onboard inboxies.co to Email Service (From `site@inboxies.co`; it needs the zone first) and verify `support@inboxies.email` as a destination? Is that mailbox monitored? Default: binding configured; until it works, the 503 → mailto fallback carries the form.
 - [ ] **17. Launch blocker.** Reserve `support@`, `security@`, `admin@`, `postmaster@`, `abuse@`, `noreply@`, `billing@`, `privacy@`, `welcome@` and `agent@` on inboxies.email. Anyone can claim them today, and the site publishes support@.

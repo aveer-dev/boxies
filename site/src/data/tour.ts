@@ -27,8 +27,8 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "On from the first email.",
-				text: "Every new mailbox starts with the Screener on. There’s no switch to turn it off yet.",
-				src: "FSW#the-screener (screener.enabled true; no client switch); PS#5",
+				text: "Every new mailbox starts with the Screener on. Rather not screen? Switch it off in Settings, and new senders’ mail is sorted like everyone else’s.",
+				src: "FSW#the-screener (screener.enabled defaults true); AVE-104 a9fead1 (Screener switch in Settings on web, iOS, Android; off: unknown senders file like everyone else, spam and blocked still to Spam); PS#5",
 			},
 		],
 		supportHref: "/support#screener",
@@ -48,9 +48,9 @@ const allChapters: TourChapter[] = [
 			: "Mark a thread Reply Later from its actions and it joins a pile with a live count in the bar at the bottom of the screen. Send your reply and it leaves the pile on its own.",
 		rows: [
 			{
-				lead: "A pile, not a timer.",
-				text: "Nothing disappears and nothing comes back at a set time. The pile waits until you’re ready.",
-				src: "RM#2 (Snooze: \"Reply Later is a pile, not a timer\")",
+				lead: "Reminders when you want them.",
+				text: "Nothing is hidden while it waits. Add a reminder and, at the time you pick, the thread comes back unread at the top of your Inbox, with a notification on your phone.",
+				src: "AVE-86 409d1b4: reply-later-reminders.ts (due: mark unread, back to Inbox if filed away, top of New, push to iOS/Android; web shows N due); Remind me… on web, iOS, Android",
 			},
 			{
 				lead: "Needs reply.",
@@ -84,14 +84,9 @@ const allChapters: TourChapter[] = [
 				src: "FC#4.8 (custom AI prompt per mailbox)",
 			},
 			{
-				lead: "Runs on Cloudflare.",
-				text: "The assistant uses models on Cloudflare Workers AI. Inboxies doesn’t send your mail to another AI provider.",
+				lead: "Stays in-house.",
+				text: "The assistant runs on the same network as your mail. Inboxies doesn’t send your mail to another AI company.",
 				src: "PS#5 (AI data handling: no third-party LLM API)",
-			},
-			{
-				lead: "Your own AI tools, too.",
-				text: "On a self-hosted install, connect Claude Code, Cursor or another MCP client. It acts with your access, including sending and deleting mail, so only connect tools you trust.",
-				src: "FSW#mcp-server (send_reply, send_email, delete_email tools); dev tools.ts toolDeleteEmail (to Trash first, permanent only from Trash or Drafts); D3: /mcp needs Access or a session token, and inboxies.email offers no way to get one (app.ts, MCPPanel.tsx, unchanged on dev); BRIEF (disclose plainly)",
 			},
 		],
 		supportHref: "/support#ask-ai",
@@ -106,7 +101,7 @@ const allChapters: TourChapter[] = [
 		lineage: "Gmail",
 		platforms: ["ios", "android", "web"],
 		title: "Find it the way you remember it.",
-		body: "Search reads the whole message body, not just the preview, and understands the operators you already use in Gmail.",
+		body: "Search reads the whole message body, not just the preview, and understands the search terms you already use in Gmail.",
 		extra: "operators",
 		rows: [
 			{
@@ -152,7 +147,7 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "Fits the limit.",
-				text: "Photos are resized on your phone to fit the 5 MiB send limit. Videos can’t be attached.",
+				text: "Photos are resized on your phone to fit the 5 MB send limit. Videos can’t be attached.",
 				src: "FC#4.6; PS#4",
 			},
 		],
@@ -166,10 +161,10 @@ const allChapters: TourChapter[] = [
 		num: "06",
 		name: "Your domain",
 		platforms: ["ios", "android", "web"],
-		title: "Your own name, with the records written for you.",
+		title: "Your own name, set up for you.",
 		body: flags.domainPurchaseLive
-			? "Connect a domain you own with one TXT record and a nameserver switch, or register a new one in the app. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off."
-			: "Connect a domain you own with one TXT record and a nameserver switch. Inboxies creates the Cloudflare zone, turns on Email Routing and writes your MX, SPF and DMARC records. Check MX, SPF, DKIM and DMARC whenever you like, and one button fixes what’s off.",
+			? "Register a new domain in the app and it’s ready as soon as you’ve paid. Or bring one you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off."
+			: "Bring a domain you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off.",
 		rows: [
 			{
 				lead: "Bring the team.",
