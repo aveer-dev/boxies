@@ -116,6 +116,8 @@ import {
 	type EmailAuth,
 } from "../lib/email-auth";
 import { storedAuthTier } from "../lib/classification-reason";
+import { directMailFlagForStoredRow } from "../lib/direct-mail";
+import { backfillDirectMailBatch, hasPendingDirectMail } from "../lib/direct-mail-backfill";
 import { buildBootstrapAllowSeeds, normalizeTriageSender } from "../lib/sender-triage";
 import {
 	applyFeedbackEvent,
@@ -316,6 +318,12 @@ interface EmailData {
 	source?: "agent" | null;
 	/** Client Idempotency-Key (Sent rows only); unique per mailbox. */
 	idempotency_key?: string | null;
+	/**
+	 * Direct-mail flag (AVE-173, lib/direct-mail.ts directMailFlag). Inbound
+	 * mail passes it with the full routing context; when omitted, createEmail
+	 * computes it from the stored row (0 for Sent / Draft).
+	 */
+	direct_mail?: 0 | 1 | null;
 }
 
 interface AttachmentData {
@@ -455,6 +463,7 @@ export class MailboxDO extends DurableObject<Env> {
 		applyMigrations(this.ctx.storage.sql, mailboxMigrations, this.ctx.storage);
 		this.#backfillSenderNames();
 		this.#scheduleFtsBackfill();
+		this.#scheduleDirectMailBackfill();
 		this.#resumePendingBlobDeletes();
 		this.#resumeStuckSendSweep();
 		this.#armRetentionSweep();
@@ -491,6 +500,8 @@ export class MailboxDO extends DurableObject<Env> {
 		// Reminders first: the mail they move / mark unread leaves dirty
 		// conversation marks that the index batch below folds in.
 		await this.#fireReplyLaterReminders();
+		// Before the index batch: each flag it sets marks a conversation dirty.
+		await this.#runDirectMailBackfillBatch();
 		await this.#runConversationIndexBatch();
 		if (retention === "more") {
 			await this.#scheduleAlarmWithin(RETENTION_CONTINUE_DELAY_MS);
@@ -629,6 +640,44 @@ export class MailboxDO extends DurableObject<Env> {
 		const current = await this.ctx.storage.getAlarm();
 		if (current == null || current > at) {
 			await this.ctx.storage.setAlarm(at);
+		}
+	}
+
+	/** The mailbox's own address, when this DO has learned it. */
+	async #ownMailboxAddress(): Promise<string | null> {
+		return (
+			(await this.ctx.storage.get<string>(REPLY_LATER_MAILBOX_ID_KEY)) ??
+			(await this.ctx.storage.get<string>(OUTBOUND_SEND_MAILBOX_ID_KEY)) ??
+			this.ctx.id.name ??
+			null
+		);
+	}
+
+	/** Mail predating migration 45 lacks the direct-mail flag: let the alarm fill it in. */
+	#scheduleDirectMailBackfill(): void {
+		try {
+			if (!hasPendingDirectMail(this.ctx.storage.sql)) return;
+			void this.#scheduleAlarmWithin(1_000).catch((e) =>
+				console.error("Direct-mail backfill schedule failed:", (e as Error).message),
+			);
+		} catch (e) {
+			console.error("Direct-mail backfill check failed:", (e as Error).message);
+		}
+	}
+
+	/** Alarm job: one batch of the direct-mail backfill (AVE-173). Never throws. */
+	async #runDirectMailBackfillBatch(): Promise<void> {
+		try {
+			if (!hasPendingDirectMail(this.ctx.storage.sql)) return;
+			const own = await this.#ownMailboxAddress();
+			const more = this.ctx.storage.transactionSync(() =>
+				backfillDirectMailBatch(this.ctx.storage.sql, [own]),
+			);
+			// The flags just set leave dirty conversation marks; the index batch
+			// that runs next in this alarm picks them up and re-arms itself.
+			if (more) await this.#scheduleAlarmWithin(CONVERSATION_FLUSH_CONTINUE_DELAY_MS);
+		} catch (e) {
+			console.error("Direct-mail backfill failed:", (e as Error).message);
 		}
 	}
 
@@ -3356,6 +3405,9 @@ export class MailboxDO extends DurableObject<Env> {
 		const folderId = folderRow.id;
 		const isOwnComposition =
 			folderId === Folders.SENT || folderId === Folders.DRAFT;
+		// Read before the idempotency re-check below: no await may run between it and the insert.
+		const ownAddress =
+			isOwnComposition || email.direct_mail != null ? null : await this.#ownMailboxAddress();
 
 		const snippet =
 			email.snippet ?? (email.body ? computeSnippet(email.body) : null);
@@ -3392,6 +3444,9 @@ export class MailboxDO extends DurableObject<Env> {
 				? parseStoredEmailAuth(email.auth)
 				: email.auth ?? null;
 		const authTier = email.auth_tier ?? storedAuthTier(decodedAuth);
+		const directMail =
+			email.direct_mail ??
+			(isOwnComposition ? 0 : directMailFlagForStoredRow(email, [ownAddress]));
 		const created = insertOrReplay(this.ctx.storage.sql, idempotencyKey, email.id, () => {
 			this.db
 				.insert(schema.emails)
@@ -3424,6 +3479,7 @@ export class MailboxDO extends DurableObject<Env> {
 					alias_id: email.alias_id ?? null,
 					source: email.source ?? null,
 					idempotency_key: idempotencyKey,
+					direct_mail: directMail,
 				})
 				.run();
 		});

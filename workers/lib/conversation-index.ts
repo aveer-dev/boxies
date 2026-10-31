@@ -69,6 +69,19 @@ export const folderIdSql = (id: string) =>
 	`(SELECT id FROM folders WHERE name = '${id}' OR id = '${id}' LIMIT 1)`;
 export const DRAFT_FOLDER_ID_SQL = folderIdSql(Folders.DRAFT);
 export const SENT_FOLDER_ID_SQL = folderIdSql(Folders.SENT);
+export const INBOX_FOLDER_ID_SQL = folderIdSql(Folders.INBOX);
+
+/**
+ * needs_reply (AVE-173), for the conversation's newest message that is not a
+ * draft (`m`): it sits in Inbox and is direct mail (`emails.direct_mail`, see
+ * lib/direct-mail.ts directMailFlag: a person writing to this mailbox, not a
+ * newsletter, notification, no-reply sender, Bcc / list delivery, or the user
+ * themself). So a reply already sent (a newer Sent message), mail in Spam,
+ * Trash, Promotions, Updates, Screener or Archive, and mail whose flag is not
+ * computed yet (NULL) never need a reply. Read state plays no part.
+ */
+export const needsReplySql = (m: string) =>
+	`CASE WHEN ${m}.folder_id = ${INBOX_FOLDER_ID_SQL} AND ${m}.direct_mail = 1 THEN 1 ELSE 0 END`;
 
 /** Distinct raw keys a list read may flush before it falls back to the scan. */
 export const CONVERSATION_FLUSH_READ_BUDGET = 200;
@@ -301,17 +314,16 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 			SELECT raw_key FROM conversation_members WHERE folder_id = ?1 AND conversation_id = ?2
 		),
 		ce AS MATERIALIZED (
-			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name, reply_later, reply_later_reminded_at
+			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name, reply_later, reply_later_reminded_at, direct_mail
 			FROM emails WHERE thread_id IN (SELECT raw_key FROM members)
 			UNION ALL
-			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name, reply_later, reply_later_reminded_at
+			SELECT rowid AS rid, id, folder_id, read, date, sender, sender_name, reply_later, reply_later_reminded_at, direct_mail
 			FROM emails WHERE id IN (SELECT raw_key FROM members) AND +thread_id IS NULL
 		),
 		stats AS (
 			SELECT
 				COUNT(*) AS thread_count,
 				SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) AS thread_unread_count,
-				SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) AS thread_read_count,
 				SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) AS has_draft,
 				MAX(CASE WHEN reply_later = 1 THEN reply_later_reminded_at END) AS resurfaced_at
 			FROM ce
@@ -319,8 +331,9 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 		SELECT
 			(SELECT id FROM ce WHERE folder_id = ?1 ORDER BY date DESC LIMIT 1) AS latest_email_id,
 			(SELECT date FROM ce WHERE folder_id = ?1 ORDER BY date DESC LIMIT 1) AS latest_date,
-			(SELECT folder_id FROM ce ORDER BY date DESC LIMIT 1) AS latest_folder_id,
-			stats.thread_count, stats.thread_unread_count, stats.thread_read_count, stats.has_draft,
+			(SELECT ${needsReplySql("m")} FROM ce m
+				WHERE m.folder_id IS NOT ${DRAFT_FOLDER_ID_SQL} ORDER BY m.date DESC LIMIT 1) AS needs_reply,
+			stats.thread_count, stats.thread_unread_count, stats.has_draft,
 			stats.resurfaced_at,
 			(SELECT GROUP_CONCAT(DISTINCT p) FROM (
 				SELECT COALESCE(NULLIF(TRIM(sender_name), ''), sender) AS p FROM ce ORDER BY rid
@@ -353,8 +366,8 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 		)
 		VALUES (
 			?1, ?2, ?3, ?4, ?5, ?6, ?7,
-			CASE WHEN ?8 != ${SENT_FOLDER_ID_SQL} AND ?8 != ${DRAFT_FOLDER_ID_SQL} AND ?9 > 0 THEN 1 ELSE 0 END,
-			CASE WHEN ?10 > 0 THEN 1 ELSE 0 END,
+			?8,
+			CASE WHEN ?9 > 0 THEN 1 ELSE 0 END,
 			CASE WHEN ?6 > 0 THEN 1 ELSE 0 END
 		)
 		ON CONFLICT (folder_id, conversation_id) DO UPDATE SET
@@ -373,8 +386,7 @@ function recomputeConversation(sql: Sql, folderId: string, conversationId: strin
 		Number(row.thread_count ?? 0),
 		Number(row.thread_unread_count ?? 0),
 		row.participants ?? null,
-		row.latest_folder_id ?? null,
-		Number(row.thread_read_count ?? 0),
+		Number(row.needs_reply ?? 0) === 1 ? 1 : 0,
 		Number(row.has_draft ?? 0),
 	);
 }
@@ -512,7 +524,6 @@ export function readThreadedListByScan(
 					conversation_id,
 					COUNT(*) as thread_count,
 					SUM(CASE WHEN read = 0 AND folder_id != ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as thread_unread_count,
-					SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) as thread_read_count,
 					GROUP_CONCAT(DISTINCT COALESCE(NULLIF(TRIM(sender_name), ''), sender)) as participants,
 					SUM(CASE WHEN folder_id = ${DRAFT_FOLDER_ID_SQL} THEN 1 ELSE 0 END) as has_draft,
 					MAX(CASE WHEN reply_later = 1 THEN reply_later_reminded_at END) as resurfaced_at
@@ -527,8 +538,10 @@ export function readThreadedListByScan(
 				SELECT
 					conversation_id,
 					folder_id,
+					direct_mail,
 					ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY date DESC) as rn
 				FROM all_emails_with_conversation
+				WHERE folder_id IS NOT ${DRAFT_FOLDER_ID_SQL}
 			),
 			latest_in_folder AS (
 				SELECT
@@ -551,10 +564,7 @@ export function readThreadedListByScan(
 				lif.snippet as snippet,
 				lif.auth, lif.auth_tier, lif.classification_reason, lif.matched_rule_id,
 				cs.thread_count, cs.thread_unread_count, cs.participants,
-				CASE WHEN lmc.folder_id != ${SENT_FOLDER_ID_SQL}
-					AND lmc.folder_id != ${DRAFT_FOLDER_ID_SQL}
-					AND cs.thread_read_count > 0
-					THEN 1 ELSE 0 END as needs_reply,
+				COALESCE(${needsReplySql("lmc")}, 0) as needs_reply,
 				CASE WHEN cs.has_draft > 0 THEN 1 ELSE 0 END as has_draft,
 				CASE WHEN cs.thread_unread_count > 0 THEN 1 ELSE 0 END as is_new,
 				-- A fired Reply Later reminder lifts the conversation as if mail arrived then (AVE-86).
