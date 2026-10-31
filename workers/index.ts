@@ -149,6 +149,7 @@ import {
 	type ClassifyAi,
 	type EmailClassification,
 } from "./lib/classify-email";
+import { directMailFlag } from "./lib/direct-mail";
 import {
 	appendXLoop,
 	autoReplySubject,
@@ -2232,6 +2233,15 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			rawMime: rawEmail,
 		});
 
+		// Direct-mail signals (AVE-172 / AVE-173): stored per message to drive
+		// needs_reply, and gating the auto-draft below.
+		const directMailInput = {
+			headers: storedHeaders,
+			sender: fromRaw,
+			replyTo: (parsedEmail.replyTo || []).map((a) => a.address),
+			recipients: [...allRecipients, ...ccRecipients],
+			ownAddresses: [message.to, mailboxId, routedAliasMeta?.aliasEmail],
+		};
 		const inboundEmail = {
 			id: messageId, subject: parsedEmail.subject || "",
 			sender: fromAddress, sender_name: senderName, recipient,
@@ -2248,6 +2258,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 			classification_reason: classification.reason as string | null,
 			auth_tier: storedAuthTier(auth),
 			matched_rule_id: null as string | null,
+			direct_mail: directMailFlag(directMailInput),
 		};
 
 		const rawMailboxSettings = await loadMailboxSettingsRaw(env, mailboxId);
@@ -2464,14 +2475,7 @@ async function receiveEmail(message: ForwardableEmailMessage, env: Env, ctx: Exe
 		// filed to Inbox skip the agent.
 		if (
 			!triageDecision.skipAutoDraft &&
-			shouldAutoDraft(classification, auth, {
-				headers: storedHeaders,
-				sender: fromRaw,
-				replyTo: (parsedEmail.replyTo || []).map((a) => a.address),
-				recipients: [...allRecipients, ...ccRecipients],
-				ownAddresses: [message.to, mailboxId, routedAliasMeta?.aliasEmail],
-				folderId: filedFolder,
-			}) &&
+			shouldAutoDraft(classification, auth, { ...directMailInput, folderId: filedFolder }) &&
 			!filterHit?.skipAutoDraft
 		) {
 			ctx.waitUntil(
