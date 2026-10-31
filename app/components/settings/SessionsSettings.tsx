@@ -5,7 +5,7 @@
 import { Badge, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { describeSession } from "~/lib/session-label";
 import { useMcpGrants, useSessions } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
@@ -163,7 +163,7 @@ function ConnectedApps() {
 
 /** Where this account is signed in, with per-session and bulk sign-out. */
 export default function SessionsSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
 	const { data: sessions, isLoading, error } = useSessions();

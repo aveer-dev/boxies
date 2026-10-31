@@ -505,6 +505,18 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
+    /// Trades the one-time `code` from the Stripe checkout return link, plus the
+    /// checkout session id this app started, for the new owner's session (AVE-118).
+    /// A wrong, used or expired code answers 400.
+    func exchangeCheckoutCode(code: String, sessionId: String) async throws -> CheckoutExchangeResponse {
+        try await request(
+            path: "/api/v1/auth/exchange",
+            method: "POST",
+            body: ["code": code, "sessionId": sessionId],
+            authed: false
+        )
+    }
+
     func forgotPassword(email: String) async throws -> ForgotPasswordResponse {
         try await request(
             path: "/api/v1/auth/password/forgot",
@@ -817,6 +829,33 @@ final class APIClient: @unchecked Sendable {
 
     func listFolders(mailboxId: String) async throws -> [Folder] {
         try await request(path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders")
+    }
+
+    /// Custom folder ("tag", AVE-158). The Worker derives the id from the name: 409 when it
+    /// clashes, 400 when the name has no letters or digits.
+    func createFolder(mailboxId: String, name: String) async throws -> Folder {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders",
+            method: "POST",
+            body: ["name": name]
+        )
+    }
+
+    /// Renames a custom folder; its id stays. System folders answer 400.
+    func renameFolder(mailboxId: String, folderId: String, name: String) async throws -> RenamedFolder {
+        try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders/\(folderId.urlPathEncoded)",
+            method: "PUT",
+            body: ["name": name]
+        )
+    }
+
+    /// Deletes a custom folder (204). The Worker moves its mail to the Inbox first.
+    func deleteFolder(mailboxId: String, folderId: String) async throws {
+        let _: EmptyResponse = try await request(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/folders/\(folderId.urlPathEncoded)",
+            method: "DELETE"
+        )
     }
 
     func getInboxDigest(mailboxId: String) async throws -> InboxDigest {

@@ -35,6 +35,12 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     SendersBlocked("sendersBlocked", "previewSendersBlocked"),
     /** Settings → Outgoing mail → Bounced addresses with fixture rows (iOS `-previewSuppressions`, AVE-157). */
     Suppressions("suppressions", "previewSuppressions"),
+    /** Settings → Tags with fixture custom folders (iOS `-previewTags`, AVE-158). */
+    Tags("tags", "previewTags"),
+    /** Settings → Tags with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
+    TagsRename("tagsRename", "previewTagsRename"),
+    /** Settings → Tags with the delete confirmation open (iOS `-previewTags -previewTagsDelete`). */
+    TagsDelete("tagsDelete", "previewTagsDelete"),
     /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
     Settings("settings", "previewSettings"),
     /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */

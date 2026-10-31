@@ -1,5 +1,6 @@
 package co.inboxies.app.ui.preview
 
+import co.inboxies.app.ui.settings.previewTagFolders
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
@@ -120,7 +121,7 @@ object PreviewSupport {
         val serviceAdmin = service?.canManage == true
         val administeredDomains = if (serviceAdmin) listOf(mailbox.domain) else emptyList()
         val domainServices = service?.let { mapOf(mailbox.domain to it) } ?: emptyMap()
-        val folders = listOf(
+        val systemFolders = listOf(
             Folder(id = FolderIds.INBOX, name = "Inbox", unreadCount = 3),
             Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 2),
             Folder(id = FolderIds.PROMOTIONS, name = "Promotions", unreadCount = 0),
@@ -131,6 +132,8 @@ object PreviewSupport {
             Folder(id = FolderIds.SCREENED_OUT, name = "Screened out", unreadCount = 0),
             Folder(id = FolderIds.TRASH, name = "Trash", unreadCount = 0),
         )
+        val tagModes = setOf(PreviewMode.Tags, PreviewMode.TagsRename, PreviewMode.TagsDelete)
+        val folders = if (mode in tagModes) systemFolders + previewTagFolders else systemFolders
         val reminderModes = setOf(PreviewMode.ReminderPicker, PreviewMode.ReminderToast, PreviewMode.ReminderDue)
         val allEmails = if (mode in reminderModes) withReminderFixtures(emails(you)) else emails(you)
         DatabaseService.shared.upsertMailboxes(listOf(mailbox))

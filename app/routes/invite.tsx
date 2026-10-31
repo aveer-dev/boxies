@@ -4,12 +4,14 @@
 
 import { Button, Input, Loader, Text, useKumoToastManager } from "@cloudflare/kumo";
 import { type FormEvent, type ReactNode, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMe } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
 import { AuthShell, quietLinkClass } from "~/components/AuthShell";
 import api, { ApiError } from "~/services/api";
+import { openMailbox } from "~/lib/open-mailbox";
+import { invitePath } from "shared/mailbox-url";
 
 export function meta() {
 	return [{ title: "Accept invite — Inboxies" }];
@@ -49,7 +51,9 @@ function Card({ children }: { children: ReactNode }) {
 }
 
 export default function InviteAcceptRoute() {
-	const { token = "" } = useParams<{ token: string }>();
+	// In the query string, not the path, so page analytics never see it (AVE-126).
+	const [searchParams] = useSearchParams();
+	const token = searchParams.get("token")?.trim() ?? "";
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const toastManager = useKumoToastManager();
@@ -73,7 +77,7 @@ export default function InviteAcceptRoute() {
 		null,
 	);
 
-	const signInHref = `/login?next=${encodeURIComponent(`/invite/${token}`)}`;
+	const signInHref = `/login?next=${encodeURIComponent(invitePath(token))}`;
 
 	const sendCode = async () => {
 		setFormError(null);
@@ -118,8 +122,7 @@ export default function InviteAcceptRoute() {
 				toastManager.add({ title: `You're in. Next time, sign in with ${result.email}.` });
 			}
 			await queryClient.invalidateQueries({ queryKey: queryKeys.account.me });
-			await queryClient.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
-			navigate(`/mailbox/${encodeURIComponent(result.mailboxId)}`);
+			await openMailbox(queryClient, navigate, result.mailboxId);
 		} catch (err) {
 			setFormError(acceptErrorMessage(err));
 			setBusy(false);

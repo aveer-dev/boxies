@@ -16,6 +16,7 @@ const source = (name) => readFileSync(join(root, name), "utf8");
 // --- matching -------------------------------------------------------------
 
 const matchContext = vm.createContext({ URL });
+vm.runInContext(source("psl-data.js"), matchContext);
 vm.runInContext(source("site-match.js"), matchContext);
 const { siteOf, labelMatchesSite } = matchContext.InboxiesSiteMatch;
 
@@ -34,9 +35,84 @@ for (const label of ["gitlab.com", "github.io", "Github account", "", null, "not
 	assert.ok(!labelMatchesSite(label, github), `${label} should not match github.com`);
 }
 assert.ok(labelMatchesSite("Hacker News", siteOf("news.hackernews.com")));
-assert.ok(labelMatchesSite("Amazon", siteOf("www.amazon.co.uk")));
+// A plain name only stands for <name>.com/.org/.net/.io/.app/.co/.dev (AVE-165):
+// country domains are too easy to register as look-alikes.
+assert.ok(!labelMatchesSite("Amazon", siteOf("www.amazon.co.uk")));
+assert.ok(labelMatchesSite("amazon.co.uk", siteOf("www.amazon.co.uk")));
 assert.ok(!labelMatchesSite("amazon.com", siteOf("www.amazon.co.uk")));
 assert.ok(!labelMatchesSite("anything", null));
+for (const host of ["acme.com", "acme.org", "acme.net", "acme.io", "acme.app", "acme.co", "acme.dev"]) {
+	assert.ok(labelMatchesSite("Acme", siteOf(host)), `Acme should match ${host}`);
+}
+// github.io is itself a public suffix (GitHub Pages), so it is never "GitHub".
+assert.equal(siteOf("github.io"), null);
+
+// --- AVE-165: registrable domains from the Public Suffix List -------------
+
+const domainOf = (host) => siteOf(host)?.domain ?? null;
+// ICANN suffixes.
+assert.equal(domainOf("a.b.example.co.uk"), "example.co.uk");
+assert.equal(domainOf("co.uk"), null);
+assert.equal(domainOf("example.ac.jp"), "example.ac.jp");
+// Private-section suffixes: each tenant is its own site.
+assert.equal(domainOf("evil.github.io"), "evil.github.io");
+assert.equal(domainOf("github.io"), null);
+assert.equal(domainOf("foo.pages.dev"), "foo.pages.dev");
+assert.equal(domainOf("preview.foo.pages.dev"), "foo.pages.dev");
+assert.equal(domainOf("myapp.vercel.app"), "myapp.vercel.app");
+assert.equal(domainOf("shop.myshopify.com"), "shop.myshopify.com");
+assert.equal(siteOf("evil.github.io").private, true);
+assert.equal(siteOf("github.com").private, false);
+// Wildcards and exceptions: "*.ck" + "!www.ck", "*.kobe.jp" + "!city.kobe.jp".
+assert.equal(domainOf("shop.foo.ck"), "shop.foo.ck");
+assert.equal(domainOf("foo.ck"), null);
+assert.equal(domainOf("a.b.kobe.jp"), "a.b.kobe.jp");
+assert.equal(domainOf("b.kobe.jp"), null);
+assert.equal(domainOf("city.kobe.jp"), "city.kobe.jp");
+assert.equal(domainOf("www.city.kobe.jp"), "city.kobe.jp");
+assert.equal(domainOf("x.y.city.kobe.jp"), "city.kobe.jp");
+// Unknown TLDs fall back to the default "*" rule.
+assert.equal(domainOf("a.b.example.notarealtld"), "example.notarealtld");
+// IDN: punycode as URL.hostname gives it, and typed Unicode.
+assert.equal(domainOf("www.xn--bcher-kva.de"), "xn--bcher-kva.de");
+assert.equal(domainOf("shop.bücher.de"), "xn--bcher-kva.de");
+assert.ok(labelMatchesSite("bücher.de", siteOf("xn--bcher-kva.de")));
+// IPs, localhost and garbage have no site, so nothing is suggested.
+for (const host of ["127.0.0.1", "http://192.168.1.10:8080/x", "[::1]", "http://[2001:db8::1]/", "localhost", "localhost:3000", "", null, "..", "a..b"]) {
+	assert.equal(siteOf(host), null, `${host} has no site`);
+	assert.ok(!labelMatchesSite(host, siteOf(host)));
+}
+assert.ok(!labelMatchesSite("127.0.0.1", siteOf("example.com")));
+
+// The issue's repros: none of these may match.
+const mustNotMatch = [
+	["GitHub", "evil.github.io"],
+	["GitHub", "github.ru"],
+	["paypal", "paypal.xyz"],
+	["foo.pages.dev", "attacker.pages.dev"],
+	["myapp.vercel.app", "phish.vercel.app"],
+	["shop.myshopify.com", "evil.myshopify.com"],
+	["github.io", "evil.github.io"],
+	["evil", "evil.github.io"],
+	["foo", "foo.pages.dev"],
+	["pages.dev", "foo.pages.dev"],
+];
+for (const [label, host] of mustNotMatch) {
+	assert.ok(!labelMatchesSite(label, siteOf(host)), `${label} must not match ${host}`);
+}
+// …while the same tenant, and subdomains of a normal site, still do.
+const mustMatch = [
+	["foo.pages.dev", "foo.pages.dev"],
+	["foo.pages.dev", "preview.foo.pages.dev"],
+	["https://myapp.vercel.app/signup", "myapp.vercel.app"],
+	["shop.myshopify.com", "shop.myshopify.com"],
+	["example.com", "sub.example.com"],
+	["sub.example.com", "example.com"],
+	["PayPal", "www.paypal.com"],
+];
+for (const [label, host] of mustMatch) {
+	assert.ok(labelMatchesSite(label, siteOf(host)), `${label} should match ${host}`);
+}
 
 // --- background SITE_ALIASES ------------------------------------------------
 
@@ -46,7 +122,7 @@ function loadBackground({ storage, aliasesByMailbox, status = 200 }) {
 	const context = vm.createContext({
 		URL,
 		console,
-		importScripts: (name) => vm.runInContext(source(name), context),
+		importScripts: (...names) => names.forEach((name) => vm.runInContext(source(name), context)),
 		fetch: async (url, init) => {
 			fetches.push({ url, init });
 			const mailboxId = decodeURIComponent(url.match(/mailboxes\/([^/]+)\/aliases/)[1]);

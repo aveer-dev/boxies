@@ -346,6 +346,74 @@ class AppModel {
         _screenerQueue.value = queue
     }
 
+    // Custom folders ("tags", AVE-158)
+
+    /**
+     * Creates a tag. Names the Worker would refuse throw [CustomFolders.ValidationException]
+     * with the Worker's sentence, before any request.
+     */
+    suspend fun createCustomFolder(raw: String): Folder {
+        val name = CustomFolders.normalizedName(raw)
+        CustomFolders.validateCreate(name, _folders.value)?.let { throw CustomFolders.ValidationException(it) }
+        val created = if (isDebugPreview) {
+            Folder(id = CustomFolders.slug(name), name = name, unreadCount = 0)
+        } else {
+            val mailboxId = _selectedMailboxId.value
+                ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            val folder = ApiClient.shared.createFolder(mailboxId, name)
+            if (_selectedMailboxId.value != mailboxId) return folder
+            folder
+        }
+        _folders.update { list -> list.filterNot { it.id == created.id } + created }
+        _selectedMailboxId.value?.let { if (!isDebugPreview) db.upsertFolders(it, _folders.value) }
+        return created
+    }
+
+    /** Renames a tag; its id (and the mail in it) stay put. */
+    suspend fun renameCustomFolder(folder: Folder, raw: String) {
+        val name = CustomFolders.normalizedName(raw)
+        if (name == folder.name) return
+        CustomFolders.validateRename(name, folder, _folders.value)?.let { throw CustomFolders.ValidationException(it) }
+        val newName = if (isDebugPreview) {
+            name
+        } else {
+            val mailboxId = _selectedMailboxId.value
+                ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            val renamed = ApiClient.shared.renameFolder(mailboxId, folder.id, name)
+            if (_selectedMailboxId.value != mailboxId) return
+            renamed.name
+        }
+        _folders.update { list -> list.map { if (it.id == folder.id) it.copy(name = newName) else it } }
+        _selectedMailboxId.value?.let { if (!isDebugPreview) db.upsertFolders(it, _folders.value) }
+    }
+
+    /**
+     * Deletes a tag. The Worker moves its mail to the Inbox first; if the tag is open, the
+     * list goes back to Inbox.
+     */
+    suspend fun deleteCustomFolder(folder: Folder) {
+        if (!CustomFolders.isCustom(folder)) return
+        val mailboxId = _selectedMailboxId.value
+        if (!isDebugPreview) {
+            mailboxId ?: throw CustomFolders.ValidationException(CustomFolders.NO_MAILBOX)
+            ApiClient.shared.deleteFolder(mailboxId, folder.id)
+            if (_selectedMailboxId.value != mailboxId) return
+            db.deleteFolder(mailboxId, folder.id)
+        }
+        val unread = _folders.value.firstOrNull { it.id == folder.id }?.unreadCount ?: 0
+        _folders.update { list -> list.filterNot { it.id == folder.id } }
+        adjustFolderUnread(FolderIds.INBOX, unread)
+        if (_selectedTab.value == HomeTab.Folder(folder.id)) {
+            selectTab(HomeTab.Folder(FolderIds.INBOX))
+        }
+        if (!isDebugPreview && mailboxId != null) {
+            // Settle counts with the server (the moved mail lands in Inbox).
+            runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { fresh ->
+                ifStillSelected(mailboxId) { _folders.value = fresh }
+            }
+        }
+    }
+
     fun adjustFolderUnread(folderId: String, delta: Int) {
         if (delta == 0) return
         _folders.update { list ->

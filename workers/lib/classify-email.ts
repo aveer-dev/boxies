@@ -24,6 +24,7 @@ import {
 	isFromUntrusted,
 	type EmailAuth,
 } from "./email-auth.ts";
+import { isDirectMail, type DirectMailInput } from "./direct-mail.ts";
 
 export type InboundClass = "spam" | "ham" | "bulk";
 
@@ -409,13 +410,20 @@ export function shouldClassifyInbound(options: {
 	return options.routeAction === "deliver" && !options.isDuplicate;
 }
 
-/** Only personal ham is auto-drafted. A failed or unaligned From never auto-drafts. */
+/**
+ * Only direct personal ham is auto-drafted. A failed or unaligned From never
+ * auto-drafts. With `direct` (the inbound path always passes it), mail that
+ * looks like a newsletter, notification or receipt, or isn't filed to Inbox,
+ * is skipped too (see isDirectMail). Manual drafts are not gated here.
+ */
 export function shouldAutoDraft(
 	classification: EmailClassification,
 	auth?: EmailAuth | null,
+	direct?: DirectMailInput,
 ): boolean {
 	if (isFromUntrusted(auth)) return false;
-	return classification.class === "ham";
+	if (classification.class !== "ham") return false;
+	return direct ? isDirectMail(direct) : true;
 }
 
 /** Skip push for spam; ham and bulk still notify. */

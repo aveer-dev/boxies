@@ -44,6 +44,8 @@ import co.inboxies.app.ui.settings.SendersSettingsView
 import co.inboxies.app.ui.settings.SendersTab
 import co.inboxies.app.ui.settings.SessionsSettingsView
 import co.inboxies.app.ui.settings.SuppressionsSettingsView
+import co.inboxies.app.ui.settings.TagsPreviewDialog
+import co.inboxies.app.ui.settings.TagsSettingsView
 import co.inboxies.app.ui.settings.SettingsSheetView
 import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
@@ -111,6 +113,9 @@ object PreviewHarness {
             PreviewMode.Senders,
             PreviewMode.SendersBlocked,
             PreviewMode.Suppressions,
+            PreviewMode.Tags,
+            PreviewMode.TagsRename,
+            PreviewMode.TagsDelete,
             PreviewMode.Settings,
             PreviewMode.SettingsScreenerOff,
             -> {
@@ -195,6 +200,13 @@ fun PreviewRoot(
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
         PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }
         PreviewMode.Suppressions -> SettingsPreviewSurface { SuppressionsSettingsView(onBack = {}) }
+        PreviewMode.Tags -> SettingsPreviewSurface { TagsSettingsView(onBack = {}) }
+        PreviewMode.TagsRename -> SettingsPreviewSurface {
+            TagsSettingsView(onBack = {}, previewDialog = TagsPreviewDialog.Rename)
+        }
+        PreviewMode.TagsDelete -> SettingsPreviewSurface {
+            TagsSettingsView(onBack = {}, previewDialog = TagsPreviewDialog.Delete)
+        }
         PreviewMode.Settings, PreviewMode.SettingsScreenerOff, PreviewMode.AiUsageSettings -> SettingsPreviewSurface {
             SettingsSheetView(onClose = {}, onThemeModeChange = onThemeModeChange, themeMode = themeMode)
         }
