@@ -452,3 +452,38 @@ export const domainOffboarding = sqliteTable(
 	},
 	(t) => [index("domain_offboarding_finalize_after_idx").on(t.finalizeAfter)],
 );
+
+/**
+ * A user's security activity (AVE-151): sign-ins and changes to how the
+ * account is signed in to. Feeds the "new device" check (sign-ins of the
+ * last 90 days) and the read-only "Recent security activity" list. Only an
+ * IP prefix is kept, never the full address. Rows older than 90 days are
+ * swept by the scheduled maintenance.
+ */
+export const securityEvent = sqliteTable(
+	"security_event",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** `SecurityEventKind` (`auth/security-activity.ts`). */
+		kind: text("kind").notNull(),
+		/** Browser/app and OS family ("Chrome on macOS"); null when unknown. */
+		device: text("device"),
+		/** IPv4 /24 or IPv6 /48 ("203.0.113.0/24"). */
+		ipPrefix: text("ip_prefix"),
+		/** ISO 3166-1 alpha-2 country from Cloudflare's geolocation. */
+		country: text("country"),
+		city: text("city"),
+		/** Sign-ins only: no sign-in in the last 90 days matched this device. */
+		newDevice: integer("new_device", { mode: "boolean" }).notNull().default(false),
+		/** JSON (e.g. `{ "provider": "google" }`). */
+		detail: text("detail"),
+		createdAt: createdAt(),
+	},
+	(t) => [
+		index("security_event_user_created_idx").on(t.userId, t.createdAt),
+		index("security_event_created_at_idx").on(t.createdAt),
+	],
+);

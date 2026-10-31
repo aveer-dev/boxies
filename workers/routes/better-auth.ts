@@ -30,12 +30,20 @@
  * session that signed in or re-authenticated in the last 5 minutes (AVE-113,
  * `auth/reauth.ts`): otherwise they answer 403 `reauth_required`. A change
  * that went through mails a "was this you?" notice.
+ *
+ * Two-factor turning on or off (enable/disable, or the verify call that
+ * confirms setup) mails one too (AVE-151): the signed-in user's flag is
+ * compared before and after the call.
  */
 
+import { eq } from "drizzle-orm";
 import { getAuth, AUTH_BASE_PATH } from "../auth";
 import { principalFromHeaders } from "../auth/principal";
 import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MANY } from "../auth/rate-limit";
 import { reauthGate } from "../auth/reauth";
+import { authDb } from "../auth/authz";
+import * as schema from "../auth/schema";
+import { requestDevice } from "../auth/security-activity";
 import { sendSecurityNotice, type SecurityChange } from "../auth/security-notice";
 import type { Env } from "../types";
 
@@ -56,6 +64,8 @@ type RouteRule = {
 	reauth?: boolean;
 	/** "Was this you?" mail after a 2xx answer. */
 	notice?: (body: Record<string, unknown> | null) => SecurityChange;
+	/** May turn two-factor on or off for the signed-in user (notice on a change). */
+	twoFactorToggle?: boolean;
 };
 
 function providerOf(body: Record<string, unknown> | null): string {
@@ -101,12 +111,12 @@ const ROUTES: Record<string, RouteRule> = {
 	"/passkey/update-passkey": { methods: ["POST"] },
 	"/passkey/delete-passkey": { methods: ["POST"], reauth: true, notice: () => ({ kind: "passkey_removed" }) },
 	// Two-factor (twoFactor plugin; TOTP only, so no /two-factor/*-otp routes).
-	"/two-factor/enable": { methods: ["POST"], limit: "sign-in", password: "session" },
-	"/two-factor/disable": { methods: ["POST"], limit: "sign-in", password: "session" },
+	"/two-factor/enable": { methods: ["POST"], limit: "sign-in", password: "session", twoFactorToggle: true },
+	"/two-factor/disable": { methods: ["POST"], limit: "sign-in", password: "session", twoFactorToggle: true },
 	"/two-factor/get-totp-uri": { methods: ["POST"], limit: "sign-in", password: "session" },
 	"/two-factor/generate-backup-codes": { methods: ["POST"], limit: "sign-in", password: "session" },
-	"/two-factor/verify-totp": { methods: ["POST"], limit: "otp-verify" },
-	"/two-factor/verify-backup-code": { methods: ["POST"], limit: "otp-verify" },
+	"/two-factor/verify-totp": { methods: ["POST"], limit: "otp-verify", twoFactorToggle: true },
+	"/two-factor/verify-backup-code": { methods: ["POST"], limit: "otp-verify", twoFactorToggle: true },
 };
 
 const json = (body: unknown, status: number) =>
@@ -114,6 +124,15 @@ const json = (body: unknown, status: number) =>
 
 /** Better Auth's error codes for a wrong password (sign-in / signed-in checks). */
 const WRONG_PASSWORD_CODES = new Set(["INVALID_EMAIL_OR_PASSWORD", "INVALID_PASSWORD"]);
+
+async function twoFactorEnabled(env: Env, userId: string): Promise<boolean | null> {
+	const row = await authDb(env.AUTH_DB)
+		.select({ on: schema.user.twoFactorEnabled })
+		.from(schema.user)
+		.where(eq(schema.user.id, userId))
+		.get();
+	return row ? row.on : null;
+}
 
 async function isWrongPassword(response: Response): Promise<boolean> {
 	if (response.status !== 400 && response.status !== 401) return false;
@@ -162,12 +181,23 @@ export async function handleBetterAuthRequest(
 	const noticeBody = rule.notice
 		? ((await request.clone().json().catch(() => null)) as Record<string, unknown> | null)
 		: null;
+	const twoFactorBefore = rule.twoFactorToggle && userId ? await twoFactorEnabled(env, userId) : null;
 	const response = await getAuth(env).handler(request);
 	if (accountEmail && (await isWrongPassword(response))) await recordPasswordFailure(env, accountEmail);
-	if (rule.notice && userId && response.ok) {
-		const sending = sendSecurityNotice(env, { userId, requestUrl: request.url, change: rule.notice(noticeBody) }).catch((e) =>
-			console.error("[Auth] Security notice failed:", (e as Error).message || e),
-		);
+	let change: SecurityChange | null = rule.notice && response.ok ? rule.notice(noticeBody) : null;
+	if (twoFactorBefore !== null && userId && response.ok) {
+		const twoFactorAfter = await twoFactorEnabled(env, userId);
+		if (twoFactorAfter !== null && twoFactorAfter !== twoFactorBefore) {
+			change = { kind: twoFactorAfter ? "two_factor_enabled" : "two_factor_disabled" };
+		}
+	}
+	if (change && userId) {
+		const sending = sendSecurityNotice(env, {
+			userId,
+			requestUrl: request.url,
+			change,
+			device: requestDevice(request),
+		}).catch((e) => console.error("[Auth] Security notice failed:", (e as Error).message || e));
 		if (ctx) ctx.waitUntil(sending);
 		else await sending;
 	}

@@ -12,6 +12,7 @@
 
 import { getAuth } from "./index";
 import type { Env } from "../types";
+import { noteSignedInRequest } from "./security-activity";
 
 export type SessionScope = "aliases";
 
@@ -36,6 +37,9 @@ export async function principalFromHeaders(
 		const result = await getAuth(env).api.getSession({ headers });
 		if (!result?.session || !result.user) return null;
 		const session = result.session as typeof result.session & { scope?: unknown };
+		// Sessions this request mints for an already signed-in user are
+		// rotations (2FA setup, password change), not sign-ins (AVE-151).
+		if (!parseScope(session.scope)) noteSignedInRequest(result.user.id);
 		return {
 			userId: result.user.id,
 			sessionId: session.id,
