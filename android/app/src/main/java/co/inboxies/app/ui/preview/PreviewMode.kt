@@ -35,8 +35,6 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ReauthPasskey("reauthPasskey", "previewReauthPasskey"),
     /** "Confirm it's you", emailed code (iOS `-previewReauth emailCode`). */
     ReauthEmailCode("reauthEmailCode", "previewReauthEmailCode"),
-    /** "Confirm it's you", sign in again only (iOS `-previewReauth signIn`). */
-    ReauthSignIn("reauthSignIn", "previewReauthSignIn"),
     Members("members", "previewMembers"),
     Sessions("sessions", "previewSessions"),
     /** Settings → Senders, Allowed tab with fixture rules (iOS `-previewSenders`). */

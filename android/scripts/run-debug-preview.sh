@@ -31,7 +31,6 @@
 #   ./scripts/run-debug-preview.sh reauthTwoFactor    # … password + authenticator code
 #   ./scripts/run-debug-preview.sh reauthPasskey      # … passkey only
 #   ./scripts/run-debug-preview.sh reauthEmailCode    # … emailed code
-#   ./scripts/run-debug-preview.sh reauthSignIn       # … sign in again only
 #   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
 #   ./scripts/run-debug-preview.sh members
 #   ./scripts/run-debug-preview.sh sessions
@@ -75,7 +74,6 @@ case "$mode" in
   reauthTwoFactor|ReauthTwoFactor|previewReauthTwoFactor) extra=previewReauthTwoFactor; label=reauthTwoFactor ;;
   reauthPasskey|ReauthPasskey|previewReauthPasskey) extra=previewReauthPasskey; label=reauthPasskey ;;
   reauthEmailCode|ReauthEmailCode|previewReauthEmailCode) extra=previewReauthEmailCode; label=reauthEmailCode ;;
-  reauthSignIn|ReauthSignIn|previewReauthSignIn) extra=previewReauthSignIn; label=reauthSignIn ;;
   inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
   members|Members|previewMembers) extra=previewMembers; label=members ;;
   sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
@@ -119,12 +117,12 @@ case "$mode" in
   serviceEnding|ServiceEnding|previewServiceEnding) extra=previewServiceEnding; label=serviceEnding ;;
   domainDnsEnded|DomainDnsEnded|previewDomainDnsEnded) extra=previewDomainDnsEnded; label=domainDnsEnded ;;
   -h|--help|help)
-    sed -n '2,58p' "$0"
+    sed -n '2,57p' "$0"
     exit 0
     ;;
   *)
     echo "Unknown preview mode: $mode" >&2
-    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | reauthSignIn | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
+    echo "Try: splash | welcome | authOptions | passwordSignIn | twoFactorChallenge | domainAdmin | domainOnboarding | inviteAccept | signInMethods | reauth | reauthTwoFactor | reauthPasskey | reauthEmailCode | mailbox | loadMore | manyNew | toast | reminderPicker | reminderToast | reminderDue | loadFailed | listError | screener | replyLater | spam | newsletter | replyQuote | notes | notesDetail | aiUsage | aiUsageLimit | aiUsageSettings | serviceEnded | serviceEndedMember | serviceEnding | domainDnsEnded | widgets" >&2
     exit 1
     ;;
 esac

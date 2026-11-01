@@ -30,8 +30,8 @@ class ReauthTest {
         val challenge = ReauthChallenge.parse(403, gateBody)
         assertNotNull(challenge)
         challenge!!
-        assertEquals(listOf(ReauthMethod.Password, ReauthMethod.Passkey, ReauthMethod.SignIn), challenge.methods)
-        assertEquals(listOf(ReauthMethod.Password, ReauthMethod.Passkey), challenge.usableMethods)
+        // `sign_in` isn't offered on this client: it's dropped like any unknown method.
+        assertEquals(listOf(ReauthMethod.Password, ReauthMethod.Passkey), challenge.methods)
         assertTrue(challenge.twoFactor)
         assertNull(challenge.emailCodeTo)
         assertEquals(300, challenge.maxAgeSeconds)
@@ -42,22 +42,22 @@ class ReauthTest {
     fun parsesEmailCodeAccount() {
         val body = """{"code":"reauth_required","methods":["email_code","sign_in"],"twoFactor":false,"emailCodeTo":"a•••p@gmail.com","maxAgeSeconds":300}"""
         val challenge = ReauthChallenge.parse(403, body)!!
-        assertEquals(listOf(ReauthMethod.EmailCode, ReauthMethod.SignIn), challenge.methods)
+        assertEquals(listOf(ReauthMethod.EmailCode), challenge.methods)
         assertEquals("a•••p@gmail.com", challenge.emailCodeTo)
         assertFalse(challenge.twoFactor)
     }
 
     @Test
-    fun unknownOrMissingMethodsFallBackToSignIn() {
-        val challenge = ReauthChallenge.parse(403, """{"code":"reauth_required","methods":["carrier_pigeon"]}""")!!
-        assertEquals(listOf(ReauthMethod.SignIn), challenge.methods)
-        assertTrue(challenge.usableMethods.isEmpty())
+    fun unknownOrSignInOnlyMethodsLeaveNothingToOffer() {
+        val challenge = ReauthChallenge.parse(403, """{"code":"reauth_required","methods":["carrier_pigeon","sign_in",42]}""")!!
+        assertTrue(challenge.methods.isEmpty())
+        assertEquals(emptyList<ReauthMethod>(), ReauthChallenge.parse(403, """{"code":"reauth_required"}""")?.methods)
         assertEquals(300, challenge.maxAgeSeconds)
         assertEquals("", challenge.message)
 
         // email_code with nowhere to send it isn't offered.
         val noTarget = """{"code":"reauth_required","methods":["email_code","sign_in"],"emailCodeTo":null}"""
-        assertEquals(listOf(ReauthMethod.SignIn), ReauthChallenge.parse(403, noTarget)?.methods)
+        assertEquals(emptyList<ReauthMethod>(), ReauthChallenge.parse(403, noTarget)?.methods)
     }
 
     @Test
@@ -81,7 +81,7 @@ class ReauthTest {
 
     @Test
     fun errorMessageFallsBackWhenServerSentNone() {
-        val bare = ApiException.ReauthRequired(ReauthChallenge(listOf(ReauthMethod.SignIn)))
+        val bare = ApiException.ReauthRequired(ReauthChallenge(emptyList()))
         assertFalse(bare.message.isNullOrBlank())
     }
 
@@ -113,7 +113,7 @@ class ReauthTest {
 
     // Retry once
 
-    private fun challenge() = ReauthChallenge(listOf(ReauthMethod.Password, ReauthMethod.SignIn), message = "m")
+    private fun challenge() = ReauthChallenge(listOf(ReauthMethod.Password), message = "m")
 
     @Test
     fun confirmedPromptRetriesOnce() = runBlocking {

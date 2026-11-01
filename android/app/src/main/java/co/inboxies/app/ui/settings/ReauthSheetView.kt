@@ -79,7 +79,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
-import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.Passkeys
 import co.inboxies.app.services.ReauthChallenge
@@ -118,8 +117,9 @@ fun ReauthPromptHost(coordinator: ReauthCoordinator = ReauthCoordinator.shared) 
 /**
  * "Confirm it's you" (AVE-171): the Android twin of the web `ReauthDialog` and iOS
  * `ReauthSheetView`. Offers what the account has (password + 2FA code, passkey, emailed
- * code) and always falls back to signing in again. `onFinish(true)` once
- * `POST /api/v1/me/reauth` accepted the proof; the caller retries its request.
+ * code). `onFinish(true)` once `POST /api/v1/me/reauth` accepted the proof; the caller
+ * retries its request. It never signs the user out: an account with none of those
+ * methods is told to sign out and back in; the prompt only closes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -129,13 +129,12 @@ fun ReauthSheet(
     initialMethod: ReauthMethod? = null,
 ) {
     val app = LocalAppModel.current
-    val auth = LocalAuthStore.current
     val colors = inboxiesColors()
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
-    var method by remember { mutableStateOf(initialMethod ?: challenge.usableMethods.firstOrNull()) }
+    var method by remember { mutableStateOf(initialMethod ?: challenge.methods.firstOrNull()) }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
@@ -153,16 +152,11 @@ fun ReauthSheet(
         confirmValueChange = { it != SheetValue.Hidden || !busy },
     )
 
-    val otherMethods = challenge.usableMethods.filter { it != method }
+    val otherMethods = challenge.methods.filter { it != method }
     val passwordReady = password.isNotEmpty() && (!challenge.twoFactor || code.isNotBlank())
 
     fun close(ok: Boolean) {
         scope.launch { sheetState.hide() }.invokeOnCompletion { onFinish(ok) }
-    }
-
-    fun signOut() {
-        onFinish(false)
-        app.signOut(auth)
     }
 
     fun attempt(fallback: String, work: suspend () -> Unit) {
@@ -384,9 +378,12 @@ fun ReauthSheet(
                                         )
                                     }
                                 }
-                                ReauthMethod.SignIn, null -> {
+                                null -> {
+                                    // Nothing this sheet can check (e.g. a Google or Apple-only
+                                    // account with no passkey or recovery email). Never signs out
+                                    // on its own.
                                     Text(
-                                        "Sign out and sign back in, then try again within 5 minutes.",
+                                        "To continue, sign out and sign back in, then try again within 5 minutes.",
                                         fontFamily = InterFontFamily,
                                         fontSize = 14.sp,
                                         color = colors.ink,
@@ -416,7 +413,7 @@ fun ReauthSheet(
                     }
                 }
 
-                if (otherMethods.isNotEmpty() || method != null) {
+                if (otherMethods.isNotEmpty()) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -439,9 +436,6 @@ fun ReauthSheet(
                                 QuietLink(title = switchLabel(other), icon = switchIcon(other), enabled = !isBusy) {
                                     switchTo(other)
                                 }
-                            }
-                            if (method != null) {
-                                QuietLink(title = "Sign in again instead", enabled = !isBusy) { signOut() }
                             }
                         }
                     }
@@ -478,8 +472,8 @@ fun ReauthSheet(
                             } else {
                                 ReauthPrimaryButton("Send code", enabled = true, isBusy = isBusy) { sendEmailCode() }
                             }
-                        ReauthMethod.SignIn, null ->
-                            ReauthPrimaryButton("Sign out", enabled = true, isBusy = isBusy) { signOut() }
+                        null ->
+                            ReauthPrimaryButton("Close", enabled = true, isBusy = isBusy) { close(false) }
                     }
                 }
             }
@@ -683,12 +677,10 @@ private fun switchLabel(method: ReauthMethod): String = when (method) {
     ReauthMethod.Password -> "Use your password"
     ReauthMethod.Passkey -> "Use a passkey"
     ReauthMethod.EmailCode -> "Email me a code"
-    ReauthMethod.SignIn -> "Sign in again instead"
 }
 
-private fun switchIcon(method: ReauthMethod): ImageVector? = when (method) {
+private fun switchIcon(method: ReauthMethod): ImageVector = when (method) {
     ReauthMethod.Password -> Icons.Outlined.Password
     ReauthMethod.Passkey -> Icons.Outlined.Key
     ReauthMethod.EmailCode -> Icons.Outlined.Email
-    ReauthMethod.SignIn -> null
 }

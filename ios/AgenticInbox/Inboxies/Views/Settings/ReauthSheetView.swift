@@ -34,12 +34,12 @@ private struct ReauthPromptHost: ViewModifier {
 }
 
 /// "Confirm it's you" (AVE-170): the iOS twin of the web `ReauthDialog`.
-/// Offers what the account has (password + 2FA code, passkey, emailed code)
-/// and always falls back to signing in again. `onFinish(true)` once
-/// `POST /api/v1/me/reauth` accepted the proof; the caller retries its request.
+/// Offers what the account has (password + 2FA code, passkey, emailed code).
+/// `onFinish(true)` once `POST /api/v1/me/reauth` accepted the proof; the
+/// caller retries its request. It never signs the user out: an account with
+/// none of those methods is told to sign out and back in; the prompt only closes.
 struct ReauthSheetView: View {
     @Environment(AppModel.self) private var app
-    @Environment(AuthStore.self) private var auth
 
     let challenge: ReauthChallenge
     var onFinish: (Bool) -> Void
@@ -61,11 +61,11 @@ struct ReauthSheetView: View {
     init(challenge: ReauthChallenge, initialMethod: ReauthMethod? = nil, onFinish: @escaping (Bool) -> Void) {
         self.challenge = challenge
         self.onFinish = onFinish
-        _method = State(initialValue: initialMethod ?? challenge.usableMethods.first)
+        _method = State(initialValue: initialMethod ?? challenge.methods.first)
     }
 
     private var otherMethods: [ReauthMethod] {
-        challenge.usableMethods.filter { $0 != method }
+        challenge.methods.filter { $0 != method }
     }
 
     var body: some View {
@@ -104,7 +104,7 @@ struct ReauthSheetView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 22)
 
-                    if !otherMethods.isEmpty || method != nil {
+                    if !otherMethods.isEmpty {
                         footerLinks
                             .padding(.horizontal, 24)
                             .padding(.top, 20)
@@ -175,8 +175,10 @@ struct ReauthSheetView: View {
                 .fixedSize(horizontal: false, vertical: true)
         case .emailCode:
             emailCodeForm
-        case .signIn, .none:
-            Text("Sign out and sign back in, then try again within 5 minutes.")
+        case .none:
+            // Nothing this sheet can check (e.g. a Google or Apple-only account
+            // with no passkey or recovery email). Never signs out on its own.
+            Text("To continue, sign out and sign back in, then try again within 5 minutes.")
                 .font(.inter(size: 14))
                 .foregroundStyle(AppTheme.ink)
                 .multilineTextAlignment(.center)
@@ -219,9 +221,9 @@ struct ReauthSheetView: View {
                     Task { await sendEmailCode() }
                 }
             }
-        case .signIn, .none:
-            primaryButton("Sign out", systemImage: nil, enabled: true) {
-                signOut()
+        case .none:
+            primaryButton("Close", systemImage: nil, enabled: true) {
+                onFinish(false)
             }
         }
     }
@@ -343,11 +345,6 @@ struct ReauthSheetView: View {
                         switchTo(other)
                     }
                 }
-                if method != nil {
-                    quietLink("Sign in again instead") {
-                        signOut()
-                    }
-                }
             }
         }
         .disabled(isBusy)
@@ -413,7 +410,6 @@ struct ReauthSheetView: View {
         case .password: return "Use your password"
         case .passkey: return "Use a passkey"
         case .emailCode: return "Email me a code"
-        case .signIn: return "Sign in again instead"
         }
     }
 
@@ -422,7 +418,6 @@ struct ReauthSheetView: View {
         case .password: return "key"
         case .passkey: return "person.badge.key"
         case .emailCode: return "envelope"
-        case .signIn: return "arrow.right.circle"
         }
     }
 
@@ -506,11 +501,6 @@ struct ReauthSheetView: View {
             #endif
             _ = try await APIClient.shared.reauthWithEmailCode(code)
         }
-    }
-
-    private func signOut() {
-        onFinish(false)
-        app.signOut(auth: auth)
     }
 }
 

@@ -399,21 +399,20 @@ object PreviewSupport {
         val message = "For your security, confirm it's you first. Sign out and sign back in, then try again within 5 minutes."
         return when (mode) {
             PreviewMode.Reauth -> ReauthChallenge(
-                listOf(ReauthMethod.Password, ReauthMethod.Passkey, ReauthMethod.SignIn),
+                listOf(ReauthMethod.Password, ReauthMethod.Passkey),
                 message = message,
             )
             PreviewMode.ReauthTwoFactor -> ReauthChallenge(
-                listOf(ReauthMethod.Password, ReauthMethod.Passkey, ReauthMethod.SignIn),
+                listOf(ReauthMethod.Password, ReauthMethod.Passkey),
                 twoFactor = true,
                 message = message,
             )
-            PreviewMode.ReauthPasskey -> ReauthChallenge(listOf(ReauthMethod.Passkey, ReauthMethod.SignIn), message = message)
+            PreviewMode.ReauthPasskey -> ReauthChallenge(listOf(ReauthMethod.Passkey), message = message)
             PreviewMode.ReauthEmailCode -> ReauthChallenge(
-                listOf(ReauthMethod.EmailCode, ReauthMethod.SignIn),
+                listOf(ReauthMethod.EmailCode),
                 emailCodeTo = "a•••x@gmail.com",
                 message = message,
             )
-            PreviewMode.ReauthSignIn -> ReauthChallenge(listOf(ReauthMethod.SignIn), message = message)
             else -> null
         }
     }

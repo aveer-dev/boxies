@@ -19,15 +19,16 @@ enum ReauthMethod: String, CaseIterable, Sendable {
     case passkey
     /// A 6-digit code mailed to `emailCodeTo` (accounts without a password).
     case emailCode = "email_code"
-    /// Sign out and sign in again; a new session is fresh for 5 minutes.
-    case signIn = "sign_in"
+    // The Worker also sends `sign_in` (sign out and back in). The sheet doesn't
+    // offer it, so it parses like any other unknown method: ignored.
 }
 
 /// The `reauth_required` 403 body.
 struct ReauthChallenge: Equatable, Sendable {
     static let code = "reauth_required"
 
-    /// What the account can confirm with, in server order. `signIn` is always offered.
+    /// What the account can confirm with, in server order. Empty when the
+    /// account has nothing the sheet can check (signing in again is all that's left).
     var methods: [ReauthMethod]
     /// A password re-auth also needs a TOTP or backup code.
     var twoFactor: Bool
@@ -37,11 +38,6 @@ struct ReauthChallenge: Equatable, Sendable {
     var maxAgeSeconds: Int
     /// The server's sentence, written for builds without this sheet ("sign out and back in").
     var message: String
-
-    /// Methods with an inline form, i.e. everything but `signIn`.
-    var usableMethods: [ReauthMethod] {
-        methods.filter { $0 != .signIn }
-    }
 
     /// The challenge in an error reply, or nil for any other error.
     static func parse(statusCode: Int, data: Data) -> ReauthChallenge? {
@@ -53,9 +49,6 @@ struct ReauthChallenge: Equatable, Sendable {
             if let name = raw as? String, let method = ReauthMethod(rawValue: name), !methods.contains(method) {
                 methods.append(method)
             }
-        }
-        if !methods.contains(.signIn) {
-            methods.append(.signIn)
         }
         let emailCodeTo = (obj["emailCodeTo"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         // An emailed code needs somewhere to go.

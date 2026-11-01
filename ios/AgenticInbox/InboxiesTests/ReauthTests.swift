@@ -15,8 +15,8 @@ final class ReauthTests: XCTestCase {
 
     func testParsesReauthRequiredBody() throws {
         let challenge = try XCTUnwrap(ReauthChallenge.parse(statusCode: 403, data: Data(gateBody.utf8)))
-        XCTAssertEqual(challenge.methods, [.password, .passkey, .signIn])
-        XCTAssertEqual(challenge.usableMethods, [.password, .passkey])
+        // `sign_in` isn't offered on this client: it's dropped like any unknown method.
+        XCTAssertEqual(challenge.methods, [.password, .passkey])
         XCTAssertTrue(challenge.twoFactor)
         XCTAssertNil(challenge.emailCodeTo)
         XCTAssertEqual(challenge.maxAgeSeconds, 300)
@@ -26,21 +26,23 @@ final class ReauthTests: XCTestCase {
     func testParsesEmailCodeAccount() throws {
         let body = #"{"code":"reauth_required","methods":["email_code","sign_in"],"twoFactor":false,"emailCodeTo":"a•••p@gmail.com","maxAgeSeconds":300}"#
         let challenge = try XCTUnwrap(ReauthChallenge.parse(statusCode: 403, data: Data(body.utf8)))
-        XCTAssertEqual(challenge.methods, [.emailCode, .signIn])
+        XCTAssertEqual(challenge.methods, [.emailCode])
         XCTAssertEqual(challenge.emailCodeTo, "a•••p@gmail.com")
         XCTAssertFalse(challenge.twoFactor)
     }
 
-    func testUnknownOrMissingMethodsFallBackToSignIn() throws {
-        let body = #"{"code":"reauth_required","methods":["carrier_pigeon"]}"#
+    func testUnknownOrSignInOnlyMethodsLeaveNothingToOffer() throws {
+        let body = #"{"code":"reauth_required","methods":["carrier_pigeon","sign_in",42]}"#
         let challenge = try XCTUnwrap(ReauthChallenge.parse(statusCode: 403, data: Data(body.utf8)))
-        XCTAssertEqual(challenge.methods, [.signIn])
-        XCTAssertTrue(challenge.usableMethods.isEmpty)
+        XCTAssertTrue(challenge.methods.isEmpty)
         XCTAssertEqual(challenge.maxAgeSeconds, 300)
+
+        let missing = #"{"code":"reauth_required"}"#
+        XCTAssertEqual(ReauthChallenge.parse(statusCode: 403, data: Data(missing.utf8))?.methods, [])
 
         // email_code with nowhere to send it isn't offered.
         let noTarget = #"{"code":"reauth_required","methods":["email_code","sign_in"],"emailCodeTo":null}"#
-        XCTAssertEqual(ReauthChallenge.parse(statusCode: 403, data: Data(noTarget.utf8))?.methods, [.signIn])
+        XCTAssertEqual(ReauthChallenge.parse(statusCode: 403, data: Data(noTarget.utf8))?.methods, [])
     }
 
     func testOtherErrorsAreNotChallenges() {
@@ -61,7 +63,7 @@ final class ReauthTests: XCTestCase {
     // MARK: - Retry once
 
     private func challenge() -> ReauthChallenge {
-        ReauthChallenge(methods: [.password, .signIn], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: "m")
+        ReauthChallenge(methods: [.password], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: "m")
     }
 
     func testConfirmedPromptRetriesOnce() async throws {

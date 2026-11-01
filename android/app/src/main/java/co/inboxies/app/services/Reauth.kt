@@ -39,10 +39,9 @@ enum class ReauthMethod(val wire: String) {
 
     /** A 6-digit code mailed to `emailCodeTo` (accounts without a password). */
     EmailCode("email_code"),
-
-    /** Sign out and sign in again; a new session is fresh for 5 minutes. */
-    SignIn("sign_in"),
     ;
+    // The Worker also sends `sign_in` (sign out and back in). The sheet doesn't offer
+    // it, so [fromWire] returns null for it like any other unknown method.
 
     companion object {
         fun fromWire(raw: String): ReauthMethod? = entries.firstOrNull { it.wire == raw }
@@ -51,7 +50,10 @@ enum class ReauthMethod(val wire: String) {
 
 /** The `reauth_required` 403 body. */
 data class ReauthChallenge(
-    /** What the account can confirm with, in server order. [ReauthMethod.SignIn] is always offered. */
+    /**
+     * What the account can confirm with, in server order. Empty when the account has
+     * nothing the sheet can check (signing in again is all that's left).
+     */
     val methods: List<ReauthMethod>,
     /** A password re-auth also needs a TOTP or backup code. */
     val twoFactor: Boolean = false,
@@ -62,10 +64,6 @@ data class ReauthChallenge(
     /** The server's sentence, written for builds without this sheet ("sign out and back in"). */
     val message: String = "",
 ) {
-    /** Methods with an inline form, i.e. everything but [ReauthMethod.SignIn]. */
-    val usableMethods: List<ReauthMethod>
-        get() = methods.filter { it != ReauthMethod.SignIn }
-
     companion object {
         const val CODE = "reauth_required"
 
@@ -79,7 +77,6 @@ data class ReauthChallenge(
                 val method = (raw as? JsonPrimitive)?.takeIf { it.isString }?.content?.let(ReauthMethod::fromWire)
                 if (method != null && method !in methods) methods += method
             }
-            if (ReauthMethod.SignIn !in methods) methods += ReauthMethod.SignIn
             val emailCodeTo = (obj["emailCodeTo"] as? JsonPrimitive)
                 ?.takeIf { it.isString }
                 ?.content
