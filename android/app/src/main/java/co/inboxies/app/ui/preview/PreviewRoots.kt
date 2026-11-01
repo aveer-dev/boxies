@@ -49,6 +49,8 @@ import co.inboxies.app.ui.settings.TagsSettingsView
 import co.inboxies.app.ui.settings.SettingsSheetView
 import co.inboxies.app.ui.settings.SharingSettingsView
 import co.inboxies.app.ui.settings.SignInMethodsSettingsView
+import co.inboxies.app.ui.settings.ReauthPromptHost
+import co.inboxies.app.services.ReauthCoordinator
 import co.inboxies.app.models.TwoFactorChallenge
 import co.inboxies.app.ui.splash.SplashScreenView
 import co.inboxies.app.ui.widget.InboxWidgetGallery
@@ -95,7 +97,13 @@ object PreviewHarness {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
             }
-            PreviewMode.SignInMethods -> {
+            PreviewMode.SignInMethods,
+            PreviewMode.Reauth,
+            PreviewMode.ReauthTwoFactor,
+            PreviewMode.ReauthPasskey,
+            PreviewMode.ReauthEmailCode,
+            PreviewMode.ReauthSignIn,
+            -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
                 appModel.setIdentities(PreviewSupport.identities())
@@ -194,6 +202,20 @@ fun PreviewRoot(
             )
         }
         PreviewMode.SignInMethods -> SettingsPreviewSurface { SignInMethodsSettingsView(onBack = {}) }
+        PreviewMode.Reauth,
+        PreviewMode.ReauthTwoFactor,
+        PreviewMode.ReauthPasskey,
+        PreviewMode.ReauthEmailCode,
+        PreviewMode.ReauthSignIn,
+        -> SettingsPreviewSurface {
+            // "Confirm it's you" over Sign-in & recovery, fixture challenge, no API (AVE-171).
+            SignInMethodsSettingsView(onBack = {})
+            ReauthPromptHost()
+            LaunchedEffect(mode) {
+                delay(400)
+                PreviewSupport.reauthChallenge(mode)?.let { ReauthCoordinator.shared.presentForPreview(it) }
+            }
+        }
         PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
         PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }

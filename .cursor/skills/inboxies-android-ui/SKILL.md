@@ -205,6 +205,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |
 | Invite accept (signed in) | `previewInviteAcceptSignedIn` | `inviteAcceptSignedIn` | Invite accept into the signed-in account |
 | Sign-in & recovery | `previewSignInMethods` | `signInMethods` | Sign-in methods + recovery email |
+| Confirm it's you | `previewReauth` · `previewReauthTwoFactor` · `previewReauthPasskey` · `previewReauthEmailCode` · `previewReauthSignIn` | `reauth` · `reauthTwoFactor` · `reauthPasskey` · `reauthEmailCode` · `reauthSignIn` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API: password · password + authenticator code · passkey · emailed code · sign in again. Peer of iOS `-previewSignInMethods -previewReauth <password\|twoFactor\|passkey\|emailCode\|signIn>` (AVE-171) |
 | Members | `previewMembers` | `members` | Mailbox members + pending invites |
 | Devices & sessions | `previewSessions` | `sessions` | Session list |
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
