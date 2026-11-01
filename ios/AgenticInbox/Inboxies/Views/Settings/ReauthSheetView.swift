@@ -113,6 +113,11 @@ struct ReauthSheetView: View {
                 .padding(.bottom, 24)
             }
             .scrollDismissesKeyboard(.interactively)
+            // The primary action sits at the bottom of the sheet, above the
+            // keyboard when one is up, not inline under the fields.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                bottomBar
+            }
         }
         .background(AppTheme.background)
         .presentationDetents([.medium, .large])
@@ -163,9 +168,11 @@ struct ReauthSheetView: View {
         case .password:
             passwordForm
         case .passkey:
-            primaryButton("Use a passkey", systemImage: "person.badge.key.fill", enabled: true) {
-                Task { await usePasskey() }
-            }
+            Text("Use one of your passkeys to confirm it's you.")
+                .font(.inter(size: 14))
+                .foregroundStyle(AppTheme.ink)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         case .emailCode:
             emailCodeForm
         case .signIn, .none:
@@ -174,6 +181,45 @@ struct ReauthSheetView: View {
                 .foregroundStyle(AppTheme.ink)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The method's primary action, pinned to the bottom of the sheet.
+    private var bottomBar: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(AppTheme.line)
+                .frame(height: 0.5)
+            primaryAction
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+        }
+        .background(AppTheme.background)
+    }
+
+    @ViewBuilder
+    private var primaryAction: some View {
+        switch method {
+        case .password:
+            primaryButton("Confirm", systemImage: nil, enabled: passwordReady) {
+                Task { await submitPassword() }
+            }
+        case .passkey:
+            primaryButton("Use a passkey", systemImage: "person.badge.key.fill", enabled: true) {
+                Task { await usePasskey() }
+            }
+        case .emailCode:
+            if codeSentTo != nil {
+                primaryButton("Confirm", systemImage: nil, enabled: code.trimmingCharacters(in: .whitespaces).count >= 6) {
+                    Task { await submitEmailCode() }
+                }
+            } else {
+                primaryButton("Send code", systemImage: nil, enabled: true) {
+                    Task { await sendEmailCode() }
+                }
+            }
+        case .signIn, .none:
             primaryButton("Sign out", systemImage: nil, enabled: true) {
                 signOut()
             }
@@ -254,10 +300,6 @@ struct ReauthSheetView: View {
                     }
                 }
             }
-
-            primaryButton("Confirm", systemImage: nil, enabled: passwordReady) {
-                Task { await submitPassword() }
-            }
         }
     }
 
@@ -281,18 +323,12 @@ struct ReauthSheetView: View {
                 .onChange(of: code) { _, next in
                     if next.count > 6 { code = String(next.prefix(6)) }
                 }
-            primaryButton("Confirm", systemImage: nil, enabled: code.trimmingCharacters(in: .whitespaces).count >= 6) {
-                Task { await submitEmailCode() }
-            }
         } else {
             Text("We'll email a 6-digit code to \(Text(challenge.emailCodeTo ?? "your recovery email").font(.inter(size: 14, weight: .semibold))).")
                 .font(.inter(size: 14))
                 .foregroundStyle(AppTheme.ink)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            primaryButton("Send code", systemImage: nil, enabled: true) {
-                Task { await sendEmailCode() }
-            }
         }
     }
 
