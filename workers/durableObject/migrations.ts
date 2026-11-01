@@ -882,4 +882,32 @@ export const mailboxMigrations: Migration[] = [
             ALTER TABLE send_log ADD COLUMN recipients INTEGER NOT NULL DEFAULT 1;
         `),
 	},
+	{
+		// Needs reply only on direct mail (AVE-173). `emails.direct_mail` is 1
+		// for a person writing to this mailbox (workers/lib/direct-mail.ts:
+		// no list / automated / campaign headers, no no-reply From or
+		// Reply-To, addressed to the mailbox, not from the mailbox itself),
+		// 0 otherwise, NULL until computed. Inbound mail sets it at receive
+		// time; the DO alarm fills it in for older rows in batches (the
+		// partial index keeps finding those cheap). The trigger marks the
+		// conversation index (42) dirty when the flag changes, and the seed
+		// below recomputes every conversation under the new needs_reply rule.
+		// Additive only. Numbered 45, after 44_send_log_recipients.
+		name: "45_direct_mail",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN direct_mail INTEGER;
+            CREATE INDEX IF NOT EXISTS idx_emails_direct_mail_pending
+                ON emails(id) WHERE direct_mail IS NULL;
+            CREATE TRIGGER IF NOT EXISTS emails_conversation_on_direct_mail
+            AFTER UPDATE OF direct_mail ON emails
+            WHEN NEW.direct_mail IS NOT OLD.direct_mail
+            BEGIN
+                INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+                VALUES (COALESCE(NEW.thread_id, NEW.id), NEW.folder_id, ${normalizedSubjectSql("NEW.subject")});
+            END;
+            INSERT INTO conversation_dirty (raw_key, folder_id, normalized_subject)
+            SELECT DISTINCT COALESCE(thread_id, id), folder_id, ${normalizedSubjectSql("subject")}
+              FROM emails;
+        `),
+	},
 ];

@@ -138,6 +138,8 @@ const SUBJECTS = [
 	"", "  ", null, "AW: Plan", "Plan", "SV: Plan", "Invoice", "Fw: Invoice", "Hello",
 ];
 const NAMES = ["Alice", "", "  ", null, "Bob", "Carol", "alice"];
+// AVE-173 needs_reply: direct mail (1), not direct (0), not computed yet (NULL).
+const DIRECT_FLAGS = [1, 1, 0, null];
 const SENDERS = ["alice@example.com", "bob@example.com", "carol@example.com", "me@example.com"];
 
 const random = rng(Number(process.env.CONVERSATION_INDEX_SEED ?? 105));
@@ -150,8 +152,8 @@ const threadKeys = () =>
 	db.prepare(`SELECT DISTINCT COALESCE(thread_id, id) AS k FROM emails`).all().map((r) => r.k);
 
 const insertEmail = db.prepare(
-	`INSERT INTO emails (id, folder_id, subject, sender, sender_name, recipient, date, read, starred, reply_later, thread_id, snippet)
-	 VALUES (?, ?, ?, ?, ?, 'me@example.com', ?, ?, ?, ?, ?, ?)`,
+	`INSERT INTO emails (id, folder_id, subject, sender, sender_name, recipient, date, read, starred, reply_later, thread_id, snippet, direct_mail)
+	 VALUES (?, ?, ?, ?, ?, 'me@example.com', ?, ?, ?, ?, ?, ?, ?)`,
 );
 
 function addEmail({ threadId } = {}) {
@@ -177,6 +179,7 @@ function addEmail({ threadId } = {}) {
 		random() < 0.1 ? 1 : 0,
 		thread,
 		`snippet ${id}`,
+		pick(DIRECT_FLAGS),
 	);
 	return id;
 }
@@ -195,6 +198,10 @@ flushAll(sql, 37);
 const initial = compareAll(sql, "initial");
 assert.ok(initial.inbox.counts.totalCount > 20, "fixture lists a real inbox");
 assert.ok(initial.inbox.counts.newCount > 0 && initial.inbox.counts.seenCount > 0, "inbox has New and Seen");
+{
+	const tagged = db.prepare(`SELECT needs_reply, COUNT(*) AS n FROM conversations GROUP BY needs_reply`).all();
+	assert.equal(tagged.length, 2, "fixture has conversations with and without needs_reply");
+}
 
 // ── Random writes, compared after each round ──────────────────────
 
@@ -227,6 +234,7 @@ const ops = {
 	mergeThreads: () => db.prepare(`UPDATE emails SET thread_id = ? WHERE thread_id = ?`).run(pick(threadKeys()), pick(threadKeys())),
 	unthread: () => db.prepare(`UPDATE emails SET thread_id = NULL WHERE id = ?`).run(pick(ids())),
 	snippet: () => db.prepare(`UPDATE emails SET snippet = 'changed' WHERE id = ?`).run(pick(ids())),
+	direct: () => db.prepare(`UPDATE emails SET direct_mail = ? WHERE id = ?`).run(pick(DIRECT_FLAGS), pick(ids())),
 	emptyTrash: () => db.prepare(`DELETE FROM emails WHERE folder_id = 'trash'`).run(),
 	deleteFolder: () => {
 		db.prepare(`DELETE FROM folders WHERE id = 'projects'`).run(); // cascades to its mail
@@ -325,6 +333,11 @@ assert.deepEqual(snapshot(), incremental, "incremental index equals a rebuild");
 		          WHERE reply_later_remind_at IS NOT NULL OR reply_later_reminded_at IS NOT NULL`)
 		.all()) {
 		copyReminder.run(r.reply_later_remind_at, r.reply_later_reminded_at, r.id);
+	}
+	// AVE-173's direct-mail flag (migration 45) likewise.
+	const copyDirect = legacy.prepare(`UPDATE emails SET direct_mail = ? WHERE id = ?`);
+	for (const r of db.prepare(`SELECT id, direct_mail FROM emails WHERE direct_mail IS NOT NULL`).all()) {
+		copyDirect.run(r.direct_mail, r.id);
 	}
 
 	// Batched backfill (as the alarm runs it), with a write between batches.
