@@ -47,6 +47,7 @@ import co.inboxies.app.LocalAppModel
 import co.inboxies.app.models.LinkedIdentity
 import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.services.ApiClient
+import co.inboxies.app.services.ApiException
 import co.inboxies.app.services.googleCredentialErrorMessage
 import co.inboxies.app.theme.HomeChromeMetrics
 import co.inboxies.app.theme.HomeChromeToolbarButton
@@ -129,8 +130,10 @@ fun SignInMethodsSettingsView(
         }
     }
 
-    fun friendlyAttachError(message: String?): String {
-        val text = message.orEmpty()
+    fun friendlyAttachError(error: Throwable): String {
+        // Closed "Confirm it's you" (AVE-171): say why nothing changed.
+        if (error is ApiException.ReauthRequired) return error.message.orEmpty()
+        val text = error.message.orEmpty()
         return when {
             text.contains("already linked", ignoreCase = true) ->
                 "That identity is already linked to another Inboxies account"
@@ -140,8 +143,9 @@ fun SignInMethodsSettingsView(
         }
     }
 
-    fun friendlyChangePasswordError(message: String?): String {
-        val text = message.orEmpty()
+    fun friendlyChangePasswordError(error: Throwable): String {
+        if (error is ApiException.ReauthRequired) return error.message.orEmpty()
+        val text = error.message.orEmpty()
         return when {
             text.contains("incorrect", ignoreCase = true) ->
                 "Current password is incorrect"
@@ -351,7 +355,7 @@ fun SignInMethodsSettingsView(
                                                 reload()
                                             }
                                         }.onFailure {
-                                            errorMessage = friendlyChangePasswordError(it.message)
+                                            errorMessage = friendlyChangePasswordError(it)
                                         }
                                         isChangingPassword = false
                                     }
@@ -429,7 +433,7 @@ fun SignInMethodsSettingsView(
                             } catch (e: GetCredentialException) {
                                 errorMessage = googleCredentialErrorMessage(e)
                             } catch (e: Exception) {
-                                errorMessage = friendlyAttachError(e.message)
+                                errorMessage = friendlyAttachError(e)
                             } finally {
                                 isConnectingGoogle = false
                             }
@@ -509,7 +513,7 @@ fun SignInMethodsSettingsView(
                                                 showPasswordForm = false
                                                 applyAttach(res, "Password added")
                                             }.onFailure {
-                                                errorMessage = friendlyAttachError(it.message)
+                                                errorMessage = friendlyAttachError(it)
                                             }
                                             isAddingPassword = false
                                         }

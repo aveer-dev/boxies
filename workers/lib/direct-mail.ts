@@ -125,3 +125,50 @@ export function directMailSignals(input: DirectMailInput): NotDirectSignal[] {
 export function isDirectMail(input: DirectMailInput): boolean {
 	return directMailSignals(input).length === 0;
 }
+
+/**
+ * The per-message `emails.direct_mail` flag (AVE-173): 1 when the message is
+ * direct mail by every signal above except the folder, and its From is not
+ * one of the mailbox's own addresses. The folder is left out on purpose: it
+ * changes when mail is moved, so the conversation index applies it at read
+ * time instead (only Inbox mail can need a reply, see conversation-index.ts).
+ */
+export function directMailFlag(input: DirectMailInput): 0 | 1 {
+	const own = new Set(cleanList(input.ownAddresses));
+	if (own.has(normalizeAddress(input.sender))) return 0;
+	return isDirectMail({ ...input, folderId: undefined }) ? 1 : 0;
+}
+
+/** Split a stored "a@x, b@y" recipient column into addresses. */
+export function splitStoredAddresses(value: string | null | undefined): string[] {
+	return (value ?? "")
+		.split(",")
+		.map((part) => {
+			const angle = part.match(/<([^>]+)>/);
+			return (angle ? angle[1] : part).trim();
+		})
+		.filter(Boolean);
+}
+
+/**
+ * `directMailFlag` for a stored `emails` row (legacy backfill, and rows
+ * created without a flag). Reply-To comes from the stored headers. Only the
+ * mailbox address is known here (not the alias or domain address the mail
+ * was routed through), so the To/Cc check is skipped: an alias delivery must
+ * not lose the tag. Inbound mail sets the flag with full context instead.
+ */
+export function directMailFlagForStoredRow(
+	row: {
+		raw_headers?: string | null;
+		sender?: string | null;
+	},
+	ownAddresses: Array<string | null | undefined>,
+): 0 | 1 {
+	const replyTo = (parseHeaderList(row.raw_headers).get("reply-to") ?? []).flatMap(splitStoredAddresses);
+	return directMailFlag({
+		headers: row.raw_headers ?? null,
+		sender: row.sender ?? null,
+		replyTo,
+		ownAddresses,
+	});
+}
