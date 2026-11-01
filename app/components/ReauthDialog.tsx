@@ -7,7 +7,6 @@ import { EnvelopeSimpleIcon, EyeIcon, EyeSlashIcon, FingerprintIcon, KeyIcon } f
 import { type FormEvent, useEffect, useState } from "react";
 import { Modal, ModalHeader } from "~/components/Modal";
 import { type ReauthMethod, useReauthStore } from "~/lib/reauth";
-import { signOut } from "~/lib/sign-out";
 import api from "~/services/api";
 
 const loadAuthClient = () => import("~/lib/auth-client");
@@ -27,8 +26,9 @@ const quietLinkClass = "text-kumo-subtle hover:text-kumo-default underline-offse
 /**
  * "Confirm it's you" before a sensitive account change (AVE-113). Opened by
  * `requestReauth` when the Worker answers `reauth_required`; offers what the
- * account has (password + 2FA code, passkey, emailed code) and falls back to
- * signing in again. On success the original request is retried.
+ * account has (password + 2FA code, passkey, emailed code). On success the
+ * original request is retried. It never signs the user out: an account with
+ * none of those methods is told to sign out and back in; the prompt only closes.
  */
 export default function ReauthDialog() {
 	const challenge = useReauthStore((s) => s.challenge);
@@ -243,10 +243,10 @@ export default function ReauthDialog() {
 					{method === null && (
 						<div className="space-y-3">
 							<p className="text-sm text-kumo-default">
-								Sign out and sign back in, then try again within 5 minutes.
+								To continue, sign out and sign back in, then try again within 5 minutes.
 							</p>
-							<Button variant="primary" className="w-full" onClick={() => void signOut()}>
-								Sign out
+							<Button variant="secondary" className="w-full" onClick={() => finish(false)}>
+								Close
 							</Button>
 						</div>
 					)}
@@ -257,7 +257,7 @@ export default function ReauthDialog() {
 						</p>
 					)}
 
-					{(others.length > 0 || method !== null) && (
+					{others.length > 0 && (
 						<div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-kumo-line pt-3 text-xs">
 							{others.map((m) => {
 								const { label, icon: Icon } = SWITCH_LABEL[m];
@@ -272,11 +272,6 @@ export default function ReauthDialog() {
 									</button>
 								);
 							})}
-							{method !== null && (
-								<button type="button" onClick={() => void signOut()} className={quietLinkClass}>
-									Sign in again instead
-								</button>
-							)}
 						</div>
 					)}
 				</div>

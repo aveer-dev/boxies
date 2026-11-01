@@ -102,7 +102,6 @@ object PreviewHarness {
             PreviewMode.ReauthTwoFactor,
             PreviewMode.ReauthPasskey,
             PreviewMode.ReauthEmailCode,
-            PreviewMode.ReauthSignIn,
             -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
@@ -206,7 +205,6 @@ fun PreviewRoot(
         PreviewMode.ReauthTwoFactor,
         PreviewMode.ReauthPasskey,
         PreviewMode.ReauthEmailCode,
-        PreviewMode.ReauthSignIn,
         -> SettingsPreviewSurface {
             // "Confirm it's you" over Sign-in & recovery, fixture challenge, no API (AVE-171).
             SignInMethodsSettingsView(onBack = {})
