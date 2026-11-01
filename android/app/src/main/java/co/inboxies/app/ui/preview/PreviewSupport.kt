@@ -7,6 +7,8 @@ import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
+import co.inboxies.app.services.ReauthChallenge
+import co.inboxies.app.services.ReauthMethod
 import co.inboxies.app.services.ReplyLaterReminderPresets
 import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.Folder
@@ -391,6 +393,30 @@ object PreviewSupport {
         expiresAt = "2026-12-01T00:00:00.000Z",
         status = "pending",
     )
+
+    /** The "Confirm it's you" challenge for a `reauth*` preview mode (iOS `reauthChallengeFixture`), else null. */
+    fun reauthChallenge(mode: PreviewMode): ReauthChallenge? {
+        val message = "For your security, confirm it's you first. Sign out and sign back in, then try again within 5 minutes."
+        return when (mode) {
+            PreviewMode.Reauth -> ReauthChallenge(
+                listOf(ReauthMethod.Password, ReauthMethod.Passkey, ReauthMethod.SignIn),
+                message = message,
+            )
+            PreviewMode.ReauthTwoFactor -> ReauthChallenge(
+                listOf(ReauthMethod.Password, ReauthMethod.Passkey, ReauthMethod.SignIn),
+                twoFactor = true,
+                message = message,
+            )
+            PreviewMode.ReauthPasskey -> ReauthChallenge(listOf(ReauthMethod.Passkey, ReauthMethod.SignIn), message = message)
+            PreviewMode.ReauthEmailCode -> ReauthChallenge(
+                listOf(ReauthMethod.EmailCode, ReauthMethod.SignIn),
+                emailCodeTo = "a•••x@gmail.com",
+                message = message,
+            )
+            PreviewMode.ReauthSignIn -> ReauthChallenge(listOf(ReauthMethod.SignIn), message = message)
+            else -> null
+        }
+    }
 
     fun identities() = listOf(
         LinkedIdentity(type = "password", key = "user:preview", label = "Password (${addr("you")})"),
