@@ -585,6 +585,43 @@ enum SpamVerdictToast {
     }
 }
 
+/// `POST sender-triage/approve` and `/reject` response: the queued Screener mail
+/// that moved with the decision (AVE-159 Undo moves it back).
+struct SenderTriageDecisionResponse: Decodable, Equatable {
+    struct Moved: Decodable, Equatable {
+        var moved: Int?
+        var ids: [String]?
+    }
+
+    var moved: Moved?
+}
+
+/// Accept / Decline in the Screening room and its Undo (AVE-159).
+/// Twin: Android `ScreenerDecision` in SenderTriage.kt.
+enum ScreenerDecision {
+    private static let folderNames: [String: String] = [
+        "promotions": "Promotions",
+        "updates": "Updates",
+    ]
+
+    /// Toast after the decision. `destinationFolderId` nil means Decline.
+    /// Inbox is the plain Accept (pins nothing, AVE-139); Promotions / Updates stick.
+    static func toastTitle(destinationFolderId: String?) -> String {
+        guard let destinationFolderId else { return "Declined" }
+        if let name = folderNames[destinationFolderId] {
+            return "Accepted · future mail goes to \(name)"
+        }
+        return "Accepted"
+    }
+
+    /// Messages Undo moves back to the Screener: everything the decision refiled,
+    /// plus the one it was made from. Order kept, duplicates dropped.
+    static func restoreIds(response: SenderTriageDecisionResponse?, emailId: String) -> [String] {
+        var seen = Set<String>()
+        return ((response?.moved?.ids ?? []) + [emailId]).filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+}
+
 struct Email: Identifiable, Codable, Hashable {
     let id: String
     var threadId: String?
