@@ -30,6 +30,7 @@ import { getAuth } from "../auth";
 import { authDb, listMailboxesOnDomain } from "../auth/authz";
 import { deleteExpiredVerifications } from "../auth/otp";
 import * as schema from "../auth/schema";
+import { deleteOldSecurityEvents } from "../auth/security-activity";
 import type { Env } from "../types";
 import { deleteZone, getZone } from "./cloudflare-client";
 import { runDomainOffboarding } from "./domain-offboarding";
@@ -135,6 +136,8 @@ export async function runScheduledMaintenance(env: Env, now = new Date()): Promi
 			if (expired.length < SESSION_SWEEP_BATCH) break;
 		}
 		await deleteExpiredVerifications(db, now.getTime());
+		// Sign-in history past the new-device window (AVE-151).
+		await deleteOldSecurityEvents(db, now.getTime());
 		// Invites past expiry stay as history for a while, then go.
 		await db
 			.delete(schema.invite)
