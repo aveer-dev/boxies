@@ -172,12 +172,13 @@ assert.deepEqual(fromIndex(), after);
 {
 	const migration = mailboxMigrations.find((m) => m.name === "45_direct_mail");
 	assert.ok(migration, "45_direct_mail is registered");
-	assert.equal(mailboxMigrations.at(-1), migration, "numbered last");
+	const index = mailboxMigrations.indexOf(migration);
+	assert.equal(mailboxMigrations[index - 1]?.name, "44_send_log_recipients", "numbered after 44");
 	assert.doesNotMatch(migration.sql, /\bUPDATE\s+emails\b|\bDELETE\s+FROM\b|\bDROP\b/i, "additive only");
 
 	const legacy = new DatabaseSync(":memory:");
 	const lsql = sqlStorage(legacy);
-	applyMigrations(lsql, mailboxMigrations.slice(0, -1));
+	applyMigrations(lsql, mailboxMigrations.slice(0, index));
 	legacy.exec(`INSERT INTO emails (id, folder_id, subject, sender, recipient, date, read, raw_headers)
 		VALUES ('old', 'inbox', 'Hi', 'alice@friend.org', '${ME}', '2026-01-01T00:00:00Z', 1, '${personal}')`);
 	applyMigrations(lsql, mailboxMigrations);

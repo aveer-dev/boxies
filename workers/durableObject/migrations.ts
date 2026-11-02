@@ -910,4 +910,17 @@ export const mailboxMigrations: Migration[] = [
               FROM emails;
         `),
 	},
+	{
+		// Reader cards (AVE-175, shared/mail-cards.ts): the one-time code and
+		// the parsed calendar invite (JSON) found when the message arrived.
+		// Readers show them only outside Spam and for senders that didn't
+		// fail authentication; older rows stay NULL (no card). Neither column
+		// feeds a list or the conversation index, so no trigger or seed.
+		// Additive only. Numbered 46, after 45_direct_mail.
+		name: "46_mail_cards",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN otp_code TEXT;
+            ALTER TABLE emails ADD COLUMN calendar_invite TEXT;
+        `),
+	},
 ];
