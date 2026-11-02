@@ -79,7 +79,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import co.inboxies.app.LocalAppModel
-import co.inboxies.app.LocalAuthStore
 import co.inboxies.app.services.ApiClient
 import co.inboxies.app.services.Passkeys
 import co.inboxies.app.services.ReauthChallenge
@@ -118,8 +117,9 @@ fun ReauthPromptHost(coordinator: ReauthCoordinator = ReauthCoordinator.shared) 
 /**
  * "Confirm it's you" (AVE-171): the Android twin of the web `ReauthDialog` and iOS
  * `ReauthSheetView`. Offers what the account has (password + 2FA code, passkey, emailed
- * code) and always falls back to signing in again. `onFinish(true)` once
- * `POST /api/v1/me/reauth` accepted the proof; the caller retries its request.
+ * code). `onFinish(true)` once `POST /api/v1/me/reauth` accepted the proof; the caller
+ * retries its request. It never signs the user out: an account with none of those
+ * methods is told to sign out and back in; the prompt only closes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -129,13 +129,12 @@ fun ReauthSheet(
     initialMethod: ReauthMethod? = null,
 ) {
     val app = LocalAppModel.current
-    val auth = LocalAuthStore.current
     val colors = inboxiesColors()
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
 
-    var method by remember { mutableStateOf(initialMethod ?: challenge.usableMethods.firstOrNull()) }
+    var method by remember { mutableStateOf(initialMethod ?: challenge.methods.firstOrNull()) }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
@@ -153,16 +152,11 @@ fun ReauthSheet(
         confirmValueChange = { it != SheetValue.Hidden || !busy },
     )
 
-    val otherMethods = challenge.usableMethods.filter { it != method }
+    val otherMethods = challenge.methods.filter { it != method }
     val passwordReady = password.isNotEmpty() && (!challenge.twoFactor || code.isNotBlank())
 
     fun close(ok: Boolean) {
         scope.launch { sheetState.hide() }.invokeOnCompletion { onFinish(ok) }
-    }
-
-    fun signOut() {
-        onFinish(false)
-        app.signOut(auth)
     }
 
     fun attempt(fallback: String, work: suspend () -> Unit) {
@@ -250,207 +244,236 @@ fun ReauthSheet(
         scrimColor = HomeChromeMetrics.modalScrim,
         dragHandle = null,
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 24.dp),
-        ) {
-            // Grabber (36×5 muted pill) + close.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(36.dp)
-                        .height(5.dp)
-                        .background(colors.muted.copy(alpha = 0.45f), RoundedCornerShape(50)),
-                )
-            }
-            Box(modifier = Modifier.padding(horizontal = 8.dp)) {
-                IconButton(onClick = { close(false) }, enabled = !isBusy) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.ink)
-                }
-            }
-
-            ReauthHeader()
-
+        Column(modifier = Modifier.fillMaxWidth()) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
-                    .padding(top = 22.dp)
-                    .animateContentSize(settingsNavSpring()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 24.dp),
             ) {
-                AnimatedContent(
-                    targetState = method,
-                    transitionSpec = { fadeIn(settingsNavSpring()) togetherWith fadeOut(settingsNavSpring()) },
-                    label = "reauthMethod",
-                ) { shown ->
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        when (shown) {
-                            ReauthMethod.Password -> {
-                                ReauthField(
-                                    value = password,
-                                    onValueChange = { password = it },
-                                    placeholder = "Password",
-                                    visualTransformation = if (showPassword) {
-                                        VisualTransformation.None
-                                    } else {
-                                        PasswordVisualTransformation()
-                                    },
-                                    keyboardOptions = KeyboardOptions(
-                                        keyboardType = KeyboardType.Password,
-                                        imeAction = if (challenge.twoFactor) ImeAction.Next else ImeAction.Go,
-                                    ),
-                                    keyboardActions = KeyboardActions(
-                                        onNext = { codeFocus.requestFocus() },
-                                        onGo = { submitPassword() },
-                                    ),
-                                    modifier = Modifier.focusRequester(passwordFocus),
-                                    trailing = {
-                                        IconButton(onClick = { showPassword = !showPassword }) {
-                                            Icon(
-                                                if (showPassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                                contentDescription = if (showPassword) "Hide password" else "Show password",
-                                                tint = colors.muted,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        }
-                                    },
-                                )
-                                if (challenge.twoFactor) {
-                                    ReauthField(
-                                        value = code,
-                                        onValueChange = { code = it },
-                                        placeholder = if (useBackupCode) "Backup code" else "Authenticator code",
-                                        keyboardOptions = KeyboardOptions(
-                                            keyboardType = if (useBackupCode) KeyboardType.Ascii else KeyboardType.NumberPassword,
-                                            imeAction = ImeAction.Go,
-                                        ),
-                                        keyboardActions = KeyboardActions(onGo = { submitPassword() }),
-                                        modifier = Modifier.focusRequester(codeFocus),
-                                    )
-                                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                                        QuietLink(
-                                            title = if (useBackupCode) "Use your authenticator app" else "Use a backup code",
-                                            accent = true,
-                                        ) {
-                                            useBackupCode = !useBackupCode
-                                            code = ""
-                                            errorMessage = null
-                                        }
-                                    }
-                                }
-                                ReauthPrimaryButton("Confirm", enabled = passwordReady, isBusy = isBusy) {
-                                    submitPassword()
-                                }
-                            }
-                            ReauthMethod.Passkey -> {
-                                ReauthPrimaryButton(
-                                    "Use a passkey",
-                                    icon = Icons.Filled.Key,
-                                    enabled = true,
-                                    isBusy = isBusy,
-                                ) { usePasskey() }
-                            }
-                            ReauthMethod.EmailCode -> {
-                                val sentTo = codeSentTo
-                                if (sentTo != null) {
-                                    BodyLine(prefix = "Enter the 6-digit code we sent to ", bold = sentTo, suffix = ".")
-                                    ReauthField(
-                                        value = code,
-                                        onValueChange = { code = it.filter(Char::isDigit).take(6) },
-                                        placeholder = "6-digit code",
-                                        centered = true,
-                                        large = true,
-                                        keyboardOptions = KeyboardOptions(
-                                            keyboardType = KeyboardType.NumberPassword,
-                                            imeAction = ImeAction.Go,
-                                        ),
-                                        keyboardActions = KeyboardActions(onGo = { submitEmailCode() }),
-                                        modifier = Modifier.focusRequester(codeFocus),
-                                    )
-                                    ReauthPrimaryButton(
-                                        "Confirm",
-                                        enabled = code.trim().length >= 6,
-                                        isBusy = isBusy,
-                                    ) { submitEmailCode() }
-                                } else {
-                                    BodyLine(
-                                        prefix = "We'll email a 6-digit code to ",
-                                        bold = challenge.emailCodeTo ?: "your recovery email",
-                                        suffix = ".",
-                                    )
-                                    ReauthPrimaryButton("Send code", enabled = true, isBusy = isBusy) {
-                                        sendEmailCode()
-                                    }
-                                }
-                            }
-                            ReauthMethod.SignIn, null -> {
-                                Text(
-                                    "Sign out and sign back in, then try again within 5 minutes.",
-                                    fontFamily = InterFontFamily,
-                                    fontSize = 14.sp,
-                                    color = colors.ink,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                                ReauthPrimaryButton("Sign out", enabled = true, isBusy = isBusy) { signOut() }
-                            }
-                        }
+                // Grabber (36×5 muted pill) + close.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(36.dp)
+                            .height(5.dp)
+                            .background(colors.muted.copy(alpha = 0.45f), RoundedCornerShape(50)),
+                    )
+                }
+                Box(modifier = Modifier.padding(horizontal = 8.dp)) {
+                    IconButton(onClick = { close(false) }, enabled = !isBusy) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Close", tint = colors.ink)
                     }
                 }
 
-                AnimatedVisibility(
-                    visible = errorMessage != null,
-                    enter = fadeIn(settingsNavSpring()),
-                    exit = fadeOut(settingsNavSpring()),
-                ) {
-                    Text(
-                        errorMessage.orEmpty(),
-                        fontFamily = InterFontFamily,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 13.sp,
-                        color = colors.deepDarkRed,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                    )
-                }
-            }
+                ReauthHeader()
 
-            if (otherMethods.isNotEmpty() || method != null) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 24.dp)
-                        .padding(top = 20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                        .padding(top = 22.dp)
+                        .animateContentSize(settingsNavSpring()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(0.5.dp)
-                            .background(colors.line),
-                    )
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        otherMethods.forEach { other ->
-                            QuietLink(title = switchLabel(other), icon = switchIcon(other), enabled = !isBusy) {
-                                switchTo(other)
+                    AnimatedContent(
+                        targetState = method,
+                        transitionSpec = { fadeIn(settingsNavSpring()) togetherWith fadeOut(settingsNavSpring()) },
+                        label = "reauthMethod",
+                    ) { shown ->
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            when (shown) {
+                                ReauthMethod.Password -> {
+                                    ReauthField(
+                                        value = password,
+                                        onValueChange = { password = it },
+                                        placeholder = "Password",
+                                        visualTransformation = if (showPassword) {
+                                            VisualTransformation.None
+                                        } else {
+                                            PasswordVisualTransformation()
+                                        },
+                                        keyboardOptions = KeyboardOptions(
+                                            keyboardType = KeyboardType.Password,
+                                            imeAction = if (challenge.twoFactor) ImeAction.Next else ImeAction.Go,
+                                        ),
+                                        keyboardActions = KeyboardActions(
+                                            onNext = { codeFocus.requestFocus() },
+                                            onGo = { submitPassword() },
+                                        ),
+                                        modifier = Modifier.focusRequester(passwordFocus),
+                                        trailing = {
+                                            IconButton(onClick = { showPassword = !showPassword }) {
+                                                Icon(
+                                                    if (showPassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                                    contentDescription = if (showPassword) "Hide password" else "Show password",
+                                                    tint = colors.muted,
+                                                    modifier = Modifier.size(18.dp),
+                                                )
+                                            }
+                                        },
+                                    )
+                                    if (challenge.twoFactor) {
+                                        ReauthField(
+                                            value = code,
+                                            onValueChange = { code = it },
+                                            placeholder = if (useBackupCode) "Backup code" else "Authenticator code",
+                                            keyboardOptions = KeyboardOptions(
+                                                keyboardType = if (useBackupCode) KeyboardType.Ascii else KeyboardType.NumberPassword,
+                                                imeAction = ImeAction.Go,
+                                            ),
+                                            keyboardActions = KeyboardActions(onGo = { submitPassword() }),
+                                            modifier = Modifier.focusRequester(codeFocus),
+                                        )
+                                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                                            QuietLink(
+                                                title = if (useBackupCode) "Use your authenticator app" else "Use a backup code",
+                                                accent = true,
+                                            ) {
+                                                useBackupCode = !useBackupCode
+                                                code = ""
+                                                errorMessage = null
+                                            }
+                                        }
+                                    }
+                                }
+                                ReauthMethod.Passkey -> {
+                                    Text(
+                                        "Use one of your passkeys to confirm it's you.",
+                                        fontFamily = InterFontFamily,
+                                        fontSize = 14.sp,
+                                        color = colors.ink,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                                ReauthMethod.EmailCode -> {
+                                    val sentTo = codeSentTo
+                                    if (sentTo != null) {
+                                        BodyLine(prefix = "Enter the 6-digit code we sent to ", bold = sentTo, suffix = ".")
+                                        ReauthField(
+                                            value = code,
+                                            onValueChange = { code = it.filter(Char::isDigit).take(6) },
+                                            placeholder = "6-digit code",
+                                            centered = true,
+                                            large = true,
+                                            keyboardOptions = KeyboardOptions(
+                                                keyboardType = KeyboardType.NumberPassword,
+                                                imeAction = ImeAction.Go,
+                                            ),
+                                            keyboardActions = KeyboardActions(onGo = { submitEmailCode() }),
+                                            modifier = Modifier.focusRequester(codeFocus),
+                                        )
+                                    } else {
+                                        BodyLine(
+                                            prefix = "We'll email a 6-digit code to ",
+                                            bold = challenge.emailCodeTo ?: "your recovery email",
+                                            suffix = ".",
+                                        )
+                                    }
+                                }
+                                null -> {
+                                    // Nothing this sheet can check (e.g. a Google or Apple-only
+                                    // account with no passkey or recovery email). Never signs out
+                                    // on its own.
+                                    Text(
+                                        "To continue, sign out and sign back in, then try again within 5 minutes.",
+                                        fontFamily = InterFontFamily,
+                                        fontSize = 14.sp,
+                                        color = colors.ink,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                             }
                         }
-                        if (method != null) {
-                            QuietLink(title = "Sign in again instead", enabled = !isBusy) { signOut() }
+                    }
+
+                    AnimatedVisibility(
+                        visible = errorMessage != null,
+                        enter = fadeIn(settingsNavSpring()),
+                        exit = fadeOut(settingsNavSpring()),
+                    ) {
+                        Text(
+                            errorMessage.orEmpty(),
+                            fontFamily = InterFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 13.sp,
+                            color = colors.deepDarkRed,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp),
+                        )
+                    }
+                }
+
+                if (otherMethods.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                            .padding(top = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(0.5.dp)
+                                .background(colors.line),
+                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            otherMethods.forEach { other ->
+                                QuietLink(title = switchLabel(other), icon = switchIcon(other), enabled = !isBusy) {
+                                    switchTo(other)
+                                }
+                            }
                         }
+                    }
+                }
+            }
+
+            // The primary action sits at the bottom of the sheet (above the keyboard when
+            // one is up), not inline under the fields. Twin of iOS `bottomBar`.
+            Column(modifier = Modifier.fillMaxWidth().background(colors.background)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(0.5.dp)
+                        .background(colors.line),
+                )
+                Box(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                    when (method) {
+                        ReauthMethod.Password ->
+                            ReauthPrimaryButton("Confirm", enabled = passwordReady, isBusy = isBusy) { submitPassword() }
+                        ReauthMethod.Passkey ->
+                            ReauthPrimaryButton(
+                                "Use a passkey",
+                                icon = Icons.Filled.Key,
+                                enabled = true,
+                                isBusy = isBusy,
+                            ) { usePasskey() }
+                        ReauthMethod.EmailCode ->
+                            if (codeSentTo != null) {
+                                ReauthPrimaryButton(
+                                    "Confirm",
+                                    enabled = code.trim().length >= 6,
+                                    isBusy = isBusy,
+                                ) { submitEmailCode() }
+                            } else {
+                                ReauthPrimaryButton("Send code", enabled = true, isBusy = isBusy) { sendEmailCode() }
+                            }
+                        null ->
+                            ReauthPrimaryButton("Close", enabled = true, isBusy = isBusy) { close(false) }
                     }
                 }
             }
@@ -654,12 +677,10 @@ private fun switchLabel(method: ReauthMethod): String = when (method) {
     ReauthMethod.Password -> "Use your password"
     ReauthMethod.Passkey -> "Use a passkey"
     ReauthMethod.EmailCode -> "Email me a code"
-    ReauthMethod.SignIn -> "Sign in again instead"
 }
 
-private fun switchIcon(method: ReauthMethod): ImageVector? = when (method) {
+private fun switchIcon(method: ReauthMethod): ImageVector = when (method) {
     ReauthMethod.Password -> Icons.Outlined.Password
     ReauthMethod.Passkey -> Icons.Outlined.Key
     ReauthMethod.EmailCode -> Icons.Outlined.Email
-    ReauthMethod.SignIn -> null
 }

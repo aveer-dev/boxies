@@ -290,6 +290,9 @@ struct SettingsSheetView: View {
                 screenerEnabled = app.isScreenerEnabled
             }
         }
+        // Sign-in & recovery, passkeys and Delete account answer `reauth_required`
+        // until the user confirms it's them (AVE-170).
+        .reauthPromptHost()
         .applyThemeController()
     }
 

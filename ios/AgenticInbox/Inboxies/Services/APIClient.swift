@@ -18,6 +18,9 @@ enum APIError: LocalizedError {
     /// 401 `code: "TWO_FACTOR_REQUIRED"` from password sign-in: the password was right,
     /// and the account wants an authenticator or backup code before it hands out a session.
     case twoFactorRequired(TwoFactorChallenge)
+    /// 403 `code: "reauth_required"`: a sensitive account change needs a session that
+    /// signed in or confirmed it's the user in the last 5 minutes (`Reauth.swift`).
+    case reauthRequired(ReauthChallenge)
 
     /// True for a write refused because the domain's service ended.
     var isServiceEnded: Bool {
@@ -46,6 +49,10 @@ enum APIError: LocalizedError {
             return message.isEmpty ? "Not sent: a recipient is suppressed." : message
         case .twoFactorRequired:
             return "Enter the code from your authenticator app."
+        case .reauthRequired(let challenge):
+            return challenge.message.isEmpty
+                ? "For your security, confirm it's you first, then try again."
+                : challenge.message
         }
     }
 }
@@ -109,16 +116,24 @@ final class APIClient: @unchecked Sendable {
         bearerToken: String? = nil,
         headers: [String: String] = [:]
     ) async throws -> (T, HTTPURLResponse) {
-        let (data, http) = try await perform(
-            path: path,
-            method: method,
-            query: query,
-            body: body,
-            authed: authed,
-            bearerToken: bearerToken,
-            headers: headers
-        )
-        return (try decodeResponse(data: data, http: http), http)
+        // A `reauth_required` 403 opens "Confirm it's you"; confirmed, the request runs once more.
+        try await ReauthRetry.run(confirm: reauthPrompt) {
+            let (data, http) = try await perform(
+                path: path,
+                method: method,
+                query: query,
+                body: body,
+                authed: authed,
+                bearerToken: bearerToken,
+                headers: headers
+            )
+            return (try decodeResponse(data: data, http: http), http)
+        }
+    }
+
+    /// Asks the user to confirm it's them; true once the session is fresh again.
+    private func reauthPrompt(_ challenge: ReauthChallenge) async -> Bool {
+        await ReauthCoordinator.shared.confirm(challenge)
     }
 
     private func decodeResponse<T: Decodable>(data: Data, http: HTTPURLResponse) throws -> T {
@@ -227,6 +242,9 @@ final class APIClient: @unchecked Sendable {
                 }
                 if let blocked = BounceSuppression.error(statusCode: http.statusCode, data: data) {
                     throw blocked
+                }
+                if let challenge = ReauthChallenge.parse(statusCode: http.statusCode, data: data) {
+                    throw APIError.reauthRequired(challenge)
                 }
                 if http.statusCode == 401, let challenge = TwoFactorChallenge.parse(data) {
                     throw APIError.twoFactorRequired(challenge)
@@ -337,6 +355,33 @@ final class APIClient: @unchecked Sendable {
             path: "/api/v1/me/identities/\(type.urlPathEncoded)",
             method: "DELETE"
         )
+    }
+
+    // MARK: Re-authentication (AVE-113 / AVE-170)
+
+    /// Confirms it's the user with the account password (plus an authenticator
+    /// or backup code when 2FA is on). The session is fresh for 5 minutes.
+    func reauthWithPassword(password: String, code: String?, useBackupCode: Bool) async throws -> ReauthResponse {
+        var body: [String: Any] = ["method": "password", "password": password]
+        if let code {
+            body["code"] = code.filter { !$0.isWhitespace }
+            body["codeType"] = useBackupCode ? "backup_code" : "totp"
+        }
+        return try await request(path: "/api/v1/me/reauth", method: "POST", body: body)
+    }
+
+    /// Confirms with a code mailed by `sendReauthEmailCode` (accounts without a password).
+    func reauthWithEmailCode(_ code: String) async throws -> ReauthResponse {
+        try await request(
+            path: "/api/v1/me/reauth",
+            method: "POST",
+            body: ["method": "email_code", "code": code.trimmingCharacters(in: .whitespacesAndNewlines)]
+        )
+    }
+
+    /// Mails a 6-digit confirmation code to the recovery (or outside login) address.
+    func sendReauthEmailCode() async throws -> ReauthEmailCodeResponse {
+        try await request(path: "/api/v1/me/reauth/email-code", method: "POST", body: [:] as [String: Any])
     }
 
     // MARK: Sessions
