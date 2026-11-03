@@ -32,6 +32,7 @@ import type {
 	MeResponse,
 	AccountSession,
 	McpGrant,
+	SecurityActivityResponse,
 	RecoveryEmailStatus,
 	MailboxMember,
 	MailboxInviteRow,
@@ -247,6 +248,8 @@ const api = {
 		del<{ ok: boolean }>(`/api/v1/me/sessions/${encodeURIComponent(sessionId)}`),
 	revokeOtherSessions: () =>
 		post<{ ok: boolean; revoked: number }>("/api/v1/me/sessions/revoke-others"),
+	/** The caller's security events of the last 30 days, newest first (AVE-151). */
+	getSecurityActivity: () => get<SecurityActivityResponse>("/api/v1/me/security-activity"),
 
 	// Connected apps (MCP OAuth grants)
 	listMcpGrants: () => get<McpGrant[]>("/api/v1/me/mcp-grants"),

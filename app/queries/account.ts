@@ -32,6 +32,16 @@ export function useSessions() {
 	});
 }
 
+/** Recent security activity (last 30 days). Retried once; a failure shows a calm note. */
+export function useSecurityActivity() {
+	return useQuery({
+		queryKey: queryKeys.account.securityActivity,
+		queryFn: () => api.getSecurityActivity(),
+		staleTime: 15_000,
+		retry: 1,
+	});
+}
+
 export function useMcpGrants() {
 	return useQuery({
 		queryKey: queryKeys.account.mcpGrants,

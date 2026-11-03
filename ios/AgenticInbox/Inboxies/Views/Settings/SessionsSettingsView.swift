@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Account → Devices & sessions: every signed-in device, browser, extension and
 /// AutoFill session, with sign-out per session or everywhere else; plus the apps
-/// connected over MCP OAuth, each with Disconnect (revokes the grant and its tokens).
+/// connected over MCP OAuth, each with Disconnect (revokes the grant and its tokens);
+/// then a read-only list of the last 30 days of sign-ins and account changes (AVE-151).
 struct SessionsSettingsView: View {
     @Environment(AppModel.self) private var app
 
@@ -19,10 +20,14 @@ struct SessionsSettingsView: View {
     @State private var grantsError: String?
     @State private var revokingGrantId: String?
     @State private var grantToRevoke: McpGrant?
+    @State private var activity: [SecurityActivityItem] = []
+    @State private var isLoadingActivity = true
+    @State private var activityFailed = false
 
     private var others: [AccountSession] { sessions.filter { !$0.current } }
 
     var body: some View {
+        ScrollViewReader { proxy in
         List {
             Section {
                 Text("Where your account is signed in. Sign out anything you don't recognize, then change your password.")
@@ -95,6 +100,37 @@ struct SessionsSettingsView: View {
                 Text("AI assistants and other apps you allowed to use your mail over MCP. Disconnecting cuts off access right away.")
             }
 
+            Section {
+                if isLoadingActivity && activity.isEmpty {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                    .id(Self.activityAnchor)
+                } else if activityFailed && activity.isEmpty {
+                    Text("Couldn't load recent activity. Try again later.")
+                        .font(.inter(size: SettingsFormChrome.footerFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                        .id(Self.activityAnchor)
+                } else if activity.isEmpty {
+                    Text("No security activity in the last 30 days")
+                        .font(.inter(size: SettingsFormChrome.rowFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                        .id(Self.activityAnchor)
+                } else {
+                    ForEach(Array(activity.enumerated()), id: \.element.id) { index, event in
+                        activityRow(event)
+                            .id(index == 0 ? Self.activityAnchor : event.id)
+                    }
+                }
+            } header: {
+                Text("Recent security activity")
+            } footer: {
+                Text("Sign-ins and changes to how you sign in, from the last 30 days. Locations are approximate.")
+            }
+
             if let statusMessage {
                 Section {
                     Text(statusMessage)
@@ -109,6 +145,15 @@ struct SessionsSettingsView: View {
             }
         }
         .settingsFormListStyle()
+        #if DEBUG
+        .task {
+            // `-previewSessions -previewSecurityActivity`: bring the activity list into view.
+            guard PreviewSupport.securityActivityPreview != nil else { return }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            proxy.scrollTo(Self.activityAnchor, anchor: .top)
+        }
+        #endif
+        }
         .navigationTitle("Devices & sessions")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
@@ -229,6 +274,36 @@ struct SessionsSettingsView: View {
         .padding(.vertical, 2)
     }
 
+    private func activityRow(_ event: SecurityActivityItem) -> some View {
+        // Time first so it survives truncation; the title keeps the full row width.
+        let when = Self.parseDate(event.createdAt).map { $0.formatted(.relative(presentation: .named)) }
+        let subtitle = [when, SecurityActivity.detail(event)]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+        return HStack(spacing: 12) {
+            Image(systemName: SecurityActivity.symbol(event))
+                .font(.system(size: 17))
+                .foregroundStyle(AppTheme.ink)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(SecurityActivity.title(event))
+                    .font(.inter(size: SettingsFormChrome.rowFontSize))
+                    .foregroundStyle(AppTheme.ink)
+                    .lineLimit(2)
+                if !subtitle.isEmpty {
+                    Text(subtitle.prefix(1).uppercased() + subtitle.dropFirst())
+                        .font(.inter(size: SettingsFormChrome.footerFontSize))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: Actions
 
     private func load() async {
@@ -237,11 +312,31 @@ struct SessionsSettingsView: View {
             grants = Self.previewGrants
             isLoading = false
             isLoadingGrants = false
+            switch PreviewSupport.securityActivityPreview ?? .events {
+            case .events: activity = Self.previewActivity
+            case .empty: activity = []
+            case .error: activity = []; activityFailed = true
+            }
+            isLoadingActivity = false
             return
         }
         async let grantsLoad: Void = loadGrants()
+        async let activityLoad: Void = loadActivity()
         await loadSessions()
         await grantsLoad
+        await activityLoad
+    }
+
+    /// Read-only; a failure (e.g. the server not migrated yet) shows a calm note, never a banner.
+    private func loadActivity() async {
+        isLoadingActivity = true
+        defer { isLoadingActivity = false }
+        do {
+            activity = try await APIClient.shared.securityActivity().events
+            activityFailed = false
+        } catch {
+            activityFailed = true
+        }
     }
 
     private func loadGrants() async {
@@ -391,6 +486,8 @@ struct SessionsSettingsView: View {
         return parts.joined(separator: " · ")
     }
 
+    private static let activityAnchor = "securityActivity"
+
     private static func parseDate(_ iso: String) -> Date? {
         ISO8601DateFormatter.withFractionalSeconds.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
     }
@@ -409,6 +506,22 @@ struct SessionsSettingsView: View {
                 scopes: ["read"], mailboxIds: ["hello@inboxies.email"],
                 createdAt: iso.string(from: now.addingTimeInterval(-3_600)), expiresAt: nil
             ),
+        ]
+    }
+
+    private static var previewActivity: [SecurityActivityItem] {
+        let now = Date()
+        let iso = ISO8601DateFormatter()
+        func at(_ secondsAgo: TimeInterval) -> String { iso.string(from: now.addingTimeInterval(-secondsAgo)) }
+        return [
+            SecurityActivityItem(
+                id: "a-1", kind: "sign_in", createdAt: at(12 * 60), device: "Inboxies app on iOS",
+                location: "Lagos, Nigeria", country: "NG", newDevice: true
+            ),
+            SecurityActivityItem(id: "a-2", kind: "two_factor_enabled", createdAt: at(3 * 3_600), device: "Safari on macOS", location: "Lagos, Nigeria"),
+            SecurityActivityItem(id: "a-3", kind: "sign_in_method_added", createdAt: at(26 * 3_600), device: "Chrome on Windows", provider: "google"),
+            SecurityActivityItem(id: "a-4", kind: "password_changed", createdAt: at(4 * 86_400), device: "Safari on macOS", location: "Accra, Ghana"),
+            SecurityActivityItem(id: "a-5", kind: "recovery_email_set", createdAt: at(12 * 86_400)),
         ]
     }
 

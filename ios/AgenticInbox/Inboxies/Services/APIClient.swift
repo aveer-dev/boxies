@@ -404,6 +404,11 @@ final class APIClient: @unchecked Sendable {
 
     // MARK: Connected apps (MCP OAuth grants)
 
+    /// Recent security activity: the caller's last 30 days, newest first (AVE-151).
+    func securityActivity() async throws -> SecurityActivityResponse {
+        try await request(path: "/api/v1/me/security-activity")
+    }
+
     func listMcpGrants() async throws -> [McpGrant] {
         try await request(path: "/api/v1/me/mcp-grants")
     }

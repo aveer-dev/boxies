@@ -67,6 +67,7 @@ import co.inboxies.app.models.MailboxMember
 import co.inboxies.app.models.RecoveryEmailStatus
 import co.inboxies.app.models.RevokeSessionsResponse
 import co.inboxies.app.models.McpGrant
+import co.inboxies.app.models.SecurityActivityResponse
 import co.inboxies.app.models.RecentRecipient
 import co.inboxies.app.models.RecentRecipientsResponse
 import co.inboxies.app.models.SendEmailResponse
@@ -489,6 +490,9 @@ class ApiClient private constructor() {
     )
 
     // ── Connected apps (MCP OAuth grants) ──
+
+    /** Recent security activity: the caller's last 30 days, newest first (AVE-151). */
+    suspend fun securityActivity(): SecurityActivityResponse = request("/api/v1/me/security-activity")
 
     suspend fun listMcpGrants(): List<McpGrant> = request("/api/v1/me/mcp-grants")
 

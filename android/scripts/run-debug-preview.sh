@@ -36,6 +36,9 @@
 #   ./scripts/run-debug-preview.sh inviteAcceptSignedIn
 #   ./scripts/run-debug-preview.sh members
 #   ./scripts/run-debug-preview.sh sessions
+#   ./scripts/run-debug-preview.sh securityActivity      # Devices & sessions → Recent security activity (AVE-151)
+#   ./scripts/run-debug-preview.sh securityActivityEmpty # … nothing in the last 30 days
+#   ./scripts/run-debug-preview.sh securityActivityError # … couldn't load
 #   ./scripts/run-debug-preview.sh senders             # Settings → Senders, Allowed tab
 #   ./scripts/run-debug-preview.sh sendersBlocked      # Settings → Senders, Blocked tab
 #   ./scripts/run-debug-preview.sh suppressions        # Settings → Outgoing mail → Bounced addresses
@@ -79,6 +82,9 @@ case "$mode" in
   inviteAcceptSignedIn|InviteAcceptSignedIn|previewInviteAcceptSignedIn) extra=previewInviteAcceptSignedIn; label=inviteAcceptSignedIn ;;
   members|Members|previewMembers) extra=previewMembers; label=members ;;
   sessions|Sessions|previewSessions) extra=previewSessions; label=sessions ;;
+  securityActivity|SecurityActivity|previewSecurityActivity) extra=previewSecurityActivity; label=securityActivity ;;
+  securityActivityEmpty|SecurityActivityEmpty|previewSecurityActivityEmpty) extra=previewSecurityActivityEmpty; label=securityActivityEmpty ;;
+  securityActivityError|SecurityActivityError|previewSecurityActivityError) extra=previewSecurityActivityError; label=securityActivityError ;;
   senders|Senders|previewSenders) extra=previewSenders; label=senders ;;
   sendersBlocked|SendersBlocked|previewSendersBlocked) extra=previewSendersBlocked; label=sendersBlocked ;;
   suppressions|Suppressions|previewSuppressions) extra=previewSuppressions; label=suppressions ;;

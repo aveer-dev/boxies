@@ -330,6 +330,25 @@ enum PreviewSupport {
         #endif
     }
 
+    /// Which Recent security activity state `-previewSessions -previewSecurityActivity [empty|error]`
+    /// shows (AVE-151; Android `securityActivity` / `securityActivityEmpty` / `securityActivityError`).
+    /// Nil without the flag (the sessions preview then shows the fixture events unscrolled).
+    enum SecurityActivityPreview { case events, empty, error }
+
+    static var securityActivityPreview: SecurityActivityPreview? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-previewSecurityActivity") else { return nil }
+        switch index + 1 < args.count ? args[index + 1] : "" {
+        case "empty": return .empty
+        case "error": return .error
+        default: return .events
+        }
+        #else
+        return nil
+        #endif
+    }
+
     static var aiUsageFixture: AIUsage? {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
@@ -986,6 +1005,8 @@ struct PreviewAdminAuthRoot: View {
                 SettingsSheetView()
                     .environment(PreviewSupport.settingsPreviewModel(screenerOff: args.contains("-previewScreenerOff")))
             } else if args.contains("-previewSessions") {
+                // Add `-previewSecurityActivity [empty|error]` to scroll to Recent security
+                // activity in that state (AVE-151; Android: `securityActivity*`).
                 NavigationStack {
                     SessionsSettingsView()
                 }
