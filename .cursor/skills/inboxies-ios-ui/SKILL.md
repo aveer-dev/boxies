@@ -203,6 +203,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewSignInMethods -previewReauth [password\|twoFactor\|passkey\|emailCode]` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API (AVE-170) |
 | `-previewMembers` | Mailbox members + pending invites |
 | `-previewSessions` | Devices & sessions |
+| `-previewSessions -previewSecurityActivity [empty\|error]` | Devices & sessions scrolled to Recent security activity: fixture events, or the empty / couldn't-load state, no API (AVE-151) |
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
 | `-previewSuppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only"), no API (AVE-157) |
 | `-previewTags` | Settings → Tags: fixture custom folders with create / rename / delete, no API (add `-previewTagsRename` or `-previewTagsDelete` for the dialogs) (AVE-158) |
