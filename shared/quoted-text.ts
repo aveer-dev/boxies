@@ -127,6 +127,20 @@ export function decodeEntities(text: string): string {
 	);
 }
 
+/**
+ * Single-line plain text from already tag-free text (list snippets, push
+ * previews, AVE-180): decode entities once, drop preheader padding (soft
+ * hyphens, zero-width and other invisible characters), collapse whitespace.
+ * A ZWJ is kept only between two visible characters, where it joins emoji.
+ */
+export function plainPreviewText(text: string): string {
+	return decodeEntities(text)
+		.replace(INVISIBLE_CHARS, "")
+		.replace(/(^|\s)‍+|‍+(?=\s|$)/g, "$1")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
 /** Remove `<head>`, `<style>`, `<script>`, `<title>` blocks and comments. */
 function dropNonContent(html: string): string {
 	return html
