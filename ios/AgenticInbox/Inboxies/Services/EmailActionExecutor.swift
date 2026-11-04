@@ -269,35 +269,62 @@ extension AppModel {
         _ email: Email,
         destinationFolderId: String
     ) async {
+        await decideScreenerSender(email, destinationFolderId: destinationFolderId)
+    }
+
+    /// Screener-lite: reject sender into screened_out (silent).
+    func rejectScreenerSender(_ email: Email) async {
+        await decideScreenerSender(email, destinationFolderId: nil)
+    }
+
+    /// Accept (`destinationFolderId`) or Decline (nil), then a toast with Undo (AVE-159).
+    private func decideScreenerSender(_ email: Email, destinationFolderId: String?) async {
         guard let mailboxId = selectedMailboxId else { return }
-        let sender = email.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let sender = Self.screenerSenderKey(email)
         guard !sender.isEmpty else { return }
+        let localFolderId = destinationFolderId ?? "screened_out"
 
         do {
-            try await APIClient.shared.approveSender(
-                mailboxId: mailboxId,
-                sender: sender,
-                destinationFolderId: destinationFolderId,
-                emailId: email.id,
-                displayName: email.senderName
-            )
+            let response: SenderTriageDecisionResponse
+            if let destinationFolderId {
+                response = try await APIClient.shared.approveSender(
+                    mailboxId: mailboxId,
+                    sender: sender,
+                    destinationFolderId: destinationFolderId,
+                    emailId: email.id,
+                    displayName: email.senderName
+                )
+            } else {
+                response = try await APIClient.shared.rejectSender(
+                    mailboxId: mailboxId,
+                    sender: sender,
+                    emailId: email.id,
+                    displayName: email.senderName
+                )
+            }
             // Mirror archive: update local SQLite so empty-folder sync cannot revive ghosts.
             let queued = (emails + screenerQueue).filter {
-                $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+                Self.screenerSenderKey($0) == sender
                     && ($0.folderId == "screener" || $0.id == email.id)
             }
             for item in queued {
-                DatabaseService.shared.moveEmail(id: item.id, toFolderId: destinationFolderId)
+                DatabaseService.shared.moveEmail(id: item.id, toFolderId: localFolderId)
             }
             let queuedIds = Set(queued.map(\.id))
             emails.removeAll { queuedIds.contains($0.id) }
             screenerQueue.removeAll { queuedIds.contains($0.id) }
             if let selected = selectedEmail, queuedIds.contains(selected.id)
-                || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
+                || Self.screenerSenderKey(selected) == sender
             {
                 selectedEmail = nil
                 threadEmails = []
             }
+            showScreenerUndoToast(
+                ScreenerDecision.toastTitle(destinationFolderId: destinationFolderId),
+                mailboxId: mailboxId,
+                sender: sender,
+                restoreIds: ScreenerDecision.restoreIds(response: response, emailId: email.id)
+            )
             await loadEmailsForCurrentTab(showLoading: false)
             if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
                 folders = synced
@@ -307,42 +334,56 @@ extension AppModel {
         }
     }
 
-    /// Screener-lite: reject sender into screened_out (silent).
-    func rejectScreenerSender(_ email: Email) async {
-        guard let mailboxId = selectedMailboxId else { return }
-        let sender = email.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !sender.isEmpty else { return }
-
-        do {
-            try await APIClient.shared.rejectSender(
-                mailboxId: mailboxId,
-                sender: sender,
-                emailId: email.id,
-                displayName: email.senderName
-            )
-            let queued = (emails + screenerQueue).filter {
-                $0.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
-                    && ($0.folderId == "screener" || $0.id == email.id)
+    /// Decision toast with Undo. The decision is already on the server, so Undo
+    /// calls `DELETE sender-triage/:sender` and moves the refiled mail back to
+    /// the Screener (same shape as `showSpamVerdictUndoToast`). If the DELETE
+    /// fails the decision stands and an error toast says so.
+    private func showScreenerUndoToast(
+        _ message: String,
+        mailboxId: String,
+        sender: String,
+        restoreIds: [String]
+    ) {
+        commitPendingActionImmediately()
+        let action = UndoableAction(
+            message: message,
+            execute: {},
+            rollback: { @MainActor in
+                Task { @MainActor in
+                    await self.undoScreenerDecision(mailboxId: mailboxId, sender: sender, restoreIds: restoreIds)
+                }
             }
-            for item in queued {
-                DatabaseService.shared.moveEmail(id: item.id, toFolderId: "screened_out")
+        )
+        pendingUndoAction = action
+        showToast(message, isUndo: true, duration: 6.0)
+        let actionID = action.id
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            if self.pendingUndoAction?.id == actionID {
+                self.pendingUndoAction = nil
             }
-            let queuedIds = Set(queued.map(\.id))
-            emails.removeAll { queuedIds.contains($0.id) }
-            screenerQueue.removeAll { queuedIds.contains($0.id) }
-            if let selected = selectedEmail, queuedIds.contains(selected.id)
-                || selected.sender.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == sender
-            {
-                selectedEmail = nil
-                threadEmails = []
-            }
-            await loadEmailsForCurrentTab(showLoading: false)
-            if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
-                folders = synced
-            }
-        } catch {
-            errorMessage = error.localizedDescription
         }
+    }
+
+    private func undoScreenerDecision(mailboxId: String, sender: String, restoreIds: [String]) async {
+        do {
+            try await APIClient.shared.deleteSenderTriage(mailboxId: mailboxId, sender: sender)
+        } catch {
+            showToast("Couldn't undo", isError: true)
+            return
+        }
+        // Undecided again: put what the decision filed back in the Screening room.
+        // Best effort per message; the next folder sync settles any that failed.
+        for id in restoreIds {
+            DatabaseService.shared.moveEmail(id: id, toFolderId: "screener")
+            _ = try? await APIClient.shared.moveEmail(mailboxId: mailboxId, id: id, folderId: "screener")
+        }
+        await refreshScreenerQueue()
+        await loadEmailsForCurrentTab(showLoading: false)
+        if let synced = try? await APIClient.shared.listFolders(mailboxId: mailboxId) {
+            folders = synced
+        }
+        showToast("Undone")
     }
 
     func deleteEmails(_ emailIDs: Set<String>) async {

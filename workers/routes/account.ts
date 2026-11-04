@@ -33,6 +33,7 @@ import { userKey, type RequestPrincipal } from "../auth/principal";
 import { clientIp, isAccountLocked, isRateLimited, recordPasswordFailure, TOO_MANY } from "../auth/rate-limit";
 import { isReauthFresh, reauthGate, recordReauth } from "../auth/reauth";
 import { securityNoticeRecipients, sendSecurityNotice, type SecurityChange } from "../auth/security-notice";
+import { listSecurityActivity, requestDevice } from "../auth/security-activity";
 import * as schema from "../auth/schema";
 import {
 	clearSessionCookieHeader,
@@ -90,7 +91,13 @@ function notifySecurityChange(
 	opts: { extra?: (string | null | undefined)[]; recipients?: string[]; login?: string } = {},
 ): void {
 	c.executionCtx.waitUntil(
-		sendSecurityNotice(c.env, { userId, requestUrl: c.req.url, change, ...opts }).catch((e) =>
+		sendSecurityNotice(c.env, {
+			userId,
+			requestUrl: c.req.url,
+			change,
+			device: requestDevice(c.req.raw),
+			...opts,
+		}).catch((e) =>
 			console.error("[Auth] Security notice failed:", (e as Error).message || e),
 		),
 	);
@@ -604,6 +611,8 @@ export function registerAccountRoutes(app: App) {
 		await setUserPassword(db, user.id, newPassword);
 		await revokeLinkTokens(db, "password-reset", user.id);
 		await revokeUserSessions(c.env, user.id);
+		// The sign-in below is then recorded without a second (new-device) mail.
+		notifySecurityChange(c, user.id, { kind: "password_reset" });
 		if (user.twoFactorEnabled) {
 			// A reset proves the recovery email, not the second factor: sign in
 			// with the new password so the user still gets the 2FA challenge.
@@ -692,6 +701,17 @@ export function registerAccountRoutes(app: App) {
 					current: s.id === principal.sessionId,
 				})),
 		);
+	});
+
+	/**
+	 * "Recent security activity" (AVE-151): the caller's sign-ins and account
+	 * changes of the last 30 days, newest first, read-only. Shape:
+	 * `{ since, events: SecurityActivityItem[] }` (`auth/security-activity.ts`).
+	 */
+	app.get("/api/v1/me/security-activity", async (c) => {
+		const principal = requirePrincipal(c);
+		if (!principal) return c.json({ error: "Unauthorized" }, 401);
+		return c.json(await listSecurityActivity(authDb(c.env.AUTH_DB), principal.userId));
 	});
 
 	app.delete("/api/v1/me/sessions/:sessionId", async (c) => {
