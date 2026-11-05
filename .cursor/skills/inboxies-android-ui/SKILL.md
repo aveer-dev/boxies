@@ -208,6 +208,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Confirm it's you | `previewReauth` · `previewReauthTwoFactor` · `previewReauthPasskey` · `previewReauthEmailCode` | `reauth` · `reauthTwoFactor` · `reauthPasskey` · `reauthEmailCode` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API: password · password + authenticator code · passkey · emailed code. Peer of iOS `-previewSignInMethods -previewReauth <password\|twoFactor\|passkey\|emailCode>` (AVE-171) |
 | Members | `previewMembers` | `members` | Mailbox members + pending invites |
 | Devices & sessions | `previewSessions` | `sessions` | Session list |
+| Security activity | `previewSecurityActivity` · `previewSecurityActivityEmpty` · `previewSecurityActivityError` | `securityActivity` · `securityActivityEmpty` · `securityActivityError` | Devices & sessions scrolled to Recent security activity: fixture events · empty · couldn't load. Peer of iOS `-previewSessions -previewSecurityActivity [empty\|error]` (AVE-151) |
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |

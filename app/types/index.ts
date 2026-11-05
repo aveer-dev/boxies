@@ -115,6 +115,31 @@ export interface McpGrant {
 	expiresAt: string | null;
 }
 
+/**
+ * One entry of Settings → Devices → "Recent security activity" (AVE-151).
+ * Mirrors the Worker's `SecurityActivityItem` (`workers/auth/security-activity.ts`).
+ * `kind` stays a string so a kind newer than this client still renders.
+ */
+export interface SecurityActivityItem {
+	id: string;
+	kind: string;
+	createdAt: string;
+	/** "Chrome on macOS"; null when unknown. */
+	device: string | null;
+	/** "Lagos, Nigeria" (approximate); null when unknown. */
+	location: string | null;
+	country: string | null;
+	/** Sign-ins only: from a device not seen in the last 90 days. */
+	newDevice: boolean;
+	/** Sign-in method events: "google", "apple", "password". */
+	provider: string | null;
+}
+
+export interface SecurityActivityResponse {
+	since: string;
+	events: SecurityActivityItem[];
+}
+
 export interface RecoveryEmailStatus {
 	email: string | null;
 	verified: boolean;

@@ -37,6 +37,12 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ReauthEmailCode("reauthEmailCode", "previewReauthEmailCode"),
     Members("members", "previewMembers"),
     Sessions("sessions", "previewSessions"),
+    /** Devices & sessions scrolled to Recent security activity with fixture events (iOS `-previewSessions -previewSecurityActivity`, AVE-151). */
+    SecurityActivity("securityActivity", "previewSecurityActivity"),
+    /** Recent security activity, nothing in the last 30 days (iOS `-previewSecurityActivity empty`). */
+    SecurityActivityEmpty("securityActivityEmpty", "previewSecurityActivityEmpty"),
+    /** Recent security activity failed to load: calm note (iOS `-previewSecurityActivity error`). */
+    SecurityActivityError("securityActivityError", "previewSecurityActivityError"),
     /** Settings → Senders, Allowed tab with fixture rules (iOS `-previewSenders`). */
     Senders("senders", "previewSenders"),
     /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */

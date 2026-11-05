@@ -42,6 +42,7 @@ import co.inboxies.app.ui.settings.DomainAdminDNSView
 import co.inboxies.app.ui.settings.DomainAdminSettingsView
 import co.inboxies.app.ui.settings.SendersSettingsView
 import co.inboxies.app.ui.settings.SendersTab
+import co.inboxies.app.ui.settings.SecurityActivityPreview
 import co.inboxies.app.ui.settings.SessionsSettingsView
 import co.inboxies.app.ui.settings.SuppressionsSettingsView
 import co.inboxies.app.ui.settings.TagsPreviewDialog
@@ -93,6 +94,9 @@ object PreviewHarness {
             PreviewMode.DomainAdmin,
             PreviewMode.DomainDns,
             PreviewMode.Sessions,
+            PreviewMode.SecurityActivity,
+            PreviewMode.SecurityActivityEmpty,
+            PreviewMode.SecurityActivityError,
             -> {
                 PreviewSupport.applyAuth(auth)
                 PreviewSupport.applyAdminPreview(appModel)
@@ -218,6 +222,15 @@ fun PreviewRoot(
         }
         PreviewMode.Members -> SettingsPreviewSurface { SharingSettingsView(onBack = {}) }
         PreviewMode.Sessions -> SettingsPreviewSurface { SessionsSettingsView(onBack = {}) }
+        PreviewMode.SecurityActivity -> SettingsPreviewSurface {
+            SessionsSettingsView(onBack = {}, previewActivity = SecurityActivityPreview.Events)
+        }
+        PreviewMode.SecurityActivityEmpty -> SettingsPreviewSurface {
+            SessionsSettingsView(onBack = {}, previewActivity = SecurityActivityPreview.Empty)
+        }
+        PreviewMode.SecurityActivityError -> SettingsPreviewSurface {
+            SessionsSettingsView(onBack = {}, previewActivity = SecurityActivityPreview.Error)
+        }
         PreviewMode.Senders -> SettingsPreviewSurface { SendersSettingsView(onBack = {}) }
         PreviewMode.Suppressions -> SettingsPreviewSurface { SuppressionsSettingsView(onBack = {}) }
         PreviewMode.Tags -> SettingsPreviewSurface { TagsSettingsView(onBack = {}) }
