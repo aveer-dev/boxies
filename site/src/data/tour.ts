@@ -56,7 +56,7 @@ const allChapters: TourChapter[] = [
 		lineage: "HEY",
 		platforms: ["ios", "android", "web"],
 		title: "Strangers wait at the door.",
-		body: "The first time someone emails you, their message waits in the Screener instead of your Inbox. Accept them into Inbox, Promotions or Updates, or decline and their mail is filed quietly in Screened out.",
+		body: "The first time someone emails you, their message waits in the Screener instead of your Inbox. On your phone, a row at the top of the Inbox opens the Screening room. Accept them into Inbox, Promotions or Updates, or decline and their mail is filed quietly in Screened out.",
 		rows: [
 			{
 				lead: "Quiet by design.",
@@ -65,13 +65,19 @@ const allChapters: TourChapter[] = [
 			},
 			{
 				lead: "People you write to are already in.",
-				text: "Anyone you’ve emailed is approved automatically, and so are senders already in your mail. Their mail is sorted for you: list mail to Promotions or Updates, the rest to Inbox.",
+				text: "Anyone you’ve emailed is approved automatically, and so are senders already in your mail. Their mail is sorted for you: mailing lists to Promotions or Updates, the rest to Inbox.",
 				src: "FSW#the-screener (allow-list seeded from Sent and existing mail); dev 31c58c6 (those seeds carry no destination, so classify-email.ts files them; migration 25)",
 			},
 			{
 				lead: "On from the first email.",
 				text: "Every new mailbox starts with the Screener on. Rather not screen? Switch it off in Settings, and new senders’ mail is sorted like everyone else’s.",
 				src: "FSW#the-screener (screener.enabled defaults true); AVE-104 a9fead1 (Screener switch in Settings on web, iOS, Android; off: unknown senders file like everyone else, spam and blocked still to Spam); PS#5",
+			},
+			{
+				lead: "Changed your mind?",
+				text: "Undo an Accept or Decline right after you make it.",
+				platforms: ["ios", "android"],
+				src: "AVE-159 f920e9d (iOS + Android: undo a Screener decision, toast with Undo)",
 			},
 		],
 		supportHref: "/support#screener",

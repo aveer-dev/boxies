@@ -202,6 +202,8 @@ Alt text and clip lengths live in `src/data/media.ts`. Update them if what's on 
    - Start: `xcrun simctl io booted recordVideo --codec=h264 --force <clip>.mov`
    - Drive the flow from the matching launch args, then stop the recording with Ctrl-C (SIGINT).
    - Clips: `inbox-open`, `screener-flow`, `reply-later`, `ask-ai`, `compose-dock`. Don't use `welcome-flow`: its sign-in sheet links a Terms page that 404s.
+   - `screener-flow` (re-shot 6 Nov 2026 from dev): `-previewMailbox`, tap the “3 waiting to be screened” row, then Maya Patel’s Accept chevron, and hold on the menu. Accepting itself fails against the closed `-apiBase` port and reverts, so the clip stops at the menu. Cut the idle stretch between taps out with two `trim`s and `concat`.
+   - On dev, Jordan Hale’s “Quarterly planning notes” thread in the sample mailbox shows an HTML test fixture (test links and a remote logo), so don't re-shoot `inbox-open` or `detail` until the fixture is back to the sample agenda.
 5. Encode at 30fps, scale to 590px wide with lanczos, trim to the flow and hold the last frame:
 
    ```sh
