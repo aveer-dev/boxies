@@ -83,6 +83,14 @@ final class ComposeFormModel {
     }
     let quotedOriginal: QuotedOriginal?
 
+    /// Forward only: the original's real attachments (inline `cid:` images left out, AVE-181).
+    /// Downloaded and attached on send while `includeForwardedAttachments` is on.
+    let forwardedAttachments: [Attachment]
+    /// "Include N attachments" in the forward composer; on by default.
+    var includeForwardedAttachments = true
+    /// The mailbox the forwarded original lives in (From can change later).
+    private let forwardSourceMailboxId: String
+
     var originalEmailId: String?
     var threadId: String?
     var draftId: String?
@@ -166,6 +174,10 @@ final class ComposeFormModel {
         self.fromName = isPrivateReply ? nil : mailboxFromName
         self.originalEmail = original
         self.selfAddresses = selves
+        self.forwardSourceMailboxId = mailboxId
+        self.forwardedAttachments = mode == .forward
+            ? ForwardAttachments.forwardable(original?.attachments, body: original?.body)
+            : []
 
         let signature = isPrivateReply
             ? ""
@@ -553,11 +565,23 @@ final class ComposeFormModel {
         let estimated = OutboundLimits.estimateMessageBytes(
             html: html + quotedBodySize,
             text: text,
-            attachmentBytes: attachments.map(\.size)
+            attachmentBytes: allAttachmentBytes
         )
         if estimated > OutboundLimits.maxMessageBytes {
             errorMessage = OutboundLimits.sizeError
             return false
+        }
+        if !sentForwardedAttachments.isEmpty {
+            // The original's files go out like any other attachment (AVE-181).
+            do {
+                let forwarded = try await downloadForwardedAttachments(bearerToken: pinnedToken)
+                var list = payload["attachments"] as? [[String: Any]] ?? []
+                list.insert(contentsOf: forwarded.map(\.sendPayload), at: 0)
+                payload["attachments"] = list
+            } catch {
+                errorMessage = error.localizedDescription
+                return false
+            }
         }
 
         do {
@@ -672,7 +696,8 @@ final class ComposeFormModel {
                 )
             },
             createdAt: Date(),
-            idempotencyKey: sendIdempotencyKey
+            idempotencyKey: sendIdempotencyKey,
+            includesForwardedAttachments: forwardedAttachments.isEmpty ? nil : includeForwardedAttachments
         )
     }
 
@@ -696,6 +721,9 @@ final class ComposeFormModel {
         draftId = record.draftId ?? draftId
         if let key = record.idempotencyKey, !key.isEmpty {
             sendIdempotencyKey = key
+        }
+        if let include = record.includesForwardedAttachments {
+            includeForwardedAttachments = include
         }
     }
 
@@ -734,7 +762,7 @@ final class ComposeFormModel {
         OutboundLimits.remainingBudget(
             html: outgoingHTML() + quotedBodySize,
             text: outgoingPlainText(),
-            attachmentBytes: attachments.map(\.size)
+            attachmentBytes: allAttachmentBytes
         )
     }
 
@@ -742,8 +770,46 @@ final class ComposeFormModel {
         OutboundLimits.estimateMessageBytes(
             html: outgoingHTML() + quotedBodySize,
             text: outgoingPlainText(),
-            attachmentBytes: attachments.map(\.size)
+            attachmentBytes: allAttachmentBytes
         ) > OutboundLimits.maxMessageBytes
+    }
+
+    /// The forwarded original's files this send carries: none while the switch is off.
+    var sentForwardedAttachments: [Attachment] {
+        includeForwardedAttachments ? forwardedAttachments : []
+    }
+
+    /// Added files plus the forwarded ones (by their stored size) for the 5 MiB estimate.
+    private var allAttachmentBytes: [Int] {
+        attachments.map(\.size) + sentForwardedAttachments.map(\.size)
+    }
+
+    /// Fetches each forwarded file. One that fails stops the send: the reader asked for the
+    /// files, so the forward never goes out quietly without them.
+    private func downloadForwardedAttachments(bearerToken: String?) async throws -> [ComposePendingAttachment] {
+        guard let sourceId = originalEmail?.id ?? originalEmailId else { return [] }
+        var loaded: [ComposePendingAttachment] = []
+        for file in sentForwardedAttachments {
+            do {
+                let data = try await APIClient.shared.getAttachment(
+                    mailboxId: forwardSourceMailboxId,
+                    emailId: sourceId,
+                    attachmentId: file.id,
+                    bearerToken: bearerToken
+                )
+                loaded.append(ForwardAttachments.pending(from: file, data: data))
+            } catch {
+                throw ForwardAttachmentError.download(filename: file.filename)
+            }
+        }
+        // Stored sizes can be off; check the real bytes against the limit too.
+        let estimated = OutboundLimits.estimateMessageBytes(
+            html: outgoingHTML() + quotedBodySize,
+            text: outgoingPlainText(),
+            attachmentBytes: attachments.map(\.size) + loaded.map(\.size)
+        )
+        if estimated > OutboundLimits.maxMessageBytes { throw ForwardAttachmentError.tooLarge }
+        return loaded
     }
 
     func addPreparedAttachment(_ attachment: ComposePendingAttachment) {
