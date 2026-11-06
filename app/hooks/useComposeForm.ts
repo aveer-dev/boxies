@@ -26,6 +26,7 @@ import {
 	bytesToBase64,
 	remainingOutboundBudget,
 } from "shared/compose-attachments";
+import { forwardableAttachments } from "shared/forward-attachments";
 import {
 	estimateOutboundMessageBytes,
 	MAX_OUTBOUND_MESSAGE_BYTES,
@@ -45,6 +46,9 @@ import {
 	prepareComposeAttachment,
 	type PreparedAttachment,
 } from "~/lib/prepare-compose-attachment";
+
+/** A file in the composer; `forwarded` marks one carried over from the forwarded original (AVE-181). */
+type ComposeAttachment = PreparedAttachment & { forwarded?: boolean };
 
 interface ComposeFormFields {
 	to: string;
@@ -257,7 +261,9 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	const [showCcBcc, setShowCcBcc] = useState(false);
 	const [subject, setSubject] = useState("");
 	const [body, setBody] = useState("");
-	const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
+	const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
+	/** Forward only: send the original's files along (on by default, AVE-181). */
+	const [includeForwarded, setIncludeForwarded] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	/** Recipients the last send was refused for (409 recipient_suppressed). */
 	const [suppressed, setSuppressed] = useState<SuppressedRecipient[]>([]);
@@ -286,6 +292,19 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	const quote = useMemo(() => composeQuote(composeOptions), [composeOptions]);
 	/** The quoted original's size counts toward the 5 MiB limit too. */
 	const quoteBody = quote?.original?.body ?? "";
+	/** The forwarded original's real attachments (inline `cid:` images left out). */
+	const forwardFiles = useMemo(
+		() =>
+			composeOptions.mode === "forward" && composeOptions.originalEmail
+				? forwardableAttachments(composeOptions.originalEmail.attachments, composeOptions.originalEmail.body)
+				: [],
+		[composeOptions],
+	);
+	/** What goes out: the forwarded files drop out while "Include N attachments" is off. */
+	const sendAttachments = useMemo(
+		() => (includeForwarded ? attachments : attachments.filter((item) => !item.forwarded)),
+		[attachments, includeForwarded],
+	);
 	// A signature usually carries your real name, so private-email replies go without.
 	const sigBlock = useMemo(
 		() => (aliasEmail ? "" : getSignatureBlock(currentMailbox?.settings)),
@@ -314,15 +333,15 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		setSubject(initialFields.subject);
 		setBody(initialFields.body);
 		setAttachments([]);
+		setIncludeForwarded(true);
 		setSavedDraftId(composeOptions.draftEmail?.id);
 
-		// Forwarding carries the original's files along.
+		// Forwarding carries the original's files along unless switched off (AVE-181).
 		const forwardFrom = composeOptions.mode === "forward" ? composeOptions.originalEmail : undefined;
-		const forwardFiles = forwardFrom?.attachments ?? [];
 		if (mailboxId && forwardFrom && forwardFiles.length > 0) {
 			const initializedFor = composeOptions;
 			void (async () => {
-				const loaded: PreparedAttachment[] = [];
+				const loaded: ComposeAttachment[] = [];
 				for (const file of forwardFiles) {
 					try {
 						const blob = await api.getAttachment(mailboxId, forwardFrom.id, file.id);
@@ -334,6 +353,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 							type: file.mimetype || "application/octet-stream",
 							disposition: "attachment",
 							size: bytes.byteLength,
+							forwarded: true,
 						});
 					} catch {
 						toastManager.add({ title: `Couldn't attach ${file.filename}`, variant: "error" });
@@ -351,7 +371,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		setSaveStatus("idle");
 		saveGenerationRef.current += 1;
 		isSendingRef.current = false;
-	}, [composeOptions, currentMailbox?.email, sigBlock, mailboxId, aliasEmail]);
+	}, [composeOptions, currentMailbox?.email, sigBlock, mailboxId, aliasEmail, forwardFiles]);
 
 	// Dirty = the user typed, edited or attached something since it opened.
 	// The body compares as text: the editor may re-serialise the starting HTML.
@@ -371,7 +391,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 	useEffect(() => {
 		if (!mailboxId || isSending) return;
 		const currentSnapshot = `${to}|${cc}|${bcc}|${subject}|${body}`;
-		const isEmpty = isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock, attachments.length);
+		const isEmpty = isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock, sendAttachments.length);
 
 		if (isEmpty || currentSnapshot === lastSavedSnapshotRef.current) {
 			return;
@@ -428,7 +448,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 
 	const handleSaveDraft = async () => {
 		if (!mailboxId || isSending) return;
-		if (isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock, attachments.length)) return;
+		if (isComposeDraftEmpty(to, cc, bcc, subject, body, sigBlock, sendAttachments.length)) return;
 		setIsSavingDraft(true);
 		setSaveStatus("saving");
 		setError(null);
@@ -517,7 +537,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		const sizeInput = {
 			html: body + quoteBody,
 			text,
-			attachments: attachments.map((item) => ({ content: item.content })),
+			attachments: sendAttachments.map((item) => ({ content: item.content })),
 		};
 		// Same 50-recipient cap and sentence as the Worker (AVE-125), before a round trip.
 		const tooMany = recipientCapError(toRecipients, ccRecipients, bccRecipients);
@@ -542,8 +562,8 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 			html: body,
 			text,
 			...(quote ? { quote_original: true, quote_time_zone: localTimeZone() } : {}),
-			attachments: attachments.length
-				? attachments.map((item) => ({
+			attachments: sendAttachments.length
+				? sendAttachments.map((item) => ({
 					content: item.content,
 					filename: item.filename,
 					type: item.type,
@@ -629,7 +649,7 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		let budget = remainingOutboundBudget({
 			html: body + quoteBody,
 			text: htmlToPlainText(body),
-			attachments: attachments.map((item) => ({ content: item.content })),
+			attachments: sendAttachments.map((item) => ({ content: item.content })),
 		});
 		const next: PreparedAttachment[] = [];
 		for (const file of files) {
@@ -656,9 +676,9 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 			estimateOutboundMessageBytes({
 				html: body + quoteBody,
 				text: htmlToPlainText(body),
-				attachments: attachments.map((item) => ({ content: item.content })),
+				attachments: sendAttachments.map((item) => ({ content: item.content })),
 			}) > MAX_OUTBOUND_MESSAGE_BYTES,
-		[body, quoteBody, attachments],
+		[body, quoteBody, sendAttachments],
 	);
 
 	return {
@@ -674,7 +694,11 @@ export function useComposeForm(mailboxId: string | undefined, panelKey: string, 
 		setSubject,
 		body,
 		setBody,
-		attachments,
+		/** The chips: forwarded files hide while "Include N attachments" is off. */
+		attachments: sendAttachments,
+		forwardAttachmentCount: forwardFiles.length,
+		includeForwarded,
+		setIncludeForwarded,
 		addFiles,
 		removeAttachment,
 		overSize,
