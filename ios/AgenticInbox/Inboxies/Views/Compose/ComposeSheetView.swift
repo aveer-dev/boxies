@@ -258,9 +258,46 @@ struct ComposeSheetView: View {
                 recipientSuggestions(for: focus)
             }
             subjectRow
+            if !form.forwardedAttachments.isEmpty {
+                divider
+                forwardAttachmentsRow
+            }
             divider
         }
         .padding(.top, 8)
+    }
+
+    /// Forward only (AVE-181): send the original's files along. On by default; the row
+    /// shows only when the original has a real attachment (inline images don't count).
+    private var forwardAttachmentsRow: some View {
+        let files = form.forwardedAttachments
+        let label = ForwardAttachments.includeLabel(count: files.count)
+        return Toggle(isOn: Binding(
+            get: { form.includeForwardedAttachments },
+            set: { form.includeForwardedAttachments = $0 }
+        )) {
+            HStack(spacing: 10) {
+                Image(systemName: "paperclip")
+                    .font(.inter(size: AppTheme.FontSize.meta, weight: .semibold))
+                    .foregroundStyle(AppTheme.muted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label)
+                        .font(.inter(size: AppTheme.FontSize.sender, weight: .medium))
+                        .foregroundStyle(AppTheme.ink)
+                    Text(files.map(\.filename).joined(separator: ", "))
+                        .font(.inter(size: AppTheme.FontSize.meta))
+                        .foregroundStyle(AppTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+        .tint(AppTheme.accent)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .sensoryFeedback(.selection, trigger: form.includeForwardedAttachments)
+        .accessibilityLabel(label)
+        .accessibilityHint("Sends the original's files with this forward.")
     }
 
     private func recipientSuggestions(for field: Field) -> some View {
