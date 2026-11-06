@@ -5,9 +5,14 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// The reader's Code card or Invite card, pinned above the bottom bar (AVE-176).
+/// Both sit in the same liquid glass container with system glass buttons.
 /// Contract: `shared/mail-cards.ts`. Android twin: AVE-177.
 struct MailCardView: View {
     let card: MailCards.Card
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: AppTheme.MailCard.cornerRadius, style: .continuous)
+    }
 
     var body: some View {
         Group {
@@ -20,12 +25,8 @@ struct MailCardView: View {
         }
         .padding(AppTheme.MailCard.padding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: AppTheme.MailCard.cornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: AppTheme.MailCard.cornerRadius, style: .continuous)
-                .stroke(AppTheme.line, lineWidth: 0.5)
-        }
-        .shadow(color: AppTheme.MailCard.shadow, radius: AppTheme.MailCard.shadowRadius, y: AppTheme.MailCard.shadowY)
+        .liquidGlass(in: shape, interactive: false)
+        .liquidGlassContainer(spacing: AppTheme.MailCard.buttonSpacing)
         .padding(.horizontal, AppTheme.MailCard.horizontalInset)
         .padding(.bottom, AppTheme.MailCard.bottomInset)
     }
@@ -40,7 +41,7 @@ private struct CodeCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(copied ? "Copied · clears in \(Int(AppTheme.MailCard.clipboardExpiry)) s" : "Verification code")
                     .font(.inter(size: AppTheme.MailCard.eyebrow, weight: .medium))
                     .foregroundStyle(AppTheme.muted)
@@ -59,7 +60,7 @@ private struct CodeCard: View {
             MailCardButton(
                 title: copied ? "Copied" : "Copy",
                 systemImage: copied ? "checkmark" : "doc.on.doc",
-                style: .primary,
+                prominent: true,
                 action: copy
             )
             .accessibilityHint("Copies the code. It clears from the clipboard after \(Int(AppTheme.MailCard.clipboardExpiry)) seconds.")
@@ -89,61 +90,44 @@ private struct CodeCard: View {
 
 // MARK: - Invite card
 
+/// Collapsed: one line (icon, title, muted compact time, chevron) and one row of
+/// actions. Tapping the line expands the details in place (time, repeat, location,
+/// organizer) with the default spring; the card is already pinned over the reader
+/// sheet, so a second sheet would stack a modal on a modal.
 private struct InviteCard: View {
     let invite: EmailInvite
     @Environment(AppModel.self) private var app
     @Environment(\.openURL) private var openURL
+    @State private var expanded = Self.startsExpanded
     @State private var calendarEvent: CalendarEventDraft?
+    @State private var directionsAddress: String?
+    @State private var mapProviders: [MapProvider] = [.apple]
+
+    /// DEBUG `-previewInviteExpanded` opens the details for screenshots.
+    private static var startsExpanded: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-previewInviteExpanded")
+        #else
+        false
+        #endif
+    }
+
+    private var canAddToCalendar: Bool { InviteTime.span(for: invite) != nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 12, weight: .medium))
-                    .accessibilityHidden(true)
-                Text(invite.cancelled ? "Cancelled event" : "Invitation")
-                    .font(.inter(size: AppTheme.MailCard.eyebrow, weight: .medium))
-            }
-            .foregroundStyle(invite.cancelled ? AppTheme.deepDarkRed : AppTheme.muted)
+        VStack(alignment: .leading, spacing: 12) {
+            header
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(invite.displayTitle)
-                    .font(.inter(size: AppTheme.MailCard.title, weight: .semibold))
-                    .foregroundStyle(invite.cancelled ? AppTheme.muted : AppTheme.ink)
-                    .strikethrough(invite.cancelled, color: AppTheme.muted)
-                    .lineLimit(2)
-
-                if let time = InviteTime.summary(for: invite) {
-                    detailRow("clock", time)
-                }
-                if let repeats = InviteRecurrence.label(invite.recurrence) {
-                    detailRow("repeat", repeats)
-                }
-                if let location = invite.displayLocation {
-                    detailRow("mappin.and.ellipse", location)
-                }
-                if let organizer = invite.organizer?.label {
-                    detailRow("person", organizer)
-                }
+            if expanded {
+                details
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
-            if !invite.cancelled, invite.meetingLink != nil || InviteTime.span(for: invite) != nil {
-                HStack(spacing: 8) {
-                    if let link = invite.meetingLink {
-                        MailCardButton(title: "Join", systemImage: "video", style: .secondary) {
-                            openURL(link)
-                        }
-                        .accessibilityHint(link.host ?? "")
-                    }
-                    if InviteTime.span(for: invite) != nil {
-                        MailCardButton(title: "Add to Calendar", systemImage: "calendar.badge.plus", style: .primary) {
-                            calendarEvent = CalendarEventDraft(invite: invite)
-                        }
-                    }
-                }
-                .padding(.top, 2)
+            if !invite.cancelled, invite.venue != .none || canAddToCalendar {
+                actions
             }
         }
+        .onAppear { mapProviders = Self.installedMapProviders() }
         .sheet(item: $calendarEvent) { draft in
             AddToCalendarSheet(invite: draft.invite) { saved in
                 calendarEvent = nil
@@ -151,9 +135,125 @@ private struct InviteCard: View {
             }
             .ignoresSafeArea()
         }
+        .confirmationDialog(
+            "Directions",
+            isPresented: Binding(
+                get: { directionsAddress != nil },
+                set: { if !$0 { directionsAddress = nil } }
+            ),
+            titleVisibility: .hidden,
+            presenting: directionsAddress
+        ) { address in
+            ForEach(mapProviders) { provider in
+                Button(provider.title) { openDirections(to: address, in: provider) }
+            }
+        }
     }
 
-    private func detailRow(_ systemImage: String, _ text: String) -> some View {
+    // One line: the whole row toggles the details.
+    private var header: some View {
+        Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { expanded.toggle() }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: invite.cancelled ? "calendar.badge.minus" : "calendar")
+                    .font(.system(size: AppTheme.MailCard.iconSize + 2, weight: .medium))
+                    .foregroundStyle(invite.cancelled ? AppTheme.deepDarkRed : AppTheme.accent)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+
+                Text(invite.displayTitle)
+                    .font(.inter(size: AppTheme.MailCard.title, weight: .semibold))
+                    .foregroundStyle(invite.cancelled ? AppTheme.muted : AppTheme.ink)
+                    .strikethrough(invite.cancelled, color: AppTheme.muted)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+
+                if let suffix = headerSuffix {
+                    Text(suffix)
+                        .font(.inter(size: AppTheme.MailCard.detail))
+                        .foregroundStyle(invite.cancelled ? AppTheme.deepDarkRed : AppTheme.muted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AppTheme.muted)
+                    .rotationEffect(.degrees(expanded ? 180 : 0))
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MailCardRowPressStyle())
+        .accessibilityLabel(headerAccessibilityLabel)
+        .accessibilityHint(expanded ? "Hides the event details" : "Shows the event details")
+    }
+
+    private var headerSuffix: String? {
+        if invite.cancelled { return "Cancelled" }
+        return InviteTime.compact(for: invite)
+    }
+
+    private var headerAccessibilityLabel: String {
+        let kind = invite.cancelled ? "Cancelled event" : "Invitation"
+        return [kind, invite.displayTitle, InviteTime.summary(for: invite)].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let time = InviteTime.summary(for: invite) {
+                detailRow("clock", time)
+            }
+            if let repeats = InviteRecurrence.label(invite.recurrence) {
+                detailRow("repeat", repeats)
+            }
+            if let location = invite.displayLocation {
+                if let address = invite.address, !invite.cancelled {
+                    // With a meeting link Join is the primary action; the address
+                    // still gets directions from here.
+                    Button { showDirections(to: address) } label: {
+                        detailRow("mappin.and.ellipse", location, tint: AppTheme.accent)
+                    }
+                    .buttonStyle(MailCardRowPressStyle())
+                    .accessibilityHint("Gets directions")
+                } else {
+                    detailRow("mappin.and.ellipse", location)
+                }
+            }
+            if let organizer = invite.organizer?.label {
+                detailRow("person", organizer)
+            }
+        }
+        .padding(.leading, 28)
+    }
+
+    private var actions: some View {
+        HStack(spacing: AppTheme.MailCard.buttonSpacing) {
+            switch invite.venue {
+            case .link(let link):
+                MailCardButton(title: "Join", systemImage: "video.fill", prominent: false) {
+                    // Universal links open Zoom / Meet / Teams when installed, else Safari.
+                    openURL(link)
+                }
+                .accessibilityHint(link.host ?? "")
+            case .address(let address):
+                MailCardButton(title: "Directions", systemImage: "arrow.triangle.turn.up.right.diamond.fill", prominent: false) {
+                    showDirections(to: address)
+                }
+            case .none:
+                EmptyView()
+            }
+            if canAddToCalendar {
+                MailCardButton(title: "Add to Calendar", systemImage: "calendar.badge.plus", prominent: true) {
+                    calendarEvent = CalendarEventDraft(invite: invite)
+                }
+            }
+        }
+    }
+
+    private func detailRow(_ systemImage: String, _ text: String, tint: Color = AppTheme.muted) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 12))
@@ -161,10 +261,32 @@ private struct InviteCard: View {
                 .accessibilityHidden(true)
             Text(text)
                 .font(.inter(size: AppTheme.MailCard.detail))
+                .multilineTextAlignment(.leading)
                 .lineLimit(2)
                 .truncationMode(.tail)
         }
-        .foregroundStyle(AppTheme.muted)
+        .foregroundStyle(tint)
+    }
+
+    /// Apple Maps straight away, or a choice when Google Maps / Waze is installed.
+    private func showDirections(to address: String) {
+        if mapProviders.count > 1 {
+            directionsAddress = address
+        } else {
+            openDirections(to: address, in: .apple)
+        }
+    }
+
+    private func openDirections(to address: String, in provider: MapProvider) {
+        guard let url = provider.directionsURL(to: address) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    private static func installedMapProviders() -> [MapProvider] {
+        MapProvider.allCases.filter { provider in
+            guard let probe = provider.probeURL else { return true }
+            return UIApplication.shared.canOpenURL(probe)
+        }
     }
 }
 
@@ -175,31 +297,50 @@ private struct CalendarEventDraft: Identifiable {
 
 // MARK: - Button
 
+/// System glass buttons on iOS 26 (`.glassProminent` / `.glass`), bordered
+/// capsules tinted with `accent` before. SF Symbols at the system weight.
 private struct MailCardButton: View {
-    enum Style { case primary, secondary }
-
     let title: String
     let systemImage: String
-    let style: Style
+    let prominent: Bool
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.inter(size: 14, weight: .semibold))
-                .labelStyle(.titleAndIcon)
-                .lineLimit(1)
-                .padding(.horizontal, 14)
-                .frame(height: AppTheme.MailCard.buttonHeight)
-                .foregroundStyle(style == .primary ? AppTheme.background : AppTheme.ink)
-                .background(style == .primary ? AppTheme.ink : AppTheme.pillFill, in: Capsule())
-                .contentShape(Capsule())
+        let button = Button(action: action) {
+            Label {
+                Text(title)
+                    .font(.inter(size: AppTheme.MailCard.buttonFont, weight: .semibold))
+            } icon: {
+                Image(systemName: systemImage)
+                    .font(.system(size: AppTheme.MailCard.iconSize, weight: .semibold))
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .labelStyle(.titleAndIcon)
+            .lineLimit(1)
+            .frame(minHeight: AppTheme.MailCard.buttonMinHeight)
+            .padding(.horizontal, 2)
         }
-        .buttonStyle(MailCardPressStyle())
+        .buttonBorderShape(.capsule)
+        .controlSize(.regular)
+        .tint(AppTheme.accent)
+
+        if #available(iOS 26.0, *) {
+            if prominent {
+                button.buttonStyle(.glassProminent)
+            } else {
+                button.buttonStyle(.glass).foregroundStyle(AppTheme.ink)
+            }
+        } else {
+            if prominent {
+                button.buttonStyle(.borderedProminent)
+            } else {
+                button.buttonStyle(.bordered).foregroundStyle(AppTheme.ink)
+            }
+        }
     }
 }
 
-private struct MailCardPressStyle: ButtonStyle {
+private struct MailCardRowPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.opacity(configuration.isPressed ? 0.55 : 1)
     }

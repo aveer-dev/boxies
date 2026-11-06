@@ -145,9 +145,10 @@ enum AppTheme {
     /// Reader Code card / Invite card pinned above the bottom bar (AVE-176).
     /// Android twin: `InboxiesColors` + `MailCardMetrics` (AVE-177).
     enum MailCard {
-        /// Digest-card radius: `surface` fill + `line` hairline.
-        static let cornerRadius: CGFloat = 18
-        static let padding: CGFloat = 16
+        /// Liquid glass container (`.liquidGlass(in:interactive: false)`): real glass on
+        /// iOS 26+, ultraThinMaterial + white hairline + shadow before.
+        static let cornerRadius: CGFloat = 22
+        static let padding: CGFloat = 14
         /// Matches the reader's 16pt side gutter.
         static let horizontalInset: CGFloat = 16
         static let bottomInset: CGFloat = 8
@@ -155,12 +156,13 @@ enum AppTheme {
         static let title: CGFloat = 15
         static let detail: CGFloat = 13
         /// Monospaced, semibold, tracked.
-        static let code: CGFloat = 30
-        static let codeTracking: CGFloat = 3
-        static let buttonHeight: CGFloat = 36
-        static let shadow = Color.black.opacity(0.08)
-        static let shadowRadius: CGFloat = 12
-        static let shadowY: CGFloat = 4
+        static let code: CGFloat = 22
+        static let codeTracking: CGFloat = 2
+        /// Buttons: system glass (iOS 26) / bordered (iOS 17–25), capsule, app tint.
+        static let buttonFont: CGFloat = 14
+        static let buttonMinHeight: CGFloat = 34
+        static let buttonSpacing: CGFloat = 8
+        static let iconSize: CGFloat = 13
         /// The copied code expires from the clipboard after this long.
         static let clipboardExpiry: TimeInterval = 90
     }

@@ -232,8 +232,10 @@ enum PreviewSupport {
     )
 
     /// `-previewDetail -previewInvite` (AVE-176): calendar invite with a join link and a
-    /// weekly repeat. Add `-previewInviteCancelled` for the cancelled variant.
-    static func inviteEmail(cancelled: Bool) -> Email {
+    /// weekly repeat. Add `-previewInviteCancelled` for the cancelled variant,
+    /// `-previewInviteAddress` for an in-person invite (address only, Directions),
+    /// `-previewInviteExpanded` to open the details.
+    static func inviteEmail(cancelled: Bool, inPerson: Bool = false) -> Email {
         Email(
             id: "preview-invite",
             folderId: "inbox",
@@ -246,7 +248,7 @@ enum PreviewSupport {
             starred: false,
             body: cancelled
                 ? "<p>This event has been cancelled.</p><p>Design review · Thursdays 10–11am</p>"
-                : "<p>Pat Lee has invited you to <b>Design review</b>.</p><p>Weekly walkthrough of the new reader. Bring one screen you want feedback on.</p><p>Join with Google Meet: https://meet.google.com/abc-defg-hij</p>",
+                : "<p>Pat Lee has invited you to <b>Design review</b>.</p><p>Weekly walkthrough of the new reader. Bring one screen you want feedback on.</p>" + (inPerson ? "<p>We’ll meet in Room 4B, 200 Market St.</p>" : "<p>Join with Google Meet: https://meet.google.com/abc-defg-hij</p>"),
             snippet: cancelled ? "This event has been cancelled." : "Pat Lee has invited you to Design review.",
             hasAttachment: true,
             authTier: "verified",
@@ -261,7 +263,7 @@ enum PreviewSupport {
                 timezone: "America/New_York",
                 location: "Room 4B, 200 Market St",
                 organizer: EmailInviteOrganizer(email: "pat@studio.example", name: "Pat Lee"),
-                meetingUrl: "https://meet.google.com/abc-defg-hij",
+                meetingUrl: inPerson ? nil : "https://meet.google.com/abc-defg-hij",
                 recurrence: "FREQ=WEEKLY;BYDAY=TH"
             )
         )
@@ -504,7 +506,10 @@ enum PreviewSupport {
             // AVE-176: reader with the Code card / Invite card pinned at the bottom.
             let email = args.contains("-previewCode")
                 ? codeEmail
-                : inviteEmail(cancelled: args.contains("-previewInviteCancelled"))
+                : inviteEmail(
+                    cancelled: args.contains("-previewInviteCancelled"),
+                    inPerson: args.contains("-previewInviteAddress")
+                )
             app.emails.insert(email, at: 0)
             app.selectedEmail = email
             app.threadEmails = [email]

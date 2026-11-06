@@ -101,6 +101,106 @@ struct EmailInvite: Codable, Hashable {
         if let meetingUrl, location == meetingUrl { return nil }
         return location
     }
+
+    /// Where the event happens, which decides the card's primary action: a
+    /// meeting link (Join), a physical address (Directions) or nothing to open.
+    /// A meeting link wins over an address; the address stays in the details.
+    var venue: InviteVenue {
+        if let link = joinLink { return .link(link) }
+        if let address { return .address(address) }
+        return .none
+    }
+
+    /// The https `meetingUrl`, else an https link in the location ("Zoom: https://…").
+    var joinLink: URL? {
+        meetingLink ?? location.flatMap(InviteVenue.httpsLink(in:))
+    }
+
+    /// The location when it is a place you can get directions to: not a link and
+    /// not just the name of a call platform ("Microsoft Teams Meeting").
+    var address: String? {
+        guard let location = displayLocation,
+              InviteVenue.httpsLink(in: location) == nil,
+              !InviteVenue.isVirtualPlaceName(location) else { return nil }
+        return location
+    }
+}
+
+/// Classification of an invite's location (AVE-176 review). Android twin: AVE-177.
+enum InviteVenue: Equatable {
+    case link(URL)
+    case address(String)
+    case none
+
+    /// The first https link in `text`, when it has a host. Other schemes are ignored.
+    static func httpsLink(in text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = URL(string: trimmed), isHTTPS(url) { return url }
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        let range = NSRange(trimmed.startIndex..., in: trimmed)
+        for match in detector.matches(in: trimmed, options: [], range: range) {
+            if let url = match.url, isHTTPS(url) { return url }
+        }
+        return nil
+    }
+
+    /// Call-platform names organizers put in the location field instead of a place.
+    static func isVirtualPlaceName(_ text: String) -> Bool {
+        var name = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for suffix in [" meeting", " call", " video call"] where name.hasSuffix(suffix) {
+            name = String(name.dropLast(suffix.count))
+        }
+        return virtualPlaceNames.contains(name)
+    }
+
+    private static let virtualPlaceNames: Set<String> = [
+        "zoom", "google meet", "meet", "microsoft teams", "teams", "webex", "cisco webex",
+        "facetime", "skype", "slack huddle", "whereby", "jitsi", "online", "virtual",
+        "remote", "video", "phone", "tbd", "tba",
+    ]
+
+    private static func isHTTPS(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && !(url.host ?? "").isEmpty
+    }
+}
+
+/// Map apps the Directions button can hand an address to. Apple Maps is always
+/// there; Google Maps and Waze are offered when installed (needs their schemes
+/// in `LSApplicationQueriesSchemes`).
+enum MapProvider: String, CaseIterable, Identifiable {
+    case apple, google, waze
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .apple: "Apple Maps"
+        case .google: "Google Maps"
+        case .waze: "Waze"
+        }
+    }
+
+    /// Probe for `canOpenURL`; Apple Maps needs none.
+    var probeURL: URL? {
+        switch self {
+        case .apple: nil
+        case .google: URL(string: "comgooglemaps://")
+        case .waze: URL(string: "waze://")
+        }
+    }
+
+    /// Driving directions to `address` from the current location.
+    func directionsURL(to address: String) -> URL? {
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: "&+=?#")
+        guard let value = address.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
+        switch self {
+        case .apple: return URL(string: "https://maps.apple.com/?daddr=\(value)")
+        case .google: return URL(string: "comgooglemaps://?daddr=\(value)&directionsmode=driving")
+        case .waze: return URL(string: "waze://?q=\(value)&navigate=yes")
+        }
+    }
 }
 
 // MARK: - Times
@@ -204,6 +304,24 @@ enum InviteTime {
             return "\(day) · \(interval.string(from: span.start, to: end))"
         }
         return interval.string(from: span.start, to: end)
+    }
+
+    /// The collapsed card's one-line time: "Nov 5 · 10:00 AM", "Nov 5" for all-day.
+    /// Adds the year when it is not this year.
+    static func compact(
+        for invite: EmailInvite,
+        timeZone: TimeZone = .current,
+        locale: Locale = .current,
+        now: Date = Date()
+    ) -> String? {
+        guard let span = span(for: invite, timeZone: timeZone) else { return nil }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let showYear = calendar.component(.year, from: span.start) != calendar.component(.year, from: now)
+        let day = dayFormatter(template: showYear ? "MMMdy" : "MMMd", timeZone: timeZone, locale: locale).string(from: span.start)
+        guard !span.allDay else { return day }
+        let time = dayFormatter(template: "jmm", timeZone: timeZone, locale: locale).string(from: span.start)
+        return "\(day) · \(time)"
     }
 
     static func isDateOnly(_ value: String) -> Bool {

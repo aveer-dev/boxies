@@ -196,6 +196,67 @@ final class MailCardsTests: XCTestCase {
         XCTAssertEqual(plain(InviteTime.summary(for: invite, timeZone: newYork, locale: enUS, now: now)), "Thu, Nov 5 · 10:00 AM")
     }
 
+    func testCompactTimeForTheCollapsedCard() {
+        let timed = EmailInvite(start: "2026-11-05T15:00:00.000Z", end: "2026-11-05T16:00:00.000Z")
+        XCTAssertEqual(plain(InviteTime.compact(for: timed, timeZone: newYork, locale: enUS, now: now)), "Nov 5 · 10:00 AM")
+        let allDay = EmailInvite(start: "2026-11-05", end: "2026-11-06", allDay: true)
+        XCTAssertEqual(plain(InviteTime.compact(for: allDay, timeZone: newYork, locale: enUS, now: now)), "Nov 5")
+        let nextYear = EmailInvite(start: "2027-01-04T15:00:00.000Z")
+        XCTAssertEqual(plain(InviteTime.compact(for: nextYear, timeZone: newYork, locale: enUS, now: now)), "Jan 4, 2027 · 10:00 AM")
+        XCTAssertNil(InviteTime.compact(for: EmailInvite(start: "not a date")))
+    }
+
+    // MARK: - Venue (Join vs Directions)
+
+    func testMeetingLinkIsJoinEvenWithAnAddress() {
+        let invite = EmailInvite(start: "2026-11-05T15:00:00Z", location: "Room 4B, 200 Market St", meetingUrl: "https://meet.google.com/abc-defg-hij")
+        XCTAssertEqual(invite.venue, .link(URL(string: "https://meet.google.com/abc-defg-hij")!))
+        // The address is still there for the details row.
+        XCTAssertEqual(invite.address, "Room 4B, 200 Market St")
+    }
+
+    func testLocationThatIsALinkIsJoin() {
+        let bare = EmailInvite(start: "2026-11-05T15:00:00Z", location: "https://zoom.us/j/123456789")
+        XCTAssertEqual(bare.venue, .link(URL(string: "https://zoom.us/j/123456789")!))
+        XCTAssertNil(bare.address)
+        let labelled = EmailInvite(start: "2026-11-05T15:00:00Z", location: "Zoom: https://zoom.us/j/987?pwd=x")
+        XCTAssertEqual(labelled.venue, .link(URL(string: "https://zoom.us/j/987?pwd=x")!))
+    }
+
+    func testPhysicalAddressIsDirections() {
+        let invite = EmailInvite(start: "2026-11-05T15:00:00Z", location: "  200 Market St, San Francisco  ")
+        XCTAssertEqual(invite.venue, .address("200 Market St, San Francisco"))
+    }
+
+    func testNoLocationOrOnlyAPlatformNameHasNoAction() {
+        XCTAssertEqual(EmailInvite(start: "2026-11-05T15:00:00Z").venue, .none)
+        XCTAssertEqual(EmailInvite(start: "2026-11-05T15:00:00Z", location: "   ").venue, .none)
+        XCTAssertEqual(EmailInvite(start: "2026-11-05T15:00:00Z", location: "Microsoft Teams Meeting").venue, .none)
+        XCTAssertEqual(EmailInvite(start: "2026-11-05T15:00:00Z", location: "Zoom").venue, .none)
+        // Non-https meeting links are not opened.
+        XCTAssertEqual(EmailInvite(start: "2026-11-05T15:00:00Z", meetingUrl: "http://meet.example/x").venue, .none)
+        XCTAssertEqual(EmailInvite(start: "2026-11-05T15:00:00Z", location: "javascript:alert(1)").venue, .address("javascript:alert(1)"))
+    }
+
+    func testDirectionsURLs() {
+        let address = "Room 4B & Co, 200 Market St"
+        XCTAssertEqual(
+            MapProvider.apple.directionsURL(to: address)?.absoluteString,
+            "https://maps.apple.com/?daddr=Room%204B%20%26%20Co,%20200%20Market%20St"
+        )
+        XCTAssertEqual(
+            MapProvider.google.directionsURL(to: address)?.absoluteString,
+            "comgooglemaps://?daddr=Room%204B%20%26%20Co,%20200%20Market%20St&directionsmode=driving"
+        )
+        XCTAssertEqual(
+            MapProvider.waze.directionsURL(to: "1+2 Main St")?.absoluteString,
+            "waze://?q=1%2B2%20Main%20St&navigate=yes"
+        )
+        XCTAssertNil(MapProvider.apple.probeURL)
+        XCTAssertEqual(MapProvider.google.probeURL?.scheme, "comgooglemaps")
+        XCTAssertEqual(MapProvider.waze.probeURL?.scheme, "waze")
+    }
+
     // MARK: - Recurrence + EventKit
 
     func testSimpleRecurrenceMaps() throws {
