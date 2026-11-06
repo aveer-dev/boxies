@@ -1,4 +1,5 @@
-// The landing tour (§4.1 L2): six stops, each with its screen. Media names
+// The landing tour (§4.1 L2): six stops, each with its screen. Your domain
+// comes first: the domain and its price are the main thing Inboxies sells. Media names
 // map to src/data/media.ts. Chapters have no status: only shipped work gets
 // a stop, and validate.ts keeps "private email" out of them until it ships.
 import { flags } from "../config";
@@ -7,8 +8,50 @@ import type { Operator, TourChapter } from "./types";
 
 const allChapters: TourChapter[] = [
 	{
-		id: "tour-screener",
+		id: "tour-domains",
 		num: "01",
+		name: "Your domain",
+		platforms: ["ios", "android", "web"],
+		title: flags.domainPurchaseLive ? "Your own domain, from $20 a year." : "Your own name, set up for you.",
+		body: flags.domainPurchaseLive
+			? "Register a new domain in the app, with the platform and the assistant in one yearly price, and it’s ready as soon as you’ve paid. Already own one? Connecting it has no charge today: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off."
+			: "Bring a domain you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off.",
+		rows: [
+			...(flags.domainPurchaseLive
+				? [
+						{
+							lead: "One price, everything in.",
+							text: "$20 a year covers the domain, its setup, your contact details kept private, and Inboxies itself. Pricier domains are their wholesale price plus $10 a year.",
+							src: "pricing.ts registered plan and price rule (PS#1: $20 total at wholesale ≤ $15, else wholesale + $10)",
+						},
+					]
+				: []),
+			{
+				lead: "Bring the team.",
+				text: "In Domain Admin, create mailboxes, invite people by email, and share a mailbox without sharing a password.",
+				src: "FSW#domain-admin-console; FSW#shared-mailboxes",
+			},
+			{
+				lead: "hello@ and support@.",
+				text: "While you set up the domain, send addresses like these to any mailbox on it.",
+				src: "FC#4.1 (alias presets during onboarding); FSW#domain-aliases",
+			},
+			{
+				lead: "Leave with your mail.",
+				text: "Domain admins can export every mailbox to .mbox. Domains registered through Inboxies come with their transfer code.",
+				src: "FSW#leave-anytime; PS#5 (EPP only for domains bought through Inboxies)",
+			},
+		],
+		supportHref: "/support#connect-domain",
+		railLabel: "Domains",
+		media: { still: "domain-admin" },
+		src: flags.domainPurchaseLive
+			? "J (OS headline graft); FSW#custom-domains; FSW#buy-a-domain; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains; registered ones skip it)"
+			: "J (OS headline graft); FSW#custom-domains; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains)",
+	},
+	{
+		id: "tour-screener",
+		num: "02",
 		name: "Screener",
 		lineage: "HEY",
 		platforms: ["ios", "android", "web"],
@@ -38,7 +81,7 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-reply-later",
-		num: "02",
+		num: "03",
 		name: "Reply Later",
 		lineage: "HEY",
 		platforms: ["ios", "android", "web"],
@@ -71,7 +114,7 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-ask-ai",
-		num: "03",
+		num: "04",
 		name: "Ask AI",
 		platforms: ["ios", "android", "web"],
 		title: "An assistant that drafts. You press send.",
@@ -96,7 +139,7 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-search",
-		num: "04",
+		num: "05",
 		name: "Search",
 		platforms: ["ios", "android", "web"],
 		title: "Find it the way you remember it.",
@@ -128,7 +171,7 @@ const allChapters: TourChapter[] = [
 	},
 	{
 		id: "tour-compose",
-		num: "05",
+		num: "06",
 		name: "Compose",
 		platforms: ["ios", "android"],
 		title: "Drafts that step aside.",
@@ -155,39 +198,6 @@ const allChapters: TourChapter[] = [
 		media: { still: "compose-minimized", clip: "compose-dock" },
 		src: "CT (chapter title); FC#4.6 (compose that minimizes instead of discarding)",
 	},
-	{
-		id: "tour-domains",
-		num: "06",
-		name: "Your domain",
-		platforms: ["ios", "android", "web"],
-		title: "Your own name, set up for you.",
-		body: flags.domainPurchaseLive
-			? "Register a new domain in the app and it’s ready as soon as you’ve paid. Or bring one you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off."
-			: "Bring a domain you own: make two quick changes where you bought it, and Inboxies sets up everything email needs. A health check shows what’s working whenever you look, and one button fixes what’s off.",
-		rows: [
-			{
-				lead: "Bring the team.",
-				text: "In Domain Admin, create mailboxes, invite people by email, and share a mailbox without sharing a password.",
-				src: "FSW#domain-admin-console; FSW#shared-mailboxes",
-			},
-			{
-				lead: "hello@ and support@.",
-				text: "While you set up the domain, send addresses like these to any mailbox on it.",
-				src: "FC#4.1 (alias presets during onboarding); FSW#domain-aliases",
-			},
-			{
-				lead: "Leave with your mail.",
-				text: "Domain admins can export every mailbox to .mbox. Domains registered through Inboxies come with their transfer code.",
-				src: "FSW#leave-anytime; PS#5 (EPP only for domains bought through Inboxies)",
-			},
-		],
-		supportHref: "/support#connect-domain",
-		railLabel: "Domains",
-		media: { still: "domain-admin" },
-		src: flags.domainPurchaseLive
-			? "J (OS headline graft); FSW#custom-domains; FSW#buy-a-domain; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains; registered ones skip it)"
-			: "J (OS headline graft); FSW#custom-domains; onboarding.ts (records written at zone creation; health check runs on demand); dev ca531c6 domain-verification.ts (TXT proof for connected domains)",
-	},
 ];
 
 // A row that only runs somewhere visitors can't get yet (Focus & Reply while
@@ -197,7 +207,7 @@ export const chapters: TourChapter[] = allChapters.map((c) => ({
 	rows: c.rows.filter((r) => !r.platforms || onSomePublicPlatform(r.platforms)),
 }));
 
-// Chapter 04's chips. Each chip's meaning becomes its tooltip and a
+// The Search chapter's chips. Each chip's meaning becomes its tooltip and a
 // screen-reader suffix ("from: — Sender’s name or address").
 export const operators: Operator[] = [
 	{ op: "from:", meaning: "Sender’s name or address", src: "FSW#search; FC#4.7; durableObject searchEmails (sender, sender_name)" },
@@ -219,7 +229,7 @@ export const operatorExample = {
 	src: "FSW#search; FC#4.7",
 };
 
-// Chapter 03's strip: the receipts Ask AI shows while it works, joined by " · ".
+// The Ask AI chapter's strip: the receipts Ask AI shows while it works, joined by " · ".
 export const agentStrip = {
 	label: "What Ask AI shows as it works",
 	steps: ["Searched mailbox", "Read thread context", "Thought for 3s", "Drafted a reply in your Drafts folder."],
