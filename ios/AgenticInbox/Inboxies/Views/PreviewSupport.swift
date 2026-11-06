@@ -448,6 +448,21 @@ enum PreviewSupport {
             app.emails.removeAll { screenerSenderKeyMatches($0, decided) }
             app.screenerQueue.removeAll { screenerSenderKeyMatches($0, decided) }
             let destination: String? = args.contains("-previewScreenerAccept") ? "promotions" : nil
+            // `-previewScreener` (reader open): Accept keeps it open on the refiled
+            // message, so the Screener bar is gone (AVE-182). Decline closes it.
+            if let open = app.selectedEmail, screenerSenderKeyMatches(open, decided) {
+                if let destination {
+                    app.selectedEmail?.folderId = destination
+                    app.selectedEmail?.folderName = nil
+                    for index in app.threadEmails.indices where screenerSenderKeyMatches(app.threadEmails[index], decided) {
+                        app.threadEmails[index].folderId = destination
+                        app.threadEmails[index].folderName = nil
+                    }
+                } else {
+                    app.selectedEmail = nil
+                    app.threadEmails = []
+                }
+            }
             app.showToast(ScreenerDecision.toastTitle(destinationFolderId: destination), isUndo: true, duration: 0)
         }
         if args.contains("-previewToast") {

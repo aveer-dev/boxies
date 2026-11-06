@@ -435,7 +435,7 @@ fun EmailDetailView(
                 if (isScreenerEmail && !readOnly) {
                     ScreenerTriageBar(
                         email = current,
-                        onDone = onClose,
+                        onDeclined = onClose,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
@@ -754,7 +754,8 @@ private fun TagChip(title: String, destructive: Boolean = false) {
 @Composable
 private fun ScreenerTriageBar(
     email: Email,
-    onDone: () -> Unit,
+    /** Decline closes the reader; Accept keeps it open on the refiled message (AVE-182). */
+    onDeclined: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val app = LocalAppModel.current
@@ -780,15 +781,12 @@ private fun ScreenerTriageBar(
         ScreenerActionButtons(
             email = email,
             onAccept = { dest ->
-                scope.launch {
-                    app.approveScreenerSender(email, dest)
-                    onDone()
-                }
+                scope.launch { app.approveScreenerSender(email, dest) }
             },
             onDecline = {
                 scope.launch {
                     app.rejectScreenerSender(email)
-                    onDone()
+                    onDeclined()
                 }
             },
         )

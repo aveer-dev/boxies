@@ -2629,17 +2629,24 @@ class AppModel {
             val queuedIds = queued.map { it.id }.toSet()
             _emails.update { list -> list.filterNot { it.id in queuedIds } }
             _screenerQueue.update { list -> list.filterNot { it.id in queuedIds } }
+            val restoreIds = ScreenerDecision.restoreIds(response, email.id)
             if (_selectedEmail.value?.id in queuedIds ||
                 _selectedEmail.value?.sender?.trim()?.lowercase() == sender
             ) {
-                _selectedEmail.value = null
-                _threadEmails.value = emptyList()
+                if (destinationFolderId != null) {
+                    // Accept keeps the reader open (AVE-182): the message is
+                    // filed where it was accepted to, so the Screener bar goes.
+                    refileOpenThread(queuedIds + restoreIds, localFolderId)
+                } else {
+                    _selectedEmail.value = null
+                    _threadEmails.value = emptyList()
+                }
             }
             showScreenerUndoToast(
                 ScreenerDecision.toastTitle(destinationFolderId),
                 mailboxId = mailboxId,
                 sender = sender,
-                restoreIds = ScreenerDecision.restoreIds(response, email.id),
+                restoreIds = restoreIds,
             )
             loadEmailsForCurrentTab(showLoading = false)
             runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->
@@ -2677,6 +2684,20 @@ class AppModel {
         }
     }
 
+    /** Re-files messages of the open reader in place, without closing it. */
+    private fun refileOpenThread(ids: Set<String>, folderId: String) {
+        _selectedEmail.update { selected ->
+            if (selected != null && selected.id in ids) {
+                selected.copy(folderId = folderId, folderName = null)
+            } else {
+                selected
+            }
+        }
+        _threadEmails.update { thread ->
+            thread.map { if (it.id in ids) it.copy(folderId = folderId, folderName = null) else it }
+        }
+    }
+
     private suspend fun undoScreenerDecision(mailboxId: String, sender: String, restoreIds: List<String>) {
         val deleted = runCatching { ApiClient.shared.deleteSenderTriage(mailboxId, sender) }
         if (deleted.isFailure) {
@@ -2689,6 +2710,8 @@ class AppModel {
             db.moveEmail(id, FolderIds.SCREENER)
             runCatching { ApiClient.shared.moveEmail(mailboxId, id, FolderIds.SCREENER) }
         }
+        // A reader left open after Accept (AVE-182) shows the Screener bar again.
+        refileOpenThread(restoreIds.toSet(), FolderIds.SCREENER)
         refreshScreenerQueue()
         loadEmailsForCurrentTab(showLoading = false)
         runCatching { MailboxSyncService.syncMailbox(mailboxId) }.getOrNull()?.let { folders ->

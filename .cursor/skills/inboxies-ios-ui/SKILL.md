@@ -212,6 +212,7 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewMailbox` | Inbox New/Seen, with the pinned "3 waiting to be screened" row (AVE-136) |
 | `-previewScreener` | Screening room + detail (`-previewScreenerList` for the room alone). The Screener folder is a subpage pushed from the Inbox row, not a folder tab or menu item (AVE-136) |
 | `-previewScreenerList -previewScreenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (add `-previewScreenerAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
+| `-previewScreener -previewScreenerUndo -previewScreenerAccept` | Reader left open after Accept → Promotions: Screener bar gone, tag reads Promotions, toast pinned (Android `screenerReaderAccept`). AVE-182 |
 | `-previewReplyLater` | Reply Later pile |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
 | `-previewDetail -previewNewsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |
