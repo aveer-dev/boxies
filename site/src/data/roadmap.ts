@@ -31,17 +31,17 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 	// ── Triage ──
 	{ id: "screener", group: "triage", name: "Screener", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "On for every new mailbox. You can switch it off in Settings.", landing: true, src: "FSW#the-screener; RM#3; AVE-104 a9fead1 (switch on web, iOS, Android)" },
 	{ id: "new-and-seen", group: "triage", name: "New and Seen", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Opening a thread moves it to Seen.", src: "FSW#supporting-features" },
-	{ id: "categories", group: "triage", name: "Promotions and Updates", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Choose one per sender, or let newsletters from people you’ve emailed be sorted for you. No Social or Forums.", landing: true, src: "RM#2 (categories); dev 31c58c6 (explicit destination wins; classifier files allowed senders without one; classify-email.ts header rules)" },
-	{ id: "sender-destinations", group: "triage", name: "Sender destinations", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Settings → Senders.", src: "FSW#sender-destinations" },
+	{ id: "categories", group: "triage", name: "Promotions and Updates", status: "available", platforms: ["ios", "android", "web"], note: "Choose one per sender, or let newsletters from people you’ve emailed be sorted for you. No Social or Forums.", landing: true, src: "RM#2 (categories); dev 31c58c6 (explicit destination wins; classifier files allowed senders without one; classify-email.ts header rules)" },
+	{ id: "sender-destinations", group: "triage", name: "Sender destinations", status: "available", platforms: ["ios", "android", "web"], note: "Settings → Senders.", src: "FSW#sender-destinations" },
 	{ id: "reply-later", group: "triage", name: "Reply Later", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Leaves the pile when you reply. Add a reminder to bring a thread back at a set time.", landing: true, src: "RM#3; AVE-86 409d1b4" },
-	{ id: "private-notes", group: "triage", name: "Private notes", status: "available", lineage: "HEY", platforms: ["ios", "android", "web"], note: "Sticky notes on a thread, or a note on one message. Only you see them.", src: "AVE-59..62 (ec2c8ca, 49f8ef3, bfcd7a9, 92c381e); shared/thread-notes.ts" },
+	{ id: "private-notes", group: "triage", name: "Private notes", status: "available", platforms: ["ios", "android", "web"], note: "Sticky notes on a thread, or a note on one message. Only you see them.", src: "AVE-59..62 (ec2c8ca, 49f8ef3, bfcd7a9, 92c381e); shared/thread-notes.ts" },
 	{ id: "focus-reply", group: "triage", name: "Focus & Reply", status: "available", lineage: "HEY", platforms: ["web"], note: "Web only.", landing: true, src: "RM#3 (web only)" },
-	{ id: "filters", group: "triage", name: "Filters", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Up to 50 per mailbox.", src: "FSW#filters" },
+	{ id: "filters", group: "triage", name: "Filters", status: "available", platforms: ["ios", "android", "web"], note: "Up to 50 per mailbox.", src: "FSW#filters" },
 	{ id: "swipes", group: "triage", name: "Swipe actions", status: "available", platforms: ["ios", "android"], note: "Up to three per edge.", src: "FC#4.4" },
-	{ id: "undo", group: "triage", name: "Undo for delete, archive and move", status: "available", lineage: "Gmail", platforms: ["ios", "android"], note: "About five seconds.", src: "FC#4.4; J (no undo on web)" },
-	{ id: "undo-send", group: "triage", name: "Undo send", status: "available", lineage: "Gmail", platforms: ["ios"], note: "A few seconds after you tap Send.", src: "RM#2 (iOS only)" },
+	{ id: "undo", group: "triage", name: "Undo for delete, archive and move", status: "available", platforms: ["ios", "android"], note: "About five seconds.", src: "FC#4.4; J (no undo on web)" },
+	{ id: "undo-send", group: "triage", name: "Undo send", status: "available", platforms: ["ios"], note: "A few seconds after you tap Send.", src: "RM#2 (iOS only)" },
 	{ id: "set-aside", group: "triage", name: "Set Aside", status: "planned", lineage: "HEY", platforms: [], note: "A second pile for mail you need to keep handy.", landing: true, src: "RM#1 (4)" },
-	{ id: "tags", group: "triage", name: "Tags and a VIP view", status: "exploring", lineage: "Gmail", platforms: [], note: "Today: folders and stars, and your own folders show as tags in every app, one per email.", src: "RM#1 (8); dev FoldersColumn.tsx (custom folders shown as #tags, one per email); AVE-158 0561af7 (Settings → Tags on iOS and Android); no VIP view" },
+	{ id: "tags", group: "triage", name: "Tags and a VIP view", status: "exploring", platforms: [], note: "Today: folders and stars, and your own folders show as tags in every app, one per email.", src: "RM#1 (8); dev FoldersColumn.tsx (custom folders shown as #tags, one per email); AVE-158 0561af7 (Settings → Tags on iOS and Android); no VIP view" },
 
 	// ── AI ──
 	{ id: "ask-ai", group: "ai", name: "Ask AI", status: "available", platforms: ["ios", "android", "web"], note: flags.webAppPublic ? "Drafts and files; never sends. Several chats in the apps, one on the web." : "Drafts and files; never sends. Several chats at once.", landing: true, src: "FSW#ai-email-agent; FC#4.8; FC#2" },
@@ -60,21 +60,21 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 		src: "RM#1 (2); PR #49 / b7895d9 merged to dev 9 Oct; dev index.ts auto-draft gate; email-agent.ts getAgentByName",
 		ownerConfirm: draftsStatus === "available" ? undefined : "list publicly",
 	},
-	{ id: "for-you", group: "ai", name: "“For you” brief", status: "progress", lineage: "HEY", platforms: ["ios", "android"], note: "To-dos and topics to catch up on. Built, not switched on yet.", src: "FC#7 (built, hidden)", ownerConfirm: "tease publicly" },
-	{ id: "rewrite", group: "ai", name: "Rewrite in the composer", status: "exploring", lineage: "Gmail", platforms: [], note: "Ask the assistant to tighten or rephrase.", src: "RM#1 (11)" },
+	{ id: "for-you", group: "ai", name: "“For you” brief", status: "progress", platforms: ["ios", "android"], note: "To-dos and topics to catch up on. Built, not switched on yet.", src: "FC#7 (built, hidden)", ownerConfirm: "tease publicly" },
+	{ id: "rewrite", group: "ai", name: "Rewrite in the composer", status: "exploring", platforms: [], note: "Ask the assistant to tighten or rephrase.", src: "RM#1 (11)" },
 	{ id: "scoped-keys", group: "ai", name: "Connect your own AI tools", status: "available", platforms: [], note: "Claude, Cursor and other AI apps, with the mailboxes and permissions you choose.", src: "RM#1 (12); MCP OAuth on main since #152 (AVE-67/68/69/70): mcp/oauth.ts, shared/mcp-consent.ts, mcp/scopes.ts, SessionsSettings.tsx" },
 
 	// ── Search and compose ──
-	{ id: "search-operators", group: "search-compose", name: "Gmail-style search", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "from: to: subject: in: is: has: before: after:", landing: true, src: "FSW#search; RM#2" },
-	{ id: "full-text-search", group: "search-compose", name: "Full-text search", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Message bodies, not just previews.", src: "FSW#search" },
+	{ id: "search-operators", group: "search-compose", name: "Advanced search", status: "available", platforms: ["ios", "android", "web"], note: "from: to: subject: in: is: has: before: after:", landing: true, src: "FSW#search; RM#2" },
+	{ id: "full-text-search", group: "search-compose", name: "Full-text search", status: "available", platforms: ["ios", "android", "web"], note: "Message bodies, not just previews.", src: "FSW#search" },
 	{ id: "on-device-search", group: "search-compose", name: "Instant on-device search", status: "available", platforms: ["ios"], note: "Your phone’s index first, then the server.", src: "FC#4.7" },
 	{ id: "compose-dock", group: "search-compose", name: "Compose dock", status: "available", platforms: ["ios", "android"], note: "Swipe a draft down to park it.", src: "FC#4.6" },
 	{ id: "formatting", group: "search-compose", name: "Formatting and attachments", status: "available", platforms: ["ios", "android", "web"], src: "FC#4.6; FSW#supporting-features; ComposeFormatSheet.tsx (text colour on the web); ComposeFormatChrome.kt (three text colours on Android since d42078b)" },
-	{ id: "recipients", group: "search-compose", name: "Recipient suggestions", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "From people you’ve emailed.", src: "FSW#supporting-features" },
+	{ id: "recipients", group: "search-compose", name: "Recipient suggestions", status: "available", platforms: ["ios", "android", "web"], note: "From people you’ve emailed.", src: "FSW#supporting-features" },
 	{ id: "web-workspace", group: "search-compose", name: "Columns on the web", status: "available", platforms: ["web"], note: "Mailboxes, folders, list and message side by side, with ⌘K search and a quick-reply box.", landing: true, src: "RM#1 (5); dev 87720b1/#53 (routes.ts nested column routes; mailbox.tsx columns; FloatingDock.tsx ⌘K focuses search; QuickReplyBar.tsx), on dev via 6ebc554 11 Oct" },
-	{ id: "shortcuts", group: "search-compose", name: "More keyboard shortcuts on the web", status: "planned", lineage: "Gmail", platforms: ["web"], note: "j and k to move through mail. Gmail-style keys for replying, archiving, starring and Reply Later, and a ? list, work today.", landing: true, src: "RM#1 (6); AVE-28 1e535a7 app/lib/shortcuts.ts (C R A F E # U S L O P [ ] Esc ⌘K ⌘J ⇧T T ?); no j/k or / handler" },
-	{ id: "signature-web", group: "search-compose", name: "Signature editor on the web", status: "exploring", lineage: "Gmail", platforms: ["web"], note: "The apps can add a fixed “Sent with Inboxies Email” line; custom signatures can’t be written yet.", src: "RM#1 (10); FSW#caveats (7); SettingsSheetView.swift / .kt (Default signature toggle only); no web signature setting" },
-	{ id: "scheduled-send", group: "search-compose", name: "Scheduled send", status: "exploring", lineage: "Gmail", platforms: [], note: "Write now, send later.", landing: true, src: "RM#1 (9)" },
+	{ id: "shortcuts", group: "search-compose", name: "More keyboard shortcuts on the web", status: "planned", platforms: ["web"], note: "j and k to move through mail. Single keys for replying, archiving, starring and Reply Later, and a ? list, work today.", landing: true, src: "RM#1 (6); AVE-28 1e535a7 app/lib/shortcuts.ts (C R A F E # U S L O P [ ] Esc ⌘K ⌘J ⇧T T ?); no j/k or / handler" },
+	{ id: "signature-web", group: "search-compose", name: "Signature editor on the web", status: "exploring", platforms: ["web"], note: "The apps can add a fixed “Sent with Inboxies Email” line; custom signatures can’t be written yet.", src: "RM#1 (10); FSW#caveats (7); SettingsSheetView.swift / .kt (Default signature toggle only); no web signature setting" },
+	{ id: "scheduled-send", group: "search-compose", name: "Scheduled send", status: "exploring", platforms: [], note: "Write now, send later.", landing: true, src: "RM#1 (9)" },
 
 	// ── Domains and teams ──
 	{
@@ -88,11 +88,11 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 		src: "FSW#custom-domains",
 	},
 	{ id: "dns", group: "domains", name: "Domain health check", status: "available", platforms: ["ios", "android", "web"], note: "See what’s working, and fix what’s off in one click. Edit the domain’s records yourself if you need to.", src: "FSW#custom-domains" },
-	{ id: "domain-admin", group: "domains", name: "Domain Admin and invites", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Create, assign, invite, delete.", src: "FSW#domain-admin-console" },
-	{ id: "shared-mailboxes", group: "domains", name: "Shared mailboxes", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Owners and members.", src: "FSW#shared-mailboxes" },
-	{ id: "domain-export", group: "domains", name: "Whole-domain .mbox export", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Domain admins.", src: "FSW#leave-anytime" },
+	{ id: "domain-admin", group: "domains", name: "Domain Admin and invites", status: "available", platforms: ["ios", "android", "web"], note: "Create, assign, invite, delete.", src: "FSW#domain-admin-console" },
+	{ id: "shared-mailboxes", group: "domains", name: "Shared mailboxes", status: "available", platforms: ["ios", "android", "web"], note: "Owners and members.", src: "FSW#shared-mailboxes" },
+	{ id: "domain-export", group: "domains", name: "Whole-domain .mbox export", status: "available", platforms: ["ios", "android", "web"], note: "Domain admins.", src: "FSW#leave-anytime" },
 	{ id: "transfer", group: "domains", name: "Transfer code and unlock", status: "available", platforms: ["ios", "android", "web"], note: "Domains registered through Inboxies.", src: "PS#5" },
-	{ id: "mailbox-export", group: "domains", name: "Export a mailbox from Settings", status: "planned", lineage: "Gmail", platforms: [], note: "One button, any mailbox.", landing: true, src: "RM#1 (7)" },
+	{ id: "mailbox-export", group: "domains", name: "Export a mailbox from Settings", status: "planned", platforms: [], note: "One button, any mailbox.", landing: true, src: "RM#1 (7)" },
 
 	// ── Privacy and trust ──
 	{
@@ -129,9 +129,9 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 		src: "1afa7e3 (MV3, Chrome 120+, aliases-only pairing via /extension/connect, sign-up pill); dev extension/manifest.json (no store listing)",
 		ownerConfirm: flags.chromeExtensionPublic ? undefined : "submit to the Chrome Web Store",
 	},
-	{ id: "spoofing", group: "privacy", name: "Spoofing warnings", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Mail pretending to be from someone else is flagged.", src: "FSW#spoofing-protection" },
+	{ id: "spoofing", group: "privacy", name: "Spoofing warnings", status: "available", platforms: ["ios", "android", "web"], note: "Mail pretending to be from someone else is flagged.", src: "FSW#spoofing-protection" },
 	{ id: "safe-html", group: "privacy", name: "Safe to open", status: "available", platforms: ["ios", "android", "web"], note: "Code hidden in an email never runs.", src: "FSW#supporting-features" },
-	{ id: "tracking-pixels", group: "privacy", name: "Remote images held back in Spam", status: "available", lineage: "Gmail", platforms: ["ios", "android", "web"], note: "Hidden in Spam until you choose Load images; elsewhere they load.", src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
+	{ id: "tracking-pixels", group: "privacy", name: "Remote images held back in Spam", status: "available", platforms: ["ios", "android", "web"], note: "Hidden in Spam until you choose Load images; elsewhere they load.", src: "dev AVE-132 (#168: shared/remote-images.ts, EmailIframe.tsx; EmailHTMLSanitizer.swift / EmailHtmlSanitizer.kt blocksRemoteImages, folder_id == spam)" },
 	{
 		id: "delete-account",
 		group: "privacy",
@@ -164,9 +164,9 @@ const all: (RoadmapRow & { hidden?: boolean })[] = [
 		note: flags.androidPublic ? "On Google Play." : "Coming soon.",
 		src: "FC#1 (Android 14+); FC#8.5; AVE-54 (Android coming soon)",
 	},
-	{ id: "push", group: "apps", name: "Push notifications", status: "available", lineage: "Gmail", platforms: ["ios", "android"], note: "Tap to open the exact email.", src: "RM#2" },
+	{ id: "push", group: "apps", name: "Push notifications", status: "available", platforms: ["ios", "android"], note: "Tap to open the exact email.", src: "RM#2" },
 	{ id: "live", group: "apps", name: "Live updates", status: "available", platforms: ["ios", "android", "web"], note: "New mail appears as it arrives.", src: "FSW#supporting-features" },
-	{ id: "offline", group: "apps", name: "Offline on iPhone", status: "available", lineage: "Gmail", platforms: ["ios"], note: "A local copy, and actions queued until you’re back.", src: "FC#4.10" },
+	{ id: "offline", group: "apps", name: "Offline on iPhone", status: "available", platforms: ["ios"], note: "A local copy, and actions queued until you’re back.", src: "FC#4.10" },
 ];
 
 /**
@@ -256,7 +256,7 @@ const allComingNext: (ComingNext & { hidden?: boolean })[] = [
 		id: "shortcuts",
 		title: "More keyboard shortcuts on the web",
 		status: "planned",
-		body: "j and k to move through mail, like Gmail. The web app already has single keys for writing, replying, forwarding, archiving, deleting, starring and Reply Later, ⌘K for search, and ? to see them all.",
+		body: "j and k to move up and down through mail. The web app already has single keys for writing, replying, forwarding, archiving, deleting, starring and Reply Later, ⌘K for search, and ? to see them all.",
 		src: "RM#1 (6); AVE-28 1e535a7 app/lib/shortcuts.ts; no j/k handler",
 	},
 	{

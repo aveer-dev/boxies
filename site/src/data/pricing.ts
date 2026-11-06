@@ -37,7 +37,7 @@ const allPlans: Plan[] = [
 			"you@inboxies.email",
 			"The Screener, Reply Later, Promotions and Updates",
 			"Ask AI, drafting replies you approve",
-			"Gmail-style search that reads every word",
+			"Search that reads every word",
 			...(appsLine() ? [appsLine()] : []),
 		],
 		footnote: "Pick a username, a password and a backup email. No card.",
@@ -133,7 +133,7 @@ const compareGroups: CompareGroup[] = [
 			{ label: "Address", values: ["you@inboxies.email", "you@yourdomain", "you@yourdomain"], src: "PS#2" },
 			{ label: "Screener, New and Seen, Reply Later", values: [true, true, true], src: "FSW#headline-features" },
 			{ label: "Promotions, Updates and Spam", values: [true, true, true], src: "FSW#smart-sorting; dev 31c58c6 (header sorting for senders without a chosen destination; accepted senders filed where you chose)" },
-			{ label: "Gmail-style search", values: [true, true, true], src: "FSW#search" },
+			{ label: "Advanced search", values: [true, true, true], src: "FSW#search" },
 			{ label: "Filters", values: ["50", "50", "50"], src: "PS#4" },
 			{ label: "Auto-reply", values: [true, true, true], src: "FSW#supporting-features (vacation auto-reply)" },
 			{

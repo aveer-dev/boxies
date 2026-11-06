@@ -98,10 +98,9 @@ const allChapters: TourChapter[] = [
 		id: "tour-search",
 		num: "04",
 		name: "Search",
-		lineage: "Gmail",
 		platforms: ["ios", "android", "web"],
 		title: "Find it the way you remember it.",
-		body: "Search reads the whole message body, not just the preview, and understands the search terms you already use in Gmail.",
+		body: "Search reads the whole message, not just the preview, and narrows things down by sender, folder, date and more.",
 		extra: "operators",
 		rows: [
 			{
