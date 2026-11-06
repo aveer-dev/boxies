@@ -1371,9 +1371,16 @@ final class APIClient: @unchecked Sendable {
         )
     }
 
-    func getAttachment(mailboxId: String, emailId: String, attachmentId: String) async throws -> Data {
-        let (data, _) = try await requestData(
-            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/attachments/\(attachmentId.urlPathEncoded)"
+    /// `bearerToken` pins the download to a session (a forward sent after sign-out in the undo window).
+    func getAttachment(mailboxId: String, emailId: String, attachmentId: String, bearerToken: String? = nil) async throws -> Data {
+        let (data, _) = try await perform(
+            path: "/api/v1/mailboxes/\(mailboxId.urlPathEncoded)/emails/\(emailId.urlPathEncoded)/attachments/\(attachmentId.urlPathEncoded)",
+            method: "GET",
+            query: [:],
+            body: nil,
+            authed: true,
+            bearerToken: bearerToken,
+            headers: [:]
         )
         return data
     }

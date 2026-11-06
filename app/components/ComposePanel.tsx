@@ -2,9 +2,10 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Banner, Button, Input } from "@cloudflare/kumo";
+import { Banner, Button, Input, Switch } from "@cloudflare/kumo";
 import { IconButton } from "~/components/IconButton";
-import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperclipIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
+import { includeAttachmentsLabel } from "shared/forward-attachments";
 import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import type { ComposeOptions } from "~/hooks/useUIStore";
@@ -31,6 +32,9 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 		body,
 		setBody,
 		attachments,
+		forwardAttachmentCount,
+		includeForwarded,
+		setIncludeForwarded,
 		addFiles,
 		removeAttachment,
 		overSize,
@@ -163,6 +167,25 @@ export default function ComposePanel({ panelKey, options }: { panelKey: string; 
 								/>
 							</div>
 						</div>
+
+						{forwardAttachmentCount > 0 ? (
+							// Forward only (AVE-181): send the original's files along, on by default.
+							<div className="flex items-center gap-2" data-testid="compose-forward-attachments">
+								<span className="w-14 shrink-0" aria-hidden="true" />
+								<div className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-kumo-line px-3 py-1.5">
+									<PaperclipIcon size={14} className="shrink-0 text-kumo-subtle" aria-hidden="true" />
+									<span className="min-w-0 flex-1 truncate text-sm text-kumo-default">
+										{includeAttachmentsLabel(forwardAttachmentCount)}
+									</span>
+									<Switch
+										checked={includeForwarded}
+										onCheckedChange={setIncludeForwarded}
+										size="sm"
+										aria-label={includeAttachmentsLabel(forwardAttachmentCount)}
+									/>
+								</div>
+							</div>
+						) : null}
 					</div>
 
 					<div className="border border-kumo-line rounded-md overflow-hidden bg-kumo-base">
