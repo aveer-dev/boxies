@@ -5,12 +5,13 @@
 import { Badge, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
+import { relativeTime, securityEventDetail, securityEventTitle } from "~/lib/security-activity";
 import { describeSession } from "~/lib/session-label";
-import { useMcpGrants, useSessions } from "~/queries/account";
+import { useMcpGrants, useSecurityActivity, useSessions } from "~/queries/account";
 import { queryKeys } from "~/queries/keys";
 import api from "~/services/api";
-import type { AccountSession, McpGrant } from "~/types";
+import type { AccountSession, McpGrant, SecurityActivityItem } from "~/types";
 import ConfirmDialog from "./ConfirmDialog";
 import SettingsSubpage from "./SettingsSubpage";
 
@@ -161,9 +162,64 @@ function ConnectedApps() {
 	);
 }
 
+function ActivityRow({ event }: { event: SecurityActivityItem }) {
+	const detail = securityEventDetail(event);
+	return (
+		<li className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
+			<div className="min-w-0">
+				<div className="text-sm text-kumo-default truncate">{securityEventTitle(event)}</div>
+				{detail && <div className="text-xs text-kumo-subtle truncate">{detail}</div>}
+			</div>
+			<time
+				dateTime={event.createdAt}
+				title={formatWhen(event.createdAt)}
+				className="shrink-0 text-xs text-kumo-subtle"
+			>
+				{relativeTime(event.createdAt)}
+			</time>
+		</li>
+	);
+}
+
+/**
+ * Read-only list of sign-ins and account changes of the last 30 days
+ * (AVE-151). Device and location are approximate; addresses are never shown.
+ */
+function SecurityActivity() {
+	const { data, isLoading, error } = useSecurityActivity();
+	const events = data?.events;
+
+	return (
+		<section className="mt-10">
+			<h2 className="text-sm font-medium text-kumo-default mb-1">Recent security activity</h2>
+			<p className="text-sm text-kumo-subtle mb-4">
+				Sign-ins and changes to how you sign in, from the last 30 days. Locations are
+				approximate.
+			</p>
+			{isLoading ? (
+				<div className="flex justify-center py-6">
+					<Loader />
+				</div>
+			) : error || !events ? (
+				<p className="text-sm text-kumo-subtle">Couldn’t load recent activity. Try again later.</p>
+			) : events.length === 0 ? (
+				<p className="text-sm text-kumo-subtle">No security activity in the last 30 days.</p>
+			) : (
+				<div className="rounded-2xl border border-kumo-line bg-kumo-base p-5">
+					<ul className="divide-y divide-kumo-line">
+						{events.map((event) => (
+							<ActivityRow key={event.id} event={event} />
+						))}
+					</ul>
+				</div>
+			)}
+		</section>
+	);
+}
+
 /** Where this account is signed in, with per-session and bulk sign-out. */
 export default function SessionsSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
 	const { data: sessions, isLoading, error } = useSessions();
@@ -250,6 +306,8 @@ export default function SessionsSettings() {
 			)}
 
 			<ConnectedApps />
+
+			<SecurityActivity />
 
 			<ConfirmDialog
 				open={revoking !== null}

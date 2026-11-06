@@ -5,7 +5,7 @@
 import { Banner, Button, Input } from "@cloudflare/kumo";
 import { IconButton } from "~/components/IconButton";
 import { ArrowsClockwiseIcon, CheckIcon, FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { useComposeForm } from "~/hooks/useComposeForm";
 import type { ComposeOptions } from "~/hooks/useUIStore";
 import RecipientAutocompleteInput from "./RecipientAutocompleteInput";
@@ -15,7 +15,7 @@ import ComposeQuotedOriginal from "./compose/ComposeQuotedOriginal";
 import PrivateEmailLogo from "./PrivateEmailLogo";
 
 export default function ComposePanel({ panelKey, options }: { panelKey: string; options: ComposeOptions }) {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 
 	const {
 		to,

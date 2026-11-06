@@ -216,6 +216,31 @@ class AuthStore(context: Context) {
         _twoFactorChallenge.value = challenge
     }
 
+    /**
+     * Signs in with the one-time code from a Stripe checkout return link (AVE-118).
+     * Returns false, with [errorMessage] telling the buyer to sign in with the password
+     * they chose, when the code is wrong, used or expired.
+     */
+    suspend fun signInWithCheckoutCode(code: String, checkoutSessionId: String, fallbackEmail: String?): Boolean {
+        return try {
+            val response = withContext(Dispatchers.IO) {
+                ApiClient.shared.exchangeCheckoutCode(code, checkoutSessionId)
+            }
+            _errorMessage.value = null
+            persist(response.token, response.email ?: response.mailboxId ?: fallbackEmail)
+            true
+        } catch (e: Exception) {
+            // Already signed in (e.g. buying another domain): keep that session, no sign-in prompt.
+            if (isAuthenticated) return false
+            _errorMessage.value = if (fallbackEmail != null) {
+                "Your domain is ready. Sign in as $fallbackEmail with the password you chose."
+            } else {
+                "Your domain is ready. Sign in with the password you chose."
+            }
+            false
+        }
+    }
+
     fun applySession(token: String, email: String?) {
         persist(token, email)
     }

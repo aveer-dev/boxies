@@ -71,26 +71,7 @@ enum Passkeys {
         guard let assertion = authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion else {
             throw Failure.message("Passkey sign-in failed. Try again or sign in another way.")
         }
-
-        let credentialID = Base64URL.encode(assertion.credentialID)
-        var response: [String: Any] = [
-            "clientDataJSON": Base64URL.encode(assertion.rawClientDataJSON),
-            "authenticatorData": Base64URL.encode(assertion.rawAuthenticatorData),
-            "signature": Base64URL.encode(assertion.signature),
-        ]
-        if let userHandle = assertion.userID, !userHandle.isEmpty {
-            response["userHandle"] = Base64URL.encode(userHandle)
-        }
-        let body: [String: Any] = [
-            "response": [
-                "id": credentialID,
-                "rawId": credentialID,
-                "type": "public-key",
-                "response": response,
-                "clientExtensionResults": [String: Any](),
-                "authenticatorAttachment": "platform",
-            ] as [String: Any],
-        ]
+        let body: [String: Any] = ["response": assertionJSON(assertion)]
 
         do {
             let (session, verifyHTTP): (SessionReply, HTTPURLResponse) = try await api.requestWithResponse(
@@ -108,6 +89,59 @@ enum Passkeys {
             throw failure
         } catch {
             throw friendly(error, fallback: "Passkey sign-in failed. Try again or sign in another way.")
+        }
+    }
+
+    // MARK: - Confirm it's you (signed in)
+
+    /// Step-up re-auth with a passkey (`POST /api/v1/me/reauth`, AVE-113): the
+    /// same ceremony as sign-in, but the assertion goes to `/me/reauth` with the
+    /// challenge cookie echoed back, and no new session comes out of it.
+    @MainActor
+    static func reauthenticate() async throws {
+        let fallback = "That passkey couldn't confirm it's you. Try again or use another way."
+        let api = APIClient.shared
+        let options: AuthenticationOptions
+        let http: HTTPURLResponse
+        do {
+            // Signed in, so the options list only this account's passkeys.
+            (options, http) = try await api.requestWithResponse(
+                path: "/api/auth/passkey/generate-authenticate-options"
+            )
+        } catch {
+            throw friendly(error, fallback: fallback)
+        }
+        guard let rpID = options.rpId, !rpID.isEmpty,
+              let challenge = Base64URL.decode(options.challenge),
+              let cookie = challengeCookie(from: http) else {
+            throw Failure.badOptions
+        }
+
+        let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: rpID)
+        let request = provider.createCredentialAssertionRequest(challenge: challenge)
+        request.userVerificationPreference = .preferred
+        let allowed = (options.allowCredentials ?? []).compactMap { Base64URL.decode($0.id) }
+        if !allowed.isEmpty {
+            request.allowedCredentials = allowed.map { ASAuthorizationPlatformPublicKeyCredentialDescriptor(credentialID: $0) }
+        }
+
+        let authorization = try await PasskeyCeremony().perform(request)
+        guard let assertion = authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion else {
+            throw Failure.message(fallback)
+        }
+        do {
+            let _: ReauthResponse = try await api.request(
+                path: "/api/v1/me/reauth",
+                method: "POST",
+                body: ["method": "passkey", "response": assertionJSON(assertion)],
+                headers: ceremonyHeaders(cookie: cookie, rpID: rpID)
+            )
+        } catch let apiError as APIError {
+            // The Worker's own sentence ("That passkey couldn't confirm it's you…", too many tries).
+            if case .http(_, let message) = apiError, !message.isEmpty, !message.hasPrefix("{") {
+                throw Failure.message(message)
+            }
+            throw friendly(apiError, fallback: fallback)
         }
     }
 
@@ -223,6 +257,27 @@ enum Passkeys {
         return "\(cookie.name)=\(cookie.value)"
     }
 
+    /// An assertion as WebAuthn `AuthenticationResponseJSON`.
+    static func assertionJSON(_ assertion: ASAuthorizationPlatformPublicKeyCredentialAssertion) -> [String: Any] {
+        let credentialID = Base64URL.encode(assertion.credentialID)
+        var response: [String: Any] = [
+            "clientDataJSON": Base64URL.encode(assertion.rawClientDataJSON),
+            "authenticatorData": Base64URL.encode(assertion.rawAuthenticatorData),
+            "signature": Base64URL.encode(assertion.signature),
+        ]
+        if let userHandle = assertion.userID, !userHandle.isEmpty {
+            response["userHandle"] = Base64URL.encode(userHandle)
+        }
+        return [
+            "id": credentialID,
+            "rawId": credentialID,
+            "type": "public-key",
+            "response": response,
+            "clientExtensionResults": [String: Any](),
+            "authenticatorAttachment": "platform",
+        ]
+    }
+
     static func ceremonyHeaders(cookie: String, rpID: String) -> [String: String] {
         ["Cookie": cookie, "Origin": "https://\(rpID)"]
     }
@@ -254,7 +309,7 @@ enum Passkeys {
             default:
                 return Failure.message(fallback)
             }
-        case .transport, .sessionExpired, .cloudflareAccess:
+        case .transport, .sessionExpired, .cloudflareAccess, .reauthRequired:
             return apiError
         default:
             return Failure.message(fallback)

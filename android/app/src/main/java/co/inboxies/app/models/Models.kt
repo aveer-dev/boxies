@@ -139,6 +139,34 @@ data class McpGrant(
     val expiresAt: String? = null,
 )
 
+/**
+ * One entry of Account → Devices & sessions → Recent security activity (AVE-151).
+ * Mirrors the Worker's `SecurityActivityItem`; [kind] stays a string so a kind newer
+ * than this build still renders (as a generic label).
+ */
+@Serializable
+data class SecurityActivityItem(
+    val id: String,
+    val kind: String,
+    val createdAt: String,
+    /** "Chrome on macOS"; null when unknown. */
+    val device: String? = null,
+    /** "Lagos, Nigeria" (approximate); null when unknown. */
+    val location: String? = null,
+    val country: String? = null,
+    /** Sign-ins only: from a device not seen in the last 90 days. */
+    val newDevice: Boolean = false,
+    /** Sign-in method events: "google", "apple", "password". */
+    val provider: String? = null,
+)
+
+/** `GET /api/v1/me/security-activity`: the caller's last 30 days, newest first. */
+@Serializable
+data class SecurityActivityResponse(
+    val since: String? = null,
+    val events: List<SecurityActivityItem> = emptyList(),
+)
+
 @Serializable
 data class RevokeSessionsResponse(
     val ok: Boolean = false,
@@ -231,6 +259,15 @@ data class InviteCodeResponse(
     val ok: Boolean = false,
     val sentTo: String,
     val devCode: String? = null,
+)
+
+/** `/api/v1/auth/exchange`: the owner session a checkout return code was traded for. */
+@Serializable
+data class CheckoutExchangeResponse(
+    val token: String,
+    val expiresAt: String,
+    val email: String? = null,
+    val mailboxId: String? = null,
 )
 
 @Serializable

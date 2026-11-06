@@ -29,6 +29,13 @@ assert.equal(computeSnippet(long), long.slice(0, SNIPPET_MAX_LENGTH));
 const htmlMail = `<html><head><style>${"body{color:red}".repeat(40)}</style></head><body><p>Hi&nbsp;Sam &amp; team,</p><p>See&#39;s you</p></body></html>`;
 assert.equal(computeSnippet(htmlMail), "Hi Sam & team, See's you");
 
+// AVE-180: list/push snippet drops preheader padding and decodes all entities.
+const uberMail = `<html><body><div style="display:none">Flexible earnings are waiting for you.${"&shy; &zwnj; &#847; &nbsp; ".repeat(20)}</div><p>Don&rsquo;t wait &#8212; &lt;tag&gt;</p></body></html>`;
+assert.equal(
+	computeSnippet(uberMail),
+	"Flexible earnings are waiting for you. Don’t wait — <tag>",
+);
+
 const mime = buildSimpleMime(
 	{
 		from: "Ada <ada@example.com>",

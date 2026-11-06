@@ -1,12 +1,16 @@
 package co.inboxies.app.ui.preview
 
+import co.inboxies.app.ui.settings.previewTagFolders
 import co.inboxies.app.BuildConfig
 import co.inboxies.app.models.AdminMailboxRow
 import co.inboxies.app.models.DomainService
 import co.inboxies.app.models.Email
 import co.inboxies.app.models.ThreadNote
 import co.inboxies.app.services.ThreadNoteSummary
+import co.inboxies.app.services.ReauthChallenge
+import co.inboxies.app.services.ReauthMethod
 import co.inboxies.app.services.ReplyLaterReminderPresets
+import co.inboxies.app.models.ScreenerDecision
 import co.inboxies.app.models.ToastAction
 import co.inboxies.app.models.Folder
 import co.inboxies.app.models.FolderIds
@@ -119,7 +123,7 @@ object PreviewSupport {
         val serviceAdmin = service?.canManage == true
         val administeredDomains = if (serviceAdmin) listOf(mailbox.domain) else emptyList()
         val domainServices = service?.let { mapOf(mailbox.domain to it) } ?: emptyMap()
-        val folders = listOf(
+        val systemFolders = listOf(
             Folder(id = FolderIds.INBOX, name = "Inbox", unreadCount = 3),
             Folder(id = FolderIds.SCREENER, name = "Screener", unreadCount = 2),
             Folder(id = FolderIds.PROMOTIONS, name = "Promotions", unreadCount = 0),
@@ -130,6 +134,8 @@ object PreviewSupport {
             Folder(id = FolderIds.SCREENED_OUT, name = "Screened out", unreadCount = 0),
             Folder(id = FolderIds.TRASH, name = "Trash", unreadCount = 0),
         )
+        val tagModes = setOf(PreviewMode.Tags, PreviewMode.TagsRename, PreviewMode.TagsDelete)
+        val folders = if (mode in tagModes) systemFolders + previewTagFolders else systemFolders
         val reminderModes = setOf(PreviewMode.ReminderPicker, PreviewMode.ReminderToast, PreviewMode.ReminderDue)
         val allEmails = if (mode in reminderModes) withReminderFixtures(emails(you)) else emails(you)
         DatabaseService.shared.upsertMailboxes(listOf(mailbox))
@@ -151,8 +157,12 @@ object PreviewSupport {
                     isAdmin = false,
                 )
             }
-            PreviewMode.ScreenerList -> {
-                val screener = allEmails.filter { it.folderId == FolderIds.SCREENER }
+            PreviewMode.ScreenerList, PreviewMode.ScreenerUndo, PreviewMode.ScreenerUndoAccept -> {
+                val screener = allEmails.filter { it.folderId == FolderIds.SCREENER }.let { queue ->
+                    // Undo modes: the first sender was just decided, so their rows are gone.
+                    if (mode == PreviewMode.ScreenerList) queue
+                    else queue.filterNot { it.sender.equals(queue.firstOrNull()?.sender, ignoreCase = true) }
+                }
                 app.applyDebugPreview(
                     mailboxes = listOf(mailbox),
                     selectedMailboxId = mailbox.id,
@@ -340,6 +350,12 @@ object PreviewSupport {
         app.setScreenerQueueForPreview(
             if (mode == PreviewMode.SettingsScreenerOff) emptyList() else allEmails.filter { it.folderId == FolderIds.SCREENER },
         )
+        if (mode == PreviewMode.ScreenerUndo || mode == PreviewMode.ScreenerUndoAccept) {
+            // Decision toast with Undo (AVE-159); the decided sender has left the room and its count.
+            app.setScreenerQueueForPreview(app.emails.value)
+            val destination = if (mode == PreviewMode.ScreenerUndoAccept) "promotions" else null
+            app.showToast(ScreenerDecision.toastTitle(destination), isUndo = true, durationMs = 0)
+        }
         if (mode == PreviewMode.Toast) {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo = true, durationMs = 0)
@@ -388,6 +404,29 @@ object PreviewSupport {
         expiresAt = "2026-12-01T00:00:00.000Z",
         status = "pending",
     )
+
+    /** The "Confirm it's you" challenge for a `reauth*` preview mode (iOS `reauthChallengeFixture`), else null. */
+    fun reauthChallenge(mode: PreviewMode): ReauthChallenge? {
+        val message = "For your security, confirm it's you first. Sign out and sign back in, then try again within 5 minutes."
+        return when (mode) {
+            PreviewMode.Reauth -> ReauthChallenge(
+                listOf(ReauthMethod.Password, ReauthMethod.Passkey),
+                message = message,
+            )
+            PreviewMode.ReauthTwoFactor -> ReauthChallenge(
+                listOf(ReauthMethod.Password, ReauthMethod.Passkey),
+                twoFactor = true,
+                message = message,
+            )
+            PreviewMode.ReauthPasskey -> ReauthChallenge(listOf(ReauthMethod.Passkey), message = message)
+            PreviewMode.ReauthEmailCode -> ReauthChallenge(
+                listOf(ReauthMethod.EmailCode),
+                emailCodeTo = "a•••x@gmail.com",
+                message = message,
+            )
+            else -> null
+        }
+    }
 
     fun identities() = listOf(
         LinkedIdentity(type = "password", key = "user:preview", label = "Password (${addr("you")})"),

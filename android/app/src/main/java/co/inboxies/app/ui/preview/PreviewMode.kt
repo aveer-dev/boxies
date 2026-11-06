@@ -27,14 +27,34 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     InviteAccept("inviteAccept", "previewInviteAccept"),
     InviteAcceptSignedIn("inviteAcceptSignedIn", "previewInviteAcceptSignedIn"),
     SignInMethods("signInMethods", "previewSignInMethods"),
+    /** "Confirm it's you" over Sign-in & recovery, password (iOS `-previewSignInMethods -previewReauth password`, AVE-171). */
+    Reauth("reauth", "previewReauth"),
+    /** "Confirm it's you", password + authenticator code (iOS `-previewReauth twoFactor`). */
+    ReauthTwoFactor("reauthTwoFactor", "previewReauthTwoFactor"),
+    /** "Confirm it's you", passkey only (iOS `-previewReauth passkey`). */
+    ReauthPasskey("reauthPasskey", "previewReauthPasskey"),
+    /** "Confirm it's you", emailed code (iOS `-previewReauth emailCode`). */
+    ReauthEmailCode("reauthEmailCode", "previewReauthEmailCode"),
     Members("members", "previewMembers"),
     Sessions("sessions", "previewSessions"),
+    /** Devices & sessions scrolled to Recent security activity with fixture events (iOS `-previewSessions -previewSecurityActivity`, AVE-151). */
+    SecurityActivity("securityActivity", "previewSecurityActivity"),
+    /** Recent security activity, nothing in the last 30 days (iOS `-previewSecurityActivity empty`). */
+    SecurityActivityEmpty("securityActivityEmpty", "previewSecurityActivityEmpty"),
+    /** Recent security activity failed to load: calm note (iOS `-previewSecurityActivity error`). */
+    SecurityActivityError("securityActivityError", "previewSecurityActivityError"),
     /** Settings → Senders, Allowed tab with fixture rules (iOS `-previewSenders`). */
     Senders("senders", "previewSenders"),
     /** Settings → Senders, Blocked tab (iOS `-previewSenders -previewSendersBlocked`). */
     SendersBlocked("sendersBlocked", "previewSendersBlocked"),
     /** Settings → Outgoing mail → Bounced addresses with fixture rows (iOS `-previewSuppressions`, AVE-157). */
     Suppressions("suppressions", "previewSuppressions"),
+    /** Settings → Tags with fixture custom folders (iOS `-previewTags`, AVE-158). */
+    Tags("tags", "previewTags"),
+    /** Settings → Tags with the rename dialog open (iOS `-previewTags -previewTagsRename`). */
+    TagsRename("tagsRename", "previewTagsRename"),
+    /** Settings → Tags with the delete confirmation open (iOS `-previewTags -previewTagsDelete`). */
+    TagsDelete("tagsDelete", "previewTagsDelete"),
     /** Settings sheet on the fixture mailbox (iOS `-previewSettings`). */
     Settings("settings", "previewSettings"),
     /** Settings sheet with Screener off (iOS `-previewSettings -previewScreenerOff`). */
@@ -58,6 +78,10 @@ enum class PreviewMode(val cliName: String, val intentExtra: String) {
     ListError("listError", "previewListError"),
     Screener("screener", "previewScreener"),
     ScreenerList("screenerList", "previewScreenerList"),
+    /** Screening room right after Decline: row gone, "Declined · Undo" toast pinned (iOS `-previewScreenerList -previewScreenerUndo`, AVE-159). */
+    ScreenerUndo("screenerUndo", "previewScreenerUndo"),
+    /** Same after Accept → Promotions (iOS `… -previewScreenerUndo -previewScreenerAccept`). */
+    ScreenerUndoAccept("screenerUndoAccept", "previewScreenerUndoAccept"),
     ReplyLater("replyLater", "previewReplyLater"),
     Spam("spam", "previewSpam"),
     /** Long, wide newsletter open in the reader: fit-to-width + sideways scroll (iOS `-previewDetail -previewNewsletter`). */

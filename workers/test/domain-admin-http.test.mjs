@@ -119,7 +119,7 @@ let ownerInviteToken;
 	assert.equal(created.status, 201);
 	const invite = created.payload.invite;
 	ownerInviteToken = invite.token;
-	assert.match(invite.inviteUrl, /\/invite\/[0-9a-f]{48}$/);
+	assert.match(invite.inviteUrl, /\/invite\?token=[0-9a-f]{48}$/, "invite links keep the token out of the path (AVE-126)");
 	assert.equal(invite.emailSent, true);
 	const stored = await d1.prepare("select token_hash, invitee_email from invite").all();
 	assert.equal(stored.results.length, 1);

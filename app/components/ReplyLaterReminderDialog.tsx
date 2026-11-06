@@ -6,7 +6,7 @@ import { Button, Dialog } from "@cloudflare/kumo";
 import { Modal, ModalHeader } from "~/components/Modal";
 import { AlarmIcon, CalendarBlankIcon, TrashIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { useReplyLater } from "~/hooks/useReplyLater";
 import { useUIStore } from "~/hooks/useUIStore";
 import {
@@ -28,7 +28,7 @@ const MAX_AHEAD_MS = 366 * 24 * 60 * 60 * 1000;
  * sheet (the pop-out look).
  */
 export default function ReplyLaterReminderDialog() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const email = useUIStore((s) => s.reminderEmail);
 	const close = useUIStore((s) => s.closeReminderPicker);
 	const { setReminder } = useReplyLater(mailboxId);

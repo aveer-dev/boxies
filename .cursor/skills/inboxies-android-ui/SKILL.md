@@ -205,11 +205,14 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | Invite accept | `previewInviteAccept` | `inviteAccept` | Invite accept, signed out (code + create account) |
 | Invite accept (signed in) | `previewInviteAcceptSignedIn` | `inviteAcceptSignedIn` | Invite accept into the signed-in account |
 | Sign-in & recovery | `previewSignInMethods` | `signInMethods` | Sign-in methods + recovery email |
+| Confirm it's you | `previewReauth` · `previewReauthTwoFactor` · `previewReauthPasskey` · `previewReauthEmailCode` | `reauth` · `reauthTwoFactor` · `reauthPasskey` · `reauthEmailCode` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API: password · password + authenticator code · passkey · emailed code. Peer of iOS `-previewSignInMethods -previewReauth <password\|twoFactor\|passkey\|emailCode>` (AVE-171) |
 | Members | `previewMembers` | `members` | Mailbox members + pending invites |
 | Devices & sessions | `previewSessions` | `sessions` | Session list |
+| Security activity | `previewSecurityActivity` · `previewSecurityActivityEmpty` · `previewSecurityActivityError` | `securityActivity` · `securityActivityEmpty` · `securityActivityError` | Devices & sessions scrolled to Recent security activity: fixture events · empty · couldn't load. Peer of iOS `-previewSessions -previewSecurityActivity [empty\|error]` (AVE-151) |
 | Senders | `previewSenders` | `senders` | Settings → Senders, Allowed tab with fixture rules (adding `@gmail.com` shows the free-mail inline error) |
 | Senders (Blocked) | `previewSendersBlocked` | `sendersBlocked` | Settings → Senders, Blocked tab |
 | Bounced addresses | `previewSuppressions` | `suppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only") (AVE-157) |
+| Tags | `previewTags` | `tags` | Settings → Tags: fixture custom folders with create / rename / delete (`tagsRename` / `tagsDelete` open the dialogs) (AVE-158) |
 | Settings | `previewSettings` | `settings` | Settings sheet on the fixture mailbox (Screener switch on) |
 | Settings, Screener off | `previewSettingsScreenerOff` | `settingsScreenerOff` | Settings sheet with Screener off |
 | AI usage meter | `previewAiUsage` | `aiUsage` | Agent chat with the usage meter at 42 / 50 (warning tint) (AVE-45) |
@@ -217,6 +220,7 @@ Reusable chrome belongs in `theme/` or `ui/components/`. Feature screens under `
 | AI usage (Settings) | `previewAiUsageSettings` | `aiUsageSettings` | Settings sheet scrolled to the AI usage section |
 | Inbox New/Seen | `previewMailbox` | `mailbox` | Home inbox list with New/Seen fixtures + the pinned "3 waiting to be screened" row (AVE-136) |
 | Screener | `previewScreener` | `screener` | Screening room + detail open (`screenerList` for the room alone). Pushed from the Inbox row; not a folder tab or menu item (AVE-136) |
+| Screener Undo | `previewScreenerUndo` | `screenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (`screenerUndoAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
 | Reply Later | `previewReplyLater` | `replyLater` | Reply Later pile |
 | Spam | `previewSpam` | `spam` | Spam folder with a spam fixture (open it for Not Spam) |
 | Newsletter | `previewNewsletter` | `newsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |

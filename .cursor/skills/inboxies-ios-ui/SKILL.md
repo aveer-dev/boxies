@@ -200,14 +200,18 @@ Peers of the Android intent harness. Use for E2E / visual review — when the ch
 | `-previewInviteAccept` | Invite accept (signed out: code + create account) |
 | `-previewInviteAcceptSignedIn` | Invite accept into the signed-in account |
 | `-previewSignInMethods` | Sign-in & recovery (methods + recovery email) |
+| `-previewSignInMethods -previewReauth [password\|twoFactor\|passkey\|emailCode]` | "Confirm it's you" sheet (`reauth_required`) over Sign-in & recovery, fixture challenge, no API (AVE-170) |
 | `-previewMembers` | Mailbox members + pending invites |
 | `-previewSessions` | Devices & sessions |
+| `-previewSessions -previewSecurityActivity [empty\|error]` | Devices & sessions scrolled to Recent security activity: fixture events, or the empty / couldn't-load state, no API (AVE-151) |
 | `-previewSenders` | Settings → Senders, Allowed tab with fixture rules (add `-previewSendersBlocked` for Blocked; adding `@gmail.com` shows the free-mail inline error) |
 | `-previewSuppressions` | Settings → Outgoing mail → Bounced addresses with fixture rows (un-suppress + "Domain admin only"), no API (AVE-157) |
+| `-previewTags` | Settings → Tags: fixture custom folders with create / rename / delete, no API (add `-previewTagsRename` or `-previewTagsDelete` for the dialogs) (AVE-158) |
 | `-previewSettings` | Settings sheet on the fixture mailbox (add `-previewScreenerOff` for the Screener switch off) |
 | `-previewAIUsage normal\|warning\|exhausted` | Stub AI usage (12/50, 42/50, 50/50 chats). Pair with `-previewChat` (meter / limit notice above the composer) or `-previewSettings` (AI usage section) (AVE-45) |
 | `-previewMailbox` | Inbox New/Seen, with the pinned "3 waiting to be screened" row (AVE-136) |
 | `-previewScreener` | Screening room + detail (`-previewScreenerList` for the room alone). The Screener folder is a subpage pushed from the Inbox row, not a folder tab or menu item (AVE-136) |
+| `-previewScreenerList -previewScreenerUndo` | Screening room right after Decline: sender gone, "Declined · Undo" toast pinned (add `-previewScreenerAccept` for "Accepted · future mail goes to Promotions"). AVE-159 |
 | `-previewReplyLater` | Reply Later pile |
 | `-previewSpam` | Spam folder + detail open (Not Spam action) |
 | `-previewDetail -previewNewsletter` | Long, wide newsletter open in the reader: scaled to fit, rigid table scrolls sideways (AVE-89) |

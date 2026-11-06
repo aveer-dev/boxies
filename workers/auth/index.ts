@@ -35,6 +35,7 @@ import { hashPassword, verifyPassword } from "../lib/password-auth";
 import type { Env } from "../types";
 import { isHostedEmailDomain, pruneSessionDeviceTokens } from "./hooks";
 import * as schema from "./schema";
+import { noteSessionCreated } from "./security-activity";
 
 export const AUTH_BASE_PATH = "/api/auth";
 const DAY_SECONDS = 24 * 60 * 60;
@@ -148,6 +149,11 @@ export function createAuth(env: Env) {
 		session: {
 			expiresIn: 30 * DAY_SECONDS,
 			updateAge: DAY_SECONDS,
+			// Better Auth's own freshness check (session created < 1 day ago,
+			// on passkey registration and unlink) is off: those routes need our
+			// stricter 5-minute re-auth instead (`auth/reauth.ts`), which a
+			// session of any age can pass by confirming it's the user again.
+			freshAge: 0,
 			additionalFields: {
 				// Set only by our own routes (extension / AutoFill tokens).
 				scope: { type: "string", required: false, input: false },
@@ -174,6 +180,13 @@ export function createAuth(env: Env) {
 				},
 			},
 			session: {
+				create: {
+					// Judged after the response (`auth/security-scope.ts`): sign-in
+					// activity and the new-device notice (AVE-151).
+					after: async (session) => {
+						noteSessionCreated({ id: String(session.id), userId: String(session.userId) });
+					},
+				},
 				delete: {
 					after: async (session) => {
 						await pruneSessionDeviceTokens(env, {

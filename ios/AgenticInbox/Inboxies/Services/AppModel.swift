@@ -273,6 +273,84 @@ final class AppModel {
         screenerQueue = db.getEmails(mailboxId: mailboxId, folderId: "screener", limit: EmailListPaging.pageSize)
     }
 
+    // MARK: - Custom folders ("tags", AVE-158)
+
+    /// Creates a tag. Names the Worker would refuse throw `CustomFolders.ValidationError`
+    /// with the Worker's sentence, before any request.
+    @discardableResult
+    func createCustomFolder(name raw: String) async throws -> Folder {
+        let name = CustomFolders.normalizedName(raw)
+        if let message = CustomFolders.validateCreate(name, existing: folders) {
+            throw CustomFolders.ValidationError(message: message)
+        }
+        let created: Folder
+        if isDebugPreview {
+            created = Folder(id: CustomFolders.slug(name), name: name, unreadCount: 0)
+        } else {
+            guard let mailboxId = selectedMailboxId else {
+                throw CustomFolders.ValidationError(message: CustomFolders.noMailbox)
+            }
+            created = try await APIClient.shared.createFolder(mailboxId: mailboxId, name: name)
+            guard selectedMailboxId == mailboxId else { return created }
+            db.upsertFolders(mailboxId: mailboxId, folders: [created])
+        }
+        folders.removeAll { $0.id == created.id }
+        folders.append(created)
+        return created
+    }
+
+    /// Renames a tag; its id (and the mail in it) stay put.
+    func renameCustomFolder(_ folder: Folder, to raw: String) async throws {
+        let name = CustomFolders.normalizedName(raw)
+        guard name != folder.name else { return }
+        if let message = CustomFolders.validateRename(name, folder: folder, existing: folders) {
+            throw CustomFolders.ValidationError(message: message)
+        }
+        var newName = name
+        if !isDebugPreview {
+            guard let mailboxId = selectedMailboxId else {
+                throw CustomFolders.ValidationError(message: CustomFolders.noMailbox)
+            }
+            let renamed = try await APIClient.shared.renameFolder(mailboxId: mailboxId, folderId: folder.id, name: name)
+            guard selectedMailboxId == mailboxId else { return }
+            newName = renamed.name
+        }
+        guard let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        let updated = Folder(id: folder.id, name: newName, unreadCount: folders[index].unreadCount)
+        folders[index] = updated
+        if let mailboxId = selectedMailboxId, !isDebugPreview {
+            db.upsertFolders(mailboxId: mailboxId, folders: [updated])
+        }
+    }
+
+    /// Deletes a tag. The Worker moves its mail to the Inbox first; if the tag is open,
+    /// the list goes back to Inbox.
+    func deleteCustomFolder(_ folder: Folder) async throws {
+        guard CustomFolders.isCustom(folder) else { return }
+        let mailboxId = selectedMailboxId
+        if !isDebugPreview {
+            guard let mailboxId else {
+                throw CustomFolders.ValidationError(message: CustomFolders.noMailbox)
+            }
+            try await APIClient.shared.deleteFolder(mailboxId: mailboxId, folderId: folder.id)
+            guard selectedMailboxId == mailboxId else { return }
+            db.deleteFolder(mailboxId: mailboxId, folderId: folder.id)
+        }
+        let unread = folders.first(where: { $0.id == folder.id })?.unreadCount ?? 0
+        folders.removeAll { $0.id == folder.id }
+        adjustFolderUnread(folderId: "inbox", delta: unread)
+        if selectedTab == .folder(folder.id) {
+            selectTab(.inbox)
+        }
+        if !isDebugPreview, let mailboxId {
+            // Settle counts with the server (the moved mail lands in Inbox).
+            if let fresh = try? await syncService.syncMailbox(mailboxId: mailboxId),
+               selectedMailboxId == mailboxId {
+                folders = fresh
+            }
+        }
+    }
+
     func adjustFolderUnread(folderId: String, delta: Int) {
         guard delta != 0,
               let index = folders.firstIndex(where: { $0.id == folderId }) else { return }

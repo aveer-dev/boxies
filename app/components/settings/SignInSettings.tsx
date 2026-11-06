@@ -5,7 +5,7 @@
 import { Button, Input, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { useParams } from "react-router";
+import { useMailboxId } from "~/hooks/useCurrentMailbox";
 import { GoogleSignInButton } from "~/components/GoogleSignInButton";
 import ConfirmDialog from "./ConfirmDialog";
 import PasskeysSection from "./PasskeysSection";
@@ -32,7 +32,7 @@ function identityTypeLabel(type: string): string {
 }
 
 export default function SignInSettings() {
-	const { mailboxId } = useParams<{ mailboxId: string }>();
+	const mailboxId = useMailboxId();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
 

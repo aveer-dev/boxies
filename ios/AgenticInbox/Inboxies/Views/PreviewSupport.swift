@@ -43,6 +43,14 @@ enum PreviewSupport {
         return app
     }
 
+    /// `-previewTags`: the fixture mailbox plus a few custom folders (AVE-158).
+    @MainActor
+    static func tagsPreviewModel() -> AppModel {
+        let app = appModel()
+        app.folders += PreviewTags.folders
+        return app
+    }
+
     @MainActor
     static func authStore() -> AuthStore {
         let store = AuthStore(persistsSession: false)
@@ -299,6 +307,48 @@ enum PreviewSupport {
     /// `-previewAIUsage normal|warning|exhausted` (AVE-45): stub usage snapshot
     /// (12/50, 42/50, 50/50 chats) so the meter renders without a backend. Nil
     /// outside DEBUG previews; `AppModel.loadAIUsage()` returns it instead of fetching.
+    /// `-previewReauth <variant>`: the "Confirm it's you" challenge to show (AVE-170).
+    /// `password` (default) · `twoFactor` · `passkey` · `emailCode`.
+    static var reauthChallengeFixture: ReauthChallenge? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-previewReauth") else { return nil }
+        let variant = index + 1 < args.count ? args[index + 1] : "password"
+        let message = "For your security, confirm it's you first. Sign out and sign back in, then try again within 5 minutes."
+        switch variant {
+        case "twoFactor":
+            return ReauthChallenge(methods: [.password, .passkey], twoFactor: true, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        case "passkey":
+            return ReauthChallenge(methods: [.passkey], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        case "emailCode":
+            return ReauthChallenge(methods: [.emailCode], twoFactor: false, emailCodeTo: "a•••x@gmail.com", maxAgeSeconds: 300, message: message)
+        default:
+            return ReauthChallenge(methods: [.password, .passkey], twoFactor: false, emailCodeTo: nil, maxAgeSeconds: 300, message: message)
+        }
+        #else
+        return nil
+        #endif
+    }
+
+    /// Which Recent security activity state `-previewSessions -previewSecurityActivity [empty|error]`
+    /// shows (AVE-151; Android `securityActivity` / `securityActivityEmpty` / `securityActivityError`).
+    /// Nil without the flag (the sessions preview then shows the fixture events unscrolled).
+    enum SecurityActivityPreview { case events, empty, error }
+
+    static var securityActivityPreview: SecurityActivityPreview? {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "-previewSecurityActivity") else { return nil }
+        switch index + 1 < args.count ? args[index + 1] : "" {
+        case "empty": return .empty
+        case "error": return .error
+        default: return .events
+        }
+        #else
+        return nil
+        #endif
+    }
+
     static var aiUsageFixture: AIUsage? {
         #if DEBUG
         let args = ProcessInfo.processInfo.arguments
@@ -391,6 +441,15 @@ enum PreviewSupport {
             || args.contains("-previewReminderToast") {
             applyReminderFixtures(to: app, args: args)
         }
+        if args.contains("-previewScreenerUndo"), app.selectedTab == .folder("screener"),
+           let decided = app.emails.first {
+            // Just declined the first sender: their row is gone and the toast offers
+            // Undo (AVE-159). Add `-previewScreenerAccept` for the Accept → Promotions copy.
+            app.emails.removeAll { screenerSenderKeyMatches($0, decided) }
+            app.screenerQueue.removeAll { screenerSenderKeyMatches($0, decided) }
+            let destination: String? = args.contains("-previewScreenerAccept") ? "promotions" : nil
+            app.showToast(ScreenerDecision.toastTitle(destinationFolderId: destination), isUndo: true, duration: 0)
+        }
         if args.contains("-previewToast") {
             // Pinned sample toast with an action (AVE-134): icon + message + Undo.
             app.showToast("Archived", isUndo: true, duration: 0)
@@ -402,6 +461,11 @@ enum PreviewSupport {
             applyPreviewService(service, to: app)
         }
         return app
+    }
+
+    @MainActor
+    private static func screenerSenderKeyMatches(_ lhs: Email, _ rhs: Email) -> Bool {
+        AppModel.screenerSenderKey(lhs) == AppModel.screenerSenderKey(rhs)
     }
 
     // MARK: Reply Later reminders (AVE-86)
@@ -902,9 +966,12 @@ struct PreviewAdminAuthRoot: View {
             } else if args.contains("-previewInviteAcceptSignedIn") {
                 InviteAcceptPreview(signedIn: true)
             } else if args.contains("-previewSignInMethods") {
+                // Add `-previewReauth [password|twoFactor|passkey|emailCode]` for the
+                // "Confirm it's you" sheet over it, no API (AVE-170).
                 NavigationStack {
                     SignInMethodsPreview()
                 }
+                .reauthPromptHost()
             } else if args.contains("-previewMembers") {
                 NavigationStack {
                     SharingSettingsView()
@@ -924,6 +991,13 @@ struct PreviewAdminAuthRoot: View {
                     SuppressionsSettingsView()
                 }
                 .environment(PreviewSupport.appModel())
+            } else if args.contains("-previewTags") {
+                // Settings → Tags with fixture custom folders, no API (AVE-158; Android:
+                // `tags`). Add `-previewTagsRename` / `-previewTagsDelete` for the dialogs.
+                NavigationStack {
+                    TagsSettingsView()
+                }
+                .environment(PreviewSupport.tagsPreviewModel())
             } else if args.contains("-previewSettings") {
                 // Settings sheet on the fixture mailbox; add `-previewScreenerOff` for the
                 // Screener switch off (AVE-104; Android: `settings` / `settingsScreenerOff`).
@@ -931,6 +1005,8 @@ struct PreviewAdminAuthRoot: View {
                 SettingsSheetView()
                     .environment(PreviewSupport.settingsPreviewModel(screenerOff: args.contains("-previewScreenerOff")))
             } else if args.contains("-previewSessions") {
+                // Add `-previewSecurityActivity [empty|error]` to scroll to Recent security
+                // activity in that state (AVE-151; Android: `securityActivity*`).
                 NavigationStack {
                     SessionsSettingsView()
                 }
@@ -996,6 +1072,11 @@ private struct SignInMethodsPreview: View {
     var body: some View {
         if ready {
             SignInMethodsSettingsView()
+                .task {
+                    guard let challenge = PreviewSupport.reauthChallengeFixture else { return }
+                    try? await Task.sleep(nanoseconds: 400_000_000)
+                    ReauthCoordinator.shared.presentForPreview(challenge)
+                }
         } else {
             Color.clear.onAppear {
                 app.setIdentities([

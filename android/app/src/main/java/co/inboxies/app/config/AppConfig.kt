@@ -43,6 +43,18 @@ object AppConfig {
     @Volatile
     private var prefs: SharedPreferences? = null
 
+    /** DEBUG-only local Worker base for this process; see [isLocalWorkerBase]. */
+    @Volatile
+    private var localWorkerBase: String? = null
+
+    /**
+     * A `pnpm dev` Worker on the host. DEBUG builds keep it in memory for this process
+     * only: stored, it outlived the dev server and stranded every later launch on a dead
+     * host, so a stored one is dropped instead.
+     */
+    fun isLocalWorkerBase(value: String): Boolean =
+        value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")
+
     fun init(context: Context) {
         if (prefs == null) {
             prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -58,7 +70,8 @@ object AppConfig {
                 if (override != null) prefs?.edit { remove(KEY_API_BASE) }
                 return BuildConfig.DEFAULT_API_BASE
             }
-            if (override != null && (override.contains("localhost") || override.contains("127.0.0.1") || override.contains("10.0.2.2"))) {
+            localWorkerBase?.let { return it }
+            if (override != null && isLocalWorkerBase(override)) {
                 prefs?.edit { remove(KEY_API_BASE) }
                 return BuildConfig.DEFAULT_API_BASE
             }
@@ -70,21 +83,27 @@ object AppConfig {
                 prefs?.edit { remove(KEY_API_BASE) }
                 return
             }
-            if (value.contains("localhost") || value.contains("127.0.0.1") || value.contains("10.0.2.2")) {
+            if (isLocalWorkerBase(value)) {
+                localWorkerBase = value
                 prefs?.edit { remove(KEY_API_BASE) }
             } else {
+                localWorkerBase = null
                 prefs?.edit { putString(KEY_API_BASE, value) }
             }
         }
 
     /**
-     * Stripe checkout session this app started. The `inboxies://onboarding` deep link
-     * only applies its session token when it returns this id, so a crafted link
-     * can't sign the user into someone else's account.
+     * Stripe checkout session this app started. The `inboxies://onboarding` return link
+     * carries only a one-time code, which the Worker redeems together with this id
+     * (never in the link), so neither an intercepted nor a crafted link can sign anyone in.
      */
     fun rememberPendingCheckout(sessionId: String) {
         prefs?.edit { putString(KEY_PENDING_CHECKOUT_SESSION, sessionId) }
     }
+
+    /** The checkout this app started, if any; [consumePendingCheckout] forgets it. */
+    fun pendingCheckout(): String? =
+        prefs?.getString(KEY_PENDING_CHECKOUT_SESSION, null)?.takeIf { it.isNotBlank() }
 
     /** True (and forgets it) when [sessionId] is the checkout this app started. */
     fun consumePendingCheckout(sessionId: String?): Boolean {

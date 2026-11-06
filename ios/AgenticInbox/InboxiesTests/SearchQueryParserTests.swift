@@ -206,6 +206,7 @@ final class SharedSessionTests: XCTestCase {
             legacy.removeValue(forKey: kSecAttrAccessGroup as String)
             status = SecItemAdd(legacy as CFDictionary, nil)
         }
+        try XCTSkipIf(status == errSecMissingEntitlement, "The keychain is unavailable on this host")
         XCTAssertEqual(status, errSecSuccess)
         XCTAssertEqual(accessibility(key), kSecAttrAccessibleAfterFirstUnlock as String)
 
@@ -217,6 +218,7 @@ final class SharedSessionTests: XCTestCase {
     }
 
     func testWriteStoresThisDeviceOnly() throws {
+        try XCTSkipUnless(keychainAvailable(), "The keychain is unavailable on this host")
         let key = "test-write-\(UUID().uuidString)"
         defer { KeychainStore.deleteEverywhere(key) }
 
@@ -249,6 +251,20 @@ final class SharedSessionTests: XCTestCase {
         SharedSession.clear()
         XCTAssertNil(SharedSession.activeMailboxId)
         XCTAssertEqual(SharedSession.apiBaseURL, AppConfig.defaultAPIBaseURL)
+    }
+
+    /// False on builds without any keychain entitlement (CI's CODE_SIGNING_ALLOWED=NO),
+    /// where even the default group refuses items. `KeychainStore.write` doesn't
+    /// report its status, so probe with an item of our own.
+    private func keychainAvailable() -> Bool {
+        let probe = "test-probe-\(UUID().uuidString)"
+        defer { KeychainStore.deleteEverywhere(probe) }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: probe,
+            kSecValueData as String: Data(),
+        ]
+        return SecItemAdd(query as CFDictionary, nil) != errSecMissingEntitlement
     }
 
     /// `kSecAttrAccessible` of the single item for `key`, in any group.
