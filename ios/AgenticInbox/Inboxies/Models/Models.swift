@@ -787,6 +787,10 @@ struct Email: Identifiable, Codable, Hashable {
     var matchedRuleId: String? = nil
     /// RFC 8058 one-click unsubscribe is available (detail payloads only; AVE-99).
     var oneClickUnsubscribe: Bool? = nil
+    /// One-time code for the reader's Code card (reader payloads only; AVE-175/176).
+    var otp: EmailOtp? = nil
+    /// Calendar invite for the reader's Invite card (reader payloads only; AVE-175/176).
+    var invite: EmailInvite? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, subject, sender, recipient, cc, bcc, date, read, starred, body, snippet, participants, attachments, auth
@@ -820,6 +824,7 @@ struct Email: Identifiable, Codable, Hashable {
         case classificationReason = "classification_reason"
         case matchedRuleId = "matched_rule_id"
         case oneClickUnsubscribe = "one_click_unsubscribe"
+        case otp, invite
     }
 
     /// Report spam offers "Unsubscribe" only for RFC 8058 bulk mail. The
@@ -1205,6 +1210,9 @@ extension Email {
         hasStickyNote = c.decodeLenientBool(forKey: .hasStickyNote)
         stickyNoteText = try? c.decodeIfPresent(String.self, forKey: .stickyNoteText)
         inlineNoteCount = try? c.decodeIfPresent(Int.self, forKey: .inlineNoteCount)
+        // Reader cards (AVE-176): a malformed card must never fail the whole email.
+        otp = try? c.decodeIfPresent(EmailOtp.self, forKey: .otp)
+        invite = try? c.decodeIfPresent(EmailInvite.self, forKey: .invite)
     }
 }
 

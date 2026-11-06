@@ -142,6 +142,29 @@ enum AppTheme {
         static let homeSubtitle: CGFloat = 12
     }
 
+    /// Reader Code card / Invite card pinned above the bottom bar (AVE-176).
+    /// Android twin: `InboxiesColors` + `MailCardMetrics` (AVE-177).
+    enum MailCard {
+        /// Digest-card radius: `surface` fill + `line` hairline.
+        static let cornerRadius: CGFloat = 18
+        static let padding: CGFloat = 16
+        /// Matches the reader's 16pt side gutter.
+        static let horizontalInset: CGFloat = 16
+        static let bottomInset: CGFloat = 8
+        static let eyebrow: CGFloat = 12
+        static let title: CGFloat = 15
+        static let detail: CGFloat = 13
+        /// Monospaced, semibold, tracked.
+        static let code: CGFloat = 30
+        static let codeTracking: CGFloat = 3
+        static let buttonHeight: CGFloat = 36
+        static let shadow = Color.black.opacity(0.08)
+        static let shadowRadius: CGFloat = 12
+        static let shadowY: CGFloat = 4
+        /// The copied code expires from the clipboard after this long.
+        static let clipboardExpiry: TimeInterval = 90
+    }
+
     /// List row typography and spacing (email list, AI chat list, search).
     enum List {
         /// Primary title size (email sender name or chat title).
